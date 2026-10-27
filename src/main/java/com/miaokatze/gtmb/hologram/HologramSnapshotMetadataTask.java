@@ -26,7 +26,7 @@ final class HologramSnapshotMetadataTask {
     private final NBTTagCompound state;
     private final long revision;
     private final HologramCapture capture;
-    private final boolean authoring, draftOnly;
+    private final boolean authoring, draftOnly, detailRows;
     private final HologramSnapshotDataContext dataContext = new HologramSnapshotDataContext();
     private HologramSnapshotMetadataSource source;
     private HologramSnapshotAeTask ae;
@@ -47,6 +47,7 @@ final class HologramSnapshotMetadataTask {
     private boolean keysCached, decorative;
     private String sourceWarning = "";
     private FutureTask<Report> report;
+    private long busyTick;
     private final WorkerProgress workerProgress = new WorkerProgress();
 
     HologramSnapshotMetadataTask(HologramSession s, NBTTagCompound state) {
@@ -56,6 +57,7 @@ final class HologramSnapshotMetadataTask {
         capture = s.capture;
         authoring = HologramSessionPolicy.authoring(s);
         draftOnly = authoring || s.localPlanPending && !s.localPlanError.isEmpty();
+        detailRows = HologramNetwork.segmentedPeer(s.player);
     }
 
     String phase() {
@@ -100,10 +102,11 @@ final class HologramSnapshotMetadataTask {
     }
 
     boolean step(int maxWork, long deadline) {
-        if (s.planRevision != revision || s.capture != capture) {
+        if (s.planRevision != revision || s.capture != capture || !dataContext.currentProviders()) {
             cancel();
-            throw new IllegalStateException("Snapshot metadata source changed");
+            throw new IllegalStateException("Snapshot metadata source or providers changed");
         }
+        if (waitingForBudget()) return false;
         for (int work = 0; work < maxWork && stage < 13; work++) {
             if (work > 0 && System.nanoTime() >= deadline) return false;
             try {
@@ -153,6 +156,9 @@ final class HologramSnapshotMetadataTask {
                     stage = 13;
                     cursor = 1;
                 }
+            } catch (HologramSnapshotDataContext.Busy busy) {
+                busyTick = HologramWorkBudget.currentServerTick();
+                return false;
             } catch (IOException invalid) {
                 if (stage == 4) {
                     state.setString("networkBindingError", HologramAePolicy.fallback(invalid.getMessage()));
@@ -166,10 +172,19 @@ final class HologramSnapshotMetadataTask {
 
     void cancel() {
         if (report != null) HologramAreaPreparation.cancel(report);
+        dataContext.close();
     }
 
     boolean waitingForWorker() {
-        return stage == 3 && (report == null || !report.isDone());
+        return stage == 3 && report != null && !report.isDone();
+    }
+
+    boolean waitingForBudget() {
+        return busyTick != 0 && busyTick == HologramWorkBudget.currentServerTick();
+    }
+
+    boolean canAdvance() {
+        return !waitingForWorker() && !waitingForBudget();
     }
 
     private void next() {
@@ -215,8 +230,9 @@ final class HologramSnapshotMetadataTask {
             return;
         }
         if (capture == null && cursor < networkSize()) {
-            HologramPresets.Cell cell = s.virtualPreset.cells.get(cursor++);
+            HologramPresets.Cell cell = s.virtualPreset.cells.get(cursor);
             collectNetwork(cell.tileNbt, cell.excluded);
+            cursor++;
         } else if (capture != null && cursor < capture.cells.size()) {
             HologramCapture.Cell cell = capture.cells.get(cursor);
             if (s.virtualPreset != null) collectNetwork(cell.tileNbt, cell.excluded);
@@ -251,7 +267,9 @@ final class HologramSnapshotMetadataTask {
             List<Position> frozenPositions = positions;
             HologramSnapshotDataContext frozenContext = dataContext;
             WorkerProgress progress = workerProgress;
-            FutureTask<Report> candidate = new FutureTask<>(() -> {
+            AutoCloseable input = frozenContext.retain();
+            java.util.concurrent.atomic.AtomicBoolean started = new java.util.concurrent.atomic.AtomicBoolean();
+            FutureTask<Report> candidate = new FutureTask<Report>(() -> {
                 HologramSnapshotMetadataSource.enterDetached(frozenContext);
                 try {
                     return derive(
@@ -265,19 +283,49 @@ final class HologramSnapshotMetadataTask {
                         z,
                         reviewed,
                         receipt,
-                        progress);
+                        progress,
+                        detailRows);
                 } finally {
                     HologramSnapshotMetadataSource.exitDetached();
                 }
-            });
-            if (!HologramAreaPreparation.execute(candidate)) return false;
+            }) {
+
+                @Override
+                public void run() {
+                    started.set(true);
+                    try {
+                        super.run();
+                    } finally {
+                        releaseInput(input);
+                    }
+                }
+
+                @Override
+                protected void done() {
+                    if (!started.get()) releaseInput(input);
+                }
+            };
+            if (!HologramAreaPreparation.execute(candidate)) {
+                candidate.cancel(false);
+                return false;
+            }
             report = candidate;
         }
         if (!report.isDone()) return false;
         try {
             Report result = report.get();
-            for (Object raw : result.fields.func_150296_c())
-                state.setTag((String) raw, result.fields.getTag((String) raw));
+            if (result == null) {
+                report = null;
+                busyTick = HologramWorkBudget.currentServerTick();
+                return false;
+            }
+            if (!dataContext.currentProviders()) {
+                dataContext.close();
+                throw new IllegalStateException("Snapshot metadata providers changed");
+            }
+            NBTTagCompound publication = HologramSnapshotDetails
+                .publication(s, result.fields, result.detailBytes, result.detailSource, result.policy);
+            for (Object raw : publication.func_150296_c()) state.setTag((String) raw, publication.getTag((String) raw));
             if (!keysCached) {
                 s.availableNbtKeys.clear();
                 s.nbtKeysCapture = null;
@@ -285,18 +333,30 @@ final class HologramSnapshotMetadataTask {
             if (source != null && source.publishesSource()
                 && (s.processingSource == null || s.localPlanPending && !s.localPlanError.isEmpty())) {
                 s.processingSource = result.source;
+                HologramAnalysisDocument.bindCaptureIds(s, result.source);
                 if (s.processingPolicy == null) s.processingPolicy = result.policy;
             }
             state.setBoolean("networkBindingRequested", !authoring && s.networkBindingRequested);
             state.setBoolean("decorativeMaterialsNotice", decorative);
+            dataContext.close();
             next();
             return true;
         } catch (InterruptedException interrupted) {
+            dataContext.close();
             Thread.currentThread()
                 .interrupt();
             throw new IllegalStateException(interrupted);
         } catch (ExecutionException failed) {
+            dataContext.close();
             throw new IllegalStateException("Snapshot metadata worker failed", failed.getCause());
+        }
+    }
+
+    private static void releaseInput(AutoCloseable input) {
+        try {
+            input.close();
+        } catch (Exception failed) {
+            throw new IllegalStateException("Frozen metadata input release failed", failed);
         }
     }
 
@@ -380,7 +440,7 @@ final class HologramSnapshotMetadataTask {
 
     private void appendNbtKey() {
         if (!keyIterator.hasNext()) {
-            state.setTag("nbtEntries", entries);
+            HologramSnapshotDetails.rootEntries(s, state, entries);
             if (!keysCached) s.nbtKeysCapture = capture;
             next();
             return;
@@ -473,50 +533,105 @@ final class HologramSnapshotMetadataTask {
 
     private static Report derive(HologramPresets.Preset raw, HologramBlueprintProcessing.Policy policy,
         List<Position> frozenPositions, int selected, int dimension, int x, int y, int z, boolean reviewed,
-        String receipt, WorkerProgress progress) throws IOException {
+        String receipt, WorkerProgress progress, boolean detailRows) throws IOException {
         Report result = new Report(raw, policy);
-        if (raw != null) try {
-            if (result.policy == null) result.policy = HologramBlueprintProcessing.policy(raw);
-            progress.value = new HologramAreaPreparation.Progress("metadata.processing", 0, 1);
-            NBTTagCompound processing = HologramBlueprintProcessing.state(raw, result.policy, dimension, x, y, z);
-            boolean direct = processing.getInteger("requiredStages") == 0;
-            result.fields.setBoolean("blueprintDirectSave", direct);
-            result.fields.setBoolean("blueprintProcessingRequired", !reviewed && !direct);
-            HologramPresets.Preset current = new HologramPresets.Preset();
-            current.processingNbt = receipt;
-            processing.setBoolean("complete", reviewed && HologramBlueprintProcessing.complete(current));
-            result.fields.setTag("processing", processing);
-            result.fields.setTag(
-                "processingPolicy",
-                processing.getCompoundTag("policy")
-                    .copy());
-            result.fields.setTag(
-                "processingRelations",
-                processing.getTagList("relations", 10)
-                    .copy());
-            result.fields.setTag(
-                "processingNbtKeys",
-                processing.getTagList("nbtKeys", 8)
-                    .copy());
-            result.fields.setTag(
-                "processingNbtPaths",
-                processing.getTagList("nbtPaths", 8)
-                    .copy());
-            progress.value = new HologramAreaPreparation.Progress("metadata.processing", 1, 1);
-            cellNbt(result.fields, result.policy, frozenPositions, selected, progress);
-        } catch (IOException invalid) {
-            result.fields.setString("processingError", invalid.getMessage());
+        HologramProcessGovernor.Lease cpu = HologramProcessGovernor.tryHeavyCpu("snapshot.metadata");
+        if (cpu == null) return null;
+        try (HologramProcessGovernor.Lease admitted = cpu; HologramAnalysisFacts facts = new HologramAnalysisFacts()) {
+            if (raw != null) try {
+                facts.bind(raw);
+                if (result.policy == null) result.policy = HologramBlueprintProcessing.policy(raw, facts);
+                progress.value = new HologramAreaPreparation.Progress("metadata.processing", 0, 1);
+                NBTTagCompound processing = HologramBlueprintProcessing
+                    .state(raw, result.policy, dimension, x, y, z, facts);
+                boolean direct = processing.getInteger("requiredStages") == 0;
+                result.fields.setBoolean("blueprintDirectSave", direct);
+                result.fields.setBoolean("blueprintProcessingRequired", !reviewed && !direct);
+                HologramPresets.Preset current = new HologramPresets.Preset();
+                current.processingNbt = receipt;
+                processing.setBoolean("complete", reviewed && HologramBlueprintProcessing.complete(current));
+                result.fields.setTag("processing", processing);
+                result.fields.setTag(
+                    "processingPolicy",
+                    processing.getCompoundTag("policy")
+                        .copy());
+                result.fields.setTag(
+                    "processingRelations",
+                    processing.getTagList("relations", 10)
+                        .copy());
+                result.fields.setTag(
+                    "processingNbtKeys",
+                    processing.getTagList("nbtKeys", 8)
+                        .copy());
+                result.fields.setTag(
+                    "processingNbtPaths",
+                    processing.getTagList("nbtPaths", 8)
+                        .copy());
+                progress.value = new HologramAreaPreparation.Progress("metadata.processing", 1, 1);
+                cellNbt(result.fields, result.policy, frozenPositions, selected, progress, facts, detailRows);
+                facts.publish();
+                HologramProcessingDetails.summarize(raw);
+            } catch (IOException invalid) {
+                result.fields.setString("processingError", invalid.getMessage());
+            }
+            result.detailBytes = HologramSnapshotCodec.retainedEstimate(result.fields);
+            if (detailRows && raw != null) {
+                // The detail store retains only the owner readers' inputs, not the frozen native context or full
+                // preset.
+                result.detailSource = new HologramPresets.Preset();
+                result.detailSource.resourceDirectory = raw.resourceDirectory;
+                result.detailBytes += 4096;
+                for (HologramPresets.Cell original : raw.cells) {
+                    interrupted();
+                    HologramPresets.Cell cell = new HologramPresets.Cell();
+                    cell.block = original.block;
+                    cell.metadata = original.metadata;
+                    cell.damage = original.damage;
+                    cell.x = original.x;
+                    cell.y = original.y;
+                    cell.z = original.z;
+                    cell.excluded = original.excluded;
+                    cell.tileNbt = original.tileNbt;
+                    cell.itemNbt = original.itemNbt;
+                    cell.resourceTileRows = original.resourceTileRows;
+                    cell.resourceItemRows = original.resourceItemRows;
+                    cell.resourceTileBlockers = original.resourceTileBlockers;
+                    cell.resourceItemBlockers = original.resourceItemBlockers;
+                    cell.resourceTileComplete = original.resourceTileComplete;
+                    cell.resourceItemComplete = original.resourceItemComplete;
+                    result.detailSource.cells.add(cell);
+                    result.detailBytes += 512L + retainedString(cell.block)
+                        + retainedString(cell.tileNbt)
+                        + retainedString(cell.itemNbt);
+                }
+                if (result.policy != null) result.detailBytes += HologramSnapshotNbt.estimate(result.policy.write());
+            }
         }
+        interrupted();
         try {
             result.fields.setTag("processingPresets", HologramProcessingPresets.labels());
         } catch (IOException invalid) {
             result.fields.setString("processingPresetError", invalid.getMessage());
         }
+        NBTTagCompound extra = new NBTTagCompound();
+        if (result.fields.hasKey("processingPresets"))
+            extra.setTag("processingPresets", result.fields.getTag("processingPresets"));
+        if (result.fields.hasKey("processingPresetError"))
+            extra.setTag("processingPresetError", result.fields.getTag("processingPresetError"));
+        result.detailBytes += HologramSnapshotCodec.retainedEstimate(extra);
+
         return result;
     }
 
     private static void cellNbt(NBTTagCompound output, HologramBlueprintProcessing.Policy policy,
-        List<Position> frozenPositions, int selected, WorkerProgress progress) throws IOException {
+        List<Position> frozenPositions, int selected, WorkerProgress progress, HologramAnalysisFacts facts)
+        throws IOException {
+        cellNbt(output, policy, frozenPositions, selected, progress, facts, false);
+    }
+
+    private static void cellNbt(NBTTagCompound output, HologramBlueprintProcessing.Policy policy,
+        List<Position> frozenPositions, int selected, WorkerProgress progress, HologramAnalysisFacts facts,
+        boolean detailRows) throws IOException {
         NBTTagList rows = new NBTTagList();
         int entryCount = 0;
         NBTTagList overrides = policy.write()
@@ -538,7 +653,7 @@ final class HologramSnapshotMetadataTask {
                 continue;
             }
             HologramPresets.Cell cell = position.cell;
-            NBTTagList cellEntries = HologramBlueprintProcessing.nbtEntries(cell);
+            NBTTagList cellEntries = HologramBlueprintProcessing.nbtEntries(cell, facts);
             if (cellEntries.tagCount() == 0) continue;
             NBTTagCompound override = overridePositions.get(key(cell.x, cell.y, cell.z));
             List<String> chosen = override == null || override.getBoolean("all") ? null
@@ -554,6 +669,11 @@ final class HologramSnapshotMetadataTask {
             NBTTagCompound row = new NBTTagCompound();
             row.setInteger("index", position.index);
             row.setBoolean("all", chosen == null);
+            if (detailRows) row.setTag(
+                "keys",
+                chosen == null ? new NBTTagList()
+                    : override.getTagList("keys", 8)
+                        .copy());
             row.setTag("entries", cellEntries);
             row.setTag(
                 "ignoredPaths",
@@ -569,6 +689,10 @@ final class HologramSnapshotMetadataTask {
             "metadata.cell_nbt",
             frozenPositions.size(),
             frozenPositions.size());
+    }
+
+    private static long retainedString(String value) {
+        return value == null ? 0 : 64L + 2L * value.length();
     }
 
     private static void interrupted() throws IOException {
@@ -607,7 +731,9 @@ final class HologramSnapshotMetadataTask {
 
         final NBTTagCompound fields = new NBTTagCompound();
         final HologramPresets.Preset source;
+        HologramPresets.Preset detailSource;
         HologramBlueprintProcessing.Policy policy;
+        long detailBytes;
 
         Report(HologramPresets.Preset source, HologramBlueprintProcessing.Policy policy) {
             this.source = source;

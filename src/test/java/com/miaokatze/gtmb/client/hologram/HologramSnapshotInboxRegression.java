@@ -12,11 +12,145 @@ public final class HologramSnapshotInboxRegression {
 
     private HologramSnapshotInboxRegression() {}
 
+    public static void main(String[] args) {
+        run();
+        runQuotaContention();
+        System.out.println("HologramSnapshotInboxRegression passed");
+    }
+
     public static void run() {
         fifoAndBackpressure();
         epochCancellation();
         failedDecodeRetainsOrder();
         explicitRootCloseFence();
+        networkBackpressureAndControlReserve();
+    }
+
+    /** Isolated-process coverage: saturating the shared quota must not interfere with other suites' caches. */
+    public static void runQuotaContention() {
+        transientQuotaRetainsReceipt(false);
+        transientQuotaRetainsReceipt(true);
+        impossiblePreparationHasExactFailure();
+        impossibleExpandedRetainsTransportIdentity();
+    }
+
+    /** Exercise real expanded-NBT admission under a competing single-player server's shared quota. */
+    private static void transientQuotaRetainsReceipt(boolean materialized) {
+        try {
+            net.minecraft.nbt.NBTTagCompound source = new net.minecraft.nbt.NBTTagCompound();
+            source.setString("session", "exact-committed-receipt");
+            source.setByteArray("payload", new byte[32768]);
+            byte[] bytes = com.miaokatze.gtmb.hologram.HologramSnapshotCodec.compress(source);
+            long estimate;
+            try (
+                com.miaokatze.gtmb.hologram.HologramSnapshotCodec.OwnedSnapshot decoded = com.miaokatze.gtmb.hologram.HologramSnapshotCodec
+                    .decodeOwned(bytes, () -> true)) {
+                estimate = decoded.retainedEstimate;
+            }
+            CountDownLatch retried = new CountDownLatch(2);
+            java.util.concurrent.atomic.AtomicInteger released = new java.util.concurrent.atomic.AtomicInteger();
+            com.miaokatze.gtmb.hologram.HologramProcessGovernor.Lease occupied = com.miaokatze.gtmb.hologram.HologramProcessGovernor
+                .retain(
+                    "fixture.competing.singleplayer.server",
+                    com.miaokatze.gtmb.hologram.HologramProcessGovernor.retainedByteLimit()
+                        - com.miaokatze.gtmb.hologram.HologramProcessGovernor.retainedBytes()
+                        - (materialized ? estimate : 0));
+            try (HologramSnapshotInbox<net.minecraft.nbt.NBTTagCompound> inbox = new HologramSnapshotInbox<>(
+                2,
+                bytes.length,
+                1,
+                (compressed, current) -> {
+                    retried.countDown();
+                    com.miaokatze.gtmb.hologram.HologramSnapshotCodec.OwnedSnapshot decoded = com.miaokatze.gtmb.hologram.HologramSnapshotCodec
+                        .decodeOwned(compressed, current);
+                    return new HologramSnapshotInbox.Decoded<>(
+                        decoded.value,
+                        decoded,
+                        decoded.retainedEstimate,
+                        materialized ? 2L * decoded.retainedEstimate : 0);
+                })) {
+                SimpleAssert.that(
+                    inbox.put(bytes, 41, released::incrementAndGet, inbox.epoch()),
+                    "exact compressed receipt admitted before quota contention");
+                net.minecraft.nbt.NBTTagCompound later = new net.minecraft.nbt.NBTTagCompound();
+                later.setString("session", "later-control");
+                SimpleAssert.that(inbox.offerValue(later), "later control retained behind the busy receipt");
+                waitFor(retried);
+                SimpleAssert
+                    .that(inbox.poll() == null, "transient quota cannot publish a terminal failure or overtake ACK");
+                SimpleAssert.eq(0, released.get(), "retry retains the original physical frame reservation");
+                SimpleAssert.that(!inbox.offer(bytes), "retries do not grow the bounded compressed data lane");
+                occupied.close();
+                HologramSnapshotInbox.Result<net.minecraft.nbt.NBTTagCompound> result = inbox.awaitNext();
+                SimpleAssert.that(result.failure == null, "the original receipt succeeds after competing bytes retire");
+                SimpleAssert.eq(41L, result.transportSequence, "retry preserves exact transport ownership");
+                SimpleAssert.eq(source, result.value, "retry preserves every authoritative receipt byte");
+                SimpleAssert.that(
+                    (result.materialized != null) == materialized,
+                    "only ordinary-state preparation reserves materialized work before client publication");
+                result.close();
+                SimpleAssert.eq(later, inbox.poll().value, "later control follows the retained receipt exactly once");
+                SimpleAssert.that(inbox.poll() == null, "retry never duplicates a receipt");
+                SimpleAssert.eq(1, released.get(), "the original physical reservation releases exactly once");
+            } finally {
+                occupied.close();
+            }
+        } catch (IOException failure) {
+            throw new IllegalStateException(failure);
+        }
+    }
+
+    private static void impossiblePreparationHasExactFailure() {
+        java.util.concurrent.atomic.AtomicInteger closed = new java.util.concurrent.atomic.AtomicInteger();
+        try (HologramSnapshotInbox<String> inbox = new HologramSnapshotInbox<>(
+            2,
+            4,
+            1,
+            (bytes, current) -> new HologramSnapshotInbox.Decoded<>(
+                "exact session and command metadata",
+                closed::incrementAndGet,
+                1,
+                com.miaokatze.gtmb.hologram.HologramProcessGovernor.retainedByteLimit()))) {
+            inbox.offer(new byte[] { 1 }, 71);
+            inbox.offerValue("later control");
+            HologramSnapshotInbox.Result<String> failure = inbox.awaitNext();
+            SimpleAssert.that(
+                failure.failure instanceof HologramSnapshotInbox.AdmissionException,
+                "an impossible preparation becomes an explicit failure without an arbitrary retry delay");
+            SimpleAssert.eq(71L, failure.transportSequence, "terminal budget failure keeps exact transport identity");
+            SimpleAssert
+                .eq("exact session and command metadata", failure.value, "failure can retire only its own request");
+            failure.close();
+            SimpleAssert.eq(1, closed.get(), "failure releases decoded ownership exactly once");
+            SimpleAssert
+                .eq("later control", inbox.poll().value, "explicit budget failure cannot strand later controls");
+        }
+    }
+
+    private static void impossibleExpandedRetainsTransportIdentity() {
+        try {
+            java.lang.reflect.Constructor<com.miaokatze.gtmb.hologram.HologramSnapshotCodec.BusyException> constructor = com.miaokatze.gtmb.hologram.HologramSnapshotCodec.BusyException.class
+                .getDeclaredConstructor(String.class, long.class);
+            constructor.setAccessible(true);
+            com.miaokatze.gtmb.hologram.HologramSnapshotCodec.BusyException impossible = constructor.newInstance(
+                "expanded input cannot fit",
+                com.miaokatze.gtmb.hologram.HologramProcessGovernor.retainedByteLimit() + 1);
+            try (HologramSnapshotInbox<String> inbox = new HologramSnapshotInbox<>(
+                2,
+                4,
+                bytes -> { throw impossible; })) {
+                inbox.offer(new byte[] { 1 }, 72);
+                HologramSnapshotInbox.Result<String> failure = inbox.awaitNext();
+                SimpleAssert.that(
+                    failure.failure instanceof HologramSnapshotInbox.AdmissionException && failure.value == null,
+                    "an impossible expanded tree terminates without allocating it or waiting forever");
+                SimpleAssert
+                    .eq(72L, failure.transportSequence, "the missing decode identity uses exact queued sequence");
+                failure.close();
+            }
+        } catch (ReflectiveOperationException failure) {
+            throw new IllegalStateException(failure);
+        }
     }
 
     private static void fifoAndBackpressure() {
@@ -100,6 +234,42 @@ public final class HologramSnapshotInboxRegression {
             inbox.offerValue("new session");
             SimpleAssert.eq("cancelled session", inbox.poll().value, "cancellation arrives in FIFO order");
             SimpleAssert.eq("new session", inbox.poll().value, "later session survives an ordinary cancelled message");
+        }
+    }
+
+    private static void networkBackpressureAndControlReserve() {
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1),
+            admitted = new CountDownLatch(1);
+        java.util.concurrent.atomic.AtomicInteger released = new java.util.concurrent.atomic.AtomicInteger();
+        try (HologramSnapshotInbox<String> inbox = new HologramSnapshotInbox<>(4, 8, bytes -> {
+            entered.countDown();
+            waitFor(release);
+            return "frame";
+        }, 1)) {
+            long epoch = inbox.epoch();
+            SimpleAssert
+                .that(inbox.put(new byte[] { 1 }, 1, released::incrementAndGet, epoch), "leased frame admitted");
+            waitFor(entered);
+            SimpleAssert.that(inbox.offerValue("control"), "control reserve survives a full data lane");
+            Thread network = new Thread(() -> {
+                inbox.put(new byte[] { 2 }, 2, released::incrementAndGet, epoch);
+                admitted.countDown();
+            }, "test network ingress");
+            network.start();
+            SimpleAssert.that(inbox.poll() == null, "client poll returns immediately while the worker is blocked");
+            release.countDown();
+            SimpleAssert.eq("frame", inbox.awaitNext().value, "data publishes before its ordered control");
+            waitFor(admitted);
+            SimpleAssert.eq("control", inbox.poll().value, "queued control is retained while ingress waits");
+            SimpleAssert.eq("frame", inbox.awaitNext().value, "network ingress resumes after publication");
+            SimpleAssert.eq(2, released.get(), "each physical reservation releases exactly once");
+            inbox.clear();
+            SimpleAssert.that(
+                !inbox.put(new byte[] { 3 }, 3, released::incrementAndGet, epoch),
+                "stale ingress cannot enter a new epoch");
+            SimpleAssert.eq(3, released.get(), "stale admission releases its transferred reservation");
+        } finally {
+            release.countDown();
         }
     }
 

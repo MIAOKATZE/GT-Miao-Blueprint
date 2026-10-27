@@ -332,7 +332,10 @@ final class HologramResourceTask {
         if (HologramSessionPolicy.ignoredPlacementAir(s, c, i)) return;
         if (!HologramSessionPolicy.inScope(s, c, i) || !"pending".equals(c.status)) return;
         ItemStack target = HologramCellPolicy.targetFor(s, c, i);
-        if (s.mode != 2 && s.virtualPreset.schema >= 2 && !classifier.emptyOrdinary(s, c, i)) {
+        if (s.mode != 2 && s.virtual
+            && s.virtualPreset != null
+            && s.virtualPreset.schema >= 2
+            && !classifier.emptyOrdinary(s, c, i)) {
             try {
                 merge = aggregate.merge(HologramCellPolicy.resourcePlan(s, c));
                 HologramEnergyPayload.Prepared cache = HologramCellPolicy.cachePlan(s, c, i);

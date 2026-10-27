@@ -25,32 +25,37 @@ final class HologramPlacementJobs {
         // Old saved blueprints also inherited Population's controller-last editor order. Order physical
         // work by integer coordinates, treating controllers exactly like their surrounding blocks.
         long started = System.nanoTime();
-        s.work.sort((left, right) -> {
-            HologramCapture.Cell a = s.capture.cells.get(left), b = s.capture.cells.get(right);
-            int order = Integer.compare(a.y, b.y);
-            if (order == 0) order = Integer.compare(a.z, b.z);
-            return order == 0 ? Integer.compare(a.x, b.x) : order;
-        });
+        HologramWorkOrderTask ordering = new HologramWorkOrderTask(s.work, (a, b) -> compareWork(s, a, b));
+        while (!ordering.done()) ordering.advance();
         return System.nanoTime() - started;
     }
 
+    static int compareWork(HologramSession s, int left, int right) {
+        HologramCapture.Cell a = s.capture.cells.get(left), b = s.capture.cells.get(right);
+        int order = Integer.compare(a.y, b.y);
+        if (order == 0) order = Integer.compare(a.z, b.z);
+        return order == 0 ? Integer.compare(a.x, b.x) : order;
+    }
+
     static void notifyCompletedControllers(HologramSession s) {
+        for (int index : s.work) notifyCompletedController(s, index);
+    }
+
+    static void notifyCompletedController(HologramSession s, int index) {
         if (!s.virtual || s.player.worldObj.provider.dimensionId != s.dimension) return;
-        for (int index : s.work) {
-            HologramCapture.Cell cell = s.capture.cells.get(index);
-            if (!"templateController".equals(cell.role)
-                || !("placed".equals(cell.status) || "replaced".equals(cell.status))) continue;
-            try {
-                net.minecraft.tileentity.TileEntity tile = s.player.worldObj.getTileEntity(cell.x, cell.y, cell.z);
-                if (tile instanceof gregtech.api.interfaces.tileentity.IGregTechTileEntity) {
-                    gregtech.api.interfaces.metatileentity.IMetaTileEntity machine = ((gregtech.api.interfaces.tileentity.IGregTechTileEntity) tile)
-                        .getMetaTileEntity();
-                    if (machine instanceof gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase)
-                        machine.onMachineBlockUpdate();
-                }
-            } catch (RuntimeException | LinkageError failure) {
-                HologramPlacementDiagnostics.failure(s, cell, index, "completed-controller-update", failure);
+        HologramCapture.Cell cell = s.capture.cells.get(index);
+        if (!"templateController".equals(cell.role)
+            || !("placed".equals(cell.status) || "replaced".equals(cell.status))) return;
+        try {
+            net.minecraft.tileentity.TileEntity tile = s.player.worldObj.getTileEntity(cell.x, cell.y, cell.z);
+            if (tile instanceof gregtech.api.interfaces.tileentity.IGregTechTileEntity) {
+                gregtech.api.interfaces.metatileentity.IMetaTileEntity machine = ((gregtech.api.interfaces.tileentity.IGregTechTileEntity) tile)
+                    .getMetaTileEntity();
+                if (machine instanceof gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase)
+                    machine.onMachineBlockUpdate();
             }
+        } catch (RuntimeException | LinkageError failure) {
+            HologramPlacementDiagnostics.failure(s, cell, index, "completed-controller-update", failure);
         }
     }
 
@@ -61,10 +66,16 @@ final class HologramPlacementJobs {
             // Keep attempted/total counters and unpublished outcomes for the stopped-job receipt.
             // job=4 itself prevents any remaining work from executing.
             s.defer = s.stopTick = false;
+            s.placementFinishTask = null;
             s.phase = "STOPPED";
             s.job = 4;
             s.status = "施工已停止：" + invalid + "；已施工方块保留，请重新采集";
             HologramSnapshots.sendStoppedJob(s);
+            return;
+        }
+        if (s.placementFinishTask != null) {
+            finish(s, HologramWorkBudget.remainingNanos(HologramWorkBudget.SLICE_NANOS));
+            HologramSnapshots.sendJob(s);
             return;
         }
         s.materialContext = new HologramMaterials.Context(s.player, s.materialSettings, s.slot);
@@ -120,36 +131,27 @@ final class HologramPlacementJobs {
         s.batchSeq++;
         s.jobSkippedCells = Math.max(0, s.cursor - s.completed);
         if (s.cursor >= s.work.size()) {
-            notifyCompletedControllers(s);
-            int unresolved = 0;
-            for (int i = 0; i < s.capture.cells.size(); i++)
-                if (HologramSessionPolicy.inScope(s, s.capture.cells.get(i), i) && !s.capture.cells.get(i).anchor) {
-                    String status = s.capture.cells.get(i).status;
-                    if (!"satisfied".equals(status) && !"placed".equals(status)
-                        && !"replaced".equals(status)
-                        && !"removed".equals(status)) unresolved++;
-                }
-            s.job = unresolved == 0 ? 3 : 5;
-            s.status = s.jobPartialPlacement
-                ? "部分放置结束：已放置 " + s.completed
-                    + " 格；缺料跳过 "
-                    + s.jobMissingCells
-                    + " 格；保护或占位跳过 "
-                    + s.jobProtectedCells
-                    + " 格；不支持跳过 "
-                    + s.jobUnsupportedCells
-                    + " 格"
-                : unresolved == 0 ? "范围内施工完成：已完成 " + s.completed + " 格（未执行机器成型检查）"
-                    : "部分完成：已完成 " + s.completed
-                        + " 格；缺料跳过 "
-                        + s.jobMissingCells
-                        + " 格；其他未完成 "
-                        + (unresolved - s.jobMissingCells)
-                        + " 格";
+            s.placementFinishTask = new HologramPlacementFinishTask(s);
+            finish(s, Math.max(0L, deadline - System.nanoTime()));
         }
         // Final states and explicit action ACKs remain immediate; retain every per-cell batch result.
         HologramSnapshots.sendJob(s);
 
+    }
+
+    private static void finish(HologramSession s, long maxNanos) {
+        s.phase = "FINALIZING";
+        s.status = "施工操作已结束，正在核对结果与通知控制器";
+        HologramPlacementFinishTask task = s.placementFinishTask;
+        if (!task.current(s)) {
+            s.placementFinishTask = null;
+            s.job = 4;
+            s.phase = "STOPPED";
+            s.status = "施工计划已变化，已保留成功施工方块；请重新采集";
+        } else if (task.step(s, BUDGET, maxNanos)) {
+            task.publish(s);
+            s.placementFinishTask = null;
+        }
     }
 
     static void start(HologramSession s) {
@@ -168,75 +170,16 @@ final class HologramPlacementJobs {
             s.status = "选中格没有同族范围，请使用单格范围";
             return;
         }
-        if (!HologramPlanPolicy.constructionAllowed(s)) return;
-        if (!HologramMaterialWorkflow.recheckBuild(s, reviewedAction)) return;
-        for (int i = 0; i < s.capture.cells.size(); i++) {
-            HologramCapture.Cell cell = s.capture.cells.get(i);
-            if (HologramSessionPolicy.inScope(s, cell, i) && "unsupported".equals(cell.status)
-                && !cell.resourceError.isEmpty()) {
-                s.status = "蓝图资源数据无法安全解析，未施工：" + cell.resourceError;
-                return;
-            }
-        }
-        if (!s.planRecoveryFits) {
-            s.status = s.blueprintResourceMissing.isEmpty() ? "背包无法容纳回收，请整理后重试"
-                : "蓝图资源校验失败，未施工：" + s.blueprintResourceMissing;
+        if (!HologramGeometryEdits.requirePlan(s) || HologramSessionPolicy.blockedByAreaImport(s)) return;
+        if (s.virtual && (!s.virtualPlacement || !s.virtualLocked || s.mode == 2)) {
+            s.status = "请先放置蓝图，右击确定位置并核对材料后施工";
             return;
         }
-        if (s.planMissing > 0 && (!s.virtual || !s.forcePlacementReady)) {
-            s.forcePlacementReady = false;
-            s.status = s.virtual
-                ? (s.blueprintResourceMissing.isEmpty() ? "蓝图材料不足" : s.blueprintResourceMissing)
-                    + "；请核对仅放已有材料的方案后明确确认，权限与占位保护仍有效"
-                : "施工材料不足，请补齐后重试";
-            return;
-        }
-        boolean partial = s.virtual && s.planMissing > 0 && s.forcePlacementReady;
+        if (s.job == 1 || s.job == 2 || s.buildTask != null) return;
         s.forcePlacementReady = false;
-        s.work.clear();
-        for (int i = 0; i < s.capture.cells.size(); i++) {
-            if (!HologramSessionPolicy.ignoredPlacementAir(s, s.capture.cells.get(i), i)
-                && HologramSessionPolicy.inScope(s, s.capture.cells.get(i), i)
-                && "pending".equals(s.planStatus.get(i))) s.work.add(i);
-        }
-        spatialWorkOrder(s);
-        if (s.work.isEmpty()) {
-            int satisfied = 0, protectedCells = 0, unsupported = 0;
-            String reason = "";
-            for (int i = 0; i < s.capture.cells.size(); i++) {
-                HologramCapture.Cell cell = s.capture.cells.get(i);
-                if (HologramSessionPolicy.ignoredPlacementAir(s, cell, i)) continue;
-                if (!HologramSessionPolicy.inScope(s, cell, i) || cell.anchor) continue;
-                String status = s.planStatus.get(i);
-                if ("satisfied".equals(status)) satisfied++;
-                else {
-                    if ("unsupported".equals(status)) unsupported++;
-                    else protectedCells++;
-                    if (reason.isEmpty()) reason = HologramPlanPolicy.reason(s, cell, i);
-                }
-            }
-            s.status = protectedCells == 0 && unsupported == 0 && satisfied > 0
-                ? "目标范围已满足，无需施工；未放置方块、未扣材料（" + satisfied + " 格）"
-                : "没有可安全施工的位置：已满足 " + satisfied
-                    + " 格，保护或占位 "
-                    + protectedCells
-                    + " 格，不支持 "
-                    + unsupported
-                    + " 格"
-                    + (reason.isEmpty() ? "" : "；" + reason);
-            return;
-        }
-        s.replacementAuthorized = s.mode == 1;
-        s.cursor = 0;
-        s.completed = 0;
-        s.job = 1;
-        if (s.virtual) {
-            s.placementReviewNonce++;
-            if (s.materialQuote != null) s.materialQuote.setLong("placementReviewNonce", s.placementReviewNonce);
-        }
-        HologramSession.resetJobCounts(s, partial);
-        s.phase = "RUNNING";
-        s.status = "正在直接施工";
-
+        s.job = 0;
+        s.buildTask = new HologramBuildTask(s, reviewedAction);
+        s.phase = "PREPARING";
+        s.status = "正在逐段精确核对现场与材料，完成前不会施工";
     }
 }

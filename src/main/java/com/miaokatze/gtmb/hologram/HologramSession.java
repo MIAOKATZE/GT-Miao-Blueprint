@@ -57,6 +57,8 @@ final class HologramSession {
     /** Explicit material-review choice; the voucher is charged only by a successful covered transaction. */
     boolean jobVoucherRequested, jobVoucherConsumed;
     boolean placementValidating;
+    HologramBuildTask buildTask;
+    HologramPlacementFinishTask placementFinishTask;
     HologramTextWorkflow.Task attachmentTask;
     HologramVoucherCoverage.Task voucherCoverageTask;
     NBTTagCompound textPlacementAck = new NBTTagCompound();
@@ -137,7 +139,7 @@ final class HologramSession {
     long blueprintClientTaskToken;
     long libraryQuickClientTaskToken;
     boolean libraryInitialSnapshot;
-    final java.util.Set<String> virtualEdited = new java.util.HashSet<>();
+    java.util.Set<String> virtualEdited = new java.util.HashSet<>();
     final Map<String, List<ItemStack>> virtualGroups = new HashMap<>();
     String status = "";
     NBTTagCompound channels = new NBTTagCompound();
@@ -157,22 +159,22 @@ final class HologramSession {
     HologramMaterials.Settings materialSettings;
     HologramMaterials.Context materialContext;
     final List<ItemStack> materialChoices = new ArrayList<>();
-    final Map<Integer, ItemStack> pins = new HashMap<>();
+    Map<Integer, ItemStack> pins = new HashMap<>();
     ItemStack editClipboard;
     int editClipboardFacing = -1;
     final List<HologramEditState> undoEdits = new ArrayList<>();
     final List<HologramEditState> redoEdits = new ArrayList<>();
-    final Map<Integer, ItemStack> autoTargets = new HashMap<>();
-    final Map<String, ItemStack> frozenAutoTargets = new HashMap<>();
+    Map<Integer, ItemStack> autoTargets = new HashMap<>();
+    Map<String, ItemStack> frozenAutoTargets = new HashMap<>();
     boolean allocationsFrozen;
-    final java.util.Set<String> suppressedAuto = new java.util.HashSet<>();
-    final Map<String, Integer> facingPins = new HashMap<>();
+    java.util.Set<String> suppressedAuto = new java.util.HashSet<>();
+    Map<String, Integer> facingPins = new HashMap<>();
     final Map<Integer, Integer> planFacings = new HashMap<>();
     int hatchTier = 1;
     boolean hatchDowngrade, presetEnabled, presetSupported, presetAvailable, presetPaused;
     String presetReason = "请选择电压级生成整机仓室预设";
-    final Map<String, ItemStack> coordinatePins = new HashMap<>();
-    final Map<String, HologramCapture.Cell> manualPositions = new LinkedHashMap<>();
+    Map<String, ItemStack> coordinatePins = new HashMap<>();
+    Map<String, HologramCapture.Cell> manualPositions = new LinkedHashMap<>();
     final IdentityHashMap<IStructureElement<?>, Map<String, List<ItemStack>>> hatchCandidates = new IdentityHashMap<>();
     final HologramDeclarationCollector declarations = new HologramDeclarationCollector();
     final IdentityHashMap<IStructureElement<?>, List<IStructureElement<?>>> hatchParts = new IdentityHashMap<>();
@@ -202,7 +204,7 @@ final class HologramSession {
     final List<TileEntity> expectedTiles = new ArrayList<>();
     final List<Integer> expectedFacings = new ArrayList<>();
     final List<String> planStatus = new ArrayList<>();
-    final List<ItemStack> planTargets = new ArrayList<>();
+    List<ItemStack> planTargets = new ArrayList<>();
     final HologramPlacementDiagnostics.Limits placementDiagnostics = new HologramPlacementDiagnostics.Limits();
     long actionTick = -1;
     long positionNudgeTick = Long.MIN_VALUE;
@@ -279,6 +281,7 @@ final class HologramSession {
     }
 
     static void clearPending(HologramSession s) {
+        HologramBuildPreparation.cancel(s);
         s.ackIndices.clear();
         s.ackSuccesses.clear();
         s.work.clear();

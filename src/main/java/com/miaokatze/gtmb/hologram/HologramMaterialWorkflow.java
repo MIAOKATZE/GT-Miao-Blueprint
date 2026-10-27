@@ -131,14 +131,14 @@ final class HologramMaterialWorkflow {
         }
     }
 
-    private static boolean missingIncreased(NBTTagCompound current, NBTTagCompound reviewed) {
+    static boolean missingIncreased(NBTTagCompound current, NBTTagCompound reviewed) {
         if (current.hasKey("missingExact", 8) && reviewed.hasKey("missingExact", 8))
             return new java.math.BigInteger(current.getString("missingExact"))
                 .compareTo(new java.math.BigInteger(reviewed.getString("missingExact"))) > 0;
         return current.getLong("missing") > reviewed.getLong("missing");
     }
 
-    private static boolean updatedReview(HologramSession s, String reason) {
+    static boolean updatedReview(HologramSession s, String reason) {
         s.forcePlacementReady = false;
         s.placementReviewNonce++;
         if (s.materialQuote != null) s.materialQuote.setLong("placementReviewNonce", s.placementReviewNonce);

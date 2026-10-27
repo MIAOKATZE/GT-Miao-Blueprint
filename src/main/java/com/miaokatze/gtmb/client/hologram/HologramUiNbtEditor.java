@@ -30,6 +30,7 @@ final class HologramUiNbtEditor {
     private final HologramNbtSelection nbtSelection = new HologramNbtSelection();
 
     private boolean nbtCellScope;
+    private boolean detailSelectionPending;
 
     private boolean nbtPathsView;
 
@@ -43,6 +44,9 @@ final class HologramUiNbtEditor {
 
     boolean hasPlacementNbtChoices() {
         NBTTagCompound state = ui.session.state().data;
+        if (HologramSnapshotDetailsClient.paged(state))
+            return HologramSnapshotDetailsClient.count(state, "nbtEntries") > 0
+                || HologramSnapshotDetailsClient.count(state, "nbtKeys") > 0;
         if (state.hasKey("processingNbtKeys", 9)) return state.getTagList("processingNbtKeys", 8)
             .tagCount() > 0;
         if (state.getCompoundTag("processing")
@@ -76,6 +80,7 @@ final class HologramUiNbtEditor {
         this.nbtPlacement = placement;
         this.nbtOffset = 0;
         this.nbtCellScope = !placement && ui.preview.selected() >= 0;
+        this.detailSelectionPending = nbtCellScope && HologramSnapshotDetailsClient.paged(ui.session.state().data);
         this.nbtValueIndex = -1;
         this.nbtValueField = new HologramMuiTextField(ui.host.parent(), 62, 233, 286, 17);
         this.nbtValueField.setMaxStringLength(8192);
@@ -111,6 +116,8 @@ final class HologramUiNbtEditor {
     }
 
     NBTTagCompound cellNbtRow() {
+        if (HologramSnapshotDetailsClient.paged(ui.session.state().data))
+            return HologramSnapshotDetailsClient.cell(ui.session.state().data, ui.preview.selected(), nbtOffset, 8);
         NBTTagList rows = ui.session.state().data.getTagList("cellNbtEntries", 10);
         for (int i = 0; i < rows.tagCount(); i++) if (rows.getCompoundTagAt(i)
             .getInteger("index") == ui.preview.selected()) return rows.getCompoundTagAt(i);
@@ -118,11 +125,29 @@ final class HologramUiNbtEditor {
     }
 
     NBTTagList editorNbtEntries() {
+        if (HologramSnapshotDetailsClient.paged(ui.session.state().data) && (!nbtCellScope || nbtPlacement))
+            return HologramSnapshotDetailsClient.list(ui.session.state().data, "nbtEntries", 10, nbtOffset, 8);
         return this.nbtCellScope && !this.nbtPlacement ? ui.nbt.cellNbtRow()
             .getTagList("entries", 10) : ui.session.state().data.getTagList("nbtEntries", 10);
     }
 
     private List<String> editorNbtPaths() {
+        if (HologramSnapshotDetailsClient.paged(ui.session.state().data)) {
+            final NBTTagList base = nbtCellScope && !nbtPlacement ? editorNbtEntries()
+                : HologramSnapshotDetailsClient.list(ui.session.state().data, "nbtPaths", 8, nbtOffset, 8);
+            return new java.util.AbstractList<String>() {
+
+                public int size() {
+                    return base.tagCount() + nbtIgnoredPaths.size();
+                }
+
+                public String get(int index) {
+                    if (index >= base.tagCount()) return nbtIgnoredPaths.get(index - base.tagCount());
+                    return nbtCellScope && !nbtPlacement ? base.getCompoundTagAt(index)
+                        .getString("path") : base.getStringTagAt(index);
+                }
+            };
+        }
         LinkedHashSet<String> paths = new LinkedHashSet<>();
         if (nbtCellScope && !nbtPlacement) {
             NBTTagList entries = cellNbtRow().getTagList("entries", 10);
@@ -139,7 +164,29 @@ final class HologramUiNbtEditor {
         return new ArrayList<>(paths);
     }
 
+    private String detailDomain() {
+        return nbtCellScope && !nbtPlacement ? "cell/" + ui.preview.selected() : "nbtEntries";
+    }
+
+    private boolean detailComplete() {
+        return !HologramSnapshotDetailsClient.paged(ui.session.state().data)
+            || HologramSnapshotDetailsClient.complete(ui.session.state().data, detailDomain());
+    }
+
     void drawNbtEditor(int mx, int my) {
+        if (detailSelectionPending) {
+            NBTTagCompound row = cellNbtRow();
+            if (row.hasKey("index", 3)) {
+                nbtSelection.load(
+                    !row.hasKey("all") || row.getBoolean("all"),
+                    row.getTagList("keys", 8),
+                    ui.processing.retainCovers());
+                nbtIgnoredPaths.clear();
+                NBTTagList paths = row.getTagList("ignoredPaths", 8);
+                for (int i = 0; i < paths.tagCount(); i++) nbtIgnoredPaths.add(paths.getStringTagAt(i));
+                detailSelectionPending = false;
+            }
+        }
         drawRect(50, 58, 548, 304, 0xff172f36);
         ui.canvas.text(
             this.nbtPlacement ? "本次放置的 NBT 匹配条目"
@@ -183,13 +230,22 @@ final class HologramUiNbtEditor {
             .button(174, 306, 101, 230, 17, "本次保留覆盖板 " + (this.nbtSelection.retainCovers() ? "✓" : "×"), true, mx, my);
         NBTTagList entries = ui.nbt.editorNbtEntries();
         if (this.nbtPathsView) {
-            entries = new NBTTagList();
-            List<String> paths = editorNbtPaths();
-            for (String path : paths) {
-                NBTTagCompound entry = new NBTTagCompound();
-                entry.setString("key", path);
-                entries.appendTag(entry);
-            }
+            final List<String> paths = editorNbtPaths();
+            entries = new NBTTagList() {
+
+                public int tagCount() {
+                    return paths.size();
+                }
+
+                public NBTTagCompound getCompoundTagAt(int index) {
+                    NBTTagCompound entry = new NBTTagCompound();
+                    entry.setString(
+                        "key",
+                        paths.get(index)
+                            .isEmpty() ? "(loading)" : paths.get(index));
+                    return entry;
+                }
+            };
         }
         this.nbtOffset = Math
             .max(0, Math.min(this.nbtOffset, Math.max(0, entries.tagCount() - (this.nbtCellScope ? 5 : 7))));
@@ -206,8 +262,16 @@ final class HologramUiNbtEditor {
                 + " · "
                 + (this.nbtCellScope && entry.hasKey("path") ? entry.getString("path") : key)
                 + (entry.hasKey("type") ? " [" + entry.getString("type") + "] " + entry.getString("value") : "");
-            ui.canvas
-                .button(17000 + i, 62, y, 474, 15, label, this.nbtCellScope || !entry.getBoolean("protected"), mx, my);
+            ui.canvas.button(
+                17000 + i - nbtOffset,
+                62,
+                y,
+                474,
+                15,
+                label,
+                this.nbtCellScope || !entry.getBoolean("protected"),
+                mx,
+                my);
             if (mx >= 62 && mx < 536 && my >= y && my < y + 15) ui.canvas.tooltip(
                 ui.host.font()
                     .listFormattedStringToWidth(
@@ -279,6 +343,14 @@ final class HologramUiNbtEditor {
 
     boolean selectEntryControl(int id) {
         if (this.nbtDrawer && id >= 17000 && id < 18000) {
+            id += nbtOffset;
+            if (HologramSnapshotDetailsClient.paged(ui.session.state().data)) {
+                String domain = nbtPathsView && !(nbtCellScope && !nbtPlacement) ? "nbtPaths" : detailDomain();
+                int total = nbtPathsView ? editorNbtPaths().size() - nbtIgnoredPaths.size()
+                    : editorNbtEntries().tagCount();
+                if (id - 17000 < total
+                    && !HologramSnapshotDetailsClient.loaded(ui.session.state().data, domain, id - 17000)) return true;
+            }
             if (this.nbtPathsView) {
                 List<String> paths = editorNbtPaths();
                 if (id - 17000 >= paths.size()) return true;
@@ -302,6 +374,11 @@ final class HologramUiNbtEditor {
             String key = ui.nbt.editorNbtEntries()
                 .getCompoundTagAt(id - 17000)
                 .getString("key");
+            if (nbtSelection.all() && !detailComplete()) {
+                ui.session.notice(
+                    "Details are still loading; browse the remaining entries before changing an all-keys selection.");
+                return true;
+            }
             this.nbtSelection.toggle(key, ui.nbt.availableNbtKeys());
             return true;
         }
@@ -334,6 +411,11 @@ final class HologramUiNbtEditor {
                 }
                 return true;
             case 229:
+                if (nbtSelection.all() && !detailComplete()) {
+                    ui.session.notice(
+                        "Details are still loading; browse the remaining entries before changing an all-keys selection.");
+                    return true;
+                }
                 if (this.nbtValueIndex >= 0) this.nbtSelection.toggle(
                     ui.nbt.editorNbtEntries()
                         .getCompoundTagAt(this.nbtValueIndex)
@@ -353,6 +435,7 @@ final class HologramUiNbtEditor {
                 this.nbtDrawer = false;
                 return true;
             case 173:
+                if (detailSelectionPending) return true;
                 if (ui.session.editable()) {
                     if (nbtPlacement && placementSelectionUnchanged()) {
                         this.nbtDrawer = false;

@@ -208,6 +208,8 @@ final class HologramPresets {
 
     static final class Cell {
 
+        transient long segmentCellId;
+
         String item;
         String defaultItem;
         String block, tileNbt, itemNbt, prompt, structureId;
@@ -222,6 +224,14 @@ final class HologramPresets {
         transient Block frozenBlock;
         transient Boolean metadataIdentityBoundary;
         transient java.util.Set<Integer> frozenSensorSlots;
+        transient HologramNbtObligations.Descriptor frozenNbtDescriptor;
+        transient Object frozenDescriptorOwner;
+        transient HologramSnapshotDataContext.AeIssues frozenAeIssues;
+        transient int frozenAeTotal = -1;
+        transient String frozenAeError;
+        transient long resourceTileRows = -1, resourceItemRows = -1;
+        transient long resourceTileBlockers = -1, resourceItemBlockers = -1;
+        transient boolean resourceTileComplete, resourceItemComplete;
 
         ItemStack stack() {
             Object found = item == null ? null : Item.itemRegistry.getObject(item);
@@ -275,6 +285,8 @@ final class HologramPresets {
         String item;
         int damage;
 
+        Target() {}
+
         Target(ItemStack stack) {
             item = String.valueOf(Item.itemRegistry.getNameForObject(stack.getItem()));
             damage = stack.getItemDamage();
@@ -299,6 +311,12 @@ final class HologramPresets {
     }
 
     static final class Preset {
+
+        transient HologramSegmentDocument segmentDocument;
+        transient HologramSchemaPageCache schemaPageCache;
+        transient long schemaPreferredCellId;
+        transient HologramAnalysisDocument analysisDocument;
+        transient HologramProcessingDetails.Directory resourceDirectory;
 
         String id, name, controllerType;
         // Creator attribution is descriptive; public-library ownership is verified separately by the server.
@@ -711,7 +729,7 @@ final class HologramPresets {
     }
 
     static Preset copy(Preset preset) {
-        return GSON.fromJson(GSON.toJson(preset), Preset.class);
+        return HologramPresetCopies.copy(preset);
     }
 
     /** Runtime-only migration: registry availability never determines whether a legacy template can be inspected. */
@@ -1009,7 +1027,7 @@ final class HologramPresets {
             }
         }
         text(preset.prompt, 4096);
-        payloadBudget(preset);
+        long attachmentBytes = attachmentBudget(preset);
         text(preset.controllerType, 256);
         text(preset.sourceMod, 256);
         text(preset.sourceClass, 512);
@@ -1020,7 +1038,6 @@ final class HologramPresets {
             registryText(entry.getKey(), false);
             text(entry.getValue(), 256);
         }
-        Set<String> positions = new HashSet<>();
         Set<String> structureIds = new HashSet<>();
         for (Structure structure : preset.structures) {
             if (structure == null || structure.id == null
@@ -1032,7 +1049,7 @@ final class HologramPresets {
             text(structure.sourceClass, 512);
             if (structure.textBoxNbt != null && !structure.textBoxNbt.isEmpty()) {
                 if (!HologramTextBox.isAttachmentId(structure.id)) throw new IOException("文字或图片对象标识无效");
-                // The shared decoder and payloadBudget already enforce the per-NBT and aggregate byte limits.
+                // The shared decoder and attachment admission enforce the per-NBT and aggregate byte limits.
                 // A picture retains its source pixels, regardless of the smaller selected output dimensions.
                 HologramTextBox.read(HologramTextWorkflow.definition(structure));
             }
@@ -1046,27 +1063,31 @@ final class HologramPresets {
             coordinates(structure.x, structure.y, structure.z);
         }
         HologramBlueprintValidationCache validation = new HologramBlueprintValidationCache(preset);
-        for (Cell cell : preset.cells) {
-            validateBlueprintCell(cell, true, validation);
-            validation.filter(cell);
-            if (!positions.add(cell.x + "," + cell.y + "," + cell.z)) throw new IOException("蓝图位置重复");
-            validateMembership(cell, structureIds);
-        }
-        for (Cell cell : preset.palette) {
-            validateBlueprintCell(cell, false, validation);
-            validateMembership(cell, structureIds);
-            validation.filter(cell);
-        }
-        for (HintArea area : preset.hintAreas) {
-            if (area == null || area.x1 > area.x2 || area.y1 > area.y2 || area.z1 > area.z2)
-                throw new IOException("蓝图提示区域无效");
-            coordinates(area.x1, area.y1, area.z1);
-            coordinates(area.x2, area.y2, area.z2);
-            text(area.prompt, 4096);
+        long segmentStarted = HologramRuntimeMetrics.start();
+        HologramSegmentDocument staged;
+        try (HologramSchemaPageCache.Stage schema = HologramSchemaPageCache.begin(preset)) {
+            try {
+                staged = HologramSegmentDocument.validate(preset, structureIds, validation, attachmentBytes, schema);
+            } finally {
+                HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.SEGMENT_VALIDATION, segmentStarted);
+            }
+            if (staged != null) {
+                HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.SEGMENT_CHECKS, staged.schemaChecks);
+                HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.SEGMENT_REUSED, staged.reusedPages);
+            }
+            for (HintArea area : preset.hintAreas) {
+                if (area == null || area.x1 > area.x2 || area.y1 > area.y2 || area.z1 > area.z2)
+                    throw new IOException("蓝图提示区域无效");
+                coordinates(area.x1, area.y1, area.z1);
+                coordinates(area.x2, area.y2, area.z2);
+                text(area.prompt, 4096);
+            }
+            preset.schemaPageCache = schema.finish();
+            preset.segmentDocument = staged;
         }
     }
 
-    private static void validateMembership(Cell cell, Set<String> structures) throws IOException {
+    static void validateMembership(Cell cell, Set<String> structures) throws IOException {
         if (cell.structureId != null && !cell.structureId.isEmpty() && !structures.contains(cell.structureId))
             throw new IOException("蓝图方块引用不存在的结构");
         if (cell.structureIds != null) {
@@ -1078,27 +1099,14 @@ final class HologramPresets {
         }
     }
 
-    private static void payloadBudget(Preset preset) throws IOException {
-        Map<String, Integer> expanded = new java.util.HashMap<>();
+    private static long attachmentBudget(Preset preset) throws IOException {
         long total = 0;
         for (Structure structure : preset.structures)
             if (structure.textBoxNbt != null && !structure.textBoxNbt.isEmpty()) {
                 total += HologramBlueprintNbt.expandedBytes(structure.textBoxNbt);
                 if (total > 64L * 1024 * 1024) throw new IOException("蓝图文字定义超出展开预算");
             }
-        for (List<Cell> cells : java.util.Arrays.asList(preset.cells, preset.palette)) for (Cell cell : cells) {
-            if (cell == null) throw new IOException("蓝图方块无效");
-            for (String value : new String[] { cell.tileNbt, cell.itemNbt }) {
-                if (value == null || value.isEmpty()) continue;
-                Integer size = expanded.get(value);
-                if (size == null) {
-                    size = HologramBlueprintNbt.expandedBytes(value);
-                    expanded.put(value, size);
-                }
-                total += size;
-                if (total > 64L * 1024 * 1024) throw new IOException("蓝图设备NBT展开总量超过64MiB上限；请减少保存的NBT条目或拆分蓝图");
-            }
-        }
+        return total;
     }
 
     private static void validateBlueprintCell(Cell cell) throws IOException {
@@ -1110,6 +1118,18 @@ final class HologramPresets {
     }
 
     static void validateBlueprintCell(Cell cell, boolean placedCell, HologramBlueprintValidationCache validation)
+        throws IOException {
+        validateBlueprintCellIdentityShape(cell, validation);
+        validateMaterialIdentity(cell, placedCell, validation);
+        validateBlueprintCellDetailsShape(cell, validation);
+    }
+
+    static void validateBlueprintCellShape(Cell cell, HologramBlueprintValidationCache validation) throws IOException {
+        validateBlueprintCellIdentityShape(cell, validation);
+        validateBlueprintCellDetailsShape(cell, validation);
+    }
+
+    private static void validateBlueprintCellIdentityShape(Cell cell, HologramBlueprintValidationCache validation)
         throws IOException {
         if (cell == null || (cell.item == null && cell.block == null)
             || cell.count != 1
@@ -1127,7 +1147,10 @@ final class HologramPresets {
             validation.registryText(cell.block, true);
             validation.registryText(cell.defaultItem, true);
         }
-        validateMaterialIdentity(cell, placedCell, validation);
+    }
+
+    private static void validateBlueprintCellDetailsShape(Cell cell, HologramBlueprintValidationCache validation)
+        throws IOException {
         coordinates(cell.x, cell.y, cell.z);
         text(cell.prompt, 4096);
         if (cell.allowedTargets != null) {
@@ -1143,8 +1166,8 @@ final class HologramPresets {
         // The pass-local filter validates binary NBT and payment markers before stripping unselected entries.
     }
 
-    private static void validateMaterialIdentity(Cell cell, boolean placedCell,
-        HologramBlueprintValidationCache validation) throws IOException {
+    static void validateMaterialIdentity(Cell cell, boolean placedCell, HologramBlueprintValidationCache validation)
+        throws IOException {
         ItemStack material = validation == null ? cell.stack() : validation.stack(cell.item, cell.damage);
         if (material == null) return; // Missing registry entries remain inspectable; placement rejects them separately.
         Block actual = Block.getBlockFromItem(material.getItem());

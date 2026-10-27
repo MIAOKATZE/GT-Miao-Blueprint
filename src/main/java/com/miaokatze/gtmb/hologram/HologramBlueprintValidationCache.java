@@ -23,6 +23,14 @@ import net.minecraft.item.ItemStack;
 /** One synchronous validation pass. Only immutable identities/results are retained; never player/world state. */
 final class HologramBlueprintValidationCache {
 
+    private static final int PROJECTION_EPOCH = 1;
+    private static final long PROJECTION_BYTES = 8L * 1024 * 1024;
+    private static final java.util.LinkedHashMap<ProjectionKey, Projection> PROJECTIONS = new java.util.LinkedHashMap<>(
+        16,
+        0.75f,
+        true);
+    private static long projectionBytes;
+
     static final int MAX_ENTRIES = 4096;
     static final int MAX_STRING_CHARS = 4 * 1024 * 1024;
     private final int entryLimit, charLimit;
@@ -37,6 +45,7 @@ final class HologramBlueprintValidationCache {
     private int entries, stringChars;
     long registryHits, registryMisses, filterHits, filterMisses, gtHits, gtMisses, damageHits, damageMisses;
     long syntaxHits, syntaxMisses;
+    long projectionHits, projectionMisses, filterComputations;
 
     HologramBlueprintValidationCache(HologramPresets.Preset preset) {
         this(preset, MAX_ENTRIES, MAX_STRING_CHARS);
@@ -111,12 +120,101 @@ final class HologramBlueprintValidationCache {
             return filtered.get(key);
         }
         filterMisses++;
+        HologramBlueprintNbt.ExactBlob blob = HologramBlueprintNbt.exact(encoded);
+        // Only audited built-in block semantics with no item/cover registry dependencies can cross passes.
+        // Unknown integrations retain the complete old filtering path, even with a parsed blob hit.
+        boolean share = entryLimit > 0 && charLimit > 0
+            && !HologramSnapshotDataContext.active()
+            && vanillaMaterial(block)
+            && blob.registryIndependent()
+            && !"false".equals(System.getProperty("gtmb.segment.validationCache"));
+        ProjectionKey projectionKey = share ? new ProjectionKey(block, tile, encoded, keys, retainCovers) : null;
+        if (share) synchronized (PROJECTIONS) {
+            Projection found = PROJECTIONS.get(projectionKey);
+            if (found != null) {
+                projectionHits++;
+                if (admit(encoded.length() + (found.value == null ? 0 : found.value.length())))
+                    filtered.put(key, found.value);
+                return found.value;
+            }
+            projectionMisses++;
+        }
+        filterComputations++;
         net.minecraft.nbt.NBTTagCompound source = HologramBlueprintNbt.decode(encoded);
         HologramCarpentersCompatibility.stripOwner(block, source);
         if (tile) HologramCoordinatePolicies.validatePaymentPayload(source);
         String result = HologramBlueprintNbt.filterDecoded(tile ? block : null, source, keys, retainCovers);
+        if (share) retainProjection(projectionKey, result, blob.expandedBytes());
         if (admit(encoded.length() + (result == null ? 0 : result.length()))) filtered.put(key, result);
         return result;
+    }
+
+    static void clearProjectionCache() {
+        synchronized (PROJECTIONS) {
+            PROJECTIONS.clear();
+            projectionBytes = 0;
+        }
+    }
+
+    private static void retainProjection(ProjectionKey key, String value, int expanded) {
+        long cost = 256L + 2L * key.encoded.length() + (value == null ? 0 : 2L * value.length()) + 4L * expanded;
+        if (key.keys != null) for (String selected : key.keys) cost += 40L + 2L * selected.length();
+        if (cost > PROJECTION_BYTES) return;
+        synchronized (PROJECTIONS) {
+            while (!PROJECTIONS.isEmpty()
+                && (PROJECTIONS.size() >= MAX_ENTRIES || cost > PROJECTION_BYTES - projectionBytes)) {
+                ProjectionKey oldest = PROJECTIONS.keySet()
+                    .iterator()
+                    .next();
+                projectionBytes -= PROJECTIONS.remove(oldest).cost;
+            }
+            Projection previous = PROJECTIONS.put(key, new Projection(value, cost));
+            projectionBytes += cost - (previous == null ? 0 : previous.cost);
+        }
+    }
+
+    private static final class Projection {
+
+        final String value;
+        final long cost;
+
+        Projection(String value, long cost) {
+            this.value = value;
+            this.cost = cost;
+        }
+    }
+
+    private static final class ProjectionKey {
+
+        final Block block;
+        final boolean tile, covers;
+        final String encoded;
+        final List<String> keys;
+        final int epoch = PROJECTION_EPOCH;
+
+        ProjectionKey(Block block, boolean tile, String encoded, List<String> keys, boolean covers) {
+            this.block = block;
+            this.tile = tile;
+            this.encoded = encoded;
+            this.keys = keys;
+            this.covers = covers;
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(System.identityHashCode(block), tile, covers, encoded, keys, epoch);
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (!(other instanceof ProjectionKey)) return false;
+            ProjectionKey key = (ProjectionKey) other;
+            return block == key.block && tile == key.tile
+                && covers == key.covers
+                && epoch == key.epoch
+                && encoded.equals(key.encoded)
+                && Objects.equals(keys, key.keys);
+        }
     }
 
     String validateGt(String encoded, int damage, String tileId, boolean optionalItem, boolean absentPrototype)

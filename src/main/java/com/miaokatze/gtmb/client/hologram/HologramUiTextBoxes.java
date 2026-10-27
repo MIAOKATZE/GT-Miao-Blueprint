@@ -28,6 +28,7 @@ final class HologramUiTextBoxes {
     private boolean chosen, pending;
     private long request;
     private com.miaokatze.gtmb.hologram.HologramAttachmentGeometry.Job localJob;
+    private com.miaokatze.gtmb.hologram.HologramAttachmentGeometry.Job pictureOwner;
     private final HologramProgress.Tracker taskProgress = new HologramProgress.Tracker();
     private byte[] picturePixels;
     private final HologramPictureTexture pictureTexture = new HologramPictureTexture();
@@ -102,6 +103,8 @@ final class HologramUiTextBoxes {
         localJob = null;
         restoringDraft = false;
         picturePixels = null;
+        if (pictureOwner != null) pictureOwner.close();
+        pictureOwner = null;
         pictureTexture.clear();
         draft = null;
         ghost = Collections.emptyList();
@@ -318,6 +321,8 @@ final class HologramUiTextBoxes {
         if (localJob != null) localJob.cancel();
         pictureTexture.clear();
         picturePixels = null;
+        if (pictureOwner != null) pictureOwner.close();
+        pictureOwner = null;
         localJob = com.miaokatze.gtmb.hologram.HologramAttachmentGeometry.submit(value);
         draft = value;
         ghost = Collections.emptyList();
@@ -472,10 +477,13 @@ final class HologramUiTextBoxes {
             com.miaokatze.gtmb.hologram.HologramAttachmentGeometry.Job ready = localJob;
             localJob = null;
             if (ready.failure != null) {
+                ready.close();
                 ui.session.notice(ready.failure.getMessage());
                 reset();
                 return;
             }
+            if (pictureOwner != null) pictureOwner.close();
+            pictureOwner = ready;
             picturePixels = ready.picturePixels;
             boolean wasChosen = chosen;
             if (restoringDraft) {

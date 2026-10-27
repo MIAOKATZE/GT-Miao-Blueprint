@@ -36,7 +36,19 @@ final class HologramServiceEditRegression {
             sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
             ReadOnlyWorld world = (ReadOnlyWorld) unsafe.allocateInstance(ReadOnlyWorld.class);
             EntityPlayerMP player = (EntityPlayerMP) unsafe.allocateInstance(EntityPlayerMP.class);
+            java.util.UUID identity = java.util.UUID.randomUUID();
+            for (Field profile : EntityPlayer.class.getDeclaredFields())
+                if (profile.getType() == com.mojang.authlib.GameProfile.class) {
+                    profile.setAccessible(true);
+                    profile.set(player, new com.mojang.authlib.GameProfile(identity, "EditorFixture"));
+                }
+            for (Field field : net.minecraft.entity.Entity.class.getDeclaredFields())
+                if (field.getType() == java.util.UUID.class) {
+                    field.setAccessible(true);
+                    field.set(player, identity);
+                }
             player.worldObj = world;
+            player.posY = 64;
             player.inventory = new InventoryPlayer(player);
             player.capabilities = new PlayerCapabilities();
             player.capabilities.isCreativeMode = true;
@@ -226,6 +238,7 @@ final class HologramServiceEditRegression {
                 .eq("blocked", classify.invoke(null, session, cell, 0), "survival explicit target stays blocked");
             SimpleAssert.eq(false, operate.invoke(null, session, cell, 0), "blocked operation cannot write or consume");
             build.invoke(null, session, false);
+            HologramBuildContinuationRegression.drain((HologramSession) session);
             SimpleAssert.eq(0, get(session, "job"), "obstruction rejects the whole selected range");
             SimpleAssert.that(((String) get(session, "status")).contains("1 格结构占位被遮挡"), "blocked count is visible");
             player.capabilities.isCreativeMode = true;

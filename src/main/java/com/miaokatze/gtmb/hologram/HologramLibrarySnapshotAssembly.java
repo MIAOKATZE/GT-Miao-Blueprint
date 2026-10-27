@@ -5,11 +5,20 @@ final class HologramLibrarySnapshotAssembly {
 
     private long newest = -1, activity;
     private int total, index, offset;
-    private java.io.ByteArrayOutputStream bytes;
+    private byte[] bytes;
+    private HologramTransportMemory.Lease lease;
     private byte[] expectedHash;
     private java.security.MessageDigest digest;
 
     synchronized byte[] accept(long sequence, int size, int incomingIndex, byte[] chunk, byte[] hash, long now) {
+        HologramSnapshotAssembly.Complete complete = acceptReserved(sequence, size, incomingIndex, chunk, hash, now);
+        if (complete == null) return null;
+        complete.close();
+        return complete.bytes;
+    }
+
+    synchronized HologramSnapshotAssembly.Complete acceptReserved(long sequence, int size, int incomingIndex,
+        byte[] chunk, byte[] hash, long now) {
         if (sequence < newest || sequence < 0
             || size <= 0
             || size > HologramSnapshotAssembly.MAX_BYTES
@@ -24,7 +33,14 @@ final class HologramLibrarySnapshotAssembly {
             newest = sequence;
             total = size;
             activity = now;
-            bytes = new java.io.ByteArrayOutputStream(HologramLibraryProtocol.CHUNK_BYTES);
+            lease = HologramTransportMemory.reserve(size);
+            if (lease == null) throw new HologramSnapshotAssembly.AdmissionException();
+            try {
+                bytes = new byte[size];
+            } catch (RuntimeException | Error failure) {
+                clear();
+                throw failure;
+            }
             expectedHash = hash.clone();
             digest = HologramLibraryProtocol.digest();
         }
@@ -36,13 +52,19 @@ final class HologramLibrarySnapshotAssembly {
             clear();
             return null;
         }
-        bytes.write(chunk, 0, chunk.length);
+        System.arraycopy(chunk, 0, bytes, offset, chunk.length);
         digest.update(chunk);
         activity = now;
         index++;
         offset += chunk.length;
         if (offset != total) return null;
-        byte[] result = java.security.MessageDigest.isEqual(expectedHash, digest.digest()) ? bytes.toByteArray() : null;
+        if (!java.security.MessageDigest.isEqual(expectedHash, digest.digest())) {
+            clear();
+            return null;
+        }
+        HologramSnapshotAssembly.Complete result = new HologramSnapshotAssembly.Complete(bytes, lease);
+        bytes = null;
+        lease = null;
         clear();
         return result;
     }
@@ -56,6 +78,8 @@ final class HologramLibrarySnapshotAssembly {
 
     synchronized void clear() {
         bytes = null;
+        if (lease != null) lease.close();
+        lease = null;
         expectedHash = null;
         digest = null;
         total = index = offset = 0;

@@ -41,6 +41,7 @@ public final class HologramV011ProcessingClientProbe {
     private NBTTagCompound saveReview;
     private NBTTagCompound fullReviewBefore, fullReviewAfter;
     private NBTTagCompound keyboardWitness;
+    private NBTTagCompound resultReviewUi;
 
     public static void install() {
         if (!Boolean.getBoolean("gtmb.hologram.followupProductionFlow")
@@ -250,9 +251,24 @@ public final class HologramV011ProcessingClientProbe {
             return false;
         }
         if (!HologramClient.state.data.getBoolean("blueprintProcessingComplete")) return false;
+        if (ui.getBoolean("processingFlow")) {
+            NBTTagCompound processing = screen.ui.processing.backgroundUiState();
+            NBTTagCompound data = HologramClient.state.data;
+            require(
+                processing.getBoolean("resultReview")
+                    && "processBlueprint".equals(data.getString("processingPresetOperation"))
+                    && data.getBoolean("processingPresetOperationSuccess"),
+                "normal processing owner ACK opens its actual result review");
+            resultReviewUi = (NBTTagCompound) ui.copy();
+            resultReviewUi.setTag("processing", processing);
+            // Return through the visible result control before the ordinary author name/Save controls.
+            click(screen, 234);
+            lastGeneration = generation;
+            return false;
+        }
         require(
-            !ui.getBoolean("processingFlow") && !screen.smokePending(),
-            "normal Netty process operation received server ACK");
+            resultReviewUi != null && !screen.smokePending(),
+            "normal Netty process owner ACK and visible result return completed");
         NBTTagCompound receipt = new NBTTagCompound();
         require(modalEndFrames == 12, "six manual stages each have both actual END captures");
         receipt.setBoolean("passed", true);
@@ -263,6 +279,7 @@ public final class HologramV011ProcessingClientProbe {
         receipt.setInteger("nativeFullReviewControl", 296);
         receipt.setTag("actualFullReviewBefore", fullReviewBefore.copy());
         receipt.setTag("actualFullReviewAfter", fullReviewAfter.copy());
+        receipt.setTag("actualResultReview", resultReviewUi.copy());
         receipt.setTag("actualSnapshot", HologramClient.state.fullData());
         receipt.setTag("actualUi", ui.copy());
         HologramV011Evidence.write("processing-client-final.nbt", receipt);

@@ -41,16 +41,20 @@ final class HologramSnapshotMetadataSource {
     private Iterator<HologramArea.Structure> areaStructures;
 
     HologramSnapshotMetadataSource(HologramSession s, HologramSnapshotDataContext dataContext) {
+        this(s, dataContext, false);
+    }
+
+    HologramSnapshotMetadataSource(HologramSession s, HologramSnapshotDataContext dataContext, boolean forceProject) {
         this.s = s;
         this.dataContext = dataContext;
-        project = s.processingSource == null;
+        project = forceProject || s.processingSource == null;
         draftOnly = s.localPlanPending && !s.localPlanError.isEmpty();
         publishSource = project || draftOnly;
         original = project ? s.virtualPreset : s.processingSource;
     }
 
     long done() {
-        return stage == 11 ? 1 : cursor;
+        return stage == 12 ? 1 : cursor;
     }
 
     String phase() {
@@ -75,11 +79,12 @@ final class HologramSnapshotMetadataSource {
         }
         if (stage == 9) return s.processingPolicy == null ? 0 : s.processingPolicy.cellNbtOverrides.size();
         if (stage == 10) return s.processingPolicy == null ? 0 : s.processingPolicy.coordinateOverrides.size();
+        if (stage == 11) return s.processingPolicy == null ? 0 : s.processingPolicy.resourceDecisions.size();
         return 1;
     }
 
     boolean step(int maxWork, long deadline) throws IOException {
-        for (int work = 0; work < maxWork && stage < 11; work++) {
+        for (int work = 0; work < maxWork && stage < 12; work++) {
             if (work > 0 && System.nanoTime() >= deadline) return false;
             if (stage == 0) initialize();
             else if (stage == 1) {
@@ -131,7 +136,12 @@ final class HologramSnapshotMetadataSource {
                         if (authoring != null) cell.facing = HologramBlockIdentity.front(
                             s.facingPins.getOrDefault(HologramValues.position(authoring), authoring.actualFacing));
                     }
-                    freezeBlock(cell, dataContext);
+                    try {
+                        freezeBlock(cell, dataContext);
+                    } catch (HologramSnapshotDataContext.Busy busy) {
+                        cursor--;
+                        throw busy;
+                    }
                     if (hasPayload(cell.tileNbt) || hasPayload(cell.itemNbt))
                         payloadCells.put(cell.x + "," + cell.y + "," + cell.z, cell);
                     result.cells.add(cell);
@@ -161,7 +171,7 @@ final class HologramSnapshotMetadataSource {
                             GSON.toJson(s.processingPolicy.cellNbtOverrides.get(cursor++)),
                             HologramBlueprintProcessing.CellNbtOverride.class));
                 else next();
-            } else {
+            } else if (stage == 10) {
                 if (map == null && s.processingPolicy != null) map = s.processingPolicy.coordinateOverrides.entrySet()
                     .iterator();
                 if (map != null && map.hasNext()) {
@@ -169,9 +179,16 @@ final class HologramSnapshotMetadataSource {
                     policy.coordinateOverrides.put(entry.getKey(), entry.getValue());
                     cursor++;
                 } else next();
+            } else {
+                if (s.processingPolicy != null && cursor < s.processingPolicy.resourceDecisions.size())
+                    policy.resourceDecisions.add(
+                        GSON.fromJson(
+                            GSON.toJson(s.processingPolicy.resourceDecisions.get(cursor++)),
+                            HologramBlueprintProcessing.ResourceDecision.class));
+                else next();
             }
         }
-        return stage == 11;
+        return stage == 12;
     }
 
     private void next() {
@@ -182,6 +199,7 @@ final class HologramSnapshotMetadataSource {
     private void initialize() throws IOException {
         if (s.capture == null || s.capture.incomplete || s.capturePending) throw new IOException("请先完整载入结构或区域，再进行蓝图处理");
         if (original != null) {
+            dataContext.seed(original.analysisDocument);
             dataContext.freeze(original.processingNbt);
             dataContext.freeze(original.quantumGroupingNbt);
             copyScalars(original, result);
@@ -299,6 +317,10 @@ final class HologramSnapshotMetadataSource {
         target.deidentificationChosen = source.deidentificationChosen;
         target.processingNbt = source.processingNbt;
         target.quantumGroupingNbt = source.quantumGroupingNbt;
+        target.segmentDocument = source.segmentDocument;
+        target.schemaPageCache = source.schemaPageCache;
+        target.schemaPreferredCellId = source.schemaPreferredCellId;
+        target.analysisDocument = source.analysisDocument;
         target.retainNbt = source.retainNbt;
         target.retainCovers = source.retainCovers;
         target.prompt = source.prompt;
@@ -310,6 +332,7 @@ final class HologramSnapshotMetadataSource {
 
     private static void copyScalars(HologramPresets.Cell source, HologramPresets.Cell target) {
         target.item = source.item;
+        target.segmentCellId = source.segmentCellId;
         target.defaultItem = source.defaultItem;
         target.block = source.block;
         target.tileNbt = source.tileNbt;

@@ -182,38 +182,51 @@ final class HologramBlueprintProcessing {
     }
 
     static Policy policy(HologramPresets.Preset preset) throws IOException {
+        return policy(preset, new HologramAnalysisFacts());
+    }
+
+    static Policy policy(HologramPresets.Preset preset, HologramAnalysisFacts facts) throws IOException {
         if (preset != null && preset.processingNbt != null) {
-            NBTTagCompound receipt = HologramBlueprintNbt.decode(preset.processingNbt);
+            NBTTagCompound receipt = facts.read(preset.processingNbt);
             if (receipt.hasKey("policy", 10)) return Policy.read(receipt.getCompoundTag("policy"));
         }
-        return defaults("self", minimumLevel(preset));
+        return defaults("self", minimumLevel(preset, facts));
     }
 
     static HologramPresets.Preset process(HologramPresets.Preset source, Policy requested, int dimension, int originX,
         int originY, int originZ) throws IOException {
+        try (HologramAnalysisFacts facts = new HologramAnalysisFacts()) {
+            return process(source, requested, dimension, originX, originY, originZ, facts);
+        }
+    }
+
+    private static HologramPresets.Preset process(HologramPresets.Preset source, Policy requested, int dimension,
+        int originX, int originY, int originZ, HologramAnalysisFacts facts) throws IOException {
         if (source == null || requested == null) throw new IOException("没有可处理的蓝图来源");
         Policy policy = Policy.read(requested.write());
         if (!policy.complete()) throw new IOException("保存前必须明确完成全部处理阶段");
-        int minimum = minimumLevel(source);
+        facts.bind(source);
+        int minimum = minimumLevel(source, facts);
         if (policy.deidentificationLevel < minimum) throw new IOException("旧结果已清除的身份不能恢复，请选择至少等级 " + minimum);
         // Capture exact coordinate schemas before any identity projection removes a registered relation field.
         List<HologramCoordinatePolicies.Relation> relations = HologramCoordinatePolicies
-            .inspect(source, dimension, originX, originY, originZ);
-        HologramPresets.Preset selected = HologramQuantumGroups.defaulted(source);
+            .inspect(source, dimension, originX, originY, originZ, facts);
+        HologramPresets.Preset selected = HologramQuantumGroups.defaulted(source, facts);
         removeGeneratedHints(selected);
         selected.processingNbt = null;
         Map<String, CellNbtOverride> overrides = new HashMap<>();
         for (CellNbtOverride entry : policy.cellNbtOverrides) overrides.put(position(entry.x, entry.y, entry.z), entry);
         Map<String, List<ResourceDecision>> resources = resourceIndex(policy);
         Set<String> matchedResources = new LinkedHashSet<>();
-        ScopeReviews scopeReviews = new ScopeReviews();
+        ScopeReviews scopeReviews = new ScopeReviews(facts);
         List<SelectedScope[]> selectedScopes = new ArrayList<>();
         for (HologramPresets.Cell cell : selected.cells) {
             if (resources.containsKey(position(cell.x, cell.y, cell.z)))
                 matchedResources.add(position(cell.x, cell.y, cell.z));
             applyResourceDecisions(
                 cell,
-                resources.getOrDefault(position(cell.x, cell.y, cell.z), java.util.Collections.emptyList()));
+                resources.getOrDefault(position(cell.x, cell.y, cell.z), java.util.Collections.emptyList()),
+                facts);
             CellNbtOverride override = overrides.get(position(cell.x, cell.y, cell.z));
             SelectedScope tileScope = select(
                 cell.tileNbt,
@@ -256,7 +269,7 @@ final class HologramBlueprintProcessing {
             after.itemNbt = selectedScopes.get(i)[1].restore(after.itemNbt);
         }
         result.deidentificationChosen = true;
-        HologramCoordinatePolicies.apply(result, relations, policy);
+        HologramCoordinatePolicies.apply(result, relations, policy, facts);
         if ("clear".equals(policy.quantum)) clearQuantum(result);
         else applyQuantumMode(result, policy.quantum);
         for (int i = 0; i < result.cells.size(); i++) {
@@ -265,7 +278,7 @@ final class HologramBlueprintProcessing {
             scopeReviews.finish(after, "tile", selectedScopes.get(i)[0], after.tileNbt);
             scopeReviews.finish(after, "item", selectedScopes.get(i)[1], after.itemNbt);
         }
-        NBTTagCompound generatedHints = addHints(source, result, relations, policy);
+        NBTTagCompound generatedHints = addHints(source, result, relations, policy, facts);
         NBTTagCompound receipt = new NBTTagCompound();
         receipt.setInteger("version", VERSION);
         receipt.setBoolean("complete", true);
@@ -276,23 +289,36 @@ final class HologramBlueprintProcessing {
         NBTTagCompound reports = HologramExtensionSnapshots.authoring(result);
         if (!reports.hasNoTags()) receipt.setTag("extensions", reports);
         result.processingNbt = HologramBlueprintNbt.encodeCanonical(receipt);
+        facts.publish();
+        result.analysisDocument = source.analysisDocument;
         return result;
     }
 
     static NBTTagCompound state(HologramPresets.Preset source, Policy policy, int dimension, int originX, int originY,
         int originZ) throws IOException {
-        if (policy == null) policy = policy(source);
+        try (HologramAnalysisFacts facts = new HologramAnalysisFacts()) {
+            NBTTagCompound result = state(source, policy, dimension, originX, originY, originZ, facts);
+            facts.publish();
+            return result;
+        }
+    }
+
+    static NBTTagCompound state(HologramPresets.Preset source, Policy policy, int dimension, int originX, int originY,
+        int originZ, HologramAnalysisFacts facts) throws IOException {
+        facts.bind(source);
+        if (policy == null) policy = policy(source, facts);
         NBTTagCompound state = new NBTTagCompound();
         state.setTag("policy", policy.write());
         state.setBoolean("complete", complete(source));
         state.setBoolean("legacy", legacy(source));
-        int minimum = minimumLevel(source);
+        int minimum = minimumLevel(source, facts);
         List<HologramCoordinatePolicies.Relation> relations = HologramCoordinatePolicies
-            .inspect(source, dimension, originX, originY, originZ);
+            .inspect(source, dimension, originX, originY, originZ, facts);
         state.setInteger("minimumLevel", minimum);
-        state.setTag("quantumGroups", HologramQuantumGroups.groups(source));
-        state.setTag("quantumNodes", HologramQuantumGroups.nodes(source));
-        state.setBoolean("quantumGroupsConfirmed", HologramQuantumGroups.confirmed(source));
+        HologramQuantumGroups.Facts quantum = HologramQuantumGroups.analyze(source, facts);
+        state.setTag("quantumGroups", quantum.groups());
+        state.setTag("quantumNodes", quantum.nodes());
+        state.setBoolean("quantumGroupsConfirmed", quantum.confirmed());
         NBTTagList rows = new NBTTagList();
         for (HologramCoordinatePolicies.Relation relation : relations) {
             NBTTagCompound row = relation.write(HologramCoordinatePolicies.mode(relation, policy));
@@ -305,19 +331,25 @@ final class HologramBlueprintProcessing {
         }
         state.setTag("relations", rows);
         Set<String> keys = new java.util.TreeSet<>(), paths = new java.util.TreeSet<>();
-        ResourceReview review = new ResourceReview();
+        ResourceReview review = new ResourceReview(facts);
         int required = minimum > 0 ? 1 << 1 : 0;
         if (!relations.isEmpty()) required |= 1 << 3;
         int index = 0;
         if (source != null) for (HologramPresets.Cell cell : source.cells) {
-            NBTTagCompound tile = HologramBlueprintNbt.decode(cell.tileNbt),
-                item = HologramBlueprintNbt.decode(cell.itemNbt);
-            collect(tile, "tile:", keys, paths);
-            collect(item, "item:", keys, paths);
-            required |= requiredStages(cell, tile, item);
+            NBTTagCompound fields = facts.certificate(
+                cell,
+                HologramSegmentContract.Domain.REPORT,
+                "fields",
+                new Object[] { cell.block(), cell.tileNbt, cell.itemNbt, HologramSegmentContract.SCHEMA_EPOCH },
+                true,
+                () -> fieldFacts(cell, facts));
+            NBTTagList fieldKeys = fields.getTagList("keys", 8), fieldPaths = fields.getTagList("paths", 8);
+            for (int i = 0; i < fieldKeys.tagCount(); i++) keys.add(fieldKeys.getStringTagAt(i));
+            for (int i = 0; i < fieldPaths.tagCount(); i++) paths.add(fieldPaths.getStringTagAt(i));
+            required |= fields.getInteger("required");
             if (!cell.excluded) {
-                review.add(cell, index, "tile", tile, cell.tileNbt);
-                review.add(cell, index, "item", item, cell.itemNbt);
+                review.add(cell, index, "tile", cell.tileNbt);
+                review.add(cell, index, "item", cell.itemNbt);
             }
             index++;
         }
@@ -328,6 +360,19 @@ final class HologramBlueprintProcessing {
             source == null || source.cells.isEmpty() ? 63 : required == 0 ? 0 : required | 1 << 5);
         review.write(state);
         return state;
+    }
+
+    private static NBTTagCompound fieldFacts(HologramPresets.Cell cell, HologramAnalysisFacts facts)
+        throws IOException {
+        NBTTagCompound tile = facts.read(cell.tileNbt), item = facts.read(cell.itemNbt);
+        Set<String> keys = new java.util.TreeSet<>(), paths = new java.util.TreeSet<>();
+        collect(tile, "tile:", keys, paths);
+        collect(item, "item:", keys, paths);
+        NBTTagCompound result = new NBTTagCompound();
+        result.setTag("keys", strings(new ArrayList<>(keys).subList(0, Math.min(256, keys.size()))));
+        result.setTag("paths", strings(new ArrayList<>(paths).subList(0, Math.min(4096, paths.size()))));
+        result.setInteger("required", requiredStages(cell, tile, item));
+        return result;
     }
 
     private static Map<String, List<ResourceDecision>> resourceIndex(Policy policy) {
@@ -351,22 +396,24 @@ final class HologramBlueprintProcessing {
         return Integer.compare(a.length, b.length);
     }
 
-    private static void applyResourceDecisions(HologramPresets.Cell cell, List<ResourceDecision> decisions)
-        throws IOException {
+    private static void applyResourceDecisions(HologramPresets.Cell cell, List<ResourceDecision> decisions,
+        HologramAnalysisFacts facts) throws IOException {
         if (decisions.isEmpty()) return;
         for (String scope : Arrays.asList("tile", "item")) {
-            NBTTagCompound tag = null;
+            boolean selected = false;
+            for (ResourceDecision decision : decisions) selected |= decision.path.startsWith(scope + ":");
+            if (!selected) continue;
+            NBTTagCompound before = facts.read("tile".equals(scope) ? cell.tileNbt : cell.itemNbt);
+            NBTTagCompound tag = before == null ? null : (NBTTagCompound) before.copy();
             boolean changed = false;
             for (ResourceDecision decision : decisions) {
                 if (!"cancel".equals(decision.action) || !decision.path.startsWith(scope + ":")) continue;
-                if (tag == null) tag = HologramBlueprintNbt.decode("tile".equals(scope) ? cell.tileNbt : cell.itemNbt);
                 if (tag == null) continue;
                 HologramFullPreservation.forget(tag, HologramFullPreservation.root(decision.path));
                 changed = true;
             }
             for (ResourceDecision decision : decisions) {
                 if (!"remove".equals(decision.action) || !decision.path.startsWith(scope + ":")) continue;
-                if (tag == null) tag = HologramBlueprintNbt.decode("tile".equals(scope) ? cell.tileNbt : cell.itemNbt);
                 if (tag == null) continue;
                 String path = decision.path.substring(decision.path.indexOf(':') + 2);
                 if (!path.contains("/")) HologramFullPreservation.forget(tag, unescape(path));
@@ -384,7 +431,6 @@ final class HologramBlueprintProcessing {
             }
             for (ResourceDecision decision : decisions) {
                 if (!"preserve".equals(decision.action) || !decision.path.startsWith(scope + ":")) continue;
-                if (tag == null) tag = HologramBlueprintNbt.decode("tile".equals(scope) ? cell.tileNbt : cell.itemNbt);
                 if (tag == null) throw new IOException("完全保留路径不存在：" + decision.path);
                 if ("tile".equals(scope) && HologramAeBlueprint.supports(cell.block(), tag))
                     throw new IOException("AE私有资源须由专用格式解析；请移除无法解析的信息：" + decision.path);
@@ -393,6 +439,7 @@ final class HologramBlueprintProcessing {
             }
             if (!changed) continue;
             HologramBlueprintNbt.normalizeResourceSelection(tag);
+            if (before.equals(tag)) continue;
             if ("tile".equals(scope)) cell.tileNbt = HologramBlueprintNbt.encodeCanonical(tag);
             else cell.itemNbt = HologramBlueprintNbt.encodeCanonical(tag);
         }
@@ -430,6 +477,16 @@ final class HologramBlueprintProcessing {
 
     private static final class ScopeReviews {
 
+        final HologramAnalysisFacts facts;
+
+        ScopeReviews() {
+            this(new HologramAnalysisFacts());
+        }
+
+        ScopeReviews(HologramAnalysisFacts facts) {
+            this.facts = facts;
+        }
+
         // A null value is a validated success, not a miss. Failures may be resolved by later author projections.
         final Map<ReportKey, String> outcomes = new LinkedHashMap<ReportKey, String>() {
 
@@ -450,9 +507,34 @@ final class HologramBlueprintProcessing {
             if (outcomes.containsKey(key)) return outcomes.get(key);
             String error = null;
             try {
-                NBTTagCompound tag = decoded == null ? HologramBlueprintNbt.decode(encoded) : decoded;
+                NBTTagCompound proof = facts.certificate(
+                    cell,
+                    HologramSegmentContract.Domain.ASSET_NEEDS,
+                    "scope:" + scope,
+                    new Object[] { cell.block(), cell.item, cell.damage, cell.metadata, scope, encoded,
+                        com.miaokatze.gtmb.api.ResourceContainers.generation(), HologramNativePlacement.generation(),
+                        HologramAeBlueprint.POLICY_VERSION },
+                    true,
+                    () -> {
+                        String problem = inspect(cell, scope, encoded, decoded);
+                        NBTTagCompound result = new NBTTagCompound();
+                        result.setBoolean("success", problem == null);
+                        if (problem != null) result.setString("error", problem);
+                        return result;
+                    });
+                if (!proof.getBoolean("success")) error = proof.getString("error");
+            } catch (IOException invalid) {
+                error = HologramAePolicy.fallback(invalid.getMessage());
+            }
+            outcomes.put(key, error);
+            return error;
+        }
+
+        private String inspect(HologramPresets.Cell cell, String scope, String encoded, NBTTagCompound decoded) {
+            try {
+                NBTTagCompound tag = decoded == null ? facts.read(encoded) : decoded;
                 if (tag != null && "tile".equals(scope) && HologramAeBlueprint.supports(cell.block(), tag)) {
-                    HologramAeBlueprint.Analysis analysis = HologramAeBlueprint.analyze(cell.block(), cell.damage, tag);
+                    HologramAeBlueprint.Analysis analysis = facts.ae(cell.block(), cell.damage, encoded, tag);
                     if (analysis.blocking) {
                         for (HologramAeBlueprint.Issue issue : analysis.issues)
                             if ("blocker".equals(issue.severity)) throw new IOException(
@@ -461,12 +543,11 @@ final class HologramBlueprintProcessing {
                     tag = (NBTTagCompound) tag.copy();
                     for (String root : analysis.handledRoots) tag.removeTag(root);
                 }
-                resourcePlan(cell, scope, tag);
+                resourcePlan(cell, scope, tag == null ? null : (NBTTagCompound) tag.copy());
             } catch (IOException invalid) {
-                error = invalid.getMessage();
+                return HologramAePolicy.fallback(invalid.getMessage());
             }
-            outcomes.put(key, error);
-            return error;
+            return null;
         }
 
         void finish(HologramPresets.Cell cell, String scope, SelectedScope before, String encoded) throws IOException {
@@ -489,29 +570,81 @@ final class HologramBlueprintProcessing {
     private static final class ResourceReview {
 
         private final NBTTagList rows = new NBTTagList();
+        private final HologramAnalysisFacts facts;
         // Complete immutable encoded NBT plus exact block/meta/scope, never merely a machine type.
-        private final Map<ReportKey, List<NBTTagCompound>> cache = new LinkedHashMap<ReportKey, List<NBTTagCompound>>() {
+        private final Map<ReportKey, ReviewIssues> cache = new LinkedHashMap<ReportKey, ReviewIssues>() {
 
             @Override
-            protected boolean removeEldestEntry(Map.Entry<ReportKey, List<NBTTagCompound>> eldest) {
+            protected boolean removeEldestEntry(Map.Entry<ReportKey, ReviewIssues> eldest) {
                 return size() > 4096;
             }
         };
-        private long total;
+        private long total, blocking;
+        private boolean nativeComplete = true;
 
-        void add(HologramPresets.Cell cell, int index, String scope, NBTTagCompound tag, String encoded)
-            throws IOException {
-            if (tag == null) return;
-            ReportKey key = new ReportKey(cell, scope, encoded);
-            List<NBTTagCompound> problems = cache.get(key);
-            if (problems == null) {
-                problems = inspect(cell, scope, tag);
-                cache.put(key, problems);
+        ResourceReview(HologramAnalysisFacts facts) {
+            this.facts = facts;
+        }
+
+        void add(HologramPresets.Cell cell, int index, String scope, String encoded) throws IOException {
+            if (encoded == null || encoded.isEmpty()) {
+                resourceCounts(cell, scope, 0, 0);
+                return;
             }
-            total += problems.size();
-            for (NBTTagCompound problem : problems) {
+            ReportKey key = new ReportKey(cell, scope, encoded);
+            NBTTagCompound frozen = HologramSnapshotDataContext.active()
+                && !("tile".equals(scope) && HologramAeBlueprint.supports(cell.block(), facts.read(encoded)))
+                    ? HologramSnapshotDataContext.resourceReview(cell, scope)
+                    : null;
+            NBTTagCompound certificate = facts.certificate(
+                cell,
+                HologramSegmentContract.Domain.ASSET_NEEDS,
+                "resource:" + scope,
+                HologramAnalysisDocument.resourceDependencies(cell, scope),
+                !com.miaokatze.gtmb.api.ResourceContainers.hasCodecs()
+                    && (cell.frozenAeTotal < 0 || facts.coverage(cell)),
+                () -> {
+                    if (frozen != null) return frozen;
+                    ReviewIssues problems = cache.get(key);
+                    if (problems == null) {
+                        long[] count = { -1, 0 };
+                        ProblemList rows = inspect(
+                            cell,
+                            scope,
+                            facts.copyForEdit(encoded),
+                            encoded,
+                            count,
+                            0,
+                            Math.max(0, 8192 - this.rows.tagCount()),
+                            false);
+                        problems = new ReviewIssues(
+                            rows,
+                            count[0] < 0 ? rows.total : count[0],
+                            count[0] < 0 ? rows.blockers : count[0],
+                            count[1] == 0);
+                        cache.put(key, problems);
+                    }
+                    NBTTagCompound result = new NBTTagCompound();
+                    NBTTagList entries = new NBTTagList();
+                    for (NBTTagCompound problem : problems.rows) entries.appendTag(problem.copy());
+                    result.setTag("rows", entries);
+                    result.setLong("total", problems.total);
+                    result.setLong("blocking", problems.blocking);
+                    result.setBoolean("nativeComplete", problems.complete);
+                    return result;
+                });
+            NBTTagList problems = certificate.getTagList("rows", 10);
+            resourceCounts(cell, scope, certificate.getLong("total"), certificate.getLong("blocking"));
+            boolean complete = certificate.getBoolean("nativeComplete");
+            if ("tile".equals(scope)) cell.resourceTileComplete = complete;
+            else cell.resourceItemComplete = complete;
+            nativeComplete &= complete;
+            blocking += certificate.getLong("blocking");
+            total += certificate.hasKey("total", 4) ? certificate.getLong("total") : problems.tagCount();
+            for (int i = 0; i < problems.tagCount(); i++) {
                 if (rows.tagCount() >= 8192) break;
-                NBTTagCompound row = (NBTTagCompound) problem.copy();
+                NBTTagCompound row = (NBTTagCompound) problems.getCompoundTagAt(i)
+                    .copy();
                 row.setInteger("index", index);
                 row.setInteger("x", cell.x);
                 row.setInteger("y", cell.y);
@@ -520,13 +653,24 @@ final class HologramBlueprintProcessing {
             }
         }
 
-        private List<NBTTagCompound> inspect(HologramPresets.Cell cell, String scope, NBTTagCompound tag)
-            throws IOException {
-            List<NBTTagCompound> problems = new ArrayList<>();
+        private ProblemList inspect(HologramPresets.Cell cell, String scope, NBTTagCompound tag, String encoded,
+            long[] count, int skip, int limit, boolean blockersOnly) throws IOException {
+            return inspect(cell, scope, tag, encoded, count, skip, limit, blockersOnly, Long.MAX_VALUE);
+        }
+
+        private ProblemList inspect(HologramPresets.Cell cell, String scope, NBTTagCompound tag, String encoded,
+            long[] count, int skip, int limit, boolean blockersOnly, long byteLimit) throws IOException {
+            ProblemList problems = new ProblemList(skip, limit, blockersOnly, byteLimit);
             if ("tile".equals(scope) && HologramAeBlueprint.supports(cell.block(), tag)) {
                 try {
-                    HologramAeBlueprint.Analysis analysis = HologramAeBlueprint.analyze(cell.block(), cell.damage, tag);
-                    for (HologramAeBlueprint.Issue issue : analysis.issues) {
+                    List<HologramAeBlueprint.Issue> issues;
+                    if (HologramSnapshotDataContext.active()) {
+                        HologramSnapshotDataContext.AeIssues frozen = HologramSnapshotDataContext.aeIssues(cell);
+                        if (frozen.failure != null) throw new IOException(frozen.failure);
+                        issues = frozen.issues;
+                        count[0] = frozen.total;
+                    } else issues = facts.ae(cell.block(), cell.damage, encoded, tag).issues;
+                    for (HologramAeBlueprint.Issue issue : issues) {
                         if (!"blocker".equals(issue.severity) || issue.path.isEmpty()) continue;
                         if (Arrays
                             .asList("unsupported_host", "unsupported_part", "unsupported_part_item", "unsupported_cell")
@@ -535,6 +679,7 @@ final class HologramBlueprintProcessing {
                     }
                     return problems;
                 } catch (IOException invalid) {
+                    count[1] = 1;
                     // A malformed schema cannot prevent opening its exact removal controls.
                     for (Object raw : new java.util.TreeSet<Object>(tag.func_150296_c())) {
                         String root = (String) raw;
@@ -609,6 +754,54 @@ final class HologramBlueprintProcessing {
             return problems;
         }
 
+        private static final class ReviewIssues {
+
+            final List<NBTTagCompound> rows;
+            final long total, blocking;
+            final boolean complete;
+
+            ReviewIssues(List<NBTTagCompound> rows, long total, long blocking, boolean complete) {
+                this.rows = rows;
+                this.total = total;
+                this.blocking = blocking;
+                this.complete = complete;
+            }
+        }
+
+        private static final class ProblemList extends ArrayList<NBTTagCompound> {
+
+            private static final long serialVersionUID = 1L;
+            final int skip, limit;
+            final boolean blockersOnly;
+            long total, blockers, selected;
+            final long byteLimit;
+            long bytes;
+            boolean byteLimitReached;
+
+            ProblemList(int skip, int limit, boolean blockersOnly, long byteLimit) {
+                this.skip = skip;
+                this.limit = limit;
+                this.blockersOnly = blockersOnly;
+                this.byteLimit = byteLimit;
+            }
+
+            @Override
+            public boolean add(NBTTagCompound row) {
+                total++;
+                boolean blocking = !row.getBoolean("preserved") || !row.getBoolean("canFullPreserve");
+                if (blocking) blockers++;
+                if (blockersOnly && !blocking) return true;
+                if (selected++ < skip || size() >= limit) return true;
+                long cost = HologramSnapshotNbt.estimate(row);
+                if (byteLimitReached || cost > byteLimit - bytes) {
+                    byteLimitReached = true;
+                    return true;
+                }
+                bytes += cost;
+                return super.add(row);
+            }
+        }
+
         private static NBTTagCompound identity(HologramPresets.Cell cell, NBTTagCompound tag) {
             NBTTagCompound identity = new NBTTagCompound();
             for (Object raw : tag.func_150296_c()) {
@@ -632,10 +825,79 @@ final class HologramBlueprintProcessing {
             }
             state.setTag("resourceBlockers", blockers);
             state.setLong("resourceReviewTotal", total);
+            state.setLong("resourceBlockingTotal", blocking);
+            state.setBoolean("resourceSummaryComplete", nativeComplete);
             state.setBoolean("resourceReviewTruncated", total > rows.tagCount());
-            state.setBoolean("resourceReviewComplete", total == rows.tagCount());
+            state.setBoolean("resourceReviewComplete", nativeComplete && total == rows.tagCount());
             state.setString("resourceCoordinateSpace", "preset");
         }
+    }
+
+    private static void resourceCounts(HologramPresets.Cell cell, String scope, long rows, long blockers) {
+        if ("tile".equals(scope)) {
+            cell.resourceTileRows = rows;
+            cell.resourceTileBlockers = blockers;
+            cell.resourceTileComplete = true;
+        } else {
+            cell.resourceItemRows = rows;
+            cell.resourceItemBlockers = blockers;
+            cell.resourceItemComplete = true;
+        }
+    }
+
+    /** Owner-only provider evaluation; workers consume the immutable rows and complete counts. */
+    static NBTTagCompound freezeResourceReview(HologramPresets.Cell cell, String scope, HologramAnalysisFacts facts,
+        int limit, long byteLimit) throws IOException {
+        if (HologramSnapshotDataContext.active())
+            throw new IllegalStateException("Resource providers require the owner");
+        String encoded = "tile".equals(scope) ? cell.tileNbt : cell.itemNbt;
+        long[] count = { -1, 0 };
+        ResourceReview.ProblemList problems = new ResourceReview(facts)
+            .inspect(cell, scope, facts.copyForEdit(encoded), encoded, count, 0, limit, false, byteLimit);
+        NBTTagCompound result = new NBTTagCompound();
+        NBTTagList rows = new NBTTagList();
+        for (NBTTagCompound row : problems) rows.appendTag(row);
+        result.setTag("rows", rows);
+        result.setLong("total", count[0] < 0 ? problems.total : count[0]);
+        result.setLong("blocking", count[0] < 0 ? problems.blockers : count[0]);
+        result.setBoolean("nativeComplete", count[1] == 0);
+        return result;
+    }
+
+    static NBTTagCompound resourceScopePage(HologramPresets.Cell cell, int index, String scope, int offset, int limit,
+        boolean blockersOnly, long byteLimit, HologramAnalysisFacts facts) throws IOException {
+        if (HologramSnapshotDataContext.active()) throw new IllegalStateException("Resource pages require the owner");
+        String encoded = "tile".equals(scope) ? cell.tileNbt : cell.itemNbt;
+        NBTTagCompound result = new NBTTagCompound();
+        NBTTagList rows = new NBTTagList();
+        long total = 0;
+        boolean complete = true;
+        if (encoded != null && !encoded.isEmpty()) {
+            long[] count = { -1, 0 };
+            ResourceReview.ProblemList problems = new ResourceReview(facts).inspect(
+                cell,
+                scope,
+                facts.copyForEdit(encoded),
+                encoded,
+                count,
+                offset,
+                limit,
+                blockersOnly,
+                byteLimit);
+            total = count[0] >= 0 ? count[0] : blockersOnly ? problems.blockers : problems.total;
+            complete = count[1] == 0;
+            result.setLong("bytes", problems.bytes);
+            result.setBoolean("byteLimitReached", problems.byteLimitReached);
+            for (NBTTagCompound original : problems) {
+                NBTTagCompound row = (NBTTagCompound) original.copy();
+                row.setInteger("index", index);
+                rows.appendTag(row);
+            }
+        }
+        result.setTag("rows", rows);
+        result.setLong("total", total);
+        result.setBoolean("complete", complete);
+        return result;
     }
 
     private static final class ReportKey {
@@ -702,21 +964,23 @@ final class HologramBlueprintProcessing {
     /** Derived from the actual server source, never from a client claim that sensitive data is absent. */
     static int requiredStages(HologramPresets.Preset source, int dimension, int x, int y, int z) throws IOException {
         if (source == null || source.cells.isEmpty()) return 63;
+        HologramAnalysisFacts facts = new HologramAnalysisFacts();
         return requiredStages(
             source,
-            minimumLevel(source),
-            !HologramCoordinatePolicies.inspect(source, dimension, x, y, z)
-                .isEmpty());
+            minimumLevel(source, facts),
+            !HologramCoordinatePolicies.inspect(source, dimension, x, y, z, facts)
+                .isEmpty(),
+            facts);
     }
 
-    private static int requiredStages(HologramPresets.Preset source, int minimum, boolean hasRelations)
-        throws IOException {
+    private static int requiredStages(HologramPresets.Preset source, int minimum, boolean hasRelations,
+        HologramAnalysisFacts facts) throws IOException {
         if (source == null || source.cells.isEmpty()) return 63;
         int required = minimum > 0 ? 1 << 1 : 0;
         if (hasRelations) required |= 1 << 3;
         for (HologramPresets.Cell cell : source.cells) {
-            NBTTagCompound tile = HologramBlueprintNbt.decode(cell.tileNbt);
-            required |= requiredStages(cell, tile, HologramBlueprintNbt.decode(cell.itemNbt));
+            NBTTagCompound tile = facts.read(cell.tileNbt);
+            required |= requiredStages(cell, tile, facts.read(cell.itemNbt));
         }
         if (required != 0) required |= 1 << 5;
         return required;
@@ -761,6 +1025,8 @@ final class HologramBlueprintProcessing {
         for (HologramPresets.Cell cell : preset.cells) {
             NBTTagCompound tag = HologramBlueprintNbt.decode(cell.tileNbt);
             if (tag == null || !tag.hasKey(HologramNetworkBindings.GROUP)) continue;
+            if (tag.hasKey(HologramNetworkBindings.MODE, 8) && mode.equals(tag.getString(HologramNetworkBindings.MODE))
+                && (!"rebind".equals(mode) || !tag.hasKey(HologramNetworkBindings.ORIGINAL))) continue;
             tag.setString(HologramNetworkBindings.MODE, mode);
             if ("rebind".equals(mode)) tag.removeTag(HologramNetworkBindings.ORIGINAL);
             cell.tileNbt = HologramBlueprintNbt.encodeCanonical(tag);
@@ -773,22 +1039,40 @@ final class HologramBlueprintProcessing {
 
     /** Native AE/verified network reconstruction already has an irreversible level-one identity boundary. */
     static int minimumLevel(HologramPresets.Preset preset) throws IOException {
+        return minimumLevel(preset, new HologramAnalysisFacts());
+    }
+
+    private static int minimumLevel(HologramPresets.Preset preset, HologramAnalysisFacts facts) throws IOException {
         int minimum = HologramDeidentification.level(preset);
         if (preset == null || minimum > 0) return minimum;
         for (HologramPresets.Cell cell : preset.cells) {
-            if (HologramSnapshotMetadataSource.detached() && cell.metadataIdentityBoundary != null) {
-                if (cell.metadataIdentityBoundary) return 1;
-                continue;
-            }
-            NBTTagCompound tag = HologramBlueprintNbt.decode(cell.tileNbt);
-            if (HologramAeBlueprint.supports(cell.block(), tag) || HologramNetworkBindings.node(cell.block())
-                || tag != null
-                    && (tag.hasKey(HologramNetworkBindings.GROUP) || tag.hasKey(HologramNetworkBindings.CAPTURE_ANCHOR))
-                || HologramNetworkSchemas.removeExternalReferences(
-                    cell.block(),
-                    cell.damage,
-                    tag == null ? null : (NBTTagCompound) tag.copy()))
-                return 1;
+            NBTTagCompound identity = facts.certificate(
+                cell,
+                HologramSegmentContract.Domain.REPORT,
+                "identity-floor",
+                new Object[] { cell.block(), cell.damage, cell.tileNbt, cell.metadataIdentityBoundary,
+                    HologramSegmentContract.SCHEMA_EPOCH },
+                true,
+                () -> {
+                    boolean boundary;
+                    if (HologramSnapshotMetadataSource.detached() && cell.metadataIdentityBoundary != null)
+                        boundary = cell.metadataIdentityBoundary;
+                    else {
+                        NBTTagCompound tag = facts.read(cell.tileNbt);
+                        boundary = HologramAeBlueprint.supports(cell.block(), tag)
+                            || HologramNetworkBindings.node(cell.block())
+                            || tag != null && (tag.hasKey(HologramNetworkBindings.GROUP)
+                                || tag.hasKey(HologramNetworkBindings.CAPTURE_ANCHOR))
+                            || HologramNetworkSchemas.removeExternalReferences(
+                                cell.block(),
+                                cell.damage,
+                                tag == null ? null : (NBTTagCompound) tag.copy());
+                    }
+                    NBTTagCompound result = new NBTTagCompound();
+                    result.setBoolean("boundary", boundary);
+                    return result;
+                });
+            if (identity.getBoolean("boundary")) return 1;
         }
         return minimum;
     }
@@ -858,7 +1142,7 @@ final class HologramBlueprintProcessing {
     private static SelectedScope select(String encoded, String kind, Policy policy, CellNbtOverride override,
         boolean retainNbt, List<String> retainedKeys, boolean covers, HologramPresets.Cell cell, ScopeReviews reviews)
         throws IOException {
-        NBTTagCompound tag = HologramBlueprintNbt.decode(encoded);
+        NBTTagCompound tag = reviews.facts.read(encoded);
         if (tag == null) return reviews.select(cell, kind, null, null);
         net.minecraft.block.Block block = cell.block();
         NBTTagCompound before = tag;
@@ -878,23 +1162,37 @@ final class HologramBlueprintProcessing {
             tag = HologramGtMeShadow.project(tag);
         }
         if (before.hasKey(HologramFullPreservation.TAG)) HologramFullPreservation.assertUnchanged(before, tag);
-        return reviews.select(cell, kind, HologramBlueprintNbt.encodeCanonical(tag), tag);
+        return reviews
+            .select(cell, kind, before.equals(tag) ? encoded : HologramBlueprintNbt.encodeCanonical(tag), tag);
     }
 
     static void removeNbtPath(HologramPresets.Preset preset, List<Integer> indices, String path) throws IOException {
         checkPath(path);
+        HologramAnalysisFacts facts = new HologramAnalysisFacts();
+        List<String> staged = new ArrayList<>();
+        boolean tile = path.startsWith("tile:"), changed = false;
         for (Integer index : indices) {
             if (index == null || index < 0 || index >= preset.cells.size()) throw new IOException("方块NBT编辑位置无效");
             HologramPresets.Cell cell = preset.cells.get(index);
-            boolean tile = path.startsWith("tile:");
-            NBTTagCompound tag = HologramBlueprintNbt.decode(tile ? cell.tileNbt : cell.itemNbt);
-            if (tag == null) continue;
+            String original = tile ? cell.tileNbt : cell.itemNbt;
+            NBTTagCompound before = facts.read(original);
+            if (before == null) {
+                staged.add(original);
+                continue;
+            }
+            NBTTagCompound tag = (NBTTagCompound) before.copy();
             removePath(tag, path.substring(path.indexOf(':') + 1), cell.block());
             HologramBlueprintNbt.normalizeResourceSelection(tag);
-            if (tile) cell.tileNbt = HologramBlueprintNbt.encodeCanonical(tag);
-            else cell.itemNbt = HologramBlueprintNbt.encodeCanonical(tag);
+            boolean dirty = !before.equals(tag);
+            changed |= dirty;
+            staged.add(dirty ? HologramBlueprintNbt.encodeCanonical(tag) : original);
         }
+        if (!changed) return;
         invalidate(preset, "nbt");
+        for (int i = 0; i < indices.size(); i++) {
+            if (tile) preset.cells.get(indices.get(i)).tileNbt = staged.get(i);
+            else preset.cells.get(indices.get(i)).itemNbt = staged.get(i);
+        }
     }
 
     /** A value editor has no additive asset capability: only registered configuration fields may be changed. */
@@ -903,12 +1201,15 @@ final class HologramBlueprintProcessing {
         checkPath(path);
         if (indices == null || indices.length == 0 || indices.length > 8192) throw new IOException("请选择需要编辑NBT的方块");
         if (value == null || value.length() > 4096) throw new IOException("NBT值过长");
-        List<NBTTagCompound> staged = new ArrayList<>();
+        List<String> staged = new ArrayList<>();
+        HologramAnalysisFacts facts = new HologramAnalysisFacts();
+        boolean changed = false;
         boolean tile = path.startsWith("tile:");
         for (int index : indices) {
             if (index < 0 || index >= preset.cells.size()) throw new IOException("方块NBT编辑位置无效");
             HologramPresets.Cell cell = preset.cells.get(index);
-            NBTTagCompound tag = HologramBlueprintNbt.decode(tile ? cell.tileNbt : cell.itemNbt);
+            String encoded = tile ? cell.tileNbt : cell.itemNbt;
+            NBTTagCompound tag = facts.copyForEdit(encoded);
             if (tag == null) throw new IOException("所选方块没有该NBT数据");
             String[] segments = path.substring(path.indexOf(':') + 2)
                 .split("/", -1);
@@ -918,27 +1219,97 @@ final class HologramBlueprintProcessing {
             String key = unescape(segments[0]);
             NBTBase original = tag.getTag(key);
             if (original == null || !type(original).equals(type)) throw new IOException("NBT值必须保持已有条目的原始类型");
-            tag.setTag(key, parseValue(type, value));
-            staged.add(tag);
+            NBTBase replacement = parseValue(type, value);
+            boolean dirty = !original.equals(replacement);
+            changed |= dirty;
+            if (dirty) tag.setTag(key, replacement);
+            staged.add(dirty ? HologramBlueprintNbt.encodeCanonical(tag) : encoded);
         }
-        for (int i = 0; i < indices.length; i++) {
-            String encoded = HologramBlueprintNbt.encodeCanonical(staged.get(i));
-            if (tile) preset.cells.get(indices[i]).tileNbt = encoded;
-            else preset.cells.get(indices[i]).itemNbt = encoded;
-        }
+        if (!changed) return;
         invalidate(preset, "nbt");
+        for (int i = 0; i < indices.length; i++) {
+            if (tile) preset.cells.get(indices[i]).tileNbt = staged.get(i);
+            else preset.cells.get(indices[i]).itemNbt = staged.get(i);
+        }
     }
 
     static NBTTagList nbtEntries(HologramPresets.Cell cell) throws IOException {
-        NBTTagList entries = new NBTTagList();
-        entryRows(cell, HologramBlueprintNbt.decode(cell.tileNbt), "tile:", entries, 0, null);
-        entryRows(cell, HologramBlueprintNbt.decode(cell.itemNbt), "item:", entries, 0, null);
-        return entries;
+        return nbtEntries(cell, new HologramAnalysisFacts());
     }
 
-    private static void entryRows(HologramPresets.Cell cell, NBTTagCompound tag, String prefix, NBTTagList entries,
+    static NBTTagList nbtEntries(HologramPresets.Cell cell, HologramAnalysisFacts facts) throws IOException {
+        NBTTagCompound certificate = facts.certificate(
+            cell,
+            HologramSegmentContract.Domain.REPORT,
+            "entries",
+            new Object[] { cell.block(), cell.tileNbt, cell.itemNbt, HologramSegmentContract.SCHEMA_EPOCH },
+            true,
+            () -> {
+                NBTTagList entries = new NBTTagList();
+                EntrySink sink = new EntrySink() {
+
+                    void accept(NBTTagCompound row) {
+                        entries.appendTag(row);
+                    }
+                };
+                entryRows(cell, facts.read(cell.tileNbt), "tile:", sink, 0, null);
+                entryRows(cell, facts.read(cell.itemNbt), "item:", sink, 0, null);
+                NBTTagCompound result = new NBTTagCompound();
+                result.setTag("rows", entries);
+                return result;
+            });
+        return certificate.getTagList("rows", 10);
+    }
+
+    /** Stream the requested tail directly; details never retain the full 2048-row certificate. */
+    static NBTTagCompound nbtEntryPage(HologramPresets.Cell cell, HologramAnalysisFacts facts, int offset, int limit,
+        long byteLimit, Set<String> selected) throws IOException {
+        NBTTagCompound result = new NBTTagCompound();
+        NBTTagList rows = new NBTTagList();
+        EntrySink sink = new EntrySink() {
+
+            long bytes;
+            boolean full;
+
+            void accept(NBTTagCompound row) {
+                if (seen <= offset || rows.tagCount() >= limit || full) return;
+                String key = row.getString("key");
+                row.setString("label", key);
+                row.setBoolean("selected", selected == null || selected.contains(key));
+                row.setBoolean("blueprintSelected", selected == null || selected.contains(key));
+                long cost = HologramSnapshotNbt.estimate(row);
+                if (cost > byteLimit - bytes) {
+                    full = true;
+                    if (rows.tagCount() == 0) result.setString("detailError", "rowTooLarge");
+                    return;
+                }
+                rows.appendTag(row);
+                bytes += cost;
+            }
+        };
+        entryRows(cell, facts.read(cell.tileNbt), "tile:", sink, 0, null);
+        entryRows(cell, facts.read(cell.itemNbt), "item:", sink, 0, null);
+        result.setTag("rows", rows);
+        result.setInteger("total", sink.seen);
+        if (offset < 0 || offset > sink.seen) result.setString("detailError", "offset");
+        return result;
+    }
+
+    private abstract static class EntrySink {
+
+        int seen;
+
+        final void add(NBTTagCompound row) {
+            seen++;
+            accept(row);
+        }
+
+        abstract void accept(NBTTagCompound row);
+    }
+
+    private static void entryRows(HologramPresets.Cell cell, NBTTagCompound tag, String prefix, EntrySink entries,
         int depth, NBTTagCompound device) {
-        if (tag == null || depth > 8 || entries.tagCount() >= 2048) return;
+        if (tag == null || depth > 8 || entries.seen >= 2048) return;
         if (device == null) device = tag;
         for (Object raw : tag.func_150296_c()) {
             String key = (String) raw;
@@ -966,11 +1337,11 @@ final class HologramBlueprintProcessing {
                     ? "Carpenter 来源所有者仅作记录；新放置方块自动归当前玩家，无需为此去标识"
                     : protectedField ? "系统身份由服务器维护"
                         : editable ? "已审阅的配置项；修改后须重新完成NBT核验" : "保留原数据；此项可能含真实资产或未审阅格式，仅支持明确忽略");
-            entries.appendTag(row);
+            entries.add(row);
             if (value instanceof NBTTagCompound && !protectedField)
                 entryRows(cell, (NBTTagCompound) value, path, entries, depth + 1, device);
             // Lists are described as a whole. Inventory and recipe lists are never recursively made editable.
-            if (entries.tagCount() >= 2048) return;
+            if (entries.seen >= 2048) return;
         }
     }
 
@@ -1148,7 +1519,8 @@ final class HologramBlueprintProcessing {
     }
 
     private static NBTTagCompound addHints(HologramPresets.Preset source, HologramPresets.Preset preset,
-        List<HologramCoordinatePolicies.Relation> relations, Policy policy) throws IOException {
+        List<HologramCoordinatePolicies.Relation> relations, Policy policy, HologramAnalysisFacts facts)
+        throws IOException {
         Set<String> blocks = new LinkedHashSet<>();
         NBTTagCompound generated = new NBTTagCompound();
         if ("none".equals(policy.autoHints)) {
@@ -1170,17 +1542,14 @@ final class HologramBlueprintProcessing {
             HologramPresets.Cell cell = preset.cells.get(index), original = source.cells.get(index);
             List<String> hints = new ArrayList<>();
             cellHints.put(position(cell.x, cell.y, cell.z), hints);
-            NBTTagCompound payload = HologramBlueprintNbt.decode(cell.tileNbt);
-            NBTTagCompound before = HologramBlueprintNbt.decode(original.tileNbt);
+            NBTTagCompound payload = facts.read(cell.tileNbt);
+            NBTTagCompound before = facts.read(original.tileNbt);
             Map<Integer, List<String>> changes = new java.util.TreeMap<>();
             mergeFields(changes, HologramDeidentification.changedFields(original, before, payload, "tile:"));
             mergeFields(
                 changes,
-                HologramDeidentification.changedFields(
-                    original,
-                    HologramBlueprintNbt.decode(original.itemNbt),
-                    HologramBlueprintNbt.decode(cell.itemNbt),
-                    "item:"));
+                HologramDeidentification
+                    .changedFields(original, facts.read(original.itemNbt), facts.read(cell.itemNbt), "item:"));
             for (Map.Entry<Integer, List<String>> entry : changes.entrySet())
                 if (full) hints.add(fieldHint(entry.getKey(), entry.getValue()));
                 else if (entry.getKey() == 1) hints.add("设备所有者标识已清空；放置时按当前玩家身份重新建立，确认当前账户和权限");
@@ -1203,9 +1572,7 @@ final class HologramBlueprintProcessing {
                     }
                 }
             Map<Integer, List<String>> retained = HologramDeidentification.retainedRiskFields(cell, payload, "tile:");
-            mergeFields(
-                retained,
-                HologramDeidentification.retainedRiskFields(cell, HologramBlueprintNbt.decode(cell.itemNbt), "item:"));
+            mergeFields(retained, HologramDeidentification.retainedRiskFields(cell, facts.read(cell.itemNbt), "item:"));
             for (Map.Entry<Integer, List<String>> entry : retained.entrySet()) {
                 String fields = full ? "（" + String.join("、", entry.getValue()) + "）" : "";
                 if (entry.getKey() == 1) hints.add("模板保留原所有者字段" + fields + "；放置前确认当前玩家有权使用该设备");

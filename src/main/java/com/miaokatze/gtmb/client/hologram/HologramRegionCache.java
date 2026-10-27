@@ -78,7 +78,10 @@ final class HologramRegionCache {
 
     HologramRegionCache(HologramRegionCache previous, List<HologramState.Cell> cells, int[] changed,
         List<HologramState.Cell> before, boolean topology) {
-        Map<Key, List<HologramState.Cell>> result = new LinkedHashMap<>(previous.regions);
+        ModelMap model = previous.regions instanceof ModelMap ? (ModelMap) previous.regions : null;
+        Map<Key, List<HologramState.Cell>> result = new LinkedHashMap<>(model == null ? previous.regions : model.root);
+        Map<Key, List<HologramState.Cell>> models = model == null ? new LinkedHashMap<>()
+            : new LinkedHashMap<>(model.overrides);
         Map<Key, List<HologramState.Cell>> replacements = new LinkedHashMap<>();
         for (HologramState.Cell old : before) replacements
             .computeIfAbsent(
@@ -94,23 +97,133 @@ final class HologramRegionCache {
                 .add(cell);
         }
         replacements.forEach((key, region) -> {
-            if (region.isEmpty()) result.remove(key);
-            else result.put(key, new Region(region, topology));
+            if (region.isEmpty()) {
+                result.remove(key);
+                models.remove(key);
+            } else {
+                List<HologramState.Cell> cold = new ArrayList<>(region.size());
+                boolean loaded = false;
+                for (HologramState.Cell cell : region) {
+                    loaded |= cell.modelSource != null;
+                    cold.add(cell.modelSource == null ? cell : cell.modelSource);
+                }
+                result.put(key, model == null ? new Region(cold, topology) : modelRegion(cold, topology, null));
+                if (loaded) models.put(key, modelRegion(region, topology, null));
+                else models.remove(key);
+            }
         });
-        regions = Collections.unmodifiableMap(result);
+        regions = models.isEmpty() ? Collections.unmodifiableMap(result) : new ModelMap(result, models);
         if (!topology) {
             bounds = previous.bounds;
             return;
         }
         bounds = new int[] { Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE,
             Integer.MIN_VALUE, Integer.MIN_VALUE };
-        for (List<HologramState.Cell> region : result.values()) {
+        for (List<HologramState.Cell> region : regions.values()) {
             int[] extent = ((Region) region).bounds;
             for (int axis = 0; axis < 3; axis++) {
                 bounds[axis] = Math.min(bounds[axis], extent[axis]);
                 bounds[axis + 3] = Math.max(bounds[axis + 3], extent[axis + 3]);
             }
         }
+    }
+
+    /** Model-only changes retain the immutable cold index and copy only the bounded loaded-region overlay. */
+    static HologramRegionCache models(HologramRegionCache previous, List<HologramState.Cell> cells, int[] changed,
+        List<HologramState.Cell> before, List<com.miaokatze.gtmb.hologram.HologramProcessGovernor.Lease> unpublished) {
+        ModelMap model = previous.regions instanceof ModelMap ? (ModelMap) previous.regions : null;
+        Map<Key, List<HologramState.Cell>> root = model == null ? previous.regions : model.root;
+        Map<Key, List<HologramState.Cell>> overlays = model == null ? new LinkedHashMap<>()
+            : new LinkedHashMap<>(model.overrides);
+        Map<Key, List<HologramState.Cell>> replacements = new LinkedHashMap<>();
+        for (HologramState.Cell old : before)
+            replacements.computeIfAbsent(key(old), unused -> new ArrayList<>(previous.regions.get(key(old))))
+                .remove(old);
+        for (int index : changed) {
+            HologramState.Cell cell = cells.get(index);
+            replacements.computeIfAbsent(key(cell), unused -> new ArrayList<>(previous.regions.get(key(cell))))
+                .add(cell);
+        }
+        replacements.forEach((key, region) -> {
+            boolean loaded = false;
+            for (HologramState.Cell cell : region) loaded |= cell.modelSource != null;
+            if (loaded) overlays.put(key, modelRegion(region, false, unpublished));
+            else overlays.remove(key);
+        });
+        return new HologramRegionCache(overlays.isEmpty() ? root : new ModelMap(root, overlays), previous.bounds);
+    }
+
+    private static Region modelRegion(List<HologramState.Cell> cells, boolean topology,
+        List<com.miaokatze.gtmb.hologram.HologramProcessGovernor.Lease> unpublished) {
+        com.miaokatze.gtmb.hologram.HologramProcessGovernor.Lease lease = com.miaokatze.gtmb.hologram.HologramProcessGovernor
+            .tryRetain("snapshot.modelRegion", 512L + cells.size() * 128L);
+        if (lease == null) throw new IllegalStateException("Model region memory quota busy");
+        try {
+            Region result = new Region(cells, topology);
+            if (unpublished != null) unpublished.add(lease);
+            else lease.close();
+            return result;
+        } catch (RuntimeException | Error failure) {
+            lease.close();
+            throw failure;
+        }
+    }
+
+    private static final class ModelMap extends java.util.AbstractMap<Key, List<HologramState.Cell>> {
+
+        final Map<Key, List<HologramState.Cell>> root, overrides;
+
+        ModelMap(Map<Key, List<HologramState.Cell>> root, Map<Key, List<HologramState.Cell>> overrides) {
+            this.root = Collections.unmodifiableMap(root);
+            this.overrides = Collections.unmodifiableMap(overrides);
+        }
+
+        @Override
+        public List<HologramState.Cell> get(Object key) {
+            List<HologramState.Cell> value = overrides.get(key);
+            return value == null ? root.get(key) : value;
+        }
+
+        @Override
+        public int size() {
+            return root.size();
+        }
+
+        @Override
+        public boolean containsKey(Object key) {
+            return root.containsKey(key);
+        }
+
+        @Override
+        public java.util.Set<Entry<Key, List<HologramState.Cell>>> entrySet() {
+            return new java.util.AbstractSet<Entry<Key, List<HologramState.Cell>>>() {
+
+                public int size() {
+                    return root.size();
+                }
+
+                public java.util.Iterator<Entry<Key, List<HologramState.Cell>>> iterator() {
+                    java.util.Iterator<Entry<Key, List<HologramState.Cell>>> source = root.entrySet()
+                        .iterator();
+                    return new java.util.Iterator<Entry<Key, List<HologramState.Cell>>>() {
+
+                        public boolean hasNext() {
+                            return source.hasNext();
+                        }
+
+                        public Entry<Key, List<HologramState.Cell>> next() {
+                            Entry<Key, List<HologramState.Cell>> next = source.next();
+                            List<HologramState.Cell> replacement = overrides.get(next.getKey());
+                            return replacement == null ? next : new SimpleImmutableEntry<>(next.getKey(), replacement);
+                        }
+                    };
+                }
+            };
+        }
+    }
+
+    static int modelRegionCount(HologramRegionCache regions) {
+        return regions.regions instanceof ModelMap ? ((ModelMap) regions.regions).overrides.size() : 0;
     }
 
     int[] bounds() {

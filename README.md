@@ -10,9 +10,9 @@
   <a href="https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases"><img alt="Downloads" src="https://img.shields.io/badge/Downloads-Releases-green.svg"></a>
 </p>
 
-**本轮准备版本：GTMB 0.1.48。正式发布与下载请看 [Releases](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases)。必需前置：[MIAOKATZE Core 0.1.22 或更新版本](https://github.com/MIAOKATZE/MIAOKATZE-Core)，客户端与服务端均须安装。** FalsePatternLib 缺失时可补下载；已有旧版请手动更新。
+**本轮准备版本：GTMB 0.1.51。正式发布与下载请看 [Releases](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases)。必需前置：[MIAOKATZE Core 0.1.23 或更新版本](https://github.com/MIAOKATZE/MIAOKATZE-Core)，客户端与服务端均须安装。** FalsePatternLib 缺失时可补下载；已有旧版请手动更新。
 
-*Prepared version: GTMB 0.1.48. See Releases for published downloads. MIAOKATZE Core 0.1.22 or newer is required on both client and server. Missing FalsePatternLib can be downloaded automatically; update an existing older copy manually.*
+*Prepared version: GTMB 0.1.51. See Releases for published downloads. MIAOKATZE Core 0.1.23 or newer is required on both client and server. Missing FalsePatternLib can be downloaded automatically; update an existing older copy manually.*
 
 GTMB 是面向 **GTNH 2.9.0 RC** 的结构规划、蓝图编辑与材料施工工具。手持猫猫蓝图全息投影仪，查看控制器结构、采集机器和建筑、编辑布局与图文，再预览、核对材料并施工。搬家时，可把现有结构逐份剪切暂存，再放回世界。
 
@@ -32,7 +32,7 @@ GTMB 是面向 **GTNH 2.9.0 RC** 的结构规划、蓝图编辑与材料施工�
 | 项目 / Requirement | 说明 / Details |
 | --- | --- |
 | 目标环境 / Target | **GTNH 2.9.0 RC** · Minecraft **1.7.10** · Forge **10.13.4.1614** |
-| 安装位置 / Installation | 客户端与服务端均安装 GTMB 和 **Core ≥ 0.1.22**。 / Install both on the client and server. |
+| 安装位置 / Installation | 客户端与服务端均安装 GTMB 和 **Core ≥ 0.1.23**。 / Install both on the client and server. |
 | 整包依赖 / Pack dependencies | GregTech、StructureLib、Applied Energistics 2、GTNHLib、ModularUI、ModularUI2 **2.3.92-1.7.10**；由目标整包提供。 / Provided by the target pack. |
 | 图文附加 / Artwork | 文字与图片生成需要 **LittleTiles**。 / Text and picture generation requires LittleTiles. |
 | 获取 / Download | [GitHub Releases](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases) · [Core](https://github.com/MIAOKATZE/MIAOKATZE-Core) |

@@ -21,6 +21,56 @@ public final class HologramRegressionTest {
     public static void main(String[] args) throws Exception {
         if (!MinecraftTestBootstrap.enter(HologramRegressionTest.class, args)) return;
         Map<String, Runnable> cases = new LinkedHashMap<>();
+        cases.put("segment_validation_pages_and_global_constraints", HologramSegmentValidationRegression::run);
+        cases.put("preset_copy_matches_old_serialized_contract", HologramPresetCopiesRegression::run);
+        cases.put("stable_transport_page_layout", HologramTransportPageLayoutRegression::run);
+        cases.put("snapshot_segment_reference_protocol", () -> {
+            try {
+                HologramSnapshotSegmentsRegression.run();
+            } catch (Exception failure) {
+                throw new AssertionError(failure);
+            }
+        });
+        cases.put("snapshot_assembly_owned_buffers_and_timeout", HologramLibrarySnapshotAssemblyRegression::run);
+        cases.put("transport_control_lane_and_global_budget", HologramTransportBudgetRegression::run);
+        cases.put("transport_control_queue_and_backpressure", HologramTransportControlRegression::run);
+        cases.put("snapshot_copy_on_write_consumer_retention", () -> {
+            try {
+                com.miaokatze.gtmb.client.hologram.HologramSnapshotRetentionsRegression.main(new String[0]);
+            } catch (Exception failure) {
+                throw new AssertionError(failure);
+            }
+        });
+        cases.put(
+            "snapshot_demand_backoff_and_detail_completeness",
+            com.miaokatze.gtmb.client.hologram.HologramSnapshotDemandRegression::run);
+        cases.put("selective_nbt_domain_obligations", () -> {
+            try {
+                HologramNbtObligationsRegression.run();
+            } catch (Exception failure) {
+                throw new AssertionError(failure);
+            }
+        });
+        cases.put("segment_analysis_and_dependency_components", () -> {
+            try {
+                HologramSegmentAnalysisRegression.run();
+            } catch (Exception failure) {
+                throw new AssertionError(failure);
+            }
+        });
+        cases.put(
+            "progressive_preview_and_halo",
+            com.miaokatze.gtmb.client.hologram.HologramProgressivePreviewRegression::run);
+        cases.put("picture_exact_raster_reuse", HologramPictureRasterRegression::run);
+        cases.put("build_confirmation_and_finish_continuations", HologramBuildContinuationRegression::run);
+        cases.put("cut_sparse_selection_and_preparation", HologramCutSparseRegression::run);
+        cases.put("process_cpu_memory_and_singleflight", () -> {
+            try {
+                HologramProcessGovernorRegression.run();
+            } catch (Exception failure) {
+                throw new AssertionError(failure);
+            }
+        });
         cases.put("blueprint_actual_cell_limits_and_sparse_area_scanning", HologramBlueprintLimitsRegression::run);
         cases.put(
             "blueprint_client_cell_admission_is_strict_and_atomic",

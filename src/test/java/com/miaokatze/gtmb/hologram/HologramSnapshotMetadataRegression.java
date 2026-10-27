@@ -84,6 +84,7 @@ final class HologramSnapshotMetadataRegression {
             hint.x2 = 3;
             hint.prompt = "preserved hint";
             session.virtualPreset.hintAreas.add(hint);
+            contendedMetadataDefers(session);
             NBTTagCompound actual = new NBTTagCompound();
             HologramSnapshotMetadataTask task = new HologramSnapshotMetadataTask(session, actual);
             SimpleAssert.that(session.processingSource == null, "metadata constructor does no source projection");
@@ -121,6 +122,73 @@ final class HologramSnapshotMetadataRegression {
             }
         } catch (Exception failed) {
             throw new AssertionError("snapshot metadata", failed);
+        }
+    }
+
+    private static void contendedMetadataDefers(HologramSession session) throws InterruptedException {
+        HologramSnapshotMetadataTask task = new HologramSnapshotMetadataTask(session, new NBTTagCompound());
+        int permits = HologramProcessGovernor.heavyCpuPermitLimit();
+        java.util.concurrent.CountDownLatch acquired = new java.util.concurrent.CountDownLatch(permits);
+        java.util.concurrent.CountDownLatch release = new java.util.concurrent.CountDownLatch(1);
+        java.util.List<Thread> workers = new java.util.ArrayList<>();
+        java.util.concurrent.atomic.AtomicReference<Throwable> failure = new java.util.concurrent.atomic.AtomicReference<>();
+        try {
+            for (int i = 0; i < permits; i++) {
+                Thread worker = new Thread(() -> {
+                    try (HologramProcessGovernor.Lease cpu = HologramProcessGovernor
+                        .tryHeavyCpu("metadata.contention.fixture")) {
+                        SimpleAssert.that(cpu != null, "fixture owns a heavy CPU permit before metadata admission");
+                        acquired.countDown();
+                        release.await();
+                    } catch (Throwable failed) {
+                        failure.set(failed);
+                        acquired.countDown();
+                    }
+                }, "metadata-contention-fixture");
+                workers.add(worker);
+                worker.start();
+            }
+            SimpleAssert
+                .that(acquired.await(5, java.util.concurrent.TimeUnit.SECONDS), "contention workers start promptly");
+            if (failure.get() != null) throw new AssertionError("CPU contention fixture", failure.get());
+            HologramWorkBudget.startServerTick();
+            java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong();
+            java.util.concurrent.atomic.AtomicInteger attempts = new java.util.concurrent.atomic.AtomicInteger();
+            java.util.function.Consumer<HologramSnapshotMetadataTask> advance = pending -> {
+                attempts.incrementAndGet();
+                pending.step(Integer.MAX_VALUE, Long.MAX_VALUE);
+                clock.addAndGet(1_000_000L);
+            };
+            HologramWorkspaceScheduler.runRound(
+                java.util.Collections.singletonList(task),
+                advance,
+                advance,
+                HologramSnapshotMetadataTask::canAdvance,
+                clock::get,
+                40_000_000L);
+            SimpleAssert
+                .eq(1, attempts.get(), "contended metadata is attempted once instead of spinning through tick slack");
+            SimpleAssert.that(task.waitingForBudget(), "actual CPU contention defers the metadata continuation");
+            SimpleAssert.eq("metadata.source.6", task.phase(), "the complete source pauses at its first blocked cell");
+            release.countDown();
+            for (Thread worker : workers) worker.join(5000);
+            for (Thread worker : workers) SimpleAssert.that(!worker.isAlive(), "released CPU worker exits promptly");
+            task.step(1, Long.MAX_VALUE);
+            SimpleAssert.eq(0L, task.done(), "a released permit does not trigger another attempt in the same tick");
+            HologramWorkBudget.endServerTick();
+            HologramWorkBudget.startServerTick();
+            SimpleAssert.that(!task.waitingForBudget(), "the next actual server tick makes metadata runnable");
+            task.step(1, Long.MAX_VALUE);
+            SimpleAssert.eq(1L, task.done(), "the next tick freezes the previously blocked source cell");
+            HologramWorkBudget.endServerTick();
+            SimpleAssert.eq(0L, HologramWorkBudget.currentServerTick(), "standalone metadata has no server tick token");
+            task.step(1, Long.MAX_VALUE);
+            SimpleAssert.eq(2L, task.done(), "independent metadata stepping remains immediately runnable");
+        } finally {
+            release.countDown();
+            for (Thread worker : workers) worker.join(5000);
+            HologramWorkBudget.endServerTick();
+            task.cancel();
         }
     }
 
@@ -378,10 +446,26 @@ final class HologramSnapshotMetadataRegression {
             session.processingSource.cells.get(0).item,
             "authoring targets do not read a poisoned partial plan target");
         session.processingSource.cells.get(0).facing = 5;
+        HologramBlueprintProcessing.ResourceDecision decision = new HologramBlueprintProcessing.ResourceDecision();
+        decision.x = 17;
+        decision.path = "tile:/nested";
+        decision.action = "remove";
+        session.processingPolicy.resourceDecisions.add(decision);
         HologramSnapshotMetadataSource cached = new HologramSnapshotMetadataSource(
             session,
             new HologramSnapshotDataContext());
         while (!cached.step(7, Long.MAX_VALUE)) {}
+        SimpleAssert.eq(
+            decision.write(),
+            cached.policy.resourceDecisions.get(0)
+                .write(),
+            "metadata source freezes resource decisions as well as field and coordinate policy");
+        decision.action = "preserve";
+        SimpleAssert.eq(
+            "remove",
+            cached.policy.resourceDecisions.get(0).action,
+            "later owner policy edits cannot mutate the detached metadata policy");
+        session.processingPolicy.resourceDecisions.clear();
         SimpleAssert.eq(
             2,
             cached.result.cells.get(0).facing,

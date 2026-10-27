@@ -31,6 +31,15 @@ public final class HologramMaterialQuote {
         final NBTTagCompound ordinary, voucher;
         final long eligibleDemand;
 
+        private Cache(HologramSession s, NBTTagCompound ordinary, NBTTagCompound voucher, long eligibleDemand) {
+            session = s.id;
+            revision = s.planRevision;
+            capture = s.capture;
+            this.ordinary = ordinary;
+            this.voucher = voucher;
+            this.eligibleDemand = eligibleDemand;
+        }
+
         Cache(HologramSession s, NBTTagCompound ordinary, NBTTagCompound voucher) {
             session = s.id;
             revision = s.planRevision;
@@ -623,6 +632,362 @@ public final class HologramMaterialQuote {
         stamp(s, quote);
         quote.setBoolean("complete", !HologramSessionPolicy.authoring(s) && !s.localPlanPending);
         quote.setLong("inventorySnapshotTick", s.player.worldObj.getTotalWorldTime());
+    }
+
+    /** Same shared-shell and coordinate reservation rules as QuoteCounter, with one member per checkpoint. */
+    static final class CounterTask {
+
+        private final List<NBTTagCompound> rows;
+        private final ItemStock stock;
+        private final Predicate<ItemStack> fuzzy;
+        private final Map<ShellIdentity, List<NBTTagCompound>> groups = new LinkedHashMap<>();
+        private final Map<NBTTagCompound, Long> paid = new IdentityHashMap<>();
+        private java.util.Iterator<List<NBTTagCompound>> iterator, pools;
+        private final Map<HologramBlueprintResources.ExactKey, List<NBTTagCompound>> poolMap = new LinkedHashMap<>();
+        private List<NBTTagCompound> group, members;
+        private ItemStack sample, expected;
+        private Predicate<ItemStack> shell;
+        private boolean coordinates;
+        private int stage, cursor, priority;
+        private long demand, protectedStock, pool;
+
+        CounterTask(List<NBTTagCompound> rows, ItemStock stock, Predicate<ItemStack> fuzzy) {
+            this.rows = rows;
+            this.stock = stock;
+            this.fuzzy = fuzzy;
+        }
+
+        boolean done() {
+            return stage == 12;
+        }
+
+        long available(NBTTagCompound row) {
+            return paid.getOrDefault(row, 0L);
+        }
+
+        void advance() {
+            if (stage == 0) {
+                if (cursor < rows.size()) {
+                    NBTTagCompound row = rows.get(cursor++);
+                    ItemStack item = ItemStack.loadItemStackFromNBT(row);
+                    if (item != null) groups.computeIfAbsent(new ShellIdentity(item), ignored -> new ArrayList<>())
+                        .add(row);
+                } else {
+                    iterator = groups.values()
+                        .iterator();
+                    stage = 1;
+                }
+            } else if (stage == 1) {
+                if (!iterator.hasNext()) {
+                    stage = 12;
+                    return;
+                }
+                group = iterator.next();
+                coordinates = false;
+                sample = null;
+                demand = protectedStock = 0;
+                cursor = 0;
+                stage = 2;
+            } else if (stage == 2) {
+                if (cursor < group.size()) {
+                    NBTTagCompound row = group.get(cursor++);
+                    ItemStack item = ItemStack.loadItemStackFromNBT(row);
+                    coordinates |= HologramMaterialReservations.priority(item) > 0;
+                    demand = Math.addExact(demand, quantity(row, "required"));
+                    if (quantity(row, "shellRequired") > 0 && fuzzy.test(item)) sample = item;
+                } else {
+                    cursor = 0;
+                    shell = sample == null ? null : HologramMaterials.shellPredicate(sample);
+                    stage = coordinates ? 5 : 3;
+                }
+            } else if (stage == 3) {
+                if (cursor < group.size()) {
+                    NBTTagCompound row = group.get(cursor++);
+                    ItemStack item = ItemStack.loadItemStackFromNBT(row);
+                    long shellDemand = sample != null && fuzzy.test(item) ? quantity(row, "shellRequired") : 0;
+                    long exact = Math.max(0L, quantity(row, "required") - shellDemand);
+                    long amount = exact == 0 ? 0 : Math.max(0L, Math.min(exact, stock.exact(item, exact)));
+                    paid.put(row, amount);
+                    if (shell != null && shell.test(item)) protectedStock = Math.addExact(protectedStock, amount);
+                } else if (sample == null) stage = 1;
+                else {
+                    pool = Math.max(0L, stock.fuzzy(sample, demand) - protectedStock);
+                    cursor = 0;
+                    stage = 4;
+                }
+            } else if (stage == 4) {
+                if (cursor < group.size()) {
+                    NBTTagCompound row = group.get(cursor++);
+                    ItemStack item = ItemStack.loadItemStackFromNBT(row);
+                    long amount = Math.min(pool, fuzzy.test(item) ? quantity(row, "shellRequired") : 0L);
+                    paid.put(row, Math.addExact(paid.get(row), amount));
+                    pool -= amount;
+                } else stage = 1;
+            } else if (stage == 5) {
+                if (cursor < group.size()) {
+                    NBTTagCompound row = group.get(cursor++);
+                    ItemStack item = ItemStack.loadItemStackFromNBT(row);
+                    if (HologramMaterialReservations.priority(item) == 0) {
+                        long required = quantity(row, "required");
+                        paid.put(row, Math.max(0L, Math.min(required, stock.exact(item, required))));
+                    }
+                } else {
+                    priority = 1;
+                    cursor = 0;
+                    stage = 6;
+                }
+            } else if (stage == 6) {
+                if (cursor < group.size()) {
+                    NBTTagCompound row = group.get(cursor++);
+                    ItemStack item = ItemStack.loadItemStackFromNBT(row);
+                    if (HologramMaterialReservations.priority(item) == priority) poolMap
+                        .computeIfAbsent(HologramMaterialReservations.key(item, priority), ignored -> new ArrayList<>())
+                        .add(row);
+                } else {
+                    pools = poolMap.values()
+                        .iterator();
+                    stage = 7;
+                }
+            } else if (stage == 7) {
+                if (!pools.hasNext()) {
+                    if (priority == 2) {
+                        stage = 13;
+                        return;
+                    }
+                    // Remove entries incrementally; a large same-shell coordinate set must not hide in clear().
+                    stage = 11;
+                    return;
+                }
+                members = pools.next();
+                expected = ItemStack.loadItemStackFromNBT(members.get(0));
+                demand = protectedStock = 0;
+                cursor = 0;
+                stage = 8;
+            } else if (stage == 8) {
+                if (cursor < members.size())
+                    demand = Math.addExact(demand, quantity(members.get(cursor++), "required"));
+                else {
+                    cursor = 0;
+                    stage = 9;
+                }
+            } else if (stage == 9) {
+                if (cursor < group.size()) {
+                    NBTTagCompound row = group.get(cursor++);
+                    Long amount = paid.get(row);
+                    if (amount != null
+                        && HologramCoordinatePolicies.paymentEquivalent(expected, ItemStack.loadItemStackFromNBT(row)))
+                        protectedStock = Math.addExact(protectedStock, amount);
+                } else {
+                    long proven = Math.max(0L, stock.exact(expected, Math.addExact(demand, protectedStock)));
+                    pool = Math.max(0L, proven - Math.min(proven, protectedStock));
+                    cursor = 0;
+                    stage = 10;
+                }
+            } else if (stage == 10) {
+                if (cursor < members.size()) {
+                    NBTTagCompound row = members.get(cursor++);
+                    long amount = Math.min(pool, quantity(row, "required"));
+                    paid.put(row, amount);
+                    pool -= amount;
+                } else stage = 7;
+            } else if (stage == 11) {
+                // The exhausted values iterator supports removal after next; use a fresh entry per checkpoint.
+                if (!poolMap.isEmpty()) poolMap.remove(
+                    poolMap.keySet()
+                        .iterator()
+                        .next());
+                else {
+                    priority = 2;
+                    cursor = 0;
+                    stage = 6;
+                }
+            } else if (stage == 13) {
+                if (!poolMap.isEmpty()) poolMap.remove(
+                    poolMap.keySet()
+                        .iterator()
+                        .next());
+                else stage = 1;
+            }
+        }
+    }
+
+    /** Detached authoritative recount. No partially checked quote is visible before publish(). */
+    static final class RecheckTask {
+
+        private final HologramSession s;
+        private final Thread owner = Thread.currentThread();
+        private final HologramCapture capture;
+        private final long revision, voucherRevision, eligible;
+        private final StockSnapshot inventory;
+        private final NBTTagCompound[] input, output = { new NBTTagCompound(), new NBTTagCompound() };
+        private final long[] missingByLedger = new long[2];
+        private final List<NBTTagCompound> legacy = new ArrayList<>();
+        private final Map<NBTTagCompound, NBTTagCompound> linked = new IdentityHashMap<>();
+        private java.util.Iterator<String> keys;
+        private java.util.Iterator<NBTTagCompound> cleanup;
+        private CounterTask counter;
+        private NBTTagList rows, copied;
+        private int ledger, stage, cursor;
+        private long missing;
+        private String firstMissing = "";
+
+        RecheckTask(HologramSession s) throws IOException {
+            this.s = s;
+            capture = s.capture;
+            revision = s.planRevision;
+            voucherRevision = DecorationVoucherConfig.revision();
+            if (s.materialQuote == null || !s.materialQuote.getBoolean("complete")
+                || s.materialQuote.getLong("voucherRulesRevision") != voucherRevision
+                || s.materialQuote.getLong("planRevision") != revision
+                || !s.id.equals(s.materialQuote.getString("session"))) throw new IOException("材料需求缓存已失效，请重新打开材料确认");
+            boolean cached = cached(s);
+            input = new NBTTagCompound[] { cached ? s.materialQuoteCache.ordinary : s.materialQuote,
+                cached ? s.materialQuoteCache.voucher : s.materialQuote };
+            eligible = cached ? s.materialQuoteCache.eligibleDemand : 0;
+            inventory = new StockSnapshot(stock(s));
+        }
+
+        boolean done() {
+            return ledger == 2;
+        }
+
+        String phase() {
+            return stage == 3 ? "build.stock.allocate" : "build.stock.rows";
+        }
+
+        long completed() {
+            return cursor;
+        }
+
+        long total() {
+            return rows == null ? 0 : rows.tagCount();
+        }
+
+        void advance() throws IOException {
+            if (Thread.currentThread() != owner) throw new IllegalStateException("Quote stock requires owner thread");
+            if (done()) return;
+            if (s.capture != capture || s.planRevision != revision
+                || voucherRevision != DecorationVoucherConfig.revision()) throw new IOException("材料确认已更新，请重新核对");
+            if (stage == 0) {
+                keys = input[ledger].func_150296_c()
+                    .iterator();
+                rows = input[ledger].getTagList("rows", 10);
+                copied = new NBTTagList();
+                output[ledger].setTag("rows", copied);
+                stage = 1;
+            } else if (stage == 1) {
+                if (keys.hasNext()) {
+                    String key = keys.next();
+                    if (!"rows".equals(key)) output[ledger].setTag(
+                        key,
+                        input[ledger].getTag(key)
+                            .copy());
+                } else {
+                    cursor = 0;
+                    stage = 2;
+                }
+            } else if (stage == 2) {
+                if (cursor < rows.tagCount()) {
+                    NBTTagCompound row = (NBTTagCompound) rows.getCompoundTagAt(cursor++)
+                        .copy();
+                    copied.appendTag(row);
+                    if (!"item".equals(row.getString("kind"))) return;
+                    ItemStack item = readItem(row);
+                    if (item == null) throw new IOException("材料物品身份已失效，不能继续确认");
+                    NBTTagCompound nativeRow = item.writeToNBT(new NBTTagCompound());
+                    nativeRow.setLong("required", row.getLong("required"));
+                    nativeRow.setLong("shellRequired", row.getLong("shellRequired"));
+                    legacy.add(nativeRow);
+                    linked.put(row, nativeRow);
+                } else {
+                    counter = new CounterTask(
+                        legacy,
+                        inventory,
+                        item -> HologramMaterialAccess.fuzzyBlueprintShells(s, item));
+                    stage = 3;
+                }
+            } else if (stage == 3) {
+                if (!counter.done()) counter.advance();
+                else {
+                    cursor = 0;
+                    missing = 0;
+                    firstMissing = "";
+                    stage = 4;
+                }
+            } else if (stage == 4) {
+                if (cursor < copied.tagCount()) {
+                    NBTTagCompound row = copied.getCompoundTagAt(cursor++);
+                    if (row.getBoolean("optionalCache")) return;
+                    String kind = row.getString("kind");
+                    long required = row.getLong("required");
+                    if ("item".equals(kind)) counts(row, required, counter.available(linked.get(row)));
+                    else if ("fluid".equals(kind)) counts(row, required, inventory.fluid(s, readFluid(row), required));
+                    else if ("essentia".equals(kind))
+                        counts(row, required, inventory.essentia(s, row.getString("aspect"), required));
+                    else if ("energy".equals(kind)) {
+                        BigInteger available = inventory.energy(s);
+                        BigInteger shortage = new BigInteger(row.getString("requiredExact")).subtract(available)
+                            .max(BigInteger.ZERO);
+                        row.setString("availableExact", available.toString());
+                        row.setString("missingExact", shortage.toString());
+                        counts(
+                            row,
+                            required,
+                            available.min(BigInteger.valueOf(Long.MAX_VALUE))
+                                .longValue());
+                        row.setLong(
+                            "missing",
+                            shortage.min(BigInteger.valueOf(Long.MAX_VALUE))
+                                .longValue());
+                    }
+                    long shortage = row.getLong("missing");
+                    if (!s.player.capabilities.isCreativeMode || "essentia".equals(kind)) {
+                        missing = Math
+                            .min(Integer.MAX_VALUE, missing + Math.min(Integer.MAX_VALUE, Math.max(0L, shortage)));
+                        if (shortage > 0 && firstMissing.isEmpty()) firstMissing = row.getString("label") + " 缺 "
+                            + (row.hasKey("missingExact", 8) ? row.getString("missingExact") : Long.toString(shortage))
+                            + " "
+                            + row.getString("unit");
+                    }
+                } else {
+                    NBTTagCompound quote = output[ledger];
+                    quote.setString("inventoryCheck", "authoritative");
+                    quote.setLong("inventorySnapshotTick", s.player.worldObj.getTotalWorldTime());
+                    quote.setString("firstMissing", firstMissing);
+                    missingByLedger[ledger] = missing;
+                    ledger++;
+                    stage = 5;
+                }
+            } else {
+                // Release per-row scratch incrementally before starting the other independent payable projection.
+                if (!legacy.isEmpty()) legacy.remove(legacy.size() - 1);
+                else {
+                    if (cleanup == null) cleanup = linked.keySet()
+                        .iterator();
+                    if (cleanup.hasNext()) {
+                        cleanup.next();
+                        cleanup.remove();
+                    } else {
+                        stage = 0;
+                        counter = null;
+                        cleanup = null;
+                    }
+                }
+            }
+        }
+
+        void publish() throws IOException {
+            if (Thread.currentThread() != owner)
+                throw new IllegalStateException("Quote publication requires owner thread");
+            if (!done() || s.capture != capture
+                || s.planRevision != revision
+                || voucherRevision != DecorationVoucherConfig.revision()) throw new IOException("材料确认已更新，请重新核对");
+            s.materialQuoteCache = new Cache(s, output[0], output[1], eligible);
+            s.materialQuote = output[s.jobVoucherRequested ? 1 : 0];
+            stamp(s, s.materialQuote);
+            s.planMissing = (int) missingByLedger[s.jobVoucherRequested ? 1 : 0];
+            if (s.planRecoveryFits) s.blueprintResourceMissing = s.materialQuote.getString("firstMissing");
+        }
     }
 
     /** Recheck only cached payable identities. No cell/world traversal, plan rebuild or render-payload encoding. */

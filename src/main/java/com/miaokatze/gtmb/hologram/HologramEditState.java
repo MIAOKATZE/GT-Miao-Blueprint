@@ -45,6 +45,143 @@ final class HologramEditState {
         this(s, null, fullPose);
     }
 
+    /** Scalar-only shell for the cooperative full-history snapshot below. */
+    private HologramEditState(HologramSession s, int deferred) {
+        presetPose = null;
+        sessionFacing = s.facing;
+        manualPositionKeys = null;
+        rotationTurns = s.rotationTurns;
+        rotationProofEpoch = s.rotationProofEpoch;
+        sparseIndices = null;
+        sparseCapture = null;
+        selectionIndices = new java.util.LinkedHashSet<>();
+        aeIssues = new ArrayList<>();
+        presetSupported = s.presetSupported;
+        presetAvailable = s.presetAvailable;
+        presetReason = s.presetReason;
+        mode = s.mode;
+        scope = s.scope;
+        selected = s.selected;
+        facings = new HashMap<>();
+        suppressed = new java.util.HashSet<>();
+        virtualEdited = new java.util.HashSet<>();
+        presetEnabled = s.presetEnabled;
+        presetPaused = s.presetPaused;
+        hatchDowngrade = s.hatchDowngrade;
+        noHatches = s.noHatches;
+        hatchTier = s.hatchTier;
+    }
+
+    /** A transformed draft retains the same complete undo semantics without an all-cell constructor. */
+    static final class Preparation {
+
+        private final HologramSession s;
+        private final HologramCapture capture;
+        private final long revision;
+        private final HologramEditState result;
+        private java.util.Iterator<?> entries;
+        private int stage, cursor;
+
+        Preparation(HologramSession s) {
+            this.s = s;
+            capture = s.capture;
+            revision = s.planRevision;
+            result = new HologramEditState(s, 0);
+        }
+
+        boolean done() {
+            return stage == 10;
+        }
+
+        HologramEditState result() {
+            if (!done()) throw new IllegalStateException("History preparation incomplete");
+            return result;
+        }
+
+        void advance() {
+            if (capture != s.capture || revision != s.planRevision)
+                throw new IllegalStateException("Obsolete history preparation");
+            if (stage == 0) {
+                if (s.virtualPreset != null && cursor < s.virtualPreset.aeIssues.size()) result.aeIssues.addAll(
+                    HologramAePolicy
+                        .copyIssues(java.util.Collections.singletonList(s.virtualPreset.aeIssues.get(cursor++))));
+                else next();
+            } else if (stage == 1) {
+                if (s.virtualPreset != null && cursor < s.virtualPreset.structures.size()) result.structures
+                    .add(HologramBlueprintData.copyStructure(s.virtualPreset.structures.get(cursor++)));
+                else next();
+            } else if (stage == 2) {
+                if (s.virtual && s.virtualPreset != null
+                    && s.virtualPreset.schema >= 2
+                    && capture != null
+                    && cursor < capture.cells.size()) {
+                    HologramCapture.Cell cell = capture.cells.get(cursor++);
+                    result.geometry.add(HologramBlueprintData.blueprintCell(cell, cell.x, cell.y, cell.z));
+                } else next();
+            } else if (stage == 3) {
+                if (entries == null) entries = s.selectedIndices.iterator();
+                if (entries.hasNext()) {
+                    int index = (Integer) entries.next();
+                    result.selectionIndices.add(index);
+                    if (capture != null && index >= 0 && index < capture.cells.size())
+                        result.selectedPositions.add(HologramValues.position(capture.cells.get(index)));
+                } else next();
+            } else if (stage == 4) {
+                if (entries == null) entries = s.autoTargets.entrySet()
+                    .iterator();
+                if (entries.hasNext()) {
+                    @SuppressWarnings("unchecked")
+                    Map.Entry<Integer, ItemStack> entry = (Map.Entry<Integer, ItemStack>) entries.next();
+                    if (capture != null) result.automatic.put(
+                        HologramValues.position(capture.cells.get(entry.getKey())),
+                        entry.getValue()
+                            .copy());
+                } else next();
+            } else if (stage == 5) {
+                if (entries == null) entries = s.coordinatePins.entrySet()
+                    .iterator();
+                if (entries.hasNext()) {
+                    @SuppressWarnings("unchecked")
+                    Map.Entry<String, ItemStack> entry = (Map.Entry<String, ItemStack>) entries.next();
+                    result.targets.put(
+                        entry.getKey(),
+                        entry.getValue()
+                            .copy());
+                } else next();
+            } else if (stage == 6) {
+                if (entries == null) entries = s.pins.entrySet()
+                    .iterator();
+                if (entries.hasNext()) {
+                    @SuppressWarnings("unchecked")
+                    Map.Entry<Integer, ItemStack> entry = (Map.Entry<Integer, ItemStack>) entries.next();
+                    if (capture != null) result.targets.put(
+                        HologramValues.position(capture.cells.get(entry.getKey())),
+                        entry.getValue()
+                            .copy());
+                } else next();
+            } else if (stage == 7) {
+                if (entries == null) entries = s.facingPins.entrySet()
+                    .iterator();
+                if (entries.hasNext()) {
+                    @SuppressWarnings("unchecked")
+                    Map.Entry<String, Integer> entry = (Map.Entry<String, Integer>) entries.next();
+                    result.facings.put(entry.getKey(), entry.getValue());
+                } else next();
+            } else if (stage == 8 || stage == 9) {
+                if (entries == null) entries = (stage == 8 ? s.suppressedAuto : s.virtualEdited).iterator();
+                if (entries.hasNext())
+                    (stage == 8 ? result.suppressed : result.virtualEdited).add((String) entries.next());
+                else next();
+            }
+        }
+
+        private void next() {
+            stage++;
+            cursor = 0;
+            entries = null;
+        }
+    }
+
     private HologramEditState(HologramSession s, java.util.Set<Integer> indices, boolean fullPose) {
         presetPose = fullPose ? HologramBlueprintRotation.copyPreset(s.virtualPreset) : null;
         sessionFacing = s.facing;

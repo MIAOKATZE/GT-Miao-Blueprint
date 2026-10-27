@@ -35,6 +35,14 @@ final class HologramGeometryEdits {
     void changed(HologramSession s, Set<Integer> indices) {
         begin(s);
         forced.addAll(indices);
+        if (s.capture == null) return;
+        for (int index : indices) {
+            if (index < 0 || index >= s.capture.cells.size()) continue;
+            long id = s.capture.cells.get(index).segmentCellId;
+            HologramSchemaPageCache.prefer(s.processingSource, id);
+            HologramSchemaPageCache.prefer(s.virtualPreset, id);
+            break;
+        }
     }
 
     /** Keep untouched indices, reuse a moving cell's slot, and fill deletion holes from the tail. */
@@ -108,11 +116,18 @@ final class HologramGeometryEdits {
         s.geometryEdits.fullValidations++;
         HologramPresets.Preset current = HologramBlueprintProjection
             .blueprint(s, s.virtualPreset == null ? "未命名蓝图" : s.virtualPreset.name);
+        if (s.processingSource != null) {
+            current.segmentDocument = s.processingSource.segmentDocument;
+            current.schemaPageCache = s.processingSource.schemaPageCache;
+            current.schemaPreferredCellId = s.processingSource.schemaPreferredCellId;
+            current.analysisDocument = s.processingSource.analysisDocument;
+        }
         HologramBlueprintProcessing.invalidate(current, "geometry", s.processingPolicy);
         HologramAuthoringWorkflow.validateAuthorDraft(current);
         // Keep the editor's default-shell object; the next workflow owns the validated current projection.
         if (s.virtualPreset != null) s.virtualPreset.processingNbt = current.processingNbt;
         s.processingSource = current;
+        HologramAnalysisDocument.bindCaptureIds(s, current);
         s.geometryEdits.validationPending = false;
     }
 

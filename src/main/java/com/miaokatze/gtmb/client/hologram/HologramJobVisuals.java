@@ -34,6 +34,12 @@ final class HologramJobVisuals {
 
     private HologramJobVisuals() {}
 
+    static void modelOnly(HologramState previous, HologramState next) {
+        if (basis == previous
+            || basis != null && basis.cells == previous.cells && context(basis.data).equals(context(previous.data)))
+            basis = next;
+    }
+
     static void bind(HologramState complete) {
         if (basis == complete) return;
         if (complete == null) {

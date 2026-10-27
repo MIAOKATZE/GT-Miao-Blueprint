@@ -25,7 +25,7 @@ final class HologramState {
     final int parsedCells;
     private final boolean fullBaseline;
     List<Cell> changedPreviousCells = Collections.emptyList();
-    boolean topologyChanged;
+    boolean topologyChanged, modelOnly;
     final java.util.Map<String, List<Integer>> structureMembers;
     int minY = 0, maxY = 0;
     private int minWorldX, maxWorldX, minWorldY, maxWorldY, minWorldZ, maxWorldZ;
@@ -334,7 +334,7 @@ final class HologramState {
             if (row.getBoolean("annotationOnly")) {
                 if (old == null) throw new IllegalArgumentException("Appended annotation has no baseline cell");
                 NBTTagCompound annotations = row;
-                row = old.tag();
+                row = old.modelSource == null ? old.tag() : old.modelSource.tag();
                 row.setString("prompt", annotations.getString("prompt"));
                 row.setBoolean("excluded", annotations.getBoolean("excluded"));
             }
@@ -380,6 +380,141 @@ final class HologramState {
             maxY = cells.isEmpty() ? 0 : bounds[4] - data.getInteger("y");
         }
         materials = patch.hasKey("materials") ? readMaterials(data) : base.materials;
+    }
+
+    /** Appearance publications share the exact authority metadata object, selection and material receipts. */
+    private HologramState(HologramState latest, ModelPreparation models) {
+        fullBaseline = latest.fullBaseline;
+        parentIdentity = latest.identity;
+        data = latest.data;
+        session = latest.session;
+        modelOnly = true;
+        parsedCells = models.changed.size();
+        changedIndices = new int[parsedCells];
+        for (int i = 0; i < parsedCells; i++) changedIndices[i] = models.changed.get(i);
+        changedPreviousCells = Collections.unmodifiableList(models.before);
+        cells = models.pages;
+        regions = HologramRegionCache
+            .models(latest.regions, cells, changedIndices, changedPreviousCells, models.leases);
+        structureMembers = latest.structureMembers;
+        materials = latest.materials;
+        minY = latest.minY;
+        maxY = latest.maxY;
+        minWorldX = latest.minWorldX;
+        maxWorldX = latest.maxWorldX;
+        minWorldY = latest.minWorldY;
+        maxWorldY = latest.maxWorldY;
+        minWorldZ = latest.minWorldZ;
+        maxWorldZ = latest.maxWorldZ;
+    }
+
+    static final class ModelRow {
+
+        final int index;
+        final long id;
+        final NBTTagCompound actual, target;
+        final boolean evict;
+
+        ModelRow(int index, long id, NBTTagCompound actual, NBTTagCompound target, boolean evict) {
+            this.index = index;
+            this.id = id;
+            this.actual = actual;
+            this.target = target;
+            this.evict = evict;
+        }
+    }
+
+    /** Client-owner cursor. No native model or tile factory runs while these immutable rows are attached. */
+    static final class ModelPreparation implements AutoCloseable {
+
+        private final HologramState base;
+        private final List<ModelRow> rows;
+        private final CellPages pages;
+        private final List<Integer> changed = new ArrayList<>();
+        private final List<Cell> before = new ArrayList<>();
+        private final List<com.miaokatze.gtmb.hologram.HologramProcessGovernor.Lease> leases = new ArrayList<>();
+        private int position;
+        private boolean published;
+
+        ModelPreparation(HologramState base, List<ModelRow> rows) {
+            if (rows.size() > 32) throw new IllegalArgumentException("Model page exceeds row budget");
+            this.base = base;
+            this.rows = rows;
+            pages = new CellPages((CellPages) base.cells, base.cells.size());
+        }
+
+        boolean step(int limit, long nanos) {
+            long deadline = System.nanoTime() + nanos;
+            int work = 0;
+            while (position < rows.size() && work < limit && (work == 0 || System.nanoTime() < deadline)) {
+                ModelRow row = rows.get(position++);
+                work++;
+                if (row.index < 0 || row.index >= base.cells.size()) continue;
+                Cell old = base.cells.get(row.index);
+                if (old.nativeModelId != row.id || row.id <= 0) continue;
+                int mask = (row.actual == null ? 0 : 1) | (row.target == null ? 0 : 2);
+                if (row.evict ? old.modelSource == null : (old.nativeModelPending & mask) == 0) continue;
+                com.miaokatze.gtmb.hologram.HologramProcessGovernor.Lease cellLease = null;
+                if (!row.evict) {
+                    NBTTagCompound actual = row.actual == null ? old.actualDisplay.getCompoundTag("nativeTile")
+                        : row.actual;
+                    NBTTagCompound target = row.target == null ? old.targetDisplay.getCompoundTag("nativeTile")
+                        : row.target;
+                    long bytes = 4096L + com.miaokatze.gtmb.hologram.HologramSnapshotCodec.retainedEstimate(actual)
+                        + com.miaokatze.gtmb.hologram.HologramSnapshotCodec.retainedEstimate(target);
+                    cellLease = reserveModel("snapshot.modelCell", bytes);
+                }
+                try {
+                    int page = row.index >> 8;
+                    if (!pages.copied.contains(page)) {
+                        com.miaokatze.gtmb.hologram.HologramProcessGovernor.Lease pageLease = reserveModel(
+                            "snapshot.modelCellPage",
+                            512L + pages.pages[page].length * 8L);
+                        leases.add(pageLease);
+                        // replace() clones only this one logical page, after its reservation.
+                        pages.replace(row.index, old);
+                    }
+                    Cell next = row.evict ? old.modelSource : new Cell(old, row.actual, row.target, mask);
+                    if (cellLease != null) {
+                        leases.add(cellLease);
+                    }
+                    pages.replace(row.index, next);
+                    changed.add(row.index);
+                    before.add(old);
+                } catch (RuntimeException | Error failure) {
+                    if (cellLease != null) cellLease.close();
+                    throw failure;
+                }
+            }
+            return position == rows.size();
+        }
+
+        HologramState result(HologramState latest) {
+            if (position != rows.size()) throw new IllegalStateException("Model page incomplete");
+            if (!base.session.equals(latest.session) || base.cells != latest.cells) return null;
+            HologramState result = changed.isEmpty() ? latest : new HologramState(latest, this);
+            return result;
+        }
+
+        void published() {
+            published = true;
+            for (com.miaokatze.gtmb.hologram.HologramProcessGovernor.Lease lease : leases) lease.close();
+            leases.clear();
+        }
+
+        private static com.miaokatze.gtmb.hologram.HologramProcessGovernor.Lease reserveModel(String name, long bytes) {
+            com.miaokatze.gtmb.hologram.HologramProcessGovernor.Lease lease = com.miaokatze.gtmb.hologram.HologramProcessGovernor
+                .tryRetain(name, bytes);
+            if (lease == null) throw new IllegalStateException("Model memory quota busy");
+            return lease;
+        }
+
+        @Override
+        public void close() {
+            if (!published)
+                for (com.miaokatze.gtmb.hologram.HologramProcessGovernor.Lease lease : leases) lease.close();
+            leases.clear();
+        }
     }
 
     /** A delta never copies or reparses the complete cells NBT tree. */
@@ -644,10 +779,13 @@ final class HologramState {
         final String candidateBoundary;
         final ItemStack actualStack, targetStack;
         final NBTTagCompound actualDisplay, targetDisplay;
-        final String[] hintIcons = new String[6];
+        final int nativeModelPending;
+        final long nativeModelId;
+        final Cell modelSource;
+        final String[] hintIcons;
         final int hintIndex;
         final int[] hintTint;
-        final List<ItemStack> candidates = new ArrayList<>();
+        final List<ItemStack> candidates;
 
         Cell(int index, NBTTagCompound n) {
             this(index, n, false);
@@ -656,6 +794,11 @@ final class HologramState {
         /** Display preparation owns its row tree, so publishing it needs no second NBT tree. */
         private Cell(int index, NBTTagCompound n, boolean owned) {
             raw = owned ? n : (NBTTagCompound) n.copy();
+            hintIcons = new String[6];
+            candidates = new ArrayList<>();
+            nativeModelPending = n.getInteger("nativeModelPending") & 3;
+            nativeModelId = n.getLong("nativeModelId");
+            modelSource = null;
             this.index = index;
             x = n.getInteger("x");
             y = n.getInteger("y");
@@ -721,6 +864,75 @@ final class HologramState {
                 ItemStack stack = ItemStack.loadItemStackFromNBT(list.getCompoundTagAt(i));
                 if (stack != null) candidates.add(stack);
             }
+        }
+
+        private Cell(Cell source, NBTTagCompound actual, NBTTagCompound target, int mask) {
+            index = source.index;
+            x = source.x;
+            y = source.y;
+            z = source.z;
+            dx = source.dx;
+            dy = source.dy;
+            dz = source.dz;
+            meta = source.meta;
+            wantMeta = source.wantMeta;
+            chosenChoice = source.chosenChoice;
+            hatchFacing = source.hatchFacing;
+            actualFacing = source.actualFacing;
+            targetFacing = source.targetFacing;
+            id = source.id;
+            wantId = source.wantId;
+            status = source.status;
+            pinScope = source.pinScope;
+            role = source.role;
+            family = source.family;
+            renderKind = source.renderKind;
+            operation = source.operation;
+            exactIdentity = source.exactIdentity;
+            prompt = source.prompt;
+            structureId = source.structureId;
+            sourceMod = source.sourceMod;
+            sourceVersion = source.sourceVersion;
+            sourceClass = source.sourceClass;
+            sourceWarning = source.sourceWarning;
+            networkGroup = source.networkGroup;
+            specialHint = source.specialHint;
+            structureIds = source.structureIds;
+            anchor = source.anchor;
+            iconOnly = source.iconOnly;
+            excluded = source.excluded;
+            missingBlock = source.missingBlock;
+            sourceMissing = source.sourceMissing;
+            inScope = source.inScope;
+            candidateComplete = source.candidateComplete;
+            candidateBoundary = source.candidateBoundary;
+            actualStack = source.actualStack;
+            targetStack = source.targetStack;
+            hintIcons = source.hintIcons;
+            hintIndex = source.hintIndex;
+            hintTint = source.hintTint;
+            candidates = source.candidates;
+            nativeModelId = source.nativeModelId;
+            modelSource = source.modelSource == null ? source : source.modelSource;
+            nativeModelPending = source.nativeModelPending & ~mask;
+            actualDisplay = modelDisplay(source.actualDisplay, actual);
+            targetDisplay = modelDisplay(source.targetDisplay, target);
+            raw = shallow(source.raw);
+            raw.setTag("actualDisplay", actualDisplay);
+            raw.setTag("targetDisplay", targetDisplay);
+            raw.setInteger("nativeModelPending", nativeModelPending);
+        }
+
+        private static NBTTagCompound modelDisplay(NBTTagCompound source, NBTTagCompound nativeTile) {
+            if (nativeTile == null) return source;
+            NBTTagCompound result = shallow(source);
+            result.setTag("nativeTile", nativeTile);
+            return result;
+        }
+
+        boolean modelPending(boolean current) {
+            current = current || anchor || status.equals("protected") && actualStack != null;
+            return (nativeModelPending & (current ? 1 : 2)) != 0;
         }
 
         Block block(boolean current) {

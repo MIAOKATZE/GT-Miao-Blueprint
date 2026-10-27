@@ -255,9 +255,10 @@ final class HologramNetworkBindings {
         int next = 1;
         int completed = 0;
         long total = 2L * preset.cells.size();
+        HologramAnalysisFacts facts = new HologramAnalysisFacts();
         for (HologramPresets.Cell cell : preset.cells) {
             progress.update("networks", completed++, total);
-            NBTTagCompound tag = HologramBlueprintNbt.decode(cell.tileNbt);
+            NBTTagCompound tag = facts.read(cell.tileNbt);
             if (tag != null && tag.hasKey(GROUP)) {
                 String group = group(tag);
                 try {
@@ -269,8 +270,9 @@ final class HologramNetworkBindings {
         }
         for (HologramPresets.Cell cell : preset.cells) {
             progress.update("networks", completed++, total);
-            NBTTagCompound tag = HologramBlueprintNbt.decode(cell.tileNbt);
-            NBTTagCompound item = HologramBlueprintNbt.decode(cell.itemNbt);
+            NBTTagCompound before = facts.read(cell.tileNbt), beforeItem = facts.read(cell.itemNbt);
+            NBTTagCompound tag = before == null ? null : (NBTTagCompound) before.copy();
+            NBTTagCompound item = beforeItem == null ? null : (NBTTagCompound) beforeItem.copy();
             boolean removedReferences = HologramNetworkSchemas.removeExternalReferences(cell.block(), cell.damage, tag);
             removedReferences |= HologramNetworkSchemas.removeExternalReferences(cell.block(), cell.damage, item);
             if (removedReferences) changes.add(
@@ -282,7 +284,7 @@ final class HologramNetworkBindings {
                     cell.x,
                     cell.y,
                     cell.z));
-            if (item != null) cell.itemNbt = HologramBlueprintNbt.encodeCaptured(item);
+            if (item != null && !item.equals(beforeItem)) cell.itemNbt = HologramBlueprintNbt.encodeCaptured(item);
             if (tag == null) continue;
             boolean node = node(cell.block());
             NBTTagCompound anchor = node && tag.hasKey("anchorDim") ? tag
@@ -340,9 +342,10 @@ final class HologramNetworkBindings {
                 for (String key : new String[] { "coreX", "coreY", "coreZ", "partOfScreen" }) tag.removeTag(key);
             }
             if (tag.hasKey(GROUP)) group(tag);
-            cell.tileNbt = HologramAeBlueprint.supports(cell.block(), tag)
-                ? HologramBlueprintNbt.encodeCanonical(cell.block(), tag)
-                : HologramBlueprintNbt.encodeCaptured(tag);
+            NBTTagCompound projected = HologramAeBlueprint.supports(cell.block(), tag)
+                ? HologramBlueprintNbt.canonicalActorPayload(cell.block(), tag, null, "", false)
+                : tag;
+            if (!before.equals(projected)) cell.tileNbt = HologramBlueprintNbt.encodeCanonical(projected);
         }
         progress.update("networks", completed, total);
         return changes;
@@ -410,8 +413,10 @@ final class HologramNetworkBindings {
         for (HologramPresets.Cell cell : preset.cells) {
             NBTTagCompound tag = HologramBlueprintNbt.decode(cell.tileNbt);
             if (tag == null || !tag.hasKey(GROUP) || !group.equals(group(tag))) continue;
+            NBTTagCompound before = (NBTTagCompound) tag.copy();
             tag.setString(HINT, hint);
-            cell.tileNbt = HologramBlueprintNbt.encodeCanonical(cell.block(), tag);
+            NBTTagCompound projected = HologramBlueprintNbt.canonicalActorPayload(cell.block(), tag, null, "", false);
+            if (!before.equals(projected)) cell.tileNbt = HologramBlueprintNbt.encodeCanonical(projected);
             found = true;
         }
         if (!found) throw new IOException("Unknown blueprint quantum group");

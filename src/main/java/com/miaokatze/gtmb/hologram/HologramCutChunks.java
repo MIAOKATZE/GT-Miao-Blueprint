@@ -1,9 +1,14 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.io.IOException;
+import java.util.BitSet;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashSet;
 import java.util.Map;
+import java.util.Set;
 
+import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagList;
 import net.minecraft.world.WorldServer;
 import net.minecraft.world.chunk.Chunk;
 import net.minecraft.world.chunk.EmptyChunk;
@@ -12,6 +17,44 @@ import net.minecraft.world.chunk.EmptyChunk;
 final class HologramCutChunks {
 
     private HologramCutChunks() {}
+
+    static long key(int x, int z) {
+        return ((long) x << 32) ^ (z & 0xffffffffL);
+    }
+
+    /** Union of real radius-17 neighborhoods of touched chunks, including selected air. */
+    static Set<Long> lightNeighbors(NBTTagList cells, int ox, int oz) {
+        Set<Long> touched = new LinkedHashSet<>();
+        for (int i = 0; i < cells.tagCount(); i++) {
+            NBTTagCompound cell = cells.getCompoundTagAt(i);
+            touched.add(key((ox + cell.getInteger("x")) >> 4, (oz + cell.getInteger("z")) >> 4));
+        }
+        return lightNeighbors(touched);
+    }
+
+    static void loadWithLightNeighbors(WorldServer world, NBTTagList cells, int ox, int oz) throws IOException {
+        load(world, lightNeighbors(cells, ox, oz));
+    }
+
+    static void loadWithLightNeighbors(WorldServer world, BitSet mask, int ox, int oz, int sx, int sz)
+        throws IOException {
+        Set<Long> touched = new LinkedHashSet<>();
+        for (int i = mask.nextSetBit(0); i >= 0; i = mask.nextSetBit(i + 1))
+            touched.add(key((ox + i % sx) >> 4, (oz + i / sx % sz) >> 4));
+        load(world, lightNeighbors(touched));
+    }
+
+    private static Set<Long> lightNeighbors(Set<Long> touched) {
+        Set<Long> chunks = new LinkedHashSet<>();
+        for (long position : touched) {
+            int x = ((int) (position >> 32)) << 4, z = ((int) position) << 4;
+            // A newly allocated section relights untouched columns too, so include the whole touched chunk.
+            int minX = Math.max(-30000000, x - 17) >> 4, minZ = Math.max(-30000000, z - 17) >> 4;
+            int maxX = Math.min(29999999, x + 15 + 17) >> 4, maxZ = Math.min(29999999, z + 15 + 17) >> 4;
+            for (int cx = minX; cx <= maxX; cx++) for (int cz = minZ; cz <= maxZ; cz++) chunks.add(key(cx, cz));
+        }
+        return chunks;
+    }
 
     static void loadWithLightNeighbors(WorldServer world, int x, int z, int sizeX, int sizeZ) throws IOException {
         int minX = Math.max(-30000000, x - 17), minZ = Math.max(-30000000, z - 17);
@@ -22,17 +65,23 @@ final class HologramCutChunks {
     }
 
     static void load(WorldServer world, int x, int z, int sizeX, int sizeZ) throws IOException {
-        Map<Chunk, Long> positions = new IdentityHashMap<>();
+        Set<Long> chunks = new LinkedHashSet<>();
         for (int cx = x >> 4; cx <= (x + sizeX - 1) >> 4; cx++)
-            for (int cz = z >> 4; cz <= (z + sizeZ - 1) >> 4; cz++) {
-                // provideChunk/getChunkFromChunkCoords may return the shared EmptyChunk when remote loading
-                // is disabled. It accepts writes while always reading as air, so it is never a transaction world.
-                Chunk chunk = world.theChunkProviderServer.loadChunk(cx, cz);
-                if (chunk == null || chunk instanceof EmptyChunk || chunk.xPosition != cx || chunk.zPosition != cz)
-                    throw new IOException("剪切区块未能完整加载，原件记录已保留");
-                long position = ((long) cx << 32) ^ (cz & 0xffffffffL);
-                Long previous = positions.put(chunk, position);
-                if (previous != null && previous.longValue() != position) throw new IOException("剪切区块加载身份冲突，原件记录已保留");
-            }
+            for (int cz = z >> 4; cz <= (z + sizeZ - 1) >> 4; cz++) chunks.add(key(cx, cz));
+        load(world, chunks);
+    }
+
+    static void load(WorldServer world, Set<Long> chunks) throws IOException {
+        Map<Chunk, Long> positions = new IdentityHashMap<>();
+        for (long position : chunks) {
+            int cx = (int) (position >> 32), cz = (int) position;
+            // provideChunk/getChunkFromChunkCoords may return the shared EmptyChunk when remote loading
+            // is disabled. It accepts writes while always reading as air, so it is never a transaction world.
+            Chunk chunk = world.theChunkProviderServer.loadChunk(cx, cz);
+            if (chunk == null || chunk instanceof EmptyChunk || chunk.xPosition != cx || chunk.zPosition != cz)
+                throw new IOException("??????????????????");
+            Long previous = positions.put(chunk, position);
+            if (previous != null && previous.longValue() != position) throw new IOException("??????????????????");
+        }
     }
 }

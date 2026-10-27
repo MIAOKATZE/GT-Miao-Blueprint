@@ -195,12 +195,12 @@ public final class HologramServerLoadRegression {
 
     private static void adaptiveTickSlack() throws ReflectiveOperationException {
         final long ms = 1_000_000L;
-        SimpleAssert.eq(
-            40 * ms,
-            HologramWorkBudget.tickNanos(100 * ms, 100 * ms),
-            "idle tick exposes spare time through 40 ms");
         SimpleAssert
-            .eq(15 * ms, HologramWorkBudget.tickNanos(100 * ms, 125 * ms), "world work reduces spare tick time");
+            .eq(40 * ms, HologramWorkBudget.tickNanos(100 * ms, 100 * ms), "idle tick uses the available server slack");
+        SimpleAssert.eq(
+            15 * ms,
+            HologramWorkBudget.tickNanos(100 * ms, 125 * ms),
+            "world work reduces the shared allowance rather than imposing a fixed four-ms cap");
         SimpleAssert.eq(
             ms,
             HologramWorkBudget.tickNanos(100 * ms, 160 * ms),
@@ -209,6 +209,14 @@ public final class HologramServerLoadRegression {
         cursor.setAccessible(true);
         int previous = cursor.getInt(null);
         try {
+            cursor.setInt(null, 0);
+            int cappedTicks = preparationTicks(HologramWorkBudget.TICK_NANOS, 20 * ms);
+            int slackTicks = preparationTicks(HologramWorkBudget.tickNanos(0, 0), 20 * ms);
+            SimpleAssert.eq(5, cappedTicks, "the former four-ms cap spreads twenty-ms preparation over five ticks");
+            SimpleAssert.eq(1, slackTicks, "idle preparation completes in one real scheduler round");
+            System.out
+                .println("snapshot preparation scheduler: formerCapTicks=" + cappedTicks + " spareTicks=" + slackTicks);
+
             cursor.setInt(null, 0);
             AtomicLong clock = new AtomicLong();
             List<String> order = new ArrayList<>();
@@ -223,13 +231,12 @@ public final class HologramServerLoadRegression {
                 clock.addAndGet(quota);
             }, session -> !"idle".equals(session), clock::get, 40 * ms);
             SimpleAssert.eq(
-                Arrays.asList("idle", "a", "b", "a+", "b+"),
-                order,
+                Arrays.asList("idle", "a", "b"),
+                order.subList(0, 3),
                 "each peer gets its first slice before extra work");
-            SimpleAssert.eq(
-                Arrays.asList(15 * ms, 15 * ms),
-                quotas,
-                "active peers fairly share spare time without reserving idle quotas");
+            for (long quota : quotas) SimpleAssert.that(
+                quota <= HologramWorkBudget.SLICE_NANOS,
+                "each continuation retains a bounded slice even when explicit round budget is larger");
             SimpleAssert
                 .eq(40 * ms, clock.get(), "idle server spends the available tick instead of stopping after five ms");
 
@@ -273,6 +280,30 @@ public final class HologramServerLoadRegression {
             cursor.setInt(null, previous);
             HologramWorkBudget.end();
         }
+    }
+
+    private static int preparationTicks(long budget, long workNanos) {
+        AtomicLong clock = new AtomicLong();
+        AtomicLong remaining = new AtomicLong(workNanos);
+        java.util.function.Consumer<String> prepare = session -> {
+            long work = Math.min(remaining.get(), HologramWorkBudget.remainingNanos(0));
+            SimpleAssert.that(work <= HologramWorkBudget.SLICE_NANOS, "preparation keeps its bounded two-ms slice");
+            remaining.addAndGet(-work);
+            clock.addAndGet(work);
+        };
+        int ticks = 0;
+        while (remaining.get() > 0 && ticks < 100) {
+            HologramWorkspaceScheduler.runRound(
+                java.util.Collections.singletonList("snapshot"),
+                prepare,
+                prepare,
+                session -> remaining.get() > 0,
+                clock::get,
+                budget);
+            ticks++;
+        }
+        SimpleAssert.eq(0L, remaining.get(), "bounded scheduler preparation eventually completes");
+        return ticks;
     }
 
     private static void productionJobDeltas() throws ReflectiveOperationException {

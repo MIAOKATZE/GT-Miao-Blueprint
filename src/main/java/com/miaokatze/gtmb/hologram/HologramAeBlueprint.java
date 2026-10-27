@@ -769,6 +769,8 @@ public final class HologramAeBlueprint {
     }
 
     public static Analysis analyze(Block block, int metadata, NBTTagCompound payload) throws IOException {
+        if (HologramSnapshotDataContext.active())
+            throw new IllegalStateException("Native AE factories cannot run on a detached metadata reader");
         Work work = new Work(payload);
         if (block == null) throw new IOException("Missing AE block identity");
         if (block.getClass()

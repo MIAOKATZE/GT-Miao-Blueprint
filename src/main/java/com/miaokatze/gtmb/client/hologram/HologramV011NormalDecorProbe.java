@@ -103,8 +103,9 @@ final class HologramV011NormalDecorProbe {
             .getField("displayedModpackVersion")
             .get(null);
         require(
-            "0.1.0".equals(Tags.RELEASE_VERSION) && Tags.RELEASE_VERSION.equals(string(metadata, "gtmbVersion")),
-            "normal candidate records stable GTMB release 0.1.0");
+            Tags.RELEASE_VERSION.matches("[0-9]+\\.[0-9]+\\.[0-9]+")
+                && Tags.RELEASE_VERSION.equals(string(metadata, "gtmbVersion")),
+            "normal candidate records its actual stable GTMB release");
         require(
             "2.9.0-RC-2".equals(pack) && pack.equals(string(metadata, "gtnhVersion"))
                 && "dreamcoremod.displayedModpackVersion".equals(string(metadata, "gtnhVersionSource")),

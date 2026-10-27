@@ -102,6 +102,11 @@ final class HologramCutStoragePreview implements HologramCutStoragePreviewView {
         return true;
     }
 
+    /** The transport binds its materialized-byte lease to the actual retained raw owner. */
+    static NBTTagCompound retainedRaw() {
+        return active == null ? null : active.raw;
+    }
+
     void retry() {
         state.retry();
         clearRaw();

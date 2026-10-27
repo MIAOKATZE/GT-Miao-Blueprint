@@ -28,7 +28,6 @@ import com.gtnewhorizon.structurelib.alignment.constructable.IMultiblockInfoCont
 import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
 import com.miaokatze.gtmb.hologram.HologramSnapshotAssembly;
-import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
 import com.miaokatze.gtmb.hologram.HologramWorldFlow;
 import com.miaokatze.miaokatzecore.client.camera.slice.SliceBackend;
 
@@ -108,12 +107,27 @@ public final class HologramClient {
     private static final Set<String> retiredSessions = new LinkedHashSet<>();
     private static final long SNAPSHOT_TTL_NS = 300000000000L;
     private static HologramSnapshotAssembly assembly = new HologramSnapshotAssembly();
+    private static HologramSnapshotAssembly displayAssembly = new HologramSnapshotAssembly(64 * 1024);
+    private static final Object snapshotTransportLock = new Object();
+    private static final com.miaokatze.gtmb.hologram.HologramSnapshotSegments.Decoder segmentDecoder = new com.miaokatze.gtmb.hologram.HologramSnapshotSegments.Decoder();
     private static net.minecraft.world.World assemblyWorld;
     private static final HologramSnapshotInbox<NBTTagCompound> snapshotInbox = new HologramSnapshotInbox<>(
-        2,
+        64,
         HologramSnapshotAssembly.MAX_BYTES,
-        HologramSnapshotCodec::decode);
+        2,
+        (bytes, current) -> {
+            com.miaokatze.gtmb.hologram.HologramSnapshotCodec.OwnedSnapshot decoded = segmentDecoder
+                .decodeOwned(bytes, current);
+            boolean display = decoded.value.getBoolean("modelOnly") || decoded.value.getBoolean("detailOnly");
+            return new HologramSnapshotInbox.Decoded<>(
+                decoded.value,
+                decoded,
+                decoded.retainedEstimate,
+                display ? 0 : Math.max(4096, 2L * decoded.retainedEstimate));
+        });
     private static long lastDecodeNotice;
+    private static final java.util.Map<Long, NBTTagCompound> snapshotFailureHeaders = new java.util.LinkedHashMap<>();
+    private static final java.util.Map<Long, Exception> pendingSnapshotFailures = new java.util.LinkedHashMap<>();
     private static final HologramRootCloseFence rootCloseFence = new HologramRootCloseFence();
     private static final HologramPendingPositionLock pendingPositionLock = new HologramPendingPositionLock();
     private static HologramState.Preparation preparingSnapshot;
@@ -144,6 +158,11 @@ public final class HologramClient {
             minecraft.func_152344_a(() -> {
                 if (world != minecraft.theWorld || connection != minecraft.getNetHandler()
                     || retiredSessions.contains(nbt.getString("session"))) return;
+                NBTTagCompound failedHeader = snapshotFailureHeader(nbt);
+                if (failedHeader != null) {
+                    snapshotAdmissionFailure(failedHeader);
+                    return;
+                }
                 HologramLibraryClient.INSTANCE.preparationProgress(nbt);
                 if (nbt.getBoolean("materialQuoteOnly")) {
                     HologramState quoted = HologramMaterialQuoteUpdates.apply(state, nbt);
@@ -225,9 +244,9 @@ public final class HologramClient {
                 }
             });
         });
-        HologramNetwork.setClientReceiver(
-            nbt -> Minecraft.getMinecraft()
-                .func_152344_a(() -> receive(nbt)));
+        HologramNetwork.setClientReceiver(HologramClient::enqueueReceived);
+        HologramNetwork.setClientFrameReceiver(
+            (complete, sequence) -> snapshotInbox.put(complete.bytes, sequence, complete, snapshotInbox.epoch()));
         HologramNetwork.setClientInteractionSender(HologramClient::use);
         HologramClient listener = new HologramClient();
         MinecraftForge.EVENT_BUS.register(listener);
@@ -962,7 +981,9 @@ public final class HologramClient {
         HologramIsometricCamera.INSTANCE.tick();
         syncSnapshotWorld();
         HologramBackgroundTasks.tick();
+        HologramSnapshotRetentions.reap();
         installDecoded(snapshotInbox.poll());
+        HologramSnapshotModelsClient.tick();
         prepareSnapshotStep();
         HologramLibraryClient.INSTANCE.tick();
         HologramLocalPlacement.INSTANCE.tick();
@@ -1615,32 +1636,63 @@ public final class HologramClient {
                     new net.minecraft.util.ChatComponentText(HologramBackgroundTasks.transportFailureMessage(nbt)));
             return;
         }
-        installDecoded(snapshotInbox.poll());
-        if (nbt.getBoolean("transportFragment")) {
-            byte[] complete = assembly.accept(
-                nbt.getLong("transportSequence"),
-                nbt.getInteger("transportTotal"),
-                nbt.getInteger("transportIndex"),
-                nbt.getByteArray("transportBytes"),
-                System.nanoTime());
-            if (complete == null) return;
-            long transportSequence = nbt.getLong("transportSequence");
-            HologramClientProgress.decoding(transportSequence);
-            while (!snapshotInbox.offer(complete, transportSequence)) {
-                decodeNotice(
-                    "decodeBusy",
-                    "Hologram snapshots are arriving faster than they can be decoded; waiting to preserve update order.");
-                installDecoded(snapshotInbox.awaitNext());
-            }
+        // Ordinary snapshots are admitted at network ingress and published by the client tick.
+    }
+
+    /** Pure bounded ingestion runs on the network caller; it never awaits decoding on the client thread. */
+    private static void enqueueReceived(NBTTagCompound nbt) {
+        if (nbt.getBoolean("detailOnly") || nbt.getBoolean("modelOnly")) {
+            Minecraft.getMinecraft()
+                .func_152344_a(() -> {
+                    if (nbt.getBoolean("modelOnly")) HologramSnapshotModelsClient.receive(nbt, () -> {}, 0);
+                    else HologramSnapshotDetailsClient.receive(nbt, () -> {}, 0);
+                });
             return;
         }
-        while (!snapshotInbox.offerValue(nbt)) {
-            decodeNotice(
-                "decodeBusy",
-                "Hologram snapshots are arriving faster than they can be decoded; waiting to preserve update order.");
-            installDecoded(snapshotInbox.awaitNext());
+        if (nbt.getBoolean("voucherEditor") || nbt.getBoolean("transportError")) {
+            Minecraft.getMinecraft()
+                .func_152344_a(() -> receive(nbt));
+            return;
         }
-        installDecoded(snapshotInbox.poll());
+        long epoch;
+        if (!nbt.getBoolean("transportFragment")) {
+            snapshotInbox.putValue(nbt, snapshotInbox.epoch());
+            return;
+        }
+        HologramSnapshotAssembly.Complete complete;
+        try {
+            synchronized (snapshotTransportLock) {
+                epoch = snapshotInbox.epoch();
+                HologramSnapshotAssembly target = nbt.getBoolean("transportDisplay") ? displayAssembly : assembly;
+                complete = target.acceptReserved(
+                    nbt.getLong("transportSequence"),
+                    nbt.getInteger("transportTotal"),
+                    nbt.getInteger("transportIndex"),
+                    nbt.getByteArray("transportBytes"),
+                    System.nanoTime());
+            }
+        } catch (HologramSnapshotAssembly.AdmissionException full) {
+            if (nbt.getBoolean("transportDisplay")) {
+                NBTTagCompound header = nbt.getCompoundTag("transportHeader");
+                header.setString(header.getBoolean("modelOnly") ? "modelError" : "detailError", "busy");
+                enqueueReceived(header);
+                return;
+            }
+            Minecraft.getMinecraft()
+                .func_152344_a(() -> {
+                    decodeNotice(
+                        "decodeBusy",
+                        "The shared snapshot receive budget is full; requesting the current view again.");
+                    if (state != null) requestFullSnapshot(state.session);
+                });
+            return;
+        }
+        if (complete != null) {
+            long sequence = nbt.getLong("transportSequence");
+            Minecraft.getMinecraft()
+                .func_152344_a(() -> HologramClientProgress.decoding(sequence));
+            snapshotInbox.put(complete.bytes, sequence, complete, epoch);
+        }
     }
 
     static boolean presentationTransportFailed(HologramUiSession session, NBTTagCompound failure) {
@@ -1654,7 +1706,14 @@ public final class HologramClient {
         net.minecraft.world.World world = Minecraft.getMinecraft().theWorld;
         if (world == assemblyWorld) return;
         previewDistance.sync(false, null, "");
-        assembly = new HologramSnapshotAssembly();
+        synchronized (snapshotTransportLock) {
+            assembly.clear();
+            assembly = new HologramSnapshotAssembly();
+            displayAssembly.clear();
+            displayAssembly = new HologramSnapshotAssembly(64 * 1024);
+            snapshotInbox.clear();
+            clearSnapshotFailures();
+        }
         assemblyWorld = world;
         if (localAreaWorld != world) {
             localArea = null;
@@ -1662,8 +1721,9 @@ public final class HologramClient {
             localAreaAwaitingBegin = localAreaFinishing = localAreaCancelling = false;
         }
         HologramClientProgress.clear();
+        HologramSnapshotDetailsClient.clear();
+        HologramSnapshotModelsClient.clear();
         pendingPositionLock.clear();
-        snapshotInbox.clear();
         clearSnapshotPreparation();
         fullSnapshotRequested = false;
         if (state != null && snapshotWorld != world) clearProjection();
@@ -1678,16 +1738,125 @@ public final class HologramClient {
             mc.thePlayer.addChatMessage(new net.minecraft.util.ChatComponentText(text(key, fallback)));
     }
 
+    static NBTTagCompound snapshotFailureHeader(NBTTagCompound progress) {
+        if (!"server".equals(progress.getString("scope")) || !"snapshot.queued".equals(progress.getString("phase"))
+            || !progress.hasKey("transportSequence", 4)) return null;
+        long sequence = progress.getLong("transportSequence");
+        NBTTagCompound header = new NBTTagCompound();
+        for (String key : new String[] { "session", "uiSequence", "planRevision", "clientTaskToken" })
+            if (progress.hasKey(key)) header.setTag(
+                key,
+                progress.getTag(key)
+                    .copy());
+        if (pendingSnapshotFailures.remove(sequence) != null) return header;
+        else {
+            if (snapshotFailureHeaders.size() >= 64) snapshotFailureHeaders.remove(
+                snapshotFailureHeaders.keySet()
+                    .iterator()
+                    .next());
+            snapshotFailureHeaders.put(sequence, header);
+        }
+        return null;
+    }
+
+    static NBTTagCompound failedSnapshotHeader(long sequence, NBTTagCompound decoded, Exception failure) {
+        NBTTagCompound header = snapshotFailureHeaders.remove(sequence);
+        if (header == null && decoded != null) header = decoded;
+        if (header == null) {
+            if (pendingSnapshotFailures.size() >= 64) pendingSnapshotFailures.remove(
+                pendingSnapshotFailures.keySet()
+                    .iterator()
+                    .next());
+            pendingSnapshotFailures.put(sequence, failure);
+        }
+        return header;
+    }
+
+    static void snapshotTransportSucceeded(long sequence) {
+        snapshotFailureHeaders.remove(sequence);
+        pendingSnapshotFailures.remove(sequence);
+    }
+
+    static void clearSnapshotFailures() {
+        snapshotFailureHeaders.clear();
+        pendingSnapshotFailures.clear();
+    }
+
+    private static void snapshotAdmissionFailure(NBTTagCompound header) {
+        receive(snapshotAdmissionFailureEnvelope(header));
+    }
+
+    static NBTTagCompound snapshotAdmissionFailureEnvelope(NBTTagCompound header) {
+        NBTTagCompound failure = new NBTTagCompound();
+        failure.setBoolean("transportError", true);
+        failure.setString("errorCode", "snapshot.budget");
+        for (String key : new String[] { "session", "uiSequence", "clientTaskToken" })
+            if (header.hasKey(key)) failure.setTag(
+                key,
+                header.getTag(key)
+                    .copy());
+        if (header.hasKey("planRevision", 4)) failure.setLong("resultPlanRevision", header.getLong("planRevision"));
+        return failure;
+    }
+
     private static void installDecoded(HologramSnapshotInbox.Result<NBTTagCompound> result) {
         if (result == null) return;
         if (result.failure != null) {
             HologramClientProgress.decoded(result.transportSequence, false);
+            if (result.failure instanceof HologramSnapshotInbox.AdmissionException) {
+                try {
+                    NBTTagCompound header = failedSnapshotHeader(
+                        result.transportSequence,
+                        result.value,
+                        result.failure);
+                    if (header != null) snapshotAdmissionFailure(header);
+                    else if (state != null) requestFullSnapshot(state.session);
+                } finally {
+                    result.close();
+                }
+                return;
+            }
+            if (result.failure instanceof com.miaokatze.gtmb.hologram.HologramSnapshotCodec.BusyException) {
+                decodeNotice("decodeBusy", result.failure.getMessage());
+                result.close();
+                return;
+            }
             com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Hologram snapshot decoding failed", result.failure);
             decodeNotice("decodeError", "Hologram snapshot decoding failed; the previous preview was retained.");
+            if (result.failure instanceof com.miaokatze.gtmb.hologram.HologramSnapshotSegments.MissingSegmentException) {
+                String session = ((com.miaokatze.gtmb.hologram.HologramSnapshotSegments.MissingSegmentException) result.failure).session;
+                NBTTagCompound recovery = new NBTTagCompound();
+                recovery.setString("op", "requestFullSnapshot");
+                recovery.setString("session", session);
+                recovery.setBoolean("resetTransportSegments", true);
+                HologramNetwork.sendAction(recovery);
+            }
+            result.close();
             return;
         }
+        snapshotTransportSucceeded(result.transportSequence);
         NBTTagCompound nbt = result.value;
-        if (!validSnapshotIdentity(nbt)) return;
+        if (nbt.getBoolean("modelOnly")) {
+            HologramSnapshotModelsClient.receive(nbt, result, result.retainedBytes);
+            return;
+        }
+        if (nbt.getBoolean("detailOnly")) {
+            HologramSnapshotDetailsClient.receive(nbt, result, result.retainedBytes);
+            return;
+        }
+        if (nbt.hasKey(com.miaokatze.gtmb.hologram.HologramSnapshotSegments.RECEIPT, 9)) {
+            NBTTagCompound receipt = new NBTTagCompound();
+            receipt.setString("op", "ackTransportSegments");
+            receipt.setString("session", nbt.getString("session"));
+            receipt.setLong("transportSequence", result.transportSequence);
+            receipt.setTag("segments", nbt.getTag(com.miaokatze.gtmb.hologram.HologramSnapshotSegments.RECEIPT));
+            nbt.removeTag(com.miaokatze.gtmb.hologram.HologramSnapshotSegments.RECEIPT);
+            HologramNetwork.sendAction(receipt);
+        }
+        if (!validSnapshotIdentity(nbt)) {
+            result.close();
+            return;
+        }
         editorWorkspaceEpoch = Math.max(editorWorkspaceEpoch, nbt.getLong("editorWorkspaceEpoch"));
         editorSequence = Math
             .max(editorSequence, Math.max(nbt.getLong("uiSequence"), nbt.getLong("editorWorkspaceSequenceFloor")));
@@ -1697,23 +1866,35 @@ public final class HologramClient {
                 && (nbt.getBoolean("cancelled")
                     || nbt.getLong("planRevision") >= preparingResult.value.getLong("planRevision")))
                 clearSnapshotPreparation();
-            installSnapshot(nbt);
+            publishDecoded(result, null);
             HologramClientProgress.decoded(result.transportSequence, true);
         } else if (!nbt.getBoolean("partial")) {
             HologramSnapshotInbox.Result<NBTTagCompound> deferred = deferredSnapshots.peekLast();
             if (deferred != null && deferred.value.getString("session")
-                .equals(nbt.getString("session")) && olderSnapshot(nbt, deferred.value)) return;
+                .equals(nbt.getString("session")) && olderSnapshot(nbt, deferred.value)) {
+                result.close();
+                return;
+            }
             if (preparingResult != null) {
                 NBTTagCompound previous = preparingResult.value;
                 if (previous.getString("session")
                     .equals(nbt.getString("session"))) {
-                    if (olderSnapshot(nbt, previous)) return;
+                    if (olderSnapshot(nbt, previous)) {
+                        result.close();
+                        return;
+                    }
                 } else if (previous.getLong("editorWorkspaceEpoch") == 0) retire(previous.getString("session"));
                 HologramClientProgress.decoded(preparingResult.transportSequence, false);
             }
             clearSnapshotPreparation();
+            if (!reserveMaterialized(result)) return;
             preparingResult = result;
-            preparingSnapshot = new HologramState.Preparation(nbt);
+            try {
+                preparingSnapshot = new HologramState.Preparation(nbt);
+            } catch (RuntimeException invalid) {
+                clearSnapshotPreparation();
+                throw invalid;
+            }
             snapshotPreparationProgress();
         } else if (preparingSnapshot != null || !deferredSnapshots.isEmpty()) {
             int rows = nbt.getTagList("cells", 10)
@@ -1722,14 +1903,34 @@ public final class HologramClient {
                 clearSnapshotPreparation();
                 requestFullSnapshot(nbt.getString("session"));
                 HologramClientProgress.decoded(result.transportSequence, false);
+                result.close();
                 return;
             }
             deferredSnapshots.addLast(result);
             deferredCellRows += rows;
         } else {
-            installSnapshot(nbt);
+            publishDecoded(result, null);
             HologramClientProgress.decoded(result.transportSequence, true);
         }
+    }
+
+    private static boolean reserveMaterialized(HologramSnapshotInbox.Result<NBTTagCompound> result) {
+        if (result.retainedBytes == 0 || result.materialized != null) return true;
+        HologramSnapshotRetentions.reap();
+        result.materialized = com.miaokatze.gtmb.hologram.HologramProcessGovernor
+            .tryRetain("snapshot.materialized", Math.max(4096, 2L * result.retainedBytes));
+        if (result.materialized != null) return true;
+        decodeNotice(
+            "decodeBusy",
+            "Snapshot memory is busy; the previous complete view was retained. Retry the current view.");
+        HologramClientProgress.decoded(result.transportSequence, false);
+        result.close();
+        return false;
+    }
+
+    private static void publishDecoded(HologramSnapshotInbox.Result<NBTTagCompound> result, HologramState prepared) {
+        if (!reserveMaterialized(result)) return;
+        result.publish(value -> installSnapshot(value, prepared));
     }
 
     private static boolean validSnapshotIdentity(NBTTagCompound nbt) {
@@ -1763,7 +1964,7 @@ public final class HologramClient {
         HologramState prepared = preparingSnapshot.result();
         preparingSnapshot = null;
         preparingResult = null;
-        installSnapshot(complete.value, prepared);
+        publishDecoded(complete, prepared);
         HologramClientProgress.decoded(complete.transportSequence, true);
         // Edit ACKs remain ordered behind the complete baseline. One small delta is installed per tick.
         installDeferredSnapshot();
@@ -1774,7 +1975,7 @@ public final class HologramClient {
         HologramSnapshotInbox.Result<NBTTagCompound> next = deferredSnapshots.removeFirst();
         deferredCellRows -= next.value.getTagList("cells", 10)
             .tagCount();
-        installSnapshot(next.value);
+        publishDecoded(next, null);
         HologramClientProgress.decoded(next.transportSequence, true);
     }
 
@@ -1793,7 +1994,9 @@ public final class HologramClient {
 
     private static void clearSnapshotPreparation() {
         preparingSnapshot = null;
+        if (preparingResult != null) preparingResult.close();
         preparingResult = null;
+        for (HologramSnapshotInbox.Result<NBTTagCompound> deferred : deferredSnapshots) deferred.close();
         deferredSnapshots.clear();
         deferredCellRows = 0;
     }
@@ -2061,18 +2264,23 @@ public final class HologramClient {
     }
 
     static void clearProjection() {
+        clearSnapshotFailures();
         clearProjection(true);
     }
 
     private static void clearProjection(boolean invalidatePending) {
+        HologramSnapshotModelsClient.clear();
         fullSnapshotRequested = false;
         clearSnapshotPreparation();
         placementIdentitySync.clear();
         pendingPositionLock.clear();
         rootCloseFence.clear();
         if (invalidatePending) {
-            assembly.clear();
-            snapshotInbox.clear();
+            synchronized (snapshotTransportLock) {
+                assembly.clear();
+                displayAssembly.clear();
+                snapshotInbox.clear();
+            }
         }
         // A decoded server cancellation can precede an already arriving new-session snapshot.
         if (state != null) retire(state.session);
@@ -2101,6 +2309,7 @@ public final class HologramClient {
         HologramAreaOverlay.clearRenderWitness();
         Minecraft mc = Minecraft.getMinecraft();
         assembly.expire(System.nanoTime());
+        displayAssembly.expire(System.nanoTime());
         syncSnapshotWorld();
         // The read-only library viewport owns the native render snapshot while it is visible.
         // Rendering the workspace behind it would swap that snapshot twice per frame and

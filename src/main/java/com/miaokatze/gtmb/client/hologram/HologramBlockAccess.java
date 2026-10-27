@@ -15,6 +15,7 @@ import net.minecraftforge.common.util.ForgeDirection;
 final class HologramBlockAccess implements IBlockAccess {
 
     private final HologramRegionCache cells;
+    private final HologramState state;
     private final boolean current;
     private final Map<String, TileEntity> tiles = new HashMap<>();
     private final Map<String, String> failures = new HashMap<>();
@@ -23,12 +24,15 @@ final class HologramBlockAccess implements IBlockAccess {
     private boolean preparingTopology;
     private boolean loadingTile;
     private HologramRenderWorld renderWorld;
+    private HologramState.Cell modelReader;
+    private boolean modelIncomplete;
 
     HologramBlockAccess(HologramState state) {
         this(state, false);
     }
 
     HologramBlockAccess(HologramState state, boolean current) {
+        this.state = state;
         this.current = current;
         cells = state.regions;
     }
@@ -50,6 +54,14 @@ final class HologramBlockAccess implements IBlockAccess {
 
     public TileEntity getTileEntity(int x, int y, int z) {
         String key = key(x, y, z);
+        HologramState.Cell input = cells.at(x, y, z);
+        if (input != null && input.modelPending(current)) {
+            modelIncomplete = true;
+            HologramSnapshotModelsClient.requestVisible(state, input, current);
+            HologramSnapshotModelsClient.dependency(modelReader, input);
+            if (modelReader != null) HologramBlockRender.defer(modelReader, current);
+            return null; // Unknown visual data is not a known empty tile and must not enter loaded/failure caches.
+        }
         // Native NBT readers can invalidate all six neighbors. A connected picture
         // must not recursively deserialize the entire surface on the Java stack.
         // Only completed neighbors are visible during hydration; unvisited cells
@@ -100,6 +112,16 @@ final class HologramBlockAccess implements IBlockAccess {
                     + cause.getMessage());
             return null;
         }
+    }
+
+    void beginModel(HologramState.Cell cell) {
+        modelReader = cell;
+        modelIncomplete = false;
+    }
+
+    boolean endModel() {
+        modelReader = null;
+        return !modelIncomplete;
     }
 
     /** Hydrate at most immediate neighbors, then prepare each cached tile when it is requested for rendering. */

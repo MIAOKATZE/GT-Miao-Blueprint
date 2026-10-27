@@ -25,6 +25,8 @@ import appeng.api.storage.data.IAEStack;
 /** Wire identity, stock allocation and requester delivery boundaries; native network acceptance is separate. */
 final class HologramMaterialQuoteRegression {
 
+    private static Item sensorFixture;
+
     private HologramMaterialQuoteRegression() {}
 
     static void run() {
@@ -986,9 +988,10 @@ final class HologramMaterialQuoteRegression {
     }
 
     private static Item sensorCard() throws Exception {
+        if (sensorFixture != null) return sensorFixture;
         String registry = "gtmb:material_quote_sensor_fixture";
         Item registered = (Item) Item.itemRegistry.getObject(registry);
-        if (registered != null) return registered;
+        if (registered != null) return sensorFixture = registered;
         java.lang.reflect.Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
         unsafeField.setAccessible(true);
         Item card = (Item) ((sun.misc.Unsafe) unsafeField.get(null))
@@ -1003,7 +1006,7 @@ final class HologramMaterialQuoteRegression {
         while (free > 4095 && Item.getItemById(free) != null) free--;
         if (free <= 4095) throw new AssertionError("No registered sensor fixture slot");
         Item.itemRegistry.addObject(free, registry, card);
-        return card;
+        return sensorFixture = card;
     }
 
     private static ItemStack card(Item item, int x, String mode) {

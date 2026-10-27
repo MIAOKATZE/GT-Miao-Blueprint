@@ -48,6 +48,7 @@ final class HologramBlueprintData {
 
     static HologramCapture.Cell blueprintCell(HologramCapture.Cell old, int x, int y, int z) {
         HologramCapture.Cell cell = HologramVirtualTransform.at(old, x, y, z);
+        cell.segmentCellId = old.segmentCellId;
         cell.sourceClass = old.sourceClass;
         cell.sourceWarning = old.sourceWarning;
         cell.blueprintBlock = old.blueprintBlock;
@@ -86,6 +87,7 @@ final class HologramBlueprintData {
             HologramPresets.Cell source = saved.remove(position);
             if (source == null) throw new java.io.IOException("投影来源未包含原结构格：" + position);
             HologramCapture.Cell copy = blueprintCell(old, old.x, old.y, old.z);
+            copy.segmentCellId = source.segmentCellId;
             copy.block = source.block();
             copy.meta = source.metadata;
             copy.unknown = source.missing();

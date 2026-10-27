@@ -163,7 +163,7 @@ public final class HologramTextBox {
         for (int i = 0; i < turns.length; i++) turns[i]++;
     }
 
-    public static final class Cell {
+    public static final class Cell implements AutoCloseable {
 
         public final int x, y, z;
         /** Seven integers per cuboid: paint index followed by min/max XYZ. No retained native NBT tree. */
@@ -172,6 +172,9 @@ public final class HologramTextBox {
         public final int[] metadata, colors;
         public final boolean fullBlock;
         private String encodedTile;
+        private final HologramAttachmentMemory.Retention memory = new HologramAttachmentMemory.Retention();
+        private final HologramAttachmentMemory.Retention encodedMemory = new HologramAttachmentMemory.Retention();
+        private boolean encodedExported;
 
         Cell(int x, int y, int z, int[] boxes, String[] materials, int[] metadata, int[] colors, boolean fullBlock) {
             this.x = x;
@@ -193,8 +196,46 @@ public final class HologramTextBox {
         }
 
         String encodedTile() throws IOException {
-            if (encodedTile == null) encodedTile = HologramBlueprintNbt.encodeCaptured(tile());
+            if (encodedTile == null) {
+                long count = boxes.length / 7;
+                int materialLength = 0;
+                for (String material : materials) materialLength = Math.max(materialLength, material.length());
+                long raw = 256L + count * (1024L + 3L * materialLength);
+                long compressed = Math.min(HologramBlueprintNbt.MAX_COMPRESSED, raw + raw / 100 + 1024);
+                // Both NBT trees, growable gzip/base64 buffers and the final string are admitted before creation.
+                try (HologramProcessGovernor.Lease working = HologramAttachmentMemory
+                    .reserve("attachment tile encoding", 65536L + 8192L * count + 8L * compressed)) {
+                    String encoded = HologramBlueprintNbt.encodeCaptured(tile());
+                    HologramProcessGovernor.Lease result = HologramAttachmentMemory
+                        .reserve("attachment encoded tile", 512L + 2L * encoded.length());
+                    try {
+                        HologramAttachmentMemory.retain(encoded, encodedMemory, result);
+                        encodedTile = encoded;
+                    } catch (IOException | RuntimeException | Error failure) {
+                        result.close();
+                        throw failure;
+                    }
+                }
+            }
             return encodedTile;
+        }
+
+        String exportEncodedTile() throws IOException {
+            String encoded = encodedTile();
+            HologramAttachmentMemory.export(encoded, encodedMemory);
+            encodedExported = true;
+            return encoded;
+        }
+
+        void retain(HologramProcessGovernor.Lease lease) throws IOException {
+            HologramAttachmentMemory.retain(this, memory, lease);
+        }
+
+        @Override
+        public void close() {
+            encodedTile = null;
+            memory.close();
+            if (!encodedExported) encodedMemory.close();
         }
 
         private NBTTagCompound tile(int count) {
@@ -202,6 +243,8 @@ public final class HologramTextBox {
             tile.setString("id", "LittleTilesTileEntity");
             tile.setInteger("tilesCount", count);
             for (int i = 0; i < count; i++) {
+                if ((i & 255) == 0 && HologramAttachmentGeometry.cancelled())
+                    throw new java.util.concurrent.CancellationException("附加对象生成已取消");
                 int at = i * 7, paint = boxes[at];
                 NBTTagCompound box = new NBTTagCompound();
                 box.setString("tID", colors[paint] == 0xffffff ? "BlockTileBlock" : "BlockTileColored");
@@ -248,103 +291,105 @@ public final class HologramTextBox {
     public List<Cell> generate() throws IOException {
         validate();
         if (picture != null) return picture.generate(this);
-        HologramMicroTiles tiles = new HologramMicroTiles();
-        int attempts = 0;
-        double span = Math.max(1, width * pixelX - 1), verticalSpan = height * pixelY;
-        for (int py = 0; py < height; py++) for (int px = 0; px < width; px++) {
-            if (px == 0) HologramAttachmentGeometry.checkpoint("raster", py, height);
-            if (!pixel(px, py)) continue;
-            if (arc == 0 && bend == 0
-                && twist == 0
-                && shear == 0
-                && !(vertical && layoutVersion == 0)
-                && axisAligned()) {
-                box(
-                    tiles,
-                    px * pixelX,
-                    (height - py - 1) * pixelY,
-                    0,
-                    pixelX,
-                    pixelY,
-                    thickness,
-                    material,
-                    metadata,
-                    color);
-                continue;
-            }
-            for (int sx = 0; sx < pixelX; sx++)
-                for (int sy = 0; sy < pixelY; sy++) for (int sz = 0; sz < thickness; sz++) {
-                    if (++attempts > MAX_SAMPLES) throw new IOException("文字采样超过上限，请减小文字、像素大小或厚度");
-                    double xx = px * pixelX + sx, yy = (height - py - 1) * pixelY + sy, zz = sz;
-                    if (layoutVersion == 1) {
-                        // The running direction is the line for horizontal text and the column for vertical text.
-                        // Keep its midpoint fixed; equal distances on either side receive opposite angles.
-                        double centerX = (width * pixelX - 1) / 2d, centerY = (verticalSpan - 1) / 2d,
-                            centerZ = (thickness - 1) / 2d;
-                        double runningSpan = vertical ? Math.max(1, verticalSpan - 1) : span;
-                        double originalU = vertical ? yy : xx, centerU = vertical ? centerY : centerX;
-                        double at = (originalU - centerU) / runningSpan;
-                        if (Math.abs(arc) >= .001) {
-                            double angle = Math.toRadians(arc), radius = runningSpan / angle;
-                            double cross = vertical ? xx - centerX : yy - centerY;
-                            double along = Math.sin(at * angle) * (radius + cross) + centerU;
-                            double across = Math.cos(at * angle) * (radius + cross) - radius;
-                            if (vertical) {
-                                yy = along;
-                                xx = centerX + across;
-                            } else {
-                                xx = along;
-                                yy = centerY + across;
+        try (HologramMicroTiles tiles = new HologramMicroTiles()) {
+            int attempts = 0;
+            double span = Math.max(1, width * pixelX - 1), verticalSpan = height * pixelY;
+            for (int py = 0; py < height; py++) for (int px = 0; px < width; px++) {
+                if (px == 0) HologramAttachmentGeometry.checkpoint("raster", py, height);
+                if (!pixel(px, py)) continue;
+                if (arc == 0 && bend == 0
+                    && twist == 0
+                    && shear == 0
+                    && !(vertical && layoutVersion == 0)
+                    && axisAligned()) {
+                    box(
+                        tiles,
+                        px * pixelX,
+                        (height - py - 1) * pixelY,
+                        0,
+                        pixelX,
+                        pixelY,
+                        thickness,
+                        material,
+                        metadata,
+                        color);
+                    continue;
+                }
+                for (int sx = 0; sx < pixelX; sx++)
+                    for (int sy = 0; sy < pixelY; sy++) for (int sz = 0; sz < thickness; sz++) {
+                        if (++attempts > MAX_SAMPLES) throw new IOException("文字采样超过上限，请减小文字、像素大小或厚度");
+                        double xx = px * pixelX + sx, yy = (height - py - 1) * pixelY + sy, zz = sz;
+                        if (layoutVersion == 1) {
+                            // The running direction is the line for horizontal text and the column for vertical text.
+                            // Keep its midpoint fixed; equal distances on either side receive opposite angles.
+                            double centerX = (width * pixelX - 1) / 2d, centerY = (verticalSpan - 1) / 2d,
+                                centerZ = (thickness - 1) / 2d;
+                            double runningSpan = vertical ? Math.max(1, verticalSpan - 1) : span;
+                            double originalU = vertical ? yy : xx, centerU = vertical ? centerY : centerX;
+                            double at = (originalU - centerU) / runningSpan;
+                            if (Math.abs(arc) >= .001) {
+                                double angle = Math.toRadians(arc), radius = runningSpan / angle;
+                                double cross = vertical ? xx - centerX : yy - centerY;
+                                double along = Math.sin(at * angle) * (radius + cross) + centerU;
+                                double across = Math.cos(at * angle) * (radius + cross) - radius;
+                                if (vertical) {
+                                    yy = along;
+                                    xx = centerX + across;
+                                } else {
+                                    xx = along;
+                                    yy = centerY + across;
+                                }
+                            }
+                            if (Math.abs(bend) >= .001) {
+                                double angle = Math.toRadians(bend), radius = runningSpan / angle;
+                                double along = Math.sin(at * angle) * (radius + zz - centerZ) + centerU;
+                                zz = Math.cos(at * angle) * (radius + zz - centerZ) - radius + centerZ;
+                                if (vertical) yy += along - originalU;
+                                else xx += along - originalU;
+                            }
+                            if (twist != 0) {
+                                double angle = Math.toRadians(twist) * at,
+                                    cross = vertical ? xx - centerX : yy - centerY;
+                                double depth = zz - centerZ;
+                                double across = Math.cos(angle) * cross - Math.sin(angle) * depth;
+                                zz = Math.sin(angle) * cross + Math.cos(angle) * depth + centerZ;
+                                if (vertical) xx = across + centerX;
+                                else yy = across + centerY;
+                            }
+                        } else {
+                            if (Math.abs(arc) >= .001) {
+                                double angle = Math.toRadians(arc), radius = span / angle, at = xx / span * angle;
+                                xx = Math.sin(at) * (radius + yy);
+                                yy = Math.cos(at) * (radius + yy) - radius;
+                            }
+                            if (Math.abs(bend) >= .001) {
+                                double angle = Math.toRadians(bend), radius = span / angle,
+                                    at = (px * pixelX + sx) / span * angle;
+                                double before = xx;
+                                xx = Math.sin(at) * (radius + zz);
+                                zz = Math.cos(at) * (radius + zz) - radius;
+                                // Arc and spatial curvature remain independently editable.
+                                if (Math.abs(arc) >= .001) xx += before - px * pixelX - sx;
+                            }
+                            if (twist != 0) {
+                                double at = Math.toRadians(twist) * (px * pixelX + sx) / span;
+                                double oldY = yy - verticalSpan / 2;
+                                yy = Math.cos(at) * oldY - Math.sin(at) * zz + verticalSpan / 2;
+                                zz = Math.sin(at) * oldY + Math.cos(at) * zz;
                             }
                         }
-                        if (Math.abs(bend) >= .001) {
-                            double angle = Math.toRadians(bend), radius = runningSpan / angle;
-                            double along = Math.sin(at * angle) * (radius + zz - centerZ) + centerU;
-                            zz = Math.cos(at * angle) * (radius + zz - centerZ) - radius + centerZ;
-                            if (vertical) yy += along - originalU;
-                            else xx += along - originalU;
+                        xx += shear * yy / 100;
+                        if (vertical && layoutVersion == 0) {
+                            double previous = xx;
+                            xx = -yy;
+                            yy = previous;
                         }
-                        if (twist != 0) {
-                            double angle = Math.toRadians(twist) * at, cross = vertical ? xx - centerX : yy - centerY;
-                            double depth = zz - centerZ;
-                            double across = Math.cos(angle) * cross - Math.sin(angle) * depth;
-                            zz = Math.sin(angle) * cross + Math.cos(angle) * depth + centerZ;
-                            if (vertical) xx = across + centerX;
-                            else yy = across + centerY;
-                        }
-                    } else {
-                        if (Math.abs(arc) >= .001) {
-                            double angle = Math.toRadians(arc), radius = span / angle, at = xx / span * angle;
-                            xx = Math.sin(at) * (radius + yy);
-                            yy = Math.cos(at) * (radius + yy) - radius;
-                        }
-                        if (Math.abs(bend) >= .001) {
-                            double angle = Math.toRadians(bend), radius = span / angle,
-                                at = (px * pixelX + sx) / span * angle;
-                            double before = xx;
-                            xx = Math.sin(at) * (radius + zz);
-                            zz = Math.cos(at) * (radius + zz) - radius;
-                            // Arc and spatial curvature remain independently editable.
-                            if (Math.abs(arc) >= .001) xx += before - px * pixelX - sx;
-                        }
-                        if (twist != 0) {
-                            double at = Math.toRadians(twist) * (px * pixelX + sx) / span;
-                            double oldY = yy - verticalSpan / 2;
-                            yy = Math.cos(at) * oldY - Math.sin(at) * zz + verticalSpan / 2;
-                            zz = Math.sin(at) * oldY + Math.cos(at) * zz;
-                        }
+                        int[] voxel = orient(xx, yy, zz);
+                        tiles.add(voxel[0], voxel[1], voxel[2], material, metadata, color);
                     }
-                    xx += shear * yy / 100;
-                    if (vertical && layoutVersion == 0) {
-                        double previous = xx;
-                        xx = -yy;
-                        yy = previous;
-                    }
-                    int[] voxel = orient(xx, yy, zz);
-                    tiles.add(voxel[0], voxel[1], voxel[2], material, metadata, color);
-                }
+            }
+            return tiles.finish(x, y, z);
         }
-        return tiles.finish(x, y, z);
     }
 
     public static boolean isAttachmentId(String id) {
