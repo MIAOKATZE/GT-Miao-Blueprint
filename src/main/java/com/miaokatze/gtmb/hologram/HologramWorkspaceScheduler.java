@@ -140,6 +140,7 @@ final class HologramWorkspaceScheduler {
             s.attachmentTask.tick();
             return;
         }
+        if (HologramSessionPolicy.currentTool(s) == null && HologramLibraryFacade.activationPending(s)) return;
         if (!HologramSessionPolicy.tickValid(s) || s.libraryWorld != s.player.worldObj) {
             HologramDeferredPlanRefresh.suspend(s);
             HologramProjectorWorkflow.libraryCloseUi(s);

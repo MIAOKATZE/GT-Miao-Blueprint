@@ -9,24 +9,37 @@ import net.minecraft.nbt.NBTTagCompound;
 final class HologramLibraryActivationResult implements HologramLibraryFacade.ActivationCompletion {
 
     private final NBTTagCompound identity;
-    private final String reply;
+    private String reply;
     private final BooleanSupplier sourceCurrent, transportCurrent;
+    private final BooleanSupplier toolReady;
     private final Consumer<NBTTagCompound> sink;
-    private boolean terminal;
+    private volatile boolean terminal;
+    private volatile String pendingFailure;
+    private volatile boolean probeMiss;
+    private Runnable prepared;
+    private boolean preparedClaimed;
     private BooleanSupplier confirmationCurrent = () -> true;
 
     HologramLibraryActivationResult(NBTTagCompound request, String reply, BooleanSupplier sourceCurrent,
         BooleanSupplier transportCurrent, Consumer<NBTTagCompound> sink) {
+        this(request, reply, sourceCurrent, transportCurrent, () -> true, sink);
+    }
+
+    HologramLibraryActivationResult(NBTTagCompound request, String reply, BooleanSupplier sourceCurrent,
+        BooleanSupplier transportCurrent, BooleanSupplier toolReady, Consumer<NBTTagCompound> sink) {
         identity = (NBTTagCompound) request.copy();
         this.reply = reply;
         this.sourceCurrent = sourceCurrent;
         this.transportCurrent = transportCurrent;
+        this.toolReady = toolReady;
         this.sink = sink;
     }
 
     @Override
     public boolean current() {
-        return !terminal && transportCurrent.getAsBoolean()
+        return !terminal && pendingFailure == null
+            && !probeMiss
+            && transportCurrent.getAsBoolean()
             && sourceCurrent.getAsBoolean()
             && confirmationCurrent.getAsBoolean();
     }
@@ -57,9 +70,45 @@ final class HologramLibraryActivationResult implements HologramLibraryFacade.Act
         return transportCurrent.getAsBoolean();
     }
 
+    boolean owns(HologramSession session) {
+        return identity.getString("session")
+            .equals(session.id) && identity.getLong("planRevision") == session.planRevision;
+    }
+
+    /** Worker threads report failure; only the owner poll delivers terminal callbacks. */
+    synchronized void reject(String reason) {
+        if (!terminal && pendingFailure == null)
+            pendingFailure = reason == null ? "Blueprint preparation failed" : reason;
+    }
+
+    void probeMiss() {
+        probeMiss = true;
+    }
+
+    void prepared(String reply, Runnable activation) {
+        if (terminal || pendingFailure != null || preparedClaimed) return;
+        preparedClaimed = true;
+        this.reply = reply;
+        prepared = activation;
+        poll();
+    }
+
     void poll() {
-        if (!terminal && !current())
-            failed("Blueprint activation cancelled or source changed; original editor retained");
+        if (terminal) return;
+        if (probeMiss) {
+            terminal = true;
+            prepared = null;
+            pendingFailure = null;
+            confirmationCurrent = () -> true;
+            return;
+        }
+        if (pendingFailure != null) failed(pendingFailure);
+        else if (!current()) failed("Blueprint activation cancelled or source changed; original editor retained");
+        else if (prepared != null && toolReady.getAsBoolean()) {
+            Runnable activation = prepared;
+            prepared = null;
+            activation.run();
+        }
     }
 
     @Override
@@ -71,6 +120,8 @@ final class HologramLibraryActivationResult implements HologramLibraryFacade.Act
             return;
         }
         terminal = true;
+        prepared = null;
+        pendingFailure = null;
         confirmationCurrent = () -> true;
         NBTTagCompound result = envelope(reply);
         result.setString("id", id == null ? "" : id);
@@ -81,6 +132,8 @@ final class HologramLibraryActivationResult implements HologramLibraryFacade.Act
     public void failed(String reason) {
         if (terminal) return;
         terminal = true;
+        prepared = null;
+        pendingFailure = null;
         confirmationCurrent = () -> true;
         NBTTagCompound result = envelope("error");
         result.setString("message", reason == null ? "Blueprint activation failed" : reason);

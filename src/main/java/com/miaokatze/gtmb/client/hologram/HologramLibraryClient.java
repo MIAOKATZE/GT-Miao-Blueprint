@@ -79,6 +79,7 @@ final class HologramLibraryClient {
     private int quickSlot;
     private final HologramLibraryQuickState quick = new HologramLibraryQuickState();
     private String quickLocal = "", quickSession = "", observedPublic = "";
+    private NBTTagCompound pendingQuickBootstrap;
     private NBTTagCompound quickFallback;
     private NBTTagCompound placementIntent;
     private NBTTagCompound incomingPreview;
@@ -136,14 +137,47 @@ final class HologramLibraryClient {
             .toString();
         final java.util.function.Consumer<String> ready;
         final DisplaySource source;
-        boolean uploading;
-        final HologramContentAdmissionFence fence;
+        boolean uploading, probeReady, probeSent;
+        byte[] preparedArtifact;
+        String readyHash = "";
+        Object world;
+        net.minecraft.item.ItemStack tool;
+        final int slot, dimension;
+        final String toolId;
+        HologramContentAdmissionFence fence;
 
-        ContentAdmission(long task, DisplaySource source, java.util.function.Consumer<String> ready) {
+        ContentAdmission(long task, DisplaySource source, java.util.function.Consumer<String> ready, Minecraft mc) {
             this.source = source;
             String hash = source.hash;
             this.ready = ready;
             fence = new HologramContentAdmissionFence(task, transfer, hash);
+            world = mc.theWorld;
+            slot = mc.thePlayer.inventory.currentItem;
+            dimension = mc.thePlayer.dimension;
+            tool = mc.thePlayer.getHeldItem();
+            toolId = tool.hasTagCompound() ? tool.getTagCompound()
+                .getString("gtitHologramToolId") : "";
+        }
+
+        boolean owned(Minecraft mc) {
+            if (world == null || mc.theWorld != world
+                || mc.thePlayer == null
+                || mc.thePlayer.dimension != dimension
+                || slot < 0
+                || slot >= mc.thePlayer.inventory.mainInventory.length) return false;
+            net.minecraft.item.ItemStack current = mc.thePlayer.inventory.mainInventory[slot];
+            return current != null && current.getItem() == tool.getItem()
+                && (toolId.isEmpty() ? current == tool
+                    : current.hasTagCompound() && toolId.equals(
+                        current.getTagCompound()
+                            .getString("gtitHologramToolId")));
+        }
+
+        void close() {
+            fence.cancel();
+            preparedArtifact = null;
+            world = null;
+            tool = null;
         }
     }
 
@@ -558,21 +592,8 @@ final class HologramLibraryClient {
             lastSaveStatus = System.nanoTime();
             HologramNetwork.sendLibrary(query);
         }
-        if (quick.active()) {
-            if (HologramClient.state != null && HologramClient.state.data.getBoolean("virtualLocked")
-                && !(outgoingQuick && outgoing != null)
-                && quick.snapshotMatches(
-                    HologramClient.state.data.getString("quickToken"),
-                    backgroundTaskToken,
-                    HologramClient.state.data.getLong("quickClientTaskToken"))
-                && quick.commitLockedSession(HologramClient.state.session)) {
-                quickFallback = null;
-                preparing = false;
-                progressCompleted();
-                finishBackgroundTask(backgroundTaskToken, true, "蓝图已在原目标位置准备就绪");
-                HologramLocalPlacement.INSTANCE.clear();
-            } else if (!sameQuickTool(mc) || !quickScreenAllowed(mc)) cancelQuickPlacement();
-        }
+        tickContentAdmission(mc);
+        tickQuick(mc);
         if (dedicated() && HologramClient.state != null) {
             String selected = HologramClient.state.data.getString("selectedPresetId");
             if (selected.startsWith("public_") && selected.equals(selectedServer)
@@ -687,17 +708,44 @@ final class HologramLibraryClient {
         return quick.active();
     }
 
+    void tickQuick(Minecraft mc) {
+        if (quick.active()) {
+            if (HologramClient.state != null && HologramClient.state.data.getBoolean("virtualLocked")
+                && !(outgoingQuick && outgoing != null)
+                && quick.snapshotMatches(
+                    HologramClient.state.data.getString("quickToken"),
+                    backgroundTaskToken,
+                    HologramClient.state.data.getLong("quickClientTaskToken"))
+                && quick.commitLockedSession(HologramClient.state.session)) {
+                quickFallback = null;
+                preparing = false;
+                progressCompleted();
+                finishBackgroundTask(backgroundTaskToken, true, "蓝图已在原目标位置准备就绪");
+                HologramLocalPlacement.INSTANCE.clear();
+            } else if (!quickScreenAllowed(mc) || !sameQuickOwnedTool(mc) || !preparing && !sameQuickTool(mc))
+                cancelQuickPlacement();
+            else if (pendingQuickBootstrap != null && sameQuickTool(mc)) {
+                NBTTagCompound bootstrap = pendingQuickBootstrap;
+                pendingQuickBootstrap = null;
+                submitQuickBootstrap(bootstrap);
+            }
+        }
+    }
+
     private boolean quickScreenAllowed(Minecraft mc) {
         return mc.currentScreen == null || mc.currentScreen instanceof HologramPlacementLoadingScreen
             || mc.currentScreen instanceof HologramScreen && HologramBackgroundTasks.libraryTask();
     }
 
     private boolean sameQuickTool(Minecraft mc) {
-        if (mc.thePlayer == null || mc.thePlayer.inventory.currentItem != quickSlot
-            || !com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector
-                .isProjector(mc.thePlayer.getHeldItem()))
+        return mc.thePlayer != null && mc.thePlayer.inventory.currentItem == quickSlot && sameQuickOwnedTool(mc);
+    }
+
+    private boolean sameQuickOwnedTool(Minecraft mc) {
+        if (mc.thePlayer == null || quickSlot < 0 || quickSlot >= mc.thePlayer.inventory.mainInventory.length)
             return false;
-        net.minecraft.item.ItemStack held = mc.thePlayer.getHeldItem();
+        net.minecraft.item.ItemStack held = mc.thePlayer.inventory.mainInventory[quickSlot];
+        if (!com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector.isProjector(held)) return false;
         String id = held.hasTagCompound() ? held.getTagCompound()
             .getString("gtitHologramToolId") : "";
         if (!quickToolId.isEmpty()) return quickToolId.equals(id);
@@ -709,6 +757,7 @@ final class HologramLibraryClient {
     }
 
     boolean cancelQuickPlacement() {
+        pendingQuickBootstrap = null;
         if (!quick.active()) return false;
         long cancelledTask = backgroundTaskToken;
         String token = quick.cancel();
@@ -1829,34 +1878,86 @@ final class HologramLibraryClient {
 
     /** Hash-only probing precedes any PNG read, artifact assembly or upload allocation. */
     private void beginContentAdmission(DisplaySource source, java.util.function.Consumer<String> readyAction) {
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.thePlayer == null || !com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector
+            .isProjector(mc.thePlayer.getHeldItem())) return;
         if (busy() || !beginBackgroundTask("准备蓝图内容")) return;
         preparing = true;
         localProgressPhase = "library.verify";
         status = "正在检查服务器已有蓝图内容";
         long token = generation;
+        ContentAdmission admitted = new ContentAdmission(backgroundTaskToken, source, readyAction, mc);
+        contentAdmission = admitted;
+        outgoingId = admitted.transfer;
         work(() -> {
             observeDisplay(token, "library.verify", 0, 0, "");
             if (source.hash.isEmpty() && source.json != null)
                 source.hash = com.miaokatze.gtmb.hologram.HologramBlueprintContentHash.of(source.json);
             main(() -> {
-                if (token != generation) return;
+                if (token != generation || contentAdmission != admitted) return;
                 workerDisplayProgress = null;
-                ContentAdmission admitted = new ContentAdmission(backgroundTaskToken, source, readyAction);
-                contentAdmission = admitted;
-                outgoingId = admitted.transfer;
-                NBTTagCompound request = request("contentResolve");
-                request.setString("transfer", admitted.transfer);
-                request.setString("jsonHash", source.hash);
-                request.setString("sourceHash", source.hash);
-                request.setString("sourceRevision", source.revision);
-                request.setString("id", source.publicId);
-                request.setString("localId", source.localId);
-                request.setBoolean("contentOnly", true);
-                request.setBoolean("hashProbe", true);
-                if (!dedicated()) request.setString("integratedPresetId", source.publicId);
-                HologramNetwork.sendLibrary(request);
+                admitted.fence = new HologramContentAdmissionFence(backgroundTaskToken, admitted.transfer, source.hash);
+                admitted.probeReady = true;
+                tickContentAdmission(Minecraft.getMinecraft());
             });
         });
+    }
+
+    /** Pure content work has no workspace capability; only its original connection, world and tool may resume it. */
+    void tickContentAdmission(Minecraft mc) {
+        ContentAdmission admitted = contentAdmission;
+        if (admitted == null) return;
+        if (!admitted.owned(mc)) {
+            cancel("原投影仪或所在世界已变化，蓝图内容准备已取消", false);
+            return;
+        }
+        if (mc.thePlayer.inventory.currentItem != admitted.slot) return;
+        if (!admitted.readyHash.isEmpty()) {
+            String hash = admitted.readyHash;
+            contentAdmission = null;
+            clearOutgoing();
+            uploadWindow = null;
+            outgoingId = "";
+            ready = inFlight = preparing = false;
+            progressCompleted();
+            finishBackgroundTask(backgroundTaskToken, true, "蓝图内容已准备好");
+            admitted.close();
+            admitted.ready.accept(hash);
+        } else if (admitted.probeReady && !admitted.probeSent) {
+            DisplaySource source = admitted.source;
+            NBTTagCompound request = request("contentResolve");
+            request.setString("transfer", admitted.transfer);
+            request.setString("jsonHash", source.hash);
+            request.setString("sourceHash", source.hash);
+            request.setString("sourceRevision", source.revision);
+            request.setString("id", source.publicId);
+            request.setString("localId", source.localId);
+            request.setBoolean("contentOnly", true);
+            request.setBoolean("hashProbe", true);
+            if (!dedicated()) request.setString("integratedPresetId", source.publicId);
+            admitted.probeSent = true;
+            HologramNetwork.sendLibrary(request);
+        } else if (admitted.preparedArtifact != null) {
+            byte[] bytes = admitted.preparedArtifact;
+            admitted.preparedArtifact = null;
+            setOutgoing(bytes, null);
+            outgoingOp = "private";
+            outgoingQuick = false;
+            outgoingLocal = admitted.source.localId;
+            ready = inFlight = false;
+            nextChunk = sentBytes = 0;
+            NBTTagCompound request = request("privateBegin");
+            request.setString("transfer", admitted.transfer);
+            request.setString("localId", admitted.source.localId);
+            request.setString("jsonHash", admitted.source.hash);
+            request.setBoolean("contentOnly", true);
+            request.setInteger("total", bytes.length);
+            request.setString("hash", admitted.source.artifactHash);
+            request.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
+            uploadWindow = new HologramLibraryProtocol.UploadWindow(request);
+            localProgressPhase = "library.upload";
+            HologramNetwork.sendLibrary(request);
+        }
     }
 
     private void uploadAdmission(ContentAdmission admitted) {
@@ -1888,23 +1989,8 @@ final class HologramLibraryClient {
             main(() -> {
                 if (token != generation || contentAdmission != admitted) return;
                 workerDisplayProgress = null;
-                setOutgoing(bytes, null);
-                outgoingOp = "private";
-                outgoingQuick = false;
-                outgoingLocal = source.localId;
-                ready = inFlight = false;
-                nextChunk = sentBytes = 0;
-                NBTTagCompound request = request("privateBegin");
-                request.setString("transfer", admitted.transfer);
-                request.setString("localId", source.localId);
-                request.setString("jsonHash", source.hash);
-                request.setBoolean("contentOnly", true);
-                request.setInteger("total", bytes.length);
-                request.setString("hash", source.artifactHash);
-                request.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
-                uploadWindow = new HologramLibraryProtocol.UploadWindow(request);
-                localProgressPhase = "library.upload";
-                HologramNetwork.sendLibrary(request);
+                admitted.preparedArtifact = bytes;
+                tickContentAdmission(Minecraft.getMinecraft());
             });
         });
     }
@@ -2118,7 +2204,7 @@ final class HologramLibraryClient {
         releaseBrowseImage();
         displayPlacement = false;
         placementIntent = null;
-        if (contentAdmission != null) contentAdmission.fence.cancel();
+        if (contentAdmission != null) contentAdmission.close();
         contentAdmission = null;
         HologramLocalPlacement.INSTANCE.retry();
         ready = inFlight = preparing = false;
@@ -2127,6 +2213,49 @@ final class HologramLibraryClient {
         if (browseState == null && !browseStatus.isEmpty()) {
             clearBrowsePreview();
             browseStatus = reason;
+        }
+    }
+
+    /** Bootstrap ownership is retained while waiting, but the next request still needs held-tool admission. */
+    private void submitQuickBootstrap(NBTTagCompound reply) {
+        if (quickFallback != null) {
+            NBTTagCompound fallback = (NBTTagCompound) quickFallback.copy();
+            fallback.setString("op", placementIntent == null ? "quickFallback" : "publicPrepare");
+            fallback.setString("session", quickSession);
+            fallback.setLong("planRevision", reply.getLong("planRevision"));
+            fallback.setString("quickToken", quick.token());
+            fallback.setLong("clientTaskToken", backgroundTaskToken);
+            fallback.setBoolean("quickPlace", true);
+            fallback.setString("action", "place");
+            preparing = true;
+            localProgressPhase = "library.session";
+            HologramNetwork.sendLibrary(fallback);
+            return;
+        }
+        if (placementIntent != null) {
+            outgoingId = UUID.randomUUID()
+                .toString();
+            outgoingOp = "private";
+            outgoingQuick = true;
+            outgoingLocal = quickLocal;
+            NBTTagCompound admitted = request("privateBegin");
+            for (Object key : placementIntent.func_150296_c()) admitted.setTag(
+                (String) key,
+                placementIntent.getTag((String) key)
+                    .copy());
+            admitted.setString("transfer", outgoingId);
+            admitted.setString("localId", quickLocal);
+            admitted.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
+            admitted.setString("session", quickSession);
+            admitted.setLong("planRevision", reply.getLong("planRevision"));
+            admitted.setString("action", "place");
+            admitted.setBoolean("quickPlace", true);
+            admitted.setString("quickToken", quick.token());
+            admitted.setBoolean("admittedOnly", true);
+            admitted.setBoolean("hashProbe", true);
+            preparing = true;
+            HologramNetwork.sendLibrary(admitted);
+            return;
         }
     }
 
@@ -2204,14 +2333,8 @@ final class HologramLibraryClient {
                 reply.getString("transfer"),
                 reply.getString("contentHash"))) return;
             lastActivity = System.nanoTime();
-            contentAdmission = null;
-            clearOutgoing();
-            uploadWindow = null;
-            outgoingId = "";
-            ready = inFlight = preparing = false;
-            progressCompleted();
-            finishBackgroundTask(backgroundTaskToken, true, "蓝图内容已准备好");
-            admitted.ready.accept(reply.getString("contentHash"));
+            admitted.readyHash = reply.getString("contentHash");
+            tickContentAdmission(Minecraft.getMinecraft());
         } else if ("needUpload".equals(op)) {
             ContentAdmission admitted = contentAdmission;
             if (admitted == null || !matchesOutgoing(reply)
@@ -2245,45 +2368,8 @@ final class HologramLibraryClient {
                 || !reply.hasKey("planRevision", 4)
                 || !quick.bootstrap(token, session)) return;
             quickSession = session;
-            if (quickFallback != null) {
-                NBTTagCompound fallback = (NBTTagCompound) quickFallback.copy();
-                fallback.setString("op", placementIntent == null ? "quickFallback" : "publicPrepare");
-                fallback.setString("session", session);
-                fallback.setLong("planRevision", reply.getLong("planRevision"));
-                fallback.setString("quickToken", token);
-                fallback.setLong("clientTaskToken", backgroundTaskToken);
-                fallback.setBoolean("quickPlace", true);
-                fallback.setString("action", "place");
-                preparing = true;
-                localProgressPhase = "library.session";
-                HologramNetwork.sendLibrary(fallback);
-                return;
-            }
-            if (placementIntent != null) {
-                outgoingId = UUID.randomUUID()
-                    .toString();
-                outgoingOp = "private";
-                outgoingQuick = true;
-                outgoingLocal = quickLocal;
-                NBTTagCompound admitted = request("privateBegin");
-                for (Object key : placementIntent.func_150296_c()) admitted.setTag(
-                    (String) key,
-                    placementIntent.getTag((String) key)
-                        .copy());
-                admitted.setString("transfer", outgoingId);
-                admitted.setString("localId", quickLocal);
-                admitted.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
-                admitted.setString("session", session);
-                admitted.setLong("planRevision", reply.getLong("planRevision"));
-                admitted.setString("action", "place");
-                admitted.setBoolean("quickPlace", true);
-                admitted.setString("quickToken", token);
-                admitted.setBoolean("admittedOnly", true);
-                admitted.setBoolean("hashProbe", true);
-                preparing = true;
-                HologramNetwork.sendLibrary(admitted);
-                return;
-            }
+            if (!sameQuickTool(Minecraft.getMinecraft())) pendingQuickBootstrap = (NBTTagCompound) reply.copy();
+            else submitQuickBootstrap(reply);
         } else if ("quickPlacement".equals(op)) {
             if (!matchesTransferTask(reply) || !quick.placement(
                 reply.getString("quickToken"),

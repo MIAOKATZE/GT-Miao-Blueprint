@@ -45,6 +45,7 @@ public final class HologramLibraryRegression {
     }
 
     public static void run() throws Exception {
+        HologramLibraryPreparationRegression.run();
         publicStorageUpgrade();
         boundedUpgradeReport();
         publicExpandedBudgetBeforePublish();
@@ -290,9 +291,9 @@ public final class HologramLibraryRegression {
     private static void contentAdmissionWithoutWorkspace() throws Exception {
         Path root = Files.createTempDirectory("gtmb-pure-admission-");
         HologramServerLibrary store = new HologramServerLibrary(root.resolve("library"), root.resolve("library.cfg"));
+        EntityPlayerMP actor = HologramLibraryPreparationRegression.connectedPlayer("ContentOnlyOwner");
         try {
             runWorker(store, () -> {});
-            EntityPlayerMP actor = player(UUID.randomUUID(), "ContentOnlyOwner");
             Object peer = peer(actor);
             UUID owner = HologramLibraryFacade.actorId(actor);
             synchronized (store) {
@@ -330,7 +331,9 @@ public final class HologramLibraryRegression {
             probe.setLong("clientTaskToken", 711);
             probe.setString("jsonHash", contentHash);
             probe.setString("sourceHash", contentHash);
-            runWorker(store, () -> handle(store, peer, probe));
+            store.submit(actor, probe, false);
+            runWorker(store, () -> {});
+            runWorker(store, () -> {});
             SimpleAssert.that(get(peer, "upload") == null, "hash-only miss allocates no upload or fake header");
             SimpleAssert.eq(0L, get(store, "reservedBytes"), "hash-only miss reserves no artifact bytes");
             SimpleAssert.eq(0, get(store, "activeUploads"), "hash-only miss occupies no upload slot");
@@ -346,7 +349,9 @@ public final class HologramLibraryRegression {
             SimpleAssert.eq("needUpload", needed.getString("op"), "only an explicit probe miss requests bytes");
             SimpleAssert.eq(contentHash, needed.getString("contentHash"), "upload need keeps the probed identity");
             SimpleAssert.eq(probe.getString("transfer"), needed.getString("transfer"), "upload need keeps task fence");
-            runWorker(store, () -> handle(store, peer, request));
+            store.submit(actor, request, false);
+            runWorker(store, () -> {});
+            runWorker(store, () -> {});
             SimpleAssert.that(get(peer, "upload") != null, "UI content miss admits bounded upload without a workspace");
             for (int offset = 0, index = 0; offset
                 < artifact.length; offset += HologramLibraryProtocol.CHUNK_BYTES, index++) {
@@ -369,10 +374,14 @@ public final class HologramLibraryRegression {
             SimpleAssert.that(
                 before == HologramWorkspace.find(owner),
                 "content admission never creates or replaces author state");
-            runWorker(store, () -> handle(store, peer, probe));
+            store.submit(actor, probe, false);
+            runWorker(store, () -> {});
+            runWorker(store, () -> {});
             SimpleAssert.that(get(peer, "upload") == null, "a hash-only content hit never requests an artifact");
             SimpleAssert.eq(0L, get(store, "reservedBytes"), "a hash-only hit keeps reservations empty");
-            runWorker(store, () -> handle(store, peer, request));
+            store.submit(actor, request, false);
+            runWorker(store, () -> {});
+            runWorker(store, () -> {});
             SimpleAssert.that(get(peer, "upload") == null, "pure content hit allocates no upload");
             request.setBoolean("contentOnly", false);
             request.setBoolean("admittedOnly", true);
@@ -388,6 +397,8 @@ public final class HologramLibraryRegression {
                 !ready.hasKey("session") && !ready.hasKey("planRevision") && !ready.hasKey("placementReviewNonce"),
                 "content readiness is not a placement or review capability");
         } finally {
+            actor.playerNetServerHandler.netManager.channel()
+                .close();
             store.stop();
         }
     }
