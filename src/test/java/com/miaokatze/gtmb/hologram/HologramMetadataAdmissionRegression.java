@@ -57,15 +57,12 @@ public final class HologramMetadataAdmissionRegression {
             HologramWorkBudget.startServerTick();
             SimpleAssert.that(task.canAdvance(), "the next actual tick retries transient queue pressure");
             SimpleAssert.eq(1, round(task), "admitted pending worker is not polled in spare rounds");
-            SimpleAssert.that(
-                report.get(task) != null && task.waitingForWorker(),
-                "next-tick admission uses the freed slot");
+            SimpleAssert
+                .that(report.get(task) != null && task.waitingForWorker(), "next-tick admission uses the freed slot");
             SimpleAssert.eq(2, references.getInt(context), "accepted queued worker owns one frozen input retain");
             task.cancel();
-            SimpleAssert.eq(
-                0,
-                references.getInt(context),
-                "queued cancellation releases worker and owner exactly once");
+            SimpleAssert
+                .eq(0, references.getInt(context), "queued cancellation releases worker and owner exactly once");
         } finally {
             HologramWorkBudget.endServerTick();
             task.cancel();
@@ -74,10 +71,8 @@ public final class HologramMetadataAdmissionRegression {
             release.countDown();
             blocker.get(5, TimeUnit.SECONDS);
         }
-        SimpleAssert.eq(
-            before,
-            HologramProcessGovernor.retainedBytes(),
-            "admission and cancellation leave no lease charge");
+        SimpleAssert
+            .eq(before, HologramProcessGovernor.retainedBytes(), "admission and cancellation leave no lease charge");
     }
 
     private static int round(HologramSnapshotMetadataTask task) {

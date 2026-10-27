@@ -27,8 +27,10 @@ final class HologramResourceReviewFact {
     }
 
     private static boolean exactEmptySchema(NBTTagCompound source) {
-        if (source.func_150296_c().size() != 4 || !source.hasKey("rows", 9)
-            || !source.hasKey("total", 4) || !source.hasKey("blocking", 4)
+        if (source.func_150296_c()
+            .size() != 4 || !source.hasKey("rows", 9)
+            || !source.hasKey("total", 4)
+            || !source.hasKey("blocking", 4)
             || !source.hasKey("nativeComplete", 1)) return false;
         NBTTagList rows = (NBTTagList) source.getTag("rows");
         byte complete = source.getByte("nativeComplete");
@@ -45,7 +47,9 @@ final class HologramResourceReviewFact {
     }
 
     int rowCount() {
-        return full == null ? 0 : full.getTagList("rows", 10).tagCount();
+        return full == null ? 0
+            : full.getTagList("rows", 10)
+                .tagCount();
     }
 
     /** Neither source mutation nor a certificate consumer can mutate a retained fact. */

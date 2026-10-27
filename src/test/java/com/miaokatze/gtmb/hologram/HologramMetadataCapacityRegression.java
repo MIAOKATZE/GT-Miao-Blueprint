@@ -55,8 +55,10 @@ public final class HologramMetadataCapacityRegression {
 
     /** Uses real leases without allocating a quota-sized payload or exercising a native provider. */
     private static void realLedgerAdmission() throws Exception {
-        Method reserve = HologramSnapshotDataContext.class.getDeclaredMethod("reserveMandatory", String.class, long.class);
-        Method retain = HologramSnapshotDataContext.class.getDeclaredMethod("retainMandatory", HologramProcessGovernor.Lease.class);
+        Method reserve = HologramSnapshotDataContext.class
+            .getDeclaredMethod("reserveMandatory", String.class, long.class);
+        Method retain = HologramSnapshotDataContext.class
+            .getDeclaredMethod("retainMandatory", HologramProcessGovernor.Lease.class);
         reserve.setAccessible(true);
         retain.setAccessible(true);
         long limit = HologramProcessGovernor.retainedByteLimit();
@@ -70,13 +72,12 @@ public final class HologramMetadataCapacityRegression {
             } catch (HologramSnapshotDataContext.CapacityExceeded expected) { /* Proven impossible, not Busy. */ }
         }
         try (HologramSnapshotDataContext context = new HologramSnapshotDataContext()) {
-            HologramProcessGovernor.Lease external = HologramProcessGovernor.retain(
-                "test.metadata.external", limit - HologramProcessGovernor.retainedBytes());
+            HologramProcessGovernor.Lease external = HologramProcessGovernor
+                .retain("test.metadata.external", limit - HologramProcessGovernor.retainedBytes());
             try {
                 reserve(reserve, context, 1);
                 throw new AssertionError("External quota holder was ignored");
-            } catch (HologramSnapshotDataContext.Busy expected) { /* Releasing the other owner permits progress. */ }
-            finally {
+            } catch (HologramSnapshotDataContext.Busy expected) { /* Releasing the other owner permits progress. */ } finally {
                 external.close();
             }
             HologramProcessGovernor.Lease admitted = reserve(reserve, context, 1);

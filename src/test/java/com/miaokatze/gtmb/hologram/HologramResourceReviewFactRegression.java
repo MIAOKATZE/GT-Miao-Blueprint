@@ -49,15 +49,18 @@ public final class HologramResourceReviewFactRegression {
                 HologramResourceReviewFact fact = HologramResourceReviewFact.freeze(source);
                 SimpleAssert.that(fact.compact(), "exact empty schema uses no retained NBT graph");
                 SimpleAssert.eq(1088L, fact.retainedBytes(), "entry allowance plus actual typed fact allowance");
-                SimpleAssert.that(fact.retainedBytes() < 1024 + HologramSnapshotNbt.estimate(source),
+                SimpleAssert.that(
+                    fact.retainedBytes() < 1024 + HologramSnapshotNbt.estimate(source),
                     "smaller charge follows a different retained representation");
                 SimpleAssert.eq(0, fact.rowCount(), "zero displayed rows does not erase aggregate counts");
                 source.setLong("total", 42);
                 NBTTagCompound returned = fact.copy();
                 SimpleAssert.that(HologramSnapshotNbt.same(expected, returned), "all scalar values round trip exactly");
                 returned.setLong("blocking", 42);
-                returned.getTagList("rows", 10).appendTag(new NBTTagCompound());
-                SimpleAssert.that(HologramSnapshotNbt.same(expected, fact.copy()), "returned certificates are independent");
+                returned.getTagList("rows", 10)
+                    .appendTag(new NBTTagCompound());
+                SimpleAssert
+                    .that(HologramSnapshotNbt.same(expected, fact.copy()), "returned certificates are independent");
             }
         }
     }
@@ -83,10 +86,12 @@ public final class HologramResourceReviewFactRegression {
         NBTTagCompound nonempty = summary(3, 2, true);
         NBTTagCompound row = new NBTTagCompound();
         row.setString("path", "/tile/extension");
-        nonempty.getTagList("rows", 10).appendTag(row);
+        nonempty.getTagList("rows", 10)
+            .appendTag(row);
         fallback(nonempty, "nonempty rows");
         NBTTagCompound typedEmpty = (NBTTagCompound) nonempty.copy();
-        typedEmpty.getTagList("rows", 10).removeTag(0);
+        typedEmpty.getTagList("rows", 10)
+            .removeTag(0);
         SimpleAssert.eq(10, ((NBTTagList) typedEmpty.getTag("rows")).func_150303_d(), "fixture has typed empty list");
         fallback(typedEmpty, "typed empty list is not silently canonicalized");
     }
@@ -95,19 +100,22 @@ public final class HologramResourceReviewFactRegression {
         NBTTagCompound expected = (NBTTagCompound) source.copy();
         HologramResourceReviewFact fact = HologramResourceReviewFact.freeze(source);
         SimpleAssert.that(!fact.compact(), label + " retains the complete schema");
-        SimpleAssert.eq(1088 + HologramSnapshotNbt.estimate(source), fact.retainedBytes(),
+        SimpleAssert.eq(
+            1088 + HologramSnapshotNbt.estimate(source),
+            fact.retainedBytes(),
             label + " charges NBT plus its wrapper and entry");
         source.setString("mutated", "source");
         NBTTagCompound returned = fact.copy();
         SimpleAssert.that(HologramSnapshotNbt.same(expected, returned), label + " is an exact native-NBT copy");
         returned.setString("mutated", "reader");
-        if (returned.hasKey("future", 10)) returned.getCompoundTag("future").setByteArray("opaque", new byte[] { 9 });
+        if (returned.hasKey("future", 10)) returned.getCompoundTag("future")
+            .setByteArray("opaque", new byte[] { 9 });
         SimpleAssert.that(HologramSnapshotNbt.same(expected, fact.copy()), label + " has deep mutation isolation");
     }
 
     private static void boundedCertificatePreservesExtensions() throws Exception {
-        Method bound = HologramSnapshotDataContext.class.getDeclaredMethod(
-            "boundedResourceReview", NBTTagCompound.class, int.class, long.class);
+        Method bound = HologramSnapshotDataContext.class
+            .getDeclaredMethod("boundedResourceReview", NBTTagCompound.class, int.class, long.class);
         bound.setAccessible(true);
         NBTTagCompound source = summary(9, 7, false);
         source.setString("future", "preserve exactly");
@@ -116,20 +124,29 @@ public final class HologramResourceReviewFactRegression {
         rows.appendTag(new NBTTagCompound());
         rows.appendTag(new NBTTagCompound());
         NBTTagCompound bounded = (NBTTagCompound) bound.invoke(null, source, 1, Long.MAX_VALUE);
-        SimpleAssert.eq(1, bounded.getTagList("rows", 10).tagCount(), "only the presentation rows are bounded");
+        SimpleAssert.eq(
+            1,
+            bounded.getTagList("rows", 10)
+                .tagCount(),
+            "only the presentation rows are bounded");
         SimpleAssert.eq("preserve exactly", bounded.getString("future"), "unknown fields survive certificate bounding");
         SimpleAssert.that(bounded.hasKey("blocking", 3), "bounding preserves original scalar types");
-        SimpleAssert.that(!HologramResourceReviewFact.freeze(bounded).compact(), "extended certificate uses full fallback");
+        SimpleAssert.that(
+            !HologramResourceReviewFact.freeze(bounded)
+                .compact(),
+            "extended certificate uses full fallback");
         source.setString("rows", "opaque future rows");
         bounded = (NBTTagCompound) bound.invoke(null, source, 0, 0L);
-        SimpleAssert.that(HologramSnapshotNbt.same(source, bounded), "unknown row schema is preserved, not projected away");
+        SimpleAssert
+            .that(HologramSnapshotNbt.same(source, bounded), "unknown row schema is preserved, not projected away");
     }
 
     private static void realContextReuseAndLeaseLifetime() throws Exception {
         Thread owner = Thread.currentThread();
         int[] calls = { 0 };
         GTMBExtensions.Registration codec = ResourceContainers.register("gtmb:test_compact_resource_fact", value -> {
-            SimpleAssert.that(Thread.currentThread() == owner && !HologramSnapshotDataContext.active(),
+            SimpleAssert.that(
+                Thread.currentThread() == owner && !HologramSnapshotDataContext.active(),
                 "native provider remains owner-only");
             calls[0]++;
             return null;
@@ -147,7 +164,10 @@ public final class HologramResourceReviewFactRegression {
                 HologramAnalysisFacts facts = new HologramAnalysisFacts()) {
                 expected = HologramBlueprintProcessing.freezeResourceReview(first, "tile", facts, 8192, 8L << 20);
             }
-            SimpleAssert.that(HologramResourceReviewFact.freeze(expected).compact(), "ordinary configuration fixture is compact");
+            SimpleAssert.that(
+                HologramResourceReviewFact.freeze(expected)
+                    .compact(),
+                "ordinary configuration fixture is compact");
             context.freezeBlock(first);
             int firstCalls = calls[0];
             long firstBytes = context.retainedResourceBytes();
@@ -161,17 +181,23 @@ public final class HologramResourceReviewFactRegression {
             Field reviews = HologramSnapshotDataContext.class.getDeclaredField("resourceReviews");
             reviews.setAccessible(true);
             for (Object value : ((Map<?, ?>) reviews.get(context)).values()) {
-                SimpleAssert.that(value instanceof HologramResourceReviewFact && ((HologramResourceReviewFact) value).compact(),
+                SimpleAssert.that(
+                    value instanceof HologramResourceReviewFact && ((HologramResourceReviewFact) value).compact(),
                     "production directory retains typed facts rather than original NBT compounds");
             }
             Field fixed = HologramSnapshotDataContext.class.getDeclaredField("fixedBytes");
             fixed.setAccessible(true);
             long held = HologramProcessGovernor.retainedBytes();
-            SimpleAssert.eq(fixed.getLong(context) + context.retainedDecodedBytes(), held - before,
+            SimpleAssert.eq(
+                fixed.getLong(context) + context.retainedDecodedBytes(),
+                held - before,
                 "real governor ledger accounts for fixed facts and optional decoded residency");
             consumer = context.retain();
             context.close();
-            SimpleAssert.eq(held, HologramProcessGovernor.retainedBytes(), "owner close cannot retire a live detached consumer");
+            SimpleAssert.eq(
+                held,
+                HologramProcessGovernor.retainedBytes(),
+                "owner close cannot retire a live detached consumer");
             int frozenCalls = calls[0];
             FutureTask<Boolean> worker = new FutureTask<>(() -> {
                 HologramSnapshotDataContext.enter(context);
@@ -179,17 +205,21 @@ public final class HologramResourceReviewFactRegression {
                     NBTTagCompound actual = HologramSnapshotDataContext.resourceReview(first, "tile");
                     boolean same = HologramSnapshotNbt.same(expected, actual);
                     actual.setLong("total", 999);
-                    return same && HologramSnapshotNbt.same(expected, HologramSnapshotDataContext.resourceReview(first, "tile"));
+                    return same && HologramSnapshotNbt
+                        .same(expected, HologramSnapshotDataContext.resourceReview(first, "tile"));
                 } finally {
                     HologramSnapshotDataContext.exit();
                 }
             });
             new Thread(worker, "GTMB-compact-facts-test").start();
-            SimpleAssert.that(worker.get(10, TimeUnit.SECONDS), "worker sees native-equivalent independently owned certificates");
+            SimpleAssert.that(
+                worker.get(10, TimeUnit.SECONDS),
+                "worker sees native-equivalent independently owned certificates");
             SimpleAssert.eq(frozenCalls, calls[0], "worker materialization performs no native callbacks");
             consumer.close();
             consumer = null;
-            SimpleAssert.eq(before, HologramProcessGovernor.retainedBytes(), "last consumer releases actual leases without GC");
+            SimpleAssert
+                .eq(before, HologramProcessGovernor.retainedBytes(), "last consumer releases actual leases without GC");
             SimpleAssert.eq(0, context.retainedResourceFacts(), "last close drops the typed-fact directory");
         } finally {
             context.close();

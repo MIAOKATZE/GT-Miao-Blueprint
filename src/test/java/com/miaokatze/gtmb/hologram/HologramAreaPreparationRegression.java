@@ -243,7 +243,8 @@ final class HologramAreaPreparationRegression {
                 "freeing a queue slot does not retry a rejected admission in the same tick");
             SimpleAssert.eq(1, preparationRound(rejected, 8), "rejected admission cannot spin in spare time");
             HologramWorkBudget.endServerTick();
-            SimpleAssert.that(rejected.canAdvance(), "standalone callers are not stranded by a previous tick rejection");
+            SimpleAssert
+                .that(rejected.canAdvance(), "standalone callers are not stranded by a previous tick rejection");
             HologramWorkBudget.startServerTick();
             SimpleAssert.that(rejected.canAdvance(), "the next actual server tick unblocks executor admission");
             rejected.advance(1, Long.MAX_VALUE);
@@ -260,7 +261,8 @@ final class HologramAreaPreparationRegression {
                 rejected.waiting() && rejected.canAdvance() && !rejected.ready(),
                 "completed future overrides the previous waiting observation without claiming final completion");
             SimpleAssert.eq(1, preparationRound(rejected, 1), "completed worker result is harvested by scheduler");
-            SimpleAssert.that(pendingTask(rejected) == null && rejected.canAdvance(), "harvest resumes the owner phase");
+            SimpleAssert
+                .that(pendingTask(rejected) == null && rejected.canAdvance(), "harvest resumes the owner phase");
             rejected.cancel();
             SimpleAssert.eq(
                 before,
@@ -323,7 +325,8 @@ final class HologramAreaPreparationRegression {
             }
             SimpleAssert.that(preparation.canAdvance() && !preparation.ready(), "native AE is runnable, not complete");
             steps += preparationRound(preparation, 8);
-            SimpleAssert.eq(8, appeng.block.GtmbAeOwnerFixture.factories, "real AE factories use spare slices on owner");
+            SimpleAssert
+                .eq(8, appeng.block.GtmbAeOwnerFixture.factories, "real AE factories use spare slices on owner");
             while (!preparation.ready() && System.nanoTime() < deadline) {
                 int before = appeng.block.GtmbAeOwnerFixture.factories;
                 preparation.advance(1, Long.MAX_VALUE);

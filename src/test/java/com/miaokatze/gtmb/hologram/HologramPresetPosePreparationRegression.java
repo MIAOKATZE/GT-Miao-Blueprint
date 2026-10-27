@@ -29,23 +29,34 @@ public final class HologramPresetPosePreparationRegression {
             for (int[] turns : new int[][] { {}, { 0 }, { 1 }, { 0, 1, 0 }, { 0, 0, 0, 0 } }) {
                 HologramSession expected = session(player), candidate = session(player);
                 HologramBlueprintProjection.populateVirtual(expected);
-                HologramBlueprintProjection.Population population = new HologramBlueprintProjection.Population(candidate);
+                HologramBlueprintProjection.Population population = new HologramBlueprintProjection.Population(
+                    candidate);
                 while (!population.step(7, Long.MAX_VALUE)) {}
                 for (int i = 0; i < turns.length; i++) SimpleAssert.that(
-                    HologramWorldPlacementWorkflow.transformVirtual(expected, expected.x, expected.y, expected.z,
-                        true, turns[i] == 1, i == turns.length - 1), "reference pose accepted");
+                    HologramWorldPlacementWorkflow.transformVirtual(
+                        expected,
+                        expected.x,
+                        expected.y,
+                        expected.z,
+                        true,
+                        turns[i] == 1,
+                        i == turns.length - 1),
+                    "reference pose accepted");
                 HologramPresetPosePreparation task = new HologramPresetPosePreparation(turns, false, true);
                 String before = HologramBlueprintContentHash.of(candidate.virtualPreset);
                 String sourceBefore = HologramBlueprintContentHash.of(candidate.processingSource);
                 SimpleAssert.that(!task.step(candidate, 0, Long.MAX_VALUE), "zero work cannot start pose");
                 SimpleAssert.that(!task.step(candidate, 7, 0), "zero time cannot start pose");
-                SimpleAssert.eq(before, HologramBlueprintContentHash.of(candidate.virtualPreset), "zero budget preserves pose");
+                SimpleAssert
+                    .eq(before, HologramBlueprintContentHash.of(candidate.virtualPreset), "zero budget preserves pose");
                 int slices = 0;
                 while (!task.step(candidate, 3, Long.MAX_VALUE))
                     SimpleAssert.that(++slices < 30000, "bounded pose reaches terminal state");
                 SimpleAssert.that(slices > 50, "large pose really yields rather than wrapping a synchronous transform");
-                SimpleAssert.eq(HologramBlueprintContentHash.of(expected.virtualPreset),
-                    HologramBlueprintContentHash.of(candidate.virtualPreset), "preset pose equals existing transform");
+                SimpleAssert.eq(
+                    HologramBlueprintContentHash.of(expected.virtualPreset),
+                    HologramBlueprintContentHash.of(candidate.virtualPreset),
+                    "preset pose equals existing transform");
                 SimpleAssert.eq(expected.capture.cells.size(), candidate.capture.cells.size(), "all cells retained");
                 for (int i = 0; i < expected.capture.cells.size(); i++) {
                     HologramCapture.Cell a = expected.capture.cells.get(i), b = candidate.capture.cells.get(i);
@@ -53,7 +64,9 @@ public final class HologramPresetPosePreparationRegression {
                     SimpleAssert.eq(a.tileNbt, b.tileNbt, "capture tile payload parity");
                     SimpleAssert.eq(a.itemNbt, b.itemNbt, "capture item payload parity");
                 }
-                SimpleAssert.eq(sourceBefore, HologramBlueprintContentHash.of(candidate.processingSource),
+                SimpleAssert.eq(
+                    sourceBefore,
+                    HologramBlueprintContentHash.of(candidate.processingSource),
                     "processing source retains canonical unrotated owned data");
             }
             HologramSession locked = session(player);
@@ -61,13 +74,15 @@ public final class HologramPresetPosePreparationRegression {
             while (!population.step(13, Long.MAX_VALUE)) {}
             HologramPresetPosePreparation lock = new HologramPresetPosePreparation(new int[0], true);
             while (!lock.step(locked, 13, Long.MAX_VALUE)) {}
-            SimpleAssert.that(locked.virtualLocked && locked.blueprintAwaitingConfirmation && !locked.placementReviewIssued,
+            SimpleAssert.that(
+                locked.virtualLocked && locked.blueprintAwaitingConfirmation && !locked.placementReviewIssued,
                 "quick lock prepares review intent without authorization or world placement");
             SimpleAssert.that(locked.job != 1 && locked.job != 3, "preparation never submits construction");
         } catch (Exception failure) {
             throw new AssertionError("preset pose preparation", failure);
         } finally {
-            if (player != null) player.playerNetServerHandler.netManager.channel().close();
+            if (player != null) player.playerNetServerHandler.netManager.channel()
+                .close();
         }
     }
 
@@ -80,8 +95,8 @@ public final class HologramPresetPosePreparationRegression {
         s.virtualPreset.id = "private_pose";
         s.virtualPreset.name = "pose";
         s.virtualPreset.controllerType = "area";
-        for (int i = 0; i < 257; i++) s.virtualPreset.cells.add(
-            HologramPresets.cell(new ItemStack(Blocks.stone), i % 17, i % 3, i / 17, -1, false));
+        for (int i = 0; i < 257; i++) s.virtualPreset.cells
+            .add(HologramPresets.cell(new ItemStack(Blocks.stone), i % 17, i % 3, i / 17, -1, false));
         s.processingSource = HologramPresets.copy(s.virtualPreset);
         return s;
     }
@@ -95,8 +110,12 @@ public final class HologramPresetPosePreparationRegression {
         Field provider = net.minecraft.world.World.class.getDeclaredField("provider");
         provider.setAccessible(true);
         provider.set(world, new net.minecraft.world.WorldProviderSurface());
-        Method factory = HologramLibraryServiceRegression.class.getDeclaredMethod("player", sun.misc.Unsafe.class,
-            HologramServiceEditRegression.ReadOnlyWorld.class, UUID.class, String.class);
+        Method factory = HologramLibraryServiceRegression.class.getDeclaredMethod(
+            "player",
+            sun.misc.Unsafe.class,
+            HologramServiceEditRegression.ReadOnlyWorld.class,
+            UUID.class,
+            String.class);
         factory.setAccessible(true);
         EntityPlayerMP player = (EntityPlayerMP) factory.invoke(null, unsafe, world, UUID.randomUUID(), "PresetPose");
         player.posY = 64;

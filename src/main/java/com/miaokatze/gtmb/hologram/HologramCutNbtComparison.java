@@ -21,15 +21,14 @@ final class HologramCutNbtComparison {
         if (first == second) return true;
         if (first == null || second == null || first.getId() != second.getId()) return false;
         // Preserve Cut's existing semantics, NOT vanilla numeric equals: canonical NaN, distinct signed zero.
-        if (first instanceof NBTTagFloat)
-            return Float.floatToIntBits(((NBTTagFloat) first).func_150288_h())
-                == Float.floatToIntBits(((NBTTagFloat) second).func_150288_h());
-        if (first instanceof NBTTagDouble)
-            return Double.doubleToLongBits(((NBTTagDouble) first).func_150286_g())
-                == Double.doubleToLongBits(((NBTTagDouble) second).func_150286_g());
+        if (first instanceof NBTTagFloat) return Float.floatToIntBits(((NBTTagFloat) first).func_150288_h())
+            == Float.floatToIntBits(((NBTTagFloat) second).func_150288_h());
+        if (first instanceof NBTTagDouble) return Double.doubleToLongBits(((NBTTagDouble) first).func_150286_g())
+            == Double.doubleToLongBits(((NBTTagDouble) second).func_150286_g());
         if (first instanceof NBTTagCompound) {
             NBTTagCompound a = (NBTTagCompound) first, b = (NBTTagCompound) second;
-            if (!a.func_150296_c().equals(b.func_150296_c())) return false;
+            if (!a.func_150296_c()
+                .equals(b.func_150296_c())) return false;
             for (Object key : a.func_150296_c())
                 if (!same(a.getTag((String) key), b.getTag((String) key))) return false;
             return true;
@@ -51,11 +50,13 @@ final class HologramCutNbtComparison {
                     return true;
                 case 5:
                     for (int i = count - 1; i >= 0; i--)
-                        if (Float.floatToIntBits(a.func_150308_e(i)) != Float.floatToIntBits(b.func_150308_e(i))) return false;
+                        if (Float.floatToIntBits(a.func_150308_e(i)) != Float.floatToIntBits(b.func_150308_e(i)))
+                            return false;
                     return true;
                 case 6:
                     for (int i = count - 1; i >= 0; i--)
-                        if (Double.doubleToLongBits(a.func_150309_d(i)) != Double.doubleToLongBits(b.func_150309_d(i))) return false;
+                        if (Double.doubleToLongBits(a.func_150309_d(i)) != Double.doubleToLongBits(b.func_150309_d(i)))
+                            return false;
                     return true;
                 case 8:
                     for (int i = count - 1; i >= 0; i--)
@@ -72,8 +73,7 @@ final class HologramCutNbtComparison {
         // 1.7 has no public generic element getter. Keep the exact old detached-copy fallback for other list
         // types (including nested lists) and mismatched element types; never remove from either caller input.
         NBTTagList first = (NBTTagList) a.copy(), second = (NBTTagList) b.copy();
-        for (int i = count - 1; i >= 0; i--)
-            if (!same(first.removeTag(i), second.removeTag(i))) return false;
+        for (int i = count - 1; i >= 0; i--) if (!same(first.removeTag(i), second.removeTag(i))) return false;
         return true;
     }
 }

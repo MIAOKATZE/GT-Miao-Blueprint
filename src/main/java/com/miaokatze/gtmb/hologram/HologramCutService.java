@@ -354,7 +354,8 @@ public final class HologramCutService {
                         y = box[1];
                         z = box[2];
                         dimension = player.dimension;
-                        try (HologramCutDiagnostics.Scope ignored = diagnostics.phase(HologramCutDiagnostics.Phase.CAPTURE, 1)) {
+                        try (HologramCutDiagnostics.Scope ignored = diagnostics
+                            .phase(HologramCutDiagnostics.Phase.CAPTURE, 1)) {
                             entry = HologramCutEntry.capture(
                                 (WorldServer) player.worldObj,
                                 x,

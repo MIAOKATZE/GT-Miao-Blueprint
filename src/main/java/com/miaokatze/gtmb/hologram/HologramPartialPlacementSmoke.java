@@ -465,16 +465,22 @@ public final class HologramPartialPlacementSmoke {
                 HologramPresets.Preset canonical = HologramBlueprintSharing.decode(
                     new String(HologramServerLibrary.encodeShare(preset), java.nio.charset.StandardCharsets.UTF_8));
                 String[] outcome = new String[2];
-                HologramService.libraryActivate(player, upload, canonical,
-                    new HologramLibraryFacade.ActivationCompletion() {
-                        @Override
-                        public void completed(String id) { outcome[0] = id; }
+                HologramService
+                    .libraryActivate(player, upload, canonical, new HologramLibraryFacade.ActivationCompletion() {
 
                         @Override
-                        public void failed(String reason) { outcome[1] = reason; }
+                        public void completed(String id) {
+                            outcome[0] = id;
+                        }
+
+                        @Override
+                        public void failed(String reason) {
+                            outcome[1] = reason;
+                        }
                     });
                 for (int tick = 0; outcome[0] == null && outcome[1] == null && tick < 128; tick++) {
-                    world.getWorldInfo().incrementTotalWorldTime(world.getTotalWorldTime() + 1);
+                    world.getWorldInfo()
+                        .incrementTotalWorldTime(world.getTotalWorldTime() + 1);
                     HologramService.tick();
                     HologramSmokeTest.flushTransport();
                 }

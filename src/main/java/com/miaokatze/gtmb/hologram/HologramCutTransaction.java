@@ -18,7 +18,8 @@ final class HologramCutTransaction {
     static void recover(HologramCutStorage storage, NBTTagCompound state, WorldServer world,
         HologramCutDiagnostics trace) throws Exception {
         PendingEdit pending = new PendingEdit(state, world, trace);
-        pending.applyAndVerify().commit(storage);
+        pending.applyAndVerify()
+            .commit(storage);
     }
 
     /** Borrowed state is exclusively owned by this synchronous invocation; never mutate it during native callbacks. */
@@ -47,7 +48,9 @@ final class HologramCutTransaction {
         VerifiedEdit applyAndVerify() throws Exception {
             checkOwner();
             try (HologramCutDiagnostics.Scope ignored = trace.phase(
-                HologramCutDiagnostics.Phase.NATIVE_APPLY, entry.getTagList("cells", 10).tagCount())) {
+                HologramCutDiagnostics.Phase.NATIVE_APPLY,
+                entry.getTagList("cells", 10)
+                    .tagCount())) {
                 HologramCutWorld.apply(world, entry, x, y, z, air);
             }
             HologramCutWorld.saveAndVerify(world, entry, x, y, z, air, trace);
@@ -85,7 +88,8 @@ final class HologramCutTransaction {
             // No in-memory consumption or native notification before the completed journal replacement succeeds.
             if (!consumeId.isEmpty()) remove(edit.state, consumeId);
             edit.state.removeTag("pending");
-            try (HologramCutDiagnostics.Scope ignored = edit.trace.phase(HologramCutDiagnostics.Phase.COMMIT_NOTIFY, 1)) {
+            try (HologramCutDiagnostics.Scope ignored = edit.trace
+                .phase(HologramCutDiagnostics.Phase.COMMIT_NOTIFY, 1)) {
                 HologramCutWorld.notifyCommitted(edit.world, edit.entry, edit.x, edit.y, edit.z, edit.air);
             }
         }
@@ -93,9 +97,11 @@ final class HologramCutTransaction {
 
     private static void remove(NBTTagCompound state, String id) {
         NBTTagList entries = state.getTagList("entries", 10);
-        for (int i = 0; i < entries.tagCount(); i++) if (id.equals(entries.getCompoundTagAt(i).getString("id"))) {
-            entries.removeTag(i);
-            return;
-        }
+        for (int i = 0; i < entries.tagCount(); i++) if (id.equals(
+            entries.getCompoundTagAt(i)
+                .getString("id"))) {
+                    entries.removeTag(i);
+                    return;
+                }
     }
 }

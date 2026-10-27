@@ -63,31 +63,48 @@ final class HologramPresetCopies {
         }
 
         long total() {
-            return (long) size(source.aeIssues) + size(source.hintAreas) + size(source.structures)
-                + size(source.retainedNbtKeys) + size(source.cells) + size(source.palette)
+            return (long) size(source.aeIssues) + size(source.hintAreas)
+                + size(source.structures)
+                + size(source.retainedNbtKeys)
+                + size(source.cells)
+                + size(source.palette)
                 + (source.modVersions == null ? 0 : source.modVersions.size());
         }
 
         boolean step(int maxWork, long maxNanos) {
             HologramPlanBudget budget = new HologramPlanBudget(maxWork, maxNanos);
             while (stage < 7 && budget.take()) {
-                if (stage == 0 && cursor < size(source.aeIssues)) result.aeIssues.add(issue(source.aeIssues.get(cursor++)));
-                else if (stage == 1 && cursor < size(source.hintAreas)) result.hintAreas.add(area(source.hintAreas.get(cursor++)));
-                else if (stage == 2 && cursor < size(source.structures)) result.structures.add(structure(source.structures.get(cursor++)));
-                else if (stage == 3 && cursor < size(source.retainedNbtKeys)) result.retainedNbtKeys.add(source.retainedNbtKeys.get(cursor++));
+                if (stage == 0 && cursor < size(source.aeIssues))
+                    result.aeIssues.add(issue(source.aeIssues.get(cursor++)));
+                else if (stage == 1 && cursor < size(source.hintAreas))
+                    result.hintAreas.add(area(source.hintAreas.get(cursor++)));
+                else if (stage == 2 && cursor < size(source.structures))
+                    result.structures.add(structure(source.structures.get(cursor++)));
+                else if (stage == 3 && cursor < size(source.retainedNbtKeys))
+                    result.retainedNbtKeys.add(source.retainedNbtKeys.get(cursor++));
                 else if (stage == 4 && cursor < size(source.cells)) result.cells.add(cell(source.cells.get(cursor++)));
-                else if (stage == 5 && cursor < size(source.palette)) result.palette.add(cell(source.palette.get(cursor++)));
+                else if (stage == 5 && cursor < size(source.palette))
+                    result.palette.add(cell(source.palette.get(cursor++)));
                 else if (stage == 6) {
-                    if (versions == null) versions = (source.modVersions == null ? java.util.Collections.<String, String>emptyMap()
-                        : source.modVersions).entrySet().iterator();
-                    if (!versions.hasNext()) { stage++; continue; }
+                    if (versions == null)
+                        versions = (source.modVersions == null ? java.util.Collections.<String, String>emptyMap()
+                            : source.modVersions).entrySet()
+                                .iterator();
+                    if (!versions.hasNext()) {
+                        stage++;
+                        continue;
+                    }
                     Map.Entry<String, String> entry = versions.next();
                     if (entry.getValue() != null) {
                         String key = String.valueOf(entry.getKey());
                         if (result.modVersions.containsKey(key)) throw new JsonSyntaxException("duplicate key: " + key);
                         result.modVersions.put(key, entry.getValue());
                     }
-                } else { stage++; cursor = 0; continue; }
+                } else {
+                    stage++;
+                    cursor = 0;
+                    continue;
+                }
                 completed++;
             }
             return stage == 7;

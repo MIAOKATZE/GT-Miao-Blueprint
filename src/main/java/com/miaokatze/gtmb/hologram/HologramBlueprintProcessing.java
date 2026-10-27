@@ -207,9 +207,13 @@ final class HologramBlueprintProcessing {
             this.source = source;
         }
 
-        long completed() { return cursor; }
+        long completed() {
+            return cursor;
+        }
 
-        long total() { return source == null ? 0 : source.cells.size(); }
+        long total() {
+            return source == null ? 0 : source.cells.size();
+        }
 
         Policy result() {
             if (result == null) throw new IllegalStateException("Policy is not complete");
@@ -217,7 +221,8 @@ final class HologramBlueprintProcessing {
         }
 
         boolean step(int maxWork, long maxNanos) throws IOException {
-            if (Thread.currentThread() != owner) throw new IllegalStateException("Policy discovery requires its owner thread");
+            if (Thread.currentThread() != owner)
+                throw new IllegalStateException("Policy discovery requires its owner thread");
             if (result != null) return true;
             if (closed) throw new IllegalStateException("Policy discovery was cancelled");
             HologramPlanBudget budget = new HologramPlanBudget(maxWork, maxNanos);

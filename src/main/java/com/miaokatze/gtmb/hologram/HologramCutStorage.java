@@ -37,7 +37,8 @@ final class HologramCutStorage {
         long length = Files.size(file);
         if (length <= 0 || length > HologramSnapshotAssembly.MAX_BYTES) throw new IOException("剪切存储大小无效");
         NBTTagCompound result;
-        try (HologramCutDiagnostics.Scope ignored = diagnostics.phase(HologramCutDiagnostics.Phase.JOURNAL_LOAD, length)) {
+        try (HologramCutDiagnostics.Scope ignored = diagnostics
+            .phase(HologramCutDiagnostics.Phase.JOURNAL_LOAD, length)) {
             result = HologramSnapshotCodec.decode(Files.readAllBytes(file));
         }
         if (result.getInteger("version") != HologramCutProtocol.VERSION) throw new IOException("剪切存储版本无效");
@@ -83,15 +84,19 @@ final class HologramCutStorage {
             Files.createDirectories(file.getParent());
             Path temporary = file.resolveSibling(file.getFileName() + ".tmp");
             try (FileOutputStream output = new FileOutputStream(temporary.toFile())) {
-                try (HologramCutDiagnostics.Scope ignored = trace.phase(HologramCutDiagnostics.Phase.JOURNAL_WRITE, bytes.length)) {
+                try (HologramCutDiagnostics.Scope ignored = trace
+                    .phase(HologramCutDiagnostics.Phase.JOURNAL_WRITE, bytes.length)) {
                     output.write(bytes);
                 }
-                try (HologramCutDiagnostics.Scope ignored = trace.phase(HologramCutDiagnostics.Phase.JOURNAL_SYNC, bytes.length)) {
-                    output.getFD().sync();
+                try (HologramCutDiagnostics.Scope ignored = trace
+                    .phase(HologramCutDiagnostics.Phase.JOURNAL_SYNC, bytes.length)) {
+                    output.getFD()
+                        .sync();
                 }
             }
             // No non-atomic fallback: failure leaves the previous authoritative record intact.
-            try (HologramCutDiagnostics.Scope ignored = trace.phase(HologramCutDiagnostics.Phase.JOURNAL_REPLACE, bytes.length)) {
+            try (HologramCutDiagnostics.Scope ignored = trace
+                .phase(HologramCutDiagnostics.Phase.JOURNAL_REPLACE, bytes.length)) {
                 Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
             }
             return new WriteReceipt(this);

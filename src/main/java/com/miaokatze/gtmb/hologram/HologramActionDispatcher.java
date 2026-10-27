@@ -46,8 +46,7 @@ final class HologramActionDispatcher {
             }
         }
         if ("close".equals(action.getString("op")) || "cancel".equals(action.getString("op"))
-            || "clearWorkspace".equals(action.getString("op")))
-            HologramPresetActivation.cancel(s, "蓝图加载已取消；原编辑保留");
+            || "clearWorkspace".equals(action.getString("op"))) HologramPresetActivation.cancel(s, "蓝图加载已取消；原编辑保留");
         // Closing changes presentation only; it must not invalidate an unchanged data snapshot.
         if (action.hasKey("uiSequence") && !"close".equals(action.getString("op"))
             && !HologramMaterialWorkflow.lightweight(action.getString("op")))

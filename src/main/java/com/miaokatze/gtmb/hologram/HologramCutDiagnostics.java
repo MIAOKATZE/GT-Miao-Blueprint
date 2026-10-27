@@ -38,7 +38,9 @@ final class HologramCutDiagnostics implements AutoCloseable {
 
     static HologramCutDiagnostics begin() {
         return Boolean.getBoolean("gtmb.cutPhaseDiagnostics")
-            ? new HologramCutDiagnostics(message -> com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.info(message), System::nanoTime)
+            ? new HologramCutDiagnostics(
+                message -> com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.info(message),
+                System::nanoTime)
             : QUIET;
     }
 
@@ -68,11 +70,19 @@ final class HologramCutDiagnostics implements AutoCloseable {
         if (sink == null || closed) return;
         closed = true;
         StringBuilder summary = new StringBuilder("Cut phases operation=").append(id)
-            .append(" completed=").append(completed);
+            .append(" completed=")
+            .append(completed);
         for (Phase phase : Phase.values()) {
             int index = phase.ordinal();
-            if (calls[index] != 0) summary.append(' ').append(phase.name()).append("[calls=").append(calls[index])
-                .append(",units=").append(units[index]).append(",ns=").append(nanos[index]).append(']');
+            if (calls[index] != 0) summary.append(' ')
+                .append(phase.name())
+                .append("[calls=")
+                .append(calls[index])
+                .append(",units=")
+                .append(units[index])
+                .append(",ns=")
+                .append(nanos[index])
+                .append(']');
         }
         // Observability must not turn a committed edit into an apparent transaction failure.
         try {

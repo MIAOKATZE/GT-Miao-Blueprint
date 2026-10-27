@@ -40,7 +40,8 @@ final class HologramPresetPosePreparation {
     }
 
     boolean step(HologramSession s, int maxWork, long maxNanos) throws IOException {
-        if (Thread.currentThread() != owner) throw new IllegalStateException("Preset pose must stay on its owner thread");
+        if (Thread.currentThread() != owner)
+            throw new IllegalStateException("Preset pose must stay on its owner thread");
         if (maxWork <= 0 || maxNanos <= 0) return false;
         if (finished) return true;
         if (!initialized) {
@@ -75,9 +76,11 @@ final class HologramPresetPosePreparation {
             return false;
         }
         if (population != null) {
-            if (!population.step(maxWork, maxNanos == Long.MAX_VALUE ? Long.MAX_VALUE
-                : HologramWorkBudget.deadline(maxNanos))) return false;
-            if (s.capture == null || s.capture.incomplete) throw new IOException("Transformed blueprint projection incomplete");
+            if (!population
+                .step(maxWork, maxNanos == Long.MAX_VALUE ? Long.MAX_VALUE : HologramWorkBudget.deadline(maxNanos)))
+                return false;
+            if (s.capture == null || s.capture.incomplete)
+                throw new IOException("Transformed blueprint projection incomplete");
             population = null;
             phase = 6;
             cursor = 0;
@@ -93,13 +96,14 @@ final class HologramPresetPosePreparation {
                     if (front != null && !s.virtualEdited.contains(key)) initialFacings.put(key, front);
                     HologramPresets.Cell saved = s.virtualPreset.cells.get(cursor++);
                     if (!controllerFound && saved.controller) {
-                        baselineController = ExtendedFacing.of(net.minecraftforge.common.util.ForgeDirection.getOrientation(saved.facing));
+                        baselineController = ExtendedFacing
+                            .of(net.minecraftforge.common.util.ForgeDirection.getOrientation(saved.facing));
                         controllerFound = true;
                     }
                 } else {
                     Integer front = s.facingPins.get(s.x + "," + s.y + "," + s.z);
-                    if (front != null) baselineController = baselineController.with(
-                        net.minecraftforge.common.util.ForgeDirection.getOrientation(front));
+                    if (front != null) baselineController = baselineController
+                        .with(net.minecraftforge.common.util.ForgeDirection.getOrientation(front));
                     facingsCollected = true;
                     orientation = null;
                     cursor = 0;
@@ -139,8 +143,7 @@ final class HologramPresetPosePreparation {
                     s.placementReviewNonce++;
                 }
                 s.status = quickLock ? "位置已锁定；请核对材料与 NBT 放置确认"
-                    : s.virtualPlacement ? "移动鼠标预览位置；右键锁定，再次右键核对材料与 NBT，Esc 取消放置"
-                        : "已打开自定义预设；仅编辑规划，不施工";
+                    : s.virtualPlacement ? "移动鼠标预览位置；右键锁定，再次右键核对材料与 NBT，Esc 取消放置" : "已打开自定义预设；仅编辑规划，不施工";
                 finished = true;
                 return true;
             }
@@ -152,14 +155,15 @@ final class HologramPresetPosePreparation {
         HologramPresets.Preset preset = s.virtualPreset;
         boolean vertical = turns[turn] == 1, finalPose = turn == turns.length - 1;
         if (phase == 0) {
-            controller = HologramVirtualTransform.alignment(
-                turn == 0 ? baselineController : ExtendedFacing.byIndex(preset.controllerFacing), vertical);
+            controller = HologramVirtualTransform
+                .alignment(turn == 0 ? baselineController : ExtendedFacing.byIndex(preset.controllerFacing), vertical);
             if (finalPose && (preset.schema < 2 || preset.controllerId >= 0)) {
                 gregtech.api.interfaces.metatileentity.IMetaTileEntity prototype = preset.controllerId < 0
                     || preset.controllerId >= GregTechAPI.METATILEENTITIES.length ? null
                         : GregTechAPI.METATILEENTITIES[preset.controllerId];
                 if (!(prototype instanceof MTEEnhancedMultiBlockBase)
-                    || !((MTEEnhancedMultiBlockBase<?>) prototype).getAlignmentLimits().isNewExtendedFacingValid(controller))
+                    || !((MTEEnhancedMultiBlockBase<?>) prototype).getAlignmentLimits()
+                        .isNewExtendedFacingValid(controller))
                     throw new IOException("This blueprint cannot represent the selected orientation");
             }
             preset.controllerFacing = controller.ordinal();
@@ -167,8 +171,9 @@ final class HologramPresetPosePreparation {
         } else if (phase == 1) {
             if (cursor < preset.cells.size()) {
                 // Existing per-payload reference validation remains exact; no full-preset synchronous scan.
-                littleReferences.putAll(HologramBlockTransformLittleTiles.presetReferences(
-                    Collections.singletonList(preset.cells.get(cursor++)), vertical));
+                littleReferences.putAll(
+                    HologramBlockTransformLittleTiles
+                        .presetReferences(Collections.singletonList(preset.cells.get(cursor++)), vertical));
             } else {
                 cursor = 0;
                 phase = 2;
@@ -176,8 +181,10 @@ final class HologramPresetPosePreparation {
         } else if (phase == 2) {
             if (cursor < preset.cells.size()) {
                 HologramPresets.Cell saved = preset.cells.get(cursor++);
-                int front = turn == 0 ? initialFacings.getOrDefault(
-                    (s.x + saved.x) + "," + (s.y + saved.y) + "," + (s.z + saved.z), saved.facing) : saved.facing;
+                int front = turn == 0
+                    ? initialFacings
+                        .getOrDefault((s.x + saved.x) + "," + (s.y + saved.y) + "," + (s.z + saved.z), saved.facing)
+                    : saved.facing;
                 if (preset.schema >= 2) {
                     HologramBlockTransforms.turn(saved, vertical, littleReferences, false);
                     saved.tileNbt = HologramCoordinatePolicies.rotatePayload(saved.tileNbt, vertical);
@@ -189,9 +196,10 @@ final class HologramPresetPosePreparation {
                 saved.y = offset[1];
                 saved.z = offset[2];
                 saved.facing = HologramBlockTransforms.isPipe(saved.stack()) ? -1
-                    : saved.controller && preset.schema < 2 ? controller.getDirection().ordinal()
-                        : HologramVirtualTransform.front(front, vertical);
-                if (finalPose && saved.stack() != null && !saved.missing()
+                    : saved.controller && preset.schema < 2 ? controller.getDirection()
+                        .ordinal() : HologramVirtualTransform.front(front, vertical);
+                if (finalPose && saved.stack() != null
+                    && !saved.missing()
                     && !HologramCellPolicy.virtualFrontAllowed(saved.stack(), saved.facing))
                     throw new IOException("设备不支持转向后的朝向");
             } else {

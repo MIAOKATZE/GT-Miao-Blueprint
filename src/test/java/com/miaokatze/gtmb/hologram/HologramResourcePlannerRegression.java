@@ -313,11 +313,15 @@ public final class HologramResourcePlannerRegression {
         SimpleAssert.that(!task.step(1, 0), "expired projection deadline is a genuine no-op");
         SimpleAssert.that(staged.capture == original, "zero-budget projection does not clear the candidate capture");
         SimpleAssert.that(!task.step(7, Long.MAX_VALUE), "implicit-controller discovery yields before population");
-        SimpleAssert.that(staged.virtualPreset.structures.isEmpty(), "implicit controller is not found by an unbudgeted scan");
+        SimpleAssert
+            .that(staged.virtualPreset.structures.isEmpty(), "implicit controller is not found by an unbudgeted scan");
         Throwable[] rejected = { null };
         Thread worker = new Thread(() -> {
-            try { task.step(1, Long.MAX_VALUE); }
-            catch (Throwable failure) { rejected[0] = failure; }
+            try {
+                task.step(1, Long.MAX_VALUE);
+            } catch (Throwable failure) {
+                rejected[0] = failure;
+            }
         });
         worker.start();
         worker.join();

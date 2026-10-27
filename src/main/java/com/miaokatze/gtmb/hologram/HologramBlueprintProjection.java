@@ -230,7 +230,8 @@ final class HologramBlueprintProjection {
         }
 
         String phase() {
-            return implicit.done() ? "preset.projection" : implicit.stage == 0 ? "preset.controllerDiscovery" : "preset.memberships";
+            return implicit.done() ? "preset.projection"
+                : implicit.stage == 0 ? "preset.controllerDiscovery" : "preset.memberships";
         }
 
         long completed() {
@@ -248,7 +249,8 @@ final class HologramBlueprintProjection {
         }
 
         boolean step(int maxWork, long deadline) {
-            if (Thread.currentThread() != owner) throw new IllegalStateException("Projection must stay on its owner thread");
+            if (Thread.currentThread() != owner)
+                throw new IllegalStateException("Projection must stay on its owner thread");
             if (maxWork <= 0 || System.nanoTime() >= deadline) return false;
             int used = 0;
             while (!implicit.done() && used < maxWork && System.nanoTime() < deadline) {
@@ -418,11 +420,15 @@ final class HologramBlueprintProjection {
 
         void advance() {
             if (stage == 0) {
-                if (cursor >= preset.cells.size()) { stage = 2; return; }
+                if (cursor >= preset.cells.size()) {
+                    stage = 2;
+                    return;
+                }
                 HologramPresets.Cell controller = preset.cells.get(cursor++);
                 if (!controller.controller) return;
                 structure = new HologramPresets.Structure();
-                structure.id = UUID.randomUUID().toString();
+                structure.id = UUID.randomUUID()
+                    .toString();
                 structure.name = preset.name == null ? "Template" : preset.name;
                 structure.sourceClass = preset.sourceClass;
                 structure.sourceMod = preset.sourceMod;
@@ -439,7 +445,10 @@ final class HologramBlueprintProjection {
                 cursor = 0;
                 stage = 1;
             } else if (stage == 1) {
-                if (cursor >= preset.cells.size()) { stage = 2; return; }
+                if (cursor >= preset.cells.size()) {
+                    stage = 2;
+                    return;
+                }
                 HologramPresets.Cell cell = preset.cells.get(cursor++);
                 cell.structureId = structure.id;
                 cell.structureIds = new ArrayList<>(Collections.singletonList(structure.id));

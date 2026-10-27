@@ -1070,7 +1070,8 @@ public final class HologramSnapshotPublishRegression {
         action.setBoolean("confirmDiscard", true);
         origin.actionCount = 0;
         HologramActionDispatcher.handle(origin.player, action);
-        SimpleAssert.that(HologramWorkspace.find(origin.player.getUniqueID()) == origin,
+        SimpleAssert.that(
+            HologramWorkspace.find(origin.player.getUniqueID()) == origin,
             "saved-preset admission keeps the original editor active while its private candidate prepares");
         int slices = 0;
         while (HologramPresetActivation.pending(origin)) {

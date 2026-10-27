@@ -46,10 +46,14 @@ public final class HologramPresetCopiesRegression {
         }
         SimpleAssert.that(slices > 200, "large copy genuinely yields rather than copying ahead of its cursor");
         SimpleAssert.eq(task.total(), task.completed(), "all DTO records were consumed");
-        SimpleAssert.eq(ORACLE.toJsonTree(source), ORACLE.toJsonTree(task.result), "sliced DTO copy preserves complete serialized input");
+        SimpleAssert.eq(
+            ORACLE.toJsonTree(source),
+            ORACLE.toJsonTree(task.result),
+            "sliced DTO copy preserves complete serialized input");
         SimpleAssert.that(task.step(1, 1), "completed copy is idempotently complete");
         task.result.cells.get(17).allowedTargets.get(0).damage++;
-        SimpleAssert.that(source.cells.get(17).allowedTargets.get(0).damage != task.result.cells.get(17).allowedTargets.get(0).damage,
+        SimpleAssert.that(
+            source.cells.get(17).allowedTargets.get(0).damage != task.result.cells.get(17).allowedTargets.get(0).damage,
             "sliced copy does not share mutable nested ownership");
     }
 

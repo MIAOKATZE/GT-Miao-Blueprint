@@ -62,11 +62,18 @@ final class HologramWorldPlacementWorkflow {
             return;
         }
         HologramSession origin = HologramProjectorWorkflow.uiSession(player);
-        HologramPresetActivation.Completion receiver = completion == null
-            ? HologramPresetWorkflow.presentationCompletion(origin, true, request.getLong("clientTaskToken") > 0
-                ? request.getLong("clientTaskToken") : origin.blueprintClientTaskToken) : completion;
+        HologramPresetActivation.Completion receiver = completion
+            == null
+                ? HologramPresetWorkflow
+                    .presentationCompletion(
+                        origin,
+                        true,
+                        request.getLong("clientTaskToken") > 0 ? request.getLong("clientTaskToken")
+                            : origin.blueprintClientTaskToken)
+                : completion;
         boolean[] terminal = { false };
         HologramPresetActivation.Completion once = new HologramPresetActivation.Completion() {
+
             @Override
             public void completed(HologramSession ready) {
                 if (terminal[0]) return;
@@ -162,8 +169,8 @@ final class HologramWorldPlacementWorkflow {
         placement.virtual = true;
         placement.virtualPlacement = true;
         placement.uiSequence = previous.uiSequence;
-        placement.blueprintClientTaskToken = request.getLong("clientTaskToken") > 0
-            ? request.getLong("clientTaskToken") : previous.blueprintClientTaskToken;
+        placement.blueprintClientTaskToken = request.getLong("clientTaskToken") > 0 ? request.getLong("clientTaskToken")
+            : previous.blueprintClientTaskToken;
         placement.libraryLocalId = previous.libraryLocalId;
         placement.libraryReplaceLocalId = previous.libraryReplaceLocalId;
         placement.libraryPrivatePreset = id.startsWith("private_") ? preset : null;

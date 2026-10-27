@@ -280,7 +280,8 @@ final class HologramCutWorld {
         Map<Long, Map<Long, TileEntity>> tilesByChunk = new LinkedHashMap<>();
         boolean diagnostics = Boolean.getBoolean("gtmb.cutDiskDiagnostics");
         Map<Long, NBTTagCompound> before = diagnostics ? new LinkedHashMap<>() : null;
-        try (HologramCutDiagnostics.Scope ignored = trace.phase(HologramCutDiagnostics.Phase.SAVE_PREPARE, groups.chunks.size())) {
+        try (HologramCutDiagnostics.Scope ignored = trace
+            .phase(HologramCutDiagnostics.Phase.SAVE_PREPARE, groups.chunks.size())) {
             HologramCutChunks.load(world, groups.chunks.keySet());
             for (Map.Entry<Long, List<NBTTagCompound>> group : groups.chunks.entrySet()) {
                 Map<Long, TileEntity> chunkTiles = new LinkedHashMap<>();
@@ -307,7 +308,8 @@ final class HologramCutWorld {
         }
         NativeSaveSnapshot snapshot = new NativeSaveSnapshot(world);
         MinecraftForge.EVENT_BUS.register(snapshot);
-        try (HologramCutDiagnostics.Scope ignored = trace.phase(HologramCutDiagnostics.Phase.NATIVE_SAVE, chunks.size())) {
+        try (HologramCutDiagnostics.Scope ignored = trace
+            .phase(HologramCutDiagnostics.Phase.NATIVE_SAVE, chunks.size())) {
             for (Chunk chunk : chunks)
                 snapshot.save(loader, chunk, tilesByChunk.get(key(chunk.xPosition, chunk.zPosition)));
         } finally {
@@ -319,14 +321,16 @@ final class HologramCutWorld {
         Map<Long, SavedChunk> disk = new LinkedHashMap<>();
         Set<String> regions = new LinkedHashSet<>();
         DiskReader reader = new DiskReader(loader.chunkSaveLocation);
-        try (HologramCutDiagnostics.Scope ignored = trace.phase(HologramCutDiagnostics.Phase.DISK_READBACK, chunks.size())) {
+        try (HologramCutDiagnostics.Scope ignored = trace
+            .phase(HologramCutDiagnostics.Phase.DISK_READBACK, chunks.size())) {
             for (Chunk chunk : chunks) {
                 SavedChunk saved = reader.read(world, chunk.xPosition, chunk.zPosition);
                 disk.put(key(chunk.xPosition, chunk.zPosition), saved);
                 regions.add("r." + (chunk.xPosition >> 5) + "." + (chunk.zPosition >> 5) + ".mca");
             }
         }
-        try (HologramCutDiagnostics.Scope ignored = trace.phase(HologramCutDiagnostics.Phase.DISK_COMPARE, cells.tagCount())) {
+        try (HologramCutDiagnostics.Scope ignored = trace
+            .phase(HologramCutDiagnostics.Phase.DISK_COMPARE, cells.tagCount())) {
             for (int i = 0; i < cells.tagCount(); i++) {
                 NBTTagCompound cell = cells.getCompoundTagAt(i);
                 int x = ox + cell.getInteger("x"), y = oy + cell.getInteger("y"), z = oz + cell.getInteger("z");
@@ -349,7 +353,8 @@ final class HologramCutWorld {
                 }
             }
         }
-        try (HologramCutDiagnostics.Scope ignored = trace.phase(HologramCutDiagnostics.Phase.REGION_SYNC, regions.size())) {
+        try (HologramCutDiagnostics.Scope ignored = trace
+            .phase(HologramCutDiagnostics.Phase.REGION_SYNC, regions.size())) {
             for (String name : regions) try (RandomAccessFile region = new RandomAccessFile(
                 new java.io.File(new java.io.File(loader.chunkSaveLocation, "region"), name),
                 "rw")) {
@@ -358,7 +363,6 @@ final class HologramCutWorld {
                 }
         }
     }
-
 
     static TileEntity selectedTile(WorldServer world, int x, int y, int z, NBTTagCompound cell, boolean air)
         throws IOException {

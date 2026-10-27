@@ -170,10 +170,10 @@ final class HologramPresetWorkflow {
     static void initializeCandidate(HologramSession s, HologramPresets.Preset preset, String id)
         throws java.io.IOException {
         if (id == null || id.isEmpty()) throw new java.io.IOException("预设身份无效");
-        if (preset.schema < 2
-            && (preset.controllerId < 0 || preset.controllerId >= GregTechAPI.METATILEENTITIES.length
-                || !(GregTechAPI.METATILEENTITIES[preset.controllerId] instanceof MTEEnhancedMultiBlockBase)
-                || !preset.controllerType.equals(GregTechAPI.METATILEENTITIES[preset.controllerId].getClass()
+        if (preset.schema < 2 && (preset.controllerId < 0 || preset.controllerId >= GregTechAPI.METATILEENTITIES.length
+            || !(GregTechAPI.METATILEENTITIES[preset.controllerId] instanceof MTEEnhancedMultiBlockBase)
+            || !preset.controllerType.equals(
+                GregTechAPI.METATILEENTITIES[preset.controllerId].getClass()
                     .getName() + ":" + preset.controllerId)))
             throw new java.io.IOException("模板控制器身份已失效");
         HologramBlueprintData.detachAreaOverview(s);
@@ -218,7 +218,9 @@ final class HologramPresetWorkflow {
         int x = previous.target != null || previous.virtual ? previous.x
             : net.minecraft.util.MathHelper.floor_double(previous.player.posX);
         int y = previous.target != null || previous.virtual ? previous.y
-            : HologramValues.clamp(net.minecraft.util.MathHelper.floor_double(previous.player.posY), 0,
+            : HologramValues.clamp(
+                net.minecraft.util.MathHelper.floor_double(previous.player.posY),
+                0,
                 previous.player.worldObj.getHeight() - 1);
         int z = previous.target != null || previous.virtual ? previous.z
             : net.minecraft.util.MathHelper.floor_double(previous.player.posZ);
@@ -241,8 +243,8 @@ final class HologramPresetWorkflow {
             candidate.libraryReplaceLocalId = previous.libraryReplaceLocalId;
             // Private get already returned an exclusively owned DTO; do not copy the full previous library twice.
             candidate.libraryPrivatePreset = id.startsWith("private_") ? preset : null;
-            return HologramPresetActivation.begin(previous, candidate, preset, id, null,
-                presentationCompletion(previous, placement));
+            return HologramPresetActivation
+                .begin(previous, candidate, preset, id, null, presentationCompletion(previous, placement));
         } catch (java.io.IOException failure) {
             presentationCompletion(previous, placement).failed("预设加载失败：" + failure.getMessage());
             return false;
@@ -258,6 +260,7 @@ final class HologramPresetWorkflow {
         final String session = origin.id;
         final long sequence = origin.uiSequence, revision = origin.planRevision;
         return new HologramPresetActivation.Completion() {
+
             @Override
             public void completed(HologramSession ready) {
                 if (placement) {
@@ -275,9 +278,11 @@ final class HologramPresetWorkflow {
             @Override
             public void failed(String reason) {
                 // This terminal control must escape even if the old full DTO/FIFO is still blocked.
-                HologramNetwork.sendPresetActivationFailure(origin.player, session, sequence, revision, clientTask, reason);
+                HologramNetwork
+                    .sendPresetActivationFailure(origin.player, session, sequence, revision, clientTask, reason);
                 if (HologramWorkspace.find(origin.player.getUniqueID()) == origin && session.equals(origin.id)
-                    && sequence == origin.uiSequence && revision == origin.planRevision
+                    && sequence == origin.uiSequence
+                    && revision == origin.planRevision
                     && clientTask == origin.blueprintClientTaskToken) {
                     // Do not recreate a snapshot outbox while Workspace teardown is cancelling this task.
                     origin.status = reason;

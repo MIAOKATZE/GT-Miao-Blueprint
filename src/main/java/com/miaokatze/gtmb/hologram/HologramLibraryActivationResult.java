@@ -26,7 +26,8 @@ final class HologramLibraryActivationResult implements HologramLibraryFacade.Act
 
     @Override
     public boolean current() {
-        return !terminal && transportCurrent.getAsBoolean() && sourceCurrent.getAsBoolean()
+        return !terminal && transportCurrent.getAsBoolean()
+            && sourceCurrent.getAsBoolean()
             && confirmationCurrent.getAsBoolean();
     }
 
@@ -40,9 +41,11 @@ final class HologramLibraryActivationResult implements HologramLibraryFacade.Act
     }
 
     boolean matches(NBTTagCompound request) {
-        return identity.getString("session").equals(request.getString("session"))
+        return identity.getString("session")
+            .equals(request.getString("session"))
             && identity.getLong("clientTaskToken") == request.getLong("clientTaskToken")
-            && identity.getString("transfer").equals(request.getString("transfer"));
+            && identity.getString("transfer")
+                .equals(request.getString("transfer"));
     }
 
     boolean supersededBy(NBTTagCompound request) {
@@ -55,7 +58,8 @@ final class HologramLibraryActivationResult implements HologramLibraryFacade.Act
     }
 
     void poll() {
-        if (!terminal && !current()) failed("Blueprint activation cancelled or source changed; original editor retained");
+        if (!terminal && !current())
+            failed("Blueprint activation cancelled or source changed; original editor retained");
     }
 
     @Override

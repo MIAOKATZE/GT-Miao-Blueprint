@@ -384,7 +384,8 @@ final class HologramBlueprintNbt {
             // Frozen metadata already owns a bounded decoded cache. Do not create a second,
             // phantom-retired global cache charge for its owner or detached reads. Existing hits
             // and the strict uncached/singleflight path above retain exactly the same semantics.
-            if (producer && enabled && cost <= BLOB_BYTES
+            if (producer && enabled
+                && cost <= BLOB_BYTES
                 && !HologramSnapshotDataContext.freezingOnOwner()
                 && !HologramSnapshotDataContext.active())
                 lease = HologramRetainedCache.tryReserve("nbt.exact-cache", cost);

@@ -67,7 +67,8 @@ final class HologramSnapshotDataContext implements AutoCloseable {
 
         @Override
         public void close() {
-            if (Thread.currentThread() != thread) throw new IllegalStateException("Metadata freeze scope changed thread");
+            if (Thread.currentThread() != thread)
+                throw new IllegalStateException("Metadata freeze scope changed thread");
             if (closed) return;
             closed = true;
             if (previous == null) OWNER_FREEZE.remove();
@@ -94,8 +95,14 @@ final class HologramSnapshotDataContext implements AutoCloseable {
         private static final long serialVersionUID = 1L;
 
         CapacityExceeded(String phase, long held, long requested, long limit) {
-            super("Snapshot metadata working set exceeds quota phase=" + phase + " held=" + held
-                + " requested=" + requested + " limit=" + limit);
+            super(
+                "Snapshot metadata working set exceeds quota phase=" + phase
+                    + " held="
+                    + held
+                    + " requested="
+                    + requested
+                    + " limit="
+                    + limit);
         }
     }
 
@@ -142,7 +149,8 @@ final class HologramSnapshotDataContext implements AutoCloseable {
         if (!expanded.containsKey(encoded)) {
             if (!blob.registryIndependent() && itemPatch == null) {
                 HologramProcessGovernor.Lease lease = reserveMandatory(
-                    "metadata.item-patch", HologramBlueprintNbt.frozenItemPatchBytes());
+                    "metadata.item-patch",
+                    HologramBlueprintNbt.frozenItemPatchBytes());
                 try {
                     itemPatch = HologramBlueprintNbt.freezeItemPatch();
                     retainMandatory(lease);
@@ -335,7 +343,8 @@ final class HologramSnapshotDataContext implements AutoCloseable {
             cell.frozenAeTotal = -1;
             cell.frozenAeError = null;
         }
-        if (!aeFrozen && !cell.excluded && cell.tileNbt != null
+        if (!aeFrozen && !cell.excluded
+            && cell.tileNbt != null
             && !cell.tileNbt.isEmpty()
             && HologramAeBlueprint.supports(block, payload)) {
             java.util.List<HologramAeBlueprint.Issue> issues = new java.util.ArrayList<>();
@@ -442,14 +451,16 @@ final class HologramSnapshotDataContext implements AutoCloseable {
         // where mandatory admission still charges their complete retained representation.
         if (!source.hasKey("rows", 9)) return (NBTTagCompound) source.copy();
         net.minecraft.nbt.NBTTagList originalRows = (net.minecraft.nbt.NBTTagList) source.getTag("rows");
-        if (originalRows.tagCount() == 0 || originalRows.func_150303_d() != 10)
-            return (NBTTagCompound) source.copy();
+        if (originalRows.tagCount() == 0 || originalRows.func_150303_d() != 10) return (NBTTagCompound) source.copy();
         NBTTagCompound result = new NBTTagCompound();
         // Bound only the presentation rows; future fields and exact scalar types must survive
         // so the fact representation can conservatively fall back to the complete NBT schema.
         for (Object raw : source.func_150296_c()) {
             String key = (String) raw;
-            if (!"rows".equals(key)) result.setTag(key, source.getTag(key).copy());
+            if (!"rows".equals(key)) result.setTag(
+                key,
+                source.getTag(key)
+                    .copy());
         }
         net.minecraft.nbt.NBTTagList rows = new net.minecraft.nbt.NBTTagList(), originals = originalRows;
         long bytes = 0;

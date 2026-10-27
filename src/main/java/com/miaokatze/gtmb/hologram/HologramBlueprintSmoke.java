@@ -1189,13 +1189,21 @@ public final class HologramBlueprintSmoke {
         request.setBoolean("confirmDiscard", true);
         // Supply a detached DTO to the public service entry. This asserts no artifact-pair upload receipt.
         String[] outcome = new String[2];
-        HologramService.libraryActivate(player, request, HologramPresets.copy(preset),
+        HologramService.libraryActivate(
+            player,
+            request,
+            HologramPresets.copy(preset),
             new HologramLibraryFacade.ActivationCompletion() {
-                @Override
-                public void completed(String id) { outcome[0] = id; }
 
                 @Override
-                public void failed(String reason) { outcome[1] = reason; }
+                public void completed(String id) {
+                    outcome[0] = id;
+                }
+
+                @Override
+                public void failed(String reason) {
+                    outcome[1] = reason;
+                }
             });
         for (int tick = 0; outcome[0] == null && outcome[1] == null && tick < 128; tick++) {
             advance();
