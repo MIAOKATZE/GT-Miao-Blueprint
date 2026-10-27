@@ -37,6 +37,7 @@ final class HologramSnapshotMetadataSource {
     private final java.util.Set<String> palette = new HashSet<>();
     private final Map<String, HologramPresets.Cell> payloadCells = new java.util.HashMap<>();
     private int stage, cursor;
+    private HologramPresets.Cell pendingCell;
     private Iterator<? extends Map.Entry<String, String>> map;
     private Iterator<HologramArea.Structure> areaStructures;
 
@@ -122,9 +123,12 @@ final class HologramSnapshotMetadataSource {
             } else if (stage == 6) {
                 int size = project ? s.capture.cells.size() : original.cells.size();
                 if (cursor < size) {
-                    HologramPresets.Cell cell = project
-                        ? HologramBlueprintProjection.projectedCell(s, cursor++, result, palette)
-                        : copyCell(original.cells.get(cursor++), publishSource);
+                    HologramPresets.Cell cell = pendingCell;
+                    if (cell == null) {
+                        cell = project ? HologramBlueprintProjection.projectedCell(s, cursor++, result, palette)
+                            : copyCell(original.cells.get(cursor++), publishSource);
+                        pendingCell = cell;
+                    } else cursor++;
                     if (draftOnly) {
                         HologramCapture.Cell authoring = project ? s.capture.cells.get(cursor - 1)
                             : s.capture.positions.get((s.x + cell.x) + "," + (s.y + cell.y) + "," + (s.z + cell.z));
@@ -145,6 +149,7 @@ final class HologramSnapshotMetadataSource {
                     if (hasPayload(cell.tileNbt) || hasPayload(cell.itemNbt))
                         payloadCells.put(cell.x + "," + cell.y + "," + cell.z, cell);
                     result.cells.add(cell);
+                    pendingCell = null;
                 } else next();
             } else if (stage == 7) {
                 if (!project && publishSource && cursor < original.palette.size())

@@ -7,7 +7,7 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 
-/** Shared immutable cache ownership follows the actual last Java reference, with no cleanup thread. */
+/** Immutable cache ownership with phantom fallback and explicit scoped ownership for operation caches. */
 final class HologramRetainedCache {
 
     private static final ReferenceQueue<Object> QUEUE = new ReferenceQueue<>();
@@ -74,6 +74,74 @@ final class HologramRetainedCache {
             }
             for (HologramProcessGovernor.Lease lease : leases) lease.close();
             leases.clear();
+        }
+    }
+
+    /** Explicit cache residency plus scoped readers; phantom ownership is only an abandoned-owner fallback. */
+    static final class Value<T> implements AutoCloseable {
+
+        private T value;
+        private final Owner owner;
+        private int readers;
+        private boolean retired;
+
+        Value(T value, HologramProcessGovernor.Lease lease) {
+            this.value = java.util.Objects.requireNonNull(value);
+            owner = watch(value);
+            owner.add(lease);
+        }
+
+        synchronized Borrow<T> borrow() {
+            if (retired) throw new IllegalStateException("Retired cache value");
+            readers++;
+            return new Borrow<>(value, this);
+        }
+
+        private synchronized void release() {
+            if (--readers == 0 && retired) owner.close();
+        }
+
+        @Override
+        public synchronized void close() {
+            if (retired) return;
+            retired = true;
+            value = null;
+            if (readers == 0) owner.close();
+        }
+    }
+
+    /** A borrow pins the actual value as well as its charge until its last scoped use, even after eviction. */
+    static final class Borrow<T> implements AutoCloseable {
+
+        private T value;
+        private Value<T> owner;
+        private boolean closed;
+
+        private Borrow(T value, Value<T> owner) {
+            this.value = value;
+            this.owner = owner;
+        }
+
+        static <T> Borrow<T> uncached(T value) {
+            return new Borrow<>(value, null);
+        }
+
+        synchronized T value() {
+            if (closed) throw new IllegalStateException("Closed cache borrow");
+            return value;
+        }
+
+        synchronized boolean cached() {
+            return owner != null;
+        }
+
+        @Override
+        public synchronized void close() {
+            if (closed) return;
+            closed = true;
+            value = null;
+            if (owner != null) owner.release();
+            owner = null;
         }
     }
 
