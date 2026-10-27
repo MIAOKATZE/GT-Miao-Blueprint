@@ -7,6 +7,7 @@ import com.miaokatze.gtmb.hologram.HologramService;
 import com.miaokatze.gtmb.hologram.HologramSmokeTest;
 import com.miaokatze.gtmb.register.ProjectorRegistry;
 import com.miaokatze.gtmb.util.ServerTaskScheduler;
+import com.miaokatze.miaokatzecore.api.recipe.RecipeRegistration;
 
 import cpw.mods.fml.common.FMLCommonHandler;
 
@@ -32,7 +33,7 @@ public class CommonProxy {
     }
 
     public void init() {
-        ProjectorRegistry.registerRecipe();
+        RecipeRegistration.register("gtmb", ProjectorRegistry::registerRecipe);
         HologramNetwork.init();
         FMLCommonHandler.instance()
             .bus()
