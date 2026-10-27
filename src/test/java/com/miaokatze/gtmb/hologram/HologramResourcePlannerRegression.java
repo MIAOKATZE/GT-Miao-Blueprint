@@ -215,6 +215,7 @@ public final class HologramResourcePlannerRegression {
                 profile.set(player, new com.mojang.authlib.GameProfile(identity, "planner"));
             }
         HologramSparseAirRegression.run(player);
+        boundedProjection(player);
         HologramSession sync = session(player, 2048);
         HologramSession staged = session(player, 2048);
         HologramResourcePlanner.refreshPlan(sync);
@@ -299,6 +300,38 @@ public final class HologramResourcePlannerRegression {
         deferredLifecycle(player);
         classifierReuse(player, world);
         authoringPlan(player, unsafe);
+    }
+
+    private static void boundedProjection(EntityPlayerMP player) throws Exception {
+        HologramSession staged = session(player, 257);
+        staged.virtualPreset.schema = 2;
+        staged.virtualPlacement = false;
+        staged.virtualPreset.cells.get(256).controller = true;
+        HologramCapture original = staged.capture;
+        HologramBlueprintProjection.Population task = new HologramBlueprintProjection.Population(staged);
+        SimpleAssert.that(!task.step(0, Long.MAX_VALUE), "zero projection count is a genuine no-op");
+        SimpleAssert.that(!task.step(1, 0), "expired projection deadline is a genuine no-op");
+        SimpleAssert.that(staged.capture == original, "zero-budget projection does not clear the candidate capture");
+        SimpleAssert.that(!task.step(7, Long.MAX_VALUE), "implicit-controller discovery yields before population");
+        SimpleAssert.that(staged.virtualPreset.structures.isEmpty(), "implicit controller is not found by an unbudgeted scan");
+        Throwable[] rejected = { null };
+        Thread worker = new Thread(() -> {
+            try { task.step(1, Long.MAX_VALUE); }
+            catch (Throwable failure) { rejected[0] = failure; }
+        });
+        worker.start();
+        worker.join();
+        SimpleAssert.that(rejected[0] instanceof IllegalStateException, "native projection cannot move to a worker");
+        int slices = 0;
+        while (!task.step(7, Long.MAX_VALUE)) SimpleAssert.that(++slices < 1000, "bounded projection terminates");
+        SimpleAssert.that(slices > 100, "discovery, memberships and projection all share sliced work");
+        SimpleAssert.eq(257, staged.capture.cells.size(), "complete projection is retained");
+        SimpleAssert.eq(1, staged.virtualPreset.structures.size(), "one implicit declaration is generated");
+        String structure = staged.virtualPreset.structures.get(0).id;
+        for (HologramPresets.Cell cell : staged.virtualPreset.cells)
+            SimpleAssert.eq(structure, cell.structureId, "all implicit members are assigned before publication");
+        SimpleAssert.that(task.step(7, Long.MAX_VALUE), "complete projection stays complete");
+        SimpleAssert.eq(257, staged.capture.cells.size(), "repeat step cannot append duplicate cells");
     }
 
     private static void authoringPlan(EntityPlayerMP player, sun.misc.Unsafe unsafe) throws Exception {

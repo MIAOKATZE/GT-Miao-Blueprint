@@ -12,51 +12,90 @@ final class HologramPresetCopies {
 
     static HologramPresets.Preset copy(HologramPresets.Preset source) {
         if (source == null) return null;
-        HologramPresets.Preset result = new HologramPresets.Preset();
-        result.id = source.id;
-        result.name = source.name;
-        result.controllerType = source.controllerType;
-        result.authorName = source.authorName;
-        result.authorUuid = source.authorUuid;
-        result.createdAt = source.createdAt;
-        result.nativeBlueprint = metadata(source.nativeBlueprint);
-        result.fullyVoucherCovered = source.fullyVoucherCovered;
-        result.schema = source.schema;
-        result.aePolicyVersion = source.aePolicyVersion;
-        result.deidentificationVersion = source.deidentificationVersion;
-        result.deidentificationLevel = source.deidentificationLevel;
-        result.deidentificationChosen = source.deidentificationChosen;
-        result.processingNbt = source.processingNbt;
-        result.quantumGroupingNbt = source.quantumGroupingNbt;
-        if (source.aeIssues != null) {
-            result.aeIssues = new ArrayList<>(source.aeIssues.size());
-            for (HologramAePolicy.Issue issue : source.aeIssues) result.aeIssues.add(issue(issue));
+        Task task = new Task(source);
+        while (!task.step(Integer.MAX_VALUE, Long.MAX_VALUE)) {}
+        return task.result;
+    }
+
+    /** Owner-held DTO input: one bounded record per operation; no registry or world callbacks. */
+    static final class Task {
+
+        private final HologramPresets.Preset source;
+        final HologramPresets.Preset result = new HologramPresets.Preset();
+        private java.util.Iterator<Map.Entry<String, String>> versions;
+        private int stage, cursor;
+        private long completed;
+
+        Task(HologramPresets.Preset source) {
+            this.source = java.util.Objects.requireNonNull(source);
+            result.id = source.id;
+            result.name = source.name;
+            result.controllerType = source.controllerType;
+            result.authorName = source.authorName;
+            result.authorUuid = source.authorUuid;
+            result.createdAt = source.createdAt;
+            result.nativeBlueprint = metadata(source.nativeBlueprint);
+            result.fullyVoucherCovered = source.fullyVoucherCovered;
+            result.schema = source.schema;
+            result.aePolicyVersion = source.aePolicyVersion;
+            result.deidentificationVersion = source.deidentificationVersion;
+            result.deidentificationLevel = source.deidentificationLevel;
+            result.deidentificationChosen = source.deidentificationChosen;
+            result.processingNbt = source.processingNbt;
+            result.quantumGroupingNbt = source.quantumGroupingNbt;
+            result.retainNbt = source.retainNbt;
+            result.retainCovers = source.retainCovers;
+            result.prompt = source.prompt;
+            result.sourceMod = source.sourceMod;
+            result.sourceClass = source.sourceClass;
+            result.retainedNbtKeys = source.retainedNbtKeys == null ? null : new ArrayList<>();
+            result.controllerId = source.controllerId;
+            result.controllerFacing = source.controllerFacing;
+            // These manifests are immutable. Inheriting them preserves authority while new DTOs own all writes.
+            result.segmentDocument = source.segmentDocument;
+            result.schemaPageCache = source.schemaPageCache;
+            result.schemaPreferredCellId = source.schemaPreferredCellId;
+            result.analysisDocument = source.analysisDocument;
         }
-        result.retainNbt = source.retainNbt;
-        result.retainCovers = source.retainCovers;
-        result.prompt = source.prompt;
-        result.sourceMod = source.sourceMod;
-        result.sourceClass = source.sourceClass;
-        result.modVersions = map(source.modVersions);
-        if (source.hintAreas != null) {
-            result.hintAreas = new ArrayList<>(source.hintAreas.size());
-            for (HologramPresets.HintArea area : source.hintAreas) result.hintAreas.add(area(area));
+
+        long completed() {
+            return completed;
         }
-        if (source.structures != null) {
-            result.structures = new ArrayList<>(source.structures.size());
-            for (HologramPresets.Structure structure : source.structures) result.structures.add(structure(structure));
+
+        long total() {
+            return (long) size(source.aeIssues) + size(source.hintAreas) + size(source.structures)
+                + size(source.retainedNbtKeys) + size(source.cells) + size(source.palette)
+                + (source.modVersions == null ? 0 : source.modVersions.size());
         }
-        result.retainedNbtKeys = strings(source.retainedNbtKeys);
-        result.controllerId = source.controllerId;
-        result.controllerFacing = source.controllerFacing;
-        if (source.cells != null) result.cells = cells(source.cells);
-        if (source.palette != null) result.palette = cells(source.palette);
-        // These manifests are immutable. Inheriting them preserves authority while new DTOs own all writes.
-        result.segmentDocument = source.segmentDocument;
-        result.schemaPageCache = source.schemaPageCache;
-        result.schemaPreferredCellId = source.schemaPreferredCellId;
-        result.analysisDocument = source.analysisDocument;
-        return result;
+
+        boolean step(int maxWork, long maxNanos) {
+            HologramPlanBudget budget = new HologramPlanBudget(maxWork, maxNanos);
+            while (stage < 7 && budget.take()) {
+                if (stage == 0 && cursor < size(source.aeIssues)) result.aeIssues.add(issue(source.aeIssues.get(cursor++)));
+                else if (stage == 1 && cursor < size(source.hintAreas)) result.hintAreas.add(area(source.hintAreas.get(cursor++)));
+                else if (stage == 2 && cursor < size(source.structures)) result.structures.add(structure(source.structures.get(cursor++)));
+                else if (stage == 3 && cursor < size(source.retainedNbtKeys)) result.retainedNbtKeys.add(source.retainedNbtKeys.get(cursor++));
+                else if (stage == 4 && cursor < size(source.cells)) result.cells.add(cell(source.cells.get(cursor++)));
+                else if (stage == 5 && cursor < size(source.palette)) result.palette.add(cell(source.palette.get(cursor++)));
+                else if (stage == 6) {
+                    if (versions == null) versions = (source.modVersions == null ? java.util.Collections.<String, String>emptyMap()
+                        : source.modVersions).entrySet().iterator();
+                    if (!versions.hasNext()) { stage++; continue; }
+                    Map.Entry<String, String> entry = versions.next();
+                    if (entry.getValue() != null) {
+                        String key = String.valueOf(entry.getKey());
+                        if (result.modVersions.containsKey(key)) throw new JsonSyntaxException("duplicate key: " + key);
+                        result.modVersions.put(key, entry.getValue());
+                    }
+                } else { stage++; cursor = 0; continue; }
+                completed++;
+            }
+            return stage == 7;
+        }
+
+        private static int size(List<?> values) {
+            return values == null ? 0 : values.size();
+        }
     }
 
     private static List<HologramPresets.Cell> cells(List<HologramPresets.Cell> source) {

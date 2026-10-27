@@ -24,6 +24,33 @@ public final class HologramPresetCopiesRegression {
         nullDefaults();
         largeEncodedValues();
         immutableManifests();
+        boundedCopy();
+    }
+
+    private static void boundedCopy() {
+        HologramPresets.Preset source = fixture();
+        for (int i = 0; i < 2048; i++) source.cells.add(source.cells.get(0));
+        HologramPresetCopies.Task task = new HologramPresetCopies.Task(source);
+        SimpleAssert.eq(0, task.result.cells.size(), "constructing copy continuation never copies the cell tree");
+        SimpleAssert.that(!task.step(0, Long.MAX_VALUE), "zero work does not copy records");
+        SimpleAssert.that(!task.step(100, 0), "zero time does not copy records");
+        SimpleAssert.eq(0L, task.completed(), "no-budget copy stays at its original cursor");
+        int slices = 0;
+        while (true) {
+            long before = task.completed();
+            boolean done = task.step(7, Long.MAX_VALUE);
+            SimpleAssert.that(task.completed() - before <= 7, "every list/map record shares the operation cap");
+            slices++;
+            if (done) break;
+            SimpleAssert.that(slices < 1000, "bounded copy terminates");
+        }
+        SimpleAssert.that(slices > 200, "large copy genuinely yields rather than copying ahead of its cursor");
+        SimpleAssert.eq(task.total(), task.completed(), "all DTO records were consumed");
+        SimpleAssert.eq(ORACLE.toJsonTree(source), ORACLE.toJsonTree(task.result), "sliced DTO copy preserves complete serialized input");
+        SimpleAssert.that(task.step(1, 1), "completed copy is idempotently complete");
+        task.result.cells.get(17).allowedTargets.get(0).damage++;
+        SimpleAssert.that(source.cells.get(17).allowedTargets.get(0).damage != task.result.cells.get(17).allowedTargets.get(0).damage,
+            "sliced copy does not share mutable nested ownership");
     }
 
     private static void fieldCoverage() {

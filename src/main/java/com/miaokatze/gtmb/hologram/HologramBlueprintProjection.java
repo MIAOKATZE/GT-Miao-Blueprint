@@ -207,7 +207,6 @@ final class HologramBlueprintProjection {
         s.networkBindings.clear();
         s.networkBindingRequested = false;
         if (!s.virtual || s.virtualPreset == null) return;
-        materializeImplicitStructure(s);
         Population population = new Population(s);
         while (!population.step(Integer.MAX_VALUE, Long.MAX_VALUE)) {}
         HologramResourcePlanner.refreshPlan(s);
@@ -217,6 +216,8 @@ final class HologramBlueprintProjection {
     static final class Population {
 
         private final HologramSession s;
+        private final Thread owner = Thread.currentThread();
+        private final ImplicitStructure implicit;
         private final Map<String, String> sourceClasses = new HashMap<>(), sourceWarnings = new HashMap<>();
         private final Map<String, Integer> controllerIds = new HashMap<>();
         private String fallbackSourceClass, fallbackSourceWarning;
@@ -225,14 +226,21 @@ final class HologramBlueprintProjection {
 
         Population(HologramSession s) {
             this.s = s;
+            implicit = new ImplicitStructure(s);
+        }
+
+        String phase() {
+            return implicit.done() ? "preset.projection" : "preset.memberships";
         }
 
         long completed() {
-            return (long) sourceIndex + cursor + (long) pass * s.virtualPreset.cells.size();
+            return implicit.done() ? (long) sourceIndex + cursor + (long) pass * s.virtualPreset.cells.size()
+                : implicit.cursor;
         }
 
         long total() {
-            return s.virtualPreset.structures.size() + 2L * s.virtualPreset.cells.size();
+            return implicit.done() ? s.virtualPreset.structures.size() + 2L * s.virtualPreset.cells.size()
+                : s.virtualPreset.cells.size();
         }
 
         boolean step() {
@@ -240,6 +248,14 @@ final class HologramBlueprintProjection {
         }
 
         boolean step(int maxWork, long deadline) {
+            if (Thread.currentThread() != owner) throw new IllegalStateException("Projection must stay on its owner thread");
+            if (maxWork <= 0 || System.nanoTime() >= deadline) return false;
+            int used = 0;
+            while (!implicit.done() && used < maxWork && System.nanoTime() < deadline) {
+                implicit.advance();
+                used++;
+            }
+            if (!implicit.done() || used == maxWork || System.nanoTime() >= deadline) return false;
             if (!initialized) {
                 s.capture = new HologramCapture(null, HologramSessionPolicy.trigger(s));
                 s.pins.clear();
@@ -261,8 +277,8 @@ final class HologramBlueprintProjection {
                 fallbackSourceWarning = HologramBlueprintData.sourceWarning(s.virtualPreset, null);
                 initialized = true;
             }
-            for (int work = 0; work < maxWork; work++) {
-                if (work > 0 && System.nanoTime() >= deadline) return false;
+            for (int work = used; work < maxWork; work++) {
+                if (System.nanoTime() >= deadline) return false;
                 if (sourceIndex < s.virtualPreset.structures.size()) {
                     HologramPresets.Structure source = s.virtualPreset.structures.get(sourceIndex);
                     s.structureIndex.add(sourceIndex++);
@@ -378,33 +394,56 @@ final class HologramBlueprintProjection {
     }
 
     static void materializeImplicitStructure(HologramSession s) {
-        HologramPresets.Preset preset = s.virtualPreset;
-        if (preset.schema < 2 || !preset.structures.isEmpty()) return;
-        HologramPresets.Cell controller = null;
-        for (HologramPresets.Cell cell : preset.cells) if (cell.controller) {
-            controller = cell;
-            break;
+        ImplicitStructure task = new ImplicitStructure(s);
+        while (!task.done()) task.advance();
+    }
+
+    /** Legacy implicit membership migration shares the projection cursor instead of scanning ahead of its budget. */
+    private static final class ImplicitStructure {
+
+        private final HologramSession s;
+        private final HologramPresets.Preset preset;
+        private HologramPresets.Structure structure;
+        private int stage, cursor;
+
+        ImplicitStructure(HologramSession s) {
+            this.s = s;
+            preset = s.virtualPreset;
+            if (preset.schema < 2 || !preset.structures.isEmpty()) stage = 2;
         }
-        if (controller == null) return;
-        HologramPresets.Structure structure = new HologramPresets.Structure();
-        structure.id = UUID.randomUUID()
-            .toString();
-        structure.name = preset.name == null ? "Template" : preset.name;
-        structure.sourceClass = preset.sourceClass;
-        structure.sourceMod = preset.sourceMod;
-        structure.controllerId = preset.controllerId;
-        structure.x = controller.x;
-        structure.y = controller.y;
-        structure.z = controller.z;
-        structure.main = s.main;
-        structure.mainExplicit = s.mainExplicit;
-        structure.noHatches = s.noHatches;
-        for (Object raw : s.channels.func_150296_c())
-            structure.channels.put((String) raw, s.channels.getInteger((String) raw));
-        preset.structures.add(structure);
-        for (HologramPresets.Cell cell : preset.cells) {
-            cell.structureId = structure.id;
-            cell.structureIds = new ArrayList<>(Collections.singletonList(structure.id));
+
+        boolean done() {
+            return stage == 2;
+        }
+
+        void advance() {
+            if (stage == 0) {
+                if (cursor >= preset.cells.size()) { stage = 2; return; }
+                HologramPresets.Cell controller = preset.cells.get(cursor++);
+                if (!controller.controller) return;
+                structure = new HologramPresets.Structure();
+                structure.id = UUID.randomUUID().toString();
+                structure.name = preset.name == null ? "Template" : preset.name;
+                structure.sourceClass = preset.sourceClass;
+                structure.sourceMod = preset.sourceMod;
+                structure.controllerId = preset.controllerId;
+                structure.x = controller.x;
+                structure.y = controller.y;
+                structure.z = controller.z;
+                structure.main = s.main;
+                structure.mainExplicit = s.mainExplicit;
+                structure.noHatches = s.noHatches;
+                for (Object raw : s.channels.func_150296_c())
+                    structure.channels.put((String) raw, s.channels.getInteger((String) raw));
+                preset.structures.add(structure);
+                cursor = 0;
+                stage = 1;
+            } else if (stage == 1) {
+                if (cursor >= preset.cells.size()) { stage = 2; return; }
+                HologramPresets.Cell cell = preset.cells.get(cursor++);
+                cell.structureId = structure.id;
+                cell.structureIds = new ArrayList<>(Collections.singletonList(structure.id));
+            }
         }
     }
 }
