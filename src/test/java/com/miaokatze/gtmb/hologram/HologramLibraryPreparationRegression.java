@@ -1,5 +1,6 @@
 package com.miaokatze.gtmb.hologram;
 
+import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -406,12 +407,13 @@ final class HologramLibraryPreparationRegression {
         }
     }
 
-    private static HologramPresets.Preset preset() {
+    private static HologramPresets.Preset preset() throws IOException {
         HologramPresets.Preset source = new HologramPresets.Preset();
         source.schema = 2;
         source.name = "prepared";
         source.controllerType = "area";
         source.cells.add(HologramPresets.cell(new ItemStack(Blocks.stone), 0, 0, 0, -1, false));
+        HologramBlueprintVersions.stamp(source);
         return source;
     }
 
