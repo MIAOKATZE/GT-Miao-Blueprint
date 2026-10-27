@@ -78,9 +78,10 @@ final class HologramWorkspaceScheduler {
         }
     }
 
-    private static boolean canAdvanceImport(HologramArea area) {
+    static boolean canAdvanceImport(HologramArea area) {
         if (!area.importing || "declarations".equals(area.importPhase)) return false;
-        return !"canonicalize".equals(area.importPhase) || area.preparation != null && area.preparation.ready();
+        return !"canonicalize".equals(area.importPhase) || area.preparation != null
+            && (area.preparation.canAdvance() || area.preparation.ready());
     }
 
     private static boolean canContinue(HologramSession s) {

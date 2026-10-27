@@ -381,7 +381,12 @@ final class HologramBlueprintNbt {
         try {
             int expanded = measureExpanded(value);
             long cost = 128L + 2L * value.length() + 32L * expanded;
-            if (producer && enabled && cost <= BLOB_BYTES)
+            // Frozen metadata already owns a bounded decoded cache. Do not create a second,
+            // phantom-retired global cache charge for its owner or detached reads. Existing hits
+            // and the strict uncached/singleflight path above retain exactly the same semantics.
+            if (producer && enabled && cost <= BLOB_BYTES
+                && !HologramSnapshotDataContext.freezingOnOwner()
+                && !HologramSnapshotDataContext.active())
                 lease = HologramRetainedCache.tryReserve("nbt.exact-cache", cost);
             ExactBlob result = new ExactBlob(value, decodeUncached(value), expanded, cost);
             if (lease != null) {

@@ -50,6 +50,7 @@ final class HologramAreaPreparation {
     private HologramAePolicy.Sanitation sanitation;
     private HologramPresets.Preset result;
     private int stage;
+    private long rejectedTick;
     private boolean cancelled, waiting;
 
     HologramAreaPreparation() {
@@ -95,7 +96,21 @@ final class HologramAreaPreparation {
         return waiting;
     }
 
+    /** Owner work and completed worker results can use spare time; pending workers cannot. */
+    boolean canAdvance() {
+        if (cancelled || sanitation == null || stage == 5 || admissionBlocked()) return false;
+        return task == null || task.isDone();
+    }
+
+    private boolean admissionBlocked() {
+        return rejectedTick != 0 && rejectedTick == HologramWorkBudget.currentServerTick();
+    }
+
     void advance(int budget, long deadline) throws IOException {
+        if (admissionBlocked()) {
+            waiting = true;
+            return;
+        }
         waiting = false;
         for (int work = 0; !cancelled && stage < 5 && work < budget; work++) {
             if (work > 0 && System.nanoTime() >= deadline) break;
@@ -115,9 +130,11 @@ final class HologramAreaPreparation {
                         return prepared;
                     });
                     if (!execute(candidate)) {
+                        rejectedTick = HologramWorkBudget.currentServerTick();
                         waiting = true;
                         break;
                     }
+                    rejectedTick = 0;
                     task = candidate;
                 }
                 if (!task.isDone()) {

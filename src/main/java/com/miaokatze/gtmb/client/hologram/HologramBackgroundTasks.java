@@ -666,6 +666,8 @@ public final class HologramBackgroundTasks {
     }
 
     static String transportFailureMessage(NBTTagCompound failure) {
+        if ("snapshot.metadata.capacity".equals(failure.getString("errorCode")))
+            return "当前蓝图所需元数据超过工作预算，已保留原预览；请减小范围或调整内容后重试。";
         String reason = switch (failure.getString("errorCode")) {
             case "attachment.upload" -> "文字或图片数据上传失败";
             case "snapshot.prepare" -> "蓝图快照准备失败";

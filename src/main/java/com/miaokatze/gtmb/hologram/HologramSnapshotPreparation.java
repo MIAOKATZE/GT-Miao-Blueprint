@@ -109,7 +109,8 @@ final class HologramSnapshotPreparation {
                 s.player,
                 task.session,
                 task.ui,
-                "snapshot.prepare",
+                failure instanceof HologramSnapshotDataContext.CapacityExceeded ? "snapshot.metadata.capacity"
+                    : "snapshot.prepare",
                 task.clientTask,
                 new IllegalStateException(
                     "Hologram snapshot preparation failed phase=" + failedPhase

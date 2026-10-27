@@ -217,6 +217,7 @@ final class HologramAreaPreparationRegression {
             .that(entered.await(5, java.util.concurrent.TimeUnit.SECONDS), "worker task starts away from caller");
         java.util.concurrent.FutureTask<Void> queued = new java.util.concurrent.FutureTask<>(() -> null);
         HologramAreaPreparation preparation = new HologramAreaPreparation();
+        HologramAreaPreparation rejected = new HologramAreaPreparation();
         try {
             HologramPresets.Preset source = new HologramPresets.Preset();
             source.cells.add(HologramPresets.cell(new ItemStack(Blocks.stone), 0, 0, 0, -1, false));
@@ -224,20 +225,50 @@ final class HologramAreaPreparationRegression {
             preparation.captureNetworks(source, 8, Long.MAX_VALUE);
             SimpleAssert.that(preparation.start(source), "one detached area is admitted behind active work");
             preparation.advance(8, Long.MAX_VALUE);
+            SimpleAssert.that(!preparation.canAdvance(), "a queued worker is not owner work ready to advance");
+            SimpleAssert.eq(1, preparationRound(preparation, 8), "pending worker gets no spare-time polling loop");
             SimpleAssert
                 .that(HologramAreaPreparation.execute(queued), "only the second bounded queue position is admitted");
             SimpleAssert.that(
                 !HologramAreaPreparation.execute(new java.util.concurrent.FutureTask<>(() -> null)),
                 "an unbounded number of large area drafts cannot accumulate on the compute worker");
-            preparation.cancel();
+            rejected.start(new HologramPresets.Preset());
+            HologramWorkBudget.startServerTick();
+            rejected.advance(8, Long.MAX_VALUE);
+            SimpleAssert.that(rejected.waiting() && !rejected.canAdvance(), "full executor blocks this tick only");
             HologramAreaPreparation.cancel(queued);
+            rejected.advance(8, Long.MAX_VALUE);
+            SimpleAssert.that(
+                rejected.waiting() && !rejected.canAdvance() && pendingTask(rejected) == null,
+                "freeing a queue slot does not retry a rejected admission in the same tick");
+            SimpleAssert.eq(1, preparationRound(rejected, 8), "rejected admission cannot spin in spare time");
+            HologramWorkBudget.endServerTick();
+            SimpleAssert.that(rejected.canAdvance(), "standalone callers are not stranded by a previous tick rejection");
+            HologramWorkBudget.startServerTick();
+            SimpleAssert.that(rejected.canAdvance(), "the next actual server tick unblocks executor admission");
+            rejected.advance(1, Long.MAX_VALUE);
+            SimpleAssert.that(
+                pendingTask(rejected) != null && !rejected.canAdvance(),
+                "a rejected preparation is admitted next tick, then waits for the real worker");
+            preparation.cancel();
+            SimpleAssert.that(!preparation.canAdvance() && !preparation.ready(), "cancelled work cannot resume");
+            java.util.concurrent.FutureTask<?> admitted = pendingTask(rejected);
             release.countDown();
             blocker.get(5, java.util.concurrent.TimeUnit.SECONDS);
+            admitted.get(5, java.util.concurrent.TimeUnit.SECONDS);
+            SimpleAssert.that(
+                rejected.waiting() && rejected.canAdvance() && !rejected.ready(),
+                "completed future overrides the previous waiting observation without claiming final completion");
+            SimpleAssert.eq(1, preparationRound(rejected, 1), "completed worker result is harvested by scheduler");
+            SimpleAssert.that(pendingTask(rejected) == null && rejected.canAdvance(), "harvest resumes the owner phase");
+            rejected.cancel();
             SimpleAssert.eq(
                 before,
                 new com.google.gson.Gson().toJson(source),
                 "a cancelled queued canonicalization never mutates or publishes its detached source");
         } finally {
+            HologramWorkBudget.endServerTick();
+            rejected.cancel();
             preparation.cancel();
             HologramAreaPreparation.cancel(queued);
             release.countDown();
@@ -268,10 +299,31 @@ final class HologramAreaPreparationRegression {
             "owner sanitation resolves the native AE fixture");
         HologramAreaPreparation preparation = new HologramAreaPreparation();
         preparation.captureNetworks(source, 64, Long.MAX_VALUE);
+        SimpleAssert.that(!preparation.canAdvance(), "network capture alone cannot advance canonicalization");
         preparation.start(source);
         long deadline = System.nanoTime() + 5_000_000_000L;
         int steps = 0;
         try {
+            SimpleAssert.that(preparation.canAdvance() && !preparation.ready(), "identity is runnable, not complete");
+            steps += preparationRound(preparation, 8);
+            SimpleAssert.eq(8, steps, "real identity cells use multiple slices in one round");
+            SimpleAssert.eq("identity", preparation.progress().phase, "the owner identity pass remains incomplete");
+            preparation.advance(26, Long.MAX_VALUE); // Remaining 25 identity cells and transition to prepareData.
+            steps += 26;
+            preparation.advance(1, Long.MAX_VALUE);
+            steps++;
+            java.util.concurrent.FutureTask<?> task = pendingTask(preparation);
+            if (task != null) {
+                task.get(5, java.util.concurrent.TimeUnit.SECONDS);
+                SimpleAssert.that(
+                    preparation.canAdvance() && !preparation.ready(),
+                    "a completed detached result can be harvested before canonicalization is ready");
+                preparation.advance(1, Long.MAX_VALUE);
+                steps++;
+            }
+            SimpleAssert.that(preparation.canAdvance() && !preparation.ready(), "native AE is runnable, not complete");
+            steps += preparationRound(preparation, 8);
+            SimpleAssert.eq(8, appeng.block.GtmbAeOwnerFixture.factories, "real AE factories use spare slices on owner");
             while (!preparation.ready() && System.nanoTime() < deadline) {
                 int before = appeng.block.GtmbAeOwnerFixture.factories;
                 preparation.advance(1, Long.MAX_VALUE);
@@ -282,6 +334,11 @@ final class HologramAreaPreparationRegression {
                 if (preparation.waiting()) Thread.yield();
             }
             SimpleAssert.that(preparation.ready(), "owner sanitation and detached reports finish together");
+            SimpleAssert.that(!preparation.canAdvance(), "completed sanitation has no work left to advance");
+            HologramArea completed = canonicalArea(preparation);
+            SimpleAssert.that(
+                HologramWorkspaceScheduler.canAdvanceImport(completed),
+                "a complete private result still allows the import workflow to publish it");
             SimpleAssert.eq(
                 33,
                 appeng.block.GtmbAeOwnerFixture.factories,
@@ -292,6 +349,44 @@ final class HologramAreaPreparationRegression {
             preparation.cancel();
             appeng.block.GtmbAeOwnerFixture.owner = null;
         }
+    }
+
+    private static java.util.concurrent.FutureTask<?> pendingTask(HologramAreaPreparation preparation)
+        throws ReflectiveOperationException {
+        Field task = HologramAreaPreparation.class.getDeclaredField("task");
+        task.setAccessible(true);
+        return (java.util.concurrent.FutureTask<?>) task.get(preparation);
+    }
+
+    private static HologramArea canonicalArea(HologramAreaPreparation preparation) {
+        HologramArea area = new HologramArea();
+        area.importing = true;
+        area.importPhase = "canonicalize";
+        area.preparation = preparation;
+        return area;
+    }
+
+    /** Count real sanitation operations, not simulated milliseconds or claimed end-to-end speedup. */
+    private static int preparationRound(HologramAreaPreparation preparation, int operations) {
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong();
+        int[] calls = { 0 };
+        java.util.function.Consumer<HologramArea> step = area -> {
+            try {
+                area.preparation.advance(1, Long.MAX_VALUE);
+            } catch (java.io.IOException failure) {
+                throw new AssertionError("canonical continuation", failure);
+            }
+            calls[0]++;
+            clock.incrementAndGet();
+        };
+        HologramWorkspaceScheduler.runRound(
+            Collections.singletonList(canonicalArea(preparation)),
+            step,
+            step,
+            HologramWorkspaceScheduler::canAdvanceImport,
+            clock::get,
+            operations);
+        return calls[0];
     }
 
     private static void structureIndex() {
