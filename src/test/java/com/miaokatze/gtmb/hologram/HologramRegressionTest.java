@@ -21,6 +21,13 @@ public final class HologramRegressionTest {
     public static void main(String[] args) throws Exception {
         if (!MinecraftTestBootstrap.enter(HologramRegressionTest.class, args)) return;
         Map<String, Runnable> cases = new LinkedHashMap<>();
+        cases.put("snapshot_metadata_executor_admission_no_same_tick_spin", () -> {
+            try {
+                HologramMetadataAdmissionRegression.run();
+            } catch (Exception failure) {
+                throw new AssertionError(failure);
+            }
+        });
         cases.put("snapshot_metadata_explicit_ownership_and_retry", () -> {
             try {
                 HologramMetadataOwnershipRegression.run();

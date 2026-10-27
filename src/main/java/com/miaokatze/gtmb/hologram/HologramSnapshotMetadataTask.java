@@ -312,6 +312,8 @@ final class HologramSnapshotMetadataTask {
             };
             if (!HologramAreaPreparation.execute(candidate)) {
                 candidate.cancel(false);
+                // A full executor is retryable next tick, not work for this tick's spare-time rounds.
+                busyTick = HologramWorkBudget.currentServerTick();
                 return false;
             }
             report = candidate;
