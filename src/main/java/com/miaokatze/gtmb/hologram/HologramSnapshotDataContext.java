@@ -22,6 +22,7 @@ final class HologramSnapshotDataContext implements AutoCloseable {
     private final HologramRetainedCache.Owner retained = HologramRetainedCache.watch(this);
     private HologramBlueprintNbt.FrozenItemPatch itemPatch;
     private long decodedBytes;
+    private long mandatoryBytes;
     private int references = 1;
     private boolean ownerClosed;
     private int aeRows, resourceRows;
@@ -51,6 +52,35 @@ final class HologramSnapshotDataContext implements AutoCloseable {
         private static final long serialVersionUID = 1L;
     }
 
+    /** A terminal admission failure, not a retryable lack of presently free process quota. */
+    static final class CapacityExceeded extends IllegalStateException {
+
+        private static final long serialVersionUID = 1L;
+
+        CapacityExceeded(String phase, long held, long requested, long limit) {
+            super("Snapshot metadata working set exceeds quota phase=" + phase + " held=" + held
+                + " requested=" + requested + " limit=" + limit);
+        }
+    }
+
+    static void requireCapacity(String phase, long held, long requested, long limit) {
+        if (held < 0 || requested < 0 || limit < 0) throw new IllegalArgumentException("Negative metadata admission");
+        // Subtraction avoids overflow, and does not misclassify unrelated live work as our own working set.
+        if (held > limit || requested > limit - held) throw new CapacityExceeded(phase, held, requested, limit);
+    }
+
+    private HologramProcessGovernor.Lease reserveMandatory(String phase, long bytes) {
+        requireCapacity(phase, mandatoryBytes, bytes, HologramProcessGovernor.retainedByteLimit());
+        HologramProcessGovernor.Lease lease = HologramRetainedCache.tryReserve(phase, bytes);
+        if (lease == null) throw new Busy();
+        return lease;
+    }
+
+    private void retainMandatory(HologramProcessGovernor.Lease lease) {
+        retained.add(lease);
+        mandatoryBytes += lease.bytes();
+    }
+
     synchronized NBTTagCompound freeze(String encoded) throws IOException {
         NBTTagCompound value = freezeBorrowed(encoded);
         Decoded cached = decoded.get(encoded);
@@ -66,22 +96,19 @@ final class HologramSnapshotDataContext implements AutoCloseable {
         HologramBlueprintNbt.ExactBlob blob = HologramBlueprintNbt.exactDeferred(encoded);
         if (!expanded.containsKey(encoded)) {
             if (!blob.registryIndependent() && itemPatch == null) {
-                HologramProcessGovernor.Lease lease = HologramRetainedCache
-                    .tryReserve("metadata.item-patch", HologramBlueprintNbt.frozenItemPatchBytes());
-                if (lease == null) throw new Busy();
+                HologramProcessGovernor.Lease lease = reserveMandatory(
+                    "metadata.item-patch", HologramBlueprintNbt.frozenItemPatchBytes());
                 try {
                     itemPatch = HologramBlueprintNbt.freezeItemPatch();
-                    retained.add(lease);
+                    retainMandatory(lease);
                 } catch (RuntimeException | Error failed) {
                     lease.close();
                     throw failed;
                 }
             }
             if (expanded.size() % INPUT_BATCH == 0) {
-                HologramProcessGovernor.Lease lease = HologramRetainedCache
-                    .tryReserve("metadata.source-directory", 128L * INPUT_BATCH);
-                if (lease == null) throw new Busy();
-                retained.add(lease);
+                HologramProcessGovernor.Lease lease = reserveMandatory("metadata.source-directory", 128L * INPUT_BATCH);
+                retainMandatory(lease);
             }
             expanded.put(encoded, blob.expandedBytes());
         }
@@ -168,6 +195,7 @@ final class HologramSnapshotDataContext implements AutoCloseable {
         aeIssueCells.clear();
         resourceReviews.clear();
         retained.close();
+        mandatoryBytes = 0;
     }
 
     private static final class Decoded {
@@ -329,10 +357,8 @@ final class HologramSnapshotDataContext implements AutoCloseable {
                     Math.max(0, 8192 - resourceRows),
                     Math.max(0L, (8L << 20) - resourceBytes));
                 long cost = HologramSnapshotNbt.estimate(review) + 1024;
-                HologramProcessGovernor.Lease lease = HologramRetainedCache
-                    .tryReserve("metadata.resource-review", cost);
-                if (lease == null) throw new Busy();
-                retained.add(lease);
+                HologramProcessGovernor.Lease lease = reserveMandatory("metadata.resource-review", cost);
+                retainMandatory(lease);
                 resourceRows += review.getTagList("rows", 10)
                     .tagCount();
                 resourceBytes += cost;

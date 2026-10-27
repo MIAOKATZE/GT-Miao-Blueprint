@@ -156,6 +156,11 @@ final class HologramSnapshotMetadataTask {
                     stage = 13;
                     cursor = 1;
                 }
+            } catch (HologramSnapshotDataContext.CapacityExceeded impossible) {
+                // Do not publish partial facts as a successful processing-error snapshot. The enclosing
+                // preparation cancels its FIFO candidate and rolls back to the previously published editor.
+                cancel();
+                throw impossible;
             } catch (HologramSnapshotDataContext.Busy busy) {
                 busyTick = HologramWorkBudget.currentServerTick();
                 return false;
