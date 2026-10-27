@@ -36,9 +36,12 @@ public final class HologramCutService {
                 String name = file.getFileName()
                     .toString();
                 UUID owner = UUID.fromString(name.substring(0, name.length() - 4));
-                HologramCutStorage storage = new HologramCutStorage(saveRoot(), owner);
-                NBTTagCompound state = storage.load();
-                recover(storage, state);
+                try (HologramCutDiagnostics diagnostics = HologramCutDiagnostics.begin()) {
+                    HologramCutStorage storage = new HologramCutStorage(saveRoot(), owner, diagnostics);
+                    NBTTagCompound state = storage.load();
+                    recover(storage, state, diagnostics);
+                    diagnostics.completed();
+                }
             } catch (Exception failure) {
                 com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG
                     .error("Interrupted cut remains in durable recovery journal: " + file, failure);
@@ -473,24 +476,7 @@ public final class HologramCutService {
             world = DimensionManager.getWorld(dimension);
         }
         if (world == null) throw new IOException("原维度不可用，剪切记录已保留");
-        NBTTagCompound entry = pending.getCompoundTag("entry");
-        int x = pending.getInteger("x"), y = pending.getInteger("y"), z = pending.getInteger("z");
-        boolean air = pending.getBoolean("air");
-        try (HologramCutDiagnostics.Scope ignored = diagnostics.phase(
-            HologramCutDiagnostics.Phase.NATIVE_APPLY, entry.getTagList("cells", 10).tagCount())) {
-            HologramCutWorld.apply(world, entry, x, y, z, air);
-        }
-        HologramCutWorld.saveAndVerify(world, entry, x, y, z, air, diagnostics);
-        NBTTagCompound completed = (NBTTagCompound) state.copy();
-        String consumeId = pending.getString("consumeId");
-        if (!consumeId.isEmpty()) remove(completed, consumeId);
-        completed.removeTag("pending");
-        storage.save(completed);
-        if (!consumeId.isEmpty()) remove(state, consumeId);
-        state.removeTag("pending");
-        try (HologramCutDiagnostics.Scope ignored = diagnostics.phase(HologramCutDiagnostics.Phase.COMMIT_NOTIFY, 1)) {
-            HologramCutWorld.notifyCommitted(world, entry, x, y, z, air);
-        }
+        HologramCutTransaction.recover(storage, state, world, diagnostics);
     }
 
     private static boolean seen(NBTTagCompound state, String id) {
@@ -518,16 +504,6 @@ public final class HologramCutService {
                 .getString("id")))
             return entries.getCompoundTagAt(i);
         return null;
-    }
-
-    private static void remove(NBTTagCompound state, String id) {
-        NBTTagList entries = state.getTagList("entries", 10);
-        for (int i = 0; i < entries.tagCount(); i++) if (id.equals(
-            entries.getCompoundTagAt(i)
-                .getString("id"))) {
-                    entries.removeTag(i);
-                    return;
-                }
     }
 
     private static void select(NBTTagCompound response, NBTTagCompound entry) {

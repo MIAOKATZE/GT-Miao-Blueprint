@@ -522,32 +522,9 @@ final class HologramCutWorld {
         return bounded.replaceAll("[^A-Za-z0-9_:.-]", "?");
     }
 
-    /** Native floating-point writers canonicalize NaN; 1.7 tag.equals rejects its own valid roundtrip. */
+    /** Pure detached NBT comparison; no live world/registry facts are cached. */
     static boolean sameNbt(net.minecraft.nbt.NBTBase first, net.minecraft.nbt.NBTBase second) {
-        if (first == second) return true;
-        if (first == null || second == null || first.getId() != second.getId()) return false;
-        if (first instanceof net.minecraft.nbt.NBTTagFloat)
-            return Float.floatToIntBits(((net.minecraft.nbt.NBTTagFloat) first).func_150288_h())
-                == Float.floatToIntBits(((net.minecraft.nbt.NBTTagFloat) second).func_150288_h());
-        if (first instanceof net.minecraft.nbt.NBTTagDouble)
-            return Double.doubleToLongBits(((net.minecraft.nbt.NBTTagDouble) first).func_150286_g())
-                == Double.doubleToLongBits(((net.minecraft.nbt.NBTTagDouble) second).func_150286_g());
-        if (first instanceof NBTTagCompound) {
-            NBTTagCompound a = (NBTTagCompound) first, b = (NBTTagCompound) second;
-            if (!a.func_150296_c()
-                .equals(b.func_150296_c())) return false;
-            for (Object key : a.func_150296_c())
-                if (!sameNbt(a.getTag((String) key), b.getTag((String) key))) return false;
-            return true;
-        }
-        if (first instanceof NBTTagList) {
-            NBTTagList a = (NBTTagList) first.copy(), b = (NBTTagList) second.copy();
-            if (a.tagCount() != b.tagCount()) return false;
-            for (int index = a.tagCount() - 1; index >= 0; index--)
-                if (!sameNbt(a.removeTag(index), b.removeTag(index))) return false;
-            return true;
-        }
-        return first.equals(second);
+        return HologramCutNbtComparison.same(first, second);
     }
 
     /** Raw tile bytes and native block decoding must describe the same on-disk chunk. */

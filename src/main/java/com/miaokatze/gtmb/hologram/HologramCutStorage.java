@@ -45,23 +45,70 @@ final class HologramCutStorage {
     }
 
     void save(NBTTagCompound data) throws IOException {
-        byte[] bytes;
-        try (HologramCutDiagnostics.Scope ignored = diagnostics.phase(HologramCutDiagnostics.Phase.JOURNAL_ENCODE, 1)) {
-            bytes = HologramSnapshotCodec.compress(data);
+        save(data, diagnostics);
+    }
+
+    void save(NBTTagCompound data, HologramCutDiagnostics trace) throws IOException {
+        prepare(data, trace).write();
+    }
+
+    /**
+     * Pure encoding of caller-owned NBT; no world/registry access or I/O. The caller must not mutate data during
+     * this call. The returned bytes are private and immutable, so later changes to data cannot alter the write.
+     * This is a synchronous boundary, not permission to serialize shared mutable NBT on a worker.
+     */
+    PreparedWrite prepare(NBTTagCompound data, HologramCutDiagnostics trace) throws IOException {
+        try (HologramCutDiagnostics.Scope ignored = trace.phase(HologramCutDiagnostics.Phase.JOURNAL_ENCODE, 1)) {
+            return new PreparedWrite(HologramSnapshotCodec.compress(data), trace);
         }
-        Files.createDirectories(file.getParent());
-        Path temporary = file.resolveSibling(file.getFileName() + ".tmp");
-        try (FileOutputStream output = new FileOutputStream(temporary.toFile())) {
-            try (HologramCutDiagnostics.Scope ignored = diagnostics.phase(HologramCutDiagnostics.Phase.JOURNAL_WRITE, bytes.length)) {
-                output.write(bytes);
-            }
-            try (HologramCutDiagnostics.Scope ignored = diagnostics.phase(HologramCutDiagnostics.Phase.JOURNAL_SYNC, bytes.length)) {
-                output.getFD().sync();
-            }
+    }
+
+    /** One attempted replacement, tied to this exact storage and preparing owner thread. Never cached or shared. */
+    final class PreparedWrite {
+
+        private final byte[] bytes;
+        private final HologramCutDiagnostics trace;
+        private final Thread owner = Thread.currentThread();
+        private boolean attempted;
+
+        private PreparedWrite(byte[] bytes, HologramCutDiagnostics trace) {
+            this.bytes = bytes;
+            this.trace = trace;
         }
-        // No non-atomic fallback: failure leaves the previous authoritative record intact.
-        try (HologramCutDiagnostics.Scope ignored = diagnostics.phase(HologramCutDiagnostics.Phase.JOURNAL_REPLACE, bytes.length)) {
-            Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+
+        WriteReceipt write() throws IOException {
+            if (Thread.currentThread() != owner) throw new IOException("剪切存储写入必须由原操作线程完成");
+            if (attempted) throw new IOException("剪切存储写入已尝试，请重新读取权威记录");
+            attempted = true;
+            Files.createDirectories(file.getParent());
+            Path temporary = file.resolveSibling(file.getFileName() + ".tmp");
+            try (FileOutputStream output = new FileOutputStream(temporary.toFile())) {
+                try (HologramCutDiagnostics.Scope ignored = trace.phase(HologramCutDiagnostics.Phase.JOURNAL_WRITE, bytes.length)) {
+                    output.write(bytes);
+                }
+                try (HologramCutDiagnostics.Scope ignored = trace.phase(HologramCutDiagnostics.Phase.JOURNAL_SYNC, bytes.length)) {
+                    output.getFD().sync();
+                }
+            }
+            // No non-atomic fallback: failure leaves the previous authoritative record intact.
+            try (HologramCutDiagnostics.Scope ignored = trace.phase(HologramCutDiagnostics.Phase.JOURNAL_REPLACE, bytes.length)) {
+                Files.move(temporary, file, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            }
+            return new WriteReceipt(this);
+        }
+    }
+
+    /** Completion of this journal replacement only; NOT a native chunk writer completion receipt. */
+    static final class WriteReceipt {
+
+        private final PreparedWrite write;
+
+        private WriteReceipt(PreparedWrite write) {
+            this.write = write;
+        }
+
+        boolean confirms(PreparedWrite expected) {
+            return write == expected;
         }
     }
 }

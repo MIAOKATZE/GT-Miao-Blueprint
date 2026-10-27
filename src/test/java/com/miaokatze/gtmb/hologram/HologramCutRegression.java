@@ -21,6 +21,8 @@ public final class HologramCutRegression {
     public static void run() {
         try {
             HologramCutDiagnosticsRegression.run();
+            HologramCutStorageBoundaryRegression.run();
+            HologramCutNbtComparisonRegression.run();
             compositeSelection();
             NBTTagCompound floating = new NBTTagCompound();
             floating.setFloat("nativeFloat", Float.NaN);
