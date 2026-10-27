@@ -299,7 +299,7 @@ final class HologramEditorWorkspaceRegistry {
         try {
             if ("projectionLibraryActivate".equals(frozen.getString("op"))) {
                 frozen.setString("op", frozen.getString("projectionOriginalOp"));
-                HologramLibraryWorkflow.libraryActivate(source.player, frozen, source.projectionSourcePreset);
+                HologramLibraryFacade.resumePrivate(source.player, frozen, source.projectionSourcePreset);
             } else if ("projectionQuickPlace".equals(frozen.getString("op"))) {
                 HologramWorldPlacementWorkflow.quickPlaceLastBlueprint(source.player, frozen);
             } else HologramActionDispatcher.handle(source.player, frozen);

@@ -35,6 +35,7 @@ public final class HologramLibraryFacade {
         HologramLibraryProtocol.INBOUND_REQUESTS);
     private static final ConcurrentHashMap<UUID, SavedResult> savedResults = new ConcurrentHashMap<>();
     private static final HologramRequestGate callbacks = new HologramRequestGate(2, 16);
+    private static final ConcurrentHashMap<UUID, HologramLibraryActivationResult> activations = new ConcurrentHashMap<>();
     private static volatile PrivateReceiver privateReceiver;
     private static volatile BiConsumer<EntityPlayerMP, NBTTagCompound> draftReceiver;
 
@@ -61,7 +62,21 @@ public final class HologramLibraryFacade {
     @FunctionalInterface
     public interface PrivateReceiver {
 
-        String accept(EntityPlayerMP player, NBTTagCompound request, HologramPresets.Preset preset) throws IOException;
+        void accept(EntityPlayerMP player, NBTTagCompound request, HologramPresets.Preset preset,
+            ActivationCompletion completion) throws IOException;
+    }
+
+    public interface ActivationCompletion {
+
+        default boolean current() {
+            return true;
+        }
+
+        default void waitingForConfirmation(java.util.function.BooleanSupplier current) {}
+
+        void completed(String id);
+
+        void failed(String reason);
     }
 
     public static synchronized void init() {
@@ -191,24 +206,111 @@ public final class HologramLibraryFacade {
 
     static void importPrivate(EntityPlayerMP player, NBTTagCompound request, HologramPresets.Preset preset,
         String reply) {
-        scheduleLibraryCallback(player, request, () -> {
+        NBTTagCompound frozen = (NBTTagCompound) request.copy();
+        scheduleLibraryCallback(player, frozen, () -> {
             PrivateReceiver receiver = privateReceiver;
-            if (receiver != null && library != null
-                && library.draftTaskCurrent(player, request)
-                && HologramLibraryService.sessionCurrent(player, request)) {
+            HologramLibraryActivationResult result = activations.get(actorId(player));
+            if (result == null || !result.matches(frozen)) return;
+            if (receiver == null || !result.current()) {
+                result.failed("Blueprint session changed before activation; original editor retained");
+                return;
+            }
+            result.prepared(reply, () -> {
                 try {
-                    String id = receiver.accept(player, request, preset);
-                    NBTTagCompound result = HologramLibraryProtocol.reply(reply);
-                    result.setString("id", id == null ? "" : id);
-                    result.setString("session", request.getString("session"));
-                    result.setString("transfer", request.getString("transfer"));
-                    result.setLong("clientTaskToken", request.getLong("clientTaskToken"));
-                    HologramNetwork.sendLibraryReply(player, result);
-                } catch (IOException | RuntimeException failure) {
-                    error(player, failure.getMessage(), request.getLong("clientTaskToken"));
+                    receiver.accept(player, frozen, preset, result);
+                } catch (IOException | RuntimeException | LinkageError failure) {
+                    result.failed(failure.getMessage());
                 }
-            } else error(player, "Blueprint session changed; reopen and retry", request.getLong("clientTaskToken"));
+            });
         });
+    }
+
+    /** Strict initial admission precedes submit; a worker cannot outlive this exact owner capability. */
+    static boolean beginActivation(EntityPlayerMP player, NBTTagCompound request, HologramServerLibrary backend) {
+        UUID owner = actorId(player);
+        HologramLibraryActivationResult previous = activations.get(owner);
+        if (previous != null && previous.matches(request)) return false;
+        if (previous != null && !previous.supersededBy(request)) {
+            error(player, "Blueprint activation request arrived out of order", request.getLong("clientTaskToken"));
+            return false;
+        }
+        int active = 0;
+        for (HologramLibraryActivationResult result : activations.values()) if (!result.terminal()) active++;
+        if (!HologramLibraryService.sessionCurrent(player, request)
+            || active >= 64 && (previous == null || previous.terminal())) {
+            error(
+                player,
+                "Blueprint session changed or activation queue full; reopen and retry",
+                request.getLong("clientTaskToken"));
+            return false;
+        }
+        NBTTagCompound frozen = (NBTTagCompound) request.copy();
+        HologramLibraryActivationResult result = new HologramLibraryActivationResult(
+            frozen,
+            "",
+            () -> HologramLibraryService.activationCurrent(player, frozen),
+            () -> backend == library && backend.draftTaskCurrent(player, frozen)
+                && HologramLibraryService.connected(player),
+            () -> HologramLibraryService.sessionCurrent(player, frozen),
+            tag -> HologramNetwork.sendLibraryReply(player, tag));
+        if (previous != null) previous.failed("Blueprint activation replaced by a newer request");
+        activations.put(owner, result);
+        // No poll before submit synchronously creates the peer. Submit failures reject this result explicitly.
+        return true;
+    }
+
+    static boolean activationCurrent(EntityPlayerMP player, NBTTagCompound request) {
+        HologramLibraryActivationResult result = activations.get(actorId(player));
+        return result != null && result.matches(request) && result.current();
+    }
+
+    static boolean activationPending(HologramSession session) {
+        HologramLibraryActivationResult result = activations.get(actorId(session.player));
+        return result != null && result.owns(session) && result.current();
+    }
+
+    /** Worker-safe failure registration; the server poll alone sends the terminal receipt. */
+    static boolean failActivation(EntityPlayerMP player, NBTTagCompound request, String reason) {
+        HologramLibraryActivationResult result = activations.get(actorId(player));
+        if (result == null || request != null && !result.matches(request)) return false;
+        result.reject(reason);
+        return true;
+    }
+
+    static void activationProbeMiss(EntityPlayerMP player, NBTTagCompound request) {
+        HologramLibraryActivationResult result = activations.get(actorId(player));
+        if (result != null && result.matches(request)) result.probeMiss();
+    }
+
+    /** Projection confirmation resumes the original receipt, never synthesizes a second upload success. */
+    static void resumePrivate(EntityPlayerMP player, NBTTagCompound request, HologramPresets.Preset preset)
+        throws IOException {
+        HologramLibraryActivationResult result = activations.get(actorId(player));
+        if (result == null || !result.matches(request) || !result.current())
+            throw new IOException("Blueprint activation confirmation expired; select the blueprint again");
+        try {
+            privateReceiver.accept(player, request, preset, result);
+        } catch (IOException | RuntimeException failure) {
+            result.failed(failure.getMessage());
+            throw failure;
+        }
+    }
+
+    private static void pollActivations() {
+        java.util.Iterator<HologramLibraryActivationResult> iterator = activations.values()
+            .iterator();
+        while (iterator.hasNext()) {
+            HologramLibraryActivationResult result = iterator.next();
+            result.poll();
+            // Retain only the small receipt identity to reject late older callbacks after success.
+            if (result.terminal() && !result.transportCurrent()) iterator.remove();
+        }
+    }
+
+    private static void cancelActivations() {
+        for (HologramLibraryActivationResult result : activations.values())
+            result.failed("Blueprint library stopped before activation completed");
+        activations.clear();
     }
 
     static void exportDraft(EntityPlayerMP player, NBTTagCompound request) {
@@ -305,7 +407,8 @@ public final class HologramLibraryFacade {
         HologramRequestGate.Lease lease = callbacks.acquire(player);
         if (lease == null) {
             HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.LIBRARY_CALLBACK_REJECTED, 1);
-            HologramBusyReplies.rejectLibraryCallback(player, request);
+            if (!failActivation(player, request, "Blueprint callback queue is busy; retry"))
+                HologramBusyReplies.rejectLibraryCallback(player, request);
             return false;
         }
         try {
@@ -323,7 +426,8 @@ public final class HologramLibraryFacade {
             lease.close();
             callbackDepth();
             HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.LIBRARY_CALLBACK_REJECTED, 1);
-            HologramBusyReplies.rejectLibraryCallback(player, request);
+            if (!failActivation(player, request, "Blueprint callback queue is busy; retry"))
+                HologramBusyReplies.rejectLibraryCallback(player, request);
             return false;
         } catch (Error failed) {
             lease.close();
@@ -585,6 +689,7 @@ public final class HologramLibraryFacade {
             inboundQuota.clear();
         }
         savedResults.clear();
+        cancelActivations();
         callbacks.clear();
         callbackDepth();
         if (previous != null) previous.stop();
@@ -592,6 +697,7 @@ public final class HologramLibraryFacade {
 
     /** Keep committed save receipts and library ownership; reset only transient admission/transport work. */
     static synchronized void restartRuntime() {
+        cancelActivations();
         synchronized (pending) {
             inbound.clear();
             pending.clear();
@@ -610,6 +716,7 @@ public final class HologramLibraryFacade {
             MinecraftServer server = MinecraftServer.getServer();
             if (event.phase != TickEvent.Phase.END || server == null) return;
             pruneSavedResults();
+            pollActivations();
             HologramServerLibrary current = library;
             if (current == null) {
                 current = new HologramServerLibrary(
@@ -662,6 +769,11 @@ public final class HologramLibraryFacade {
                 if ("previewBegin".equals(op) && !HologramLibraryService.saveCurrent(next.player, next.request)) {
                     error(next.player, "蓝图保存来源已变更，请重新保存", next.request.getLong("clientTaskToken"));
                     continue;
+                }
+                if (("privateBegin".equals(op) && !contentOnly || "publicPrepare".equals(op))
+                    && !next.request.getString("action")
+                        .isEmpty()) {
+                    if (!beginActivation(next.player, next.request, current)) continue;
                 }
                 current.submit(next.player, next.request, isAdmin(next.player));
             }

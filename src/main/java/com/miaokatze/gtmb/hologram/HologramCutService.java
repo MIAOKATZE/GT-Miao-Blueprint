@@ -36,9 +36,12 @@ public final class HologramCutService {
                 String name = file.getFileName()
                     .toString();
                 UUID owner = UUID.fromString(name.substring(0, name.length() - 4));
-                HologramCutStorage storage = new HologramCutStorage(saveRoot(), owner);
-                NBTTagCompound state = storage.load();
-                recover(storage, state);
+                try (HologramCutDiagnostics diagnostics = HologramCutDiagnostics.begin()) {
+                    HologramCutStorage storage = new HologramCutStorage(saveRoot(), owner, diagnostics);
+                    NBTTagCompound state = storage.load();
+                    recover(storage, state, diagnostics);
+                    diagnostics.completed();
+                }
             } catch (Exception failure) {
                 com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG
                     .error("Interrupted cut remains in durable recovery journal: " + file, failure);
@@ -279,6 +282,7 @@ public final class HologramCutService {
     }
 
     private static NBTTagCompound execute(EntityPlayerMP player, NBTTagCompound request, Preparation preparation) {
+        HologramCutDiagnostics diagnostics = HologramCutDiagnostics.begin();
         NBTTagCompound response = new NBTTagCompound();
         response.setString("action", "state");
         response.setString("requestId", request.getString("requestId"));
@@ -316,9 +320,9 @@ public final class HologramCutService {
                 response.setString("message", "正在打开剪切工作区");
                 return response;
             }
-            storage = new HologramCutStorage(saveRoot(), HologramLibraryFacade.actorId(player));
+            storage = new HologramCutStorage(saveRoot(), HologramLibraryFacade.actorId(player), diagnostics);
             state = storage.load();
-            recover(storage, state);
+            recover(storage, state, diagnostics);
             String action = request.getString("action");
             if ("list".equals(action)) {
                 response.setString("message", "剪切暂存已同步");
@@ -350,15 +354,18 @@ public final class HologramCutService {
                         y = box[1];
                         z = box[2];
                         dimension = player.dimension;
-                        entry = HologramCutEntry.capture(
-                            (WorldServer) player.worldObj,
-                            x,
-                            y,
-                            z,
-                            box[3] - x + 1,
-                            box[4] - y + 1,
-                            box[5] - z + 1,
-                            selection);
+                        try (HologramCutDiagnostics.Scope ignored = diagnostics
+                            .phase(HologramCutDiagnostics.Phase.CAPTURE, 1)) {
+                            entry = HologramCutEntry.capture(
+                                (WorldServer) player.worldObj,
+                                x,
+                                y,
+                                z,
+                                box[3] - x + 1,
+                                box[4] - y + 1,
+                                box[5] - z + 1,
+                                selection);
+                        }
                         HologramCutPairs.validateEntry(entry);
                         entry.setString("id", requestId);
                         long sequence = state.getLong("sequence") + 1;
@@ -412,7 +419,7 @@ public final class HologramCutService {
                     if (consumeId != null) pending.setString("consumeId", consumeId);
                     state.setTag("pending", pending);
                     storage.save(state); // Original blocks and inventories are durable before the first mutation.
-                    recover(storage, state);
+                    recover(storage, state, diagnostics);
                     if (cut) select(response, entry);
                     response.setString(
                         "message",
@@ -436,6 +443,9 @@ public final class HologramCutService {
                 } else directory(response, durable);
             } catch (IOException ignored) {}
             com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Cut clipboard request failed", failure);
+        } finally {
+            if (response.getBoolean("success")) diagnostics.completed();
+            diagnostics.close();
         }
         return response;
     }
@@ -450,6 +460,15 @@ public final class HologramCutService {
 
     static void recover(HologramCutStorage storage, NBTTagCompound state) throws Exception {
         if (!state.hasKey("pending", 10)) return;
+        try (HologramCutDiagnostics diagnostics = HologramCutDiagnostics.begin()) {
+            recover(storage, state, diagnostics);
+            diagnostics.completed();
+        }
+    }
+
+    private static void recover(HologramCutStorage storage, NBTTagCompound state, HologramCutDiagnostics diagnostics)
+        throws Exception {
+        if (!state.hasKey("pending", 10)) return;
         NBTTagCompound pending = state.getCompoundTag("pending");
         int dimension = pending.getInteger("dimension");
         WorldServer world = DimensionManager.getWorld(dimension);
@@ -458,19 +477,7 @@ public final class HologramCutService {
             world = DimensionManager.getWorld(dimension);
         }
         if (world == null) throw new IOException("原维度不可用，剪切记录已保留");
-        NBTTagCompound entry = pending.getCompoundTag("entry");
-        int x = pending.getInteger("x"), y = pending.getInteger("y"), z = pending.getInteger("z");
-        boolean air = pending.getBoolean("air");
-        HologramCutWorld.apply(world, entry, x, y, z, air);
-        HologramCutWorld.saveAndVerify(world, entry, x, y, z, air);
-        NBTTagCompound completed = (NBTTagCompound) state.copy();
-        String consumeId = pending.getString("consumeId");
-        if (!consumeId.isEmpty()) remove(completed, consumeId);
-        completed.removeTag("pending");
-        storage.save(completed);
-        if (!consumeId.isEmpty()) remove(state, consumeId);
-        state.removeTag("pending");
-        HologramCutWorld.notifyCommitted(world, entry, x, y, z, air);
+        HologramCutTransaction.recover(storage, state, world, diagnostics);
     }
 
     private static boolean seen(NBTTagCompound state, String id) {
@@ -498,16 +505,6 @@ public final class HologramCutService {
                 .getString("id")))
             return entries.getCompoundTagAt(i);
         return null;
-    }
-
-    private static void remove(NBTTagCompound state, String id) {
-        NBTTagList entries = state.getTagList("entries", 10);
-        for (int i = 0; i < entries.tagCount(); i++) if (id.equals(
-            entries.getCompoundTagAt(i)
-                .getString("id"))) {
-                    entries.removeTag(i);
-                    return;
-                }
     }
 
     private static void select(NBTTagCompound response, NBTTagCompound entry) {

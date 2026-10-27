@@ -80,8 +80,8 @@ final class HologramWorkspaceScheduler {
 
     static boolean canAdvanceImport(HologramArea area) {
         if (!area.importing || "declarations".equals(area.importPhase)) return false;
-        return !"canonicalize".equals(area.importPhase) || area.preparation != null
-            && (area.preparation.canAdvance() || area.preparation.ready());
+        return !"canonicalize".equals(area.importPhase)
+            || area.preparation != null && (area.preparation.canAdvance() || area.preparation.ready());
     }
 
     private static boolean canContinue(HologramSession s) {
@@ -90,6 +90,7 @@ final class HologramWorkspaceScheduler {
             || !HologramSessionPolicy.tickValid(s)
             || s.libraryWorld != s.player.worldObj) return false;
         HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
+        if (HologramPresetActivation.pending(s)) return HologramPresetActivation.canAdvance(s);
         if (HologramBuildPreparation.isPending(s)) return true;
         if (area != null && area.importing) return canAdvanceImport(area) || HologramSnapshotPreparation.canAdvance(s);
         return s.voucherCoverageTask != null || s.attachmentTask != null && s.attachmentTask.ready()
@@ -98,6 +99,10 @@ final class HologramWorkspaceScheduler {
     }
 
     private static void continueSession(HologramSession s) {
+        if (HologramPresetActivation.pending(s)) {
+            HologramPresetActivation.tick(s);
+            return;
+        }
         if (HologramBuildPreparation.isPending(s)) {
             HologramBuildPreparation.tickBuild(s);
             return;
@@ -119,6 +124,10 @@ final class HologramWorkspaceScheduler {
     }
 
     private static void tickSession(HologramSession s) {
+        if (HologramPresetActivation.pending(s)) {
+            HologramPresetActivation.tick(s);
+            return;
+        }
         if (HologramBuildPreparation.isPending(s)) {
             HologramBuildPreparation.tickBuild(s);
             return;
@@ -131,6 +140,7 @@ final class HologramWorkspaceScheduler {
             s.attachmentTask.tick();
             return;
         }
+        if (HologramSessionPolicy.currentTool(s) == null && HologramLibraryFacade.activationPending(s)) return;
         if (!HologramSessionPolicy.tickValid(s) || s.libraryWorld != s.player.worldObj) {
             HologramDeferredPlanRefresh.suspend(s);
             HologramProjectorWorkflow.libraryCloseUi(s);

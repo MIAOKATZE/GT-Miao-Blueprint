@@ -31,6 +31,8 @@ public final class HologramClientLibraryRegression {
             exerciseSaveRequest();
             HologramLibrarySaveLifecycleRegression.run();
             exerciseQuickFence();
+            exerciseQuickPreparationToolWait();
+            exerciseContentPreparationToolWait();
             exerciseLegacyMappings();
             exerciseImportedAuthorUpdates();
             exerciseDisplayListing();
@@ -598,6 +600,164 @@ public final class HologramClientLibraryRegression {
             SimpleAssert.that(rejected, "a Save request cannot escape without task ownership");
         } finally {
             task.setLong(client, previous);
+        }
+    }
+
+    private static void exerciseContentPreparationToolWait() throws Exception {
+        java.lang.reflect.Field singleton = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        singleton.setAccessible(true);
+        sun.misc.Unsafe unsafe = (sun.misc.Unsafe) singleton.get(null);
+        net.minecraft.client.Minecraft mc = (net.minecraft.client.Minecraft) unsafe
+            .allocateInstance(net.minecraft.client.Minecraft.class);
+        net.minecraft.client.entity.EntityClientPlayerMP actor = (net.minecraft.client.entity.EntityClientPlayerMP) unsafe
+            .allocateInstance(net.minecraft.client.entity.EntityClientPlayerMP.class);
+        actor.inventory = new net.minecraft.entity.player.InventoryPlayer(actor);
+        mc.thePlayer = actor;
+        mc.theWorld = (net.minecraft.client.multiplayer.WorldClient) unsafe
+            .allocateInstance(net.minecraft.client.multiplayer.WorldClient.class);
+        actor.worldObj = mc.theWorld;
+        net.minecraft.item.ItemStack tool = new net.minecraft.item.ItemStack(
+            new com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector());
+        tool.setTagCompound(new net.minecraft.nbt.NBTTagCompound());
+        tool.getTagCompound()
+            .setString("gtitHologramToolId", "content-preparation-tool");
+        java.lang.reflect.Field minecraft = net.minecraft.client.Minecraft.class.getDeclaredField("theMinecraft");
+        minecraft.setAccessible(true);
+        Object oldMinecraft = minecraft.get(null);
+        minecraft.set(null, mc);
+        try {
+            for (String fence : new String[] { "held", "remove", "replace", "world", "dimension" }) {
+                HologramLibraryClient client = new HologramLibraryClient();
+                int[] completions = { 0 };
+                actor.inventory.mainInventory[0] = tool;
+                actor.inventory.currentItem = 0;
+                actor.dimension = 0;
+                Class<?> type = Class.forName(HologramLibraryClient.class.getName() + "$ContentAdmission");
+                java.lang.reflect.Constructor<?> constructor = type.getDeclaredConstructors()[0];
+                constructor.setAccessible(true);
+                String hash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+                HologramLibraryClient.DisplaySource source = new HologramLibraryClient.DisplaySource(
+                    "test",
+                    "",
+                    new byte[0],
+                    null,
+                    "local_test",
+                    "",
+                    hash,
+                    "");
+                Object admitted = constructor.newInstance(9L, source, (java.util.function.Consumer<String>) value -> {
+                    SimpleAssert.eq(hash, value, "content ready preserves actual admitted hash");
+                    completions[0]++;
+                }, mc);
+                java.lang.reflect.Field pending = HologramLibraryClient.class.getDeclaredField("contentAdmission");
+                pending.setAccessible(true);
+                pending.set(client, admitted);
+                java.lang.reflect.Field task = HologramLibraryClient.class.getDeclaredField("backgroundTaskToken");
+                task.setAccessible(true);
+                task.setLong(client, 9);
+                java.lang.reflect.Field preparing = HologramLibraryClient.class.getDeclaredField("preparing");
+                preparing.setAccessible(true);
+                preparing.setBoolean(client, true);
+                net.minecraft.nbt.NBTTagCompound reply = new net.minecraft.nbt.NBTTagCompound();
+                reply.setString("op", "contentReady");
+                reply.setLong("clientTaskToken", 9);
+                reply.setString("contentHash", hash);
+                java.lang.reflect.Field transfer = type.getDeclaredField("transfer");
+                transfer.setAccessible(true);
+                reply.setString("transfer", (String) transfer.get(admitted));
+                actor.inventory.currentItem = 1;
+                java.lang.reflect.Method receive = HologramLibraryClient.class
+                    .getDeclaredMethod("receive", net.minecraft.nbt.NBTTagCompound.class);
+                receive.setAccessible(true);
+                receive.invoke(client, reply);
+                SimpleAssert.eq(
+                    0,
+                    completions[0],
+                    "actual contentReady receiver cannot issue the next strict bootstrap while another slot is held");
+                if ("remove".equals(fence)) actor.inventory.mainInventory[0] = null;
+                if ("replace".equals(fence)) actor.inventory.mainInventory[0] = new net.minecraft.item.ItemStack(
+                    net.minecraft.init.Blocks.stone);
+                Object oldWorld = mc.theWorld;
+                if ("world".equals(fence)) mc.theWorld = null;
+                if ("dimension".equals(fence)) actor.dimension++;
+                if ("held".equals(fence)) actor.inventory.currentItem = 0;
+                client.tickContentAdmission(mc);
+                SimpleAssert.eq(
+                    "held".equals(fence) ? 1 : 0,
+                    completions[0],
+                    "content continuation resumes only its original tool/world: " + fence);
+                SimpleAssert.that(pending.get(client) == null, "content terminal clears pending ready/DTO ownership");
+                for (String name : new String[] { "world", "tool", "preparedArtifact" }) {
+                    java.lang.reflect.Field field = type.getDeclaredField(name);
+                    field.setAccessible(true);
+                    SimpleAssert.that(field.get(admitted) == null, "content terminal drops retained reference " + name);
+                }
+                mc.theWorld = (net.minecraft.client.multiplayer.WorldClient) oldWorld;
+            }
+        } finally {
+            minecraft.set(null, oldMinecraft);
+        }
+    }
+
+    private static void exerciseQuickPreparationToolWait() throws Exception {
+        java.lang.reflect.Field singleton = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        singleton.setAccessible(true);
+        sun.misc.Unsafe unsafe = (sun.misc.Unsafe) singleton.get(null);
+        net.minecraft.client.Minecraft mc = (net.minecraft.client.Minecraft) unsafe
+            .allocateInstance(net.minecraft.client.Minecraft.class);
+        net.minecraft.client.entity.EntityClientPlayerMP actor = (net.minecraft.client.entity.EntityClientPlayerMP) unsafe
+            .allocateInstance(net.minecraft.client.entity.EntityClientPlayerMP.class);
+        actor.inventory = new net.minecraft.entity.player.InventoryPlayer(actor);
+        mc.thePlayer = actor;
+        net.minecraft.item.ItemStack tool = new net.minecraft.item.ItemStack(
+            new com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector());
+        tool.setTagCompound(new net.minecraft.nbt.NBTTagCompound());
+        tool.getTagCompound()
+            .setString("gtitHologramToolId", "quick-preparation-tool");
+        actor.inventory.mainInventory[0] = tool;
+        actor.inventory.currentItem = 1;
+        HologramState previous = HologramClient.state;
+        HologramClient.state = null;
+        try {
+            for (String fence : new String[] { "held", "remove", "replace", "completed", "screen" }) {
+                HologramLibraryClient client = new HologramLibraryClient();
+                for (String name : new String[] { "quickSlot", "quickTool", "quickToolId", "preparing" }) {
+                    java.lang.reflect.Field field = HologramLibraryClient.class.getDeclaredField(name);
+                    field.setAccessible(true);
+                    field.set(
+                        client,
+                        "quickSlot".equals(name) ? 0
+                            : "quickTool".equals(name) ? tool
+                                : "quickToolId".equals(name) ? "quick-preparation-tool" : !"completed".equals(fence));
+                }
+                java.lang.reflect.Field quickField = HologramLibraryClient.class.getDeclaredField("quick");
+                quickField.setAccessible(true);
+                HologramLibraryQuickState quick = (HologramLibraryQuickState) quickField.get(client);
+                quick.begin();
+                actor.inventory.mainInventory[0] = "remove".equals(fence) ? null
+                    : "replace".equals(fence) ? new net.minecraft.item.ItemStack(net.minecraft.init.Blocks.stone)
+                        : tool;
+                actor.inventory.currentItem = 1;
+                mc.currentScreen = "screen".equals(fence) ? new net.minecraft.client.gui.GuiIngameMenu() : null;
+                client.tickQuick(mc);
+                if ("held".equals(fence)) {
+                    SimpleAssert.that(
+                        quick.active(),
+                        "actual quick preparation tick pauses with original tool in original slot");
+                    actor.inventory.currentItem = 0;
+                    client.tickQuick(mc);
+                    SimpleAssert
+                        .that(quick.active(), "returning the original tool retains the same pending bootstrap token");
+                    client.cancelQuickPlacement();
+                } else SimpleAssert.that(
+                    !quick.active(),
+                    "real tool revocation, closed screen and completed-preview switch keep cancellation: " + fence);
+                java.lang.reflect.Field pending = HologramLibraryClient.class.getDeclaredField("pendingQuickBootstrap");
+                pending.setAccessible(true);
+                SimpleAssert.that(pending.get(client) == null, "quick cancellation drops deferred bootstrap state");
+            }
+        } finally {
+            HologramClient.state = previous;
         }
     }
 

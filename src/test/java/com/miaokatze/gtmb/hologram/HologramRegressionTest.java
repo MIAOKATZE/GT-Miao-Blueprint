@@ -21,6 +21,13 @@ public final class HologramRegressionTest {
     public static void main(String[] args) throws Exception {
         if (!MinecraftTestBootstrap.enter(HologramRegressionTest.class, args)) return;
         Map<String, Runnable> cases = new LinkedHashMap<>();
+        cases.put("compact_resource_review_facts_preserve_exact_nbt_and_leases", () -> {
+            try {
+                HologramResourceReviewFactRegression.run();
+            } catch (Exception failure) {
+                throw new AssertionError(failure);
+            }
+        });
         cases.put("snapshot_metadata_executor_admission_no_same_tick_spin", () -> {
             try {
                 HologramMetadataAdmissionRegression.run();
@@ -42,6 +49,10 @@ public final class HologramRegressionTest {
                 throw new AssertionError(failure);
             }
         });
+        cases.put("saved_preset_policy_continuation", HologramPresetPolicyRegression::run);
+        cases.put("saved_preset_activation_and_teardown", HologramPresetActivationRegression::run);
+        cases.put("library_activation_terminal_receipts", HologramLibraryActivationResultRegression::run);
+        cases.put("saved_preset_pose_preparation", HologramPresetPosePreparationRegression::run);
         cases.put("segment_validation_pages_and_global_constraints", HologramSegmentValidationRegression::run);
         cases.put("preset_copy_matches_old_serialized_contract", HologramPresetCopiesRegression::run);
         cases.put("stable_transport_page_layout", HologramTransportPageLayoutRegression::run);

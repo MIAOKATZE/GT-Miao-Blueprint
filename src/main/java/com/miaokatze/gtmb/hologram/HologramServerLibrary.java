@@ -84,7 +84,8 @@ final class HologramServerLibrary {
 
     synchronized void submit(EntityPlayerMP player, NBTTagCompound request, boolean admin) {
         if (!available()) {
-            HologramLibraryFacade.error(player, unavailableMessage(), request.getLong("clientTaskToken"));
+            if (!HologramLibraryFacade.failActivation(player, request, unavailableMessage()))
+                HologramLibraryFacade.error(player, unavailableMessage(), request.getLong("clientTaskToken"));
             HologramNetwork.sendLibraryReply(player, statusTag(admin));
             return;
         }
@@ -98,8 +99,9 @@ final class HologramServerLibrary {
                     tasks.remove(peer.preparation);
                     peer.preparation = null;
                 }
-                HologramLibraryFacade
-                    .error(player, "Server library connection changed; retry", request.getLong("clientTaskToken"));
+                if (!HologramLibraryFacade.failActivation(player, request, "Server library connection changed; retry"))
+                    HologramLibraryFacade
+                        .error(player, "Server library connection changed; retry", request.getLong("clientTaskToken"));
                 return;
             }
             if (peers.size() >= MAX_PEERS) {
@@ -120,10 +122,12 @@ final class HologramServerLibrary {
                     }
                 }
                 if (peers.size() >= MAX_PEERS) {
-                    HologramLibraryFacade.error(
-                        player,
-                        "Server library transfer queue is busy; retry later",
-                        request.getLong("clientTaskToken"));
+                    if (!HologramLibraryFacade
+                        .failActivation(player, request, "Server library transfer queue is busy; retry later"))
+                        HologramLibraryFacade.error(
+                            player,
+                            "Server library transfer queue is busy; retry later",
+                            request.getLong("clientTaskToken"));
                     return;
                 }
             }
@@ -131,9 +135,34 @@ final class HologramServerLibrary {
             peers.put(peer.owner, peer);
         }
         peer.admin = admin;
+        if ("contentResolve".equals(request.getString("op"))
+            || "privateBegin".equals(request.getString("op")) && request.getBoolean("contentOnly")) {
+            if (!HologramLibraryService.contentCurrent(player, request)
+                || request.getLong("clientTaskToken") <= peer.retiredThrough) {
+                error(
+                    peer,
+                    "Blueprint content preparation requires its original held projector",
+                    request.getLong("clientTaskToken"));
+                return;
+            }
+            if (!contentIdentity(peer, request)) {
+                retireContent(peer);
+                peer.contentToken = request.getLong("clientTaskToken");
+                peer.contentTransfer = request.getString("transfer");
+                peer.contentWorld = player.worldObj;
+                peer.contentDimension = player.dimension;
+                peer.contentSlot = player.inventory.currentItem;
+                peer.contentTool = player.getHeldItem();
+                peer.contentToolId = peer.contentTool.hasTagCompound() ? peer.contentTool.getTagCompound()
+                    .getString(HologramSessionKeys.TOOL_ID) : "";
+                peer.contentValid = true;
+            }
+        }
         if ("cancel".equals(request.getString("op")) || "cancelTransfer".equals(request.getString("op"))) {
             // This runs on the server thread even while the sole IO pump is inside serialization.
             peer.retiredThrough = Math.max(peer.retiredThrough, request.getLong("clientTaskToken"));
+            if (request.getLong("clientTaskToken") == 0 || request.getLong("clientTaskToken") == peer.contentToken)
+                retireContent(peer);
             if (peer.preparation != null && (request.getLong("clientTaskToken") == 0
                 || peer.preparation.token == request.getLong("clientTaskToken"))) {
                 peer.preparation.valid = false;
@@ -144,7 +173,7 @@ final class HologramServerLibrary {
                 || peer.download.clientTaskToken == request.getLong("clientTaskToken"))) peer.download.valid = false;
         }
         if (!peer.requests.offer(request, admitted(peer, request))) {
-            error(peer, "Server library request queue is busy; retry later", request.getLong("clientTaskToken"));
+            error(peer, "Server library request queue is busy; retry later", request);
         }
     }
 
@@ -167,18 +196,64 @@ final class HologramServerLibrary {
         return upload.privateUpload == "privateChunk".equals(op) && upload.previewUpload == "previewChunk".equals(op);
     }
 
+    private static boolean contentIdentity(Peer peer, NBTTagCompound request) {
+        return peer.contentValid && peer.contentToken == request.getLong("clientTaskToken")
+            && peer.contentTransfer.equals(request.getString("transfer"));
+    }
+
+    private synchronized boolean contentCurrent(Peer peer, NBTTagCompound request) {
+        return contentIdentity(peer, request) && draftTaskCurrent(peer.player, request);
+    }
+
+    private static boolean contentOwnerCurrent(Peer peer) {
+        EntityPlayerMP player = peer.player;
+        if (!HologramLibraryService.connected(player) || player.worldObj != peer.contentWorld
+            || player.dimension != peer.contentDimension
+            || peer.contentSlot < 0
+            || peer.contentSlot >= player.inventory.mainInventory.length) return false;
+        net.minecraft.item.ItemStack tool = player.inventory.mainInventory[peer.contentSlot];
+        return tool != null && tool.getItem() == peer.contentTool.getItem()
+            && (peer.contentToolId.isEmpty() ? tool == peer.contentTool
+                : tool.hasTagCompound() && peer.contentToolId.equals(
+                    tool.getTagCompound()
+                        .getString(HologramSessionKeys.TOOL_ID)));
+    }
+
+    private synchronized void retireContent(Peer peer, NBTTagCompound request) {
+        if (contentIdentity(peer, request)) retireContent(peer);
+    }
+
+    private synchronized void retireContent(Peer peer) {
+        peer.contentValid = false;
+        peer.contentWorld = null;
+        peer.contentTool = null;
+        peer.contentToolId = "";
+        peer.contentTransfer = "";
+    }
+
     synchronized void heartbeat() {
         for (Peer peer : peers.values()) {
             peer.online = peer.player.playerNetServerHandler != null
                 && peer.player.playerNetServerHandler.netManager != null
                 && peer.player.playerNetServerHandler.netManager.isChannelOpen();
-            if (!peer.online) trusted.retire(peer);
+            if (!peer.online) {
+                trusted.retire(peer);
+                retireContent(peer);
+            }
             peer.admin = HologramLibraryFacade.isAdmin(peer.player);
+            if (peer.contentValid && !contentOwnerCurrent(peer)) {
+                long token = peer.contentToken;
+                peer.retiredThrough = Math.max(peer.retiredThrough, token);
+                retireContent(peer);
+                if (peer.online && (peer.upload == null || peer.upload.request.getLong("clientTaskToken") != token))
+                    error(peer, "Blueprint content preparation source changed", token);
+            }
             Upload upload = peer.upload;
             if (upload != null && upload.privateUpload
-                && !(upload.request.getBoolean("contentOnly")
-                    ? HologramLibraryService.contentCurrent(peer.player, upload.request)
-                    : HologramLibraryService.sessionCurrent(peer.player, upload.request)))
+                && !(upload.request.getBoolean("contentOnly") ? contentCurrent(peer, upload.request)
+                    : upload.request.getString("action")
+                        .isEmpty() ? HologramLibraryService.sessionCurrent(peer.player, upload.request)
+                            : HologramLibraryFacade.activationCurrent(peer.player, upload.request)))
                 upload.valid = false;
             if (upload != null && upload.previewUpload
                 && !HologramLibraryService.saveCurrent(peer.player, upload.request)) upload.valid = false;
@@ -285,7 +360,8 @@ final class HologramServerLibrary {
                 abort(peer);
                 clearDownload(peer);
                 if (peer.online) {
-                    HologramLibraryFacade.error(peer.player, unavailableMessage(), clientTaskToken);
+                    if (!HologramLibraryFacade.failActivation(peer.player, null, unavailableMessage()))
+                        HologramLibraryFacade.error(peer.player, unavailableMessage(), clientTaskToken);
                     HologramNetwork.sendLibraryReply(peer.player, statusTag(peer.admin));
                 }
             }
@@ -318,10 +394,13 @@ final class HologramServerLibrary {
             if (!peer.online || peer.upload != null
                 && (!peer.upload.valid || now - peer.upload.lastActivity > HologramLibraryProtocol.TIMEOUT_NANOS)) {
                 long clientTaskToken = taskToken(peer);
+                NBTTagCompound uploadRequest = peer.upload == null ? null : peer.upload.request;
                 abort(peer);
                 clearDownload(peer);
-                if (peer.online) error(peer, "Upload timed out; retry", clientTaskToken);
-                else synchronized (this) {
+                if (peer.online) {
+                    if (uploadRequest == null) error(peer, "Upload timed out; retry", clientTaskToken);
+                    else error(peer, "Upload timed out; retry", uploadRequest);
+                } else synchronized (this) {
                     peers.remove(peer.owner, peer);
                 }
                 continue;
@@ -377,6 +456,10 @@ final class HologramServerLibrary {
     }
 
     private void process(Peer peer, NBTTagCompound request) {
+        Upload upload = peer.upload;
+        NBTTagCompound identity = upload != null && upload.transfer.equals(request.getString("transfer"))
+            && upload.request.getLong("clientTaskToken") == request.getLong("clientTaskToken") ? upload.request
+                : request;
         try {
             handle(peer, request);
         } catch (IOException | RuntimeException invalid) {
@@ -384,7 +467,8 @@ final class HologramServerLibrary {
             if (HologramLibraryProtocol.uploadChunk(request) || "uploadBegin".equals(op)
                 || "privateBegin".equals(op)
                 || "previewBegin".equals(op)) abort(peer);
-            error(peer, invalid.getMessage(), request.getLong("clientTaskToken"));
+            retireContent(peer, identity);
+            error(peer, invalid.getMessage(), identity);
         }
     }
 
@@ -404,6 +488,7 @@ final class HologramServerLibrary {
         String op = request.getString("op");
         if ("list".equals(op)) list(peer, request.getInteger("page"));
         else if ("contentResolve".equals(op)) {
+            if (!contentCurrent(peer, request)) return;
             String hash;
             if (request.getString("id")
                 .isEmpty()) {
@@ -417,8 +502,9 @@ final class HologramServerLibrary {
                 boolean publicHit = publicSource != null && published.get(publicSource.blueprint.id) == publicSource;
                 boolean hit = trusted.contains(peer.owner, peer, peer.world, runtimeEpoch, hash) || publicHit
                     || integratedContentHit(request, hash);
-                if (draftTaskCurrent(peer.player, request))
+                if (contentCurrent(peer, request))
                     send(peer, hit ? contentReply(request, hash, true, false) : contentUploadReply(request, hash));
+                if (hit) retireContent(peer, request);
                 return;
             } else if (HologramLibraryFacade.enabled()) {
                 Entry entry = publicEntry(request);
@@ -434,13 +520,14 @@ final class HologramServerLibrary {
                 String requestedHash = request.getString("sourceHash");
                 if (!requestedHash.isEmpty() && !HologramPresets.matchesContent(id, requestedHash)) {
                     HologramLibraryProtocol.header(request.getString("transfer"), 1, requestedHash);
-                    if (draftTaskCurrent(peer.player, request)) send(peer, contentUploadReply(request, requestedHash));
+                    if (contentCurrent(peer, request)) send(peer, contentUploadReply(request, requestedHash));
                     return;
                 }
                 if (!requestedHash.isEmpty()) hash = requestedHash;
             }
             HologramLibraryProtocol.header(request.getString("transfer"), 1, hash);
-            if (draftTaskCurrent(peer.player, request)) send(peer, contentReply(request, hash, true, false));
+            if (contentCurrent(peer, request)) send(peer, contentReply(request, hash, true, false));
+            retireContent(peer, request);
         } else if ("preview".equals(op)) {
             Entry entry = publicEntry(request);
             NBTTagCompound identity = (NBTTagCompound) request.copy();
@@ -693,6 +780,7 @@ final class HologramServerLibrary {
             throw new IOException("Unsupported blueprint artifact version");
         if (peer.upload != null) throw new IOException("An upload is already active");
         boolean contentOnly = request.getBoolean("contentOnly");
+        if (contentOnly && !contentCurrent(peer, request)) return;
         if ("privateBegin".equals(request.getString("op"))
             && (request.getBoolean("hashProbe") || contentOnly || request.getBoolean("admittedOnly"))) {
             String jsonHash = request.getString("jsonHash");
@@ -702,8 +790,8 @@ final class HologramServerLibrary {
             if (contentOnly) {
                 if (trusted.contains(peer.owner, peer, peer.world, runtimeEpoch, jsonHash) || publicHit
                     || integratedContentHit(request, jsonHash)) {
-                    if (draftTaskCurrent(peer.player, request))
-                        send(peer, contentReply(request, jsonHash, true, false));
+                    if (contentCurrent(peer, request)) send(peer, contentReply(request, jsonHash, true, false));
+                    retireContent(peer, request);
                     return;
                 }
             } else {
@@ -721,6 +809,7 @@ final class HologramServerLibrary {
                 if (request.getBoolean("admittedOnly")) {
                     if (draftTaskCurrent(peer.player, request))
                         send(peer, contentReply(request, jsonHash, false, true));
+                    HologramLibraryFacade.activationProbeMiss(peer.player, request);
                     return;
                 }
             }
@@ -1360,6 +1449,7 @@ final class HologramServerLibrary {
         List<Peer> retired = new ArrayList<>(peers.values());
         for (Peer peer : retired) {
             peer.online = false;
+            retireContent(peer);
             peer.pendingDraft = null;
             if (peer.preparation != null) peer.preparation.valid = false;
             if (peer.upload != null) peer.upload.valid = false;
@@ -1526,6 +1616,11 @@ final class HologramServerLibrary {
         return peer.upload == null ? 0L : peer.upload.request.getLong("clientTaskToken");
     }
 
+    private void error(Peer peer, String message, NBTTagCompound request) {
+        if (!HologramLibraryFacade.failActivation(peer.player, request, message))
+            error(peer, message, request.getLong("clientTaskToken"));
+    }
+
     private void error(Peer peer, String message, long clientTaskToken) {
         NBTTagCompound tag = HologramLibraryProtocol.reply("error");
         tag.setLong("clientTaskToken", clientTaskToken);
@@ -1543,6 +1638,7 @@ final class HologramServerLibrary {
             if (upload == null) return;
             upload.valid = false;
             peer.upload = null;
+            if (upload.request.getBoolean("contentOnly")) retireContent(peer, upload.request);
             peer.requests.discard(upload.transfer, upload.request.getLong("clientTaskToken"));
         }
         try {
@@ -1575,6 +1671,7 @@ final class HologramServerLibrary {
             }
             for (Peer peer : copy) {
                 peer.online = false;
+                retireContent(peer);
                 abort(peer);
                 clearDownload(peer);
             }
@@ -1629,6 +1726,12 @@ final class HologramServerLibrary {
         volatile Entry materialPreview;
         volatile NBTTagCompound materialPreviewRequest;
         volatile long retiredThrough;
+        Object contentWorld;
+        net.minecraft.item.ItemStack contentTool;
+        String contentToolId = "", contentTransfer = "";
+        int contentDimension, contentSlot;
+        long contentToken;
+        volatile boolean contentValid;
         Preparation preparation;
         NBTTagCompound preparationRequest;
 

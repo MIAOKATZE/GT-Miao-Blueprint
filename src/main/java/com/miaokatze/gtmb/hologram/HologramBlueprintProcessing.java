@@ -193,6 +193,66 @@ final class HologramBlueprintProcessing {
         return defaults("self", minimumLevel(preset, facts));
     }
 
+    /** Owner-scoped policy discovery; one exact cell identity obligation per cooperative operation. */
+    static final class PolicyTask implements AutoCloseable {
+
+        private final HologramPresets.Preset source;
+        private final HologramAnalysisFacts facts = new HologramAnalysisFacts();
+        private final Thread owner = Thread.currentThread();
+        private boolean initialized, closed;
+        private int cursor;
+        private Policy result;
+
+        PolicyTask(HologramPresets.Preset source) {
+            this.source = source;
+        }
+
+        long completed() {
+            return cursor;
+        }
+
+        long total() {
+            return source == null ? 0 : source.cells.size();
+        }
+
+        Policy result() {
+            if (result == null) throw new IllegalStateException("Policy is not complete");
+            return result;
+        }
+
+        boolean step(int maxWork, long maxNanos) throws IOException {
+            if (Thread.currentThread() != owner)
+                throw new IllegalStateException("Policy discovery requires its owner thread");
+            if (result != null) return true;
+            if (closed) throw new IllegalStateException("Policy discovery was cancelled");
+            HologramPlanBudget budget = new HologramPlanBudget(maxWork, maxNanos);
+            while (result == null && budget.take()) {
+                if (!initialized) {
+                    initialized = true;
+                    if (source != null && source.processingNbt != null) {
+                        NBTTagCompound receipt = facts.read(source.processingNbt);
+                        if (receipt.hasKey("policy", 10)) {
+                            result = Policy.read(receipt.getCompoundTag("policy"));
+                            continue;
+                        }
+                    }
+                    int minimum = HologramDeidentification.level(source);
+                    if (source == null || minimum > 0) result = defaults("self", minimum);
+                } else if (cursor < source.cells.size()) {
+                    if (identityBoundary(source.cells.get(cursor++), facts)) result = defaults("self", 1);
+                } else result = defaults("self", 0);
+            }
+            return result != null;
+        }
+
+        @Override
+        public void close() {
+            if (closed) return;
+            closed = true;
+            facts.close();
+        }
+    }
+
     static HologramPresets.Preset process(HologramPresets.Preset source, Policy requested, int dimension, int originX,
         int originY, int originZ) throws IOException {
         try (HologramAnalysisFacts facts = new HologramAnalysisFacts()) {
@@ -1045,36 +1105,39 @@ final class HologramBlueprintProcessing {
     private static int minimumLevel(HologramPresets.Preset preset, HologramAnalysisFacts facts) throws IOException {
         int minimum = HologramDeidentification.level(preset);
         if (preset == null || minimum > 0) return minimum;
-        for (HologramPresets.Cell cell : preset.cells) {
-            NBTTagCompound identity = facts.certificate(
-                cell,
-                HologramSegmentContract.Domain.REPORT,
-                "identity-floor",
-                new Object[] { cell.block(), cell.damage, cell.tileNbt, cell.metadataIdentityBoundary,
-                    HologramSegmentContract.SCHEMA_EPOCH },
-                true,
-                () -> {
-                    boolean boundary;
-                    if (HologramSnapshotMetadataSource.detached() && cell.metadataIdentityBoundary != null)
-                        boundary = cell.metadataIdentityBoundary;
-                    else {
-                        NBTTagCompound tag = facts.read(cell.tileNbt);
-                        boundary = HologramAeBlueprint.supports(cell.block(), tag)
-                            || HologramNetworkBindings.node(cell.block())
-                            || tag != null && (tag.hasKey(HologramNetworkBindings.GROUP)
-                                || tag.hasKey(HologramNetworkBindings.CAPTURE_ANCHOR))
-                            || HologramNetworkSchemas.removeExternalReferences(
-                                cell.block(),
-                                cell.damage,
-                                tag == null ? null : (NBTTagCompound) tag.copy());
-                    }
-                    NBTTagCompound result = new NBTTagCompound();
-                    result.setBoolean("boundary", boundary);
-                    return result;
-                });
-            if (identity.getBoolean("boundary")) return 1;
-        }
+        for (HologramPresets.Cell cell : preset.cells) if (identityBoundary(cell, facts)) return 1;
         return minimum;
+    }
+
+    /** The same complete native identity obligation serves synchronous and resumed policy discovery. */
+    private static boolean identityBoundary(HologramPresets.Cell cell, HologramAnalysisFacts facts) throws IOException {
+        NBTTagCompound identity = facts.certificate(
+            cell,
+            HologramSegmentContract.Domain.REPORT,
+            "identity-floor",
+            new Object[] { cell.block(), cell.damage, cell.tileNbt, cell.metadataIdentityBoundary,
+                HologramSegmentContract.SCHEMA_EPOCH },
+            true,
+            () -> {
+                boolean boundary;
+                if (HologramSnapshotMetadataSource.detached() && cell.metadataIdentityBoundary != null)
+                    boundary = cell.metadataIdentityBoundary;
+                else {
+                    NBTTagCompound tag = facts.read(cell.tileNbt);
+                    boundary = HologramAeBlueprint.supports(cell.block(), tag)
+                        || HologramNetworkBindings.node(cell.block())
+                        || tag != null && (tag.hasKey(HologramNetworkBindings.GROUP)
+                            || tag.hasKey(HologramNetworkBindings.CAPTURE_ANCHOR))
+                        || HologramNetworkSchemas.removeExternalReferences(
+                            cell.block(),
+                            cell.damage,
+                            tag == null ? null : (NBTTagCompound) tag.copy());
+                }
+                NBTTagCompound result = new NBTTagCompound();
+                result.setBoolean("boundary", boundary);
+                return result;
+            });
+        return identity.getBoolean("boundary");
     }
 
     private static boolean legacy(HologramPresets.Preset preset) throws IOException {

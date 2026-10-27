@@ -1,0 +1,150 @@
+package com.miaokatze.gtmb.hologram;
+
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
+
+import net.minecraft.nbt.NBTTagCompound;
+
+/** Owner-thread terminal receipt. Admission is not completion and late callbacks cannot acknowledge a replacement. */
+final class HologramLibraryActivationResult implements HologramLibraryFacade.ActivationCompletion {
+
+    private final NBTTagCompound identity;
+    private String reply;
+    private final BooleanSupplier sourceCurrent, transportCurrent;
+    private final BooleanSupplier toolReady;
+    private final Consumer<NBTTagCompound> sink;
+    private volatile boolean terminal;
+    private volatile String pendingFailure;
+    private volatile boolean probeMiss;
+    private Runnable prepared;
+    private boolean preparedClaimed;
+    private BooleanSupplier confirmationCurrent = () -> true;
+
+    HologramLibraryActivationResult(NBTTagCompound request, String reply, BooleanSupplier sourceCurrent,
+        BooleanSupplier transportCurrent, Consumer<NBTTagCompound> sink) {
+        this(request, reply, sourceCurrent, transportCurrent, () -> true, sink);
+    }
+
+    HologramLibraryActivationResult(NBTTagCompound request, String reply, BooleanSupplier sourceCurrent,
+        BooleanSupplier transportCurrent, BooleanSupplier toolReady, Consumer<NBTTagCompound> sink) {
+        identity = (NBTTagCompound) request.copy();
+        this.reply = reply;
+        this.sourceCurrent = sourceCurrent;
+        this.transportCurrent = transportCurrent;
+        this.toolReady = toolReady;
+        this.sink = sink;
+    }
+
+    @Override
+    public boolean current() {
+        return !terminal && pendingFailure == null
+            && !probeMiss
+            && transportCurrent.getAsBoolean()
+            && sourceCurrent.getAsBoolean()
+            && confirmationCurrent.getAsBoolean();
+    }
+
+    @Override
+    public void waitingForConfirmation(BooleanSupplier current) {
+        confirmationCurrent = current == null ? () -> true : current;
+    }
+
+    boolean terminal() {
+        return terminal;
+    }
+
+    boolean matches(NBTTagCompound request) {
+        return identity.getString("session")
+            .equals(request.getString("session"))
+            && identity.getLong("clientTaskToken") == request.getLong("clientTaskToken")
+            && identity.getString("transfer")
+                .equals(request.getString("transfer"));
+    }
+
+    boolean supersededBy(NBTTagCompound request) {
+        long previous = identity.getLong("clientTaskToken"), incoming = request.getLong("clientTaskToken");
+        return incoming == 0 || previous == 0 || incoming > previous;
+    }
+
+    boolean transportCurrent() {
+        return transportCurrent.getAsBoolean();
+    }
+
+    boolean owns(HologramSession session) {
+        return identity.getString("session")
+            .equals(session.id) && identity.getLong("planRevision") == session.planRevision;
+    }
+
+    /** Worker threads report failure; only the owner poll delivers terminal callbacks. */
+    synchronized void reject(String reason) {
+        if (!terminal && pendingFailure == null)
+            pendingFailure = reason == null ? "Blueprint preparation failed" : reason;
+    }
+
+    void probeMiss() {
+        probeMiss = true;
+    }
+
+    void prepared(String reply, Runnable activation) {
+        if (terminal || pendingFailure != null || preparedClaimed) return;
+        preparedClaimed = true;
+        this.reply = reply;
+        prepared = activation;
+        poll();
+    }
+
+    void poll() {
+        if (terminal) return;
+        if (probeMiss) {
+            terminal = true;
+            prepared = null;
+            pendingFailure = null;
+            confirmationCurrent = () -> true;
+            return;
+        }
+        if (pendingFailure != null) failed(pendingFailure);
+        else if (!current()) failed("Blueprint activation cancelled or source changed; original editor retained");
+        else if (prepared != null && toolReady.getAsBoolean()) {
+            Runnable activation = prepared;
+            prepared = null;
+            activation.run();
+        }
+    }
+
+    @Override
+    public void completed(String id) {
+        if (terminal) return;
+        // The successful presentation has replaced the source session. Recheck transport, not the retired source.
+        if (!transportCurrent.getAsBoolean()) {
+            failed("Blueprint activation result was cancelled");
+            return;
+        }
+        terminal = true;
+        prepared = null;
+        pendingFailure = null;
+        confirmationCurrent = () -> true;
+        NBTTagCompound result = envelope(reply);
+        result.setString("id", id == null ? "" : id);
+        sink.accept(result);
+    }
+
+    @Override
+    public void failed(String reason) {
+        if (terminal) return;
+        terminal = true;
+        prepared = null;
+        pendingFailure = null;
+        confirmationCurrent = () -> true;
+        NBTTagCompound result = envelope("error");
+        result.setString("message", reason == null ? "Blueprint activation failed" : reason);
+        sink.accept(result);
+    }
+
+    private NBTTagCompound envelope(String operation) {
+        NBTTagCompound result = HologramLibraryProtocol.reply(operation);
+        result.setString("session", identity.getString("session"));
+        result.setString("transfer", identity.getString("transfer"));
+        result.setLong("clientTaskToken", identity.getLong("clientTaskToken"));
+        return result;
+    }
+}

@@ -152,35 +152,9 @@ final class HologramPresetWorkflow {
                 presetGuidance(s, "蓝图已选定；点击放置进入位置预览，或打开蓝图继续编辑。");
                 return;
             }
-            HologramBlueprintData.detachAreaOverview(s);
-            HologramBlueprintRotation.reset(s);
-            s.virtualPreset = preset;
-            s.processingSource = HologramPresets.copy(preset);
-            s.blueprintSaveReceipt = "";
+            initializeCandidate(s, preset, id);
             s.processingPolicy = HologramBlueprintProcessing.policy(preset);
-            s.processingReviewed = false;
-            s.processingWorkflowStarted = false;
-            s.decorLedger = new HologramDecorMaterials.Ledger();
-            s.blueprintDirty = false;
-            s.blueprintSource = "saved";
-            HologramAuthoringWorkflow.clearSourceSwitch(s);
-            s.libraryInitialSnapshot = HologramLibraryFacade.enabled() && id.startsWith("public_");
-            if (!id.startsWith("private_")) {
-                s.libraryLocalId = "";
-                s.libraryPrivatePreset = null;
-            }
-            s.retainedNbtKeys = preset.retainedNbtKeys;
-            s.placementNbtCustomized = false;
-            s.placementNbtKeys = null;
-            s.placementRetainCovers = null;
-            s.presetBrowseForPlacement = false;
-            s.virtualLocked = false;
-            s.placementReviewIssued = false;
-            s.cancelled = false;
-            s.open = !s.virtualPlacement;
-            s.settingsOnly = false;
-            s.mode = 0;
-            s.scope = 0;
+            s.processingSource = HologramPresets.copy(preset);
             HologramSessionPolicy.currentTool(s)
                 .getTagCompound()
                 .setString(HologramSessionKeys.SELECTED_PRESET, id);
@@ -190,6 +164,131 @@ final class HologramPresetWorkflow {
         } catch (java.io.IOException invalid) {
             s.status = "预设加载失败：" + invalid.getMessage();
         }
+    }
+
+    /** Candidate-only initialization: no tool selection, active route or snapshot is changed here. */
+    static void initializeCandidate(HologramSession s, HologramPresets.Preset preset, String id)
+        throws java.io.IOException {
+        if (id == null || id.isEmpty()) throw new java.io.IOException("预设身份无效");
+        if (preset.schema < 2 && (preset.controllerId < 0 || preset.controllerId >= GregTechAPI.METATILEENTITIES.length
+            || !(GregTechAPI.METATILEENTITIES[preset.controllerId] instanceof MTEEnhancedMultiBlockBase)
+            || !preset.controllerType.equals(
+                GregTechAPI.METATILEENTITIES[preset.controllerId].getClass()
+                    .getName() + ":" + preset.controllerId)))
+            throw new java.io.IOException("模板控制器身份已失效");
+        HologramBlueprintData.detachAreaOverview(s);
+        HologramBlueprintRotation.reset(s);
+        s.virtualPreset = preset;
+        s.processingSource = null;
+        s.blueprintSaveReceipt = "";
+        s.processingPolicy = null;
+        s.processingReviewed = false;
+        s.processingWorkflowStarted = false;
+        s.decorLedger = new HologramDecorMaterials.Ledger();
+        s.blueprintDirty = false;
+        s.blueprintSource = "saved";
+        HologramAuthoringWorkflow.clearSourceSwitch(s);
+        s.libraryInitialSnapshot = HologramLibraryFacade.enabled() && id.startsWith("public_");
+        if (!id.startsWith("private_")) {
+            s.libraryLocalId = "";
+            s.libraryPrivatePreset = null;
+        }
+        s.retainedNbtKeys = preset.retainedNbtKeys;
+        s.placementNbtCustomized = false;
+        s.placementNbtKeys = null;
+        s.placementRetainCovers = null;
+        s.presetBrowseForPlacement = false;
+        s.virtualLocked = false;
+        s.placementReviewIssued = false;
+        s.cancelled = false;
+        s.open = !s.virtualPlacement;
+        s.settingsOnly = false;
+        s.mode = 0;
+        s.scope = 0;
+        s.networkBindings.clear();
+        s.networkBindingRequested = false;
+    }
+
+    /** All ordinary saved edit/browse/place requests stage behind the exact former editor. */
+    static boolean requestPreset(HologramSession previous, String id, String purpose, boolean placement) {
+        if (!HologramWorkspace.presentationAllowed(previous)) {
+            presentationCompletion(previous, placement).failed("当前工作区不能切换蓝图；请先完成正在执行的任务");
+            return false;
+        }
+        int x = previous.target != null || previous.virtual ? previous.x
+            : net.minecraft.util.MathHelper.floor_double(previous.player.posX);
+        int y = previous.target != null || previous.virtual ? previous.y
+            : HologramValues.clamp(
+                net.minecraft.util.MathHelper.floor_double(previous.player.posY),
+                0,
+                previous.player.worldObj.getHeight() - 1);
+        int z = previous.target != null || previous.virtual ? previous.z
+            : net.minecraft.util.MathHelper.floor_double(previous.player.posZ);
+        if (!previous.player.worldObj.blockExists(x, y, z)
+            || previous.player.getDistanceSq(x + .5, y + .5, z + .5) > 4096) {
+            presentationCompletion(previous, placement).failed("编辑锚点未加载或超出距离限制");
+            return false;
+        }
+        try {
+            HologramPresets.Preset preset = HologramLibraryFacade.get(previous.player, id);
+            if (preset == null) throw new java.io.IOException("预设不存在");
+            HologramSession candidate = HologramWorkspace.create(previous.player, x, y, z, false, previous.side);
+            candidate.virtual = true;
+            candidate.virtualPlacement = placement;
+            candidate.openPurpose = purpose;
+            candidate.blueprintPreview = "blueprintBrowse".equals(purpose);
+            candidate.uiSequence = previous.uiSequence;
+            candidate.blueprintClientTaskToken = previous.blueprintClientTaskToken;
+            candidate.libraryLocalId = previous.libraryLocalId;
+            candidate.libraryReplaceLocalId = previous.libraryReplaceLocalId;
+            // Private get already returned an exclusively owned DTO; do not copy the full previous library twice.
+            candidate.libraryPrivatePreset = id.startsWith("private_") ? preset : null;
+            return HologramPresetActivation
+                .begin(previous, candidate, preset, id, null, presentationCompletion(previous, placement));
+        } catch (java.io.IOException failure) {
+            presentationCompletion(previous, placement).failed("预设加载失败：" + failure.getMessage());
+            return false;
+        }
+    }
+
+    static HologramPresetActivation.Completion presentationCompletion(HologramSession origin, boolean placement) {
+        return presentationCompletion(origin, placement, origin.blueprintClientTaskToken);
+    }
+
+    static HologramPresetActivation.Completion presentationCompletion(HologramSession origin, boolean placement,
+        long clientTask) {
+        final String session = origin.id;
+        final long sequence = origin.uiSequence, revision = origin.planRevision;
+        return new HologramPresetActivation.Completion() {
+
+            @Override
+            public void completed(HologramSession ready) {
+                if (placement) {
+                    HologramSessionPolicy.clearPlacementSelection(ready);
+                    HologramProjectorWorkflow.libraryCloseUi(ready);
+                    ready.status = "移动鼠标预览位置；右键锁定，再次右键核对材料与 NBT，Esc 取消放置";
+                } else {
+                    ready.open = true;
+                    ready.status = "已打开自定义预设编辑；保存回原预设或另存为，仅保存规划，不施工";
+                }
+                HologramSnapshots.send(ready);
+                presetGuidance(ready, placement ? ready.status : "编辑完成后可保存或另存为；点击放置预览位置，再核对材料并确认施工。");
+            }
+
+            @Override
+            public void failed(String reason) {
+                // This terminal control must escape even if the old full DTO/FIFO is still blocked.
+                HologramNetwork
+                    .sendPresetActivationFailure(origin.player, session, sequence, revision, clientTask, reason);
+                if (HologramWorkspace.find(origin.player.getUniqueID()) == origin && session.equals(origin.id)
+                    && sequence == origin.uiSequence
+                    && revision == origin.planRevision
+                    && clientTask == origin.blueprintClientTaskToken) {
+                    // Do not recreate a snapshot outbox while Workspace teardown is cancelling this task.
+                    origin.status = reason;
+                }
+            }
+        };
     }
 
     /** Guidance is emitted only by explicit player actions, never by scan or tick. */

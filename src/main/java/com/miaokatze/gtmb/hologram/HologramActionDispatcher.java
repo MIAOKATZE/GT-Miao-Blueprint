@@ -45,6 +45,8 @@ final class HologramActionDispatcher {
                 return;
             }
         }
+        if ("close".equals(action.getString("op")) || "cancel".equals(action.getString("op"))
+            || "clearWorkspace".equals(action.getString("op"))) HologramPresetActivation.cancel(s, "蓝图加载已取消；原编辑保留");
         // Closing changes presentation only; it must not invalidate an unchanged data snapshot.
         if (action.hasKey("uiSequence") && !"close".equals(action.getString("op"))
             && !HologramMaterialWorkflow.lightweight(action.getString("op")))
@@ -341,14 +343,7 @@ final class HologramActionDispatcher {
             return;
         }
         if (s.job != 1 && s.job != 2 && "previewPreset".equals(op)) {
-            HologramSession previewSource = s;
-            String previewId = action.getString("presetId");
-            s = HologramPresetWorkflow.editPreset(s, previewId);
-            if (s != previewSource && s.virtualPreset != null && previewId.equals(s.virtualPreset.id))
-                s.openPurpose = "blueprintBrowse";
-            s.blueprintPreview = true;
-            s.open = true;
-            HologramSnapshots.send(s);
+            HologramPresetWorkflow.requestPreset(s, action.getString("presetId"), "blueprintBrowse", false);
             return;
         }
         if ("importBlueprint".equals(op) && HologramEditorWorkspaceRegistry.physicalProjection(s)) {
@@ -379,36 +374,14 @@ final class HologramActionDispatcher {
         } else if ("loadPreset".equals(op) && s.job != 1 && s.job != 2) {
             HologramPresetWorkflow.loadPreset(s, action.getString("presetId"));
         } else if ("choosePlacementPreset".equals(op) && s.job != 1 && s.job != 2) {
-            if (HologramEditorWorkspaceRegistry.physicalProjection(s)) {
-                HologramSession source = s;
-                s = HologramPresetWorkflow.editPreset(source, action.getString("presetId"));
-                if (s == source) {
-                    HologramSnapshots.send(source);
-                    return;
-                }
-            }
-            s.virtual = true;
-            HologramSessionPolicy.clearPlacementSelection(s);
-            HologramPresetWorkflow.loadPreset(s, action.getString("presetId"), false);
-            if (s.virtualPreset != null && action.getString("presetId")
-                .equals(s.virtualPreset.id)) {
-                s.virtualPlacement = true;
-                s.target = null;
-                s.machine = null;
-                s.context = null;
-                s.blueprintAwaitingConfirmation = false;
-                s.placementReviewIssued = false;
-                s.virtualLocked = false;
-                s.forcePlacementReady = false;
-                HologramProjectorWorkflow.libraryCloseUi(s);
-                s.openPurpose = "blueprintPlacement";
-                s.status = "移动鼠标预览位置；右键锁定，再次右键核对材料与 NBT，Esc 取消放置";
-            }
+            HologramPresetWorkflow.requestPreset(s, action.getString("presetId"), "blueprintPlacement", true);
+            return;
         } else if ("dismissPresetBrowse".equals(op)) {
             HologramProjectorWorkflow.dismissPresetBrowse(s);
             HologramProjectorWorkflow.libraryCloseUi(s);
         } else if ("editPreset".equals(op) && s.job != 1 && s.job != 2) {
-            s = HologramPresetWorkflow.editPreset(s, action.getString("presetId"));
+            HologramPresetWorkflow.requestPreset(s, action.getString("presetId"), "blueprintEdit", false);
+            return;
         } else if ("updatePreset".equals(op) && s.job != 1 && s.job != 2) {
             HologramPresetWorkflow.saveVirtualPreset(s, action.getString("name"), true);
         } else if ("resetDraft".equals(op) && s.job != 1 && s.job != 2) {

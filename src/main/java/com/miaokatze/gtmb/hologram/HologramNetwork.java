@@ -1023,6 +1023,21 @@ public final class HologramNetwork {
         }
     }
 
+    /** Admission/preparation failure is a small control, not a replacement snapshot or a presentation rollback. */
+    static void sendPresetActivationFailure(EntityPlayerMP player, String session, long uiSequence, long revision,
+        long clientTask, String message) {
+        if (channel == null || !progressConnected(player)) return;
+        NBTTagCompound state = new NBTTagCompound();
+        state.setBoolean("transportError", true);
+        state.setString("session", session);
+        state.setLong("uiSequence", uiSequence);
+        state.setLong("planRevision", revision);
+        state.setLong("clientTaskToken", clientTask);
+        state.setString("errorCode", "preset.activation");
+        state.setString("errorMessage", message);
+        channel.sendTo(new State(state), player);
+    }
+
     static void transportFailure(EntityPlayerMP player, String session, long uiSequence, String code,
         Exception failure) {
         transportFailure(player, session, uiSequence, code, 0, failure);
