@@ -6,6 +6,7 @@ import java.util.Base64;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -14,8 +15,10 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.LongSupplier;
 
+import net.minecraft.nbt.NBTBase;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
+import net.minecraft.nbt.NBTTagString;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -203,48 +206,121 @@ final class HologramAuthorProjection implements AutoCloseable {
             AuthorDocument.Cell source = document.cell(id);
             HologramState.Cell cold = new HologramState.Cell(index, source);
             NBTTagCompound row = cold.tag();
-            long charge = 8192;
+            long charge;
+            HologramState.Cell prepared;
             try {
                 row.setInteger("targetFacing", source.facing());
                 row.setString("prompt", source.prompt() == null ? "" : source.prompt());
                 row.setString("previewItem", source.item() == null ? "" : source.item());
                 row.setInteger("previewDamage", source.damage());
-                Decoded tile = decode(source.tileNbt()), item = decode(source.itemNbt());
-                charge += tile.charge + item.charge;
+                NBTTagCompound tile = decode(source.tileNbt()), item = decode(source.itemNbt());
+                if (tile != null) row.setTag("previewTile", tile);
+                if (item != null) row.setTag("previewItemTag", item);
+                HologramBlueprintPreview.completeCell(row);
+                row.setTag("actualDisplay", row.getCompoundTag("targetDisplay"));
+                if (row.hasKey("targetStack")) row.setTag("actualStack", row.getTag("targetStack"));
+                charge = residentCharge(row);
                 if (!makeRoom(charge, replacements)) {
                     budgetDeferred.put(id, charge);
                     throw new NativeBudget();
                 }
-                if (tile.value != null) row.setTag("previewTile", tile.value);
-                if (item.value != null) row.setTag("previewItemTag", item.value);
-                HologramBlueprintPreview.completeCell(row);
-                row.setTag("actualDisplay", row.getCompoundTag("targetDisplay"));
-                if (row.hasKey("targetStack")) row.setTag("actualStack", row.getTag("targetStack"));
+                row.setInteger("nativeModelPending", 0);
+                prepared = HologramState.Cell.takeOwnedLocalRow(index, row);
             } catch (IOException | RuntimeException failure) {
                 // An unsupported native preview is explicit terminal shell, never a source/document error.
                 row = cold.tag();
                 row.setString("sourceWarning", "Native preview unavailable: " + failure.getMessage());
                 row.setString("renderKind", failure instanceof NativeBudget ? "localBudget" : "localFallback");
                 row.setString("status", "unsupported");
-                charge = 8192;
+                charge = 0;
+                row.setInteger("nativeModelPending", 0);
+                prepared = HologramState.Cell.takeOwnedLocalRow(index, row);
             }
-            row.setInteger("nativeModelPending", 0);
             // Unsupported data is terminal for this revision; resident pressure remains a resumable budget shell.
             if (!"localFallback".equals(row.getString("renderKind"))
                 && !"localBudget".equals(row.getString("renderKind"))) {
                 Long old = loaded.put(id, charge);
                 resident += charge - (old == null ? 0 : old);
             }
-            replacements.put(index, HologramState.Cell.takeOwnedLocalRow(index, row));
+            replacements.put(index, prepared);
         }
         if (replacements.isEmpty()) return false;
         publish(view.data, replacements);
         return true;
     }
 
+    /**
+     * Account for the final owned row, not four copies of the input payload. The local preparation path
+     * aliases the two displays and two serialized stacks, while Cell independently copies each mutable
+     * stack tag. This is conservative ownership accounting, not a JVM/GL/whole-document heap limit.
+     */
+    static long residentCharge(NBTTagCompound row) {
+        // Cell, two stack shells, arrays/list shells, row map and <=32 scalar/tag/map-entry shells,
+        // plus per-cell resident/directory bookkeeping. Extra fields cannot silently outgrow the allowance.
+        long bytes = 4096L + 128L * Math.max(
+            0,
+            row.func_150296_c()
+                .size() - 32);
+        Set<NBTBase> seen = Collections.newSetFromMap(new IdentityHashMap<>());
+        NBTTagCompound variable = new NBTTagCompound();
+        for (Object name : row.func_150296_c()) {
+            String key = (String) name;
+            NBTBase value = row.getTag(key);
+            bytes += 2L * key.length();
+            if (value instanceof NBTTagString) {
+                // Count variable text even when the immutable String is also referenced by the source.
+                bytes += 64L + 2L * ((NBTTagString) value).func_150285_a_()
+                    .length();
+            } else if (value.getId() >= 7 && seen.add(value)) {
+                // Includes displays (nativeTile AND added gt.covers), serialized stack, memberships,
+                // arrays and any future non-scalar row field. Identity, never content equality, deduplicates.
+                if (value instanceof NBTTagCompound && (key.equals("actualDisplay") || key.equals("targetDisplay")))
+                    bytes += 128L + 2L * key.length() + wrappedPayloadCharge((NBTTagCompound) value, "nativeTile");
+                else if (value instanceof NBTTagCompound && (key.equals("actualStack") || key.equals("targetStack")))
+                    bytes += 128L + 2L * key.length() + wrappedPayloadCharge((NBTTagCompound) value, "tag");
+                else variable.setTag(key, value);
+            }
+        }
+        bytes += HologramSnapshotCodec.retainedEstimate(variable);
+        for (String key : new String[] { "actualStack", "targetStack" })
+            bytes += stackTagCharge(row.getCompoundTag(key));
+        // Cell copies this hint tree independently; it does not share the row's hint tree.
+        if (row.hasKey("specialHint", 10))
+            bytes += HologramSnapshotCodec.retainedEstimate(row.getCompoundTag("specialHint"));
+        NBTTagList members = row.getTagList("structureIds", 8);
+        bytes += 128L * Math.max(
+            members.tagCount(),
+            row.getString("structureId")
+                .isEmpty() ? 0 : 1);
+        NBTTagList candidates = row.getTagList("candidates", 10);
+        for (int i = 0; i < candidates.tagCount(); i++) bytes += 128L + stackTagCharge(candidates.getCompoundTagAt(i));
+        return bytes;
+    }
+
+    /**
+     * Display/nativeTile and stack/tag are trusted local envelopes, not additional untrusted NBT depth.
+     * Charge their map entries while measuring the already bounded source subtree at its original root.
+     * Keeping it in a temporary row wrapper would incorrectly reject valid source depths 511 and 512.
+     */
+    private static long wrappedPayloadCharge(NBTTagCompound envelope, String payloadKey) {
+        if (!envelope.hasKey(payloadKey, 10)) return HologramSnapshotCodec.retainedEstimate(envelope);
+        NBTTagCompound shell = new NBTTagCompound();
+        for (Object name : envelope.func_150296_c()) {
+            String key = (String) name;
+            if (!key.equals(payloadKey)) shell.setTag(key, envelope.getTag(key));
+        }
+        return HologramSnapshotCodec.retainedEstimate(shell) + 128L
+            + 2L * payloadKey.length()
+            + HologramSnapshotCodec.retainedEstimate(envelope.getCompoundTag(payloadKey));
+    }
+
+    private static long stackTagCharge(NBTTagCompound stack) {
+        return stack.hasKey("tag", 10) ? HologramSnapshotCodec.retainedEstimate(stack.getCompoundTag("tag")) : 0;
+    }
+
     /** Evict only offscreen native data, with bounded traversal; visible details never thrash each other. */
     private boolean makeRoom(long need, Map<Integer, HologramState.Cell> replacements) {
-        if (need > MAX_RESIDENT) return false;
+        if (need < 0 || need > MAX_RESIDENT) return false;
         int checks = Math.min(32, loaded.size());
         for (int check = 0; resident + need > MAX_RESIDENT && check < checks; check++) {
             Iterator<Map.Entry<Long, Long>> entries = loaded.entrySet()
@@ -453,26 +529,14 @@ final class HologramAuthorProjection implements AutoCloseable {
         document = metadataDocument = null;
     }
 
-    private static final class Decoded {
-
-        final NBTTagCompound value;
-        final long charge;
-
-        Decoded(NBTTagCompound value, long charge) {
-            this.value = value;
-            this.charge = charge;
-        }
-    }
-
-    private static Decoded decode(String encoded) throws IOException {
-        if (encoded == null || encoded.isEmpty()) return new Decoded(null, 0);
+    private static NBTTagCompound decode(String encoded) throws IOException {
+        if (encoded == null || encoded.isEmpty()) return null;
         if (encoded.length() > ((1024 * 1024 + 2) / 3) * 4) throw new IOException("Native preview encoded budget");
         byte[] bytes = Base64.getDecoder()
             .decode(encoded);
         if (bytes.length > 1024 * 1024) throw new IOException("Native preview compressed budget");
         // The codec enforces expanded bytes, structural depth, and pre-allocation NBT accounting.
-        NBTTagCompound value = HologramSnapshotCodec.decodeBounded(bytes, 256 * 1024, 2L * 1024 * 1024);
-        return new Decoded(value, 4L * HologramSnapshotCodec.retainedEstimate(value));
+        return HologramSnapshotCodec.decodeBounded(bytes, 256 * 1024, 2L * 1024 * 1024);
     }
 
     private static String string(JsonObject source, String key) {

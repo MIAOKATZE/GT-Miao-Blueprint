@@ -54,6 +54,10 @@ public final class HologramLocalAuthorRegressionTest {
             com.miaokatze.gtmb.client.hologram.HologramAuthorOwnedRowRegression::run);
         add(
             cases,
+            "author_final_owned_payload_accounting",
+            com.miaokatze.gtmb.client.hologram.HologramAuthorOwnershipBudgetRegression::run);
+        add(
+            cases,
             "author_saturated_neighbor_demand",
             com.miaokatze.gtmb.client.hologram.HologramAuthorModelDemandRegression::run);
         add(
