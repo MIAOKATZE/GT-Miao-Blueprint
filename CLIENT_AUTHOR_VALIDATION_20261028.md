@@ -27,11 +27,23 @@
 
 可重跑的合成输入探针及命令见 [回调边界复现工具](tools/client-author-validation/README.md)。仓内脚本已对上述 clean 合并提交重跑，退出码 0；该退出码表示复现成功，不能作为兼容性通过门禁。它没有修改公共 API、跳过扩展拒绝或伪造服务器授权。后续修复需要保留旧自动回调契约，明确本地扩展能力，并在真实服务器边界核对最终候选；不能只改文档追认旧消费者接受线程变化。
 
+## 云端待修清单
+
+| 编号 | 已确认的问题／覆盖缺口 | 定位与影响 |
+| --- | --- | --- |
+| C01 | 旧快照处理器被本地作者路径调用 | `HologramLocalAuthorSemantics.process` / `HologramAuthorPortableCompiler.compile` → `HologramExtensionSnapshots.authoring`；原自动 `AUTHORING_COMPLETE` 服务端线程契约不再成立。旧扩展可能拒绝或依赖服务端线程。 |
+| C02 | 外部流体容器 codec 被本地状态计算调用 | `HologramLocalAuthorSemantics.processingState` → 资源检查 → `ResourceContainers.decode`；未声明接受客户端线程的旧 codec 仍会执行。 |
+| C03 | 外部原生放置适配器被本地候选枚举调用 | `HologramLocalAuthorConfigurations.candidates` → `NativePlacement.supports/create/materials`；只保护 create/materials 会漏掉选型时的 supports，不能调用后才判断是否安全。部分旧路径本就有非服务端调用，不能把全部历史问题归因于此次重构。 |
+| C04 | 本地结构再生调用旧来源与采集完成扩展 | `HologramLocalAuthorStructures` → `HologramCapture` → `StructureSources.describe` / `CAPTURE_COMPLETE`；只修处理／导出仍会漏掉此入口。 |
+| C05 | 服务端候选规范化没有补跑作者处理器 | `HologramServerLibrary.canonical` 对注册拒绝型 `AUTHORING_COMPLETE` 的调用数为 0；客户端没有服务端扩展时，候选文件不能证明已经经过该扩展。需核对真实 owner admission/activation 的补验。尚未实测活服提交／施工，不能写成已证实越权。 |
+
+这些是同一兼容边界问题的不同入口及一个服务端复验覆盖缺口，不代表已经发生五种内置崩溃。受控拒绝保源断言通过。3–4 秒目标、五图端到端、编辑保存及完整业务 UI 仍未验收，不能作为已确认产品错误计数。
+
 ## 一次限时客户端观察
 
 在 4 GiB heap 的隔离新世界中，仅观察一个 42,319 格输入；本轮没有向系统窗口发送输入或取得焦点。QA 记录显示作者文档已载入、画布和标题可见，未停留在“解析收到的数据”状态。自动验收要求 35 秒内达到完整源／视口条件，但该条件超时，`performance.complete` 为 false，且没有取得所需性能帧。流程按 harness 取消后以退出码 0 正常结束，没有强制终止。
 
-因此这次结果只是一项限时 UI 观察，不能判为产品 PASS 或 FAIL，也不能据此作出性能结论。其余四个输入以及编辑、保存用例未执行。下一次 native 验收仍为 **WAITING / NOT RUN**；本轮没有填入第二次运行结果。
+因此这次结果只是一项限时 UI 观察，不能判为产品 PASS 或 FAIL，也不能据此作出性能结论。其余四个输入以及编辑、保存用例未执行。第二轮在用户要求停止修复／输出清单前已经启动，初始化阶段未执行样本业务；通过既有取消命令以 `CANCELLED`、退出码 0 正常结束，未强制终止。第二轮源 manifest 未变化，14 份原样本与 5 对隔离副本结束哈希核验通过，不继续扩展测试。
 
 测试期间源实例 manifest 出现 118 项外部启动／升级变动。14 份原始样本的 SHA-256 复核通过，5 对 owned-copy 哈希匹配；没有覆盖这些外部变动。
 
@@ -39,6 +51,7 @@
 
 - 本地 `v0.1.55` tag 指向合并提交；`RELEASE_VERSION` 为 `0.1.55`。该 tag 未推送，未发布 Release，交付目录的 JAR 仍为 v0.1.54。
 - 公开玩家 Wiki 的冻结 `approvedRef` 仍为 `d3bb6753c97d56a25692dbce6ef4f48037d90def`。本轮重构尚未 Release，没有发布新的玩家文档或配图。
+- 按用户要求交云端继续修复；[Draft PR #65](https://github.com/MIAOKATZE/GT-Miao-Blueprint/pull/65) 仅含报告与合成复现工具，未修改产品实现，保持未合并。
 - 合并后构建与指定回归已完成；外部回调兼容修复、实际客户端完整验收、其余样本、编辑保存及性能验收仍未完成。
 
 私有原始资产、资产路径、原文和 QA 截图未包含在本记录中。
