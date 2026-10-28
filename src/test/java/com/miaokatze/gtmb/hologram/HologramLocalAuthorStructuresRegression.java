@@ -84,7 +84,54 @@ public final class HologramLocalAuthorStructuresRegression {
         SimpleAssert.that(
             HologramLocalAuthorStructures.mergeCell(current, baseline, null, true) == null,
             "core removes only this membership from departed shared cell");
+        retainedContainerOwnership();
         nativeDeadline();
+    }
+
+    private static void retainedContainerOwnership() throws Exception {
+        for (boolean removed : new boolean[] { false, true }) {
+            JsonObject baseline = row("stone"), current = copy(baseline);
+            // Intentionally non-interned; an opaque native payload must not be serialized/decoded/copied as text.
+            String payload = new String(new char[] { 'o', 'p', 'a', 'q', 'u', 'e', '\n', '\u4e2d' });
+            current.addProperty("tileNbt", payload);
+            current.add(
+                "futureExtension",
+                new JsonParser()
+                    .parse("{\"nested\":[{\"value\":\"before\"},null,1.2500,-0,9223372036854775808123,1e+20]}"));
+            String before = current.toString();
+            JsonObject result = HologramLocalAuthorStructures
+                .mergeCell(current, baseline, removed ? null : row("glass"), false);
+            SimpleAssert.eq(before, current.toString(), "reconciliation leaves retained source untouched");
+            SimpleAssert.eq(
+                current.get("futureExtension")
+                    .toString(),
+                result.get("futureExtension")
+                    .toString(),
+                "unknown nested null/numeric lexical values survive both retention branches");
+            SimpleAssert.that(
+                payload == result.get("tileNbt")
+                    .getAsString(),
+                "immutable opaque NBT String is shared, not serialized and reparsed");
+            JsonArray sourceNested = current.getAsJsonObject("futureExtension")
+                .getAsJsonArray("nested");
+            JsonArray resultNested = result.getAsJsonObject("futureExtension")
+                .getAsJsonArray("nested");
+            resultNested.get(0)
+                .getAsJsonObject()
+                .addProperty("value", "result edit");
+            SimpleAssert.eq(
+                "before",
+                sourceNested.get(0)
+                    .getAsJsonObject()
+                    .get("value")
+                    .getAsString(),
+                "mutating copied nested object cannot affect retained source");
+            sourceNested.add(new JsonObject());
+            SimpleAssert.eq(6, resultNested.size(), "mutating source nested array cannot affect copied result");
+            SimpleAssert.that(
+                sourceNested.get(2) == resultNested.get(2),
+                "immutable numeric primitive retains its original lexical representation");
+        }
     }
 
     private static void nativeDeadline() throws Exception {

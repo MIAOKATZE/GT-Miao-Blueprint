@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 import com.google.gson.ExclusionStrategy;
 import com.google.gson.FieldAttributes;
@@ -24,6 +25,8 @@ import com.google.gson.stream.JsonWriter;
 public final class HologramBlueprintCompactCodec {
 
     private static final String ENCODING = "gtmb-dictionary-1";
+    private static final Pattern COORDINATE = Pattern.compile("-?[0-9]+");
+    private static final Pattern DICTIONARY_INDEX = Pattern.compile("0|[1-9][0-9]{0,9}");
     static final int MAX_DICTIONARY = 65536;
     static final int MAX_CELLS = HologramBlueprintLimits.MAX_CELLS;
     private static final Gson GSON = new GsonBuilder().serializeNulls()
@@ -335,13 +338,14 @@ public final class HologramBlueprintCompactCodec {
                     int ref = index(row.get(0), materials.size());
                     JsonObject coordinates = object(row.get(1));
                     for (Map.Entry<String, JsonElement> coordinate : coordinates.entrySet()) {
-                        if (!coordinate.getKey()
-                            .matches("[xyz]")) throw new IOException("Invalid compact coordinate field");
+                        if (!("x".equals(coordinate.getKey()) || "y".equals(coordinate.getKey())
+                            || "z".equals(coordinate.getKey())))
+                            throw new IOException("Invalid compact coordinate field");
                         JsonElement number = coordinate.getValue();
                         if (!number.isJsonPrimitive() || !number.getAsJsonPrimitive()
                             .isNumber()
-                            || !number.getAsString()
-                                .matches("-?[0-9]+"))
+                            || !COORDINATE.matcher(number.getAsString())
+                                .matches())
                             throw new IOException("Invalid compact coordinate");
                         try {
                             Integer.parseInt(number.getAsString());
@@ -396,8 +400,8 @@ public final class HologramBlueprintCompactCodec {
         if (value == null || !value.isJsonPrimitive()
             || !value.getAsJsonPrimitive()
                 .isNumber()
-            || !value.getAsString()
-                .matches("0|[1-9][0-9]{0,9}"))
+            || !DICTIONARY_INDEX.matcher(value.getAsString())
+                .matches())
             throw new IOException("Invalid blueprint dictionary reference");
         long index = Long.parseLong(value.getAsString());
         if (index >= count) throw new IOException("Blueprint dictionary reference out of range");
@@ -466,27 +470,49 @@ public final class HologramBlueprintCompactCodec {
 
     // Gson's own escaping determines the exact expanded UTF-8 budget; no expanded string is allocated.
     private static long measure(JsonElement value) throws IOException {
-        final long[] count = { 0 };
-        java.io.Writer writer = new java.io.Writer() {
-
-            @Override
-            public void write(char[] chars, int offset, int length) throws IOException {
-                for (int i = offset; i < offset + length; i++) {
-                    char c = chars[i];
-                    count[0] += c < 0x80 ? 1 : c < 0x800 ? 2 : Character.isLowSurrogate(c) ? 1 : 3;
-                }
-                if (count[0] > HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES)
-                    throw new IOException("Expanded JSON byte budget");
-            }
-
-            @Override
-            public void flush() {}
-
-            @Override
-            public void close() {}
-        };
+        CountingWriter writer = new CountingWriter();
         GSON.toJson(value, writer);
-        return count[0];
+        return writer.count;
+    }
+
+    private static final class CountingWriter extends java.io.Writer {
+
+        private long count;
+
+        @Override
+        public void write(char[] chars, int offset, int length) throws IOException {
+            for (int i = offset; i < offset + length; i++) count(chars[i]);
+            checkBudget();
+        }
+
+        @Override
+        public void write(String value, int offset, int length) throws IOException {
+            for (int i = offset; i < offset + length; i++) count(value.charAt(i));
+            checkBudget();
+        }
+
+        @Override
+        public void write(int value) throws IOException {
+            count((char) value);
+            checkBudget();
+        }
+
+        private void count(char c) {
+            // Preserve the existing admission formula, including isolated surrogate code units. Gson still owns
+            // escaping; changing malformed-surrogate accounting would be a separate format/budget decision.
+            count += c < 0x80 ? 1 : c < 0x800 ? 2 : Character.isLowSurrogate(c) ? 1 : 3;
+        }
+
+        private void checkBudget() throws IOException {
+            if (count > HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES)
+                throw new IOException("Expanded JSON byte budget");
+        }
+
+        @Override
+        public void flush() {}
+
+        @Override
+        public void close() {}
     }
 
     static byte[] encode(HologramPresets.Preset blueprint, HologramDraftEncoding.Progress progress) throws IOException {

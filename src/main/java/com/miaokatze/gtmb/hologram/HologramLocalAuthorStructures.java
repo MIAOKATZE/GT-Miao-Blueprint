@@ -320,7 +320,7 @@ public final class HologramLocalAuthorStructures implements AutoCloseable {
     }
 
     private static JsonObject copy(JsonObject row) {
-        return new com.google.gson.JsonParser().parse(row.toString())
+        return HologramLocalAuthorSemantics.copy(row)
             .getAsJsonObject();
     }
 

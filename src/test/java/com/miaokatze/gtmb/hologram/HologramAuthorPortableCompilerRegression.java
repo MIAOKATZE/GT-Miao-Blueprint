@@ -30,6 +30,7 @@ public final class HologramAuthorPortableCompilerRegression {
         opaqueNoop();
         plainGeometry();
         relativeCoordinates();
+        indexedCopiedEndpoints();
         littleTiles();
         unsupportedAndSealed();
         freshProcessing();
@@ -179,6 +180,26 @@ public final class HologramAuthorPortableCompilerRegression {
             -4,
             relation(settle(external.current())).getInteger("dx"),
             "external relative reference retains original endpoint instead of following nonexistent target");
+        AuthorEditor motif = new AuthorEditor(read(source(host, cell(1))), 8);
+        motif.select(Arrays.asList(1L, 2L));
+        motif.copy(5, 2, -3);
+        JsonObject copiedMotif = settle(motif.current());
+        SimpleAssert.eq(
+            1,
+            relationAt(copiedMotif, 2).getInteger("dx"),
+            "copied linked motif retains its internal endpoint delta");
+        SimpleAssert
+            .eq(0, relationAt(copiedMotif, 2).getInteger("dy"), "copied linked motif uses the matching y translation");
+        SimpleAssert
+            .eq(0, relationAt(copiedMotif, 2).getInteger("dz"), "copied linked motif uses the matching z translation");
+        AuthorEditor excludedEndpoint = new AuthorEditor(read(source(host, cell(1))), 8);
+        excludedEndpoint.select(Collections.singleton(2L));
+        excludedEndpoint.move(7, 0, 0);
+        excludedEndpoint.setExcluded(true);
+        SimpleAssert.eq(
+            1,
+            relation(settle(excludedEndpoint.current())).getInteger("dx"),
+            "excluded moved endpoint cannot redirect the retained external reference");
         relation.targetX = 1;
         relations = new NBTTagList();
         relations.appendTag(relation.write("absolute"));
@@ -206,6 +227,105 @@ public final class HologramAuthorPortableCompilerRegression {
             "clear",
             relation(settle(cleared.current())).getString("mode"),
             "cleared endpoint ignores unrelated origin-zero copy ambiguity");
+    }
+
+    private static void indexedCopiedEndpoints() throws Exception {
+        int copies = 4096;
+        JsonObject[] rows = new JsonObject[copies * 2];
+        for (int i = 0; i < copies; i++) {
+            rows[i * 2] = cell(i * 3);
+            rows[i * 2 + 1] = cell(i * 3 + 1);
+            // Distinct three-dimensional translations, not just the common x-only case.
+            rows[i * 2].addProperty("y", i % 17);
+            rows[i * 2 + 1].addProperty("y", i % 17);
+            rows[i * 2].addProperty("z", -i);
+            rows[i * 2 + 1].addProperty("z", -i);
+        }
+        JsonObject draft = new com.google.gson.JsonParser()
+            .parse(
+                new String(
+                    AuthorDocumentIO.writeDraft(read(source(rows)), AuthorDocumentIO.Limits.defaults()),
+                    java.nio.charset.StandardCharsets.UTF_8))
+            .getAsJsonObject();
+        JsonArray origins = new JsonArray();
+        for (int i = 0; i < rows.length; i++) {
+            JsonArray origin = new JsonArray();
+            origin.add(new com.google.gson.JsonPrimitive(i % 2));
+            origin.add(new com.google.gson.JsonPrimitive(0));
+            origin.add(new com.google.gson.JsonPrimitive(0));
+            origins.add(origin);
+        }
+        draft.add("payloadOrigins", origins);
+        java.util.List<AuthorDocument.Cell> cells = new java.util.ArrayList<>();
+        for (AuthorDocument.Cell cell : read(draft).cells()) cells.add(cell);
+        final int[] sourceReads = { 0 };
+        java.util.List<AuthorDocument.Cell> counted = new java.util.AbstractList<AuthorDocument.Cell>() {
+
+            @Override
+            public AuthorDocument.Cell get(int index) {
+                sourceReads[0]++;
+                return cells.get(index);
+            }
+
+            @Override
+            public int size() {
+                return cells.size();
+            }
+        };
+        HologramAuthorPortableCompiler.EndpointIndex index = new HologramAuthorPortableCompiler.EndpointIndex(
+            counted,
+            Collections.emptySet());
+        SimpleAssert.eq(cells.size(), sourceReads[0], "endpoint index visits each source cell exactly once");
+        for (int i = 0; i < copies; i++) SimpleAssert.eq(
+            Integer.valueOf(i * 2 + 1),
+            index.target(1, 0, 0, cells.get(i * 2)),
+            "each copied host resolves only its matching translated endpoint");
+        SimpleAssert.eq(
+            cells.size(),
+            sourceReads[0],
+            "thousands of endpoint lookups never revisit source candidates (no quadratic source-list scan)");
+        SimpleAssert.eq(null, index.target(2, 0, 0, cells.get(0)), "missing payload origin stays external");
+        HologramAuthorPortableCompiler.EndpointIndex ambiguous = new HologramAuthorPortableCompiler.EndpointIndex(
+            Arrays.asList(cells.get(1), cells.get(1)),
+            Collections.emptySet());
+        reject(() -> ambiguous.target(1, 0, 0, cells.get(0)), "duplicate same-shift endpoint stays ambiguous");
+        HologramAuthorPortableCompiler.EndpointIndex unrelatedDuplicate = new HologramAuthorPortableCompiler.EndpointIndex(
+            Arrays.asList(cells.get(1), cells.get(1), cells.get(3)),
+            Collections.emptySet());
+        SimpleAssert.eq(
+            Integer.valueOf(2),
+            unrelatedDuplicate.target(1, 0, 0, cells.get(2)),
+            "duplicate at another shift cannot invalidate a unique matching endpoint");
+        HologramAuthorPortableCompiler.EndpointIndex fallback = new HologramAuthorPortableCompiler.EndpointIndex(
+            Collections.singletonList(cells.get(3)),
+            Collections.emptySet());
+        SimpleAssert.eq(
+            Integer.valueOf(0),
+            fallback.target(1, 0, 0, cells.get(0)),
+            "stationary host follows a sole moved endpoint");
+        JsonObject excluded = cell(1), disabled = cell(2), enabled = cell(3);
+        excluded.addProperty("excluded", true);
+        disabled.addProperty("structureId", "disabled");
+        enabled.addProperty("structureId", "enabled");
+        JsonObject filteredSource = source(excluded, disabled, enabled);
+        for (String id : new String[] { "disabled", "enabled" }) {
+            JsonObject structure = new JsonObject();
+            structure.addProperty("id", id);
+            structure.addProperty("enabled", "enabled".equals(id));
+            filteredSource.getAsJsonArray("structures")
+                .add(structure);
+        }
+        java.util.List<AuthorDocument.Cell> filtered = new java.util.ArrayList<>();
+        for (AuthorDocument.Cell cell : read(filteredSource).cells()) filtered.add(cell);
+        HologramAuthorPortableCompiler.EndpointIndex eligible = new HologramAuthorPortableCompiler.EndpointIndex(
+            filtered,
+            Collections.singleton("enabled"));
+        SimpleAssert.eq(null, eligible.target(1, 0, 0, cells.get(0)), "excluded endpoint is not indexed");
+        SimpleAssert.eq(null, eligible.target(2, 0, 0, cells.get(0)), "disabled-membership endpoint is not indexed");
+        SimpleAssert.eq(
+            Integer.valueOf(2),
+            eligible.target(3, 0, 0, cells.get(0)),
+            "enabled-membership endpoint remains eligible");
     }
 
     private static void littleTiles() throws Exception {

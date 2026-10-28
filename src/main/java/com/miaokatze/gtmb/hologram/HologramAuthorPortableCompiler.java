@@ -28,6 +28,9 @@ import com.miaokatze.gtmb.blueprint.editor.AuthorDocument;
 public final class HologramAuthorPortableCompiler {
 
     private static final Gson GSON = new Gson();
+    private static final Set<String> CELL_FIELDS = knownFields(HologramPresets.Cell.class);
+    private static final Set<String> STRUCTURE_FIELDS = knownFields(HologramPresets.Structure.class);
+    private static final Set<String> HINT_FIELDS = knownFields(HologramPresets.HintArea.class);
 
     private HologramAuthorPortableCompiler() {}
 
@@ -120,9 +123,8 @@ public final class HologramAuthorPortableCompiler {
             HologramPresets.Preset candidate = HologramLocalAuthorSemantics.preset(raw);
             if (candidate.schema != 2) throw new IOException("Explicit template migration is required");
             List<AuthorDocument.Cell> cells = new ArrayList<>();
-            Map<String, List<Integer>> origins = new HashMap<>();
             Map<String, Integer> finalPositions = new HashMap<>();
-            Map<String, List<HologramPresets.Cell>> nativeGroups = new LinkedHashMap<>();
+            Map<Vector, List<HologramPresets.Cell>> nativeGroups = new LinkedHashMap<>();
             Set<Long> copied = new HashSet<>();
             Set<String> transformedStructures = new HashSet<>();
             Set<String> enabledStructures = new HashSet<>();
@@ -150,15 +152,8 @@ public final class HologramAuthorPortableCompiler {
             int index = 0;
             for (AuthorDocument.Cell source : document.cells()) {
                 cells.add(source);
-                if (!source.excluded() && (source.memberships()
-                    .isEmpty() || !Collections.disjoint(source.memberships(), enabledStructures))) {
-                    origins
-                        .computeIfAbsent(
-                            key(source.payloadX(), source.payloadY(), source.payloadZ()),
-                            ignored -> new ArrayList<>())
-                        .add(index);
+                if (eligibleEndpoint(source, enabledStructures))
                     finalPositions.put(key(source.x(), source.y(), source.z()), index);
-                }
                 HologramPresets.Cell cell = candidate.cells.get(index++);
                 boolean moved = moved(source);
                 geometry |= moved;
@@ -178,6 +173,7 @@ public final class HologramAuthorPortableCompiler {
                             .add(check);
                 }
             }
+            EndpointIndex origins = geometry ? new EndpointIndex(cells, enabledStructures) : null;
             for (JsonObject structure : document.structures())
                 if (structure.has("id") && transformedStructures.contains(
                     structure.get("id")
@@ -222,7 +218,7 @@ public final class HologramAuthorPortableCompiler {
                         Integer target = "clear".equals(relation.previousMode) ? null
                             : "absolute".equals(relation.previousMode)
                                 ? finalPositions.get(key(targetX, targetY, targetZ))
-                                : target(origins.get(key(targetX, targetY, targetZ)), cells, source);
+                                : origins.target(targetX, targetY, targetZ, source);
                         relation.internal = target != null && (relation.targetDimension == dimension
                             || !HologramNativeHubData.adapter(relation.adapter));
                         if (relation.internal && !"absolute".equals(relation.previousMode)
@@ -313,26 +309,105 @@ public final class HologramAuthorPortableCompiler {
         return count;
     }
 
-    private static Integer target(List<Integer> choices, List<AuthorDocument.Cell> cells, AuthorDocument.Cell host)
-        throws IOException {
-        if (choices == null || choices.isEmpty()) return null;
-        Integer match = null;
-        for (Integer index : choices) if (shift(cells.get(index)).equals(shift(host))) {
-            if (match != null) throw new IOException("Ambiguous copied coordinate endpoint");
-            match = index;
-        }
-        if (match != null) return match;
-        if (choices.size() == 1) return choices.get(0);
-        throw new IOException("Ambiguous coordinate endpoint after copy; original draft retained");
+    private static boolean eligibleEndpoint(AuthorDocument.Cell cell, Set<String> enabledStructures) {
+        return !cell.excluded() && (cell.memberships()
+            .isEmpty() || !Collections.disjoint(cell.memberships(), enabledStructures));
     }
 
-    private static void rejectExtensions(JsonObject source, Class<?> type, String context) throws IOException {
+    /** One source pass; lookup never rescans copies or retains the source list. */
+    static final class EndpointIndex {
+
+        private final Map<Vector, Endpoints> origins = new HashMap<>();
+
+        EndpointIndex(List<AuthorDocument.Cell> cells, Set<String> enabledStructures) {
+            int index = 0;
+            for (AuthorDocument.Cell cell : cells) {
+                if (eligibleEndpoint(cell, enabledStructures)) {
+                    Endpoints endpoints = origins.computeIfAbsent(
+                        new Vector(cell.payloadX(), cell.payloadY(), cell.payloadZ()),
+                        ignored -> new Endpoints());
+                    endpoints.add(shift(cell), index);
+                }
+                index++;
+            }
+        }
+
+        Integer target(int x, int y, int z, AuthorDocument.Cell host) throws IOException {
+            Endpoints endpoints = origins.get(new Vector(x, y, z));
+            if (endpoints == null) return null;
+            // A sole endpoint is selected whether or not its translation matches the host.
+            if (endpoints.byShift == null) return endpoints.sole;
+            Integer match = endpoints.byShift.get(shift(host));
+            if (match != null) {
+                if (match < 0) throw new IOException("Ambiguous copied coordinate endpoint");
+                return match;
+            }
+            throw new IOException("Ambiguous coordinate endpoint after copy; original draft retained");
+        }
+    }
+
+    private static final class Endpoints {
+
+        private Map<Vector, Integer> byShift;
+        private Vector soleShift;
+        private int sole = -1;
+
+        void add(Vector shift, int index) {
+            if (sole < 0) {
+                sole = index;
+                soleShift = shift;
+                return;
+            }
+            // Most origins are not copied; avoid a second HashMap and table for every ordinary source cell.
+            if (byShift == null) {
+                byShift = new HashMap<>();
+                byShift.put(soleShift, sole);
+                soleShift = null;
+            }
+            // A duplicate matching shift is ambiguous; duplicates at unrelated shifts do not block a match.
+            byShift.merge(shift, index, (previous, added) -> -1);
+        }
+    }
+
+    private static final class Vector {
+
+        final long x, y, z;
+
+        Vector(long x, long y, long z) {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (!(other instanceof Vector)) return false;
+            Vector vector = (Vector) other;
+            return x == vector.x && y == vector.y && z == vector.z;
+        }
+
+        @Override
+        public int hashCode() {
+            return (Long.hashCode(x) * 31 + Long.hashCode(y)) * 31 + Long.hashCode(z);
+        }
+    }
+
+    private static Set<String> knownFields(Class<?> type) {
         Set<String> known = new HashSet<>();
         for (Field field : type.getDeclaredFields())
             if (!Modifier.isTransient(field.getModifiers()) && !Modifier.isStatic(field.getModifiers()))
                 known.add(field.getName());
         // Local declaration completeness is a nonspatial UI fact, never a portable/server authority.
         if (type == HologramPresets.Cell.class) known.add("authorDeclarationComplete");
+        return Collections.unmodifiableSet(known);
+    }
+
+    private static void rejectExtensions(JsonObject source, Class<?> type, String context) throws IOException {
+        Set<String> known;
+        if (type == HologramPresets.Cell.class) known = CELL_FIELDS;
+        else if (type == HologramPresets.Structure.class) known = STRUCTURE_FIELDS;
+        else if (type == HologramPresets.HintArea.class) known = HINT_FIELDS;
+        else throw new IOException("Unsupported transformed record type: " + type.getName());
         for (Map.Entry<String, JsonElement> entry : source.entrySet())
             if (!known.contains(entry.getKey())) throw new IOException(
                 "Unsupported transformed extension " + context + "/" + entry.getKey() + "; source retained");
@@ -346,8 +421,8 @@ public final class HologramAuthorPortableCompiler {
         return cell.x() != cell.payloadX() || cell.y() != cell.payloadY() || cell.z() != cell.payloadZ();
     }
 
-    private static String shift(AuthorDocument.Cell cell) {
-        return key(
+    private static Vector shift(AuthorDocument.Cell cell) {
+        return new Vector(
             (long) cell.x() - cell.payloadX(),
             (long) cell.y() - cell.payloadY(),
             (long) cell.z() - cell.payloadZ());
