@@ -40,6 +40,10 @@ public final class HologramLocalAuthorRegressionTest {
             cases,
             "author_model_deadline_scheduling",
             com.miaokatze.gtmb.client.hologram.HologramAuthorProjectionSchedulerRegression::run);
+        add(
+            cases,
+            "author_owned_row_isolation",
+            com.miaokatze.gtmb.client.hologram.HologramAuthorOwnedRowRegression::run);
         add(cases, "atomic_native_attachments", HologramLocalAuthorAttachmentsRegression::run);
         add(cases, "native_configuration_contract", HologramLocalAuthorConfigurationsRegression::run);
         add(cases, "native_structure_regeneration", HologramLocalAuthorStructuresRegression::run);

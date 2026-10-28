@@ -221,7 +221,7 @@ final class HologramAuthorProjection implements AutoCloseable {
                 Long old = loaded.put(id, charge);
                 resident += charge - (old == null ? 0 : old);
             }
-            replacements.put(index, new HologramState.Cell(index, row));
+            replacements.put(index, HologramState.Cell.takeOwnedLocalRow(index, row));
             work++;
         }
         if (replacements.isEmpty()) return false;

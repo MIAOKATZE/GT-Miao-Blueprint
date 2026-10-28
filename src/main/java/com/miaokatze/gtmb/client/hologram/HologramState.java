@@ -989,6 +989,14 @@ final class HologramState {
             this(index, n, false);
         }
 
+        /**
+         * Transfer a freshly prepared local row and its whole tree; the caller must retain no mutable aliases.
+         * Displays remain read-only owned data, exports copy, and mutable ItemStacks are independently decoded.
+         */
+        static Cell takeOwnedLocalRow(int index, NBTTagCompound row) {
+            return new Cell(index, row, true);
+        }
+
         /** Display preparation owns its row tree, so publishing it needs no second NBT tree. */
         private Cell(int index, NBTTagCompound n, boolean owned) {
             raw = owned ? n : (NBTTagCompound) n.copy();
