@@ -1053,6 +1053,12 @@ final class HologramRenderer {
         result.visible.add(c);
         boolean visibleNative = state.authorProjection == null || projectedFrame == null
             || previewRegionVisible(state, HologramRegionCache.key(c));
+        if (detailed && visibleNative && HologramSnapshotModelsClient.resumableBudget(state, c)) {
+            HologramSnapshotModelsClient.requestVisible(state, c, current);
+            result.budgetLimited++;
+            result.cells.add(new PreviewCell(c, 63, "细节预算不足，等待容量", false));
+            return;
+        }
         if (!detailed || !visibleNative || !HologramSnapshotModelsClient.ready(state, c, current)) {
             if (detailed) {
                 result.unresolved++;
@@ -1061,11 +1067,8 @@ final class HologramRenderer {
             result.cells.add(new PreviewCell(c, 63, roleLabel(c), false));
             return;
         }
-        if (state.authorProjection != null
-            && ("localFallback".equals(c.renderKind) || "localBudget".equals(c.renderKind))) {
-            boolean limited = "localBudget".equals(c.renderKind);
-            if (limited) result.budgetLimited++;
-            result.cells.add(new PreviewCell(c, 63, limited ? "细节预算不足，等待容量" : "预览不可用", false));
+        if (state.authorProjection != null && "localFallback".equals(c.renderKind)) {
+            result.cells.add(new PreviewCell(c, 63, "预览不可用", false));
             return;
         }
         if (!HologramLinkNodePreview.prepare(c, current)

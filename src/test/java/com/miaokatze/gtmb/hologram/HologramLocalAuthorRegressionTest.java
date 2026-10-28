@@ -52,6 +52,10 @@ public final class HologramLocalAuthorRegressionTest {
             cases,
             "bounded_material_dedup_cache",
             com.miaokatze.gtmb.client.hologram.HologramMaterialCacheRegression::run);
+        add(
+            cases,
+            "author_hidden_budget_recovery",
+            com.miaokatze.gtmb.client.hologram.HologramAuthorBudgetRecoveryRegression::run);
         add(cases, "atomic_native_attachments", HologramLocalAuthorAttachmentsRegression::run);
         add(cases, "native_configuration_contract", HologramLocalAuthorConfigurationsRegression::run);
         add(cases, "native_structure_regeneration", HologramLocalAuthorStructuresRegression::run);

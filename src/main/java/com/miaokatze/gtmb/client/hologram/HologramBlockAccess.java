@@ -58,7 +58,8 @@ final class HologramBlockAccess implements IBlockAccess {
         if (state.authorProjection != null) state.authorProjection.dependency(modelReader, x, y, z);
         String key = key(x, y, z);
         HologramState.Cell input = cells.at(x, y, z);
-        if (input != null && input.modelPending(current)) {
+        if (input != null
+            && (input.modelPending(current) || HologramSnapshotModelsClient.resumableBudget(state, input))) {
             modelIncomplete = true;
             HologramSnapshotModelsClient.requestVisible(state, input, current);
             if (state.authorProjection == null) HologramSnapshotModelsClient.dependency(modelReader, input);
