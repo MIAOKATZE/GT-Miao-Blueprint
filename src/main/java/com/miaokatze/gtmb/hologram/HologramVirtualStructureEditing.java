@@ -109,11 +109,17 @@ final class HologramVirtualStructureEditing {
 
     private static MTEEnhancedMultiBlockBase<?> controller(HologramSession s, HologramPresets.Structure source)
         throws IOException {
-        String warning = HologramBlueprintData.sourceWarning(s.virtualPreset, source);
+        return controller(s.virtualPreset, source);
+    }
+
+    /** Shared detached native boundary; caller owns the saved source, never a server session. */
+    static MTEEnhancedMultiBlockBase<?> controller(HologramPresets.Preset preset, HologramPresets.Structure source)
+        throws IOException {
+        String warning = HologramBlueprintData.sourceWarning(preset, source);
         if (!warning.isEmpty()) throw new IOException(warning);
         int front = -1;
         NBTTagCompound state = null;
-        for (HologramPresets.Cell cell : s.virtualPreset.cells) if (cell.controller && cell.belongsTo(source.id)) {
+        for (HologramPresets.Cell cell : preset.cells) if (cell.controller && cell.belongsTo(source.id)) {
             front = cell.facing;
             state = HologramBlueprintNbt.decode(cell.tileNbt);
             if (state == null || state.hasNoTags()) {
@@ -130,7 +136,7 @@ final class HologramVirtualStructureEditing {
                 throw new IOException("保存的来源控制器 NBT 身份不匹配");
             break;
         }
-        ExtendedFacing facing = HologramVirtualTransform.controller(s.virtualPreset);
+        ExtendedFacing facing = HologramVirtualTransform.controller(preset);
         if (front >= 0 && front <= 5) facing = facing.with(ForgeDirection.getOrientation(front));
         MTEEnhancedMultiBlockBase<?> machine = HologramDetachedController.create(source.controllerId, facing, state);
         if (!HologramStructureDiscovery.captureSupported(machine)) throw new IOException("来源控制器未提供可重建的原生声明");

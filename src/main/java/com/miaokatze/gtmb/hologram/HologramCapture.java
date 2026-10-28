@@ -149,8 +149,17 @@ public final class HologramCapture {
     @SuppressWarnings({ "rawtypes", "unchecked" })
     static HologramCapture collect(MTEEnhancedMultiBlockBase<?> machine, ItemStack trigger, ExtendedFacing facing,
         HologramCapture resumed) {
+        return collect(machine, trigger, facing, resumed, System.nanoTime() + CAPTURE_TIME_NS);
+    }
+
+    /** Explicit owner-thread slice for detached client declarations; never enters global server work-budget state. */
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    static HologramCapture collect(MTEEnhancedMultiBlockBase<?> machine, ItemStack trigger, ExtendedFacing facing,
+        HologramCapture resumed, long deadline) {
         HologramCapture capture = resumed == null ? new HologramCapture(machine, trigger) : resumed;
-        capture.deadline = System.nanoTime() + CAPTURE_TIME_NS;
+        // Native construct/discovery is indivisible. Keep its existing safety fuse separate from the
+        // cooperative walking deadline; a short client slice must yield, not fail inside buildPiece.
+        capture.deadline = resumed == null ? Math.max(deadline, System.nanoTime() + CAPTURE_TIME_NS) : deadline;
         capture.pending = false;
         if (capture.walkingComplete) {
             capture.deadline = HologramWorkBudget.captureDeadline(capture.deadline);
@@ -195,8 +204,8 @@ public final class HologramCapture {
                     .getYCoord(),
                 z = machine.getBaseMetaTileEntity()
                     .getZCoord();
-            // Native definition discovery is atomic; resumable element walking shares the server tick budget.
-            capture.deadline = HologramWorkBudget.captureDeadline(capture.deadline);
+            // Native definition discovery is atomic; walking uses the caller's exact cooperative deadline.
+            capture.deadline = HologramWorkBudget.captureDeadline(deadline);
             walkPieces(capture, definition, world, machine.getExtendedFacing(), x, y, z);
         } catch (RuntimeException | LinkageError e) {
             capture.noteFailure(e);
