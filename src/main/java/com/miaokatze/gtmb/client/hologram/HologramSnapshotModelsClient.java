@@ -86,8 +86,12 @@ final class HologramSnapshotModelsClient {
         if (!budget && cell.nativeModelId <= 0 && cell.nativeModelPending == 0) return true;
         boolean ready = !cell.modelPending(current) && !budget;
         if (!ready) requestVisible(state, cell, current);
-        // Native connected models may inspect diagonal neighbors; block/meta are already in the cold index.
-        if (HologramNativeTiles.supported(cell.block(current || cell.anchor))) {
+        // Exact built-in Chisel CTM does not require every neighbor's opaque appearance up front.
+        // A custom adapter still takes the conservative neighborhood gate. Any actual tile read,
+        // even from a static renderer, retains BlockAccess's unknown/defer/dependency protection.
+        boolean actual = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
+        net.minecraft.block.Block block = cell.block(actual);
+        if (HologramNativeTiles.supported(block) && !HologramChiselNativeRender.selected(block)) {
             for (int x = -1; x <= 1; x++) for (int y = -1; y <= 1; y++) for (int z = -1; z <= 1; z++) {
                 HologramState.Cell neighbor = state.regions.at(cell.x + x, cell.y + y, cell.z + z);
                 if (neighbor != null && (neighbor.modelPending(current) || resumableBudget(state, neighbor))) {

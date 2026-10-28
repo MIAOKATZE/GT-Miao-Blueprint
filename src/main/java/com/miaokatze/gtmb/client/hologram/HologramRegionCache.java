@@ -350,6 +350,14 @@ final class HologramRegionCache {
         return result;
     }
 
+    /** Opaque appearance publication leaves neighboring cold block/meta facts unchanged. */
+    static java.util.Set<Key> changedRegions(HologramState state) {
+        java.util.Set<Key> result = new java.util.HashSet<>();
+        for (HologramState.Cell old : state.changedPreviousCells) result.add(key(old));
+        for (int index : state.changedIndices) result.add(key(state.cells.get(index)));
+        return result;
+    }
+
     private static void affect(java.util.Set<Key> result, HologramState.Cell c) {
         // Native connected textures may inspect diagonal neighbors. A one-cell halo
         // intersects one or two regions per axis, hence at most eight regions per cell.

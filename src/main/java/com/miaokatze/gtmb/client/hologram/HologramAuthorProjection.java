@@ -44,9 +44,10 @@ final class HologramAuthorProjection implements AutoCloseable {
     private final LinkedHashMap<Long, Long> loaded = new LinkedHashMap<>(16, .75f, true);
     private final LinkedHashMap<Long, Long> budgetDeferred = new LinkedHashMap<>();
     private final Map<HologramRegionCache.Key, Set<HologramRegionCache.Key>> readers = new HashMap<>();
+    private final Map<HologramRegionCache.Key, Set<HologramRegionCache.Key>> blockReaders = new HashMap<>();
     private long resident;
-    private int dependencyCount;
-    private boolean dependencyOverflow, closed;
+    private int dependencyCount, blockDependencyCount;
+    private boolean dependencyOverflow, blockDependencyOverflow, closed;
 
     HologramAuthorProjection(AuthorDocument document) {
         this.document = document;
@@ -245,7 +246,7 @@ final class HologramAuthorProjection implements AutoCloseable {
             replacements.put(index, prepared);
         }
         if (replacements.isEmpty()) return false;
-        publish(view.data, replacements);
+        publish(view.data, replacements, true);
         return true;
     }
 
@@ -349,6 +350,7 @@ final class HologramAuthorProjection implements AutoCloseable {
             .getOrDefault(HologramRegionCache.key(cell), Collections.emptySet())) {
             if (++checked > 64) {
                 readers.clear();
+                dependencyCount = 0;
                 dependencyOverflow = true;
                 return false; // Same conservative retirement rule when this bounded query cannot prove eviction safe.
             }
@@ -370,26 +372,61 @@ final class HologramAuthorProjection implements AutoCloseable {
         HologramRegionCache.Key input = new HologramRegionCache.Key(x >> 4, y >> 4, z >> 4);
         HologramRegionCache.Key output = HologramRegionCache.key(reader);
         Set<HologramRegionCache.Key> set = readers.computeIfAbsent(input, ignored -> new HashSet<>());
-        if (set.add(output) && ++dependencyCount > MAX_DEPENDENCIES) {
+        if (set.add(output) && ++dependencyCount + blockDependencyCount > MAX_DEPENDENCIES) {
             readers.clear();
+            dependencyCount = 0;
             dependencyOverflow = true;
         }
     }
 
+    /** Known block/meta reads only depend on source facts, not a neighbor's later opaque NBT publication. */
+    void blockDependency(HologramState.Cell reader, int x, int y, int z) {
+        if (reader == null || blockDependencyOverflow) return;
+        HologramRegionCache.Key input = new HologramRegionCache.Key(x >> 4, y >> 4, z >> 4);
+        Set<HologramRegionCache.Key> set = blockReaders.computeIfAbsent(input, ignored -> new HashSet<>());
+        if (set.add(HologramRegionCache.key(reader)) && ++blockDependencyCount + dependencyCount > MAX_DEPENDENCIES) {
+            blockReaders.clear();
+            blockDependencyCount = 0;
+            blockDependencyOverflow = true;
+        }
+    }
+
     private void publish(NBTTagCompound metadata, Map<Integer, HologramState.Cell> replacements) {
+        publish(metadata, replacements, false);
+    }
+
+    private void publish(NBTTagCompound metadata, Map<Integer, HologramState.Cell> replacements, boolean modelOnly) {
         HologramState previous = view;
         view = new HologramState(this, metadata, previous, ids.size(), replacements);
-        Set<HologramRegionCache.Key> dirty = HologramRegionCache.affected(view);
+        view.modelOnly = modelOnly && !view.topologyChanged;
+        for (HologramState.Cell old : view.changedPreviousCells) {
+            HologramState.Cell next = old.index < view.cells.size() ? view.cells.get(old.index) : null;
+            if (next == null || !old.id.equals(next.id)
+                || !old.wantId.equals(next.wantId)
+                || old.meta != next.meta
+                || old.wantMeta != next.wantMeta
+                || old.anchor != next.anchor
+                || (old.status.equals("protected") && old.actualStack != null)
+                    != (next.status.equals("protected") && next.actualStack != null))
+                view.modelOnly = false;
+        }
+        Set<HologramRegionCache.Key> dirty = view.modelOnly ? HologramRegionCache.changedRegions(view)
+            : HologramRegionCache.affected(view);
         Set<HologramRegionCache.Key> dependencies = new HashSet<>();
-        boolean retireUnknownDependencies = dependencyOverflow && !dirty.isEmpty();
+        boolean retireUnknownDependencies = (dependencyOverflow || !view.modelOnly && blockDependencyOverflow)
+            && !dirty.isEmpty();
         if (retireUnknownDependencies) {
             dependencies.addAll(previous.regions.regions.keySet());
             dependencies.addAll(view.regions.regions.keySet());
         } else {
             List<HologramRegionCache.Key> frontier = new ArrayList<>(dirty);
-            for (int i = 0; i < frontier.size(); i++)
+            for (int i = 0; i < frontier.size(); i++) {
                 for (HologramRegionCache.Key reader : readers.getOrDefault(frontier.get(i), Collections.emptySet()))
                     if (dependencies.add(reader)) frontier.add(reader);
+                if (!view.modelOnly) for (HologramRegionCache.Key reader : blockReaders
+                    .getOrDefault(frontier.get(i), Collections.emptySet()))
+                    if (dependencies.add(reader)) frontier.add(reader);
+            }
         }
         HologramRenderer.authorSnapshotChanged(previous, view, dependencies);
         if (retireUnknownDependencies) {
@@ -398,6 +435,9 @@ final class HologramAuthorProjection implements AutoCloseable {
             readers.clear();
             dependencyCount = 0;
             dependencyOverflow = false;
+            blockReaders.clear();
+            blockDependencyCount = 0;
+            blockDependencyOverflow = false;
         }
     }
 
@@ -521,6 +561,7 @@ final class HologramAuthorProjection implements AutoCloseable {
         loaded.clear();
         budgetDeferred.clear();
         readers.clear();
+        blockReaders.clear();
         slots.clear();
         ids.clear();
         resident = 0;

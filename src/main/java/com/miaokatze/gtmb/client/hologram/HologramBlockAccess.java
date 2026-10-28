@@ -42,14 +42,14 @@ final class HologramBlockAccess implements IBlockAccess {
     }
 
     public Block getBlock(int x, int y, int z) {
-        if (state.authorProjection != null) state.authorProjection.dependency(modelReader, x, y, z);
+        if (state.authorProjection != null) state.authorProjection.blockDependency(modelReader, x, y, z);
         HologramState.Cell cell = cells.at(x, y, z);
         Block block = cell == null ? null : cell.block(actual(cell));
         return block == null ? Blocks.air : block;
     }
 
     public int getBlockMetadata(int x, int y, int z) {
-        if (state.authorProjection != null) state.authorProjection.dependency(modelReader, x, y, z);
+        if (state.authorProjection != null) state.authorProjection.blockDependency(modelReader, x, y, z);
         HologramState.Cell cell = cells.at(x, y, z);
         return cell == null ? 0 : actual(cell) ? cell.meta : cell.wantMeta;
     }
@@ -157,6 +157,8 @@ final class HologramBlockAccess implements IBlockAccess {
     }
 
     boolean contains(int x, int y, int z) {
+        // RenderWorld.blockExists is a source-topology read, including currently empty coordinates.
+        if (state.authorProjection != null) state.authorProjection.blockDependency(modelReader, x, y, z);
         return cells.at(x, y, z) != null;
     }
 

@@ -46,6 +46,10 @@ public final class HologramLocalAuthorRegressionTest {
             com.miaokatze.gtmb.client.hologram.HologramAuthorPreviewOwnershipRegression::run);
         add(
             cases,
+            "author_typed_dependency_invalidation",
+            com.miaokatze.gtmb.client.hologram.HologramTypedDependencyInvalidationRegression::run);
+        add(
+            cases,
             "author_plain_block_descriptor_budget",
             com.miaokatze.gtmb.client.hologram.HologramAuthorPlainBlockRegression::run);
         add(
