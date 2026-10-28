@@ -82,7 +82,7 @@ final class HologramTextures {
 
     private HologramTextures() {}
 
-    /** Exact keys preserve all NBT identity; eviction sacrifices reuse, never a cell's resolved material. */
+    /** Preserve existing string-key equality; eviction sacrifices reuse, never a cell's resolved material. */
     static final class MaterialCache {
 
         private final int maxEntries;
@@ -107,8 +107,10 @@ final class HologramTextures {
             if (cost > maxKeyBytes) return;
             if (entries.remove(key) != null) keyBytes -= cost;
             while (!entries.isEmpty() && (entries.size() >= maxEntries || keyBytes + cost > maxKeyBytes)) {
-                java.util.Iterator<String> oldest = entries.keySet().iterator();
-                keyBytes -= 2L * oldest.next().length();
+                java.util.Iterator<String> oldest = entries.keySet()
+                    .iterator();
+                keyBytes -= 2L * oldest.next()
+                    .length();
                 oldest.remove();
             }
             entries.put(key, material);

@@ -11,7 +11,7 @@ import com.miaokatze.gtmb.blueprint.editor.AuthorDocumentIO;
 import com.miaokatze.gtmb.blueprint.editor.AuthorEditor;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
-/** Optional exact-material dedup bounds; no native resolution, GL, or whole-heap claims. */
+/** Optional material-key dedup bounds; no native resolution, GL, or whole-heap claims. */
 public final class HologramMaterialCacheRegression {
 
     private HologramMaterialCacheRegression() {}
@@ -19,7 +19,7 @@ public final class HologramMaterialCacheRegression {
     public static void run() {
         entryBoundAndAccessOrder();
         keyBytesReplacementOversizeAndClear();
-        exactIdentitySurvivesHashCollision();
+        stringKeyEqualitySurvivesHashCollision();
         try {
             snapshotLineageAndOwnerCleanup();
         } catch (IOException | ReflectiveOperationException failure) {
@@ -63,14 +63,14 @@ public final class HologramMaterialCacheRegression {
         SimpleAssert.eq(2L, cache.retainedKeyBytes(), "non-ASCII key follows the same conservative charge");
     }
 
-    private static void exactIdentitySurvivesHashCollision() {
+    private static void stringKeyEqualitySurvivesHashCollision() {
         HologramTextures.MaterialCache cache = new HologramTextures.MaterialCache(8, 1024);
         HologramTextures.Material a = material(), b = material();
         String first = "nativeTile:{payload:Aa}", second = "nativeTile:{payload:BB}";
         SimpleAssert.eq(first.hashCode(), second.hashCode(), "fixture has colliding string hashes");
         cache.put(first, a);
         cache.put(second, b);
-        SimpleAssert.that(cache.get(first) == a && cache.get(second) == b, "distinct exact NBT keys never merge");
+        SimpleAssert.that(cache.get(first) == a && cache.get(second) == b, "distinct existing string keys never merge");
     }
 
     @SuppressWarnings("unchecked")
@@ -82,8 +82,8 @@ public final class HologramMaterialCacheRegression {
         HologramTextures.clear();
         try {
             HologramTextures.MaterialCache cache = (HologramTextures.MaterialCache) field("CACHE").get(null);
-            Map<HologramState.Cell, HologramTextures.Material[]> resolved =
-                (Map<HologramState.Cell, HologramTextures.Material[]>) field("RESOLVED").get(null);
+            Map<HologramState.Cell, HologramTextures.Material[]> resolved = (Map<HologramState.Cell, HologramTextures.Material[]>) field(
+                "RESOLVED").get(null);
             AuthorEditor editor = editor();
             try (HologramAuthorProjection projection = new HologramAuthorProjection(editor.current())) {
                 HologramState before = projection.view();
@@ -95,12 +95,16 @@ public final class HologramMaterialCacheRegression {
                 editor.select(Collections.singleton(projection.cellId(0)));
                 HologramState after = projection.update(editor.move(1, 0, 0));
                 HologramTextures.advance(before, after);
-                SimpleAssert.eq(false, resolved.containsKey(before.cells.get(0)), "changed cell releases resolved reference");
-                SimpleAssert.that(resolved.get(before.cells.get(1))[0] == active, "untouched cell keeps its required material");
+                SimpleAssert
+                    .eq(false, resolved.containsKey(before.cells.get(0)), "changed cell releases resolved reference");
+                SimpleAssert
+                    .that(resolved.get(before.cells.get(1))[0] == active, "untouched cell keeps its required material");
                 for (int i = 0; i < 3000; i++) cache.put("variant-" + i, material());
                 SimpleAssert.eq(2048, cache.size(), "long revision lineage remains entry-bounded");
                 SimpleAssert.eq(null, cache.get("obsolete-variant"), "old variant eventually leaves dedup index");
-                SimpleAssert.that(resolved.get(before.cells.get(1))[0] == active, "dedup eviction does not invalidate live material");
+                SimpleAssert.that(
+                    resolved.get(before.cells.get(1))[0] == active,
+                    "dedup eviction does not invalidate live material");
                 HologramTextures.begin(new HologramState(new net.minecraft.nbt.NBTTagCompound()));
                 SimpleAssert.eq(0, cache.size(), "new snapshot owner clears dedup index");
                 SimpleAssert.eq(0, resolved.size(), "new snapshot owner releases old per-cell references");
