@@ -17,6 +17,48 @@ final class HologramRegionCache {
         this.bounds = bounds;
     }
 
+    /** Local publications replace only touched region directory paths; subtree extents avoid full bounds scans. */
+    static HologramRegionCache document(HologramRegionCache previous, List<HologramState.Cell> cells, int[] changed,
+        List<HologramState.Cell> before) {
+        HologramDocumentIndex<Key, List<HologramState.Cell>> index;
+        if (previous == null) index = new HologramDocumentIndex<>((a, b) -> {
+            int order = Integer.compare(a.x, b.x);
+            if (order == 0) order = Integer.compare(a.y, b.y);
+            return order == 0 ? Integer.compare(a.z, b.z) : order;
+        }, region -> ((Region) region).bounds);
+        else {
+            @SuppressWarnings("unchecked")
+            HologramDocumentIndex<Key, List<HologramState.Cell>> retained = (HologramDocumentIndex<Key, List<HologramState.Cell>>) previous.regions;
+            index = retained;
+        }
+        Map<Key, List<HologramState.Cell>> replacements = new LinkedHashMap<>();
+        for (HologramState.Cell cell : before) {
+            Key key = key(cell);
+            replacements.computeIfAbsent(key, unused -> new ArrayList<>(previous.regions.get(key)))
+                .remove(cell);
+        }
+        for (int slot : changed) {
+            HologramState.Cell cell = cells.get(slot);
+            Key key = key(cell);
+            replacements
+                .computeIfAbsent(
+                    key,
+                    unused -> previous == null ? new ArrayList<>()
+                        : new ArrayList<>(previous.regions.getOrDefault(key, Collections.emptyList())))
+                .add(cell);
+        }
+        for (Map.Entry<Key, List<HologramState.Cell>> entry : replacements.entrySet()) index = index.with(
+            entry.getKey(),
+            entry.getValue()
+                .isEmpty() ? null : new Region(entry.getValue(), true));
+        return new HologramRegionCache(index);
+    }
+
+    private HologramRegionCache(HologramDocumentIndex<Key, List<HologramState.Cell>> index) {
+        regions = index;
+        bounds = index.bounds();
+    }
+
     static final class Builder {
 
         final Map<Key, MutableRegion> pending = new LinkedHashMap<>();
