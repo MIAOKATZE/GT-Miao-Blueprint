@@ -10,7 +10,7 @@ import com.miaokatze.gtmb.blueprint.editor.AuthorDocumentIO;
 public final class HologramAuthorReviewProtocol {
 
     public static final int MAX_BYTES = 32 * 1024 * 1024;
-    public static final long LIFETIME_NANOS = java.util.concurrent.TimeUnit.MINUTES.toNanos(5);
+    public static final long LIFETIME_NANOS = HologramAuthorReviewDeadline.HARD_NANOS;
     public static final int RAW_BYTES = 40 * 1024 * 1024;
     public static final long RETAINED_BYTES = 128L * 1024 * 1024;
 
@@ -52,6 +52,7 @@ public final class HologramAuthorReviewProtocol {
             || "cellNbt".equals(op)
             || "candidates".equals(op)
             || "configureCells".equals(op)
+            || "attachment".equals(op)
             || "structure".equals(op)
             || "structureInspect".equals(op);
     }

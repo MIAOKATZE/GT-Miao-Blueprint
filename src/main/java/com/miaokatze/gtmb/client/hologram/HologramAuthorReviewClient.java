@@ -13,6 +13,7 @@ import net.minecraft.nbt.NBTTagCompound;
 
 import com.miaokatze.gtmb.blueprint.editor.AuthorDocument;
 import com.miaokatze.gtmb.blueprint.editor.AuthorDocumentIO;
+import com.miaokatze.gtmb.hologram.HologramAuthorReviewDeadline;
 import com.miaokatze.gtmb.hologram.HologramAuthorReviewProtocol;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramLibraryDownload;
@@ -64,6 +65,7 @@ final class HologramAuthorReviewClient {
         volatile boolean retired;
         final long started = System.nanoTime();
         long activity = started, pollAt;
+        HologramAuthorReviewDeadline deadline;
 
         Task(HologramLocalAuthorRuntime owner, String operation, BooleanSupplier condition,
             Consumer<NBTTagCompound> success, Consumer<Throwable> failure, HologramProcessGovernor.Lease lease) {
@@ -167,9 +169,13 @@ final class HologramAuthorReviewClient {
             finish(task, null, new IOException("文档、工具或连接已变化，扩展审核已取消；草稿保留"));
             return;
         }
-        if (now - task.activity > HologramLibraryProtocol.TIMEOUT_NANOS
-            || now - task.started > HologramAuthorReviewProtocol.LIFETIME_NANOS) {
-            finish(task, null, new IOException("服务端扩展审核超时或服务器不支持；恢复草稿保留"));
+        if (task.deadline == null ? now - task.activity > HologramAuthorReviewDeadline.COMPUTE_NANOS
+            : task.deadline.expired(now)) {
+            finish(
+                task,
+                null,
+                new IOException(
+                    task.deadline == null ? "服务端扩展审核准备或握手超时；恢复草稿保留" : task.deadline.timeout(now) + "; 恢复草稿保留"));
             return;
         }
         if (task.waiting && !task.decoding && now >= task.pollAt) {
@@ -190,16 +196,25 @@ final class HologramAuthorReviewClient {
             return true;
         }
         try {
-            task.activity = System.nanoTime();
+            if (task.deadline != null && task.deadline.expired(System.nanoTime()))
+                throw new IOException(task.deadline.timeout(System.nanoTime()));
             if ("authorReviewError".equals(op)) throw new IOException(reply.getString("message"));
+            if (reply.hasKey("reviewResultBytes", 3) && task.deadline != null)
+                task.deadline.result(reply.getInteger("reviewResultBytes"), System.nanoTime());
             if ("authorReviewReady".equals(op)) {
-                if (task.upload.ready(reply)) sendChunks(task);
+                if (task.upload.ready(reply)) {
+                    task.deadline = HologramAuthorReviewDeadline
+                        .negotiated(task.proof.getInteger("total"), reply, System.nanoTime());
+                    sendChunks(task);
+                }
             } else if ("authorReviewAck".equals(op)) {
                 if (!task.upload.acknowledge(reply)) return true;
                 task.acknowledged = task.upload.acknowledged();
+                task.deadline.progress(System.nanoTime());
                 if (task.outgoing != null
                     && (long) task.acknowledged * HologramLibraryProtocol.CHUNK_BYTES >= task.outgoing.length) {
                     task.outgoing = null;
+                    task.deadline.computing(System.nanoTime());
                     task.waiting = true;
                     task.pollAt = 0;
                 } else sendChunks(task);
@@ -219,7 +234,10 @@ final class HologramAuthorReviewClient {
                 }
                 if (total != task.resultTotal || !task.resultHash.equals(reply.getString("resultHash")))
                     throw new IOException("Review response identity changed");
+                if (task.deadline == null) throw new IOException("Review result arrived before admission");
+                task.deadline.result(total, System.nanoTime());
                 task.incoming.append(reply.getInteger("index"), reply.getByteArray("data"));
+                task.deadline.progress(System.nanoTime());
                 if (reply.getBoolean("last")) {
                     byte[] response = task.incoming.finish();
                     task.incoming = null;

@@ -52,8 +52,7 @@ final class HologramAuthorReviewService {
         volatile byte[] output;
         volatile String error, outputHash;
         volatile boolean retired;
-        final long started = System.nanoTime();
-        volatile long activity = started;
+        final HologramAuthorReviewDeadline deadline;
         int sent;
 
         Ticket(EntityPlayerMP player, NBTTagCompound begin, HologramProcessGovernor.Lease lease) throws IOException {
@@ -65,6 +64,16 @@ final class HologramAuthorReviewService {
             proof = HologramAuthorReviewProtocol.packet(begin, "authorReviewBegin");
             this.lease = lease;
             total = begin.getInteger("total");
+            HologramServerLibrary backend = HologramLibraryFacade.backend();
+            HologramLibraryConfig.View config = !HologramLibraryFacade.enabled() || backend == null ? null
+                : backend.config();
+            if (HologramLibraryFacade.enabled() && config == null)
+                throw new IOException("Author review bandwidth configuration is unavailable");
+            deadline = new HologramAuthorReviewDeadline(
+                total,
+                config == null ? 1024 * 1024 : config.uploadKiB * 1024,
+                config == null ? 1024 * 1024 : config.downloadKiB * 1024,
+                System.nanoTime());
             input = new HologramLibraryDownload.Assembly(total);
         }
 
@@ -115,7 +124,7 @@ final class HologramAuthorReviewService {
             if ("authorReviewBegin".equals(op)) {
                 if (!HologramLibraryService.contentCurrent(player, request))
                     throw new IOException("Author review requires the connected projector owner");
-                if (ticket != null || ACTIVE.size() >= 2)
+                if (ticket != null || ACTIVE.size() >= HologramAuthorReviewDeadline.MAX_CONTENDERS)
                     throw new IOException("Author review queue is busy; retry with recovery draft retained");
                 HologramLibraryProtocol.header(
                     request.getString("transfer"),
@@ -138,6 +147,7 @@ final class HologramAuthorReviewService {
                 }
                 ACTIVE.put(owner, ticket);
                 NBTTagCompound ready = send(ticket, "authorReviewReady", false);
+                ticket.deadline.advertise(ready);
                 ready.setInteger("nextIndex", 0);
                 ready.setInteger("uploadWindow", HologramLibraryProtocol.MAX_UPLOAD_WINDOW);
                 HologramNetwork.sendLibraryReply(player, ready);
@@ -153,7 +163,8 @@ final class HologramAuthorReviewService {
                 retire(ticket);
                 return;
             }
-            ticket.activity = System.nanoTime();
+            String timeout = ticket.deadline.timeout(System.nanoTime());
+            if (timeout != null) throw new IOException(timeout + "; recovery source retained on client");
             if ("authorReviewChunk".equals(op)) {
                 if (ticket.input == null) throw new IOException("Author review upload already completed");
                 byte[] data = request.getByteArray("data");
@@ -200,6 +211,7 @@ final class HologramAuthorReviewService {
                     reply.setBoolean("last", offset + count == response.length);
                     reply.setBoolean("windowEnd", credit + 1 == HologramLibraryProtocol.MAX_UPLOAD_WINDOW);
                     ticket.sent++;
+                    ticket.deadline.progress(System.nanoTime());
                     HologramNetwork.sendLibraryReply(player, reply);
                     if (offset + count == response.length) {
                         retire(ticket);
@@ -238,6 +250,7 @@ final class HologramAuthorReviewService {
                 return;
             ticket.chunks.removeFirst();
             ticket.input.append(chunk.index, chunk.data);
+            ticket.deadline.progress(System.nanoTime());
             NBTTagCompound ack = send(ticket, "authorReviewAck", false);
             ack.setInteger("nextIndex", ticket.input.index());
             ack.setInteger("index", ticket.input.index() - 1);
@@ -245,6 +258,7 @@ final class HologramAuthorReviewService {
             if (chunk.last) {
                 byte[] uploaded = ticket.input.finish();
                 ticket.input = null;
+                ticket.deadline.computing(System.nanoTime());
                 enqueue(ticket, () -> prepare(ticket, uploaded));
             }
         }
@@ -287,11 +301,15 @@ final class HologramAuthorReviewService {
         }
         try {
             String intent = ticket.proof.getString("intent");
-            if ("structure".equals(intent) || "structureInspect".equals(intent) || "configureCells".equals(intent)) {
-                ticket.nativeTask = "configureCells".equals(intent)
-                    ? HologramAuthorServerReview.startConfiguration(ticket.source, ticket.policy)
-                    : HologramAuthorServerReview
-                        .startStructure(ticket.source, intent, ticket.policy, ticket.player.getHeldItem());
+            if ("structure".equals(intent) || "structureInspect".equals(intent)
+                || "configureCells".equals(intent)
+                || "attachment".equals(intent)) {
+                ticket.nativeTask = "attachment".equals(intent)
+                    ? HologramAuthorAttachmentReview.start(ticket.source, ticket.policy)
+                    : "configureCells".equals(intent)
+                        ? HologramAuthorServerReview.startConfiguration(ticket.source, ticket.policy)
+                        : HologramAuthorServerReview
+                            .startStructure(ticket.source, intent, ticket.policy, ticket.player.getHeldItem());
                 ticket.source = null;
                 ticket.policy = null;
                 return;
@@ -329,6 +347,7 @@ final class HologramAuthorReviewService {
             NBTTagCompound result = resultPayload(reviewed, selectedReport);
             byte[] encoded = HologramAuthorReviewProtocol.encode(result, () -> !ticket.retired);
             if (!ticket.retired) {
+                ticket.deadline.result(encoded.length, System.nanoTime());
                 ticket.outputHash = HologramBlueprintArtifact.hash(encoded);
                 ticket.output = encoded;
             }
@@ -376,6 +395,8 @@ final class HologramAuthorReviewService {
     private static NBTTagCompound send(Ticket ticket, String op, boolean send) {
         NBTTagCompound packet = HologramAuthorReviewProtocol.packet(ticket.proof, op);
         packet.setBoolean("library", true);
+        byte[] output = ticket.output;
+        if (output != null) packet.setInteger("reviewResultBytes", output.length);
         if (send) HologramNetwork.sendLibraryReply(ticket.player, packet);
         return packet;
     }
@@ -408,10 +429,17 @@ final class HologramAuthorReviewService {
         long now = System.nanoTime();
         for (Ticket ticket : ACTIVE.values()) {
             if (!ticket.current()) retire(ticket);
-            else if (now - ticket.activity > HologramLibraryProtocol.TIMEOUT_NANOS
-                || now - ticket.started > HologramAuthorReviewProtocol.LIFETIME_NANOS)
-                fail(ticket, "Author review timed out; recovery source retained on client");
+            else if (ticket.deadline.expired(now))
+                fail(ticket, ticket.deadline.timeout(now) + "; recovery source retained on client");
             else try {
+                HologramServerLibrary backend = HologramLibraryFacade.backend();
+                HologramLibraryConfig.View config = !HologramLibraryFacade.enabled() || backend == null ? null
+                    : backend.config();
+                if (HologramLibraryFacade.enabled() && config == null || !ticket.deadline.ratesMatch(
+                    config == null ? 1024 * 1024 : config.uploadKiB * 1024,
+                    config == null ? 1024 * 1024 : config.downloadKiB * 1024))
+                    throw new IOException(
+                        "Author review bandwidth configuration changed; retry with the new size/rate budget");
                 drain(ticket);
                 if (ticket.nativeTask != null && ticket.nativeTask.step()) {
                     HologramAuthorServerReview.Result result = ticket.nativeTask.result();

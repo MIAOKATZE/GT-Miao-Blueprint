@@ -33,6 +33,7 @@ final class HologramAuthorReviewTransportRegression {
     private HologramAuthorReviewTransportRegression() {}
 
     static void run() throws Exception {
+        deadlines();
         correlation();
         compilePayloadDoesNotDuplicateSource();
         selectedCellQuery();
@@ -72,6 +73,14 @@ final class HologramAuthorReviewTransportRegression {
             HologramAuthorReviewService.receive(player, proof);
             SimpleAssert
                 .that(HologramAuthorReviewService.admitted(player, proof), "authenticated review ticket admitted");
+            Object admittedTicket = active().get(player.getUniqueID());
+            HologramAuthorReviewDeadline admittedDeadline = (HologramAuthorReviewDeadline) get(
+                admittedTicket,
+                "deadline");
+            Object beforePoll = get(admittedDeadline, "progress");
+            HologramAuthorReviewService.receive(player, HologramAuthorReviewProtocol.packet(proof, "authorReviewPoll"));
+            SimpleAssert
+                .eq(beforePoll, get(admittedDeadline, "progress"), "real service poll does not refresh byte progress");
             NBTTagCompound stale = (NBTTagCompound) proof.copy();
             stale.setLong("planRevision", frozen.revision() + 1);
             SimpleAssert.that(
@@ -183,6 +192,8 @@ final class HologramAuthorReviewTransportRegression {
             HologramAuthorReviewService.tick();
             SimpleAssert.that(active().isEmpty(), "tool change retires independent review capability");
             SimpleAssert.eq(retiredBaseline, HologramProcessGovernor.retainedBytes(), "tool retirement closes quota");
+            player.inventory.currentItem = 0;
+            attachmentTransport(player, io);
         } finally {
             HologramAuthorReviewService.clear();
             barrier(io);
@@ -190,6 +201,168 @@ final class HologramAuthorReviewTransportRegression {
             player.playerNetServerHandler.netManager.channel()
                 .close();
         }
+    }
+
+    private static void attachmentTransport(EntityPlayerMP player, ThreadPoolExecutor io) throws Exception {
+        Block host = HologramAuthorAttachmentReviewRegression.host();
+        AuthorDocument original = HologramAuthorAttachmentReviewRegression.empty();
+        byte[] draft = AuthorDocumentIO.writeDraft(original, HologramAuthorReviewProtocol.limits());
+        NBTTagCompound payload = new NBTTagCompound();
+        payload.setByteArray("draft", draft);
+        payload.setTag("policy", HologramAuthorAttachmentReviewRegression.request(false));
+        byte[] bytes = HologramAuthorReviewProtocol.encode(payload);
+        NBTTagCompound proof = proof(original, bytes, 105);
+        proof.setString("intent", "attachment");
+        AtomicInteger callbacks = new AtomicInteger();
+        try (GTMBExtensions.Registration legacy = NativePlacement.register(
+            "gtmb_test:attachment-transport",
+            HologramAuthorAttachmentReviewRegression.adapter(host, callbacks, Thread.currentThread(), true))) {
+            HologramAuthorReviewService.receive(player, proof);
+            SimpleAssert.that(HologramAuthorReviewService.admitted(player, proof), "attachment intent admitted");
+            upload(player, proof, bytes);
+            barrier(io);
+            SimpleAssert.eq(0, callbacks.get(), "attachment upload/decode never invokes legacy callbacks");
+            ownerCallbacks();
+            Object ticket = active().get(player.getUniqueID());
+            SimpleAssert.that(
+                ticket != null && get(ticket, "nativeTask") != null,
+                "attachment transport dispatch owns the cooperative native task");
+            long until = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            while (get(ticket, "output") == null && get(ticket, "error") == null && System.nanoTime() < until) {
+                HologramWorkBudget.startServerTick();
+                try {
+                    HologramAuthorReviewService.tick();
+                } finally {
+                    HologramWorkBudget.endServerTick();
+                }
+                Thread.sleep(1);
+            }
+            barrier(io);
+            SimpleAssert.eq(null, get(ticket, "error"), "attachment native task completes through review service");
+            byte[] output = (byte[]) get(ticket, "output");
+            SimpleAssert.that(output != null, "attachment service publishes bounded encoded delta");
+            NBTTagCompound reply = HologramAuthorReviewProtocol.decode(output);
+            SimpleAssert.eq(
+                31L,
+                reply.getCompoundTag("report")
+                    .getLong("textRequest"),
+                "attachment result retains explicit request fence");
+            JsonObject delta = com.miaokatze.gtmb.blueprint.editor.AuthorReviewDeltaIO
+                .read(reply.getByteArray("source"), HologramAuthorReviewProtocol.limits());
+            java.util.List<JsonObject> cells = new java.util.ArrayList<>();
+            for (com.google.gson.JsonElement row : delta.getAsJsonArray("cells")) cells.add(row.getAsJsonObject());
+            AuthorEditor editor = new AuthorEditor(original, 4);
+            editor.replaceAttachment(original.revision(), delta.getAsJsonObject("group"), cells);
+            SimpleAssert.that(
+                editor.canUndo() && editor.current()
+                    .cellCount() > 0,
+                "transport delta applies as one ordinary attachment transaction");
+            SimpleAssert.that(
+                Arrays.equals(draft, AuthorDocumentIO.writeDraft(original, HologramAuthorReviewProtocol.limits())),
+                "service attachment generation never changes original recovery source");
+            SimpleAssert.that(
+                callbacks.get() > 0 && HologramWorkspace.find(player.getUniqueID()) == null,
+                "legacy callbacks run under real owner without author Session");
+            HologramAuthorReviewService
+                .receive(player, HologramAuthorReviewProtocol.packet(proof, "authorReviewCancel"));
+            SimpleAssert.that(active().isEmpty(), "completed attachment result retires exact ticket");
+        }
+    }
+
+    /** Real byte buckets, synthetic monotonic time: never wait minutes to exercise slow valid configurations. */
+    private static void deadlines() throws Exception {
+        final int mib = 1024 * 1024;
+        final long second = TimeUnit.SECONDS.toNanos(1);
+        long now = second;
+        HologramAuthorReviewDeadline server = new HologramAuthorReviewDeadline(5 * mib, 16 * 1024, 512 * 1024, now);
+        NBTTagCompound offered = new NBTTagCompound();
+        server.advertise(offered);
+        HologramAuthorReviewDeadline client = HologramAuthorReviewDeadline.negotiated(5 * mib, offered, now);
+        HologramLibraryProtocol.Budget budget = new HologramLibraryProtocol.Budget(true);
+        int uploaded = 0;
+        while (uploaded < 5 * mib && now < HologramAuthorReviewDeadline.HARD_NANOS) {
+            if (budget.take(HologramLibraryProtocol.CHUNK_BYTES, 16 * 1024, now)) {
+                uploaded += HologramLibraryProtocol.CHUNK_BYTES;
+                server.progress(now);
+                client.progress(now);
+            }
+            SimpleAssert.that(
+                !server.expired(now) && !client.expired(now),
+                "negotiated endpoints admit genuine slow-upload progress beyond old five minute TTL");
+            now += TimeUnit.MILLISECONDS.toNanos(50);
+        }
+        SimpleAssert.eq(5 * mib, uploaded, "slow upload completes within bounded synthetic observation");
+        SimpleAssert.that(now > 320 * second, "real 16 KiB/s bucket needs at least 320 seconds for 5 MiB");
+        server.computing(now);
+        client.computing(now);
+        server.result(mib, now + second);
+        client.result(mib, now + second);
+        SimpleAssert.eq(
+            server.timeout(now + 40 * second),
+            client.timeout(now + 40 * second),
+            "client/server result inactivity policy agrees");
+        SimpleAssert.that(server.expired(now + 40 * second), "poll replies alone never count as download progress");
+
+        HologramLibraryProtocol.FairBudget fair = new HologramLibraryProtocol.FairBudget(true);
+        UUID[] owners = { UUID.randomUUID(), UUID.randomUUID() };
+        int[] sent = { 0, 0 };
+        HologramAuthorReviewDeadline[] deadlines = {
+            new HologramAuthorReviewDeadline(20 * mib, 128 * 1024, 512 * 1024, second),
+            new HologramAuthorReviewDeadline(20 * mib, 128 * 1024, 512 * 1024, second) };
+        now = second;
+        while ((sent[0] < 20 * mib || sent[1] < 20 * mib) && now < HologramAuthorReviewDeadline.HARD_NANOS) {
+            for (int i = 0; i < 2; i++) if (sent[i] < 20 * mib) {
+                if (fair.take(owners[i], HologramLibraryProtocol.CHUNK_BYTES, 128 * 1024, now)) {
+                    sent[i] += HologramLibraryProtocol.CHUNK_BYTES;
+                    deadlines[i].progress(now);
+                }
+                SimpleAssert.that(!deadlines[i].expired(now), "two review owners fit aggregate default-rate envelope");
+            }
+            now += TimeUnit.MILLISECONDS.toNanos(50);
+        }
+        SimpleAssert.eq(40 * mib, sent[0] + sent[1], "both fair owners complete within bounded observation");
+        SimpleAssert.that(now > 320 * second, "two default-rate 20 MiB owners share one real aggregate bucket");
+        try {
+            new HologramAuthorReviewDeadline(5 * mib, 1024, 1024, second);
+            throw new AssertionError("provably infeasible low-rate upload admitted");
+        } catch (java.io.IOException expected) {
+            SimpleAssert.that(
+                expected.getMessage()
+                    .contains("upload")
+                    && expected.getMessage()
+                        .contains("1024"),
+                "admission rejection names stage and effective configured rate before upload");
+        }
+        HologramAuthorReviewDeadline lowDownload = new HologramAuthorReviewDeadline(1024, 128 * 1024, 1024, second);
+        lowDownload.computing(second);
+        try {
+            lowDownload.result(mib, 2 * second);
+            throw new AssertionError("provably infeasible result admitted");
+        } catch (java.io.IOException expected) {
+            SimpleAssert.that(
+                expected.getMessage()
+                    .contains("result"),
+                "actual result size rejected before transfer");
+        }
+        HologramAuthorReviewDeadline stalled = new HologramAuthorReviewDeadline(mib, 128 * 1024, 512 * 1024, second);
+        SimpleAssert.that(stalled.expired(40 * second), "no-progress timeout is independent of peer poll activity");
+        HologramAuthorReviewDeadline compute = new HologramAuthorReviewDeadline(1024, 128 * 1024, 512 * 1024, second);
+        compute.computing(second);
+        compute.computing(110 * second);
+        SimpleAssert.that(compute.expired(122 * second), "repeated stage keepalives cannot extend computation");
+        try {
+            compute.result(1024, 122 * second);
+            throw new AssertionError("late stage transition rescued expired computation");
+        } catch (java.io.IOException expected) {
+            SimpleAssert.that(
+                expected.getMessage()
+                    .contains("processing"),
+                "late result cannot revive expired stage");
+        }
+        compute.progress(HologramAuthorReviewDeadline.HARD_NANOS + second);
+        SimpleAssert.that(
+            compute.expired(HologramAuthorReviewDeadline.HARD_NANOS + 2 * second),
+            "even real progress never extends hard retention ceiling");
     }
 
     /** Attribute cache residency by the actual transferred lease owner, without clearing or collecting caches. */
