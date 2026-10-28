@@ -157,6 +157,8 @@ final class HologramRenderer {
                 region.projectedKey = "";
                 region.projectionWorkKey = "";
             }
+        } else if (previewPreparation != null && previewPreparation.state == previous) {
+            previewPreparation.update(previous, next, dirty);
         }
         if (structureBoundsState == previous) {
             boolean sameMemberships = true;
@@ -1060,7 +1062,7 @@ final class HologramRenderer {
 
     private static final class PreviewPreparation {
 
-        final HologramState state;
+        HologramState state;
         final Map<HologramRegionCache.Key, PreviewTask> pending = new LinkedHashMap<>();
         PreviewTask task;
         int completed, published, detailedCompleted;
@@ -1081,6 +1083,28 @@ final class HologramRenderer {
                     pending.put(entry.getKey(), new PreviewTask(entry.getKey(), entry.getValue()));
                 }
             }
+        }
+
+        /** A model reply changes only its dirty regions; unrelated partial native work keeps its cursor. */
+        void update(HologramState previous, HologramState next, Set<HologramRegionCache.Key> dirty) {
+            state = next;
+            for (HologramRegionCache.Key key : dirty) {
+                PreviewTask old = pending.remove(key);
+                if (old != null) {
+                    completed -= old.cell + (old.refining ? old.cells.size() : 0);
+                    if (old.refining) detailedCompleted -= old.cell;
+                    if (task == old) task = null;
+                } else {
+                    List<HologramState.Cell> before = previous.regions.regions.get(key);
+                    if (before != null) {
+                        completed -= 2 * before.size();
+                        detailedCompleted -= before.size();
+                    }
+                }
+                List<HologramState.Cell> cells = next.regions.regions.get(key);
+                if (cells != null) pending.put(key, new PreviewTask(key, cells));
+            }
+            published = Math.min(published, completed);
         }
 
         void advance(int layer, int view, boolean current) {

@@ -149,12 +149,54 @@ final class HologramSnapshotInbox<T> implements AutoCloseable {
         return true;
     }
 
+    /** Owner ingress never waits. It may publish ready FIFO entries to make bounded room. */
+    boolean offer(byte[] bytes, long sequence, AutoCloseable reservation, long expectedEpoch,
+        java.util.function.Consumer<Result<T>> readyConsumer) {
+        if (bytes == null || bytes.length == 0 || bytes.length > byteBudget) {
+            close(reservation);
+            throw new IllegalArgumentException("snapshot byte budget");
+        }
+        boolean accepted = false;
+        try {
+            for (int remaining = capacity;; remaining--) {
+                Result<T> ready;
+                synchronized (this) {
+                    if (closed || expectedEpoch != epoch) return false;
+                    if (offer(bytes, sequence)) {
+                        entries.getLast().reservation = reservation;
+                        accepted = true;
+                        return true;
+                    }
+                    ready = readyConsumer != null && remaining > 0 ? poll() : null;
+                }
+                if (ready == null) return false;
+                readyConsumer.accept(ready);
+            }
+        } finally {
+            if (!accepted) close(reservation);
+        }
+    }
+
     /** Small legacy/control messages cannot overtake earlier compressed ACKs. */
     synchronized boolean offerValue(T value) {
         if (!room(0)) return false;
         entries.addLast(new Entry<>(epoch, null, value, -1));
         notifyAll();
         return true;
+    }
+
+    /** Legacy controls use the same bounded FIFO without waiting on their own consumer thread. */
+    boolean offerValue(T value, long expectedEpoch, java.util.function.Consumer<Result<T>> readyConsumer) {
+        for (int remaining = capacity;; remaining--) {
+            Result<T> ready;
+            synchronized (this) {
+                if (closed || expectedEpoch != epoch) return false;
+                if (offerValue(value)) return true;
+                ready = readyConsumer != null && remaining > 0 ? poll() : null;
+            }
+            if (ready == null) return false;
+            readyConsumer.accept(ready);
+        }
     }
 
     private boolean room(int cost) {
@@ -217,7 +259,7 @@ final class HologramSnapshotInbox<T> implements AutoCloseable {
         return epoch;
     }
 
-    /** Network ingress may wait for bounded capacity; the Minecraft thread only calls poll/clear. */
+    /** Background ingress may wait; the Minecraft thread uses the bounded nonblocking offer overload. */
     synchronized boolean put(byte[] bytes, long sequence, AutoCloseable reservation, long expectedEpoch) {
         if (bytes == null || bytes.length == 0 || bytes.length > byteBudget) {
             close(reservation);
@@ -324,7 +366,9 @@ final class HologramSnapshotInbox<T> implements AutoCloseable {
                 Entry<T> decoding = entry;
                 Decoded<T> decoded = decoder.decode(entry.bytes, () -> current(decoding));
                 long limit = com.miaokatze.gtmb.hologram.HologramProcessGovernor.retainedByteLimit();
-                if (decoded.preparationBytes > limit - decoded.retainedBytes) {
+                long inputBytes = entry.reservation instanceof com.miaokatze.gtmb.hologram.HologramSnapshotAssembly.Complete
+                    ? entry.cost : 0;
+                if (decoded.preparationBytes > limit - decoded.retainedBytes - inputBytes) {
                     result = new Result<>(
                         decoded.value,
                         new AdmissionException("Snapshot preparation exceeds the shared work-memory budget"),
@@ -353,7 +397,10 @@ final class HologramSnapshotInbox<T> implements AutoCloseable {
             } catch (com.miaokatze.gtmb.hologram.HologramSnapshotCodec.BusyException busy) {
                 // Quota contention is not a terminal decode failure. Keep the exact compressed ACK and its
                 // reservation at the FIFO head; a single-player server may still own the shared byte budget.
-                if (busy.requestedBytes > com.miaokatze.gtmb.hologram.HologramProcessGovernor.retainedByteLimit()) {
+                long inputBytes = entry.reservation instanceof com.miaokatze.gtmb.hologram.HologramSnapshotAssembly.Complete
+                    ? entry.cost : 0;
+                if (busy.requestedBytes > com.miaokatze.gtmb.hologram.HologramProcessGovernor.retainedByteLimit()
+                    - inputBytes) {
                     result = new Result<>(null, new AdmissionException(busy.getMessage()), entry.transportSequence);
                 } else {
                     result = null;
@@ -372,9 +419,9 @@ final class HologramSnapshotInbox<T> implements AutoCloseable {
                     continue;
                 }
                 entry.bytes = null;
-                release(entry);
                 if (entry.epoch == epoch) entry.result = result;
                 else {
+                    release(entry);
                     reservedBytes -= entry.cost;
                     if (result != null) result.close();
                 }

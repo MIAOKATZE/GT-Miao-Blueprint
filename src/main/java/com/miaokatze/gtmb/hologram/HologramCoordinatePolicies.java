@@ -74,6 +74,9 @@ final class HologramCoordinatePolicies {
         for (HologramPresets.Cell cell : preset.cells)
             if (!cell.excluded && activeCell(enabledStructures, cell)) selected.add(position(cell.x, cell.y, cell.z));
         for (HologramPresets.Cell cell : preset.cells) {
+            // A known block with no serialized scopes has no coordinate record to inspect or retain.
+            if (cell.block() != null && !HologramSnapshotMetadataSource.hasPayload(cell.tileNbt)
+                && !HologramSnapshotMetadataSource.hasPayload(cell.itemNbt)) continue;
             NBTTagCompound certificate = facts.certificate(
                 cell,
                 HologramSegmentContract.Domain.RELATIONS,

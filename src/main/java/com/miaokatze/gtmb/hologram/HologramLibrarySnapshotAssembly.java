@@ -3,6 +3,16 @@ package com.miaokatze.gtmb.hologram;
 /** Small public hydration slices; timeout measures inactivity, so slow large blueprints can complete. */
 final class HologramLibrarySnapshotAssembly {
 
+    private final java.util.function.LongConsumer released;
+
+    HologramLibrarySnapshotAssembly() {
+        this(null);
+    }
+
+    HologramLibrarySnapshotAssembly(java.util.function.LongConsumer released) {
+        this.released = released;
+    }
+
     private long newest = -1, activity;
     private int total, index, offset;
     private byte[] bytes;
@@ -34,7 +44,10 @@ final class HologramLibrarySnapshotAssembly {
             total = size;
             activity = now;
             lease = HologramTransportMemory.reserve(size);
-            if (lease == null) throw new HologramSnapshotAssembly.AdmissionException();
+            if (lease == null) {
+                if (released != null) released.accept(sequence);
+                throw new HologramSnapshotAssembly.AdmissionException();
+            }
             try {
                 bytes = new byte[size];
             } catch (RuntimeException | Error failure) {
@@ -62,7 +75,7 @@ final class HologramLibrarySnapshotAssembly {
             clear();
             return null;
         }
-        HologramSnapshotAssembly.Complete result = new HologramSnapshotAssembly.Complete(bytes, lease);
+        HologramSnapshotAssembly.Complete result = new HologramSnapshotAssembly.Complete(bytes, lease, released, sequence);
         bytes = null;
         lease = null;
         clear();
@@ -78,7 +91,10 @@ final class HologramLibrarySnapshotAssembly {
 
     synchronized void clear() {
         bytes = null;
-        if (lease != null) lease.close();
+        if (lease != null) {
+            lease.close();
+            if (released != null) released.accept(newest);
+        }
         lease = null;
         expectedHash = null;
         digest = null;

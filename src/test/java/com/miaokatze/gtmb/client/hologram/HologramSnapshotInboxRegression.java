@@ -1,9 +1,11 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import java.io.IOException;
+import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
@@ -24,6 +26,8 @@ public final class HologramSnapshotInboxRegression {
         failedDecodeRetainsOrder();
         explicitRootCloseFence();
         networkBackpressureAndControlReserve();
+        ownerDisplayAdmission();
+        retiredActiveSlotRelease();
     }
 
     /** Isolated-process coverage: saturating the shared quota must not interfere with other suites' caches. */
@@ -365,6 +369,138 @@ public final class HologramSnapshotInboxRegression {
             SimpleAssert.eq(3, released.get(), "stale admission releases its transferred reservation");
         } finally {
             release.countDown();
+        }
+    }
+
+    private static void ownerDisplayAdmission() {
+        java.util.concurrent.atomic.AtomicInteger released = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.List<Long> published = new java.util.ArrayList<>();
+        try (HologramSnapshotInbox<String> inbox = new HologramSnapshotInbox<>(4, 8, bytes -> "frame", 2)) {
+            long epoch = inbox.epoch();
+            inbox.offer(new byte[] { 1 }, 29, released::incrementAndGet, epoch, null);
+            inbox.offer(new byte[] { 2 }, 30, released::incrementAndGet, epoch, null);
+            SimpleAssert.that(inbox.offerValue("control"), "control reserve remains bounded behind display results");
+            waitForReady(inbox, 3);
+            SimpleAssert.eq(0, released.get(), "decoded results retain their physical receive credits until owner consumption");
+            SimpleAssert.that(
+                inbox.offer(new byte[] { 3 }, 31, released::incrementAndGet, epoch, ready -> {
+                    published.add(ready.transportSequence);
+                    ready.close();
+                }),
+                "an owner can make room by publishing an already decoded FIFO result without waiting");
+            SimpleAssert.eq(java.util.Collections.singletonList(29L), published, "only the oldest ready frame publishes");
+            waitForReady(inbox, 3);
+            HologramSnapshotInbox.Result<String> second = inbox.poll();
+            SimpleAssert.eq(30L, second.transportSequence, "ready-owner admission retains the next exact receipt");
+            second.close();
+            SimpleAssert.eq("control", inbox.poll().value, "control cannot be overtaken by the new display frame");
+            HologramSnapshotInbox.Result<String> third = inbox.poll();
+            SimpleAssert.eq(31L, third.transportSequence, "the newly admitted frame follows the existing FIFO");
+            third.close();
+            SimpleAssert.eq(3, released.get(), "each physical frame releases exactly once");
+        }
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        try (HologramSnapshotInbox<String> inbox = new HologramSnapshotInbox<>(2, 8, bytes -> {
+            entered.countDown();
+            waitFor(release);
+            return "authoritative ACK";
+        }, 1)) {
+            long epoch = inbox.epoch();
+            inbox.offer(new byte[] { 1 }, 41, released::incrementAndGet, epoch, null);
+            waitFor(entered);
+            SimpleAssert.that(
+                !inbox.offer(new byte[] { 2 }, 42, released::incrementAndGet, epoch, ready -> {
+                    throw new AssertionError("an undecoded head cannot publish");
+                }),
+                "an owner returns busy immediately when no ready result can free its bounded data slot");
+            SimpleAssert.eq(4, released.get(), "a rejected optional frame releases its own ownership immediately");
+            SimpleAssert.that(inbox.offerValue("control"), "optional saturation preserves the control reserve");
+            SimpleAssert.that(
+                !inbox.offerValue("later control", epoch, ready -> {
+                    throw new AssertionError("an undecoded head cannot publish");
+                }),
+                "an owner control also returns immediately at the existing FIFO capacity");
+            SimpleAssert.that(inbox.poll() == null, "optional rejection cannot drop or overtake an authoritative ACK");
+            release.countDown();
+            HologramSnapshotInbox.Result<String> ack = inbox.awaitNext();
+            SimpleAssert.eq(41L, ack.transportSequence, "the exact authoritative receipt remains admitted");
+            ack.close();
+            SimpleAssert.eq("control", inbox.poll().value, "the existing control follows its authoritative receipt");
+            inbox.clear();
+            SimpleAssert.that(
+                !inbox.offer(new byte[] { 3 }, 43, released::incrementAndGet, epoch, null),
+                "a stale optional frame cannot cross the epoch fence");
+            SimpleAssert.eq(6, released.get(), "accepted and stale optional frames release once");
+        } finally {
+            release.countDown();
+        }
+    }
+
+    private static void retiredActiveSlotRelease() {
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        AtomicInteger retired = new AtomicInteger();
+        try (HologramSnapshotInbox<String> inbox = new HologramSnapshotInbox<>(2, 4, bytes -> {
+            if (bytes[0] == 1) {
+                entered.countDown();
+                waitFor(release);
+            }
+            return "frame";
+        }, 2)) {
+            long epoch = inbox.epoch();
+            inbox.offer(new byte[] { 1 }, 51, retired::incrementAndGet, epoch, null);
+            waitFor(entered);
+            inbox.clear();
+            SimpleAssert.eq(0, retired.get(), "an old active decoder keeps its physical slot until it retires");
+            inbox.offer(new byte[] { 2 }, 52, retired::incrementAndGet, inbox.epoch(), null);
+            release.countDown();
+            waitForReady(inbox, 1);
+            SimpleAssert.eq(1, retired.get(), "stale completion returns only the old physical credit");
+            HologramSnapshotInbox.Result<String> current = inbox.poll();
+            SimpleAssert.eq(52L, current.transportSequence, "retired work cannot publish into the new epoch");
+            current.close();
+            SimpleAssert.eq(2, retired.get(), "the new physical credit returns only on owner consumption");
+            inbox.offer(new byte[] { 3 }, 53, retired::incrementAndGet, inbox.epoch(), null);
+            waitForReady(inbox, 1);
+            inbox.clear();
+            SimpleAssert.eq(3, retired.get(), "clearing a ready result returns its physical credit once");
+            SimpleAssert.that(inbox.poll() == null, "cleared results cannot republish");
+        } finally {
+            release.countDown();
+        }
+        try (HologramSnapshotInbox<String> inbox = new HologramSnapshotInbox<>(2, 4, bytes -> "frame")) {
+            List<String> consumed = new java.util.ArrayList<>();
+            inbox.offerValue("first");
+            inbox.offerValue("second");
+            SimpleAssert.that(
+                inbox.offerValue("third", inbox.epoch(), ready -> consumed.add(ready.value)),
+                "an owner may consume ready legacy controls within the same bounded FIFO");
+            SimpleAssert.eq(java.util.Collections.singletonList("first"), consumed, "ready controls publish in FIFO order");
+            SimpleAssert.eq("second", inbox.poll().value, "the existing control remains before newly admitted work");
+            SimpleAssert.eq("third", inbox.poll().value, "the new control is not reordered");
+        }
+    }
+
+    private static void waitForReady(HologramSnapshotInbox<?> inbox, int expected) {
+        try {
+            java.lang.reflect.Field entries = HologramSnapshotInbox.class.getDeclaredField("entries");
+            entries.setAccessible(true);
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (System.nanoTime() < deadline) {
+                synchronized (inbox) {
+                    java.util.Deque<?> queue = (java.util.Deque<?>) entries.get(inbox);
+                    int ready = 0;
+                    for (Object entry : queue) {
+                        java.lang.reflect.Field result = entry.getClass().getDeclaredField("result");
+                        result.setAccessible(true);
+                        if (result.get(entry) != null) ready++;
+                    }
+                    if (queue.size() == expected && ready == expected) return;
+                }
+                Thread.sleep(1);
+            }
+            throw new AssertionError("snapshot results did not become ready");
+        } catch (ReflectiveOperationException | InterruptedException failure) {
+            throw new AssertionError(failure);
         }
     }
 

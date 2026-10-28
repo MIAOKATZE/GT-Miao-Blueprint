@@ -24,6 +24,7 @@ final class HologramSnapshotMetadataRegression {
             frozenWorkerContext();
             repeatedPayloadSlices();
             coordinateMembershipComplexity();
+            HologramAbsentMetadataRegression.run();
             Field field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
             field.setAccessible(true);
             sun.misc.Unsafe unsafe = (sun.misc.Unsafe) field.get(null);

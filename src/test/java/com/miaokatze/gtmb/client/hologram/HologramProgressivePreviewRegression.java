@@ -19,6 +19,7 @@ public final class HologramProgressivePreviewRegression {
     public static void run() {
         try {
             hintBudget();
+            modelUpdateKeepsPartialWork();
             readiness();
             projectionBudget();
             extentProjection();
@@ -55,6 +56,75 @@ public final class HologramProgressivePreviewRegression {
         } finally {
             activeState.set(null, previousState);
             activePreparation.set(null, previousPreparation);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void modelUpdateKeepsPartialWork() throws ReflectiveOperationException {
+        NBTTagList rows = new NBTTagList();
+        for (int index = 0; index < 100; index++) rows.appendTag(cell(index % 10, 0, index / 10));
+        NBTTagCompound farCell = cell(1024, 0, 0);
+        farCell.setLong("nativeModelId", 7);
+        farCell.setInteger("nativeModelPending", 1);
+        rows.appendTag(farCell);
+        HologramState before = state(rows);
+        Class<?> type = nested("PreviewPreparation");
+        Object preparation = construct(type, new Class<?>[] { HologramState.class }, before);
+        Method advance = type.getDeclaredMethod("advance", int.class, int.class, boolean.class, long.class,
+            java.util.function.LongSupplier.class);
+        advance.setAccessible(true);
+        Field active = field(HologramRenderer.class, "previewPreparation");
+        Object oldPreparation = active.get(null);
+        Map<?, ?> regions = (Map<?, ?>) field(HologramRenderer.class, "previewRegions").get(null);
+        try {
+            active.set(null, preparation);
+            java.util.function.LongSupplier available = () -> 0;
+            advance.invoke(preparation, Integer.MIN_VALUE, 0, false, 0L, available);
+            Map<HologramRegionCache.Key, Object> pending = (Map<HologramRegionCache.Key, Object>) field(type, "pending")
+                .get(preparation);
+            HologramRegionCache.Key local = new HologramRegionCache.Key(0, 0, 0), far = new HologramRegionCache.Key(64, 0, 0);
+            Object localTask = pending.get(local), oldFarTask = pending.get(far);
+            NBTTagCompound nativeTile = new NBTTagCompound();
+            nativeTile.setString("id", "detached-model-update");
+            HologramState after;
+            try (HologramState.ModelPreparation models = new HologramState.ModelPreparation(before,
+                java.util.Collections.singletonList(new HologramState.ModelRow(100, 7, nativeTile, null, false)))) {
+                SimpleAssert.that(models.step(1, Long.MAX_VALUE), "model update prepares its bounded cell");
+                after = models.result(before);
+                HologramRenderer.modelSnapshotChanged(before, after, java.util.Collections.emptySet());
+                models.published();
+            }
+            SimpleAssert.that(active.get(null) == preparation && field(type, "state").get(preparation) == after,
+                "a model publication advances the existing preview preparation to the latest snapshot");
+            SimpleAssert.that(pending.get(local) == localTask && pending.get(far) != oldFarTask,
+                "only dirty model regions replace their preparation task");
+            SimpleAssert.eq(1, field(localTask.getClass(), "cell").getInt(localTask),
+                "an unrelated model reply preserves the partial native-work cursor");
+            SimpleAssert.eq(1, field(type, "completed").getInt(preparation),
+                "an unrelated model reply preserves completed work accounting");
+            advance.invoke(preparation, Integer.MIN_VALUE, 0, false, Long.MAX_VALUE, available);
+            advance.invoke(preparation, Integer.MIN_VALUE, 0, false, Long.MAX_VALUE, available);
+            SimpleAssert.eq(202, field(type, "completed").getInt(preparation),
+                "retained work and updated model regions finish exactly two passes");
+            SimpleAssert.eq(101, field(type, "detailedCompleted").getInt(preparation),
+                "retained work reaches the exact full detailed count");
+            try (HologramState.ModelPreparation eviction = new HologramState.ModelPreparation(after,
+                java.util.Collections.singletonList(new HologramState.ModelRow(100, 7, null, null, true)))) {
+                SimpleAssert.that(eviction.step(1, Long.MAX_VALUE), "model eviction prepares its bounded cell");
+                HologramState evicted = eviction.result(after);
+                HologramRenderer.modelSnapshotChanged(after, evicted, java.util.Collections.emptySet());
+                eviction.published();
+                SimpleAssert.eq(200, field(type, "completed").getInt(preparation),
+                    "dirty completed regions surrender only their own hint and detail work");
+                SimpleAssert.eq(100, field(type, "detailedCompleted").getInt(preparation),
+                    "dirty detailed count excludes the model region until it is rebuilt");
+                advance.invoke(preparation, Integer.MIN_VALUE, 0, false, Long.MAX_VALUE, available);
+                SimpleAssert.eq(202, field(type, "completed").getInt(preparation),
+                    "later model rebuilds do not repeat the first-hint frame pause");
+            }
+        } finally {
+            active.set(null, oldPreparation);
+            regions.clear();
         }
     }
 
