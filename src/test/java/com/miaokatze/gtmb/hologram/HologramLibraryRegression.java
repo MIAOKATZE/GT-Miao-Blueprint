@@ -73,6 +73,7 @@ public final class HologramLibraryRegression {
         permissions();
         streamingDraftProgress();
         cancelledServerPreparationReleasesQueue();
+        HologramLibraryStartupRegression.run();
     }
 
     @SuppressWarnings("unchecked")
