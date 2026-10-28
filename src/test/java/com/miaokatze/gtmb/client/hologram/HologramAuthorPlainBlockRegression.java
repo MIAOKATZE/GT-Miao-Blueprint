@@ -58,6 +58,7 @@ public final class HologramAuthorPlainBlockRegression {
                 Arrays.equals(before, AuthorDocumentIO.writeDraft(document, AuthorDocumentIO.Limits.defaults())),
                 "render preparation keeps the exact source draft");
         }
+        HologramAuthorStaticFactsRegression.run();
         realNativeDecorRemainsLazy();
     }
 

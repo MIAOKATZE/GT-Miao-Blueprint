@@ -994,13 +994,14 @@ final class HologramState {
             candidates = Collections.emptyList();
         }
 
-        /** Plain block/item facts need no opaque NBT decode or per-cell native resident admission. */
+        /**
+         * Exact block/item facts need no opaque decode or native-payload admission. This is not a geometry
+         * classification: non-cubes, transparent blocks and custom render IDs retain their normal renderer/adapter
+         * selection; unknown shapes are not promoted to supported cubes. Do not probe render adapters here.
+         */
         private static ItemStack simpleLocalStack(com.miaokatze.gtmb.blueprint.editor.AuthorDocument.Cell source,
             Block block) {
-            boolean chisel = HologramChiselNativeRender.selected(block);
             if (block == null || block == net.minecraft.init.Blocks.air
-                || !chisel && (block.getRenderType() != 0 || !block.renderAsNormalBlock()
-                    || HologramNativeTiles.supported(block))
                 || block.hasTileEntity(source.metadata())
                 || source.tileNbt() != null && !source.tileNbt()
                     .isEmpty()
