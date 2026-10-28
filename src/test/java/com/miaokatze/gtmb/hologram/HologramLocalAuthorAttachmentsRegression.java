@@ -114,6 +114,7 @@ public final class HologramLocalAuthorAttachmentsRegression {
                 .getString("vendorPicture"),
             "picture extensions survive settings edits");
         largeNativePictureDefinition();
+        HologramAuthorAttachmentReviewRegression.run();
     }
 
     private static void largeNativePictureDefinition() throws Exception {

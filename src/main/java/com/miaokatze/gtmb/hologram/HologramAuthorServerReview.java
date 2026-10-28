@@ -27,7 +27,7 @@ public final class HologramAuthorServerReview {
         public final JsonObject source;
         public final byte[] compiled;
 
-        private Result(NBTTagCompound report, JsonObject source, byte[] compiled) {
+        Result(NBTTagCompound report, JsonObject source, byte[] compiled) {
             this.report = report;
             this.source = source;
             this.compiled = compiled;

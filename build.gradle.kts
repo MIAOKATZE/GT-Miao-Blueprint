@@ -47,7 +47,11 @@ tasks.register<JavaExec>("runLocalAuthorTest") {
     group = "verification"
     description = "Checks client-owned source, native adapters, local persistence and explicit submission."
     mainClass = "com.miaokatze.gtmb.hologram.HologramLocalAuthorRegressionTest"
-    classpath = tasks.named<JavaExec>("runHologramTest").get().classpath
+    // The attachment boundary fixture exercises the actual pinned LittleTiles block, not a replacement stub.
+    classpath = tasks.named<JavaExec>("runHologramTest").get().classpath +
+        configurations.detachedConfiguration(
+            dependencies.create("com.github.GTNewHorizons:LittleTiles:1.6.59:dev")
+        ).apply { isTransitive = false }
     maxHeapSize = "2g"
     val scratchDir = layout.buildDirectory.dir("hologram-local-author-test")
     workingDir(scratchDir)

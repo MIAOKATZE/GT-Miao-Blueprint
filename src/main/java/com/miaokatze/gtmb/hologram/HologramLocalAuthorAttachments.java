@@ -18,7 +18,7 @@ import com.google.gson.JsonPrimitive;
 import com.miaokatze.gtmb.blueprint.editor.AuthorDocument;
 import com.miaokatze.gtmb.blueprint.editor.AuthorEditor;
 
-/** Client-owned attachment transaction. Geometry workers never own or publish a document. */
+/** Owner-thread attachment transaction; also reusable by a detached server-review editor. */
 public final class HologramLocalAuthorAttachments implements AutoCloseable {
 
     private Task task;
@@ -48,10 +48,13 @@ public final class HologramLocalAuthorAttachments implements AutoCloseable {
                     .diagnostic());
         if (request.hasKey("planRevision", 4) && request.getLong("planRevision") != editor.current()
             .revision()) throw new IOException("蓝图已变化，请重新确认附加位置");
-        task = new Task(editor, request);
+        // Preflight probes native applicability too: guard before constructing (and submitting geometry).
+        try (HologramExtensionExecution.Scope local = HologramExtensionExecution.localAuthor()) {
+            task = new Task(editor, request);
+        }
     }
 
-    /** Called only by the document owner's client tick; a single successful result publishes one edit. */
+    /** Called only by the document owner; a single successful result publishes one edit to that editor. */
     public Result tick() {
         Task pending = task;
         if (pending == null) return null;
@@ -70,18 +73,36 @@ public final class HologramLocalAuthorAttachments implements AutoCloseable {
             AuthorEditor.Change change = pending.commit();
             task = null;
             pending.geometry.close();
-            return new Result(pending.request, true, pending.text.noun() + "已加入本地蓝图", change);
+            return new Result(
+                pending.request,
+                true,
+                pending.text.noun() + "已加入本地蓝图",
+                change,
+                pending.group,
+                pending.additions,
+                false);
         } catch (IOException | RuntimeException | LinkageError failure) {
-            return cancel(failure.getMessage());
+            return cancel(failure.getMessage(), failure instanceof HologramExtensionExecution.ReviewRequired);
         }
     }
 
     public Result cancel(String reason) {
+        return cancel(reason, false);
+    }
+
+    private Result cancel(String reason, boolean reviewRequired) {
         Task pending = task;
         if (pending == null) return null;
         task = null;
         pending.geometry.cancel();
-        return new Result(pending.request, false, reason == null ? "附加对象处理失败，原稿保留" : reason, null);
+        return new Result(
+            pending.request,
+            false,
+            reason == null ? "附加对象处理失败，原稿保留" : reason,
+            null,
+            null,
+            null,
+            reviewRequired);
     }
 
     @Override
@@ -95,12 +116,20 @@ public final class HologramLocalAuthorAttachments implements AutoCloseable {
         public final boolean accepted;
         public final String message;
         public final AuthorEditor.Change change;
+        public final boolean reviewRequired;
+        // Exclusively owned prepared delta, available only to the detached server review adapter.
+        final JsonObject preparedGroup;
+        final List<JsonObject> preparedCells;
 
-        Result(long request, boolean accepted, String message, AuthorEditor.Change change) {
+        Result(long request, boolean accepted, String message, AuthorEditor.Change change, JsonObject preparedGroup,
+            List<JsonObject> preparedCells, boolean reviewRequired) {
             this.request = request;
             this.accepted = accepted;
             this.message = message;
             this.change = change;
+            this.reviewRequired = reviewRequired;
+            this.preparedGroup = preparedGroup;
+            this.preparedCells = preparedCells;
         }
     }
 
