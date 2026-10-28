@@ -47,12 +47,13 @@ final class HologramSnapshotSegmentEncoding {
                         .copy());
             }
             NBTTagList rows = source.getTagList("cells", 10);
+            boolean compactRows = rows.tagCount() > 0 && HologramSnapshotRows.compactRow(rows.getCompoundTagAt(0));
             if (layout == null || layout.size() != rows.tagCount())
                 throw new IOException("snapshot stable layout missing");
             Map<Address, Group> stable = new LinkedHashMap<>();
             for (int i = 0; i < rows.tagCount(); i++) {
                 HologramTransportPageLayout.Row row = layout.row(i);
-                Address address = new Address(row);
+                Address address = new Address(row, compactRows);
                 Group group = stable.get(address);
                 if (group == null) {
                     group = new Group(address);
@@ -157,10 +158,14 @@ final class HologramSnapshotSegmentEncoding {
                 REUSED.incrementAndGet();
                 return previous;
             }
-            NBTTagCompound root = new NBTTagCompound();
-            NBTTagList rows = new NBTTagList();
-            for (NBTTagCompound row : group.rows) rows.appendTag(row);
-            root.setTag("cells", rows);
+            NBTTagCompound root;
+            if (group.address.compactRows) root = HologramSnapshotRows.compactPage(group.rows);
+            else {
+                root = new NBTTagCompound();
+                NBTTagList rows = new NBTTagList();
+                for (NBTTagCompound row : group.rows) rows.appendTag(row);
+                root.setTag("cells", rows);
+            }
             long estimate = HologramSnapshotCodec.retainedEstimate(root);
             while (!cache.isEmpty() && (cache.size() >= MAX_ENTRIES || estimate > MAX_CACHE_BYTES - cachedBytes))
                 evict();
@@ -248,8 +253,10 @@ final class HologramSnapshotSegmentEncoding {
     private static final class Address {
 
         final long authority, page, report, mesh, reportAuthority, meshAuthority;
+        final boolean compactRows;
 
-        Address(HologramTransportPageLayout.Row row) {
+        Address(HologramTransportPageLayout.Row row, boolean compactRows) {
+            this.compactRows = compactRows;
             authority = row.authority;
             page = row.pageId;
             report = row.report == null ? 0 : row.report.input;
@@ -262,7 +269,7 @@ final class HologramSnapshotSegmentEncoding {
             int hash = Long.hashCode(authority);
             hash = 31 * hash + Long.hashCode(page);
             hash = 31 * hash + Long.hashCode(mesh);
-            return 31 * hash + Long.hashCode(meshAuthority);
+            return 31 * (31 * hash + Long.hashCode(meshAuthority)) + Boolean.hashCode(compactRows);
         }
 
         public boolean equals(Object value) {
@@ -270,7 +277,8 @@ final class HologramSnapshotSegmentEncoding {
             Address other = (Address) value;
             return authority == other.authority && page == other.page
                 && mesh == other.mesh
-                && meshAuthority == other.meshAuthority;
+                && meshAuthority == other.meshAuthority
+                && compactRows == other.compactRows;
         }
     }
 
@@ -299,9 +307,9 @@ final class HologramSnapshotSegmentEncoding {
 
         boolean matches(Group group) {
             if (ids.length != group.ids.size()) return false;
-            NBTTagList rows = frozen.getTagList("cells", 10);
-            for (int i = 0; i < ids.length; i++) if (ids[i] != group.ids.get(i)
-                || !HologramSnapshotNbt.same(rows.getCompoundTagAt(i), group.rows.get(i))) return false;
+            for (int i = 0; i < ids.length; i++)
+                if (ids[i] != group.ids.get(i) || !HologramSnapshotRows.sameRow(frozen, i, group.rows.get(i)))
+                    return false;
             return true;
         }
 

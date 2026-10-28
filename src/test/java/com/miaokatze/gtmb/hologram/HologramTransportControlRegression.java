@@ -51,6 +51,10 @@ public final class HologramTransportControlRegression {
                 action.tag.getInteger("clientSegmentProtocol") == HologramSnapshotSegments.VERSION,
                 "segment capability is a separate negotiated version");
             check(!source.hasKey("clientSegmentProtocol"), "advertising capability does not mutate the caller");
+            check(
+                action.tag.getInteger("clientSnapshotRows") == 1,
+                "compact rows require a separate explicit capability");
+            check(!source.hasKey("clientSnapshotRows"), "row capability does not mutate the caller's request");
             wire.clear();
             System.setProperty("gtmb.segment.transport", "false");
             new HologramNetwork.Action(source).toBytes(wire);
@@ -59,6 +63,7 @@ public final class HologramTransportControlRegression {
             check(
                 action.tag.getInteger("clientSegmentProtocol") == 0,
                 "fallback switch retains the old complete wire codec");
+            check(action.tag.getInteger("clientSnapshotRows") == 0, "the fallback switch disables compact rows too");
             wire.clear();
             new HologramNetwork.CutAction(source).toBytes(wire);
             HologramNetwork.CutAction legacyCut = new HologramNetwork.CutAction();

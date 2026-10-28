@@ -85,6 +85,8 @@ public final class HologramSnapshotCodec {
         final int rawBytes;
         final long retainedEstimate;
         HologramProcessGovernor.Lease lease;
+        boolean compactRows;
+        int cellCount = -1;
 
         Decoded(NBTTagCompound tag, int rawBytes, long retainedEstimate, HologramProcessGovernor.Lease lease) {
             this.tag = tag;
@@ -150,18 +152,9 @@ public final class HologramSnapshotCodec {
 
     static Decoded decodeMeasured(byte[] bytes, int rawLimit, long nbtLimit, java.util.function.BooleanSupplier current,
         boolean retained) throws IOException {
-        int expanded;
-        long estimate;
-        // Vanilla 1.7 array-size accounting multiplies ints before casting to long. Validate lengths first.
-        try (DataInputStream input = input(bytes, current)) {
-            Validator validator = new Validator(input, rawLimit);
-            if (validator.byteValue() != 10) throw new IOException("snapshot root is not a compound");
-            validator.string();
-            validator.payload(10, 0);
-            if (input.read() != -1) throw new IOException("snapshot trailing bytes");
-            expanded = validator.consumed;
-            estimate = validator.retainedEstimate;
-        }
+        Decoded measured = measure(bytes, 0, bytes.length, rawLimit, current);
+        int expanded = measured.rawBytes;
+        long estimate = measured.retainedEstimate;
         HologramProcessGovernor.Lease lease = retained
             ? HologramProcessGovernor.tryRetain("snapshot.expanded", estimate)
             : null;
@@ -187,11 +180,33 @@ public final class HologramSnapshotCodec {
         }
     }
 
+    /** Safety-pass accounting without materializing an NBT tree or copying a compressed page. */
+    static Decoded measure(byte[] bytes, int offset, int length, int rawLimit,
+        java.util.function.BooleanSupplier current) throws IOException {
+        // Vanilla 1.7 array-size accounting multiplies ints before casting to long. Validate lengths first.
+        try (DataInputStream input = input(bytes, offset, length, current)) {
+            Validator validator = new Validator(input, rawLimit);
+            if (validator.byteValue() != 10) throw new IOException("snapshot root is not a compound");
+            validator.string();
+            validator.payload(10, 0);
+            if (input.read() != -1) throw new IOException("snapshot trailing bytes");
+            Decoded measured = new Decoded(null, validator.consumed, validator.retainedEstimate, null);
+            measured.compactRows = validator.compactRows;
+            measured.cellCount = validator.cellCount;
+            return measured;
+        }
+    }
+
     private static DataInputStream input(byte[] bytes, java.util.function.BooleanSupplier current) throws IOException {
+        return input(bytes, 0, bytes.length, current);
+    }
+
+    private static DataInputStream input(byte[] bytes, int offset, int length,
+        java.util.function.BooleanSupplier current) throws IOException {
         checkpoint(current);
         return new DataInputStream(
             new BufferedInputStream(
-                new java.io.FilterInputStream(new GZIPInputStream(new ByteArrayInputStream(bytes))) {
+                new java.io.FilterInputStream(new GZIPInputStream(new ByteArrayInputStream(bytes, offset, length))) {
 
                     public int read() throws IOException {
                         checkpoint(current);
@@ -263,6 +278,8 @@ public final class HologramSnapshotCodec {
         private final int limit;
         private int consumed;
         private long retainedEstimate = 256;
+        private boolean compactRows;
+        private int cellCount = -1;
         private final byte[] utfBytes = new byte[65535];
 
         Validator(DataInputStream input, int limit) {
@@ -282,7 +299,7 @@ public final class HologramSnapshotCodec {
             return length;
         }
 
-        void string() throws IOException {
+        int string() throws IOException {
             reserve(2);
             int length = input.readUnsignedShort();
             reserve(length);
@@ -296,6 +313,7 @@ public final class HologramSnapshotCodec {
                 if (tails < 0 || tails > length - i) throw new IOException("snapshot NBT UTF");
                 while (tails-- > 0) if ((utfBytes[i++] & 192) != 128) throw new IOException("snapshot NBT UTF");
             }
+            return length;
         }
 
         void skip(long bytes) throws IOException {
@@ -318,6 +336,10 @@ public final class HologramSnapshotCodec {
         }
 
         void payload(int type, int depth) throws IOException {
+            payload(type, depth, false);
+        }
+
+        void payload(int type, int depth, boolean cellsField) throws IOException {
             // Conservative Java object/map-entry projection, separately charged from expanded serialized bytes.
             retainedEstimate += 64;
             if (depth > 512) throw new IOException("snapshot NBT depth");
@@ -346,6 +368,7 @@ public final class HologramSnapshotCodec {
                     break;
                 case 9:
                     int child = byteValue(), count = length();
+                    if (cellsField) cellCount = count;
                     retainedEstimate += 64L + 16L * count;
                     if ((child <= 0 && count != 0) || child > 11) throw new IOException("snapshot list type");
                     for (int i = 0; i < count; i++) payload(child, depth + 1);
@@ -354,8 +377,21 @@ public final class HologramSnapshotCodec {
                     retainedEstimate += 64;
                     int member;
                     while ((member = byteValue()) != 0) {
-                        string();
-                        payload(member, depth + 1);
+                        int nameLength = string();
+                        if (depth == 0 && nameLength == HologramSnapshotRows.PALETTE.length()) {
+                            boolean palette = true;
+                            for (int i = 0; i < nameLength; i++)
+                                palette &= utfBytes[i] == HologramSnapshotRows.PALETTE.charAt(i);
+                            compactRows |= palette;
+                        }
+                        boolean cells = depth == 0 && member == 9
+                            && nameLength == 5
+                            && utfBytes[0] == 'c'
+                            && utfBytes[1] == 'e'
+                            && utfBytes[2] == 'l'
+                            && utfBytes[3] == 'l'
+                            && utfBytes[4] == 's';
+                        payload(member, depth + 1, cells);
                     }
                     break;
                 case 11:

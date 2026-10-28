@@ -34,6 +34,101 @@ public final class HologramSnapshotInboxRegression {
         impossibleExpandedRetainsTransportIdentity();
     }
 
+    /** Real manifest ownership plus compressed-page copying, under the isolated 1 MiB quota. */
+    public static void runCopyQuota(byte[] impossibleCopy, byte[] impossibleWorkingSet, byte[] temporary,
+        long available) throws Exception {
+        long before = com.miaokatze.gtmb.hologram.HologramProcessGovernor.retainedBytes();
+        for (long resident : new long[] { 0,
+            com.miaokatze.gtmb.hologram.HologramProcessGovernor.retainedByteLimit() / 2 }) {
+            try (
+                com.miaokatze.gtmb.hologram.HologramProcessGovernor.Lease competing = com.miaokatze.gtmb.hologram.HologramProcessGovernor
+                    .retain("fixture.resident.server.before.first.page", resident)) {
+                for (byte[] impossible : new byte[][] { impossibleCopy, impossibleWorkingSet }) {
+                    try (
+                        com.miaokatze.gtmb.hologram.HologramSnapshotSegments.Decoder decoder = new com.miaokatze.gtmb.hologram.HologramSnapshotSegments.Decoder();
+                        HologramSnapshotInbox<net.minecraft.nbt.NBTTagCompound> inbox = new HologramSnapshotInbox<>(
+                            2,
+                            impossible.length,
+                            1,
+                            (bytes, current) -> copyQuotaDecode(decoder, bytes, current))) {
+                        inbox.offer(impossible, 73);
+                        net.minecraft.nbt.NBTTagCompound later = new net.minecraft.nbt.NBTTagCompound();
+                        later.setString("session", "later-control");
+                        inbox.offerValue(later);
+                        HologramSnapshotInbox.Result<net.minecraft.nbt.NBTTagCompound> failure = awaitCopyQuota(inbox);
+                        SimpleAssert.that(failure != null, "an impossible compressed copy cannot retry forever");
+                        SimpleAssert.that(
+                            failure.failure instanceof HologramSnapshotInbox.AdmissionException,
+                            "manifest plus its own compressed page exposes a terminal budget failure");
+                        SimpleAssert
+                            .eq(73L, failure.transportSequence, "copy failure retains exact transport identity");
+                        failure.close();
+                        SimpleAssert.eq(later, inbox.poll().value, "an impossible copy cannot strand later controls");
+                    }
+                }
+            }
+        }
+        SimpleAssert.eq(
+            before,
+            com.miaokatze.gtmb.hologram.HologramProcessGovernor.retainedBytes(),
+            "failed copy releases its manifest");
+        CountDownLatch retried = new CountDownLatch(2);
+        com.miaokatze.gtmb.hologram.HologramProcessGovernor.Lease competing = com.miaokatze.gtmb.hologram.HologramProcessGovernor
+            .retain(
+                "fixture.transient.copy.competitor",
+                com.miaokatze.gtmb.hologram.HologramProcessGovernor.retainedByteLimit() - before - available);
+        try (
+            com.miaokatze.gtmb.hologram.HologramSnapshotSegments.Decoder decoder = new com.miaokatze.gtmb.hologram.HologramSnapshotSegments.Decoder();
+            HologramSnapshotInbox<net.minecraft.nbt.NBTTagCompound> inbox = new HologramSnapshotInbox<>(
+                2,
+                temporary.length,
+                1,
+                (bytes, current) -> {
+                    retried.countDown();
+                    return copyQuotaDecode(decoder, bytes, current);
+                })) {
+            java.util.concurrent.atomic.AtomicInteger released = new java.util.concurrent.atomic.AtomicInteger();
+            inbox.put(temporary, 74, released::incrementAndGet, inbox.epoch());
+            net.minecraft.nbt.NBTTagCompound later = new net.minecraft.nbt.NBTTagCompound();
+            later.setString("session", "later-control");
+            inbox.offerValue(later);
+            waitFor(retried);
+            SimpleAssert.that(inbox.poll() == null, "temporary copy contention retains the exact FIFO head");
+            SimpleAssert.eq(0, released.get(), "temporary copy contention retains physical frame ownership");
+            competing.close();
+            HologramSnapshotInbox.Result<net.minecraft.nbt.NBTTagCompound> result = awaitCopyQuota(inbox);
+            SimpleAssert
+                .that(result != null && result.failure == null, "the original copy succeeds after contention retires");
+            SimpleAssert.eq(74L, result.transportSequence, "temporary retry preserves exact transport identity");
+            SimpleAssert
+                .eq("exact-copy-quota-receipt", result.value.getString("session"), "the exact manifest survives retry");
+            result.close();
+            SimpleAssert.eq(1, released.get(), "frame ownership retires once");
+            SimpleAssert.eq(later, inbox.poll().value, "temporary copy contention never reorders controls");
+        } finally {
+            competing.close();
+        }
+        SimpleAssert.eq(
+            before,
+            com.miaokatze.gtmb.hologram.HologramProcessGovernor.retainedBytes(),
+            "all copy-quota leases retire explicitly");
+    }
+
+    private static HologramSnapshotInbox.Decoded<net.minecraft.nbt.NBTTagCompound> copyQuotaDecode(
+        com.miaokatze.gtmb.hologram.HologramSnapshotSegments.Decoder decoder, byte[] bytes,
+        java.util.function.BooleanSupplier current) throws IOException {
+        com.miaokatze.gtmb.hologram.HologramSnapshotCodec.OwnedSnapshot decoded = decoder.decodeOwned(bytes, current);
+        return new HologramSnapshotInbox.Decoded<>(decoded.value, decoded, decoded.retainedEstimate);
+    }
+
+    private static HologramSnapshotInbox.Result<net.minecraft.nbt.NBTTagCompound> awaitCopyQuota(
+        HologramSnapshotInbox<net.minecraft.nbt.NBTTagCompound> inbox) throws InterruptedException {
+        long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+        HologramSnapshotInbox.Result<net.minecraft.nbt.NBTTagCompound> result;
+        while ((result = inbox.poll()) == null && System.nanoTime() < deadline) Thread.sleep(5);
+        return result;
+    }
+
     /** Exercise real expanded-NBT admission under a competing single-player server's shared quota. */
     private static void transientQuotaRetainsReceipt(boolean materialized) {
         try {

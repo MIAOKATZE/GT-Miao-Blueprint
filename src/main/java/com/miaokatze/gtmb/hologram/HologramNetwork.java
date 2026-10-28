@@ -1235,7 +1235,7 @@ public final class HologramNetwork {
         final EntityPlayerMP player;
         final HologramSnapshotSegments.Peer segments = new HologramSnapshotSegments.Peer();
         String session = "";
-        boolean supportsSegments;
+        boolean supportsSegments, supportsCompactRows;
 
         TransportPeer(EntityPlayerMP player) {
             this.player = player;
@@ -1245,6 +1245,11 @@ public final class HologramNetwork {
     static boolean segmentedPeer(EntityPlayerMP player) {
         TransportPeer peer = player == null ? null : transportPeers.get(player.getUniqueID());
         return peer != null && peer.player == player && peer.supportsSegments;
+    }
+
+    static boolean compactSnapshotPeer(EntityPlayerMP player) {
+        TransportPeer peer = player == null ? null : transportPeers.get(player.getUniqueID());
+        return peer != null && peer.player == player && peer.supportsSegments && peer.supportsCompactRows;
     }
 
     private static TransportPeer transportPeer(EntityPlayerMP player, String session) {
@@ -1898,6 +1903,8 @@ public final class HologramNetwork {
             this.tag.setInteger(
                 "clientSegmentProtocol",
                 "false".equals(System.getProperty("gtmb.segment.transport")) ? 0 : HologramSnapshotSegments.VERSION);
+            this.tag
+                .setInteger("clientSnapshotRows", "false".equals(System.getProperty("gtmb.segment.transport")) ? 0 : 1);
         }
     }
 
@@ -1953,6 +1960,7 @@ public final class HologramNetwork {
         if (peer == null || peer.player != player) peer = transportPeer(player, "");
         if (tag.getInteger("clientSegmentProtocol") == HologramSnapshotSegments.VERSION
             && !"false".equals(System.getProperty("gtmb.segment.transport"))) peer.supportsSegments = true;
+        if (peer.supportsSegments && tag.getInteger("clientSnapshotRows") == 1) peer.supportsCompactRows = true;
         if ("requestSnapshotModel".equals(tag.getString("op"))) {
             HologramSession owner = HologramWorkspace.find(player.getUniqueID());
             if (owner != null && owner.player == player

@@ -115,16 +115,8 @@ public final class HologramClient {
         64,
         HologramSnapshotAssembly.MAX_BYTES,
         2,
-        (bytes, current) -> {
-            com.miaokatze.gtmb.hologram.HologramSnapshotCodec.OwnedSnapshot decoded = segmentDecoder
-                .decodeOwned(bytes, current);
-            boolean display = decoded.value.getBoolean("modelOnly") || decoded.value.getBoolean("detailOnly");
-            return new HologramSnapshotInbox.Decoded<>(
-                decoded.value,
-                decoded,
-                decoded.retainedEstimate,
-                display ? 0 : Math.max(4096, 2L * decoded.retainedEstimate));
-        });
+        (bytes, current) -> decodeSnapshot(segmentDecoder, bytes, current));
+
     private static long lastDecodeNotice;
     private static final java.util.Map<Long, NBTTagCompound> snapshotFailureHeaders = new java.util.LinkedHashMap<>();
     private static final java.util.Map<Long, Exception> pendingSnapshotFailures = new java.util.LinkedHashMap<>();
@@ -1639,6 +1631,23 @@ public final class HologramClient {
         // Ordinary snapshots are admitted at network ingress and published by the client tick.
     }
 
+    static HologramSnapshotInbox.Decoded<NBTTagCompound> decodeSnapshot(
+        com.miaokatze.gtmb.hologram.HologramSnapshotSegments.Decoder decoder, byte[] bytes,
+        java.util.function.BooleanSupplier current) throws java.io.IOException {
+        com.miaokatze.gtmb.hologram.HologramSnapshotCodec.OwnedSnapshot decoded = decoder.decodeOwned(bytes, current);
+        boolean display = decoded.value.getBoolean("modelOnly") || decoded.value.getBoolean("detailOnly");
+        long preparationBytes = display ? 0
+            : com.miaokatze.gtmb.hologram.HologramSnapshotRows.preparationBytes(decoded.value);
+        if (preparationBytes > com.miaokatze.gtmb.hologram.HologramProcessGovernor.retainedByteLimit()
+            - com.miaokatze.gtmb.hologram.HologramProcessGovernor.retainedBytes()) {
+            // A completed decode can still lack room for preparation. Keeping its derived pages would
+            // reproduce the same quota failure forever on every retry of the authoritative FIFO head.
+            decoder.clear();
+            decoded.value.removeTag(com.miaokatze.gtmb.hologram.HologramSnapshotSegments.RECEIPT);
+        }
+        return new HologramSnapshotInbox.Decoded<>(decoded.value, decoded, decoded.retainedEstimate, preparationBytes);
+    }
+
     /** Pure bounded ingestion runs on the network caller; it never awaits decoding on the client thread. */
     private static void enqueueReceived(NBTTagCompound nbt) {
         if (nbt.getBoolean("detailOnly") || nbt.getBoolean("modelOnly")) {
@@ -1917,8 +1926,9 @@ public final class HologramClient {
     private static boolean reserveMaterialized(HologramSnapshotInbox.Result<NBTTagCompound> result) {
         if (result.retainedBytes == 0 || result.materialized != null) return true;
         HologramSnapshotRetentions.reap();
-        result.materialized = com.miaokatze.gtmb.hologram.HologramProcessGovernor
-            .tryRetain("snapshot.materialized", Math.max(4096, 2L * result.retainedBytes));
+        result.materialized = com.miaokatze.gtmb.hologram.HologramProcessGovernor.tryRetain(
+            "snapshot.materialized",
+            com.miaokatze.gtmb.hologram.HologramSnapshotRows.preparationBytes(result.value));
         if (result.materialized != null) return true;
         decodeNotice(
             "decodeBusy",

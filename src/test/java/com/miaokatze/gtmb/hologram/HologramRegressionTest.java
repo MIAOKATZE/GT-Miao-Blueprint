@@ -63,6 +63,13 @@ public final class HologramRegressionTest {
                 throw new AssertionError(failure);
             }
         });
+        cases.put("snapshot_compact_rows_exactness_and_peer_compatibility", () -> {
+            try {
+                HologramSnapshotRowsRegression.run();
+            } catch (Exception failure) {
+                throw new AssertionError(failure);
+            }
+        });
         cases.put("snapshot_assembly_owned_buffers_and_timeout", HologramLibrarySnapshotAssemblyRegression::run);
         cases.put("transport_control_lane_and_global_budget", HologramTransportBudgetRegression::run);
         cases.put("transport_control_queue_and_backpressure", HologramTransportControlRegression::run);

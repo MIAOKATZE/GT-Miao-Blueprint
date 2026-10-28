@@ -9,6 +9,10 @@ import net.minecraft.nbt.NBTTagList;
 public final class HologramSnapshotOwnershipRegression {
 
     public static void main(String[] args) throws Exception {
+        if (args.length == 1 && "copy-quota".equals(args[0])) {
+            copyQuota();
+            return;
+        }
         long before = HologramProcessGovernor.retainedBytes();
         NBTTagCompound source = new NBTTagCompound();
         source.setString("session", "owner");
@@ -71,8 +75,45 @@ public final class HologramSnapshotOwnershipRegression {
             cumulative.requestedBytes > HologramProcessGovernor.retainedByteLimit(),
             "already owned projection plus next page exposes a theoretically impossible combined allocation");
         com.miaokatze.gtmb.client.hologram.HologramSnapshotInboxRegression.runQuotaContention();
+        com.miaokatze.gtmb.client.hologram.HologramSnapshotPreparationQuotaRegression.run();
         HologramSnapshotCacheQuotaRegression.main(args);
         System.out.println("HologramSnapshotOwnershipRegression passed");
+    }
+
+    /** Run in a fresh JVM with -Dgtmb.heavy.retainedBytes=1048576. */
+    private static void copyQuota() throws Exception {
+        check(HologramProcessGovernor.retainedByteLimit() == 1048576, "copy fixture requires its isolated 1 MiB quota");
+        NBTTagCompound source = new NBTTagCompound();
+        source.setString("session", "exact-copy-quota-receipt");
+        source.setByteArray("manifestPadding", new byte[800000]);
+        long manifestBytes;
+        try (HologramSnapshotCodec.OwnedSnapshot manifest = HologramSnapshotCodec
+            .decodeOwned(HologramSnapshotCodec.compress(source), () -> true)) {
+            manifestBytes = manifest.retainedEstimate;
+        }
+        NBTTagCompound row = new NBTTagCompound();
+        byte[] payload = new byte[300000];
+        new java.util.Random(71).nextBytes(payload);
+        row.setByteArray("payload", payload);
+        NBTTagList cells = new NBTTagList();
+        cells.appendTag(row);
+        source.setTag("cells", cells);
+        byte[] impossible = HologramSnapshotSegments
+            .encode(source, Collections.emptySet(), () -> true, written -> {}).bytes;
+        row.setByteArray("payload", java.util.Arrays.copyOf(payload, 160000));
+        byte[] impossibleWorkingSet = HologramSnapshotSegments
+            .encode(source, Collections.emptySet(), () -> true, written -> {}).bytes;
+        row.setByteArray("payload", java.util.Arrays.copyOf(payload, 16000));
+        byte[] temporary = HologramSnapshotSegments
+            .encode(source, Collections.emptySet(), () -> true, written -> {}).bytes;
+        com.miaokatze.gtmb.client.hologram.HologramSnapshotInboxRegression
+            .runCopyQuota(impossible, impossibleWorkingSet, temporary, manifestBytes + 4096);
+        System.out.println(
+            "HologramSnapshotOwnershipRegression copy-quota passed manifestBytes=" + manifestBytes
+                + " impossibleFrameBytes="
+                + impossible.length
+                + " temporaryFrameBytes="
+                + temporary.length);
     }
 
     private static void check(boolean value, String message) {

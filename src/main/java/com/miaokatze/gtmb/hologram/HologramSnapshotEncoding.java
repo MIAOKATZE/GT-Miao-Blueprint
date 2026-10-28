@@ -170,15 +170,19 @@ final class HologramSnapshotEncoding {
                         checkpoint.accept(written);
                     };
                     HologramSnapshotBytes encoded;
+                    boolean compactRows = HologramSnapshotRows.compactSnapshot(frozen);
+                    if (compactRows && (confirmedSegments == null || layout == null))
+                        throw new java.io.IOException("compact snapshot requires negotiated segmented transport");
                     if (confirmedSegments != null && layout != null
                         && frozen.hasKey("cells", 9)
-                        && !frozen.getBoolean("libraryInitialSnapshot")) {
+                        && (!frozen.getBoolean("libraryInitialSnapshot") || compactRows)) {
                         try {
                             HologramSnapshotSegmentEncoding.Result segmented = HologramSnapshotSegmentEncoding
                                 .encode(frozen, layout, confirmedSegments, current, progress);
                             encoded = segmented.bytes;
                             segmentHashes = segmented.hashes;
                         } catch (HologramSnapshotSegmentEncoding.LegacyFallback overhead) {
+                            if (compactRows) throw new java.io.IOException("compact snapshot expanded byte budget");
                             try (HologramProcessGovernor.Lease cpu = HologramProcessGovernor
                                 .acquireHeavyCpu("snapshot.encode")) {
                                 encoded = HologramSnapshotCodec.compressOwned(frozen, current, progress);

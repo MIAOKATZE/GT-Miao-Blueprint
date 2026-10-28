@@ -31,6 +31,8 @@ public final class HologramLargeStateRegression {
         SimpleAssert.that(state.distanceSquared(6100, 64.5, .5) > 4096, "far outside structure stays culled");
         incremental(state);
         preparation(state);
+        preparationOwnership();
+        compactPreparation();
         regionInvalidation();
         areaSelectionReceipts(state);
         localCatalogReceipts();
@@ -429,6 +431,139 @@ public final class HologramLargeStateRegression {
             throw new AssertionError(interrupted);
         }
         SimpleAssert.that(rejected[0], "registry preparation refuses a different thread");
+    }
+
+    private static void preparationOwnership() {
+        NBTTagCompound source = new NBTTagCompound();
+        NBTTagList rows = new NBTTagList();
+        CopyCountedRow row = new CopyCountedRow();
+        row.setInteger("x", 7);
+        NBTTagCompound display = new NBTTagCompound();
+        display.setInteger("color", 123);
+        row.setTag("targetDisplay", display);
+        rows.appendTag(row);
+        source.setTag("cells", rows);
+        HologramState.Preparation task = new HologramState.Preparation(source);
+        while (!task.step(1, Long.MAX_VALUE)) {}
+        HologramState transferred = task.result();
+        SimpleAssert.eq(0, row.copies, "preparation takes ownership without copying an already decoded row");
+        NBTTagCompound exported = transferred.cells.get(0)
+            .tag();
+        exported.setInteger("x", 99);
+        exported.getCompoundTag("targetDisplay")
+            .setInteger("color", 999);
+        SimpleAssert.eq(7, transferred.cells.get(0).x, "exported row edits cannot alter prepared geometry");
+        SimpleAssert.eq(
+            123,
+            transferred.cells.get(0).targetDisplay.getInteger("color"),
+            "exported native display edits cannot alter the owned snapshot");
+        HologramState borrowed = new HologramState(source);
+        row.setInteger("x", 88);
+        display.setInteger("color", 888);
+        SimpleAssert.eq(
+            7,
+            borrowed.cells.get(0)
+                .tag()
+                .getInteger("x"),
+            "borrowed constructors still isolate caller rows");
+        SimpleAssert.eq(
+            123,
+            borrowed.cells.get(0).targetDisplay.getInteger("color"),
+            "borrowed constructors still isolate caller native display payloads");
+    }
+
+    private static final class CopyCountedRow extends NBTTagCompound {
+
+        int copies;
+
+        @Override
+        public net.minecraft.nbt.NBTBase copy() {
+            copies++;
+            return super.copy();
+        }
+    }
+
+    private static void compactPreparation() {
+        NBTTagCompound full = new NBTTagCompound();
+        full.setString("session", "compact-preparation");
+        NBTTagList rows = new NBTTagList();
+        net.minecraft.item.ItemStack item = new net.minecraft.item.ItemStack(net.minecraft.init.Blocks.stone);
+        NBTTagCompound payload = new NBTTagCompound();
+        payload.setInteger("config", 3);
+        item.setTagCompound(payload);
+        for (int index = 0; index < 2; index++) {
+            NBTTagCompound row = new NBTTagCompound();
+            for (String axis : new String[] { "x", "y", "z", "dx", "dy", "dz" })
+                row.setInteger(axis, axis.endsWith("x") ? 7 + index * 1024 : 0);
+            row.setString("wantId", "minecraft:stone");
+            row.setString("structureId", "group");
+            row.setLong("nativeModelId", 7);
+            row.setInteger("nativeModelPending", 1);
+            row.setTag("targetStack", item.writeToNBT(new NBTTagCompound()));
+            NBTTagList candidates = new NBTTagList();
+            candidates.appendTag(item.writeToNBT(new NBTTagCompound()));
+            row.setTag("candidates", candidates);
+            rows.appendTag(row);
+        }
+        full.setTag("cells", rows);
+        HologramState legacy = new HologramState(full);
+        NBTTagCompound packed = com.miaokatze.gtmb.hologram.HologramSnapshotRowsRegression.compactForTest(full);
+        HologramState.Preparation preparation = new HologramState.Preparation(packed);
+        while (!preparation.step(1, Long.MAX_VALUE)) {}
+        HologramState compact = preparation.result();
+        SimpleAssert.eq(legacy.fullData(), compact.fullData(), "compact preparation restores every original row field");
+        SimpleAssert.eq(1031, compact.cells.get(1).x, "shared descriptors preserve distant cell coordinates");
+        SimpleAssert.eq(1, compact.cells.get(1).index, "shared descriptors preserve selection indices");
+        SimpleAssert.eq(
+            2,
+            compact.structureMembers.get("group")
+                .size(),
+            "shared descriptors preserve memberships");
+        compact.cells.get(0).targetStack.getTagCompound()
+            .setInteger("config", 99);
+        compact.cells.get(0).candidates.get(0)
+            .getTagCompound()
+            .setInteger("config", 98);
+        SimpleAssert.eq(
+            3,
+            compact.cells.get(1).targetStack.getTagCompound()
+                .getInteger("config"),
+            "mutable target stacks are isolated between cells sharing a descriptor");
+        SimpleAssert.eq(
+            3,
+            compact.cells.get(1).candidates.get(0)
+                .getTagCompound()
+                .getInteger("config"),
+            "mutable candidate stacks are isolated between cells sharing a descriptor");
+        SimpleAssert
+            .eq(legacy.fullData(), compact.fullData(), "mutable stack edits cannot change retained raw palette data");
+        NBTTagCompound nativeTile = new NBTTagCompound();
+        nativeTile.setString("id", "native-overlay");
+        try (HologramState.ModelPreparation model = new HologramState.ModelPreparation(
+            compact,
+            java.util.Collections.singletonList(new HologramState.ModelRow(0, 7, nativeTile, null, false)))) {
+            SimpleAssert.that(model.step(1, Long.MAX_VALUE), "compact model overlay prepares within its bounded work");
+            HologramState modeled = model.result(compact);
+            NBTTagCompound expected = legacy.cells.get(0)
+                .tag();
+            NBTTagCompound display = new NBTTagCompound();
+            display.setTag("nativeTile", nativeTile);
+            expected.setTag("actualDisplay", display);
+            expected.setTag("targetDisplay", new NBTTagCompound());
+            expected.setInteger("nativeModelPending", 0);
+            SimpleAssert.eq(
+                expected,
+                modeled.cells.get(0)
+                    .tag(),
+                "model overlays export complete exact compact rows");
+            SimpleAssert.eq(
+                legacy.cells.get(1)
+                    .tag(),
+                modeled.cells.get(1)
+                    .tag(),
+                "other compact cells retain their raw data");
+            model.published();
+        }
     }
 
     private static void rejects(HologramState state, NBTTagCompound patch, String message) {

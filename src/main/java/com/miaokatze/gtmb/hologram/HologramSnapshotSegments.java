@@ -171,7 +171,67 @@ public final class HologramSnapshotSegments {
             } catch (HologramSnapshotCodec.BusyException quota) {
                 // Derived cache bytes never prevent the authoritative current projection from admission.
                 clear();
-                return decodeProjection(bytes, current, true, false);
+                try {
+                    return decodeProjection(bytes, current, true, false);
+                } catch (HologramSnapshotCodec.BusyException uncached) {
+                    long required = requiredProjectionBytes(bytes, current);
+                    if (required > HologramProcessGovernor.retainedByteLimit())
+                        throw new HologramSnapshotCodec.BusyException(uncached.getMessage(), required);
+                    throw uncached;
+                }
+            }
+        }
+
+        /** Only failed uncached admission needs this pass; successful frames keep their existing two NBT passes. */
+        static long requiredProjectionBytes(byte[] bytes, BooleanSupplier current) throws IOException {
+            if (bytes.length < 4 || readInt(bytes) != MAGIC)
+                return HologramSnapshotCodec.measure(bytes, 0, bytes.length, RAW_LIMIT, current).retainedEstimate;
+            try (DataInputStream input = new DataInputStream(new ByteArrayInputStream(bytes))) {
+                input.readInt();
+                int version = input.readInt();
+                if (version != 1 && version != 2) throw new IOException("snapshot segment version");
+                int raw = positive(input.readInt(), RAW_LIMIT);
+                int manifestLength = positive(input.readInt(), bytes.length);
+                if (manifestLength > input.available()) throw new IOException("snapshot segment payload budget");
+                int manifestOffset = bytes.length - input.available();
+                HologramSnapshotCodec.Decoded header = HologramSnapshotCodec
+                    .measure(bytes, manifestOffset, manifestLength, raw, current);
+                if (header.rawBytes != raw) throw new IOException("snapshot manifest shape");
+                input.skipBytes(manifestLength);
+                long estimate = header.retainedEstimate;
+                long peak = manifestLength + estimate;
+                int cellCount = input.readInt(), count = input.readInt();
+                if (cellCount < 0 || count < 0
+                    || count > MAX_SEGMENTS
+                    || version == 1 && count != (cellCount + (long) PAGE_CELLS - 1) / PAGE_CELLS)
+                    throw new IOException("snapshot segment count");
+                for (int page = 0; page < count; page++) {
+                    if (!current.getAsBoolean())
+                        throw new java.util.concurrent.CancellationException("snapshot segment retired");
+                    byte[] hash = payload(input, 32);
+                    int segmentRaw = positive(input.readInt(), RAW_LIMIT - raw);
+                    raw += segmentRaw;
+                    int length = input.readInt();
+                    if (length < 0 || length > input.available()) throw new IOException("snapshot segment length");
+                    // This pass only proves infeasibility. A missing reference needs the normal decoder's
+                    // exact session once admission permits it; an incomplete lower bound cannot reject it.
+                    if (length == 0) return Math.max(estimate, peak);
+                    int offset = bytes.length - input.available();
+                    java.security.MessageDigest digest = HologramLibraryProtocol.digest();
+                    digest.update(bytes, offset, length);
+                    if (!Arrays.equals(hash, digest.digest())) throw new IOException("snapshot segment digest");
+                    HologramSnapshotCodec.Decoded measured = HologramSnapshotCodec
+                        .measure(bytes, offset, length, segmentRaw, current);
+                    if (measured.rawBytes != segmentRaw) throw new IOException("snapshot segment shape");
+                    peak = Math.max(peak, estimate + length + measured.retainedEstimate);
+                    estimate += measured.retainedEstimate;
+                    if (measured.compactRows && measured.cellCount >= 0)
+                        estimate += HologramSnapshotRows.projectionOverhead(measured.cellCount);
+                    input.skipBytes(length);
+                }
+                if (input.available() != 0) throw new IOException("snapshot segment trailing bytes");
+                if (version == 2) estimate += 16L * cellCount + 128;
+                return Math.max(estimate, peak);
             }
         }
 
@@ -190,7 +250,7 @@ public final class HologramSnapshotSegments {
                 int raw = positive(input.readInt(), RAW_LIMIT);
                 HologramSnapshotCodec.Decoded decoded;
                 try (Payload manifest = copiedPayload(input, positive(input.readInt(), bytes.length), owned)) {
-                    decoded = HologramSnapshotCodec.decodeMeasured(manifest.bytes, raw, 4L * raw, current, owned);
+                    decoded = decodePayload(manifest, raw, current, owned);
                 }
                 owner = new HologramSnapshotCodec.OwnedSnapshot(decoded.tag);
                 owner.add(decoded.lease, decoded.retainedEstimate);
@@ -220,6 +280,7 @@ public final class HologramSnapshotSegments {
                         throw new java.util.concurrent.CancellationException("snapshot segment retired");
                     byte[] hash = payload(input, 32);
                     String identity = hex(hash);
+                    int expected = version == 2 ? sizes[page] : Math.min(PAGE_CELLS, cellCount - page * PAGE_CELLS);
                     int segmentRaw = positive(input.readInt(), RAW_LIMIT - raw);
                     raw += segmentRaw;
                     int length = input.readInt();
@@ -237,19 +298,21 @@ public final class HologramSnapshotSegments {
                                     .digest(encoded.bytes)))
                                 throw new IOException("snapshot segment digest");
                             if (segment == null || segment.rawBytes != segmentRaw) {
-                                HologramSnapshotCodec.Decoded part = HologramSnapshotCodec
-                                    .decodeMeasured(encoded.bytes, segmentRaw, 4L * segmentRaw, current, owned);
+                                HologramSnapshotCodec.Decoded part = decodePayload(encoded, segmentRaw, current, owned);
+                                boolean compact = HologramSnapshotRows.isCompactPage(part.tag);
                                 if (part.rawBytes != segmentRaw || !part.tag.hasKey("cells", 9)
-                                    || part.tag.func_150296_c()
+                                    || !compact && part.tag.func_150296_c()
                                         .size() != 1) {
                                     if (part.lease != null) part.lease.close();
                                     throw new IOException("snapshot segment shape");
                                 }
-                                segment = new Segment(
-                                    part.tag.getTagList("cells", 10),
-                                    segmentRaw,
-                                    part.retainedEstimate,
-                                    part.lease);
+                                if (compact) try {
+                                    HologramSnapshotRows.validatePage(part.tag, expected);
+                                } catch (IOException invalid) {
+                                    if (part.lease != null) part.lease.close();
+                                    throw invalid;
+                                }
+                                segment = new Segment(part.tag, segmentRaw, part.retainedEstimate, part.lease);
                                 cached = cacheAllowed && segmentRaw <= CACHE_RAW_BYTES
                                     && part.retainedEstimate <= CACHE_RETAINED_BYTES;
                                 if (cached) {
@@ -269,27 +332,33 @@ public final class HologramSnapshotSegments {
                             }
                         }
                     }
-                    int expected = version == 2 ? sizes[page] : Math.min(PAGE_CELLS, cellCount - page * PAGE_CELLS);
                     if (segment.cells.tagCount() != expected) {
                         if (!cached) segment.close();
                         throw new IOException("snapshot segment cell count");
                     }
+                    long projectionOverhead = HologramSnapshotRows.isCompactPage(segment.root)
+                        ? HologramSnapshotRows.projectionOverhead(segment.root)
+                        : 0;
                     if (cached) {
                         if (owned && segment.lease == null)
                             segment.lease = admission("snapshot.segmentCache", segment.estimate).transfer();
                         HologramProcessGovernor.Lease projection = owned
-                            ? admission("snapshot.segmentProjection", segment.estimate)
+                            ? admission("snapshot.segmentProjection", segment.estimate + projectionOverhead)
                             : null;
-                        owner.add(projection, segment.estimate);
-                        for (int i = 0; i < expected; i++) cells.appendTag(
-                            segment.cells.getCompoundTagAt(i)
-                                .copy());
+                        owner.add(projection, segment.estimate + projectionOverhead);
                     } else {
                         // An uncached segment is already private; transfer it instead of allocating another full copy.
                         owner.add(segment.lease, segment.estimate);
                         segment.lease = null;
-                        for (int i = 0; i < expected; i++) cells.appendTag(segment.cells.getCompoundTagAt(i));
+                        if (projectionOverhead > 0) owner.add(
+                            owned ? admission("snapshot.segmentBindings", projectionOverhead) : null,
+                            projectionOverhead);
                     }
+                    NBTTagList projection = projectionOverhead > 0 ? HologramSnapshotRows.project(segment.root, cached)
+                        : segment.cells;
+                    for (int i = 0; i < expected; i++) cells.appendTag(
+                        cached && projectionOverhead == 0 ? projection.getCompoundTagAt(i)
+                            .copy() : projection.getCompoundTagAt(i));
                     retained.add(identity);
                 }
                 if (input.available() != 0) throw new IOException("snapshot segment trailing bytes");
@@ -359,13 +428,15 @@ public final class HologramSnapshotSegments {
 
     private static final class Segment {
 
+        final NBTTagCompound root;
         final NBTTagList cells;
         final int rawBytes;
         final long estimate;
         HologramProcessGovernor.Lease lease;
 
-        Segment(NBTTagList cells, int rawBytes, long estimate, HologramProcessGovernor.Lease lease) {
-            this.cells = cells;
+        Segment(NBTTagCompound root, int rawBytes, long estimate, HologramProcessGovernor.Lease lease) {
+            this.root = root;
+            cells = root.getTagList("cells", 10);
             this.rawBytes = rawBytes;
             this.estimate = estimate;
             this.lease = lease == null ? null : lease.transfer();
@@ -382,13 +453,23 @@ public final class HologramSnapshotSegments {
         HologramProcessGovernor.Lease lease = owned
             ? HologramProcessGovernor.tryRetain("snapshot.compressedCopy", length)
             : null;
-        if (owned && lease == null)
-            throw new HologramSnapshotCodec.BusyException("Snapshot copy-memory quota is busy; retry the current view");
+        if (owned && lease == null) throw new HologramSnapshotCodec.BusyException(
+            "Snapshot copy-memory quota is busy; retry the current view",
+            length);
         try {
             return new Payload(payload(input, length), lease);
         } catch (RuntimeException | IOException | Error failure) {
             if (lease != null) lease.close();
             throw failure;
+        }
+    }
+
+    private static HologramSnapshotCodec.Decoded decodePayload(Payload payload, int raw, BooleanSupplier current,
+        boolean owned) throws IOException {
+        try {
+            return HologramSnapshotCodec.decodeMeasured(payload.bytes, raw, 4L * raw, current, owned);
+        } catch (HologramSnapshotCodec.BusyException quota) {
+            throw Decoder.accumulatedQuota(payload.lease == null ? 0 : payload.bytes.length, quota);
         }
     }
 

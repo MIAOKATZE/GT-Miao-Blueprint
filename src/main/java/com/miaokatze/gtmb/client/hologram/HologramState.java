@@ -10,6 +10,7 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
 import com.miaokatze.gtmb.hologram.HologramBlueprintLimits;
+import com.miaokatze.gtmb.hologram.HologramSnapshotRows;
 
 /** Immutable client snapshot; all amounts and construction outcomes come from the server. */
 final class HologramState {
@@ -153,6 +154,7 @@ final class HologramState {
         private final HologramRegionCache.Builder regions = new HologramRegionCache.Builder();
         private final java.util.Map<String, List<Integer>> members = new java.util.LinkedHashMap<>();
         private final List<Material> materials = new ArrayList<>();
+        private final java.util.Map<NBTTagCompound, Cell> descriptors = new java.util.IdentityHashMap<>();
         private java.util.Iterator<java.util.Map.Entry<String, List<Integer>>> memberIterator;
         private int stage, cellPosition, materialPosition, memberPosition;
         private int minY, maxY, minWorldX, maxWorldX, minWorldY, maxWorldY, minWorldZ, maxWorldZ;
@@ -197,7 +199,12 @@ final class HologramState {
                     } catch (java.io.IOException invalid) {
                         throw new IllegalArgumentException(invalid.getMessage(), invalid);
                     }
-                    Cell cell = new Cell(cellPosition, row, displayRows);
+                    NBTTagCompound descriptor = HologramSnapshotRows.descriptor(row);
+                    Cell cell = descriptor == null ? new Cell(cellPosition, row, true)
+                        : new Cell(
+                            cellPosition,
+                            row,
+                            descriptors.computeIfAbsent(descriptor, key -> new Cell(0, key, true)));
                     if ((cellPosition & 255) == 0) pages.add(new Cell[Math.min(256, rows.tagCount() - cellPosition)]);
                     pages.get(cellPosition >> 8)[cellPosition & 255] = cell;
                     regions.add(cell);
@@ -794,6 +801,7 @@ final class HologramState {
         /** Display preparation owns its row tree, so publishing it needs no second NBT tree. */
         private Cell(int index, NBTTagCompound n, boolean owned) {
             raw = owned ? n : (NBTTagCompound) n.copy();
+            n = HologramSnapshotRows.resolve(raw);
             hintIcons = new String[6];
             candidates = new ArrayList<>();
             nativeModelPending = n.getInteger("nativeModelPending") & 3;
@@ -847,8 +855,8 @@ final class HologramState {
                 || !wantId.isEmpty() && !"minecraft:air".equals(wantId) && Block.getBlockFromName(wantId) == null;
             anchor = n.getBoolean("anchor");
             iconOnly = n.getBoolean("iconOnly");
-            actualStack = ItemStack.loadItemStackFromNBT(n.getCompoundTag("actualStack"));
-            targetStack = ItemStack.loadItemStackFromNBT(n.getCompoundTag("targetStack"));
+            actualStack = readCellStack(n.getCompoundTag("actualStack"));
+            targetStack = readCellStack(n.getCompoundTag("targetStack"));
             actualDisplay = owned ? n.getCompoundTag("actualDisplay")
                 : (NBTTagCompound) n.getCompoundTag("actualDisplay")
                     .copy();
@@ -861,8 +869,77 @@ final class HologramState {
             for (int i = 0; i < 6; i++) hintIcons[i] = i < icons.tagCount() ? icons.getStringTagAt(i) : "";
             NBTTagList list = n.getTagList("candidates", 10);
             for (int i = 0; i < list.tagCount(); i++) {
-                ItemStack stack = ItemStack.loadItemStackFromNBT(list.getCompoundTagAt(i));
+                ItemStack stack = readCellStack(list.getCompoundTagAt(i));
                 if (stack != null) candidates.add(stack);
+            }
+        }
+
+        private static ItemStack readCellStack(NBTTagCompound tag) {
+            ItemStack stack = ItemStack.loadItemStackFromNBT(tag);
+            // Vanilla readFromNBT aliases "tag". Mutable ItemStacks must not mutate a shared row palette.
+            if (stack != null && stack.hasTagCompound()) stack.setTagCompound(
+                (NBTTagCompound) stack.getTagCompound()
+                    .copy());
+            return stack;
+        }
+
+        /** A page descriptor resolves registry fields once; positions and mutable ItemStacks belong to each cell. */
+        private Cell(int index, NBTTagCompound row, Cell source) {
+            raw = row;
+            this.index = index;
+            int[] position = HologramSnapshotRows.position(row);
+            x = position[0];
+            y = position[1];
+            z = position[2];
+            dx = position[3];
+            dy = position[4];
+            dz = position[5];
+            meta = source.meta;
+            wantMeta = source.wantMeta;
+            chosenChoice = source.chosenChoice;
+            hatchFacing = source.hatchFacing;
+            actualFacing = source.actualFacing;
+            targetFacing = source.targetFacing;
+            id = source.id;
+            wantId = source.wantId;
+            status = source.status;
+            pinScope = source.pinScope;
+            role = source.role;
+            family = source.family;
+            renderKind = source.renderKind;
+            operation = source.operation;
+            exactIdentity = source.exactIdentity;
+            prompt = source.prompt;
+            structureId = source.structureId;
+            sourceMod = source.sourceMod;
+            sourceVersion = source.sourceVersion;
+            sourceClass = source.sourceClass;
+            sourceWarning = source.sourceWarning;
+            networkGroup = source.networkGroup;
+            specialHint = source.specialHint;
+            structureIds = source.structureIds;
+            anchor = source.anchor;
+            iconOnly = source.iconOnly;
+            excluded = source.excluded;
+            missingBlock = source.missingBlock;
+            sourceMissing = source.sourceMissing;
+            inScope = source.inScope;
+            candidateComplete = source.candidateComplete;
+            candidateBoundary = source.candidateBoundary;
+            actualStack = source.actualStack == null ? null : source.actualStack.copy();
+            targetStack = source.targetStack == null ? null : source.targetStack.copy();
+            actualDisplay = source.actualDisplay;
+            targetDisplay = source.targetDisplay;
+            nativeModelPending = source.nativeModelPending;
+            nativeModelId = source.nativeModelId;
+            modelSource = null;
+            hintIcons = source.hintIcons;
+            hintIndex = source.hintIndex;
+            hintTint = source.hintTint;
+            if (source.candidates.isEmpty()) candidates = Collections.emptyList();
+            else {
+                candidates = new ArrayList<>(source.candidates.size());
+                for (ItemStack candidate : source.candidates) candidates.add(candidate.copy());
             }
         }
 
@@ -940,7 +1017,7 @@ final class HologramState {
         }
 
         NBTTagCompound tag() {
-            return (NBTTagCompound) raw.copy();
+            return HologramSnapshotRows.export(raw);
         }
 
         boolean belongsToStructure(String id) {
