@@ -35,6 +35,7 @@ public final class HologramAuthorPortableCompilerRegression {
         unsupportedAndSealed();
         freshProcessing();
         captureSourceFrames();
+        crossDimensionSettlement();
     }
 
     private static void opaqueNoop() throws Exception {
@@ -566,6 +567,88 @@ public final class HologramAuthorPortableCompilerRegression {
                     targetDimension == 7,
                     relation.internal,
                     "capture dimension distinguishes internal hub from cross-dimension world endpoint");
+            }
+        }
+    }
+
+    private static void crossDimensionSettlement() throws Exception {
+        AuthorDocument.SourceFrame frame = AuthorDocument.SourceFrame.captured(7, 100, 64, 200);
+        for (int targetDimension : new int[] { 7, 8 }) {
+            for (String tendency : new String[] { "self", "share" }) {
+                for (boolean copied : new boolean[] { false, true }) {
+                    NBTTagCompound tile = new NBTTagCompound(), target = new NBTTagCompound();
+                    target.setInteger("x", 101);
+                    target.setInteger("y", 64);
+                    target.setInteger("z", 200);
+                    target.setInteger("dim", targetDimension);
+                    target.setString("type", "water");
+                    tile.setTag("gtsr.hubPos", target);
+                    JsonObject host = cell(0);
+                    host.addProperty("tileNbt", HologramBlueprintNbt.encodeCaptured(tile));
+                    AuthorEditor editor = new AuthorEditor(read(source(host, cell(1))).withSourceFrame(frame), 8);
+                    editor.select(Collections.singleton(2L));
+                    editor.move(5, 0, 0);
+                    if (copied) editor.copy(3, 0, 0);
+                    AuthorDocument document = editor.current();
+                    JsonObject before = document.sourceCopy();
+                    HologramBlueprintProcessing.Policy policy = policy();
+                    policy.tendency = tendency;
+                    if (targetDimension == 7 && copied) {
+                        try {
+                            HologramAuthorPortableCompiler.settle(document, policy.write());
+                            throw new AssertionError("same-dimension ambiguous endpoint was accepted");
+                        } catch (IOException expected) {
+                            SimpleAssert.that(
+                                expected.getMessage()
+                                    .contains("Ambiguous"),
+                                "same-dimension control rejects endpoint ambiguity, not an unrelated failure");
+                        }
+                    } else {
+                        JsonObject settled = HologramAuthorPortableCompiler.settle(document, policy.write());
+                        NBTTagCompound descriptor = relationAt(settled, 0);
+                        SimpleAssert.eq(
+                            targetDimension == 7,
+                            descriptor.getBoolean("internal"),
+                            "only same-dimension moved endpoints can become internal");
+                        if (targetDimension == 8) {
+                            NBTTagCompound payload = HologramBlueprintNbt.decode(
+                                settled.getAsJsonArray("cells")
+                                    .get(0)
+                                    .getAsJsonObject()
+                                    .get("tileNbt")
+                                    .getAsString());
+                            if ("self".equals(tendency)) {
+                                SimpleAssert.eq(
+                                    "absolute",
+                                    descriptor.getString("mode"),
+                                    "self preserves foreign endpoint as absolute despite unrelated local copies");
+                                SimpleAssert
+                                    .eq(8, descriptor.getInteger("targetDimension"), "foreign dimension remains exact");
+                                SimpleAssert
+                                    .eq(101, descriptor.getInteger("targetX"), "foreign target x remains exact");
+                                SimpleAssert.eq(64, descriptor.getInteger("targetY"), "foreign target y remains exact");
+                                SimpleAssert
+                                    .eq(200, descriptor.getInteger("targetZ"), "foreign target z remains exact");
+                                SimpleAssert.eq(
+                                    target,
+                                    payload.getCompoundTag("gtsr.hubPos"),
+                                    "self retains exact foreign native binding");
+                            } else {
+                                SimpleAssert.eq(
+                                    "clear",
+                                    descriptor.getString("mode"),
+                                    "share clears foreign binding instead of resolving unrelated local copies");
+                                SimpleAssert
+                                    .that(!payload.hasKey("gtsr.hubPos"), "share removes foreign native binding");
+                            }
+                        }
+                    }
+                    SimpleAssert.eq(
+                        before,
+                        document.sourceCopy(),
+                        "successful and rejected dimension-aware settlement leave authoritative source unchanged");
+                    SimpleAssert.eq(frame, document.sourceFrame(), "settlement leaves capture provenance unchanged");
+                }
             }
         }
     }

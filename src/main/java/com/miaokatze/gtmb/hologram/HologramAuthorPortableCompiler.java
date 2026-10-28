@@ -205,22 +205,26 @@ public final class HologramAuthorPortableCompiler {
                     List<HologramCoordinatePolicies.Relation> relations = HologramCoordinatePolicies
                         .inspect(single, dimension, originX, originY, originZ, facts);
                     for (HologramCoordinatePolicies.Relation relation : relations) {
-                        int targetX, targetY, targetZ;
-                        try {
-                            targetX = Math.subtractExact(relation.targetX, originX);
-                            targetY = Math.subtractExact(relation.targetY, originY);
-                            targetZ = Math.subtractExact(relation.targetZ, originZ);
-                        } catch (ArithmeticException overflow) {
-                            throw new IOException("Coordinate relation overflow", overflow);
-                        }
-                        // Absolute bindings deliberately keep their exact world endpoint; cleared bindings have
-                        // none. Neither may become ambiguous just because an old local endpoint was copied.
-                        Integer target = "clear".equals(relation.previousMode) ? null
-                            : "absolute".equals(relation.previousMode)
+                        Integer target = null;
+                        // Foreign-dimension native links cannot refer to any local endpoint, including an ambiguous
+                        // copied origin. Filter them before local coordinate conversion or endpoint lookup.
+                        boolean localDimension = relation.targetDimension == dimension
+                            || !HologramNativeHubData.adapter(relation.adapter);
+                        if (localDimension && !"clear".equals(relation.previousMode)) {
+                            int targetX, targetY, targetZ;
+                            try {
+                                targetX = Math.subtractExact(relation.targetX, originX);
+                                targetY = Math.subtractExact(relation.targetY, originY);
+                                targetZ = Math.subtractExact(relation.targetZ, originZ);
+                            } catch (ArithmeticException overflow) {
+                                throw new IOException("Coordinate relation overflow", overflow);
+                            }
+                            // Absolute bindings keep their exact world endpoint, not a copied payload origin.
+                            target = "absolute".equals(relation.previousMode)
                                 ? finalPositions.get(key(targetX, targetY, targetZ))
                                 : origins.target(targetX, targetY, targetZ, source);
-                        relation.internal = target != null && (relation.targetDimension == dimension
-                            || !HologramNativeHubData.adapter(relation.adapter));
+                        }
+                        relation.internal = target != null;
                         if (relation.internal && !"absolute".equals(relation.previousMode)
                             && !"clear".equals(relation.previousMode)) {
                             AuthorDocument.Cell endpoint = cells.get(target);
