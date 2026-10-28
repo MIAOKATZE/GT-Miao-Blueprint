@@ -40,14 +40,17 @@ public final class HologramAuthorProjectionSchedulerRegression {
     private static void successfulBatchKeepsResidentAccounting() throws IOException, ReflectiveOperationException {
         NBTTagCompound nativeData = new NBTTagCompound();
         nativeData.setString("marker", "prepared");
-        String payload = java.util.Base64.getEncoder().encodeToString(HologramSnapshotCodec.compress(nativeData));
+        String payload = java.util.Base64.getEncoder()
+            .encodeToString(HologramSnapshotCodec.compress(nativeData));
         try (HologramAuthorProjection projection = new HologramAuthorProjection(document(13, payload))) {
             request(projection, 12);
             projection.advance(() -> 0);
             SimpleAssert.eq(12, resolved(projection.view()), "successful preparations also exceed four per tick");
-            SimpleAssert.eq(12, ((java.util.Map<?, ?>) field("loaded").get(projection)).size(), "all successes are charged");
+            SimpleAssert
+                .eq(12, ((java.util.Map<?, ?>) field("loaded").get(projection)).size(), "all successes are charged");
             long charge = 8192 + 4L * HologramSnapshotCodec.retainedEstimate(nativeData);
-            SimpleAssert.eq(12 * charge, field("resident").getLong(projection), "resident accounting is exact per batch");
+            SimpleAssert
+                .eq(12 * charge, field("resident").getLong(projection), "resident accounting is exact per batch");
             for (int i = 0; i < 12; i++) SimpleAssert.eq(
                 nativeData,
                 projection.view().cells.get(i).targetDisplay.getCompoundTag("nativeTile"),
@@ -118,7 +121,10 @@ public final class HologramAuthorProjectionSchedulerRegression {
             SimpleAssert.eq(9, waiting.size(), "resumable demands are retained");
             SimpleAssert.eq(
                 projection.cellId(8),
-                waiting.keySet().iterator().next().longValue(),
+                waiting.keySet()
+                    .iterator()
+                    .next()
+                    .longValue(),
                 "only eight deferred entries rotate even when the clock does not advance");
         }
     }
@@ -131,12 +137,24 @@ public final class HologramAuthorProjectionSchedulerRegression {
             editor.select(Collections.singleton(projection.cellId(0)));
             projection.update(editor.move(1, 0, 0));
             projection.advance(() -> 0);
-            SimpleAssert.eq(true, projection.view().cells.get(0).modelPending(false), "edit retires old queued demand");
-            SimpleAssert.eq(false, projection.view().cells.get(1).modelPending(false), "unrelated demand survives edit");
+            SimpleAssert.eq(
+                true,
+                projection.view().cells.get(0)
+                    .modelPending(false),
+                "edit retires old queued demand");
+            SimpleAssert.eq(
+                false,
+                projection.view().cells.get(1)
+                    .modelPending(false),
+                "unrelated demand survives edit");
             projection.request(before, before.cells.get(0));
             projection.advance(() -> 0);
             SimpleAssert.eq(1, projection.view().cells.get(0).x, "old view demand prepares current source coordinates");
-            SimpleAssert.eq(false, projection.view().cells.get(0).modelPending(false), "current revision is resolved");
+            SimpleAssert.eq(
+                false,
+                projection.view().cells.get(0)
+                    .modelPending(false),
+                "current revision is resolved");
         }
     }
 

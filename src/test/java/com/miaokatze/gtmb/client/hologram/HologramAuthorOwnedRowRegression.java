@@ -37,28 +37,45 @@ public final class HologramAuthorOwnedRowRegression {
         Field raw = HologramState.Cell.class.getDeclaredField("raw");
         raw.setAccessible(true);
         SimpleAssert.that(raw.get(owned) == row, "owned publication transfers the existing row tree");
-        SimpleAssert.that(owned.targetDisplay == row.getCompoundTag("targetDisplay"), "owned display is not copied again");
+        SimpleAssert
+            .that(owned.targetDisplay == row.getCompoundTag("targetDisplay"), "owned display is not copied again");
         SimpleAssert.eq(expected, owned.tag(), "ownership transfer preserves every row field");
 
         NBTTagCompound exported = owned.tag();
-        exported.getCompoundTag("targetDisplay").getCompoundTag("nativeTile").getIntArray("pixels")[0] = 99;
-        exported.getCompoundTag("actualDisplay").getCompoundTag("nativeTile").setString("marker", "export-mutated");
-        exported.getCompoundTag("targetStack").getCompoundTag("tag").setString("marker", "export-mutated");
+        exported.getCompoundTag("targetDisplay")
+            .getCompoundTag("nativeTile")
+            .getIntArray("pixels")[0] = 99;
+        exported.getCompoundTag("actualDisplay")
+            .getCompoundTag("nativeTile")
+            .setString("marker", "export-mutated");
+        exported.getCompoundTag("targetStack")
+            .getCompoundTag("tag")
+            .setString("marker", "export-mutated");
         SimpleAssert.eq(expected, owned.tag(), "exported compound and array mutations cannot alter owned display data");
 
         SimpleAssert.that(owned.actualStack != owned.targetStack, "actual and target stacks are separate objects");
         SimpleAssert.that(
             owned.actualStack.getTagCompound() != owned.targetStack.getTagCompound(),
             "actual and target mutable stack tags are not shared");
-        owned.actualStack.getTagCompound().setString("marker", "actual-mutated");
-        SimpleAssert.eq("stack", owned.targetStack.getTagCompound().getString("marker"), "actual cannot mutate target");
-        owned.targetStack.getTagCompound().setString("marker", "target-mutated");
+        owned.actualStack.getTagCompound()
+            .setString("marker", "actual-mutated");
+        SimpleAssert.eq(
+            "stack",
+            owned.targetStack.getTagCompound()
+                .getString("marker"),
+            "actual cannot mutate target");
+        owned.targetStack.getTagCompound()
+            .setString("marker", "target-mutated");
         SimpleAssert.eq(expected, owned.tag(), "mutable stacks cannot change the authoritative display row");
 
         NBTTagCompound callerRow = row();
         HologramState.Cell defensive = new HologramState.Cell(0, callerRow);
-        callerRow.getCompoundTag("targetDisplay").getCompoundTag("nativeTile").getIntArray("pixels")[0] = 123;
-        callerRow.getCompoundTag("targetStack").getCompoundTag("tag").setString("marker", "caller-mutated");
+        callerRow.getCompoundTag("targetDisplay")
+            .getCompoundTag("nativeTile")
+            .getIntArray("pixels")[0] = 123;
+        callerRow.getCompoundTag("targetStack")
+            .getCompoundTag("tag")
+            .setString("marker", "caller-mutated");
         SimpleAssert.eq(expected, defensive.tag(), "ordinary constructor still defends against caller mutation");
     }
 
@@ -68,8 +85,10 @@ public final class HologramAuthorOwnedRowRegression {
         tile.setIntArray("pixels", new int[] { 1, 2, 3 });
         NBTTagCompound item = new NBTTagCompound();
         item.setString("marker", "item-source");
-        String tilePayload = Base64.getEncoder().encodeToString(HologramSnapshotCodec.compress(tile));
-        String itemPayload = Base64.getEncoder().encodeToString(HologramSnapshotCodec.compress(item));
+        String tilePayload = Base64.getEncoder()
+            .encodeToString(HologramSnapshotCodec.compress(tile));
+        String itemPayload = Base64.getEncoder()
+            .encodeToString(HologramSnapshotCodec.compress(item));
         JsonObject source = new JsonObject();
         source.addProperty("schema", 2);
         JsonArray cells = new JsonArray();
@@ -94,8 +113,10 @@ public final class HologramAuthorOwnedRowRegression {
             projection.advance(() -> 0);
             HologramState.Cell first = projection.view().cells.get(0), second = projection.view().cells.get(1);
             SimpleAssert.eq("", first.sourceWarning, "fixture reaches successful native completion");
-            SimpleAssert.eq(tile, first.targetDisplay.getCompoundTag("nativeTile"), "native output retains exact tile payload");
-            SimpleAssert.that(first.actualStack != null && first.targetStack != null, "native item fixture was decoded");
+            SimpleAssert
+                .eq(tile, first.targetDisplay.getCompoundTag("nativeTile"), "native output retains exact tile payload");
+            SimpleAssert
+                .that(first.actualStack != null && first.targetStack != null, "native item fixture was decoded");
             SimpleAssert.that(
                 first.targetDisplay.getCompoundTag("nativeTile") != second.targetDisplay.getCompoundTag("nativeTile"),
                 "different cells do not share mutable decoded payload trees");
@@ -104,20 +125,36 @@ public final class HologramAuthorOwnedRowRegression {
             SimpleAssert.that(
                 first.targetDisplay == ((NBTTagCompound) raw.get(first)).getCompoundTag("targetDisplay"),
                 "projection uses owned-row publication rather than the defensive constructor");
-            first.actualStack.getTagCompound().setString("marker", "actual-mutated");
-            first.targetStack.getTagCompound().setString("marker", "target-mutated");
-            SimpleAssert.eq("item-source", second.targetStack.getTagCompound().getString("marker"), "stack edits stay per cell");
+            first.actualStack.getTagCompound()
+                .setString("marker", "actual-mutated");
+            first.targetStack.getTagCompound()
+                .setString("marker", "target-mutated");
             SimpleAssert.eq(
                 "item-source",
-                first.tag().getCompoundTag("targetStack").getCompoundTag("tag").getString("marker"),
+                second.targetStack.getTagCompound()
+                    .getString("marker"),
+                "stack edits stay per cell");
+            SimpleAssert.eq(
+                "item-source",
+                first.tag()
+                    .getCompoundTag("targetStack")
+                    .getCompoundTag("tag")
+                    .getString("marker"),
                 "display-row stack payload remains immutable");
             NBTTagCompound exported = first.tag();
-            exported.getCompoundTag("actualDisplay").getCompoundTag("nativeTile").getIntArray("pixels")[0] = 77;
-            SimpleAssert.eq(tile, first.targetDisplay.getCompoundTag("nativeTile"), "export does not alias display payload");
+            exported.getCompoundTag("actualDisplay")
+                .getCompoundTag("nativeTile")
+                .getIntArray("pixels")[0] = 77;
+            SimpleAssert
+                .eq(tile, first.targetDisplay.getCompoundTag("nativeTile"), "export does not alias display payload");
             SimpleAssert.that(
                 Arrays.equals(before, AuthorDocumentIO.writeDraft(document, AuthorDocumentIO.Limits.defaults())),
                 "native preparation and consumer mutation cannot alter source, IDs, origins or obligations");
-            SimpleAssert.eq(tilePayload, document.cell(projection.cellId(0)).tileNbt(), "source encoded NBT stays opaque and exact");
+            SimpleAssert.eq(
+                tilePayload,
+                document.cell(projection.cellId(0))
+                    .tileNbt(),
+                "source encoded NBT stays opaque and exact");
         }
     }
 

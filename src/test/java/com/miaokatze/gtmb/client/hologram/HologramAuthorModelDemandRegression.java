@@ -30,8 +30,7 @@ public final class HologramAuthorModelDemandRegression {
         }
     }
 
-    private static void rejectedNeighborIsRetriedAfterReaderLoaded()
-        throws IOException, ReflectiveOperationException {
+    private static void rejectedNeighborIsRetriedAfterReaderLoaded() throws IOException, ReflectiveOperationException {
         try (HologramAuthorProjection projection = new HologramAuthorProjection(document())) {
             HologramState state = projection.view();
             HologramState.Cell reader = state.cells.get(0), neighbor = state.cells.get(513);
@@ -46,15 +45,29 @@ public final class HologramAuthorModelDemandRegression {
             state = projection.view();
             SimpleAssert.eq(0, queued(projection).size(), "unrelated demand has drained");
             SimpleAssert.that(state.cells.get(0) == reader, "reader remains cached and unchanged");
-            SimpleAssert.eq(true, state.cells.get(513).modelPending(false), "dropped neighbor remains pending");
+            SimpleAssert.eq(
+                true,
+                state.cells.get(513)
+                    .modelPending(false),
+                "dropped neighbor remains pending");
             HologramSnapshotModelsClient.requestVisible(state, reader, false);
             SimpleAssert.eq(0, queued(projection).size(), "old per-frame reader-only retry cannot recover neighbor");
 
             HologramRenderer.retryAuthorModelDemands(state, 1, index -> reader, 0, false, 1, () -> 0);
-            SimpleAssert.eq(true, queued(projection).contains(neighbor.nativeModelId), "readiness retry restores neighbor demand");
+            SimpleAssert.eq(
+                true,
+                queued(projection).contains(neighbor.nativeModelId),
+                "readiness retry restores neighbor demand");
             projection.advance(() -> 0);
-            SimpleAssert.eq(false, projection.view().cells.get(513).modelPending(false), "restored demand reaches terminal result");
-            SimpleAssert.eq(true, HologramSnapshotModelsClient.ready(projection.view(), reader, false), "no stranded pending neighbor");
+            SimpleAssert.eq(
+                false,
+                projection.view().cells.get(513)
+                    .modelPending(false),
+                "restored demand reaches terminal result");
+            SimpleAssert.eq(
+                true,
+                HologramSnapshotModelsClient.ready(projection.view(), reader, false),
+                "no stranded pending neighbor");
         }
     }
 
@@ -76,12 +89,19 @@ public final class HologramAuthorModelDemandRegression {
             }, cursor, false, 1, () -> 1);
             SimpleAssert.eq(16, seen[0], "deadline yield resumes where prior batch stopped");
             SimpleAssert.eq(17, cursor, "only one indivisible neighborhood proceeds at an exhausted deadline");
-            cursor = HologramRenderer.retryAuthorModelDemands(null, 100, index -> {
-                throw new AssertionError("non-author contexts must not be read");
-            }, cursor, false, 1, () -> 0);
+            cursor = HologramRenderer.retryAuthorModelDemands(
+                null,
+                100,
+                index -> { throw new AssertionError("non-author contexts must not be read"); },
+                cursor,
+                false,
+                1,
+                () -> 0);
             SimpleAssert.eq(17, cursor, "absent owner cannot schedule local demand");
-            SimpleAssert.eq(17, HologramRenderer.retryAuthorModelDemands(state, 0, index -> reader,
-                cursor, false, 1, () -> 0), "empty viewport does not advance cursor");
+            SimpleAssert.eq(
+                17,
+                HologramRenderer.retryAuthorModelDemands(state, 0, index -> reader, cursor, false, 1, () -> 0),
+                "empty viewport does not advance cursor");
         }
     }
 
