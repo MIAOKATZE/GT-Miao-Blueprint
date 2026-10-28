@@ -1280,12 +1280,16 @@ final class HologramUiLibrary {
 
     private void setLocalName(String name) {
         presetNameField.setMaxStringLength(Math.max(240, name.length()));
-        if (!presetNameField.getText().equals(name)) presetNameField.setText(name);
+        if (!presetNameField.getText()
+            .equals(name)) presetNameField.setText(name);
     }
 
     /** An absent/empty draft field is not a request to replace the source title. */
     static String authorSaveName(String entered, String currentTitle) {
-        if (entered == null || entered.equals(currentTitle) || entered.trim().isEmpty()) return currentTitle;
+        if (entered == null || entered.equals(currentTitle)
+            || entered.trim()
+                .isEmpty())
+            return currentTitle;
         return entered.trim();
     }
 
@@ -2232,24 +2236,29 @@ final class HologramUiLibrary {
 
     /** Follow canonical rename/undo without overwriting an in-progress user-entered name. */
     void syncLocalName(HologramState before, HologramState next) {
-        if (presetNameField == null || before == null || next == null || !before.session.equals(next.session)
-            || !before.data.getBoolean("localAuthor") || !next.data.getBoolean("localAuthor")) return;
+        if (presetNameField == null || before == null
+            || next == null
+            || !before.session.equals(next.session)
+            || !before.data.getBoolean("localAuthor")
+            || !next.data.getBoolean("localAuthor")) return;
         String previous = HologramDraftNameMemory.canonicalName(before.data);
         String current = HologramDraftNameMemory.canonicalName(next.data);
-        if (!previous.equals(current) && presetNameField.getText().equals(previous)) setLocalName(current);
+        if (!previous.equals(current) && presetNameField.getText()
+            .equals(previous)) setLocalName(current);
     }
 
     void initializeFields() {
+        String canonical = HologramDraftNameMemory.canonicalName(ui.session.state().data);
+        UiMemory memory = HologramUiMemory.UI_MEMORY()
+            .get(ui.session.state().session);
+        String name = memory == null ? canonical : memory.draftName.restore(ui.session.state().data);
         ui.library.presetNameField(
             new HologramMuiTextField(ui.host.parent(), 457, 78, HologramScreenLayout.COMPACT_PANEL_WIDTH - 10, 16));
         ui.library.presetNameField()
-            .setMaxStringLength(ui.session.isLocalAuthor() ? Math.max(240, ui.session.author().document().title().length()) : 240);
-        if (ui.session.state().data.getBoolean("virtual")) ui.library.presetNameField()
-            .setText(ui.session.state().data.getString("virtualPresetName"));
-        UiMemory memory = HologramUiMemory.UI_MEMORY()
-            .get(ui.session.state().session);
-        if (memory != null) ui.library.presetNameField()
-            .setText(memory.draftName.restore(ui.session.state().data));
+            .setMaxStringLength(
+                ui.session.isLocalAuthor() ? Math.max(240, Math.max(canonical.length(), name.length())) : 240);
+        ui.library.presetNameField()
+            .setText(name);
     }
 
     void tickStatus() {
