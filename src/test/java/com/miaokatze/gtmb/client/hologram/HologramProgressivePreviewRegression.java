@@ -283,9 +283,9 @@ public final class HologramProgressivePreviewRegression {
             "preparation stops at the deterministic shared deadline rather than counting a fixed page");
         advance.invoke(preparation, Integer.MIN_VALUE, 0, false, Long.MAX_VALUE, available);
         SimpleAssert.eq(
-            300,
+            304,
             field(type, "completed").getInt(preparation),
-            "the first full region hint is presented before native detail callbacks");
+            "deadline yields retain four cheap cells in the other region before first-region presentation");
         SimpleAssert.eq(
             0,
             field(type, "detailedCompleted").getInt(preparation),

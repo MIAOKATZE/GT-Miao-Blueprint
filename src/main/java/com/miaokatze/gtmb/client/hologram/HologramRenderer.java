@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -56,6 +57,7 @@ final class HologramRenderer {
     private static final Set<Coordinate> occluders = new HashSet<>();
     private static final Map<HologramRegionCache.Key, PreviewRegion> previewRegions = new LinkedHashMap<>();
     private static final long PREVIEW_BUILD_NANOS = 2_000_000L;
+    private static final int PREVIEW_REGION_SLICE = 1024;
     private static PreviewPreparation previewPreparation;
     private static boolean projectionPending;
     private static int modelDemandCursor, modelDependencyCursor;
@@ -317,9 +319,8 @@ final class HologramRenderer {
         int unresolved = 0;
         for (PreviewRegion region : previewRegions.values())
             if (region.complete) unresolved += region.unresolved + region.budgetLimited;
-        PreviewTask active = previewPreparation.task;
-        if (active != null && active.refining && active.detail != null)
-            unresolved += active.detail.unresolved + active.detail.budgetLimited;
+        for (PreviewTask pending : previewPreparation.pending.values()) if (pending.refining && pending.detail != null)
+            unresolved += pending.detail.unresolved + pending.detail.budgetLimited;
         return Math.max(0, previewPreparation.detailedCompleted - unresolved);
     }
 
@@ -458,15 +459,7 @@ final class HologramRenderer {
                 view,
                 currentView,
                 Math.min(projectionDeadline, System.nanoTime() + PREVIEW_BUILD_NANOS / 2));
-            int prepared = previewPreparation.completed;
-            // Reproject at geometrically growing milestones. Rebuilding every accumulated face after each
-            // time slice would turn a linear preparation into quadratic work on large library previews.
-            if (prepared > previewPreparation.published
-                && (previewPreparation.published == 0 || prepared >= 2L * previewPreparation.published
-                    || prepared == 2L * state.cells.size())) {
-                previewPreparation.published = prepared;
-                previewState = null;
-            }
+            if (previewPreparation.publishProgress()) previewState = null;
         }
         if (previewState != state || !key.equals(previewKey) || projectionPending) {
             List<Face> faces = new ArrayList<>();
@@ -1179,9 +1172,10 @@ final class HologramRenderer {
 
         HologramState state;
         final Map<HologramRegionCache.Key, PreviewTask> pending = new LinkedHashMap<>();
+        final Set<HologramRegionCache.Key> cheapPending = new LinkedHashSet<>();
         PreviewTask task;
         int completed, published, detailedCompleted;
-        boolean firstHintsPresented;
+        boolean firstHintsPresented, allHintsPresented;
 
         PreviewPreparation(HologramState state) {
             this.state = state;
@@ -1196,6 +1190,7 @@ final class HologramRenderer {
                 } else {
                     previewRegions.remove(entry.getKey());
                     pending.put(entry.getKey(), new PreviewTask(entry.getKey(), entry.getValue()));
+                    cheapPending.add(entry.getKey());
                 }
             }
         }
@@ -1205,6 +1200,7 @@ final class HologramRenderer {
             state = next;
             for (HologramRegionCache.Key key : dirty) {
                 PreviewTask old = pending.remove(key);
+                cheapPending.remove(key);
                 if (old != null) {
                     completed -= old.cell + (old.refining ? old.cells.size() : 0);
                     if (old.refining) detailedCompleted -= old.cell;
@@ -1217,9 +1213,13 @@ final class HologramRenderer {
                     }
                 }
                 List<HologramState.Cell> cells = next.regions.regions.get(key);
-                if (cells != null) pending.put(key, new PreviewTask(key, cells));
+                if (cells != null) {
+                    pending.put(key, new PreviewTask(key, cells));
+                    cheapPending.add(key);
+                }
             }
             published = Math.min(published, completed);
+            if (!dirty.isEmpty()) allHintsPresented = false;
         }
 
         void advance(int layer, int view, boolean current) {
@@ -1231,25 +1231,11 @@ final class HologramRenderer {
         }
 
         void advance(int layer, int view, boolean current, long deadline, java.util.function.LongSupplier clock) {
-            int work = 0;
-            if (task != null && !previewRegionVisible(state, task.key)) task = null;
+            int work = 0, slice = 0;
             while (!pending.isEmpty() && (work == 0 || clock.getAsLong() < deadline)) {
-                if (task == null) task = nextTask();
-                if (task.cell == task.cells.size()) {
-                    if (!task.refining) {
-                        task.region.hintsComplete = true;
-                        task.refining = true;
-                        task.cell = 0;
-                        task.detail = new PreviewRegion();
-                        // Preserve the first cheap visual feedback; later regions consume the shared frame deadline.
-                        if (!firstHintsPresented) {
-                            firstHintsPresented = true;
-                            break;
-                        }
-                        continue;
-                    }
-                    completeTask();
-                    continue;
+                if (task == null) {
+                    task = nextTask();
+                    slice = 0;
                 }
                 if (task.region == null) {
                     task.region = new PreviewRegion();
@@ -1262,17 +1248,67 @@ final class HologramRenderer {
                 completed++;
                 if (task.refining) detailedCompleted++;
                 work++;
+                slice++;
+                if (task.cell == task.cells.size()) {
+                    if (task.refining) completeTask();
+                    else {
+                        cheapPending.remove(task.key);
+                        task.region.hintsComplete = true;
+                        task.refining = true;
+                        task.cell = 0;
+                        task.detail = new PreviewRegion();
+                        rotateTask();
+                        // Keep the existing first cheap feedback boundary, never enter detail ahead of hints.
+                        if (!firstHintsPresented) {
+                            firstHintsPresented = true;
+                            break;
+                        }
+                    }
+                } else if (slice >= PREVIEW_REGION_SLICE) rotateTask();
             }
-            if (task != null && task.refining && task.cell == task.cells.size()) completeTask();
+            // A deadline is a yield, not ownership of the next frame. Keep the exact partial cursor at the tail.
+            rotateTask();
         }
 
         private PreviewTask nextTask() {
-            PreviewTask first = null;
-            for (PreviewTask candidate : pending.values()) {
-                if (first == null) first = candidate;
-                if (previewRegionVisible(state, candidate.key)) return candidate;
+            // Include every source region, not just the currently cached or clipped subset. Native work cannot
+            // hold up cheap coverage elsewhere; FIFO also avoids permanent offscreen starvation after a pan.
+            // A separate cheap FIFO avoids scanning every detailed task on each selection (quadratic for
+            // sparse blueprints), including when a single dirty region re-enters cheap preparation.
+            if (!cheapPending.isEmpty()) return pending.get(
+                cheapPending.iterator()
+                    .next());
+            return pending.values()
+                .iterator()
+                .next();
+        }
+
+        private void rotateTask() {
+            if (task == null) return;
+            pending.remove(task.key);
+            pending.put(task.key, task);
+            if (!task.refining) {
+                cheapPending.remove(task.key);
+                cheapPending.add(task.key);
             }
-            return first;
+            task = null;
+        }
+
+        boolean hintsReady() {
+            return completed - detailedCompleted == state.cells.size();
+        }
+
+        boolean publishProgress() {
+            // Geometric milestones avoid quadratic reprojection, but the last cheap pass must be visible even
+            // when it lands between milestones. This is not a native-ready or current-camera-ready assertion.
+            boolean allHints = hintsReady();
+            if (allHints && !allHintsPresented || completed > published
+                && (published == 0 || completed >= 2L * published || completed == 2L * state.cells.size())) {
+                if (allHints) allHintsPresented = true;
+                published = completed;
+                return true;
+            }
+            return false;
         }
 
         private void completeTask() {
