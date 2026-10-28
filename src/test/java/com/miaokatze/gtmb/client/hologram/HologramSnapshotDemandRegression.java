@@ -106,7 +106,9 @@ public final class HologramSnapshotDemandRegression {
             NBTTagCompound busy = reply(pendingId(), 1);
             busy.setString("detailError", "busy");
             HologramSnapshotDetailsClient.receive(busy, closed::incrementAndGet, 0);
-            check(!HologramSnapshotDetailsClient.complete(data, "resourceReview"), "busy details never certify a complete report");
+            check(
+                !HologramSnapshotDetailsClient.complete(data, "resourceReview"),
+                "busy details never certify a complete report");
             HologramSnapshotDetailsClient.list(data, "resourceReview", 10, 0, 1);
             Map<?, ?> pending = (Map<?, ?>) field(HologramSnapshotDetailsClient.class, "pending").get(null);
             check(pending.isEmpty(), "busy details preserve a quiet retry window");

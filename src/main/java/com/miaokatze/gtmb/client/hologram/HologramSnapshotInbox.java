@@ -367,7 +367,8 @@ final class HologramSnapshotInbox<T> implements AutoCloseable {
                 Decoded<T> decoded = decoder.decode(entry.bytes, () -> current(decoding));
                 long limit = com.miaokatze.gtmb.hologram.HologramProcessGovernor.retainedByteLimit();
                 long inputBytes = entry.reservation instanceof com.miaokatze.gtmb.hologram.HologramSnapshotAssembly.Complete
-                    ? entry.cost : 0;
+                    ? entry.cost
+                    : 0;
                 if (decoded.preparationBytes > limit - decoded.retainedBytes - inputBytes) {
                     result = new Result<>(
                         decoded.value,
@@ -398,9 +399,10 @@ final class HologramSnapshotInbox<T> implements AutoCloseable {
                 // Quota contention is not a terminal decode failure. Keep the exact compressed ACK and its
                 // reservation at the FIFO head; a single-player server may still own the shared byte budget.
                 long inputBytes = entry.reservation instanceof com.miaokatze.gtmb.hologram.HologramSnapshotAssembly.Complete
-                    ? entry.cost : 0;
-                if (busy.requestedBytes > com.miaokatze.gtmb.hologram.HologramProcessGovernor.retainedByteLimit()
-                    - inputBytes) {
+                    ? entry.cost
+                    : 0;
+                if (busy.requestedBytes
+                    > com.miaokatze.gtmb.hologram.HologramProcessGovernor.retainedByteLimit() - inputBytes) {
                     result = new Result<>(null, new AdmissionException(busy.getMessage()), entry.transportSequence);
                 } else {
                     result = null;

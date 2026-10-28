@@ -4,8 +4,8 @@ import java.io.IOException;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
@@ -27,6 +27,7 @@ public final class HologramSnapshotInboxRegression {
         explicitRootCloseFence();
         networkBackpressureAndControlReserve();
         ownerDisplayAdmission();
+        ownerOrdinaryRecovery();
         retiredActiveSlotRelease();
     }
 
@@ -381,14 +382,14 @@ public final class HologramSnapshotInboxRegression {
             inbox.offer(new byte[] { 2 }, 30, released::incrementAndGet, epoch, null);
             SimpleAssert.that(inbox.offerValue("control"), "control reserve remains bounded behind display results");
             waitForReady(inbox, 3);
-            SimpleAssert.eq(0, released.get(), "decoded results retain their physical receive credits until owner consumption");
-            SimpleAssert.that(
-                inbox.offer(new byte[] { 3 }, 31, released::incrementAndGet, epoch, ready -> {
-                    published.add(ready.transportSequence);
-                    ready.close();
-                }),
-                "an owner can make room by publishing an already decoded FIFO result without waiting");
-            SimpleAssert.eq(java.util.Collections.singletonList(29L), published, "only the oldest ready frame publishes");
+            SimpleAssert
+                .eq(0, released.get(), "decoded results retain their physical receive credits until owner consumption");
+            SimpleAssert.that(inbox.offer(new byte[] { 3 }, 31, released::incrementAndGet, epoch, ready -> {
+                published.add(ready.transportSequence);
+                ready.close();
+            }), "an owner can make room by publishing an already decoded FIFO result without waiting");
+            SimpleAssert
+                .eq(java.util.Collections.singletonList(29L), published, "only the oldest ready frame publishes");
             waitForReady(inbox, 3);
             HologramSnapshotInbox.Result<String> second = inbox.poll();
             SimpleAssert.eq(30L, second.transportSequence, "ready-owner admission retains the next exact receipt");
@@ -409,16 +410,20 @@ public final class HologramSnapshotInboxRegression {
             inbox.offer(new byte[] { 1 }, 41, released::incrementAndGet, epoch, null);
             waitFor(entered);
             SimpleAssert.that(
-                !inbox.offer(new byte[] { 2 }, 42, released::incrementAndGet, epoch, ready -> {
-                    throw new AssertionError("an undecoded head cannot publish");
-                }),
+                !inbox.offer(
+                    new byte[] { 2 },
+                    42,
+                    released::incrementAndGet,
+                    epoch,
+                    ready -> { throw new AssertionError("an undecoded head cannot publish"); }),
                 "an owner returns busy immediately when no ready result can free its bounded data slot");
             SimpleAssert.eq(4, released.get(), "a rejected optional frame releases its own ownership immediately");
             SimpleAssert.that(inbox.offerValue("control"), "optional saturation preserves the control reserve");
             SimpleAssert.that(
-                !inbox.offerValue("later control", epoch, ready -> {
-                    throw new AssertionError("an undecoded head cannot publish");
-                }),
+                !inbox.offerValue(
+                    "later control",
+                    epoch,
+                    ready -> { throw new AssertionError("an undecoded head cannot publish"); }),
                 "an owner control also returns immediately at the existing FIFO capacity");
             SimpleAssert.that(inbox.poll() == null, "optional rejection cannot drop or overtake an authoritative ACK");
             release.countDown();
@@ -431,6 +436,50 @@ public final class HologramSnapshotInboxRegression {
                 !inbox.offer(new byte[] { 3 }, 43, released::incrementAndGet, epoch, null),
                 "a stale optional frame cannot cross the epoch fence");
             SimpleAssert.eq(6, released.get(), "accepted and stale optional frames release once");
+        } finally {
+            release.countDown();
+        }
+    }
+
+    private static void ownerOrdinaryRecovery() {
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        AtomicInteger disposed = new AtomicInteger();
+        try (HologramSnapshotInbox<String> inbox = new HologramSnapshotInbox<>(4, 8, bytes -> {
+            entered.countDown();
+            waitFor(release);
+            return "authoritative";
+        }, 2)) {
+            long epoch = inbox.epoch();
+            SimpleAssert.that(
+                inbox.offer(new byte[] { 1 }, 61, disposed::incrementAndGet, epoch, null),
+                "first ordinary frame admitted");
+            waitFor(entered);
+            SimpleAssert.that(
+                inbox.offer(new byte[] { 2 }, 62, disposed::incrementAndGet, epoch, null),
+                "second ordinary frame admitted");
+            boolean accepted = inbox.offer(
+                new byte[] { 3 },
+                63,
+                disposed::incrementAndGet,
+                epoch,
+                result -> { throw new AssertionError("owner must not wait for an undecoded FIFO head"); });
+            SimpleAssert.that(!accepted, "third ordinary frame returns without waiting on its owner consumer");
+            SimpleAssert.eq(1, disposed.get(), "rejected ordinary frame returns its byte lease and credit once");
+            net.minecraft.nbt.NBTTagCompound recovery = HologramClient.snapshotIngressRecovery(63);
+            SimpleAssert.eq(
+                63L,
+                recovery.getLong("transportSequence"),
+                "headerless rejection retains exact frame identity for recovery");
+            SimpleAssert.that(
+                !recovery.hasKey("session"),
+                "initial baseline recovery does not borrow previous session identity");
+            release.countDown();
+            HologramSnapshotInbox.Result<String> first = inbox.awaitNext(), second = inbox.awaitNext();
+            SimpleAssert.eq(61L, first.transportSequence, "first authoritative ACK is not discarded for recovery");
+            SimpleAssert.eq(62L, second.transportSequence, "second authoritative ACK remains FIFO");
+            first.close();
+            second.close();
+            SimpleAssert.eq(3, disposed.get(), "all three reservations dispose exactly once");
         } finally {
             release.countDown();
         }
@@ -474,7 +523,8 @@ public final class HologramSnapshotInboxRegression {
             SimpleAssert.that(
                 inbox.offerValue("third", inbox.epoch(), ready -> consumed.add(ready.value)),
                 "an owner may consume ready legacy controls within the same bounded FIFO");
-            SimpleAssert.eq(java.util.Collections.singletonList("first"), consumed, "ready controls publish in FIFO order");
+            SimpleAssert
+                .eq(java.util.Collections.singletonList("first"), consumed, "ready controls publish in FIFO order");
             SimpleAssert.eq("second", inbox.poll().value, "the existing control remains before newly admitted work");
             SimpleAssert.eq("third", inbox.poll().value, "the new control is not reordered");
         }
@@ -490,7 +540,8 @@ public final class HologramSnapshotInboxRegression {
                     java.util.Deque<?> queue = (java.util.Deque<?>) entries.get(inbox);
                     int ready = 0;
                     for (Object entry : queue) {
-                        java.lang.reflect.Field result = entry.getClass().getDeclaredField("result");
+                        java.lang.reflect.Field result = entry.getClass()
+                            .getDeclaredField("result");
                         result.setAccessible(true);
                         if (result.get(entry) != null) ready++;
                     }

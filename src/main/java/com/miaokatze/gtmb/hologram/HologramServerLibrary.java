@@ -95,8 +95,7 @@ final class HologramServerLibrary {
                 peer.online = false;
                 trusted.retire(peer);
                 if (peer.preparation != null) {
-                    peer.preparation.valid = false;
-                    tasks.remove(peer.preparation);
+                    retirePreparation(peer.preparation);
                     peer.preparation = null;
                 }
                 if (!HologramLibraryFacade.failActivation(player, request, "Server library connection changed; retry"))
@@ -159,14 +158,19 @@ final class HologramServerLibrary {
             }
         }
         if ("cancel".equals(request.getString("op")) || "cancelTransfer".equals(request.getString("op"))) {
+            // A token-only or wrong-session packet must not retire a separately bound author source.
+            if (peer.authorSourceRequest != null
+                && (request.getLong("clientTaskToken") == 0
+                    || request.getLong("clientTaskToken") == peer.authorSourceRequest.getLong("clientTaskToken"))
+                && !sameAuthorSource(peer.authorSourceRequest, request)) return;
+            if (sameAuthorSource(peer.authorSourceRequest, request)) peer.authorSourceRequest = null;
             // This runs on the server thread even while the sole IO pump is inside serialization.
             peer.retiredThrough = Math.max(peer.retiredThrough, request.getLong("clientTaskToken"));
             if (request.getLong("clientTaskToken") == 0 || request.getLong("clientTaskToken") == peer.contentToken)
                 retireContent(peer);
             if (peer.preparation != null && (request.getLong("clientTaskToken") == 0
                 || peer.preparation.token == request.getLong("clientTaskToken"))) {
-                peer.preparation.valid = false;
-                tasks.remove(peer.preparation);
+                retirePreparation(peer.preparation);
                 peer.preparation = null;
             }
             if (peer.download != null && (request.getLong("clientTaskToken") == 0
@@ -241,6 +245,9 @@ final class HologramServerLibrary {
                 retireContent(peer);
             }
             peer.admin = HologramLibraryFacade.isAdmin(peer.player);
+            if (peer.authorSourceRequest != null
+                && (!peer.online || !HologramLibraryService.sessionCurrent(peer.player, peer.authorSourceRequest)))
+                peer.authorSourceRequest = null;
             if (peer.contentValid && !contentOwnerCurrent(peer)) {
                 long token = peer.contentToken;
                 peer.retiredThrough = Math.max(peer.retiredThrough, token);
@@ -259,8 +266,7 @@ final class HologramServerLibrary {
                 && !HologramLibraryService.saveCurrent(peer.player, upload.request)) upload.valid = false;
             if (peer.preparation != null
                 && (!peer.online || !HologramLibraryService.draftCurrent(peer.player, peer.preparationRequest))) {
-                peer.preparation.valid = false;
-                tasks.remove(peer.preparation);
+                retirePreparation(peer.preparation);
                 peer.preparation = null;
             }
             Download download = peer.download;
@@ -1290,13 +1296,55 @@ final class HologramServerLibrary {
         return HologramDraftEncoding.encode(blueprint, (done, total) -> {});
     }
 
+    synchronized void reserveAuthorSource(EntityPlayerMP player, NBTTagCompound request) throws IOException {
+        checkAvailable();
+        UUID owner = HologramLibraryFacade.actorId(player);
+        Peer peer = peers.get(owner);
+        if (peer != null && peer.player != player) throw new IOException("Blueprint connection changed");
+        if (peer == null) {
+            if (peers.size() >= MAX_PEERS) throw new IOException("Blueprint peer queue full");
+            peer = new Peer(player);
+            peers.put(owner, peer);
+        }
+        if (!peer.online || request.getLong("clientTaskToken") <= peer.retiredThrough
+            || !HologramLibraryService.sessionCurrent(player, request))
+            throw new IOException("Author source request was retired");
+        if (peer.authorSourceRequest != null
+            && request.getLong("clientTaskToken") < peer.authorSourceRequest.getLong("clientTaskToken"))
+            throw new IOException("Older author source task");
+        if (peer.pendingDraft != null || peer.download != null) throw new IOException("A download is already active");
+        if (peer.preparation != null) {
+            retirePreparation(peer.preparation);
+            peer.preparation = null;
+        }
+        peer.authorSourceRequest = (NBTTagCompound) request.copy();
+    }
+
+    synchronized void releaseAuthorSource(EntityPlayerMP player, String session, long revision, long task) {
+        Peer peer = peers.get(HologramLibraryFacade.actorId(player));
+        if (peer == null || peer.player != player || peer.authorSourceRequest == null) return;
+        NBTTagCompound identity = peer.authorSourceRequest;
+        if (session.equals(identity.getString("session")) && revision == identity.getLong("planRevision")
+            && task == identity.getLong("clientTaskToken")) peer.authorSourceRequest = null;
+    }
+
+    static boolean sameAuthorSource(NBTTagCompound expected, NBTTagCompound request) {
+        return expected != null && request != null
+            && request.hasKey("planRevision", 4)
+            && expected.getString("session")
+                .equals(request.getString("session"))
+            && expected.getLong("planRevision") == request.getLong("planRevision")
+            && expected.getLong("clientTaskToken") == request.getLong("clientTaskToken");
+    }
+
     synchronized boolean draftTaskCurrent(EntityPlayerMP player, NBTTagCompound request) {
         Peer peer = peers.get(HologramLibraryFacade.actorId(player));
         long token = request.getLong("clientTaskToken");
         return !closed && peer != null
             && peer.player == player
             && peer.online
-            && (token == 0 || token > peer.retiredThrough);
+            && (token == 0 || token > peer.retiredThrough)
+            && (!"authorSource".equals(request.getString("op")) || sameAuthorSource(peer.authorSourceRequest, request));
     }
 
     synchronized void draft(EntityPlayerMP player, NBTTagCompound request, byte[] bytes, String name)
@@ -1332,6 +1380,22 @@ final class HologramServerLibrary {
     }
 
     void prepareDraft(EntityPlayerMP player, NBTTagCompound request, HologramPresets.Preset preset) throws IOException {
+        prepareDetachedDraft(player, request, HologramPresets.copy(preset), null);
+    }
+
+    void prepareAuthorSource(EntityPlayerMP player, NBTTagCompound request, HologramSourceTransfer.OwnedSource source)
+        throws IOException {
+        try {
+            if (!"authorSource".equals(request.getString("op"))) throw new IOException("Invalid source purpose");
+            prepareDetachedDraft(player, request, source.take(), source::close);
+        } catch (IOException | RuntimeException failure) {
+            source.close();
+            throw failure;
+        }
+    }
+
+    private void prepareDetachedDraft(EntityPlayerMP player, NBTTagCompound request, HologramPresets.Preset detached,
+        Runnable release) throws IOException {
         checkAvailable();
         synchronized (this) {
             UUID owner = HologramLibraryFacade.actorId(player);
@@ -1342,7 +1406,6 @@ final class HologramServerLibrary {
                 peers.put(owner, new Peer(player));
             }
         }
-        HologramPresets.Preset detached = HologramPresets.copy(preset);
         long epoch = runtimeEpoch;
         NBTTagCompound identity = (NBTTagCompound) request.copy();
         HologramSession session = HologramWorkspace.find(player.getUniqueID());
@@ -1351,12 +1414,12 @@ final class HologramServerLibrary {
             throw new IOException("Blueprint preparation source changed");
         identity.setLong("uiSequence", session.uiSequence);
         final Preparation preparation = new Preparation(identity.getLong("clientTaskToken"));
+        preparation.release = release;
         synchronized (this) {
             Peer peer = peers.get(HologramLibraryFacade.actorId(player));
             if (!draftTaskCurrent(player, identity)) throw new IOException("Blueprint preparation was cancelled");
             if (peer.preparation != null) {
-                peer.preparation.valid = false;
-                tasks.remove(peer.preparation);
+                retirePreparation(peer.preparation);
             }
             peer.preparation = preparation;
             peer.preparationRequest = identity;
@@ -1365,7 +1428,7 @@ final class HologramServerLibrary {
             long[] lastProgress = { Long.MIN_VALUE };
             long[] advancedAt = { System.nanoTime() };
             try {
-                byte[] encoded = HologramDraftEncoding.encode(detached, new HologramDraftEncoding.Progress() {
+                HologramDraftEncoding.Progress progress = new HologramDraftEncoding.Progress() {
 
                     @Override
                     public void checkpoint() throws IOException {
@@ -1394,7 +1457,10 @@ final class HologramServerLibrary {
                         progress.setString("unit", "rows");
                         HologramNetwork.sendLibraryReply(player, progress);
                     }
-                });
+                };
+                byte[] encoded = "authorSource".equals(identity.getString("op"))
+                    ? HologramBlueprintCompactCodec.encode(detached, progress)
+                    : HologramDraftEncoding.encode(detached, progress);
                 if (preparation.valid && epoch == runtimeEpoch && !closed) {
                     if (!identity.getString("saveReceipt")
                         .isEmpty()) {
@@ -1431,6 +1497,7 @@ final class HologramServerLibrary {
                 if (peer != null && peer.preparation == preparation) peer.preparation = null;
             }
             preparation.valid = false;
+            preparation.close();
             throw new IOException("Server library worker is busy; retry");
         }
     }
@@ -1451,7 +1518,7 @@ final class HologramServerLibrary {
             peer.online = false;
             retireContent(peer);
             peer.pendingDraft = null;
-            if (peer.preparation != null) peer.preparation.valid = false;
+            if (peer.preparation != null) retirePreparation(peer.preparation);
             if (peer.upload != null) peer.upload.valid = false;
             if (peer.download != null) peer.download.valid = false;
         }
@@ -1483,7 +1550,8 @@ final class HologramServerLibrary {
                     && (request.getLong("clientTaskToken") == 0
                         || request.getLong("clientTaskToken") > peer.retiredThrough)),
             request.getLong("clientTaskToken"));
-        if ("exportDraft".equals(request.getString("op"))) peer.download.boundRequest = (NBTTagCompound) request.copy();
+        if ("exportDraft".equals(request.getString("op")) || "authorSource".equals(request.getString("op")))
+            peer.download.boundRequest = (NBTTagCompound) request.copy();
         downloadBytes += bytes.length;
         activeDownloads++;
         NBTTagCompound begin = HologramLibraryProtocol.reply("downloadBegin");
@@ -1495,7 +1563,10 @@ final class HologramServerLibrary {
         begin.setInteger("decodedTotal", bytes.length);
         begin.setString("id", id);
         begin.setString("name", name == null ? "" : name);
-        begin.setString("purpose", "exportDraft".equals(request.getString("op")) ? "draft" : "public");
+        begin.setString(
+            "purpose",
+            "authorSource".equals(request.getString("op")) ? "authorSource"
+                : "exportDraft".equals(request.getString("op")) ? "draft" : "public");
         begin.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
         if ("preview".equals(request.getString("op")) || "previewMaterials".equals(request.getString("op"))) {
             begin.setBoolean("materialsOnly", "previewMaterials".equals(request.getString("op")));
@@ -1655,6 +1726,8 @@ final class HologramServerLibrary {
     private void clearDownload(Peer peer) {
         if (peer.download == null) return;
         downloadBytes -= peer.download.payload.decodedTotal;
+        if (peer.download.boundRequest != null && "authorSource".equals(peer.download.boundRequest.getString("op"))
+            && sameAuthorSource(peer.authorSourceRequest, peer.download.boundRequest)) peer.authorSourceRequest = null;
         activeDownloads--;
         peer.download = null;
         downloadBudget.cancel(peer.owner);
@@ -1662,6 +1735,9 @@ final class HologramServerLibrary {
 
     void stop() {
         closed = true;
+        synchronized (this) {
+            for (Peer peer : peers.values()) if (peer.preparation != null) retirePreparation(peer.preparation);
+        }
         trusted.clear();
         worker.execute(() -> {
             List<Peer> copy;
@@ -1733,6 +1809,7 @@ final class HologramServerLibrary {
         long contentToken;
         volatile boolean contentValid;
         Preparation preparation;
+        NBTTagCompound authorSourceRequest;
         NBTTagCompound preparationRequest;
 
         Peer(EntityPlayerMP player) {
@@ -1743,20 +1820,35 @@ final class HologramServerLibrary {
         }
     }
 
+    private void retirePreparation(Preparation preparation) {
+        preparation.valid = false;
+        if (tasks.remove(preparation)) preparation.close();
+    }
+
     /** Queue entry and running capability are the same object, so retirement removes queued work too. */
     static final class Preparation implements Runnable {
 
         final long token;
         volatile boolean valid = true;
-        Runnable action;
+        Runnable action, release;
 
         Preparation(long token) {
             this.token = token;
         }
 
         public void run() {
-            if (valid && action != null) action.run();
+            try {
+                if (valid && action != null) action.run();
+            } finally {
+                close();
+            }
+        }
+
+        synchronized void close() {
             action = null;
+            Runnable cleanup = release;
+            release = null;
+            if (cleanup != null) cleanup.run();
         }
     }
 

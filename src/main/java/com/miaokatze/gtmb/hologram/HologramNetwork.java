@@ -34,6 +34,8 @@ public final class HologramNetwork {
 
     private static SimpleNetworkWrapper channel;
     private static volatile Consumer<NBTTagCompound> receiver;
+    private static volatile java.util.function.BiConsumer<NBTTagCompound, net.minecraft.network.NetworkManager> authorMaterialReceiver;
+    private static volatile java.util.function.BiConsumer<NBTTagCompound, net.minecraft.network.NetworkManager> transportReceiver;
     private static volatile java.util.function.BiConsumer<HologramSnapshotAssembly.Complete, Long> frameReceiver;
     private static volatile Consumer<NBTTagCompound> interactionSender;
     private static volatile Consumer<NBTTagCompound> libraryReceiver;
@@ -62,8 +64,9 @@ public final class HologramNetwork {
     private static final int MAX_BYTES = 1048576;
     private static final AtomicLong snapshotSequence = new AtomicLong();
     private static final Map<UUID, Outbox> outgoing = new LinkedHashMap<>();
-    private static final HologramLibrarySnapshotAssembly librarySnapshots = new HologramLibrarySnapshotAssembly(
-        HologramNetwork::snapshotInboxReleased);
+    private static final Object libraryTransportLock = new Object();
+    private static HologramLibrarySnapshotAssembly librarySnapshots = new HologramLibrarySnapshotAssembly();
+    private static net.minecraft.network.NetworkManager libraryConnection;
     private static int publicSnapshotCursor;
     private static final Map<UUID, TransportPeer> transportPeers = new java.util.concurrent.ConcurrentHashMap<>();
     private static final HologramTransportBudget transportBudget = new HologramTransportBudget(
@@ -140,10 +143,23 @@ public final class HologramNetwork {
             .register(new TransportTicks());
     }
 
+    public static void setAuthorMaterialCatalogReceiver(
+        java.util.function.BiConsumer<NBTTagCompound, net.minecraft.network.NetworkManager> value) {
+        authorMaterialReceiver = value;
+    }
+
+    static void sendAuthorMaterialCatalog(EntityPlayerMP player, NBTTagCompound result) {
+        if (channel == null || !progressConnected(player)) return;
+        NBTTagCompound envelope = new NBTTagCompound();
+        envelope.setTag("authorMaterialCatalog", result);
+        channel.sendTo(new State(envelope), player);
+    }
+
     public static void setClientReceiver(Consumer<NBTTagCompound> value) {
         receiver = value;
+        transportReceiver = null;
         frameReceiver = null;
-        librarySnapshots.reset();
+        resetLibrarySnapshots();
     }
 
     /** The built-in client takes ownership of the admitted complete frame without a second assembly/copy. */
@@ -152,9 +168,42 @@ public final class HologramNetwork {
         frameReceiver = value;
     }
 
+    /** Ordinary fragments carry the packet context's origin instead of inferring it after a reconnect. */
+    public static void setClientTransportReceiver(
+        java.util.function.BiConsumer<NBTTagCompound, net.minecraft.network.NetworkManager> value) {
+        transportReceiver = value;
+    }
+
+    static void receiveTransportFragment(NBTTagCompound envelope, net.minecraft.network.NetworkManager connection) {
+        java.util.function.BiConsumer<NBTTagCompound, net.minecraft.network.NetworkManager> transport = transportReceiver;
+        if (transport != null) transport.accept(envelope, connection);
+        else {
+            Consumer<NBTTagCompound> current = receiver;
+            if (current != null) current.accept(envelope);
+        }
+    }
+
     public static void clearLibraryClientTransport() {
-        librarySnapshots.reset();
+        resetLibrarySnapshots();
         HologramAttachmentUpload.clearClient();
+    }
+
+    private static void resetLibrarySnapshots() {
+        synchronized (libraryTransportLock) {
+            librarySnapshots.reset();
+            libraryConnection = null;
+        }
+    }
+
+    /** A completed frame keeps this assembler's original connection even after the next login. */
+    private static HologramLibrarySnapshotAssembly librarySnapshots(net.minecraft.network.NetworkManager connection) {
+        if (libraryConnection != connection) {
+            librarySnapshots.reset();
+            libraryConnection = connection;
+            librarySnapshots = new HologramLibrarySnapshotAssembly(
+                sequence -> snapshotInboxReleased(sequence, connection));
+        }
+        return librarySnapshots;
     }
 
     public static void setClientInteractionSender(Consumer<NBTTagCompound> value) {
@@ -185,11 +234,19 @@ public final class HologramNetwork {
     }
 
     private static void receiveAdmissionFailure(String scope, long sequence) {
+        receiveAdmissionFailure(
+            scope,
+            sequence,
+            "The shared snapshot byte budget is full; synchronize or retry the current view.");
+    }
+
+    private static void receiveAdmissionFailure(String scope, long sequence, String detail) {
         NBTTagCompound progress = new NBTTagCompound();
         progress.setString("scope", scope);
         progress.setString("phase", "transport.retry");
-        progress.setString("detail", "The shared snapshot byte budget is full; synchronize or retry the current view.");
+        progress.setString("detail", detail);
         progress.setLong("sequence", sequence);
+        progress.setLong("transportSequence", sequence);
         progress.setBoolean("complete", false);
         observeProgress(progress);
         com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG
@@ -223,6 +280,37 @@ public final class HologramNetwork {
         receipt.setBoolean("inboxConsumed", true);
         receipt.setLong("transportSequence", sequence);
         sendAction(receipt);
+    }
+
+    /** Never use sendToServer here: it resolves the current connection at disposal time. */
+    private static void snapshotInboxReleased(long sequence, net.minecraft.network.NetworkManager connection) {
+        if (sequence < 0 || channel == null || connection == null || !connection.isChannelOpen()) return;
+        NBTTagCompound receipt = new NBTTagCompound();
+        receipt.setString("op", "ackTransportSegments");
+        receipt.setBoolean("inboxConsumed", true);
+        receipt.setLong("transportSequence", sequence);
+        connection.scheduleOutboundPacket(channel.getPacketFrom(new Action(receipt)));
+    }
+
+    /** Only contention can recover unchanged bytes; a frame larger than either fixed limit cannot. */
+    public static boolean snapshotAdmissionCanRetry(long compressedBytes) {
+        return compressedBytes > 0 && compressedBytes <= HologramSnapshotAssembly.MAX_BYTES
+            && compressedBytes <= HologramProcessGovernor.retainedByteLimit();
+    }
+
+    /** Admission failure has no decoded session. Ask only the original sender to resolve its exact sent frame. */
+    public static boolean requestSnapshotAdmissionRecovery(net.minecraft.network.NetworkManager connection,
+        long sequence, long compressedBytes) {
+        if (sequence < 0 || !snapshotAdmissionCanRetry(compressedBytes)
+            || channel == null
+            || connection == null
+            || !connection.isChannelOpen()) return false;
+        NBTTagCompound recovery = new NBTTagCompound();
+        recovery.setString("op", "requestFullSnapshot");
+        recovery.setBoolean("recoverTransportSequence", true);
+        recovery.setLong("transportSequence", sequence);
+        connection.scheduleOutboundPacket(channel.getPacketFrom(new Action(recovery)));
+        return true;
     }
 
     static void clientActionFailure(NBTTagCompound action, String reason) {
@@ -1264,14 +1352,51 @@ public final class HologramNetwork {
         }
     }
 
+    /** Exact sent-frame correlation survives credit disposal, but never survives a connection. */
+    static final class SnapshotRecoveryWindow {
+
+        private final Map<Long, String> sent = new LinkedHashMap<>();
+        private String pending;
+        private long lastRecoveryTick = Long.MIN_VALUE;
+
+        void sent(long sequence, String session) {
+            if (sequence < 0 || session == null || session.isEmpty()) return;
+            if (sent.size() >= 64 && !sent.containsKey(sequence)) sent.remove(
+                sent.keySet()
+                    .iterator()
+                    .next());
+            sent.put(sequence, session);
+        }
+
+        boolean request(long sequence, String currentSession) {
+            String session = sent.remove(sequence);
+            if (session == null || !session.equals(currentSession)) return false;
+            pending = session;
+            return true;
+        }
+
+        boolean poll(String session, long tick) {
+            if (pending == null) return false;
+            if (!pending.equals(session)) {
+                pending = null;
+                return false;
+            }
+            if (lastRecoveryTick != Long.MIN_VALUE && tick - lastRecoveryTick < 20) return false;
+            pending = null;
+            lastRecoveryTick = tick;
+            return true;
+        }
+    }
+
     private static final class TransportPeer {
 
         volatile EntityPlayerMP player;
         final net.minecraft.network.NetworkManager connection;
         final HologramSnapshotSegments.Peer segments = new HologramSnapshotSegments.Peer();
         final InboxWindow inbox = new InboxWindow();
+        final SnapshotRecoveryWindow recovery = new SnapshotRecoveryWindow();
         String session = "";
-        boolean supportsSegments, supportsCompactRows;
+        boolean supportsSegments, supportsCompactRows, supportsAuthorDocuments;
 
         TransportPeer(EntityPlayerMP player) {
             this.player = player;
@@ -1287,6 +1412,15 @@ public final class HologramNetwork {
     static boolean compactSnapshotPeer(EntityPlayerMP player) {
         TransportPeer peer = player == null ? null : transportPeers.get(player.getUniqueID());
         return peer != null && peer.player == player && peer.supportsSegments && peer.supportsCompactRows;
+    }
+
+    static boolean localAuthorPeer(EntityPlayerMP player) {
+        if (player == null || player.getUniqueID() == null) return false;
+        TransportPeer peer = transportPeers.get(player.getUniqueID());
+        return peer != null && peer.player == player
+            && peer.supportsAuthorDocuments
+            && player.playerNetServerHandler != null
+            && peer.connection == player.playerNetServerHandler.netManager;
     }
 
     private static TransportPeer transportPeer(EntityPlayerMP player, String session) {
@@ -1366,6 +1500,19 @@ public final class HologramNetwork {
                 .removeIf(peer -> !progressConnected(peer.player));
             cutControlPeers.values()
                 .removeIf(player -> !progressConnected(player));
+            for (TransportPeer peer : transportPeers.values()) {
+                HologramSession owner = HologramWorkspace.find(peer.player.getUniqueID());
+                if (owner == null || owner.player != peer.player
+                    || owner.cancelled
+                    || peer.player.playerNetServerHandler.netManager != peer.connection) {
+                    peer.recovery.poll("", 0);
+                    continue;
+                }
+                if (peer.recovery.poll(owner.id, peer.player.worldObj.getTotalWorldTime())) {
+                    owner.localEdits.invalidate();
+                    HologramSnapshots.send(owner);
+                }
+            }
             transportBudget.begin(System.nanoTime());
             cutFirst = !cutFirst;
             rotate(outgoing);
@@ -1430,8 +1577,7 @@ public final class HologramNetwork {
                 }
                 int length = Math.min(DISPLAY_CHUNK_BYTES, row.output.bytes.length - row.offset);
                 TransportPeer peer = transportPeers.get(box.player.getUniqueID());
-                if (row.offset == 0 && peer != null && !peer.inbox.start(row.sequence))
-                    continue;
+                if (row.offset == 0 && peer != null && !peer.inbox.start(row.sequence)) continue;
                 if (!writable(box.player) || !transportBudget.tryAcquire(
                     box.player.getUniqueID(),
                     length + row.headerBytes.bytes.length + 24,
@@ -1574,6 +1720,7 @@ public final class HologramNetwork {
                             current.libraryHash,
                             Arrays.copyOfRange(current.bytes, current.offset, current.offset + length))))
                         continue;
+                    if (first.offset == 0) box.peer.recovery.sent(first.sequence, box.session);
                     first.index++;
                     first.offset += length;
                     if (first.offset == first.bytes.length) {
@@ -1620,6 +1767,7 @@ public final class HologramNetwork {
                         current.index,
                         Arrays.copyOfRange(current.bytes, current.offset, end))))
                     continue;
+                if (snapshot.offset == 0) box.peer.recovery.sent(snapshot.sequence, box.session);
                 snapshot.index++;
                 snapshot.offset = end;
                 if (end == snapshot.bytes.length) {
@@ -1698,6 +1846,33 @@ public final class HologramNetwork {
         }
     }
 
+    /** The handler and regression harness share the actual rejection/recovery boundary. No frame is queued here. */
+    static HologramSnapshotAssembly.Complete acceptLibrarySnapshot(net.minecraft.network.NetworkManager connection,
+        LibrarySnapshotFragment message) {
+        if (connection == null || !connection.isChannelOpen()) return null;
+        try {
+            synchronized (libraryTransportLock) {
+                return librarySnapshots(connection).acceptReserved(
+                    message.sequence,
+                    message.total,
+                    message.index,
+                    message.bytes,
+                    message.hash,
+                    System.nanoTime());
+            }
+        } catch (HologramSnapshotAssembly.AdmissionException full) {
+            boolean retryable = snapshotAdmissionCanRetry(message.total);
+            if (retryable) requestSnapshotAdmissionRecovery(connection, message.sequence, message.total);
+            receiveAdmissionFailure(
+                "snapshot",
+                message.sequence,
+                retryable
+                    ? "The shared snapshot byte budget is full; recovery requested. On an older server, reopen the view to retry."
+                    : "This snapshot exceeds the configured receive budget; reduce its size or increase that budget before retrying.");
+            return null;
+        }
+    }
+
     public static final class LibrarySnapshotHandler implements IMessageHandler<LibrarySnapshotFragment, IMessage> {
 
         public IMessage onMessage(LibrarySnapshotFragment message, MessageContext context) {
@@ -1708,19 +1883,10 @@ public final class HologramNetwork {
                 message.index,
                 message.bytes.length,
                 HologramLibraryProtocol.CHUNK_BYTES);
-            HologramSnapshotAssembly.Complete admitted;
-            try {
-                admitted = librarySnapshots.acceptReserved(
-                    message.sequence,
-                    message.total,
-                    message.index,
-                    message.bytes,
-                    message.hash,
-                    System.nanoTime());
-            } catch (HologramSnapshotAssembly.AdmissionException full) {
-                receiveAdmissionFailure("snapshot", message.sequence);
-                return null;
-            }
+            HologramSnapshotAssembly.Complete admitted = acceptLibrarySnapshot(
+                context.getClientHandler()
+                    .getNetworkManager(),
+                message);
             if (admitted == null) return null;
             java.util.function.BiConsumer<HologramSnapshotAssembly.Complete, Long> frames = frameReceiver;
             if (frames != null) {
@@ -1867,16 +2033,20 @@ public final class HologramNetwork {
                 msg.index,
                 msg.bytes.length,
                 HologramSnapshotAssembly.CHUNK_BYTES);
-            librarySnapshots.supersede(msg.sequence);
-            Consumer<NBTTagCompound> current = receiver;
-            if (current != null) {
+            net.minecraft.network.NetworkManager connection = ctx.getClientHandler()
+                .getNetworkManager();
+            synchronized (libraryTransportLock) {
+                if (!connection.isChannelOpen()) return null;
+                librarySnapshots(connection).supersede(msg.sequence);
+            }
+            if (receiver != null || transportReceiver != null) {
                 NBTTagCompound envelope = new NBTTagCompound();
                 envelope.setBoolean("transportFragment", true);
                 envelope.setLong("transportSequence", msg.sequence);
                 envelope.setInteger("transportTotal", msg.total);
                 envelope.setInteger("transportIndex", msg.index);
                 envelope.setByteArray("transportBytes", msg.bytes);
-                current.accept(envelope);
+                receiveTransportFragment(envelope, connection);
             }
             return null;
         }
@@ -1989,8 +2159,13 @@ public final class HologramNetwork {
             // Packet decompression is already bounded. Large index selections must not be rejected
             // because their textual representation exceeds an unrelated string budget.
             net.minecraft.world.World world = player.worldObj;
-            ServerTaskScheduler
-                .scheduleServerTask(() -> runQueuedAction(player, world, lease, () -> dispatch(player, msg.tag)));
+            net.minecraft.network.NetworkManager connection = ctx.getServerHandler().netManager;
+            ServerTaskScheduler.scheduleServerTask(
+                () -> runQueuedAction(
+                    player,
+                    world,
+                    lease,
+                    () -> { if (player.playerNetServerHandler.netManager == connection) dispatch(player, msg.tag); }));
             return null;
         }
     }
@@ -2011,12 +2186,27 @@ public final class HologramNetwork {
     }
 
     private static void dispatch(EntityPlayerMP player, NBTTagCompound tag) {
+        if (HologramAuthorMaterialCatalog.OPERATION.equals(tag.getString("op"))
+            || HologramAuthorMaterialCatalog.SETTINGS_OPERATION.equals(tag.getString("op"))) {
+            HologramAuthorMaterialCatalog.query(player, tag);
+            return;
+        }
         TransportPeer peer = transportPeers.get(player.getUniqueID());
         if (peer == null || peer.player != player) peer = transportPeer(player, "");
         if (tag.getInteger("clientSegmentProtocol") == HologramSnapshotSegments.VERSION
             && !"false".equals(System.getProperty("gtmb.segment.transport"))) peer.supportsSegments = true;
         if (peer.supportsSegments && tag.getInteger("clientSnapshotRows") == 1) peer.supportsCompactRows = true;
         if (tag.getInteger("clientSnapshotInbox") == 2) peer.inbox.enabled = true;
+        if (tag.getInteger("clientAuthorDocuments") == 1) peer.supportsAuthorDocuments = true;
+        if ("requestFullSnapshot".equals(tag.getString("op")) && tag.getBoolean("recoverTransportSequence")) {
+            HologramSession owner = HologramWorkspace.find(player.getUniqueID());
+            if (owner != null && owner.player == player
+                && !owner.cancelled
+                && peer.connection == player.playerNetServerHandler.netManager
+                && tag.hasKey("transportSequence", 4))
+                peer.recovery.request(tag.getLong("transportSequence"), owner.id);
+            return;
+        }
         if ("requestSnapshotModel".equals(tag.getString("op"))) {
             HologramSession owner = HologramWorkspace.find(player.getUniqueID());
             if (owner != null && owner.player == player
@@ -2109,6 +2299,14 @@ public final class HologramNetwork {
     public static final class ClientHandler implements IMessageHandler<State, IMessage> {
 
         public IMessage onMessage(State msg, MessageContext ctx) {
+            if (msg.tag.hasKey("authorMaterialCatalog", 10)) {
+                java.util.function.BiConsumer<NBTTagCompound, net.minecraft.network.NetworkManager> current = authorMaterialReceiver;
+                if (current != null && ctx != null) current.accept(
+                    msg.tag.getCompoundTag("authorMaterialCatalog"),
+                    ctx.getClientHandler()
+                        .getNetworkManager());
+                return null;
+            }
             if (msg.tag.hasKey("cutControl", 10)) {
                 observeCutCapabilities(msg.tag.getCompoundTag("cutControl"));
                 Consumer<NBTTagCompound> current = cutReceiver;
@@ -2120,7 +2318,12 @@ public final class HologramNetwork {
                 return null;
             }
             if (msg.tag.hasKey("progress", 10)) observeProgress(msg.tag.getCompoundTag("progress"));
-            if (msg.tag.getBoolean("cancelled") || msg.tag.getBoolean("transportError")) librarySnapshots.clear();
+            if (msg.tag.getBoolean("cancelled") || msg.tag.getBoolean("transportError")) {
+                synchronized (libraryTransportLock) {
+                    if (ctx != null && libraryConnection == ctx.getClientHandler()
+                        .getNetworkManager()) librarySnapshots.clear();
+                }
+            }
             Consumer<NBTTagCompound> current = receiver;
             if (current != null) current.accept(msg.tag);
             return null;

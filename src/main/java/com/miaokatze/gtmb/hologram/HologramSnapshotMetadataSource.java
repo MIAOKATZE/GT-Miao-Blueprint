@@ -307,7 +307,7 @@ final class HologramSnapshotMetadataSource {
     }
 
     /** Typed copies remain legal when the native bootstrap redirects reflective Field access. */
-    private static void copyScalars(HologramPresets.Preset source, HologramPresets.Preset target) {
+    static void copyScalars(HologramPresets.Preset source, HologramPresets.Preset target) {
         target.id = source.id;
         target.name = source.name;
         target.controllerType = source.controllerType;
@@ -335,7 +335,7 @@ final class HologramSnapshotMetadataSource {
         target.controllerFacing = source.controllerFacing;
     }
 
-    private static void copyScalars(HologramPresets.Cell source, HologramPresets.Cell target) {
+    static void copyScalars(HologramPresets.Cell source, HologramPresets.Cell target) {
         target.item = source.item;
         target.segmentCellId = source.segmentCellId;
         target.defaultItem = source.defaultItem;

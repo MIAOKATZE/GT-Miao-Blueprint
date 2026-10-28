@@ -106,8 +106,8 @@ public final class HologramSnapshotAssembly {
             this(bytes, lease, null, -1);
         }
 
-        Complete(byte[] bytes, HologramTransportMemory.Lease lease,
-            java.util.function.LongConsumer released, long sequence) {
+        Complete(byte[] bytes, HologramTransportMemory.Lease lease, java.util.function.LongConsumer released,
+            long sequence) {
             this.bytes = bytes;
             this.lease = lease;
             this.released = released;

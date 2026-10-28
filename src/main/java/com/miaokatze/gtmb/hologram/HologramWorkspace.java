@@ -28,6 +28,7 @@ final class HologramWorkspace {
         HologramSession previous = SESSIONS.get(player);
         if (previous != null) HologramEditorWorkspaceRegistry.remember(previous);
         if (previous != null && previous != session) {
+            HologramSourceTransfer.cancel(previous);
             previous.presentationTransition = null;
             HologramPresetActivation.cancel(previous, "蓝图加载已取消：工作区已切换");
             HologramDeferredPlanRefresh.cancel(previous);
@@ -112,6 +113,7 @@ final class HologramWorkspace {
         if (find(origin.player.getUniqueID()) != origin || !presentationAllowed(origin)
             || !origin.id.equals(transition.originId)
             || origin.uiSequence != transition.sequence) return false;
+        HologramSourceTransfer.cancel(origin);
         HologramPresetActivation.cancel(origin, "蓝图加载已取消：编辑来源已切换");
         HologramDeferredPlanRefresh.suspend(origin);
         origin.presentationTransition = null;
@@ -144,6 +146,7 @@ final class HologramWorkspace {
             || !presentationAllowed(target)
             || !presentationAllowed(transition.origin)) return null;
         HologramNetwork.retirePresentationState(target);
+        HologramSourceTransfer.cancel(target);
         HologramSnapshotPreparation.cancel(target);
         target.presentationTransition = null;
         HologramSession origin = transition.origin;
@@ -220,6 +223,7 @@ final class HologramWorkspace {
 
     /** A cached editor keeps its planning data but never reuses a retired network nonce. */
     static void activateAreaSession(HologramSession s) {
+        HologramSourceTransfer.cancel(s);
         HologramDeferredPlanRefresh.suspend(s);
         s.id = UUID.randomUUID()
             .toString();
@@ -232,6 +236,7 @@ final class HologramWorkspace {
         HologramEditorWorkspaceRegistry.clear();
         HologramNetwork.clearServerQueues();
         for (HologramSession s : SESSIONS.values()) {
+            HologramSourceTransfer.cancel(s);
             HologramPresetActivation.cancel(s, "蓝图加载已取消：工作区已关闭");
             HologramDeferredPlanRefresh.cancel(s);
             clearAreaSelection(s);
@@ -258,6 +263,7 @@ final class HologramWorkspace {
             area.cancelImportWork();
         }
         for (HologramSession s : all) {
+            HologramSourceTransfer.cancel(s);
             HologramPresetActivation.cancel(s, "蓝图加载已取消：工作区已关闭");
             HologramDeferredPlanRefresh.cancel(s);
             HologramSession.cancelCaptureRetry(s);

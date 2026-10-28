@@ -61,6 +61,7 @@ final class HologramSnapshotPreparation {
     }
 
     static void start(HologramSession s) {
+        if (HologramSnapshots.sendLocalAuthorSource(s)) return;
         Task previous = TASKS.get(s);
         if (previous != null && previous.valid()) return;
         if (previous != null) cancel(previous);

@@ -92,6 +92,7 @@ final class HologramWorkspaceScheduler {
         HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
         if (HologramPresetActivation.pending(s)) return HologramPresetActivation.canAdvance(s);
         if (HologramBuildPreparation.isPending(s)) return true;
+        if (HologramSourceTransfer.pending(s)) return true;
         if (area != null && area.importing) return canAdvanceImport(area) || HologramSnapshotPreparation.canAdvance(s);
         return s.voucherCoverageTask != null || s.attachmentTask != null && s.attachmentTask.ready()
             || s.localPlanPending && s.localPlanError.isEmpty()
@@ -99,6 +100,7 @@ final class HologramWorkspaceScheduler {
     }
 
     private static void continueSession(HologramSession s) {
+        if (HologramSourceTransfer.tick(s)) return;
         if (HologramPresetActivation.pending(s)) {
             HologramPresetActivation.tick(s);
             return;
@@ -124,6 +126,7 @@ final class HologramWorkspaceScheduler {
     }
 
     private static void tickSession(HologramSession s) {
+        if (HologramSourceTransfer.tick(s)) return;
         if (HologramPresetActivation.pending(s)) {
             HologramPresetActivation.tick(s);
             return;

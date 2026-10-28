@@ -154,8 +154,8 @@ public final class HologramClient {
             minecraft.func_152344_a(() -> {
                 if (world != minecraft.theWorld || connection != minecraft.getNetHandler()
                     || retiredSessions.contains(nbt.getString("session"))) return;
-                boolean retryIngress = pendingSnapshotFailures.get(nbt.getLong("transportSequence"))
-                    instanceof SnapshotIngressFullException;
+                boolean retryIngress = pendingSnapshotFailures
+                    .get(nbt.getLong("transportSequence")) instanceof SnapshotIngressFullException;
                 NBTTagCompound failedHeader = snapshotFailureHeader(nbt);
                 if (failedHeader != null) {
                     snapshotAdmissionFailure(failedHeader);
@@ -244,6 +244,7 @@ public final class HologramClient {
             });
         });
         HologramNetwork.setClientReceiver(HologramClient::enqueueReceived);
+        HologramNetwork.setClientTransportReceiver(HologramClient::enqueueReceived);
         HologramNetwork.setClientFrameReceiver(HologramClient::enqueueComplete);
         HologramNetwork.setClientInteractionSender(HologramClient::use);
         HologramClient listener = new HologramClient();
@@ -1656,7 +1657,12 @@ public final class HologramClient {
 
     /** Pure bounded ingestion runs on the network caller; it never awaits decoding on the client thread. */
     private static void enqueueReceived(NBTTagCompound nbt) {
+        enqueueReceived(nbt, null);
+    }
+
+    private static void enqueueReceived(NBTTagCompound nbt, net.minecraft.network.NetworkManager origin) {
         Minecraft mc = Minecraft.getMinecraft();
+        if (origin != null && !snapshotTransportOriginCurrent(origin, snapshotConnection(mc))) return;
         boolean owner = mc.func_152345_ab();
         if (owner) syncSnapshotWorld();
         if (nbt.getBoolean("detailOnly") || nbt.getBoolean("modelOnly")) {
@@ -1677,14 +1683,18 @@ public final class HologramClient {
             epoch = snapshotInbox.epoch();
             if (owner) {
                 if (!snapshotInbox.offerValue(nbt, epoch, HologramClient::installDecoded)
-                    && snapshotInbox.epoch() == epoch)
-                    rejectSnapshotIngress(-1, nbt);
+                    && snapshotInbox.epoch() == epoch) rejectSnapshotIngress(-1, nbt);
             } else snapshotInbox.putValue(nbt, epoch);
             return;
         }
+        long admissionEpoch = snapshotInbox.epoch();
+        Object admissionWorld = mc.theWorld;
+        net.minecraft.network.NetworkManager admissionConnection = origin == null ? snapshotConnection(mc) : origin;
         HologramSnapshotAssembly.Complete complete;
         try {
             synchronized (snapshotTransportLock) {
+                if (admissionEpoch != snapshotInbox.epoch()
+                    || origin != null && !snapshotTransportOriginCurrent(origin, snapshotConnection(mc))) return;
                 epoch = snapshotInbox.epoch();
                 HologramSnapshotAssembly target = nbt.getBoolean("transportDisplay") ? displayAssembly : assembly;
                 complete = target.acceptReserved(
@@ -1701,12 +1711,25 @@ public final class HologramClient {
                 enqueueReceived(header);
                 return;
             }
+            long rejectedSequence = nbt.getLong("transportSequence");
+            int rejectedBytes = nbt.getInteger("transportTotal");
             Minecraft.getMinecraft()
                 .func_152344_a(() -> {
+                    if (!snapshotAdmissionCurrent(
+                        admissionEpoch,
+                        snapshotInbox.epoch(),
+                        admissionWorld,
+                        mc.theWorld,
+                        admissionConnection,
+                        snapshotConnection(mc))) return;
+                    boolean retryable = HologramNetwork.snapshotAdmissionCanRetry(rejectedBytes);
+                    if (retryable) HologramNetwork
+                        .requestSnapshotAdmissionRecovery(admissionConnection, rejectedSequence, rejectedBytes);
                     decodeNotice(
-                        "decodeBusy",
-                        "The shared snapshot receive budget is full; requesting the current view again.");
-                    if (state != null) requestFullSnapshot(state.session);
+                        retryable ? "snapshotIngressRetry" : "snapshotAdmissionOversize",
+                        retryable
+                            ? "The shared snapshot receive budget is full; recovery requested. On an older server, reopen the view to retry."
+                            : "This snapshot exceeds the configured receive budget; reduce its size or increase that budget before retrying.");
                 });
             return;
         }
@@ -1758,15 +1781,52 @@ public final class HologramClient {
         if (header != null) {
             snapshotAdmissionFailure(header);
             requestFullSnapshot(header.getString("session"));
+        } else {
+            // The legacy frame may be the first baseline of a different session. Never borrow
+            // state.session: only the sending server can correlate an undecoded transport sequence.
+            NBTTagCompound recovery = snapshotIngressRecovery(sequence);
+            if (recovery != null) HologramNetwork.sendAction(recovery);
+            decodeNotice(
+                "snapshotIngressRetry",
+                "Snapshot receive window is full; recovery requested. On an older server, reopen the view to retry.");
         }
+    }
+
+    static NBTTagCompound snapshotIngressRecovery(long sequence) {
+        if (sequence < 0) return null;
+        NBTTagCompound recovery = new NBTTagCompound();
+        recovery.setString("op", "requestFullSnapshot");
+        recovery.setBoolean("recoverTransportSequence", true);
+        recovery.setLong("transportSequence", sequence);
+        return recovery;
+    }
+
+    static boolean snapshotAdmissionCurrent(long admittedEpoch, long currentEpoch, Object admittedWorld,
+        Object currentWorld, Object admittedConnection, Object currentConnection) {
+        return admittedEpoch == currentEpoch && admittedWorld != null
+            && admittedWorld == currentWorld
+            && admittedConnection != null
+            && admittedConnection == currentConnection;
+    }
+
+    static boolean snapshotTransportOriginCurrent(Object origin, Object currentConnection) {
+        return origin != null && origin == currentConnection;
+    }
+
+    private static net.minecraft.network.NetworkManager snapshotConnection(Minecraft mc) {
+        net.minecraft.client.network.NetHandlerPlayClient handler = mc.getNetHandler();
+        return handler == null ? null : handler.getNetworkManager();
     }
 
     private static HologramSnapshotAssembly snapshotAssembly(int chunkBytes) {
         Minecraft mc = Minecraft.getMinecraft();
         Object connection = mc.getNetHandler();
-        return new HologramSnapshotAssembly(chunkBytes, sequence -> {
-            if (connection != null && connection == mc.getNetHandler()) HologramNetwork.snapshotInboxReleased(sequence);
-        });
+        return new HologramSnapshotAssembly(
+            chunkBytes,
+            sequence -> {
+                if (connection != null && connection == mc.getNetHandler())
+                    HologramNetwork.snapshotInboxReleased(sequence);
+            });
     }
 
     static boolean presentationTransportFailed(HologramUiSession session, NBTTagCompound failure) {
