@@ -316,6 +316,7 @@ final class HologramBlockRender {
                 WORLD_PASS.setInt(null, pass);
                 ForgeHooksClient.setRenderPass(pass);
                 if (sourceReference && !block.canRenderInPass(pass)) continue;
+                if (adapter == HologramChiselNativeRender.INSTANCE && !block.canRenderInPass(pass)) continue;
                 if (aeCableContext != null && block.getClass() == appeng.block.networking.BlockCableBus.class
                     && !block.canRenderInPass(pass)) continue;
                 tess.startDrawingQuads();

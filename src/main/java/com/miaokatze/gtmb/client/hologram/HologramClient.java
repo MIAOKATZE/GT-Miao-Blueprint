@@ -2446,11 +2446,10 @@ public final class HologramClient {
         assembly.expire(System.nanoTime());
         displayAssembly.expire(System.nanoTime());
         syncSnapshotWorld();
-        // The read-only library viewport owns the native render snapshot while it is visible.
+        // The editor/library viewport owns the native render snapshot while it is visible.
         // Rendering the workspace behind it would swap that snapshot twice per frame and
         // restart its cooperative mesh preparation. Returning to the workspace restores it normally.
-        if (mc.currentScreen instanceof HologramScreen
-            && ((HologramScreen) mc.currentScreen).ui.library.browsePreviewActive()) return;
+        if (screenOwnsNativePreview(mc.currentScreen)) return;
         if (HologramCutClient.INSTANCE.render(event.partialTicks)) return;
         HologramState localPreview = HologramLocalPlacement.INSTANCE.display();
         if (localPreview != null) {
@@ -2496,5 +2495,11 @@ public final class HologramClient {
         if (state.distanceSquared(mc.thePlayer.posX, mc.thePlayer.posY, mc.thePlayer.posZ) > 4096
             && !(state.data.getBoolean("virtual") && state.data.getBoolean("moving"))) return;
         HologramRenderer.world(state, event.partialTicks);
+    }
+
+    static boolean screenOwnsNativePreview(net.minecraft.client.gui.GuiScreen screen) {
+        if (!(screen instanceof HologramScreen)) return false;
+        HologramUiModules ui = ((HologramScreen) screen).ui;
+        return ui.session.isLocalAuthor() || ui.library.browsePreviewActive();
     }
 }

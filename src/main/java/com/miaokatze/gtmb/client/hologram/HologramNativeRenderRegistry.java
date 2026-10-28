@@ -93,6 +93,7 @@ public final class HologramNativeRenderRegistry {
             || family.equals("appeng.block.networking.BlockCableBus"))
             && HologramAeNativeRender.INSTANCE.supports(block)) return HologramAeNativeRender.INSTANCE;
         for (Adapter adapter : ADAPTERS) if (adapter.supports(block)) return adapter;
+        if (HologramChiselNativeRender.INSTANCE.supports(block)) return HologramChiselNativeRender.INSTANCE;
         return null;
     }
 }

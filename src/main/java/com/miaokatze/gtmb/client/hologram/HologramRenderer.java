@@ -405,18 +405,7 @@ final class HologramRenderer {
         boolean budgeted = !HologramBlueprintPreview.cleanCapture();
         int mode = state.data.getInteger("mode");
         boolean currentView = view == 1 || mode == 2;
-        if (visibleState != state || visibleLayer != layer
-            || visibleView != view
-            || visibleMode != mode
-            || visibleEmptyCells != showEmptyCells) {
-            visibleState = state;
-            visibleLayer = layer;
-            visibleView = view;
-            visibleMode = mode;
-            visibleEmptyCells = showEmptyCells;
-            previewRegions.clear();
-            previewPreparation = null;
-        }
+        preparePreviewView(state, layer, view);
         if (boundsState != state) {
             boundsState = state;
             boundsX = boundsY = boundsZ = 0;
@@ -791,6 +780,23 @@ final class HologramRenderer {
         return cursor;
     }
 
+    /** Native snapshot ownership and view changes invalidate the cooperative region cursor together. */
+    static void preparePreviewView(HologramState state, int layer, int view) {
+        int mode = state.data.getInteger("mode");
+        if (visibleState != state || visibleLayer != layer
+            || visibleView != view
+            || visibleMode != mode
+            || visibleEmptyCells != showEmptyCells) {
+            visibleState = state;
+            visibleLayer = layer;
+            visibleView = view;
+            visibleMode = mode;
+            visibleEmptyCells = showEmptyCells;
+            previewRegions.clear();
+            previewPreparation = null;
+        }
+    }
+
     /** Native blocks and linked TE previews consume the exact camera used by face projection and picking. */
     private static void applyPreviewTransform(HologramState.Cell cell, double depthScale) {
         HologramEditorCameraFrame frame = projectedFrame;
@@ -1082,6 +1088,9 @@ final class HologramRenderer {
         }
         boolean empty = !c.anchor && !c.iconOnly && (current ? c.id : c.wantId).equals("minecraft:air");
         String role = roleLabel(c);
+        boolean chiselCube = HologramChiselNativeRender.opaqueCube(c, current);
+        // Audited solid CTM cubes need no native list when every face is hidden by another shown opaque voxel.
+        if (chiselCube && exposed == 0 && role.isEmpty() && c.prompt.isEmpty()) return;
         boolean nativeModel = !empty && HologramBlockRender.ready(c, current);
         if (!nativeModel && HologramBlockRender.deferred(c, current)) {
             result.unresolved++;
@@ -1089,7 +1098,7 @@ final class HologramRenderer {
             return;
         }
         HologramTextures.Material material = empty ? null : HologramTextures.material(c, current);
-        if (nativeModel || !empty && material.partial) exposed = 63;
+        if (nativeModel && !chiselCube || !empty && material.partial) exposed = 63;
         if (c.missingBlock) role = "缺失方块";
         else if (c.sourceMissing && c.anchor) role = "来源结构缺失";
         if (!nativeModel && !empty && role.isEmpty() && material.fallback) role = "材质缺失";
@@ -1924,6 +1933,7 @@ final class HologramRenderer {
         current = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
         if (cell.modelPending(current)) return false;
         Block block = cell.block(current);
+        if (HologramChiselNativeRender.opaqueCube(block)) return !cell.iconOnly;
         return HologramOcclusion.fullCube(
             block,
             HologramTextures.material(cell, current).partial,

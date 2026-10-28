@@ -42,6 +42,14 @@ public final class HologramLocalAuthorRegressionTest {
             com.miaokatze.gtmb.client.hologram.HologramAuthorProjectionSchedulerRegression::run);
         add(
             cases,
+            "author_preview_native_owner_and_regions",
+            com.miaokatze.gtmb.client.hologram.HologramAuthorPreviewOwnershipRegression::run);
+        add(
+            cases,
+            "author_plain_block_descriptor_budget",
+            com.miaokatze.gtmb.client.hologram.HologramAuthorPlainBlockRegression::run);
+        add(
+            cases,
             "author_owned_row_isolation",
             com.miaokatze.gtmb.client.hologram.HologramAuthorOwnedRowRegression::run);
         add(

@@ -5,6 +5,8 @@ import java.util.Collections;
 import java.util.List;
 
 import net.minecraft.block.Block;
+import net.minecraft.item.Item;
+import net.minecraft.item.ItemBlock;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
@@ -923,6 +925,7 @@ final class HologramState {
     static final class Cell {
 
         private final NBTTagCompound raw;
+        private final ItemStack localStack;
 
         final int index, x, y, z, dx, dy, dz, meta, wantMeta, chosenChoice, hatchFacing, actualFacing, targetFacing;
         final String id, wantId, status, pinScope, role, family, renderKind, operation, exactIdentity;
@@ -965,24 +968,53 @@ final class HologramState {
             anchor = false; // Saved template controllers are not protected physical-world anchors.
             iconOnly = sourceMissing = inScope = candidateComplete = false;
             excluded = source.excluded();
-            missingBlock = !wantId.isEmpty() && !"minecraft:air".equals(wantId)
-                && Block.getBlockFromName(wantId) == null;
+            Block block = Block.getBlockFromName(wantId);
+            missingBlock = !wantId.isEmpty() && !"minecraft:air".equals(wantId) && block == null;
             candidateBoundary = "Local source candidates have not been checked against native declarations";
-            actualStack = targetStack = null;
+            localStack = simpleLocalStack(source, block);
+            actualStack = localStack == null ? null : localStack.copy();
+            targetStack = localStack == null ? null : localStack.copy();
             actualDisplay = targetDisplay = new NBTTagCompound();
+            if (localStack != null) {
+                actualDisplay.setInteger("color", -1);
+                if (targetFacing >= 0) actualDisplay.setInteger("facing", targetFacing);
+            }
             // Local identities never leave the owner. Both views use the same source payload.
             nativeModelId = source.id();
-            nativeModelPending = source.tileNbt() != null && !source.tileNbt()
+            nativeModelPending = localStack == null && (source.tileNbt() != null && !source.tileNbt()
                 .isEmpty() || source.itemNbt() != null
                     && !source.itemNbt()
                         .isEmpty()
                 || source.item() != null && !source.item()
-                    .isEmpty() ? 3 : 0;
+                    .isEmpty()) ? 3 : 0;
             modelSource = null;
             hintIcons = new String[] { "", "", "", "", "", "" };
             hintIndex = -1;
             hintTint = new int[0];
             candidates = Collections.emptyList();
+        }
+
+        /** Plain block/item facts need no opaque NBT decode or per-cell native resident admission. */
+        private static ItemStack simpleLocalStack(com.miaokatze.gtmb.blueprint.editor.AuthorDocument.Cell source,
+            Block block) {
+            boolean chisel = HologramChiselNativeRender.selected(block);
+            if (block == null || block == net.minecraft.init.Blocks.air
+                || !chisel && (block.getRenderType() != 0 || !block.renderAsNormalBlock()
+                    || HologramNativeTiles.supported(block))
+                || block.hasTileEntity(source.metadata())
+                || source.tileNbt() != null && !source.tileNbt()
+                    .isEmpty()
+                || source.itemNbt() != null && !source.itemNbt()
+                    .isEmpty()
+                || source.item() == null
+                || source.item()
+                    .isEmpty())
+                return null;
+            Object item = Item.itemRegistry.getObject(source.item());
+            if (!(item instanceof ItemBlock) || item instanceof gregtech.common.blocks.ItemMachines
+                || Block.getBlockFromItem((Item) item) != block
+                || ((Item) item).getMetadata(source.damage()) != source.metadata()) return null;
+            return new ItemStack((Item) item, 1, source.damage());
         }
 
         Cell(int index, NBTTagCompound n) {
@@ -999,6 +1031,7 @@ final class HologramState {
 
         /** Display preparation owns its row tree, so publishing it needs no second NBT tree. */
         private Cell(int index, NBTTagCompound n, boolean owned) {
+            localStack = null;
             raw = owned ? n : (NBTTagCompound) n.copy();
             n = HologramSnapshotRows.resolve(raw);
             hintIcons = new String[6];
@@ -1084,6 +1117,7 @@ final class HologramState {
 
         /** A page descriptor resolves registry fields once; positions and mutable ItemStacks belong to each cell. */
         private Cell(int index, NBTTagCompound row, Cell source) {
+            localStack = source.localStack;
             raw = row;
             this.index = index;
             int[] position = HologramSnapshotRows.position(row);
@@ -1143,6 +1177,7 @@ final class HologramState {
         }
 
         private Cell(Cell source, NBTTagCompound actual, NBTTagCompound target, int mask) {
+            localStack = source.localStack;
             index = source.index;
             x = source.x;
             y = source.y;
@@ -1242,6 +1277,15 @@ final class HologramState {
             row.setTag("structureIds", ids);
             row.setLong("nativeModelId", nativeModelId);
             row.setInteger("nativeModelPending", nativeModelPending);
+            if (localStack != null) {
+                row.setTag("actualStack", localStack.writeToNBT(new NBTTagCompound()));
+                row.setTag("targetStack", localStack.writeToNBT(new NBTTagCompound()));
+                NBTTagCompound display = new NBTTagCompound();
+                display.setInteger("color", -1);
+                if (targetFacing >= 0) display.setInteger("facing", targetFacing);
+                row.setTag("actualDisplay", display);
+                row.setTag("targetDisplay", display.copy());
+            }
             return row;
         }
 
