@@ -22,8 +22,11 @@ public final class HologramTextBox {
     public byte[] bitmap = new byte[0];
     public int[] turns = new int[0];
 
+    // Opaque extension fields belong to the source, not to the editor widget.
+    private NBTTagCompound retainedSource;
+
     public NBTTagCompound write() {
-        NBTTagCompound tag = new NBTTagCompound();
+        NBTTagCompound tag = retainedSource == null ? new NBTTagCompound() : (NBTTagCompound) retainedSource.copy();
         tag.setString("id", id);
         tag.setString("text", text);
         tag.setString("font", font);
@@ -52,11 +55,17 @@ public final class HologramTextBox {
         tag.setBoolean("vertical", vertical);
         tag.setInteger("layoutVersion", layoutVersion);
         if (picture != null) tag.setTag("picture", picture.write());
+        else tag.removeTag("picture");
         return tag;
     }
 
     public static HologramTextBox read(NBTTagCompound tag) throws IOException {
         HologramTextBox result = new HologramTextBox();
+        result.retainedSource = (NBTTagCompound) tag.copy();
+        for (String key : new String[] { "id", "text", "font", "material", "metadata", "color", "width", "turns",
+            "height", "bitmap", "pixelX", "pixelY", "thickness", "x", "y", "z", "yaw", "pitch", "roll", "arc", "bend",
+            "twist", "shear", "bold", "underline", "vertical", "layoutVersion", "picture" })
+            result.retainedSource.removeTag(key);
         result.id = tag.getString("id");
         result.text = tag.getString("text");
         result.font = tag.getString("font");
@@ -100,7 +109,7 @@ public final class HologramTextBox {
                 || thickness < 1
                 || thickness > 64
                 || Math.abs((long) x) > 30000000
-                || Math.abs((long) y) > 256
+                || Math.abs((long) y) > 30000000
                 || Math.abs((long) z) > 30000000
                 || arc != 0
                 || bend != 0
@@ -133,7 +142,7 @@ public final class HologramTextBox {
             || thickness < 1
             || thickness > 16
             || Math.abs((long) x) > 30000000
-            || Math.abs((long) y) > 256
+            || Math.abs((long) y) > 30000000
             || Math.abs((long) z) > 30000000) throw new IOException("文字内容、像素大小、厚度、材质或栅格超出范围");
         for (double value : new double[] { yaw, pitch, roll, arc, bend, twist, shear })
             if (!Double.isFinite(value) || Math.abs(value) > 360) throw new IOException("文字形变参数超出范围");

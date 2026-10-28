@@ -36,8 +36,11 @@ public final class HologramPictureBox {
     public int brightness, contrast, saturation = 100, backgroundTolerance;
     public boolean keepAspect = true, removeBackground, dither;
 
+    // Opaque extension fields belong to the source, not to the editor widget.
+    private NBTTagCompound retainedSource;
+
     public NBTTagCompound write() {
-        NBTTagCompound tag = new NBTTagCompound();
+        NBTTagCompound tag = retainedSource == null ? new NBTTagCompound() : (NBTTagCompound) retainedSource.copy();
         tag.setString("filename", filename);
         tag.setInteger("originalWidth", originalWidth);
         tag.setInteger("originalHeight", originalHeight);
@@ -61,6 +64,10 @@ public final class HologramPictureBox {
 
     public static HologramPictureBox read(NBTTagCompound tag) throws IOException {
         HologramPictureBox result = new HologramPictureBox();
+        result.retainedSource = (NBTTagCompound) tag.copy();
+        for (String key : new String[] { "filename", "originalWidth", "originalHeight", "sourceWidth", "sourceHeight",
+            "source", "width", "height", "shortSide", "palette", "filter", "brightness", "contrast", "saturation",
+            "backgroundTolerance", "keepAspect", "removeBackground", "dither" }) result.retainedSource.removeTag(key);
         result.filename = tag.getString("filename");
         result.originalWidth = tag.getInteger("originalWidth");
         result.originalHeight = tag.getInteger("originalHeight");
