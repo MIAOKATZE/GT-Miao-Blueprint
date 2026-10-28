@@ -62,6 +62,7 @@ final class HologramLocalAuthorRuntime {
     }
 
     private long inspectorRevision = -1, inspectorCell = -1;
+    private int requestedInspectorPage;
     private final LinkedHashMap<Integer, NBTTagCompound> inspectorPages = new LinkedHashMap<Integer, NBTTagCompound>(
         16,
         .75f,
@@ -116,7 +117,8 @@ final class HologramLocalAuthorRuntime {
                 JsonObject converted = HologramLocalAuthorSemantics.upgradeLegacy(legacy);
                 if (root.has("blueprint")) root.add("blueprint", converted);
                 else root = converted;
-                source = AuthorDocumentIO.readExpanded(root, AuthorDocumentIO.Limits.defaults());
+                source = AuthorDocumentIO.readExpanded(root, AuthorDocumentIO.Limits.defaults())
+                    .withSourceFrame(source.sourceFrame());
             } catch (IOException | RuntimeException failure) {
                 migrationFailure = "旧模板转换未完成；原文档只读保留，仍可保存恢复草稿：" + failure.getMessage();
             }
@@ -135,6 +137,7 @@ final class HologramLocalAuthorRuntime {
         }
         if (!migrationFailure.isEmpty() && candidate.attached != null) candidate.attached.notice(migrationFailure);
         if (previous != null) {
+            HologramAuthorReviewClient.cancel(previous);
             previous.retired = true;
             previous.attached = null;
             previous.attachmentActions.close();
@@ -259,6 +262,7 @@ final class HologramLocalAuthorRuntime {
     }
 
     String diagnostic() {
+        if (HologramAuthorReviewClient.busy(this)) return "正在服务器核对扩展；可取消，原稿仍在本地";
         if (attachmentActions.busy()) return "正在生成文字或图片，可取消后继续编辑";
         if (structureActions.busy()) return "正在读取或重建原生结构声明，原稿保持不变；可取消后继续编辑";
         return document().diagnostic();
@@ -310,6 +314,7 @@ final class HologramLocalAuthorRuntime {
 
     void detach(HologramUiSession session) {
         if (attached == session) {
+            HologramAuthorReviewClient.cancel(this);
             attachmentActions.cancel();
             structureActions.cancel();
             refreshMetadata();
@@ -380,6 +385,54 @@ final class HologramLocalAuthorRuntime {
             .equals(name)) changed(editor.rename(name));
     }
 
+    /** Preflight only on explicit drawer open/scroll, never from a render-driven list getter. */
+    void requireInspectorPages(int index, int offset) throws IOException {
+        requestedInspectorPage = offset / 64 * 64;
+        NBTTagCompound row = inspectNbt(index, offset, 8);
+        int last = Math.min(offset + 7, row.getInteger("total") - 1);
+        if (last < 0) return;
+        requestedInspectorPage = last / 64 * 64;
+        long id = projection.cellId(index);
+        inspectorPage(index, document().cell(id), requestedInspectorPage);
+    }
+
+    void reviewNbt(int index, Runnable success, java.util.function.Consumer<Throwable> failure) {
+        final AuthorDocument frozen = document();
+        final boolean global = index < 0;
+        final long cellId = global ? -1 : projection.cellId(index);
+        final int page = requestedInspectorPage;
+        NBTTagCompound policy = new NBTTagCompound();
+        if (!global) {
+            policy.setLong("cellId", cellId);
+            policy.setInteger("index", index);
+            policy.setInteger("offset", page);
+        }
+        HologramAuthorReviewClient.request(
+            this,
+            global ? "globalNbt" : "cellNbt",
+            policy,
+            () -> document() == frozen && (global || projection.cellId(index) == cellId),
+            reply -> {
+                NBTTagCompound details = reply.getCompoundTag("report");
+                if (!details.getString("detailError")
+                    .isEmpty()) {
+                    failure.accept(new IOException(details.getString("detailError")));
+                    return;
+                }
+                if (global) {
+                    globalNbt = (NBTTagCompound) details.copy();
+                    globalNbtRevision = frozen.revision();
+                } else {
+                    if (inspectorRevision != frozen.revision() || inspectorCell != cellId) inspectorPages.clear();
+                    inspectorRevision = frozen.revision();
+                    inspectorCell = cellId;
+                    inspectorPages.put(page, (NBTTagCompound) details.copy());
+                }
+                success.run();
+            },
+            failure);
+    }
+
     NBTTagCompound inspectNbt(int index, int offset, int limit) throws IOException {
         long id = projection.cellId(index);
         AuthorDocument.Cell cell = document().cell(id);
@@ -412,7 +465,7 @@ final class HologramLocalAuthorRuntime {
                     NBTTagCompound page = inspectorPage(index, cell, base);
                     return page.getTagList("entries", 10)
                         .getCompoundTagAt(requested - base);
-                } catch (IOException failure) {
+                } catch (IOException | RuntimeException failure) {
                     if (attached != null) attached.notice("NBT 读取失败，原始内容已保留：" + failure.getMessage());
                     return new NBTTagCompound();
                 }
@@ -515,6 +568,7 @@ final class HologramLocalAuthorRuntime {
     }
 
     private void changed(AuthorEditor.Change change) {
+        HologramAuthorReviewClient.cancel(this);
         projection.update(change);
         refreshMetadata();
         publish();

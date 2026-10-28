@@ -75,7 +75,9 @@ public final class HologramLibraryProtocol {
 
     static boolean uploadChunk(NBTTagCompound request) {
         String op = request.getString("op");
-        return "uploadChunk".equals(op) || "privateChunk".equals(op) || "previewChunk".equals(op);
+        return "uploadChunk".equals(op) || "privateChunk".equals(op)
+            || "previewChunk".equals(op)
+            || "authorReviewChunk".equals(op);
     }
 
     /** Optional v3 ready credit; absent on old servers. ACKs confirm only bytes actually sent. */

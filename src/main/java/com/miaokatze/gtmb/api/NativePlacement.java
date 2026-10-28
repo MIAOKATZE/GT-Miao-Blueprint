@@ -29,6 +29,11 @@ public final class NativePlacement {
     }
 
     public static GTMBExtensions.Registration register(String id, Adapter adapter) {
+        return register(id, adapter, false);
+    }
+
+    /** Opt in only when all callbacks, including supports, are safe on both client and server game threads. */
+    public static GTMBExtensions.Registration register(String id, Adapter adapter, boolean clientSafe) {
         if (adapter == null) throw new IllegalArgumentException("adapter");
         return GTMBExtensions.install(id, "native-placement", () -> {
             HologramNativePlacement.Adapter bridge = new HologramNativePlacement.Adapter() {
@@ -49,7 +54,7 @@ public final class NativePlacement {
                     return adapter.includesInventoryDrops(block);
                 }
             };
-            HologramNativePlacement.register(id, bridge);
+            HologramNativePlacement.register(id, bridge, clientSafe);
             return () -> HologramNativePlacement.unregister(id, bridge);
         });
     }

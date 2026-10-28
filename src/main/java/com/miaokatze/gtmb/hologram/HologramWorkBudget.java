@@ -14,6 +14,7 @@ final class HologramWorkBudget {
     private static java.util.function.LongSupplier clock;
     private static Frame parent;
     private static Thread serverTickOwner;
+    private static volatile Thread serverOwner;
     private static long serverTickStarted;
     private static long serverTickSequence;
 
@@ -44,12 +45,18 @@ final class HologramWorkBudget {
 
     static void startServerTick() {
         serverTickOwner = Thread.currentThread();
+        serverOwner = serverTickOwner;
         serverTickStarted = System.nanoTime();
         if (++serverTickSequence == 0) serverTickSequence++;
     }
 
     static void endServerTick() {
         serverTickOwner = null;
+    }
+
+    /** Captured only by the actual server tick hook, valid for scheduled callbacks outside the budget window. */
+    static boolean isServerOwnerThread() {
+        return serverOwner == Thread.currentThread();
     }
 
     static boolean isOwnerThread() {

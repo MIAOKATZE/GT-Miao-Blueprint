@@ -63,7 +63,9 @@ public final class HologramLocalAuthorAttachments implements AutoCloseable {
             long deadline = System.nanoTime() + 2_000_000L;
             int units = 0;
             while (pending.cursor < pending.geometry.cells.size() && units++ < 8 && System.nanoTime() < deadline)
-                pending.stage(pending.geometry.cells.get(pending.cursor++));
+                try (HologramExtensionExecution.Scope local = HologramExtensionExecution.localAuthor()) {
+                    pending.stage(pending.geometry.cells.get(pending.cursor++));
+                }
             if (pending.cursor < pending.geometry.cells.size()) return null;
             AuthorEditor.Change change = pending.commit();
             task = null;

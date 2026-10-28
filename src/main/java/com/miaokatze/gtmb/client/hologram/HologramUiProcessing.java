@@ -120,6 +120,24 @@ final class HologramUiProcessing {
         processingReopenSequence = ui.session.sequence();
     }
 
+    private boolean localReviewPending() {
+        return ui.session.isLocalAuthor() && HologramAuthorReviewClient.busy(ui.session.author());
+    }
+
+    /** Async native review never advances a stage until its exact source-bound result is installed. */
+    void localServerReviewReady(String operation) {
+        if ("beginBlueprintReprocessing".equals(operation)) openProcessing(false);
+        else if ("processBlueprint".equals(operation)) openProcessingResult();
+        else if ("loadProcessingPreset".equals(operation) && processingFlow != null)
+            processingFlow.preset(ui.session.state().data.getCompoundTag("processingPolicy"));
+        else if ("configureBlueprintQuantumGroups".equals(operation)) {
+            quantumGroupsSaved();
+            net.minecraft.client.gui.GuiScreen screen = net.minecraft.client.Minecraft.getMinecraft().currentScreen;
+            if (screen instanceof HologramQuantumGroupsScreen)
+                ((HologramQuantumGroupsScreen) screen).serverReviewSaved(ui);
+        }
+    }
+
     private void openProcessing(boolean resume) {
         processingResultReview = false;
         NBTTagCompound policy = ui.session.state().data.hasKey("processingPolicy")
@@ -174,6 +192,13 @@ final class HologramUiProcessing {
     }
 
     void drawProcessingFlow(int mx, int my) {
+        if (localReviewPending()) {
+            HologramEditorTheme.PANEL.draw(28, 48, 622, 256);
+            ui.canvas.text("正在服务器核对扩展 · 不授予施工许可", 42, 65, 588, HologramEditorTheme.TITLE);
+            ui.canvas.text("原稿及未兑现义务保留在本地；等待对应源版本的分析或处理结果。", 42, 103, 588, HologramEditorTheme.TEXT);
+            ui.canvas.button(234, 42, 274, 588, 20, "取消核对 · 保留原稿", true, mx, my);
+            return;
+        }
         if (this.processingFlow == null) return;
         HologramEditorTheme.PANEL.draw(28, 48, 622, 256);
         if (processingResultReview) {
@@ -524,6 +549,14 @@ final class HologramUiProcessing {
     }
 
     boolean activateProcessing(int id) {
+        if (localReviewPending()) {
+            if (id == 234) {
+                HologramAuthorReviewClient.cancel(ui.session.author());
+                processingFlow = null;
+                processingResultReview = false;
+            }
+            return true;
+        }
         if (ui.canvas.rejectLocalPlanAction(id)) return true;
         if (id == 297) {
             if (HologramGuidance.authorWorkspace(ui.session.state()) && ui.session.editable()) reopenProcessing();
@@ -921,7 +954,8 @@ final class HologramUiProcessing {
     }
 
     boolean consumeAuthoringModalMouse(int mx, int my, int button) {
-        if (this.processingFlow != null || ui.library.discardReview()
+        if (localReviewPending() || this.processingFlow != null
+            || ui.library.discardReview()
             || ui.library.overwriteReview()
             || this.processingPresetSaveReview) {
             if (this.processingPresetSaveReview) {
@@ -947,6 +981,10 @@ final class HologramUiProcessing {
     }
 
     boolean consumeProcessingKey(char c, int key) {
+        if (localReviewPending()) {
+            if (key == Keyboard.KEY_ESCAPE) activateProcessing(234);
+            return true;
+        }
         if (this.processingFlow != null) {
             if (key == Keyboard.KEY_ESCAPE) ui.processing.activateProcessing(234);
             else if (processingResultReview && processingBlueprintField.isFocused())
@@ -1010,6 +1048,10 @@ final class HologramUiProcessing {
         if (processingPresetLoadSequence == sequence) processingPresetLoadSequence = -1;
         if (processingReopenSequence == sequence) processingReopenSequence = -1;
         if (processingSubmitSequence == sequence) processingSubmitSequence = -1;
+    }
+
+    boolean processingVisible() {
+        return localReviewPending() || processingFlow != null;
     }
 
     HologramProcessingFlow processingFlow() {

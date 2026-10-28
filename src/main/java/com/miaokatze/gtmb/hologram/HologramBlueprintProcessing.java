@@ -256,14 +256,15 @@ final class HologramBlueprintProcessing {
     static HologramPresets.Preset process(HologramPresets.Preset source, Policy requested, int dimension, int originX,
         int originY, int originZ) throws IOException {
         try (HologramAnalysisFacts facts = new HologramAnalysisFacts()) {
-            return process(source, requested, dimension, originX, originY, originZ, facts, null);
+            return process(source, requested, dimension, originX, originY, originZ, facts, null, true);
         }
     }
 
     /** Client documents have no captured world/network authority, including in an integrated-server JVM. */
     static HologramPresets.Preset processDetached(HologramPresets.Preset source, Policy requested, int dimension,
         int originX, int originY, int originZ) throws IOException {
-        try (HologramAnalysisFacts facts = new HologramAnalysisFacts()) {
+        try (HologramExtensionExecution.Scope local = HologramExtensionExecution.localAuthor();
+            HologramAnalysisFacts facts = new HologramAnalysisFacts()) {
             return process(
                 source,
                 requested,
@@ -272,13 +273,14 @@ final class HologramBlueprintProcessing {
                 originY,
                 originZ,
                 facts,
-                java.util.Collections.emptyMap());
+                java.util.Collections.emptyMap(),
+                false);
         }
     }
 
     private static HologramPresets.Preset process(HologramPresets.Preset source, Policy requested, int dimension,
-        int originX, int originY, int originZ, HologramAnalysisFacts facts, Map<String, String> networks)
-        throws IOException {
+        int originX, int originY, int originZ, HologramAnalysisFacts facts, Map<String, String> networks,
+        boolean inspectExtensions) throws IOException {
         if (source == null || requested == null) throw new IOException("没有可处理的蓝图来源");
         Policy policy = Policy.read(requested.write());
         if (!policy.complete()) throw new IOException("保存前必须明确完成全部处理阶段");
@@ -363,8 +365,10 @@ final class HologramBlueprintProcessing {
         receipt.setInteger("minimumLevel", minimum);
         receipt.setTag("policy", policy.write());
         receipt.setTag("generatedHints", generatedHints);
-        NBTTagCompound reports = HologramExtensionSnapshots.authoring(result);
-        if (!reports.hasNoTags()) receipt.setTag("extensions", reports);
+        if (inspectExtensions) {
+            NBTTagCompound reports = HologramExtensionSnapshots.authoring(result);
+            if (!reports.hasNoTags()) receipt.setTag("extensions", reports);
+        } else receipt.setBoolean("extensionReviewPending", true);
         result.processingNbt = HologramBlueprintNbt.encodeCanonical(receipt);
         facts.publish();
         result.analysisDocument = source.analysisDocument;

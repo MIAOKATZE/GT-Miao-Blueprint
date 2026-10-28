@@ -12,6 +12,8 @@ import net.minecraft.nbt.NBTTagList;
 
 import org.lwjgl.input.Keyboard;
 
+import com.miaokatze.gtmb.hologram.HologramExtensionExecution;
+
 /** Internal nbt workflow; composed by the workstation, never part of the mod extension API. */
 final class HologramUiNbtEditor {
 
@@ -94,9 +96,27 @@ final class HologramUiNbtEditor {
                 localGlobalRevision = ui.session.author()
                     .document()
                     .revision();
-            } catch (java.io.IOException failure) {
+            } catch (HologramExtensionExecution.ReviewRequired serverOnly) {
+                nbtDrawer = false;
+                reviewNbt(-1, () -> openNbtEditor(placement));
+                return;
+            } catch (java.io.IOException | RuntimeException failure) {
                 nbtDrawer = false;
                 ui.session.notice("全局 NBT 读取失败，原稿保留：" + failure.getMessage());
+                return;
+            }
+        }
+        if (ui.session.isLocalAuthor() && nbtCellScope && !placement) {
+            try {
+                ui.session.author()
+                    .requireInspectorPages(ui.preview.selected(), 0);
+            } catch (HologramExtensionExecution.ReviewRequired serverOnly) {
+                nbtDrawer = false;
+                reviewNbt(ui.preview.selected(), () -> openNbtEditor(placement));
+                return;
+            } catch (java.io.IOException | RuntimeException failure) {
+                nbtDrawer = false;
+                ui.session.notice("NBT 读取失败，原稿保留：" + failure.getMessage());
                 return;
             }
         }
@@ -136,12 +156,33 @@ final class HologramUiNbtEditor {
         for (int i = 0; i < openedKeys.tagCount(); i++) openedPlacementKeys.add(openedKeys.getStringTagAt(i));
     }
 
+    private void reviewNbt(int index, Runnable ready) {
+        ui.session.notice("正在服务器分析所选 NBT；仅返回只读明细，原稿不变");
+        ui.session.author()
+            .reviewNbt(
+                index,
+                () -> { if (index < 0 || ui.preview.selected() == index) ready.run(); },
+                failure -> ui.session.notice("NBT 扩展分析未完成，原稿保留：" + failure.getMessage()));
+    }
+
+    private void prepareScrolledNbt() {
+        if (!ui.session.isLocalAuthor() || !nbtCellScope || nbtPlacement || nbtPathsView) return;
+        try {
+            ui.session.author()
+                .requireInspectorPages(ui.preview.selected(), nbtOffset);
+        } catch (HologramExtensionExecution.ReviewRequired serverOnly) {
+            reviewNbt(ui.preview.selected(), this::prepareScrolledNbt);
+        } catch (java.io.IOException | RuntimeException failure) {
+            ui.session.notice("NBT 页读取失败，原稿保留：" + failure.getMessage());
+        }
+    }
+
     NBTTagCompound cellNbtRow() {
         if (ui.session.isLocalAuthor()) {
             try {
                 return ui.session.author()
                     .inspectNbt(ui.preview.selected(), nbtOffset, 8);
-            } catch (java.io.IOException invalid) {
+            } catch (java.io.IOException | RuntimeException invalid) {
                 ui.session.notice("NBT 读取失败，原始内容已保留：" + invalid.getMessage());
                 return new NBTTagCompound();
             }
@@ -601,6 +642,7 @@ final class HologramUiNbtEditor {
                                 .tagCount())
                             - (this.nbtCellScope ? 5 : 7)),
                     this.nbtOffset + (wheel > 0 ? -1 : 1)));
+            prepareScrolledNbt();
             return true;
         }
         return false;

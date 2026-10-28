@@ -27,6 +27,7 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
     private boolean dragging, stale;
     private double yaw = Math.PI / 4, pitch = Math.PI / 6, zoom = 1;
     private long pending = -1, renderGeneration;
+    private boolean authorReviewPending;
     private String notice = "";
     private NBTTagList renderedNodeMarkers = new NBTTagList();
     private long markerRenderGeneration;
@@ -75,9 +76,20 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
     }
 
     @Override
+    public void onGuiClosed() {
+        if (authorReviewPending && editor.ui.session.isLocalAuthor())
+            HologramAuthorReviewClient.cancel(editor.ui.session.author());
+        super.onGuiClosed();
+    }
+
+    @Override
     public void updateScreen() {
         nameField.updateCursorCounter();
         boolean local = editor.ui.session.isLocalAuthor();
+        if (authorReviewPending && !HologramAuthorReviewClient.busy(editor.ui.session.author())) {
+            authorReviewPending = false;
+            notice = editor.ui.session.notice();
+        }
         HologramState next = local ? editor.ui.session.author()
             .view() : HologramClient.state;
         if (next == null || !local && world != mc.theWorld
@@ -175,11 +187,11 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
                 319,
                 118,
                 22,
-                pending >= 0 ? "等待服务器确认" : "保存自定义分类",
+                pending >= 0 || authorReviewPending ? "等待服务器确认" : "保存自定义分类",
                 editable() && model.complete() && HologramQuantumGroupsModel.validName(nameField.getText()),
                 mx,
                 my);
-            String status = pending >= 0 ? "正在原子校验全部节点…"
+            String status = pending >= 0 || authorReviewPending ? "正在原子校验全部节点…"
                 : !notice.isEmpty() ? notice
                     : model.unassigned() > 0 ? "还有 " + model.unassigned() + " 个节点未分类，分配后才能保存"
                         : "已选 " + model.selected.size() + " / " + model.nodes.size() + " 个节点；所有节点均已分类";
@@ -301,7 +313,7 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
     }
 
     private boolean editable() {
-        return !stale && pending < 0;
+        return !stale && pending < 0 && !authorReviewPending;
     }
 
     private void loadName() {
@@ -390,6 +402,7 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
 
     private void activate(int id) {
         if (id == 2 && pending < 0) {
+            if (editor.ui.session.isLocalAuthor()) HologramAuthorReviewClient.cancel(editor.ui.session.author());
             deferAction(() -> mc.displayGuiScreen(editor));
             return;
         }
@@ -405,7 +418,10 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
             long result = editor.saveQuantumGroups(model.export(), model.revision);
             if (editor.ui.session.isLocalAuthor()) {
                 if (result >= 0) deferAction(() -> mc.displayGuiScreen(editor));
-                else notice = editor.ui.session.notice();
+                else {
+                    authorReviewPending = HologramAuthorReviewClient.busy(editor.ui.session.author());
+                    notice = editor.ui.session.notice();
+                }
             } else pending = result;
         } else if (id == 3 || id == 4) model.select(id == 4);
         else if (id == 5) {
@@ -421,6 +437,16 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
             model.activate(model.groups.get(id - 1000).id);
             loadName();
         }
+    }
+
+    /** Return only the secondary editor which initiated this exact owner-bound review. */
+    void serverReviewSaved(HologramUiModules expected) {
+        if (editor.ui != expected || !authorReviewPending || mc.currentScreen != this) return;
+        authorReviewPending = false;
+        editor.updateState(
+            editor.ui.session.author()
+                .view());
+        deferAction(() -> mc.displayGuiScreen(editor));
     }
 
     @Override

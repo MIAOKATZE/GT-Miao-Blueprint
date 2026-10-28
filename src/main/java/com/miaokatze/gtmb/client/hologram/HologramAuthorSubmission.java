@@ -17,6 +17,7 @@ import net.minecraft.nbt.NBTTagCompound;
 import com.miaokatze.gtmb.blueprint.editor.AuthorDocument;
 import com.miaokatze.gtmb.hologram.HologramAuthorPortableCompiler;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
+import com.miaokatze.gtmb.hologram.HologramExtensionExecution;
 
 /** User-triggered source -> processed candidate -> exact native PNG -> export/private admission. */
 final class HologramAuthorSubmission {
@@ -59,42 +60,57 @@ final class HologramAuthorSubmission {
                 && minecraft.thePlayer.inventory.currentItem == originalSlot);
         try {
             // Native registry/providers are owner-thread work. Never put this call in the IO executor.
-            byte[] json = HologramAuthorPortableCompiler.compile(frozen, confirmedPolicy, 0, 0, 0, 0);
-            notice("正在从当前源版本生成原生预览；这是未获服务器审核的候选");
-            work(() -> {
-                NBTTagCompound exact = HologramBlueprintPreview.snapshot(json);
-                HologramBlueprintPreview.capture(exact, yaw, pitch, current, pixels -> work(() -> {
-                    byte[] png = png(pixels, current);
-                    HologramBlueprintArtifact.Artifact pair = HologramBlueprintArtifact.prepareSave(json, png);
-                    if (!current.getAsBoolean()) throw new IOException("文档已变化，候选已取消；草稿保留");
-                    Minecraft.getMinecraft()
-                        .func_152344_a(() -> {
-                            if (!current.getAsBoolean()) {
-                                fail(new IOException("文档已变化，请重新提交"));
-                                return;
-                            }
-                            if (place) {
-                                try {
-                                    HologramLibraryClient.INSTANCE.beginAuthorCandidatePlacement(
-                                        pair,
-                                        exact,
-                                        frozen.documentId() + ":" + frozen.revision(),
-                                        current);
-                                    BUSY.set(false);
-                                    notice("候选已交给服务器内容核验；施工、材料和世界权限仍须服务器审核");
-                                } catch (Exception failure) {
-                                    fail(failure);
-                                }
-                            } else HologramLibraryClient.INSTANCE.persistAuthorArtifact(pair, current, path -> {
-                                BUSY.set(false);
-                                notice("未获服务器审核的候选 JSON + PNG 已导出：" + path + "；原草稿保留");
-                            }, HologramAuthorSubmission::fail);
-                        });
-                }), HologramAuthorSubmission::fail);
-            });
+            byte[] json = HologramAuthorPortableCompiler.compile(frozen, confirmedPolicy);
+            preview(frozen, json, current, place, yaw, pitch);
+        } catch (HologramExtensionExecution.ReviewRequired serverOnly) {
+            notice("此候选需要服务器扩展核对；上传精确源版本，仅分析，不施工、不扣除材料");
+            HologramAuthorReviewClient.request(owner, "compile", confirmedPolicy, current, reply -> {
+                byte[] json = reply.getByteArray("compiled");
+                if (!current.getAsBoolean() || json.length == 0) {
+                    fail(new IOException("服务器候选不再对应当前源版本，原稿保留"));
+                    return;
+                }
+                preview(frozen, json, current, place, yaw, pitch);
+            }, HologramAuthorSubmission::fail);
         } catch (Exception | LinkageError failure) {
             fail(failure);
         }
+    }
+
+    private static void preview(AuthorDocument frozen, byte[] json, BooleanSupplier current, boolean place, double yaw,
+        double pitch) {
+        notice("正在从当前源版本生成原生预览；此候选尚未取得施工许可");
+        work(() -> {
+            NBTTagCompound exact = HologramBlueprintPreview.snapshot(json);
+            HologramBlueprintPreview.capture(exact, yaw, pitch, current, pixels -> work(() -> {
+                byte[] png = png(pixels, current);
+                HologramBlueprintArtifact.Artifact pair = HologramBlueprintArtifact.prepareSave(json, png);
+                if (!current.getAsBoolean()) throw new IOException("文档已变化，候选已取消；草稿保留");
+                Minecraft.getMinecraft()
+                    .func_152344_a(() -> {
+                        if (!current.getAsBoolean()) {
+                            fail(new IOException("文档已变化，请重新提交"));
+                            return;
+                        }
+                        if (place) {
+                            try {
+                                HologramLibraryClient.INSTANCE.beginAuthorCandidatePlacement(
+                                    pair,
+                                    exact,
+                                    frozen.documentId() + ":" + frozen.revision(),
+                                    current);
+                                BUSY.set(false);
+                                notice("候选已交给服务器内容核验；施工、材料和世界权限仍须服务器审核");
+                            } catch (Exception failure) {
+                                fail(failure);
+                            }
+                        } else HologramLibraryClient.INSTANCE.persistAuthorArtifact(pair, current, path -> {
+                            BUSY.set(false);
+                            notice("候选 JSON + PNG 已导出（不含施工许可）：" + path + "；原草稿保留");
+                        }, HologramAuthorSubmission::fail);
+                    });
+            }), HologramAuthorSubmission::fail);
+        });
     }
 
     private interface Job {

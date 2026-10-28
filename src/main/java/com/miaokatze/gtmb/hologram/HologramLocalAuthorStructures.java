@@ -142,85 +142,87 @@ public final class HologramLocalAuthorStructures implements AutoCloseable {
 
     /** Cooperative client game-thread continuation; individual native callbacks are indivisible. */
     public boolean tick() throws IOException {
-        requireOwner();
-        if (cancelled) throw new IOException("结构重建已取消");
-        if (done()) return true;
-        long deadline = System.nanoTime() + SLICE;
-        if (controllerCursor != null) {
-            int units = 0;
-            while (controllerCursor.hasNext() && units++ < 256 && System.nanoTime() < deadline) {
-                AuthorDocument.Cell cell = controllerCursor.next();
-                if (cell.controller() && cell.memberships()
-                    .contains(original.id)) preset.cells.add(HologramLocalAuthorSemantics.cell(cell.sourceCopy()));
-                completed++;
-            }
-            if (controllerCursor.hasNext()) return false;
-            controllerCursor = null;
-            if (preset.cells.isEmpty()) throw new IOException("来源控制器记录缺失，原稿保留");
-            return false;
-        }
-        if (phase < 2) {
-            if (declaration == null) {
-                declaration = new Declaration(phase == 0 ? original : requested);
+        try (HologramExtensionExecution.Scope local = HologramExtensionExecution.localAuthor()) {
+            requireOwner();
+            if (cancelled) throw new IOException("结构重建已取消");
+            if (done()) return true;
+            long deadline = System.nanoTime() + SLICE;
+            if (controllerCursor != null) {
+                int units = 0;
+                while (controllerCursor.hasNext() && units++ < 256 && System.nanoTime() < deadline) {
+                    AuthorDocument.Cell cell = controllerCursor.next();
+                    if (cell.controller() && cell.memberships()
+                        .contains(original.id)) preset.cells.add(HologramLocalAuthorSemantics.cell(cell.sourceCopy()));
+                    completed++;
+                }
+                if (controllerCursor.hasNext()) return false;
+                controllerCursor = null;
+                if (preset.cells.isEmpty()) throw new IOException("来源控制器记录缺失，原稿保留");
                 return false;
             }
-            if (!declaration.step(deadline, phase == 0 ? baseline : generated)) return false;
-            if (phase == 1) {
-                capabilities = HologramCapabilities
-                    .describe(declaration.machine, declaration.signal, declaration.capture.channelReport)
-                    .toNBT();
-                facingOrdinal = declaration.machine.getExtendedFacing()
-                    .ordinal();
+            if (phase < 2) {
+                if (declaration == null) {
+                    declaration = new Declaration(phase == 0 ? original : requested);
+                    return false;
+                }
+                if (!declaration.step(deadline, phase == 0 ? baseline : generated)) return false;
+                if (phase == 1) {
+                    capabilities = HologramCapabilities
+                        .describe(declaration.machine, declaration.signal, declaration.capture.channelReport)
+                        .toNBT();
+                    facingOrdinal = declaration.machine.getExtendedFacing()
+                        .ordinal();
+                }
+                declaration = null;
+                if (inspectionOnly) {
+                    phase = 4;
+                    return true;
+                }
+                phase++;
+                if (phase == 2) mergeCursor = document.cells()
+                    .iterator();
+                return false;
             }
-            declaration = null;
-            if (inspectionOnly) {
-                phase = 4;
-                return true;
+            int units = 0;
+            while (phase == 2 && mergeCursor.hasNext() && units++ < 256 && System.nanoTime() < deadline) {
+                AuthorDocument.Cell cell = mergeCursor.next();
+                JsonObject raw = cell.sourceCopy();
+                String key = position(raw);
+                JsonObject next = generated.remove(key), old = baseline.get(key);
+                boolean own = cell.memberships()
+                    .contains(original.id);
+                if (own) {
+                    JsonObject merged = mergeCell(
+                        raw,
+                        old,
+                        next,
+                        cell.memberships()
+                            .size() > 1);
+                    if (merged != null) result.add(merged);
+                } else if (next != null) {
+                    // Never overwrite an independent source cell or silently appropriate an attachment.
+                    if (!sameTarget(raw, next)) throw new IOException("新结构与现有独立格冲突：" + key);
+                    List<String> ids = new ArrayList<>(cell.memberships());
+                    ids.add(original.id);
+                    memberships(raw, ids);
+                    result.add(mergeCell(raw, old, next, true));
+                }
+                completed++;
             }
-            phase++;
-            if (phase == 2) mergeCursor = document.cells()
-                .iterator();
-            return false;
-        }
-        int units = 0;
-        while (phase == 2 && mergeCursor.hasNext() && units++ < 256 && System.nanoTime() < deadline) {
-            AuthorDocument.Cell cell = mergeCursor.next();
-            JsonObject raw = cell.sourceCopy();
-            String key = position(raw);
-            JsonObject next = generated.remove(key), old = baseline.get(key);
-            boolean own = cell.memberships()
-                .contains(original.id);
-            if (own) {
-                JsonObject merged = mergeCell(
-                    raw,
-                    old,
-                    next,
-                    cell.memberships()
-                        .size() > 1);
-                if (merged != null) result.add(merged);
-            } else if (next != null) {
-                // Never overwrite an independent source cell or silently appropriate an attachment.
-                if (!sameTarget(raw, next)) throw new IOException("新结构与现有独立格冲突：" + key);
-                List<String> ids = new ArrayList<>(cell.memberships());
-                ids.add(original.id);
-                memberships(raw, ids);
-                result.add(mergeCell(raw, old, next, true));
+            if (phase == 2 && !mergeCursor.hasNext()) {
+                phase = 3;
+                additions = generated.entrySet()
+                    .iterator();
             }
-            completed++;
+            while (phase == 3 && additions.hasNext() && units++ < 256 && System.nanoTime() < deadline) {
+                Map.Entry<String, JsonObject> entry = additions.next();
+                // Missing old-declared coordinates are an intentional deletion, not permission to resurrect them.
+                if (!baseline.containsKey(entry.getKey())) result.add(entry.getValue());
+                completed++;
+            }
+            if (phase == 3 && !additions.hasNext()) phase = 4;
+            return done();
         }
-        if (phase == 2 && !mergeCursor.hasNext()) {
-            phase = 3;
-            additions = generated.entrySet()
-                .iterator();
-        }
-        while (phase == 3 && additions.hasNext() && units++ < 256 && System.nanoTime() < deadline) {
-            Map.Entry<String, JsonObject> entry = additions.next();
-            // Missing old-declared coordinates are an intentional deletion, not permission to resurrect them.
-            if (!baseline.containsKey(entry.getKey())) result.add(entry.getValue());
-            completed++;
-        }
-        if (phase == 3 && !additions.hasNext()) phase = 4;
-        return done();
     }
 
     @Override
@@ -348,7 +350,8 @@ public final class HologramLocalAuthorStructures implements AutoCloseable {
 
         boolean step(long deadline, Map<String, JsonObject> output) throws IOException {
             if (capture == null || capture.pending) {
-                capture = HologramCapture.collect(machine, signal, machine.getExtendedFacing(), capture, deadline);
+                capture = HologramCapture
+                    .collectDeclaration(machine, signal, machine.getExtendedFacing(), capture, deadline);
                 if (capture.pending) return false;
                 if (capture.incomplete) throw new IOException(capture.failure);
                 return false;

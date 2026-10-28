@@ -510,6 +510,7 @@ final class HologramLibraryClient {
     }
 
     void tick() {
+        HologramAuthorReviewClient.tick();
         Minecraft mc = Minecraft.getMinecraft();
         tickBrowsePreview();
         String current = mc.theWorld == null ? ""
@@ -2491,6 +2492,7 @@ final class HologramLibraryClient {
     }
 
     private void receive(NBTTagCompound reply) {
+        if (HologramAuthorReviewClient.receive(reply)) return;
         String op = reply.getString("op");
         if ("previewThumbnail".equals(op)) {
             if (!matchesTransferTask(reply) || !activePublicPreviewId.equals(reply.getString("publicId"))) return;

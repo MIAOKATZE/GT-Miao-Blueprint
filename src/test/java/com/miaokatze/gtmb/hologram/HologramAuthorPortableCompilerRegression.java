@@ -33,6 +33,7 @@ public final class HologramAuthorPortableCompilerRegression {
         littleTiles();
         unsupportedAndSealed();
         freshProcessing();
+        captureSourceFrames();
     }
 
     private static void opaqueNoop() throws Exception {
@@ -278,6 +279,205 @@ public final class HologramAuthorPortableCompilerRegression {
             !document.sourceCopy()
                 .has("processingNbt"),
             "fresh processed candidate does not overwrite source draft");
+    }
+
+    private static void captureSourceFrames() throws Exception {
+        for (int originX : new int[] { 100, -100 }) {
+            AuthorDocument.SourceFrame frame = AuthorDocument.SourceFrame.captured(7, originX, 64, 200);
+            NBTTagCompound tile = new NBTTagCompound();
+            tile.setString("id", "IC2NCInfoPanelExtender");
+            tile.setBoolean("partOfScreen", true);
+            tile.setInteger("coreX", originX + 1);
+            tile.setInteger("coreY", 64);
+            tile.setInteger("coreZ", 200);
+            JsonObject host = cell(0);
+            String opaque = HologramBlueprintNbt.encodeCaptured(tile);
+            host.addProperty("tileNbt", opaque);
+            JsonObject raw = source(host, cell(1));
+            HologramBlueprintProcessing.Policy policy = policy();
+            policy.coordinateDefault = "auto";
+            policy.tendency = "share";
+            AuthorDocument unknown = read(raw);
+            reject(
+                () -> HologramAuthorPortableCompiler.compile(unknown, policy.write()),
+                "old raw world links without provenance must not silently clear at zero");
+            SimpleAssert.eq(
+                opaque,
+                unknown.cell(1)
+                    .tileNbt(),
+                "missing provenance refusal keeps exact source");
+            AuthorDocument captured = unknown.withSourceFrame(frame);
+            byte[] transport = HologramBlueprintCompactCodec
+                .encodeAuthorSource(HologramLocalAuthorSemantics.preset(raw), frame, (done, total) -> {});
+            AuthorDocument transferred = read(HologramBlueprintCompactCodec.parse(transport));
+            SimpleAssert.eq(frame, transferred.sourceFrame(), "compact capture handoff retains source frame");
+            SimpleAssert.eq(
+                opaque,
+                transferred.cell(1)
+                    .tileNbt(),
+                "handoff does not eagerly normalize native payload");
+            JsonObject direct = HologramLocalAuthorSemantics.process(raw, policy.write(), frame);
+            SimpleAssert.eq("relative", relation(direct).getString("mode"), "nonzero captured link remains internal");
+            SimpleAssert.eq(1, relation(direct).getInteger("dx"), "source origin subtracted exactly once");
+            JsonObject turned = rotateCoordinateFixture(raw, frame);
+            int[] expectedTurn = HologramVirtualTransform.turn(1, 0, 0, false);
+            SimpleAssert.eq(
+                "relative",
+                relation(turned).getString("mode"),
+                "raw capture rotation declares its internal link before transforming geometry");
+            SimpleAssert.eq(expectedTurn[0], relation(turned).getInteger("dx"), "rotated raw link x");
+            SimpleAssert.eq(expectedTurn[2], relation(turned).getInteger("dz"), "rotated raw link z");
+            SimpleAssert.that(!turned.has("processingNbt"), "rotation cannot manufacture processing approval");
+            AuthorEditor rotatedEditor = new AuthorEditor(captured, 8);
+            rotatedEditor.replaceResolvedSource(captured.revision(), turned);
+            SimpleAssert.eq(
+                frame,
+                rotatedEditor.current()
+                    .sourceFrame(),
+                "whole rotation retains capture frame");
+            JsonObject rotatedPortable = HologramBlueprintCompactCodec
+                .parse(HologramAuthorPortableCompiler.compile(rotatedEditor.current(), policy.write()))
+                .getAsJsonObject("blueprint");
+            SimpleAssert.eq(
+                expectedTurn[2],
+                relation(rotatedPortable).getInteger("dz"),
+                "rotation then compile does not restore the unrotated raw endpoint");
+            AuthorEditor editor = new AuthorEditor(captured, 8);
+            editor.select(Arrays.asList(1L, 2L));
+            editor.move(3, 0, 0);
+            editor.copy(10, 0, 0);
+            AuthorDocument reopened = AuthorDocumentIO.read(
+                AuthorDocumentIO.writeDraft(editor.current(), AuthorDocumentIO.Limits.defaults()),
+                AuthorDocumentIO.Limits.defaults());
+            JsonObject settled = HologramAuthorPortableCompiler.settle(reopened, policy.write());
+            for (int index : new int[] { 0, 2 }) {
+                NBTTagCompound descriptor = relationAt(settled, index);
+                SimpleAssert.eq("relative", descriptor.getString("mode"), "move/copy retains captured internal links");
+                SimpleAssert.eq(1, descriptor.getInteger("dx"), "copy points to its matching copied endpoint");
+            }
+            JsonObject processed = HologramLocalAuthorSemantics.process(settled, policy.write(), frame);
+            AuthorEditor resolved = new AuthorEditor(reopened, 8);
+            resolved.replaceResolvedSource(reopened.revision(), processed);
+            SimpleAssert.eq(
+                frame,
+                resolved.current()
+                    .sourceFrame(),
+                "processing retains world frame");
+            SimpleAssert.eq(
+                3,
+                resolved.current()
+                    .cell(1)
+                    .payloadX(),
+                "processing rebases only local payload origin");
+            byte[] compiled = HologramAuthorPortableCompiler.compile(resolved.current(), policy.write());
+            JsonObject portable = HologramBlueprintCompactCodec.parse(compiled)
+                .getAsJsonObject("blueprint");
+            SimpleAssert.eq(
+                relationAt(processed, 0),
+                relationAt(portable, 0),
+                "postprocess compile does not double-offset captured links");
+            SimpleAssert.eq(
+                relationAt(processed, 2),
+                relationAt(portable, 2),
+                "copied link remains stable through postprocess compile");
+            // Portable relative descriptors remain usable without capture provenance on import.
+            HologramAuthorPortableCompiler.compile(read(portable), policy.write());
+            HologramCoordinatePolicies.Relation absolute = new HologramCoordinatePolicies.Relation();
+            absolute.id = "0,0,0:tile:nc.extender:-1";
+            absolute.label = "core";
+            absolute.adapter = "nc.extender";
+            absolute.slot = -1;
+            absolute.targetX = originX + 1;
+            absolute.targetY = 64;
+            absolute.targetZ = 200;
+            NBTTagList declarations = new NBTTagList();
+            declarations.appendTag(absolute.write("absolute"));
+            tile.setTag(HologramCoordinatePolicies.RELATIONS, declarations);
+            JsonObject fixed = cell(0);
+            fixed.addProperty("tileNbt", HologramBlueprintNbt.encodeCanonical(tile));
+            AuthorEditor absoluteEditor = new AuthorEditor(read(source(fixed, cell(1))).withSourceFrame(frame), 8);
+            absoluteEditor.select(Collections.singleton(1L));
+            absoluteEditor.move(6, 0, 0);
+            SimpleAssert.eq(
+                originX + 1,
+                relation(HologramAuthorPortableCompiler.settle(absoluteEditor.current(), policy().write()))
+                    .getInteger("targetX"),
+                "absolute world endpoint never shifted with capture origin");
+            JsonObject rotatedAbsolute = rotateCoordinateFixture(source(fixed, cell(1)), frame);
+            SimpleAssert.eq(
+                "absolute",
+                relation(rotatedAbsolute).getString("mode"),
+                "rotation preserves explicitly absolute mode");
+            SimpleAssert.eq(
+                originX + 1,
+                relation(rotatedAbsolute).getInteger("targetX"),
+                "rotation preserves exact absolute world endpoint");
+            declarations = new NBTTagList();
+            declarations.appendTag(absolute.write("clear"));
+            tile.setTag(HologramCoordinatePolicies.RELATIONS, declarations);
+            fixed.addProperty("tileNbt", HologramBlueprintNbt.encodeCanonical(tile));
+            SimpleAssert.eq(
+                "clear",
+                relation(rotateCoordinateFixture(source(fixed, cell(1)), frame)).getString("mode"),
+                "rotation cannot resurrect an explicitly cleared endpoint");
+        }
+        AuthorDocument.SourceFrame frame = AuthorDocument.SourceFrame.captured(7, 100, 64, 200);
+        for (int targetDimension : new int[] { 7, 8 }) {
+            NBTTagCompound tile = new NBTTagCompound(), target = new NBTTagCompound();
+            target.setInteger("x", 101);
+            target.setInteger("y", 64);
+            target.setInteger("z", 200);
+            target.setInteger("dim", targetDimension);
+            target.setString("type", "water");
+            tile.setTag("gtsr.hubPos", target);
+            JsonObject host = cell(0);
+            host.addProperty("tileNbt", HologramBlueprintNbt.encodeCaptured(tile));
+            try (HologramAnalysisFacts facts = new HologramAnalysisFacts()) {
+                HologramCoordinatePolicies.Relation relation = HologramCoordinatePolicies
+                    .inspect(
+                        HologramLocalAuthorSemantics.preset(source(host, cell(1))),
+                        frame.dimension,
+                        frame.x,
+                        frame.y,
+                        frame.z,
+                        facts)
+                    .get(0);
+                SimpleAssert.eq(
+                    targetDimension == 7,
+                    relation.internal,
+                    "capture dimension distinguishes internal hub from cross-dimension world endpoint");
+            }
+        }
+    }
+
+    /** Isolates coordinate provenance from real mod orientation support; no claim of native NC pose support. */
+    private static JsonObject rotateCoordinateFixture(JsonObject source, AuthorDocument.SourceFrame frame)
+        throws IOException {
+        HologramBlockTransforms.Adapter fixture = new HologramBlockTransforms.Adapter() {
+
+            public boolean accepts(HologramBlockTransforms.Data data) {
+                return data.id("IC2NCInfoPanelExtender");
+            }
+
+            public void turn(HologramBlockTransforms.Data data, boolean vertical) { /* orientation-neutral fixture */ }
+        };
+        HologramBlockTransforms.register(fixture);
+        try {
+            return HologramLocalAuthorSemantics.rotateBlueprint(source, frame);
+        } finally {
+            HologramBlockTransforms.unregister(fixture);
+        }
+    }
+
+    private static NBTTagCompound relationAt(JsonObject source, int index) throws IOException {
+        return HologramBlueprintNbt.decode(
+            source.getAsJsonArray("cells")
+                .get(index)
+                .getAsJsonObject()
+                .get("tileNbt")
+                .getAsString())
+            .getTagList(HologramCoordinatePolicies.RELATIONS, 10)
+            .getCompoundTagAt(0);
     }
 
     private static NBTTagCompound relation(JsonObject settled) throws IOException {

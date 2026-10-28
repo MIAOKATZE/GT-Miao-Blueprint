@@ -104,14 +104,57 @@ public final class HologramLocalAuthorStructuresRegression {
                 .setName(threadName);
         }
         gregtech.api.GregTechAPI.METATILEENTITIES[id] = prototype;
-        try {
+        java.util.concurrent.atomic.AtomicInteger completed = new java.util.concurrent.atomic.AtomicInteger();
+        try (com.miaokatze.gtmb.api.GTMBExtensions.Registration extension = com.miaokatze.gtmb.api.BlueprintSnapshots
+            .register(
+                "gtmb_test:declaration-not-capture",
+                com.miaokatze.gtmb.api.BlueprintSnapshots.Stage.CAPTURE_COMPLETE,
+                snapshot -> {
+                    completed.incrementAndGet();
+                    return new net.minecraft.nbt.NBTTagCompound();
+                })) {
             HologramDynamicDefinitionRegression.DynamicController machine = (HologramDynamicDefinitionRegression.DynamicController) HologramDetachedController
                 .create(id, com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing.DEFAULT);
             net.minecraft.item.ItemStack signal = new net.minecraft.item.ItemStack(net.minecraft.init.Blocks.stone, 1);
             com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor
                 .setChannelData(signal, "shape", 1);
-            HologramCapture capture = HologramCapture
-                .collect(machine, signal, machine.getExtendedFacing(), null, System.nanoTime() - 1L);
+            java.util.concurrent.atomic.AtomicInteger sourceCalls = new java.util.concurrent.atomic.AtomicInteger();
+            try (com.miaokatze.gtmb.api.GTMBExtensions.Registration legacy = com.miaokatze.gtmb.api.StructureSources
+                .register(
+                    "gtmb_test:legacy-declaration-source",
+                    HologramDynamicDefinitionRegression.DynamicController.class,
+                    (controller, trigger) -> {
+                        sourceCalls.incrementAndGet();
+                        return null;
+                    })) {
+                try {
+                    HologramCapture.collectDeclaration(
+                        machine,
+                        signal,
+                        machine.getExtendedFacing(),
+                        null,
+                        System.nanoTime() + 100_000_000L);
+                    throw new AssertionError("synthetic declaration accepted a legacy source callback");
+                } catch (HologramExtensionExecution.ReviewRequired expected) {}
+                SimpleAssert
+                    .eq(0, sourceCalls.get(), "synthetic entry blocks matching legacy describe before invocation");
+                SimpleAssert.eq(0, machine.constructions, "rejected source cannot fall through to native construct");
+                SimpleAssert.eq(0, completed.get(), "rejected declaration cannot emit capture completion");
+            }
+            HologramCapture capture;
+            try (com.miaokatze.gtmb.api.GTMBExtensions.Registration safe = com.miaokatze.gtmb.api.StructureSources
+                .register(
+                    "gtmb_test:safe-declaration-source",
+                    HologramDynamicDefinitionRegression.DynamicController.class,
+                    (controller, trigger) -> {
+                        sourceCalls.incrementAndGet();
+                        return null;
+                    },
+                    true)) {
+                capture = HologramCapture
+                    .collectDeclaration(machine, signal, machine.getExtendedFacing(), null, System.nanoTime() - 1L);
+            }
+            SimpleAssert.eq(1, sourceCalls.get(), "explicit client-safe declaration source executes once");
             SimpleAssert
                 .that(capture.pending && !capture.incomplete, "explicit expired client slice yields native traversal");
             long deadline = System.nanoTime() + 5_000_000_000L;
@@ -121,6 +164,15 @@ public final class HologramLocalAuthorStructuresRegression {
                 .that(!capture.pending && !capture.incomplete, "existing server-default overload resumes same capture");
             SimpleAssert.eq(1, machine.constructions, "continuation never reenters native construct");
             SimpleAssert.eq(0, prototype.constructions, "native declaration never mutates registry prototype");
+            SimpleAssert.eq(0, completed.get(), "synthetic declaration does not masquerade as captured world data");
+            HologramCapture actual = HologramCapture.collect(machine, signal, machine.getExtendedFacing());
+            deadline = System.nanoTime() + 5_000_000_000L;
+            while (actual.pending && System.nanoTime() < deadline)
+                actual = HologramCapture.collect(machine, signal, machine.getExtendedFacing(), actual);
+            SimpleAssert.that(!actual.pending && !actual.incomplete, "actual capture completes");
+            SimpleAssert.eq(1, completed.get(), "actual capture keeps complete callback");
+            HologramCapture.collect(machine, signal, machine.getExtendedFacing(), actual);
+            SimpleAssert.eq(1, completed.get(), "completed capture cannot repeat completion callback");
         } finally {
             gregtech.api.GregTechAPI.METATILEENTITIES[id] = previous;
         }

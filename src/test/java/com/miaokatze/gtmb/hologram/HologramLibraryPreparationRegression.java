@@ -28,6 +28,7 @@ import com.miaokatze.gtmb.testutil.SimpleAssert;
 final class HologramLibraryPreparationRegression {
 
     static void run() throws Exception {
+        ownerAdmissionBoundaries();
         try (Fixture f = new Fixture()) {
             f.begin(false, false);
             f.actor.inventory.currentItem = 1;
@@ -37,7 +38,13 @@ final class HologramLibraryPreparationRegression {
                 (Boolean) get(get(peer, "upload"), "valid"),
                 "accepted private upload survives temporary held-slot change");
             f.upload();
-            SimpleAssert.that(get(peer, "upload") == null, "real canonical upload completed before server callback");
+            SimpleAssert.that(
+                get(peer, "upload") == null,
+                "builtin upload keeps its existing IO canonical fast path before activation callback");
+            SimpleAssert.eq(
+                0,
+                (Integer) get(f.store, "activeUploads"),
+                "builtin upload adds no pending owner canonicalization slot");
             call(HologramWorkspaceScheduler.class, "tickSession", f.session);
             SimpleAssert
                 .that(f.session.libraryUiActive, "worker-to-callback gap cannot close the admitted editor capability");
@@ -165,6 +172,7 @@ final class HologramLibraryPreparationRegression {
                         (Boolean) get(peer, "contentValid") && (Boolean) get(get(peer, "upload"), "valid"),
                         "pure content upload survives temporary held-slot change");
                     f.upload();
+                    f.serverCallbacks();
                     SimpleAssert.that(
                         !(Boolean) get(peer, "contentValid") && get(peer, "contentWorld") == null
                             && get(peer, "contentTool") == null,
@@ -230,6 +238,114 @@ final class HologramLibraryPreparationRegression {
         }
     }
 
+    private static void ownerAdmissionBoundaries() throws Exception {
+        for (String outcome : new String[] { "accepted", "rejected", "cancelled", "changedRevision" }) {
+            try (Fixture f = new Fixture()) {
+                HologramBlueprintProcessing.Policy policy = HologramBlueprintProcessing.defaults("self", 0);
+                policy.confirmedStages.addAll(HologramBlueprintProcessing.STAGES);
+                HologramPresets.Preset source = HologramBlueprintProcessing
+                    .processDetached(preset(), policy, 0, 0, 0, 0);
+                NBTTagCompound receipt = HologramBlueprintNbt.decode(source.processingNbt);
+                NBTTagCompound forged = new NBTTagCompound();
+                forged.setBoolean("forgedApproval", true);
+                receipt.setTag("extensions", forged);
+                source.processingNbt = HologramBlueprintNbt.encodeCanonical(receipt);
+                String before = source.processingNbt;
+                f.bytes = HologramBlueprintArtifact
+                    .encode(HologramServerLibrary.encodeShare(source), HologramBlueprintArtifact.decode(f.bytes).png);
+                java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+                Thread owner = Thread.currentThread();
+                try (
+                    com.miaokatze.gtmb.api.GTMBExtensions.Registration nativeRegistration = com.miaokatze.gtmb.api.NativePlacement
+                        .register(
+                            "gtmb_test:private-owner-native",
+                            new com.miaokatze.gtmb.api.NativePlacement.Adapter() {
+
+                                public boolean supports(net.minecraft.block.Block block) {
+                                    SimpleAssert.that(
+                                        Thread.currentThread() == owner,
+                                        "external native applicability never runs on upload IO");
+                                    return false;
+                                }
+
+                                public net.minecraft.tileentity.TileEntity create(net.minecraft.block.Block block,
+                                    int metadata, NBTTagCompound tag, net.minecraft.world.World world) {
+                                    throw new AssertionError("nonmatching native adapter create");
+                                }
+
+                                public List<ItemStack> materials(net.minecraft.block.Block block, int metadata,
+                                    net.minecraft.tileentity.TileEntity tile) {
+                                    throw new AssertionError("nonmatching native adapter materials");
+                                }
+                            });
+                    com.miaokatze.gtmb.api.GTMBExtensions.Registration registration = com.miaokatze.gtmb.api.BlueprintSnapshots
+                        .register(
+                            "gtmb_test:private-owner-admission",
+                            com.miaokatze.gtmb.api.BlueprintSnapshots.Stage.AUTHORING_COMPLETE,
+                            snapshot -> {
+                                SimpleAssert.that(
+                                    Thread.currentThread() == owner,
+                                    "private admission extension runs on owner, never the upload IO worker");
+                                calls.incrementAndGet();
+                                if ("rejected".equals(outcome)) throw new IOException("extension veto");
+                                return new NBTTagCompound();
+                            })) {
+                    f.begin(false, false);
+                    f.upload();
+                    SimpleAssert.eq(0, calls.get(), "private bytes alone never invoke completion callbacks");
+                    SimpleAssert.that(
+                        get(f.peer(), "upload") != null,
+                        "external compatibility upload retains its bounded owner-review reservation");
+                    SimpleAssert.eq(
+                        1,
+                        (Integer) get(f.store, "activeUploads"),
+                        "only external compatibility path reserves pending owner work");
+                    if ("cancelled".equals(outcome)) {
+                        NBTTagCompound cancel = (NBTTagCompound) f.request.copy();
+                        cancel.setString("op", "cancel");
+                        f.store.submit(f.actor, cancel, false);
+                        f.worker(() -> {});
+                    }
+                    if ("changedRevision".equals(outcome)) {
+                        f.session.planRevision++;
+                        f.store.heartbeat();
+                        f.worker(() -> {});
+                    }
+                    f.serverCallbacks();
+                    f.worker(() -> {});
+                    boolean accepted = "accepted".equals(outcome);
+                    SimpleAssert.eq(
+                        accepted || "rejected".equals(outcome) ? 1 : 0,
+                        calls.get(),
+                        "one review per exact activation; stale/cancelled work invokes none: " + outcome);
+                    SimpleAssert
+                        .eq(accepted ? 1 : 0, f.starts, "extension veto or stale source cannot activate: " + outcome);
+                    if (accepted) SimpleAssert.that(
+                        !HologramBlueprintNbt.decode(f.activatedSource.processingNbt)
+                            .getCompoundTag("extensions")
+                            .hasKey("forgedApproval"),
+                        "private activation replaces forged incoming report before receiver");
+                    SimpleAssert.eq(
+                        0,
+                        (Integer) get(f.store, "activeUploads"),
+                        "owner review terminal releases active upload quota: " + outcome);
+                    SimpleAssert.eq(
+                        0L,
+                        (Long) get(f.store, "reservedBytes"),
+                        "owner review terminal releases byte reservation: " + outcome);
+                    SimpleAssert.eq(
+                        0L,
+                        (Long) get(f.store, "reviewDtoBytes"),
+                        "owner review terminal releases expanded DTO quota: " + outcome);
+                    SimpleAssert.eq(before, source.processingNbt, "upload review preserves original candidate source");
+                    if (!accepted) SimpleAssert.that(
+                        HologramWorkspace.find(f.actor.getUniqueID()) == f.session,
+                        "failed review preserves original server presentation");
+                }
+            }
+        }
+    }
+
     static EntityPlayerMP connectedPlayer(String name) throws Exception {
         Field singleton = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
         singleton.setAccessible(true);
@@ -265,6 +381,7 @@ final class HologramLibraryPreparationRegression {
         HologramLibraryActivationResult result;
         byte[] bytes;
         int starts;
+        HologramPresets.Preset activatedSource;
 
         @SuppressWarnings("unchecked")
         Fixture() throws Exception {
@@ -296,6 +413,7 @@ final class HologramLibraryPreparationRegression {
             set(HologramLibraryFacade.class, "library", store);
             HologramLibraryFacade.setPrivateReceiver((player, identity, source, completion) -> {
                 starts++;
+                activatedSource = source;
                 completion.completed(source.id);
             });
             request.setString("session", session.id);
@@ -378,10 +496,21 @@ final class HologramLibraryPreparationRegression {
         }
 
         void serverCallbacks() throws Exception {
+            ownerCallbacks();
+            worker(() -> {
+                Object peer = peer();
+                if (peer != null) call(store, "finishReviewedUpload", peer);
+            }); // Reviewed outcome returns to IO; no owner-thread producer waits in production.
+            ownerCallbacks(); // Private activation is separately owner/held-tool fenced.
+            poll();
+        }
+
+        void ownerCallbacks() throws Exception {
+            HologramWorkBudget.startServerTick();
             com.miaokatze.gtmb.util.ServerTaskScheduler.INSTANCE.onServerTick(
                 new cpw.mods.fml.common.gameevent.TickEvent.ServerTickEvent(
                     cpw.mods.fml.common.gameevent.TickEvent.Phase.END));
-            poll();
+            HologramWorkBudget.endServerTick();
         }
 
         void poll() throws Exception {

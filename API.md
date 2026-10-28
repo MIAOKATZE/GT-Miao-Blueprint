@@ -52,6 +52,10 @@ GTMBExtensions.Registration source = StructureSources.register(
 
 来源接口目前服务于 `MTEEnhancedMultiBlockBase` 控制器。返回 null 时继续 native `construct(..., true)` 和 buildPiece 捕获；非空 Plan 不调用 native construct 或 definition 工厂。只匹配精确类，子类可能改变验收语义，不自动继承适配。
 
+`StructureSources.register(id, type, source)` 保持旧自动采集回调的服务端执行契约。本地合成结构声明遇到该精确控制器类的旧注册时，在调用 `describe` 前明确拒绝；不会执行回调后才判断，也不会跳过来源并降级到 native construct。未匹配的其他控制器类不受影响。新增 `register(id, type, source, true)` 可显式声明 `describe` 支持客户端游戏线程上的 detached controller；这不授予 IO 线程执行能力。显式外部 `resolve` 调用仍是调用线程上的同步查询。
+
+匹配旧 `StructureSources` 时，本地重建/能力读取通过显式 owner-bound 审核请求将冻结恢复文档和结构选项交给服务端：复用同一个 detached 原生结构引擎逐 tick 续行，返回结构增量与能力报告，在原文档版本仍然一致时由客户端执行一次编辑事务。取消、断线、工具/结构选择或文档版本变化不会提交旧结果；不会创建作者 Session、操作真实世界或消费资产。合成声明不属于真实采集，即使审核在服务端执行也不触发 `CAPTURE_COMPLETE`。
+
 来源回调只能读取声明，不能运行 checkMachine、hatch adder、放置、tick、世界修改或未知 deferred controller factory。definition 图必须在本次采集期间保持不变。pieces 列表不可变，Piece 保存并返回 trigger 副本。来源每次新采集调用一次，续批复用同一图；main/channel 改动、重新扫描或另一采集重新求值，不能永久缓存旧 tier/offset。
 
 默认 native 路径同样每次采集只取得一个 definition，续批复用它。GTNL rc2 的 `NuclearReactor`、`AtomicEnergyExcitationPlant`、`AssemblerMatrix` 等每次 `getStructureDefinition()` 都新建 element 图。旧实现每次续批重建图，因同坐标的 element 身份变化而触发 `CONFLICTING_CELL`。修复冻结的是单次采集图，不是跨会话缓存。
@@ -101,7 +105,11 @@ GTMBExtensions.Registration review = BlueprintSnapshots.register(
 
 Snapshot 包含不可变值和 cell 列表；tile()/item() 每次返回独立 NBT。处理器可分析、验证和报告，不能修改作者结果、原始结构、会话或施工授权。报告字段不会成为已付款、已绑定或可放置授权。`BlueprintSnapshots.inspect(snapshot)` 也可分析外部工具的独立数据，不导入服务器会话、不操作世界。
 
-回调按注册顺序运行。IOException 拒绝该次完成，错误包含扩展 ID，原始作者来源保持不变。回调应确定、无副作用，避免无界工作和网络阻塞。capture、authoring、原生资源回调沿用服务端线程；renderer 在客户端线程运行。
+回调按注册顺序运行。IOException 拒绝该次完成，错误包含扩展 ID，原始作者来源保持不变。回调应确定、无副作用，避免无界工作和网络阻塞。真实 capture 完成和服务端 authoring 完成回调沿用服务端线程；renderer 在客户端线程运行。`BlueprintSnapshots.inspect(snapshot)` 是显式外部工具入口，始终在调用者线程同步执行，不自动调度到服务器。
+
+本地作者文档的合成结构声明不是世界采集，因此不触发 `CAPTURE_COMPLETE`。本地处理只完成内置步骤，不触发 `AUTHORING_COMPLETE`，也不会沿用旧扩展报告；receipt 的 `extensionReviewPending` 仅表示等待服务端审核，不是授权。显式服务端审核及最终候选接纳在真实服务端所有者线程对最终数据重新检查原生资源、执行完成回调，并完整替换不可信的 `extensions` 元数据；拒绝保留原稿，不创建伪会话、不消耗材料或修改世界。
+
+`NativePlacement.register(id, adapter)` 和 `ResourceContainers.register(id, codec)` 保持旧默认：本地作者路径不会执行这些回调（包括 `supports`/`decode` 适用性探测）。可以使用新增重载 `register(id, adapterOrCodec, true)` 显式声明所有回调也可安全运行在客户端游戏线程的独立数据上下文。第三方接管顺序不变；在需要旧服务端扩展的位置，本地操作报告需要显式服务端审核，不能跳过该扩展并降级到内置适配器。GTMB 内置原生适配器保留本地快速路径，普通文档编辑不因此产生逐编辑 RPC。该边界不改变其他显式外部 API 的调用线程，也不声称历史教程或库 IO 中的原生调用从未存在。
 
 ## 模块与验证边界
 
@@ -127,3 +135,7 @@ GTNL 根因已核对本地 `GT-Not-Leisure-0.2.7-rc2` 源码。源码分析、�
 Transform 按源局部轴 mirror（bit 0/1/2 为 X/Y/Z），再 X、Y、Z 四分之一转执行；`rotation` 是 Y，`turnX`、`turnZ` 为其余轴。`point` 将完整体积含空气归一化到目标最小角，`size`、`vector`、`direction` 提供同一矩阵。已知原生方向字段变换，未知私有字段按 WorldEdit/MatterManipulator 的保留原则原样携带，不猜测其语义；不照搬 MM 复制重建路径的连接缓存清理。
 
 预览和放置从原始缓存生成派生快照，不回写原件。持久 journal 同时保留原始队列记录和派生放置快照，世界读回成功并提交后才消费原件；撤销始终恢复原维度、原位、原姿态。所选条目的完整原始 NBT 仅经独立剪切通道发送给已认证所有者，目录列表不包含方块内容。客户端独立预览 world 不主动 tick；无法渲染的原生 TESR 显示诊断，数据仍完整保留。
+
+### 本地扩展兼容范围
+
+服务端兼容回退覆盖处理流程检查/执行、候选导出、整蓝图旋转、量子类群配置、全局/所选格 NBT 检查、所选格候选读取与目标/恢复/朝向配置，以及原生结构重建/能力读取。候选查询只上传有界所选源记录；配置返回实际变化的格增量，原始未知字段、坐标来源与未兑现义务由现有作者事务保留。其他未镜像的原生操作（例如独立直接去标识、所选 NBT 值编辑、AE 原生标记编辑和 LittleTiles 附加对象）若遇到未声明客户端安全的外部回调，仍会明确拒绝并保留原稿。触发条件是注册顺序中遇到旧适配器，而不是已经证实它适用于当前方块：不能为了判断适用性先在客户端调用旧 `supports`/`decode`。这项边界不应被描述为恢复了所有第三方原生编辑能力。`StructureSources` 与无适用性元数据的原生适配器不同：它仅在精确控制器类匹配旧注册时拒绝，不会因任意其他结构来源已注册就全局拒绝重建。

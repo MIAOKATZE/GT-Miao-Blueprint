@@ -13,7 +13,20 @@ import com.gtnewhorizon.structurelib.structure.IStructureDefinition;
 /** Alternative declaration sources for standard GT controllers. This API never initiates a world operation. */
 public final class StructureSources {
 
-    private static final Map<Class<?>, Source<?>> SOURCES = new ConcurrentHashMap<>();
+    private static final Map<Class<?>, Entry> SOURCES = new ConcurrentHashMap<>();
+
+    private static final class Entry {
+
+        final String id;
+        final Source<?> source;
+        final boolean clientSafe;
+
+        Entry(String id, Source<?> source, boolean clientSafe) {
+            this.id = id;
+            this.source = source;
+            this.clientSafe = clientSafe;
+        }
+    }
 
     private StructureSources() {}
 
@@ -59,11 +72,18 @@ public final class StructureSources {
 
     /** Exact classes only: subclasses may have different acceptance rules. No global class-name heuristics. */
     public static <C> GTMBExtensions.Registration register(String id, Class<C> type, Source<C> source) {
+        return register(id, type, source, false);
+    }
+
+    /** Opt in only when describe is safe for detached controllers on both client and server game threads. */
+    public static <C> GTMBExtensions.Registration register(String id, Class<C> type, Source<C> source,
+        boolean clientSafe) {
         if (type == null || source == null) throw new IllegalArgumentException("source");
         return GTMBExtensions.install(id, "structure-source", () -> {
-            if (SOURCES.putIfAbsent(type, source) != null)
+            Entry entry = new Entry(id, source, clientSafe);
+            if (SOURCES.putIfAbsent(type, entry) != null)
                 throw new IllegalArgumentException("Source already registered");
-            return () -> SOURCES.remove(type, source);
+            return () -> SOURCES.remove(type, entry);
         });
     }
 
@@ -75,7 +95,11 @@ public final class StructureSources {
     @SuppressWarnings("unchecked")
     public static Plan resolve(Object controller, ItemStack trigger) {
         if (controller == null || trigger == null) return null;
-        Source<Object> source = (Source<Object>) SOURCES.get(controller.getClass());
-        return source == null ? null : source.describe(controller, trigger.copy());
+        Entry entry = SOURCES.get(controller.getClass());
+        if (entry == null) return null;
+        // Exact-class registry lookup is safe; never call describe just to discover whether a source applies.
+        com.miaokatze.gtmb.hologram.HologramExtensionExecution.requireBuiltinIo(false, entry.id);
+        com.miaokatze.gtmb.hologram.HologramExtensionExecution.requireClientSafe(entry.clientSafe, entry.id);
+        return ((Source<Object>) entry.source).describe(controller, trigger.copy());
     }
 }
