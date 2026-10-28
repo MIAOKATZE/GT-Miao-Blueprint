@@ -1521,15 +1521,8 @@ final class HologramLibraryClient {
 
     static com.miaokatze.gtmb.blueprint.editor.AuthorDocument readAuthorSource(byte[] bytes)
         throws java.io.IOException {
-        // Reject malformed UTF-8 before the legacy compact adapter can replace invalid input characters.
-        java.nio.charset.StandardCharsets.UTF_8.newDecoder()
-            .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
-            .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
-            .decode(java.nio.ByteBuffer.wrap(bytes));
-        com.google.gson.JsonObject source = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec
-            .parse(bytes, HologramClientLibrary.MAX_AUTHOR_BYTES);
-        return com.miaokatze.gtmb.blueprint.editor.AuthorDocumentIO
-            .readExpanded(source, com.miaokatze.gtmb.blueprint.editor.AuthorDocumentIO.Limits.defaults());
+        return com.miaokatze.gtmb.blueprint.editor.AuthorSourceImporter
+            .read(bytes, com.miaokatze.gtmb.blueprint.editor.AuthorDocumentIO.Limits.defaults());
     }
 
     private byte[] readIntegratedAuthorSource(String id) throws java.io.IOException {

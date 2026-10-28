@@ -35,6 +35,69 @@ public final class AuthorDocumentRegression {
         boundedOwnedCopyAndByteOracle();
         largeOpaqueAttachment();
         treeIndex();
+        sourceWorldFrame();
+    }
+
+    private static void sourceWorldFrame() throws Exception {
+        AuthorDocument plain = read("{\"schema\":2,\"cells\":[{\"x\":0,\"tileNbt\":\"opaque-exact\"}]}");
+        check(!plain.sourceFrame().known, "old files have unknown source, not invented zero capture");
+        AuthorDocument.SourceFrame frame = AuthorDocument.SourceFrame.captured(7, -100, 64, 200);
+        AuthorDocument captured = plain.withSourceFrame(frame);
+        check(
+            captured.sourceCopy()
+                .equals(plain.sourceCopy()),
+            "world frame does not normalize source or NBT");
+        AuthorEditor editor = new AuthorEditor(captured, 8);
+        editor.select(Collections.singleton(1L));
+        editor.move(4, 0, 0);
+        editor.copy(5, 0, 0);
+        AuthorDocument saved = AuthorDocumentIO.read(
+            AuthorDocumentIO.writeDraft(editor.current(), AuthorDocumentIO.Limits.defaults()),
+            AuthorDocumentIO.Limits.defaults());
+        check(
+            saved.sourceFrame()
+                .equals(frame),
+            "draft saves source dimension and origin separately");
+        check(
+            saved.cell(2)
+                .payloadX() == 0,
+            "world frame never replaces local per-cell payload origin");
+        check(
+            saved.forkCopy()
+                .sourceFrame()
+                .equals(frame),
+            "save as retains capture provenance");
+        editor.undo();
+        check(
+            editor.current()
+                .sourceFrame()
+                .equals(frame),
+            "undo retains frame");
+        editor.redo();
+        check(
+            editor.current()
+                .sourceFrame()
+                .equals(frame),
+            "redo retains frame");
+        AuthorEditor other = new AuthorEditor(plain, 8);
+        boolean rejected = false;
+        try {
+            other.paste(editor.clipboard(), 20, 0, 0);
+        } catch (IllegalArgumentException expected) {
+            rejected = true;
+        }
+        check(rejected && other.current() == plain, "cross-frame opaque paste is atomic refusal");
+        AuthorEditor geometry = new AuthorEditor(read("{\"schema\":2,\"cells\":[{\"x\":0}]}"), 8);
+        geometry.select(Collections.singleton(1L));
+        editor.paste(geometry.clipboard(), 30, 0, 0);
+        check(
+            editor.current()
+                .cellAt(30, 0, 0) != null,
+            "plain geometry may cross source frames");
+        String draft = new String(
+            AuthorDocumentIO.writeDraft(plain, AuthorDocumentIO.Limits.defaults()),
+            StandardCharsets.UTF_8);
+        check(!draft.contains("sourceFrame"), "old plain draft serialization unchanged");
     }
 
     private static void losslessAndImmutable() throws Exception {

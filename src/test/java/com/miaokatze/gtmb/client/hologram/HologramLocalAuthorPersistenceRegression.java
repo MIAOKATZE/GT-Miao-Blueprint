@@ -22,6 +22,7 @@ public final class HologramLocalAuthorPersistenceRegression {
     }
 
     public static void run() throws Exception {
+        HologramAuthorSourceImportRegression.run();
         Path game = Files.createTempDirectory("gtmb-local-author-");
         try {
             HologramClientLibrary library = new HologramClientLibrary(game);

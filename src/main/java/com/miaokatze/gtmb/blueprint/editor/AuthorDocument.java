@@ -13,12 +13,13 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 /**
- * Immutable, source-authoritative local draft. No registry, world, native NBT or server receipt lives here.
+ * Immutable, source-authoritative local draft. No registry, live world, native NBT or server receipt lives here.
  * JSON containers are owned privately; exact encoded payload strings and untouched records are shared.
  */
 public final class AuthorDocument {
 
     static final int PAGE_SIZE = 64;
+    final SourceFrame sourceFrame;
     final String id;
     final long revision, nextId;
     final long retainedBytes, retainedNodes;
@@ -33,10 +34,12 @@ public final class AuthorDocument {
     final Obligation obligations;
     final String readOnlyReason;
 
-    AuthorDocument(String id, long revision, long nextId, int count, AuthorDocumentIO.Limits limits, long retainedBytes,
-        long retainedNodes, int pendingPayloadPositions, JsonObject envelope, JsonObject header, boolean wrapped,
-        boolean hadCells, boolean hadStructures, AuthorTree<Long, Cell[]> pages, AuthorTree<Position, Long> positions,
-        AuthorTree<String, Group> groups, List<String> groupOrder, Obligation obligations, String readOnlyReason) {
+    AuthorDocument(SourceFrame sourceFrame, String id, long revision, long nextId, int count,
+        AuthorDocumentIO.Limits limits, long retainedBytes, long retainedNodes, int pendingPayloadPositions,
+        JsonObject envelope, JsonObject header, boolean wrapped, boolean hadCells, boolean hadStructures,
+        AuthorTree<Long, Cell[]> pages, AuthorTree<Position, Long> positions, AuthorTree<String, Group> groups,
+        List<String> groupOrder, Obligation obligations, String readOnlyReason) {
+        this.sourceFrame = java.util.Objects.requireNonNull(sourceFrame);
         this.retainedBytes = retainedBytes;
         this.retainedNodes = retainedNodes;
         this.pendingPayloadPositions = pendingPayloadPositions;
@@ -71,6 +74,7 @@ public final class AuthorDocument {
             .toString()
             .equalsIgnoreCase(documentId)) throw new IllegalArgumentException("Invalid document identity");
         return new AuthorDocument(
+            sourceFrame,
             documentId,
             revision,
             nextId,
@@ -90,6 +94,69 @@ public final class AuthorDocument {
             groupOrder,
             obligations,
             readOnlyReason);
+    }
+
+    /** Historical coordinate basis only, never world access or a server permission. */
+    public SourceFrame sourceFrame() {
+        return sourceFrame;
+    }
+
+    /** Trusted capture/import boundary; does not rewrite or decode opaque payloads. */
+    public AuthorDocument withSourceFrame(SourceFrame frame) {
+        if (sourceFrame.equals(frame)) return this;
+        return new AuthorDocument(
+            frame,
+            id,
+            revision,
+            nextId,
+            count,
+            limits,
+            retainedBytes,
+            retainedNodes,
+            pendingPayloadPositions,
+            envelope,
+            header,
+            wrapped,
+            hadCells,
+            hadStructures,
+            pages,
+            positions,
+            groups,
+            groupOrder,
+            obligations,
+            readOnlyReason);
+    }
+
+    public static final class SourceFrame {
+
+        /** Legacy files did not record a source world frame; zero values are compatibility fallback, not evidence. */
+        public static final SourceFrame UNKNOWN = new SourceFrame(false, 0, 0, 0, 0);
+        public final boolean known;
+        public final int dimension, x, y, z;
+
+        private SourceFrame(boolean known, int dimension, int x, int y, int z) {
+            this.known = known;
+            this.dimension = dimension;
+            this.x = x;
+            this.y = y;
+            this.z = z;
+        }
+
+        public static SourceFrame captured(int dimension, int x, int y, int z) {
+            return new SourceFrame(true, dimension, x, y, z);
+        }
+
+        @Override
+        public boolean equals(Object value) {
+            if (!(value instanceof SourceFrame)) return false;
+            SourceFrame other = (SourceFrame) value;
+            return known == other.known && dimension == other.dimension && x == other.x && y == other.y && z == other.z;
+        }
+
+        @Override
+        public int hashCode() {
+            return (((31 * (known ? 1 : 0) + dimension) * 31 + x) * 31 + y) * 31 + z;
+        }
     }
 
     public String documentId() {
@@ -238,6 +305,7 @@ public final class AuthorDocument {
 
     AuthorDocument withRevision(long value, long minimumNextId) {
         return new AuthorDocument(
+            sourceFrame,
             id,
             value,
             Math.max(nextId, minimumNextId),

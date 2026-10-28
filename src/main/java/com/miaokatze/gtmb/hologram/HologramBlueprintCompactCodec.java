@@ -145,7 +145,26 @@ public final class HologramBlueprintCompactCodec {
         try {
             JsonElement value = new JsonParser().parse(text);
             if (!value.isJsonObject()) throw new IOException("Blueprint JSON root must be an object");
-            JsonObject root = value.getAsJsonObject();
+            return expandOwned(value.getAsJsonObject(), limit, null);
+        } catch (RuntimeException invalid) {
+            throw new IOException("Invalid compact blueprint JSON", invalid);
+        }
+    }
+
+    /**
+     * Internal author adapter operation: mutates its caller-owned strict parse tree, but retains no aliases.
+     * Unlike parse(), this does not parse text or relax grammar. The caller must complete document admission.
+     */
+    public static void expandAuthorInput(JsonObject root,
+        com.miaokatze.gtmb.blueprint.editor.AuthorDocumentIO.Limits limits) throws IOException {
+        if (limits.maxBytes > HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES)
+            throw new IOException("Blueprint JSON byte budget");
+        expandOwned(root, limits.maxBytes, limits);
+    }
+
+    private static JsonObject expandOwned(JsonObject root, int limit,
+        com.miaokatze.gtmb.blueprint.editor.AuthorDocumentIO.Limits authorLimits) throws IOException {
+        try {
             if (!root.has("encoding")) {
                 List<JsonObject> legacy = new ArrayList<>();
                 if (root.has("blueprint")) legacy.add(object(root.get("blueprint")));
@@ -217,6 +236,7 @@ public final class HologramBlueprintCompactCodec {
                 total += size;
                 if (total > limit) throw new IOException("Expanded blueprint collection byte budget");
             }
+            if (authorLimits != null) preflightAuthorExpansion(root, blueprints, materials, authorLimits);
             for (JsonObject blueprint : blueprints) {
                 resolveNbt(blueprint, nbt);
                 for (String field : new String[] { "cells", "palette" }) {
@@ -244,6 +264,55 @@ public final class HologramBlueprintCompactCodec {
         } catch (RuntimeException invalid) {
             throw new IOException("Invalid compact blueprint JSON", invalid);
         }
+    }
+
+    /** Logical node/depth/cell limits are checked before allocating any expanded material containers. */
+    private static void preflightAuthorExpansion(JsonObject root, List<JsonObject> blueprints, JsonArray materials,
+        com.miaokatze.gtmb.blueprint.editor.AuthorDocumentIO.Limits limits) throws IOException {
+        long nodes = nodeCount(root) - nodeCount(root.get("materials")) - nodeCount(root.get("nbt")) - 1;
+        long[] materialNodes = new long[materials.size()];
+        int[] materialDepths = new int[materials.size()];
+        for (int i = 0; i < materials.size(); i++) {
+            materialNodes[i] = nodeCount(materials.get(i));
+            materialDepths[i] = valueDepth(materials.get(i));
+        }
+        int blueprintDepth = root.has("presets") ? 2 : 1;
+        for (JsonObject blueprint : blueprints) for (String field : new String[] { "cells", "palette" }) {
+            JsonElement value = blueprint.get(field);
+            if (value == null || value.isJsonNull()) continue;
+            JsonArray rows = array(value);
+            if (field.equals("cells") && rows.size() > limits.maxCells)
+                throw new IOException("Cell count budget exceeded");
+            for (JsonElement row : rows) {
+                int ref = index(
+                    row.getAsJsonArray()
+                        .get(0),
+                    materials.size());
+                // The reference is [id, coordinates]; expanded cell is material + coordinates, one object.
+                nodes += materialNodes[ref] - 3;
+                // Author documents reserve two levels for their durable draft source envelope.
+                if (blueprintDepth + 4 + materialDepths[ref] > limits.maxDepth)
+                    throw new IOException("JSON structure budget exceeded");
+            }
+        }
+        if (nodes > limits.maxNodes) throw new IOException("JSON structure budget exceeded");
+    }
+
+    private static long nodeCount(JsonElement value) {
+        long nodes = 1;
+        if (value.isJsonObject()) for (Map.Entry<String, JsonElement> field : value.getAsJsonObject()
+            .entrySet()) nodes += nodeCount(field.getValue());
+        else if (value.isJsonArray()) for (JsonElement child : value.getAsJsonArray()) nodes += nodeCount(child);
+        return nodes;
+    }
+
+    private static int valueDepth(JsonElement value) {
+        int depth = 0;
+        if (value.isJsonObject()) for (Map.Entry<String, JsonElement> field : value.getAsJsonObject()
+            .entrySet()) depth = Math.max(depth, 1 + valueDepth(field.getValue()));
+        else if (value.isJsonArray())
+            for (JsonElement child : value.getAsJsonArray()) depth = Math.max(depth, 1 + valueDepth(child));
+        return depth;
     }
 
     private static long expandedSize(JsonObject blueprint, JsonArray materials, long[] nbtSizes, long[] sizes)
@@ -424,6 +493,17 @@ public final class HologramBlueprintCompactCodec {
         return encode(java.util.Collections.singletonList(blueprint), false, null, progress);
     }
 
+    /** Capture source provenance is transport metadata, separate from portable preset DTOs. */
+    static byte[] encodeAuthorSource(HologramPresets.Preset blueprint,
+        com.miaokatze.gtmb.blueprint.editor.AuthorDocument.SourceFrame frame, HologramDraftEncoding.Progress progress)
+        throws IOException {
+        JsonObject fields = new JsonObject();
+        fields.add(
+            com.miaokatze.gtmb.blueprint.editor.AuthorDocumentIO.SOURCE_FRAME_FIELD,
+            com.miaokatze.gtmb.blueprint.editor.AuthorDocumentIO.sourceFrameJson(frame));
+        return encode(java.util.Collections.singletonList(blueprint), false, fields, progress);
+    }
+
     static byte[] encodeLibrary(List<HologramPresets.Preset> presets) throws IOException {
         return encode(presets, true, null, (done, total) -> {});
     }
@@ -441,8 +521,10 @@ public final class HologramBlueprintCompactCodec {
         if (presets.size() > 32) throw new IOException("Blueprint collection entry budget");
         for (HologramPresets.Preset preset : presets) total += (long) preset.cells.size() + preset.palette.size();
         final long all = total;
+        final int envelopeSchema = extra == null
+            || extra.has(com.miaokatze.gtmb.blueprint.editor.AuthorDocumentIO.SOURCE_FRAME_FIELD) ? 2 : 1;
         JsonObject rootMetadata = new JsonObject();
-        rootMetadata.addProperty("schema", extra == null ? 2 : 1);
+        rootMetadata.addProperty("schema", envelopeSchema);
         if (extra != null) for (Map.Entry<String, JsonElement> field : extra.entrySet())
             rootMetadata.add(field.getKey(), field.getValue());
         rootMetadata.add(
@@ -465,7 +547,7 @@ public final class HologramBlueprintCompactCodec {
             public void write(JsonWriter output, Encoded ignored) throws IOException {
                 output.beginObject()
                     .name("schema")
-                    .value(extra == null ? 2 : 1)
+                    .value(envelopeSchema)
                     .name("encoding")
                     .value(ENCODING);
                 if (extra != null) for (Map.Entry<String, JsonElement> field : extra.entrySet()) {
