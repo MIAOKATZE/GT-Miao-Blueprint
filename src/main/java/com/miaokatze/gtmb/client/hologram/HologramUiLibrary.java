@@ -1268,17 +1268,34 @@ final class HologramUiLibrary {
         submitBlueprintSave(true);
     }
 
+    private String localAuthorSaveName() {
+        String name = authorSaveName(
+            presetNameField == null ? null : presetNameField.getText(),
+            ui.session.author()
+                .document()
+                .title());
+        if (presetNameField != null) setLocalName(name);
+        return name;
+    }
+
+    private void setLocalName(String name) {
+        presetNameField.setMaxStringLength(Math.max(240, name.length()));
+        if (!presetNameField.getText().equals(name)) presetNameField.setText(name);
+    }
+
+    /** An absent/empty draft field is not a request to replace the source title. */
+    static String authorSaveName(String entered, String currentTitle) {
+        if (entered == null || entered.equals(currentTitle) || entered.trim().isEmpty()) return currentTitle;
+        return entered.trim();
+    }
+
     private void submitBlueprintSave(boolean current) {
         if (ui.session.isLocalAuthor()) {
-            String name = presetNameField == null ? ui.session.author()
-                .document()
-                .title() : presetNameField.getText();
+            String name = localAuthorSaveName();
             ui.session.author()
                 .select(
                     ui.preview.selection()
                         .indices());
-            name = name.trim()
-                .isEmpty() ? "未命名蓝图" : name.trim();
             if (current) ui.session.author()
                 .save(name);
             else ui.session.author()
@@ -1404,11 +1421,7 @@ final class HologramUiLibrary {
                     ui.session.notice("恢复草稿不能覆盖可分享成品；请选恢复草稿，或使用独立导出候选");
                     return true;
                 }
-                String name = presetNameField == null ? ui.session.author()
-                    .document()
-                    .title()
-                    : presetNameField.getText()
-                        .trim();
+                String name = localAuthorSaveName();
                 ui.session.author()
                     .saveOverwrite(this.overwriteTarget, name);
                 return true;
@@ -2217,11 +2230,20 @@ final class HologramUiLibrary {
         return null;
     }
 
+    /** Follow canonical rename/undo without overwriting an in-progress user-entered name. */
+    void syncLocalName(HologramState before, HologramState next) {
+        if (presetNameField == null || before == null || next == null || !before.session.equals(next.session)
+            || !before.data.getBoolean("localAuthor") || !next.data.getBoolean("localAuthor")) return;
+        String previous = HologramDraftNameMemory.canonicalName(before.data);
+        String current = HologramDraftNameMemory.canonicalName(next.data);
+        if (!previous.equals(current) && presetNameField.getText().equals(previous)) setLocalName(current);
+    }
+
     void initializeFields() {
         ui.library.presetNameField(
             new HologramMuiTextField(ui.host.parent(), 457, 78, HologramScreenLayout.COMPACT_PANEL_WIDTH - 10, 16));
         ui.library.presetNameField()
-            .setMaxStringLength(240);
+            .setMaxStringLength(ui.session.isLocalAuthor() ? Math.max(240, ui.session.author().document().title().length()) : 240);
         if (ui.session.state().data.getBoolean("virtual")) ui.library.presetNameField()
             .setText(ui.session.state().data.getString("virtualPresetName"));
         UiMemory memory = HologramUiMemory.UI_MEMORY()

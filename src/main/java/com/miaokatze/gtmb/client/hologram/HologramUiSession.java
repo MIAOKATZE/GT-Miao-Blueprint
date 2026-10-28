@@ -53,6 +53,7 @@ final class HologramUiSession {
 
     void localDocumentChanged(HologramState next) {
         if (author == null) throw new IllegalStateException("No local document owner");
+        ui.library.syncLocalName(state, next);
         state = next;
         ui.preview.initializeSelection(next);
         ui.preview.syncLayerAndSelection(next);

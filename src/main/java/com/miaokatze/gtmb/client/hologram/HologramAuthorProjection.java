@@ -314,6 +314,7 @@ final class HologramAuthorProjection implements AutoCloseable {
         data.setBoolean("virtualLocked", !document.editable());
         data.setString("session", document.documentId());
         data.setString("blueprintName", document.title());
+        data.setString("virtualPresetName", document.title());
         data.setString("title", document.title());
         data.setLong("planRevision", document.revision());
         data.setString("authorDiagnostic", document.diagnostic());

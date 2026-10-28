@@ -32,6 +32,10 @@ public final class HologramLocalAuthorRegressionTest {
             cases,
             "draft_persistence_and_recovery",
             com.miaokatze.gtmb.client.hologram.HologramLocalAuthorPersistenceRegression::run);
+        add(
+            cases,
+            "author_save_name_preservation",
+            com.miaokatze.gtmb.client.hologram.HologramAuthorSaveNameRegression::run);
         add(cases, "atomic_native_attachments", HologramLocalAuthorAttachmentsRegression::run);
         add(cases, "native_configuration_contract", HologramLocalAuthorConfigurationsRegression::run);
         add(cases, "native_structure_regeneration", HologramLocalAuthorStructuresRegression::run);
