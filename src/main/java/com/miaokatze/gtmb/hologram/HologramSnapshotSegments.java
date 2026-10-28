@@ -7,6 +7,7 @@ import java.io.DataOutputStream;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -273,6 +274,9 @@ public final class HologramSnapshotSegments {
                     }
                     if (total != cellCount) throw new IOException("snapshot stable page total");
                 }
+                // A frame may start with an inline page before referencing every existing cache entry.
+                // Pin those references before inserting anything, without retaining another decoded frame.
+                Set<String> references = frameReferences(input, count, raw, current);
                 NBTTagList cells = new NBTTagList();
                 List<String> retained = new ArrayList<>();
                 for (int page = 0; page < count; page++) {
@@ -316,18 +320,25 @@ public final class HologramSnapshotSegments {
                                 cached = cacheAllowed && segmentRaw <= CACHE_RAW_BYTES
                                     && part.retainedEstimate <= CACHE_RETAINED_BYTES;
                                 if (cached) {
-                                    while (!cache.isEmpty()
-                                        && (cache.size() >= CACHE_ENTRIES || segmentRaw > CACHE_RAW_BYTES - cachedRaw
-                                            || part.retainedEstimate > CACHE_RETAINED_BYTES - cachedEstimate))
-                                        evictOldest();
-                                    Segment previous = cache.put(identity, segment);
-                                    if (previous != null) {
-                                        cachedRaw -= previous.rawBytes;
-                                        cachedEstimate -= previous.estimate;
-                                        previous.close();
+                                    while (cache.size() >= CACHE_ENTRIES || segmentRaw > CACHE_RAW_BYTES - cachedRaw
+                                        || part.retainedEstimate > CACHE_RETAINED_BYTES - cachedEstimate) {
+                                        if (!evictOldest(references)) {
+                                            // All remaining cache entries belong to this frame. Transfer the
+                                            // inline page into its projection rather than growing the cache.
+                                            cached = false;
+                                            break;
+                                        }
                                     }
-                                    cachedRaw += segmentRaw;
-                                    cachedEstimate += part.retainedEstimate;
+                                    if (cached) {
+                                        Segment previous = cache.put(identity, segment);
+                                        if (previous != null) {
+                                            cachedRaw -= previous.rawBytes;
+                                            cachedEstimate -= previous.estimate;
+                                            previous.close();
+                                        }
+                                        cachedRaw += segmentRaw;
+                                        cachedEstimate += part.retainedEstimate;
+                                    }
                                 }
                             }
                         }
@@ -405,14 +416,43 @@ public final class HologramSnapshotSegments {
             return lease;
         }
 
-        private void evictOldest() {
-            String oldest = cache.keySet()
-                .iterator()
-                .next();
-            Segment removed = cache.remove(oldest);
-            cachedRaw -= removed.rawBytes;
-            cachedEstimate -= removed.estimate;
-            removed.close();
+        /** Header-only bounded pass: no compressed payload copies or decoded NBT are retained. */
+        private static Set<String> frameReferences(DataInputStream input, int count, int raw, BooleanSupplier current)
+            throws IOException {
+            Set<String> references = new LinkedHashSet<>();
+            input.mark(input.available());
+            try {
+                for (int page = 0; page < count; page++) {
+                    if (!current.getAsBoolean())
+                        throw new java.util.concurrent.CancellationException("snapshot segment retired");
+                    byte[] hash = payload(input, 32);
+                    raw += positive(input.readInt(), RAW_LIMIT - raw);
+                    int length = input.readInt();
+                    if (length < 0 || length > input.available()) throw new IOException("snapshot segment length");
+                    if (length == 0) references.add(hex(hash));
+                    else input.skipBytes(length);
+                }
+                if (input.available() != 0) throw new IOException("snapshot segment trailing bytes");
+                return references;
+            } finally {
+                input.reset();
+            }
+        }
+
+        private boolean evictOldest(Set<String> references) {
+            Iterator<Map.Entry<String, Segment>> entries = cache.entrySet()
+                .iterator();
+            while (entries.hasNext()) {
+                Map.Entry<String, Segment> entry = entries.next();
+                if (references.contains(entry.getKey())) continue;
+                Segment removed = entry.getValue();
+                entries.remove();
+                cachedRaw -= removed.rawBytes;
+                cachedEstimate -= removed.estimate;
+                removed.close();
+                return true;
+            }
+            return false;
         }
     }
 

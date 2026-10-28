@@ -84,6 +84,20 @@ tasks.register<JavaExec>("runSnapshotOwnershipTest") {
 }
 tasks.named("check") { dependsOn("runSnapshotOwnershipTest") }
 
+// Large frame fixtures need exact lease baselines, independent of other suites' weak-cache retirement.
+tasks.register<JavaExec>("runSnapshotFrameReferencesTest") {
+    group = "verification"
+    description = "Checks bounded snapshot reference-cache ownership at the 128/129-page boundary."
+    dependsOn("compileTestJava")
+    mainClass = "com.miaokatze.gtmb.hologram.HologramSnapshotFrameReferencesRegression"
+    classpath = tasks.named<JavaExec>("runHologramTest").get().classpath
+    maxHeapSize = "2g"
+    val scratchDir = layout.buildDirectory.dir("hologram-snapshot-frame-references")
+    workingDir(scratchDir)
+    doFirst { scratchDir.get().asFile.mkdirs() }
+}
+tasks.named("check") { dependsOn("runSnapshotFrameReferencesTest") }
+
 tasks.register<JavaExec>("runBlueprintValidationBenchmark") {
     group = "verification"
     description = "Measures production validation reuse at 50k, 100k and 1m streamed cells; not a live-world benchmark."
