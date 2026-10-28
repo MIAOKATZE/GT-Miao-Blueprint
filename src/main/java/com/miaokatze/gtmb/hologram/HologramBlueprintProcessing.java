@@ -396,17 +396,23 @@ final class HologramBlueprintProcessing {
         if (!relations.isEmpty()) required |= 1 << 3;
         int index = 0;
         if (source != null) for (HologramPresets.Cell cell : source.cells) {
-            NBTTagCompound fields = facts.certificate(
-                cell,
-                HologramSegmentContract.Domain.REPORT,
-                "fields",
-                new Object[] { cell.block(), cell.tileNbt, cell.itemNbt, HologramSegmentContract.SCHEMA_EPOCH },
-                true,
-                () -> fieldFacts(cell, facts));
-            NBTTagList fieldKeys = fields.getTagList("keys", 8), fieldPaths = fields.getTagList("paths", 8);
-            for (int i = 0; i < fieldKeys.tagCount(); i++) keys.add(fieldKeys.getStringTagAt(i));
-            for (int i = 0; i < fieldPaths.tagCount(); i++) paths.add(fieldPaths.getStringTagAt(i));
-            required |= fields.getInteger("required");
+            if (cell.block() != null && !HologramSnapshotMetadataSource.hasPayload(cell.tileNbt)
+                && !HologramSnapshotMetadataSource.hasPayload(cell.itemNbt)) {
+                // No fields exist to collect. Native block/node requirements and resource counts still run below.
+                required |= requiredStages(cell, null, null);
+            } else {
+                NBTTagCompound fields = facts.certificate(
+                    cell,
+                    HologramSegmentContract.Domain.REPORT,
+                    "fields",
+                    new Object[] { cell.block(), cell.tileNbt, cell.itemNbt, HologramSegmentContract.SCHEMA_EPOCH },
+                    true,
+                    () -> fieldFacts(cell, facts));
+                NBTTagList fieldKeys = fields.getTagList("keys", 8), fieldPaths = fields.getTagList("paths", 8);
+                for (int i = 0; i < fieldKeys.tagCount(); i++) keys.add(fieldKeys.getStringTagAt(i));
+                for (int i = 0; i < fieldPaths.tagCount(); i++) paths.add(fieldPaths.getStringTagAt(i));
+                required |= fields.getInteger("required");
+            }
             if (!cell.excluded) {
                 review.add(cell, index, "tile", cell.tileNbt);
                 review.add(cell, index, "item", cell.itemNbt);
@@ -1111,6 +1117,8 @@ final class HologramBlueprintProcessing {
 
     /** The same complete native identity obligation serves synchronous and resumed policy discovery. */
     private static boolean identityBoundary(HologramPresets.Cell cell, HologramAnalysisFacts facts) throws IOException {
+        if (HologramSnapshotMetadataSource.detached() && cell.frozenBlockResolved && cell.frozenBlock != null
+            && cell.metadataIdentityBoundary != null) return cell.metadataIdentityBoundary;
         NBTTagCompound identity = facts.certificate(
             cell,
             HologramSegmentContract.Domain.REPORT,

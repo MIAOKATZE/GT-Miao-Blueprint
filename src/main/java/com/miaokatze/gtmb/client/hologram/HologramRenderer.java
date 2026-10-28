@@ -56,7 +56,6 @@ final class HologramRenderer {
     private static final Set<Coordinate> occluders = new HashSet<>();
     private static final Map<HologramRegionCache.Key, PreviewRegion> previewRegions = new LinkedHashMap<>();
     private static final long PREVIEW_BUILD_NANOS = 2_000_000L;
-    private static final int PREVIEW_BUILD_CELLS = 256;
     private static PreviewPreparation previewPreparation;
     private static boolean projectionPending;
     private static int modelDemandCursor;
@@ -158,6 +157,8 @@ final class HologramRenderer {
                 region.projectedKey = "";
                 region.projectionWorkKey = "";
             }
+        } else if (previewPreparation != null && previewPreparation.state == previous) {
+            previewPreparation.update(previous, next, dirty);
         }
         if (structureBoundsState == previous) {
             boolean sameMemberships = true;
@@ -455,8 +456,7 @@ final class HologramRenderer {
                 if (budgeted && !region.visible.isEmpty()
                     && !previewRegionVisible(state, HologramRegionCache.key(region.visible.get(0)))) continue;
                 if (!key.equals(region.projectedKey)) {
-                    if (!budgeted || projectedWork < PREVIEW_BUILD_CELLS
-                        && (projectedWork == 0 || System.nanoTime() < projectionDeadline))
+                    if (!budgeted || projectedWork == 0 || System.nanoTime() < projectionDeadline)
                         projectedWork += projectPreviewRegion(
                             region,
                             key,
@@ -464,7 +464,7 @@ final class HologramRenderer {
                             currentView,
                             budgeted,
                             projectionDeadline,
-                            PREVIEW_BUILD_CELLS - projectedWork);
+                            Integer.MAX_VALUE);
                     if (!key.equals(region.projectedKey)) projectionPending = true;
                 }
                 if (!key.equals(region.projectionWorkKey)) continue;
@@ -996,6 +996,11 @@ final class HologramRenderer {
     /** Client render-thread cursor: each cell invokes the existing native/texture path exactly once. */
     private static int projectPreviewRegion(PreviewRegion region, String key, int facing, boolean currentView,
         boolean budgeted, long deadline, int maxCells) {
+        return projectPreviewRegion(region, key, facing, currentView, budgeted, deadline, maxCells, System::nanoTime);
+    }
+
+    private static int projectPreviewRegion(PreviewRegion region, String key, int facing, boolean currentView,
+        boolean budgeted, long deadline, int maxCells, java.util.function.LongSupplier clock) {
         if (!key.equals(region.projectionWorkKey)) {
             region.projectionWorkKey = key;
             region.projectedKey = "";
@@ -1007,7 +1012,7 @@ final class HologramRenderer {
         }
         int work = 0;
         while (region.projectedCells < region.cells.size()
-            && (!budgeted || work < maxCells && (work == 0 || System.nanoTime() < deadline))) {
+            && (!budgeted || work < maxCells && (work == 0 || clock.getAsLong() < deadline))) {
             PreviewCell previewCell = region.cells.get(region.projectedCells++);
             work++;
             HologramState.Cell c = previewCell.cell;
@@ -1057,10 +1062,11 @@ final class HologramRenderer {
 
     private static final class PreviewPreparation {
 
-        final HologramState state;
+        HologramState state;
         final Map<HologramRegionCache.Key, PreviewTask> pending = new LinkedHashMap<>();
         PreviewTask task;
         int completed, published, detailedCompleted;
+        boolean firstHintsPresented;
 
         PreviewPreparation(HologramState state) {
             this.state = state;
@@ -1079,14 +1085,40 @@ final class HologramRenderer {
             }
         }
 
+        /** A model reply changes only its dirty regions; unrelated partial native work keeps its cursor. */
+        void update(HologramState previous, HologramState next, Set<HologramRegionCache.Key> dirty) {
+            state = next;
+            for (HologramRegionCache.Key key : dirty) {
+                PreviewTask old = pending.remove(key);
+                if (old != null) {
+                    completed -= old.cell + (old.refining ? old.cells.size() : 0);
+                    if (old.refining) detailedCompleted -= old.cell;
+                    if (task == old) task = null;
+                } else {
+                    List<HologramState.Cell> before = previous.regions.regions.get(key);
+                    if (before != null) {
+                        completed -= 2 * before.size();
+                        detailedCompleted -= before.size();
+                    }
+                }
+                List<HologramState.Cell> cells = next.regions.regions.get(key);
+                if (cells != null) pending.put(key, new PreviewTask(key, cells));
+            }
+            published = Math.min(published, completed);
+        }
+
         void advance(int layer, int view, boolean current) {
             advance(layer, view, current, System.nanoTime() + PREVIEW_BUILD_NANOS);
         }
 
         void advance(int layer, int view, boolean current, long deadline) {
+            advance(layer, view, current, deadline, System::nanoTime);
+        }
+
+        void advance(int layer, int view, boolean current, long deadline, java.util.function.LongSupplier clock) {
             int work = 0;
             if (task != null && !previewRegionVisible(state, task.key)) task = null;
-            while (!pending.isEmpty() && work < PREVIEW_BUILD_CELLS && (work == 0 || System.nanoTime() < deadline)) {
+            while (!pending.isEmpty() && (work == 0 || clock.getAsLong() < deadline)) {
                 if (task == null) task = nextTask();
                 if (task.cell == task.cells.size()) {
                     if (!task.refining) {
@@ -1094,8 +1126,12 @@ final class HologramRenderer {
                         task.refining = true;
                         task.cell = 0;
                         task.detail = new PreviewRegion();
-                        // Show the cheap block/meta hint for a frame before native callbacks.
-                        break;
+                        // Preserve the first cheap visual feedback; later regions consume the shared frame deadline.
+                        if (!firstHintsPresented) {
+                            firstHintsPresented = true;
+                            break;
+                        }
+                        continue;
                     }
                     completeTask();
                     continue;

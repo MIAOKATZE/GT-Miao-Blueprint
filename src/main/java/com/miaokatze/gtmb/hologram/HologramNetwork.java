@@ -62,9 +62,10 @@ public final class HologramNetwork {
     private static final int MAX_BYTES = 1048576;
     private static final AtomicLong snapshotSequence = new AtomicLong();
     private static final Map<UUID, Outbox> outgoing = new LinkedHashMap<>();
-    private static final HologramLibrarySnapshotAssembly librarySnapshots = new HologramLibrarySnapshotAssembly();
+    private static final HologramLibrarySnapshotAssembly librarySnapshots = new HologramLibrarySnapshotAssembly(
+        HologramNetwork::snapshotInboxReleased);
     private static int publicSnapshotCursor;
-    private static final Map<UUID, TransportPeer> transportPeers = new LinkedHashMap<>();
+    private static final Map<UUID, TransportPeer> transportPeers = new java.util.concurrent.ConcurrentHashMap<>();
     private static final HologramTransportBudget transportBudget = new HologramTransportBudget(
         1024 * 1024 + 256,
         HologramSnapshotAssembly.CHUNK_BYTES + 128,
@@ -211,6 +212,16 @@ public final class HologramNetwork {
         if (channel == null) return;
         if ("placeTextBox".equals(tag.getString("op"))) HologramAttachmentUpload.send(tag);
         else channel.sendToServer(new Action(tag));
+    }
+
+    /** Returning an inbox slot never executes a world command; old servers safely ignore this extra receipt flag. */
+    public static void snapshotInboxReleased(long sequence) {
+        if (sequence < 0 || channel == null) return;
+        NBTTagCompound receipt = new NBTTagCompound();
+        receipt.setString("op", "ackTransportSegments");
+        receipt.setBoolean("inboxConsumed", true);
+        receipt.setLong("transportSequence", sequence);
+        sendAction(receipt);
     }
 
     static void clientActionFailure(NBTTagCompound action, String reason) {
@@ -650,7 +661,11 @@ public final class HologramNetwork {
         }
 
         public void close() {
-            for (DisplaySnapshot row : rows) row.close();
+            TransportPeer peer = transportPeers.get(player.getUniqueID());
+            for (DisplaySnapshot row : rows) {
+                if (row.offset == 0 && peer != null) peer.inbox.release(row.sequence);
+                row.close();
+            }
             rows.clear();
         }
     }
@@ -992,6 +1007,7 @@ public final class HologramNetwork {
 
     private static void retire(Outbox box) {
         for (OutgoingSnapshot snapshot : box.snapshots) {
+            if (snapshot.offset == 0) box.peer.inbox.release(snapshot.sequence);
             if (snapshot.encoding != null) {
                 snapshot.encoding.cancel();
                 snapshot.encoding.retireSource(snapshot.sourceReservation);
@@ -1230,15 +1246,35 @@ public final class HologramNetwork {
         }
     }
 
+    static final class InboxWindow {
+
+        private final java.util.Set<Long> frames = new java.util.HashSet<>();
+        volatile boolean enabled;
+
+        synchronized boolean start(long sequence) {
+            if (!enabled || frames.contains(sequence)) return true;
+            if (frames.size() == 2) return false;
+            frames.add(sequence);
+            return true;
+        }
+
+        synchronized void release(long sequence) {
+            frames.remove(sequence);
+        }
+    }
+
     private static final class TransportPeer {
 
-        final EntityPlayerMP player;
+        volatile EntityPlayerMP player;
+        final net.minecraft.network.NetworkManager connection;
         final HologramSnapshotSegments.Peer segments = new HologramSnapshotSegments.Peer();
+        final InboxWindow inbox = new InboxWindow();
         String session = "";
-        boolean supportsSegments;
+        boolean supportsSegments, supportsCompactRows;
 
         TransportPeer(EntityPlayerMP player) {
             this.player = player;
+            connection = player.playerNetServerHandler == null ? null : player.playerNetServerHandler.netManager;
         }
     }
 
@@ -1247,11 +1283,21 @@ public final class HologramNetwork {
         return peer != null && peer.player == player && peer.supportsSegments;
     }
 
+    static boolean compactSnapshotPeer(EntityPlayerMP player) {
+        TransportPeer peer = player == null ? null : transportPeers.get(player.getUniqueID());
+        return peer != null && peer.player == player && peer.supportsSegments && peer.supportsCompactRows;
+    }
+
     private static TransportPeer transportPeer(EntityPlayerMP player, String session) {
         TransportPeer peer = transportPeers.get(player.getUniqueID());
         if (peer == null || peer.player != player) {
-            peer = new TransportPeer(player);
-            transportPeers.put(player.getUniqueID(), peer);
+            net.minecraft.network.NetworkManager connection = player.playerNetServerHandler == null ? null
+                : player.playerNetServerHandler.netManager;
+            if (peer != null && connection != null && peer.connection == connection) peer.player = player;
+            else {
+                peer = new TransportPeer(player);
+                transportPeers.put(player.getUniqueID(), peer);
+            }
         }
         if (!peer.session.equals(session)) {
             peer.segments.clear();
@@ -1382,6 +1428,9 @@ public final class HologramNetwork {
                     }
                 }
                 int length = Math.min(DISPLAY_CHUNK_BYTES, row.output.bytes.length - row.offset);
+                TransportPeer peer = transportPeers.get(box.player.getUniqueID());
+                if (row.offset == 0 && peer != null && !peer.inbox.start(row.sequence))
+                    continue;
                 if (!writable(box.player) || !transportBudget.tryAcquire(
                     box.player.getUniqueID(),
                     length + row.headerBytes.bytes.length + 24,
@@ -1495,6 +1544,7 @@ public final class HologramNetwork {
                     Outbox box = initial.get((start + n) % initial.size());
                     OutgoingSnapshot first = box.snapshots.peekFirst();
                     if (!connected(box) || first == null) continue;
+                    if (first.offset == 0 && !box.peer.inbox.start(first.sequence)) continue;
                     int length = Math.min(HologramLibraryProtocol.CHUNK_BYTES, first.bytes.length - first.offset);
                     if (!writable(box.player)
                         || !transportBudget.tryAcquire(box.player.getUniqueID(), length + 56, System.nanoTime()))
@@ -1545,6 +1595,7 @@ public final class HologramNetwork {
                     || !box.player.playerNetServerHandler.netManager.isChannelOpen()) {
                     if (box.snapshots.peekFirst() != null && box.snapshots.peekFirst().libraryInitial)
                         HologramLibraryFacade.cancelDownloadAllowance(HologramLibraryFacade.actorId(box.player));
+                    retire(box);
                     iterator.remove();
                     continue;
                 }
@@ -1554,6 +1605,7 @@ public final class HologramNetwork {
                     continue;
                 }
                 if (snapshot.bytes == null || snapshot.libraryInitial) continue;
+                if (snapshot.offset == 0 && !box.peer.inbox.start(snapshot.sequence)) continue;
                 int end = Math.min(snapshot.bytes.length, snapshot.offset + HologramSnapshotAssembly.CHUNK_BYTES);
                 if (!writable(box.player) || !transportBudget
                     .tryAcquire(box.player.getUniqueID(), end - snapshot.offset + 20, System.nanoTime())) continue;
@@ -1898,6 +1950,9 @@ public final class HologramNetwork {
             this.tag.setInteger(
                 "clientSegmentProtocol",
                 "false".equals(System.getProperty("gtmb.segment.transport")) ? 0 : HologramSnapshotSegments.VERSION);
+            this.tag
+                .setInteger("clientSnapshotRows", "false".equals(System.getProperty("gtmb.segment.transport")) ? 0 : 1);
+            this.tag.setInteger("clientSnapshotInbox", frameReceiver == null ? 0 : 2);
         }
     }
 
@@ -1914,6 +1969,12 @@ public final class HologramNetwork {
 
         public IMessage onMessage(Action msg, MessageContext ctx) {
             EntityPlayerMP player = ctx.getServerHandler().playerEntity;
+            if ("ackTransportSegments".equals(msg.tag.getString("op")) && msg.tag.getBoolean("inboxConsumed")) {
+                TransportPeer peer = transportPeers.get(player.getUniqueID());
+                if (peer != null && peer.connection == ctx.getServerHandler().netManager && peer.inbox.enabled)
+                    peer.inbox.release(msg.tag.getLong("transportSequence"));
+                return null;
+            }
             // Preserve an independent lane for disk receipts; different capabilities are never coalesced.
             boolean receipt = "ackBlueprintSaved".equals(msg.tag.getString("op"));
             HologramRequestGate gate = receipt ? receiptGate : actionGate;
@@ -1953,6 +2014,8 @@ public final class HologramNetwork {
         if (peer == null || peer.player != player) peer = transportPeer(player, "");
         if (tag.getInteger("clientSegmentProtocol") == HologramSnapshotSegments.VERSION
             && !"false".equals(System.getProperty("gtmb.segment.transport"))) peer.supportsSegments = true;
+        if (peer.supportsSegments && tag.getInteger("clientSnapshotRows") == 1) peer.supportsCompactRows = true;
+        if (tag.getInteger("clientSnapshotInbox") == 2) peer.inbox.enabled = true;
         if ("requestSnapshotModel".equals(tag.getString("op"))) {
             HologramSession owner = HologramWorkspace.find(player.getUniqueID());
             if (owner != null && owner.player == player

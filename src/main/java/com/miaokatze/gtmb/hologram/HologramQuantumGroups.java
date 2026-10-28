@@ -50,6 +50,9 @@ final class HologramQuantumGroups {
             receipt = preset == null ? null : preset.quantumGroupingNbt;
             if (preset == null) return;
             for (HologramPresets.Cell cell : preset.cells) {
+                // Keep AE/node classification even without NBT; ordinary absent scopes have no membership facts.
+                if (!HologramSnapshotMetadataSource.hasPayload(cell.tileNbt) && cell.block() != null
+                    && (cell.excluded || !HologramAeBlueprint.supports(cell.block(), null))) continue;
                 NBTTagCompound entry = facts.certificate(
                     cell,
                     HologramSegmentContract.Domain.RELATIONS,

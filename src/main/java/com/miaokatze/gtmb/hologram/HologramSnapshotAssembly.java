@@ -7,14 +7,20 @@ public final class HologramSnapshotAssembly {
     public static final int MAX_BYTES = 128 * 1024 * 1024;
     private static final long TIMEOUT_NS = 30_000_000_000L;
     private final int chunkBytes;
+    private final java.util.function.LongConsumer released;
 
     public HologramSnapshotAssembly() {
         this(CHUNK_BYTES);
     }
 
     public HologramSnapshotAssembly(int chunkBytes) {
+        this(chunkBytes, null);
+    }
+
+    public HologramSnapshotAssembly(int chunkBytes, java.util.function.LongConsumer released) {
         if (chunkBytes < 1 || chunkBytes > CHUNK_BYTES) throw new IllegalArgumentException("snapshot chunk size");
         this.chunkBytes = chunkBytes;
+        this.released = released;
     }
 
     private long newest = -1;
@@ -48,7 +54,10 @@ public final class HologramSnapshotAssembly {
             started = now;
             total = size;
             lease = HologramTransportMemory.reserve(size);
-            if (lease == null) throw new AdmissionException();
+            if (lease == null) {
+                if (released != null) released.accept(sequence);
+                throw new AdmissionException();
+            }
             try {
                 frame = new byte[size];
             } catch (RuntimeException | Error failure) {
@@ -64,7 +73,7 @@ public final class HologramSnapshotAssembly {
         next++;
         received += bytes.length;
         if (received != total) return null;
-        Complete complete = new Complete(frame, lease);
+        Complete complete = new Complete(frame, lease, released, sequence);
         frame = null;
         lease = null;
         total = next = received = 0;
@@ -77,7 +86,10 @@ public final class HologramSnapshotAssembly {
 
     public synchronized void clear() {
         frame = null;
-        if (lease != null) lease.close();
+        if (lease != null) {
+            lease.close();
+            if (released != null) released.accept(newest);
+        }
         lease = null;
         total = next = received = 0;
     }
@@ -86,15 +98,28 @@ public final class HologramSnapshotAssembly {
 
         public final byte[] bytes;
         private HologramTransportMemory.Lease lease;
+        private final java.util.function.LongConsumer released;
+        private final long sequence;
+        private boolean closed;
 
         Complete(byte[] bytes, HologramTransportMemory.Lease lease) {
+            this(bytes, lease, null, -1);
+        }
+
+        Complete(byte[] bytes, HologramTransportMemory.Lease lease,
+            java.util.function.LongConsumer released, long sequence) {
             this.bytes = bytes;
             this.lease = lease;
+            this.released = released;
+            this.sequence = sequence;
         }
 
         public synchronized void close() {
+            if (closed) return;
+            closed = true;
             if (lease != null) lease.close();
             lease = null;
+            if (released != null) released.accept(sequence);
         }
     }
 

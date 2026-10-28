@@ -10,9 +10,9 @@
   <a href="https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases"><img alt="Downloads" src="https://img.shields.io/badge/Downloads-Releases-green.svg"></a>
 </p>
 
-**本轮准备版本：GTMB 0.1.54。正式发布与下载请看 [Releases](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases)。必需前置：[MIAOKATZE Core 0.1.27 或更新版本](https://github.com/MIAOKATZE/MIAOKATZE-Core)，客户端与服务端均须安装。** FalsePatternLib 缺失时可补下载；已有旧版请手动更新。
+**本轮准备版本：GTMB 0.1.55。正式发布与下载请看 [Releases](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases)。必需前置：[MIAOKATZE Core 0.1.27 或更新版本](https://github.com/MIAOKATZE/MIAOKATZE-Core)，客户端与服务端均须安装。** FalsePatternLib 缺失时可补下载；已有旧版请手动更新。
 
-*Prepared version: GTMB 0.1.54. See Releases for published downloads. MIAOKATZE Core 0.1.27 or newer is required on both client and server. Missing FalsePatternLib can be downloaded automatically; update an existing older copy manually.*
+*Prepared version: GTMB 0.1.55. See Releases for published downloads. MIAOKATZE Core 0.1.27 or newer is required on both client and server. Missing FalsePatternLib can be downloaded automatically; update an existing older copy manually.*
 
 GTMB 是面向 **GTNH 2.9.0 RC** 的结构规划、蓝图编辑与材料施工工具。手持猫猫蓝图全息投影仪，查看控制器结构、采集机器和建筑、编辑布局与图文，再预览、核对材料并施工。搬家时，可把现有结构逐份剪切暂存，再放回世界。
 

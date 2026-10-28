@@ -210,6 +210,7 @@ final class HologramSnapshotPreparation {
         HologramSnapshotMetadataTask metadata;
         HologramTransportPageLayout.Builder transportLayout;
         HologramSnapshotModels.Builder nativeModels;
+        final HologramSnapshotRows.Builder compactRows;
         final NBTTagList cells = new NBTTagList(), materials = new NBTTagList(), recovery = new NBTTagList();
         final NBTTagList hatchEntries = new NBTTagList();
         boolean structureValid = true, structureFound;
@@ -257,6 +258,7 @@ final class HologramSnapshotPreparation {
             y = s.y;
             z = s.z;
             size = capture == null ? 0 : capture.cells.size();
+            compactRows = HologramNetwork.compactSnapshotPeer(s.player) ? new HologramSnapshotRows.Builder() : null;
             if (HologramNetwork.segmentedPeer(s.player)) {
                 transportLayout = new HologramTransportPageLayout.Builder(s, size);
                 if (s.blueprintSaveReceipt.isEmpty()) nativeModels = new HologramSnapshotModels.Builder(s);
@@ -431,7 +433,7 @@ final class HologramSnapshotPreparation {
             HologramCapture.Cell c = s.capture.cells.get(index);
             if (!draftOnly && HologramSessionPolicy.ignoredPlacementAir(s, c, index)) {
                 HologramSnapshots.CellRow air = HologramSnapshots.cellRowData(s, index, false, rowContext);
-                cells.appendTag(air.row);
+                cells.appendTag(compactRows == null ? air.row : compactRows.add(air.row));
                 if (transportLayout != null) transportLayout.add(index, air.row);
                 HologramLocalPlanRefresh.snapshotCell(s, index, air.row, null, air.inScope);
                 return;
@@ -448,7 +450,7 @@ final class HologramSnapshotPreparation {
                 transportLayout.add(index, row);
                 if (nativeModels != null) nativeModels.add(index, transportLayout.row(index), row);
             }
-            cells.appendTag(row);
+            cells.appendTag(compactRows == null ? row : compactRows.add(row));
             if (draftOnly) {
                 HologramLocalPlanRefresh.snapshotDraftCell(s, index, row);
                 if (observed.inScope) total++;

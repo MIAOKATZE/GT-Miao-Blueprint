@@ -103,6 +103,20 @@ public final class HologramSnapshotDemandRegression {
                 "an unavailable zero-row source is not a completed report");
             HologramSnapshotDetailsClient.clear();
             HologramSnapshotDetailsClient.list(data, "resourceReview", 10, 0, 1);
+            NBTTagCompound busy = reply(pendingId(), 1);
+            busy.setString("detailError", "busy");
+            HologramSnapshotDetailsClient.receive(busy, closed::incrementAndGet, 0);
+            check(!HologramSnapshotDetailsClient.complete(data, "resourceReview"), "busy details never certify a complete report");
+            HologramSnapshotDetailsClient.list(data, "resourceReview", 10, 0, 1);
+            Map<?, ?> pending = (Map<?, ?>) field(HologramSnapshotDetailsClient.class, "pending").get(null);
+            check(pending.isEmpty(), "busy details preserve a quiet retry window");
+            Map<?, ?> domains = (Map<?, ?>) field(HologramSnapshotDetailsClient.class, "domains").get(null);
+            Object domain = domains.get("resourceReview");
+            field(domain.getClass(), "retryAt").setLong(domain, 0);
+            HologramSnapshotDetailsClient.list(data, "resourceReview", 10, 0, 1);
+            check(pending.size() == 1, "missing details are requested again after the busy retry window");
+            HologramSnapshotDetailsClient.clear();
+            HologramSnapshotDetailsClient.list(data, "resourceReview", 10, 0, 1);
             NBTTagCompound reply = reply(pendingId(), 1);
             reply.setBoolean("complete", false);
             reply.setBoolean("detailTruncated", true);
@@ -132,7 +146,7 @@ public final class HologramSnapshotDemandRegression {
         } finally {
             HologramSnapshotDetailsClient.clear();
         }
-        check(closed.get() == 3, "rejected pages and cleared accepted pages release all inbound ownership");
+        check(closed.get() == 4, "rejected pages and cleared accepted pages release all inbound ownership");
     }
 
     private static NBTTagCompound state() {
