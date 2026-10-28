@@ -617,7 +617,7 @@ public final class HologramMaterials {
                         }
                         if (result.size() >= maximum || System.nanoTime() > deadline) break;
                     }
-                } else if (type == 2 && settings.me && terminalAvailable()) {
+                } else if (type == 2 && settings.me && catalogTerminalAvailable()) {
                     IMEMonitor<IAEItemStack> monitor = terminal.getItemInventory();
                     if (monitor == null) continue;
                     for (IAEItemStack entry : monitor.getStorageList()) {
@@ -626,7 +626,7 @@ public final class HologramMaterials {
                         if (entry.getStackSize() <= 0 || !placeable(sample) || contains(result, sample)) continue;
                         IAEItemStack request = entry.copy();
                         request.setStackSize(1);
-                        if (terminalAvailable() && Platform.poweredExtraction(
+                        if (catalogTerminalAvailable() && Platform.poweredExtraction(
                             energySource(null),
                             monitor,
                             request,
@@ -837,6 +837,16 @@ public final class HologramMaterials {
             if (!carried && Platform.isBaublesLoaded)
                 carried = PlayerInventoryUtil.getWirelessTerminalFromBaubles(player) == terminalStack;
             return carried && terminal.rangeCheck() && terminal.getActionableNode() != null;
+        }
+
+        /** Reading a catalog is not a crafting request, but still requires real native extraction permission. */
+        private boolean catalogTerminalAvailable() {
+            if (!terminalAvailable() || !terminal.getActionableNode()
+                .isActive()) return false;
+            IGrid grid = terminal.getActionableNode()
+                .getGrid();
+            ISecurityGrid security = grid == null ? null : grid.getCache(ISecurityGrid.class);
+            return security != null && security.hasPermission(player, SecurityPermissions.EXTRACT);
         }
 
         /** A crafting order must use the same carried, range-checked terminal and the player's AE permissions. */
