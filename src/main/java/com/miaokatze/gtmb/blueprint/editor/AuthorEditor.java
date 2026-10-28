@@ -821,7 +821,8 @@ public final class AuthorEditor {
     }
 
     private void requireClock() {
-        if (clock == Long.MAX_VALUE) throw new IllegalStateException("Revision budget exhausted");
+        // Persisted drafts exclude MAX_VALUE; never publish an edit/history revision that cannot reopen.
+        if (clock >= Long.MAX_VALUE - 1) throw new IllegalStateException("Revision budget exhausted");
     }
 
     private void requireEditable() {

@@ -22,9 +22,41 @@ public final class HologramAuthorSourceImportRegression {
 
     public static void run() throws Exception {
         duplicateFieldsAndGrammar();
+        strictLexicalBoundary();
         compactFidelityAndOwnership();
         compactLimits();
         draftReopen();
+    }
+
+    private static void strictLexicalBoundary() throws Exception {
+        for (int c = 0; c < 0x20; c++) {
+            reject("{\"schema\":2,\"future\":\"a" + (char) c + "b\"}", "raw C0 value at author open");
+            reject("{\"schema\":2,\"a" + (char) c + "b\":null}", "raw C0 key at author open");
+        }
+        for (String bad : new String[] { "\\q", "\\'", "\\\n", "\\u00x0" }) {
+            reject("{\"schema\":2,\"future\":\"" + bad + "\"}", "invalid escape at author open");
+            reject(compact("{\"future\":\"" + bad + "\"}", "[0,{\"x\":0}]"), "invalid compact material escape");
+        }
+        for (String bad : new String[] { "TRUE", "False", "nUlL", "truE", "falsE", "nulL" }) {
+            reject("{\"schema\":2,\"future\":[" + bad + "]}", "keyword casing at author open");
+            reject(compact("{\"future\":" + bad + "}", "[0,{\"x\":0}]"), "compact material keyword casing");
+        }
+        String valid = compact(
+            "{\"future\":{\"\\u0000\\n\":\"\\\"\\\\\\/\\b\\f\\r\\t\\uD83D\\uDE00\","
+                + "\"literals\":[true,false,null,1E2,\"TRUE False nUlL\"]}}",
+            "[0,{\"x\":0}]");
+        check(
+            HologramLibraryClient.readAuthorSource(bytes(valid))
+                .sourceCopy()
+                .equals(HologramBlueprintCompactCodec.parse(bytes(valid))),
+            "valid escaped controls, Unicode and unknown compact fields retain legacy values");
+        AuthorDocument document = HologramLibraryClient.readAuthorSource(bytes(valid));
+        String draft = new String(
+            AuthorDocumentIO.writeDraft(document, AuthorDocumentIO.Limits.defaults()),
+            StandardCharsets.UTF_8);
+        reject(draft.replace("\"literals\":[true", "\"literals\":[truE"), "draft also uses strict keyword guard");
+        reject("{\"schema\":2,\"future\":\"\\", "EOF during escape at author open");
+        reject("{\"schema\":2,\"future\":\"\\u12", "EOF during Unicode escape at author open");
     }
 
     private static void duplicateFieldsAndGrammar() throws Exception {

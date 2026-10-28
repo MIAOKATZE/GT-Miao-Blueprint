@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
+import java.io.Reader;
 import java.math.BigDecimal;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
@@ -77,13 +78,84 @@ public final class AuthorDocumentIO {
             .onMalformedInput(CodingErrorAction.REPORT)
             .onUnmappableCharacter(CodingErrorAction.REPORT);
         try (JsonReader reader = new JsonReader(
-            new java.io.InputStreamReader(new java.io.ByteArrayInputStream(bytes), decoder))) {
+            new StrictLexicalReader(new java.io.InputStreamReader(new java.io.ByteArrayInputStream(bytes), decoder)))) {
             reader.setLenient(false);
             JsonElement root = readValue(reader, limits, 0, new long[] { 0 });
             if (reader.peek() != JsonToken.END_DOCUMENT) throw new IOException("Trailing JSON content");
             return object(root, "document");
         } catch (IllegalStateException | NumberFormatException e) {
             throw new IOException("Invalid document JSON", e);
+        }
+    }
+
+    /**
+     * Gson 2.2.4's strict mode still accepts raw string controls, arbitrary escapes and mixed-case literals.
+     * Guard only those lexical gaps, in constant space; Gson continues to own JSON structure and number grammar.
+     */
+    private static final class StrictLexicalReader extends Reader {
+
+        private final Reader source;
+        private boolean quoted, escaped, token, keyword;
+        private int unicodeDigits;
+
+        StrictLexicalReader(Reader source) {
+            this.source = source;
+        }
+
+        @Override
+        public int read(char[] chars, int offset, int length) throws IOException {
+            int count = source.read(chars, offset, length);
+            if (count < 0 && quoted) throw new IOException("Unterminated JSON string");
+            for (int i = offset; i < offset + count; i++) check(chars[i]);
+            return count;
+        }
+
+        private void check(char c) throws IOException {
+            if (quoted) {
+                if (unicodeDigits > 0) {
+                    if (!(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F'))
+                        throw new IOException("Invalid JSON Unicode escape");
+                    unicodeDigits--;
+                } else if (escaped) {
+                    escaped = false;
+                    if (c == 'u') unicodeDigits = 4;
+                    else if (c != '"' && c != '\\'
+                        && c != '/'
+                        && c != 'b'
+                        && c != 'f'
+                        && c != 'n'
+                        && c != 'r'
+                        && c != 't') throw new IOException("Invalid JSON string escape");
+                } else if (c < 0x20) throw new IOException("Unescaped JSON string control");
+                else if (c == '\\') escaped = true;
+                else if (c == '"') quoted = false;
+                return;
+            }
+            if (c == '"') {
+                quoted = true;
+                token = false;
+            } else if (c == '{' || c == '}'
+                || c == '['
+                || c == ']'
+                || c == ':'
+                || c == ','
+                || c == ' '
+                || c == '\t'
+                || c == '\r'
+                || c == '\n') {
+                    token = false;
+                } else {
+                    if (!token) {
+                        token = true;
+                        keyword = c == 't' || c == 'T' || c == 'f' || c == 'F' || c == 'n' || c == 'N';
+                    }
+                    if (keyword && c >= 'A' && c <= 'Z') throw new IOException("JSON keywords must be lowercase");
+                }
+        }
+
+        @Override
+        public void close() throws IOException {
+            source.close();
         }
     }
 
