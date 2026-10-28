@@ -1,0 +1,65 @@
+package com.miaokatze.gtmb.hologram;
+
+import java.util.LinkedHashMap;
+import java.util.Map;
+
+import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
+import com.miaokatze.gtmb.testutil.TestRunner;
+
+/** Independent JVM: local native fixtures must not disturb the server suite's process-wide lease baselines. */
+public final class HologramLocalAuthorRegressionTest {
+
+    private HologramLocalAuthorRegressionTest() {}
+
+    public static void main(String[] args) throws Exception {
+        if (!MinecraftTestBootstrap.enter(HologramLocalAuthorRegressionTest.class, args)) return;
+        HologramResourceWorld.init();
+        Map<String, Runnable> cases = new LinkedHashMap<>();
+        add(
+            cases,
+            "source_revision_cow_and_provenance",
+            com.miaokatze.gtmb.blueprint.editor.AuthorDocumentRegression::run);
+        add(cases, "selected_native_nbt_and_legacy_migration", HologramLocalAuthorSemanticsRegression::run);
+        add(
+            cases,
+            "persistent_render_directories",
+            com.miaokatze.gtmb.client.hologram.HologramDocumentIndexRegression::run);
+        add(
+            cases,
+            "incremental_projection_and_lazy_payload",
+            com.miaokatze.gtmb.client.hologram.HologramAuthorProjectionRegression::run);
+        add(
+            cases,
+            "draft_persistence_and_recovery",
+            com.miaokatze.gtmb.client.hologram.HologramLocalAuthorPersistenceRegression::run);
+        add(cases, "atomic_native_attachments", HologramLocalAuthorAttachmentsRegression::run);
+        add(cases, "native_configuration_contract", HologramLocalAuthorConfigurationsRegression::run);
+        add(cases, "native_structure_regeneration", HologramLocalAuthorStructuresRegression::run);
+        add(cases, "explicit_portable_candidate", HologramAuthorPortableCompilerRegression::run);
+        add(
+            cases,
+            "candidate_pair_persistence",
+            com.miaokatze.gtmb.client.hologram.HologramAuthorCandidatePersistenceRegression::run);
+        add(cases, "real_material_sample_privacy_and_settings", HologramAuthorMaterialCatalogRegression::run);
+        add(
+            cases,
+            "material_sample_client_correlation",
+            com.miaokatze.gtmb.client.hologram.HologramLocalAuthorMaterialCatalogRegression::run);
+        TestRunner.run(HologramLocalAuthorRegressionTest.class, cases);
+    }
+
+    private interface Case {
+
+        void run() throws Exception;
+    }
+
+    private static void add(Map<String, Runnable> cases, String name, Case test) {
+        cases.put(name, () -> {
+            try {
+                test.run();
+            } catch (Exception failure) {
+                throw new AssertionError(failure);
+            }
+        });
+    }
+}
