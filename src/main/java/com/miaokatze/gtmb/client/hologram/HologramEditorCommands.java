@@ -192,7 +192,7 @@ final class HologramEditorCommands {
             || ui.tools.modalOpen()
             || ui.tools.pointerCaptured()
             || ui.preview.inventory()
-            || HologramBackgroundTasks.busy()
+            || ui.session.backgroundBusy()
             || ui.library.browsePreviewActive()
             || !org.lwjgl.opengl.Display.isActive()) return false;
         return Keyboard.isKeyDown(command.key)
@@ -314,7 +314,7 @@ final class HologramEditorCommands {
 
     /** A deliberate native button press commits/removes field focus before its deferred command runs. */
     boolean commandContextAvailable() {
-        return !HologramBackgroundTasks.busy() && !ui.library.browsePreviewActive()
+        return !ui.session.backgroundBusy() && !ui.library.browsePreviewActive()
             && ui.shell.sceneActive()
             && !ui.preview.inventory();
     }
@@ -328,7 +328,7 @@ final class HologramEditorCommands {
             || ui.session.state().data.getBoolean("placementValidating")) return false;
         // The old read-only browse header also exposed its ready mesh's layer controls.
         if (!ui.library.browsePreviewActive()) return commandContextAvailable();
-        return !HologramBackgroundTasks.busy() && ui.preview.previewInteractive()
+        return !ui.session.backgroundBusy() && ui.preview.previewInteractive()
             && !ui.preview.inventory()
             && !ui.bindings.networkDrawer()
             && !ui.library.libraryAdminDrawer()
@@ -346,6 +346,8 @@ final class HologramEditorCommands {
 
     String reason(String name) {
         if (get(name) == null) return "未知编辑器命令";
+        if ("save".equals(name) && ui.session.isLocalAuthor())
+            return ui.library.nativeCanSave() ? "" : "本地草稿正在保存或只读预览中";
         if (workspaceCommand(name)) return ui.workspaces.switching() ? "正在切换工作区，请等待回执" : "";
         if (ui.workspaces.emptyProjection()) return "shortcuts".equals(name) ? "" : "右击控制器开启投影模式";
         if ("viewWorkspace".equals(name)) return viewContextAvailable() ? "" : "先完成当前窗口或任务，再查看视图与工作区";
@@ -365,8 +367,9 @@ final class HologramEditorCommands {
             case "frontView", "rightView", "topView", "cameraLeft", "cameraRight", "cameraForward", "cameraBack", "air", "floatingTools", "shortcuts", "library" -> "";
             case "areaSelection", "clearWorkspace" -> editable ? "" : ui.session.editingReason();
             case "networkBindings" -> !editable ? ui.session.editingReason()
-                : ui.bindings.networkGroups()
-                    .tagCount() > 0 ? "" : "当前蓝图没有已登记的量子类群";
+                : ui.session.author() != null ? ""
+                    : ui.bindings.networkGroups()
+                        .tagCount() > 0 ? "" : "当前蓝图没有已登记的量子类群";
             case "aeMarking" -> ui.ae.canOpenAePreview() && !ui.canvas.localPlanBlockedControl(179) ? ""
                 : ui.canvas.disabledReason(179);
             case "selectAll" -> ui.session.state().cells.isEmpty() ? "当前没有可选择的格" : "";

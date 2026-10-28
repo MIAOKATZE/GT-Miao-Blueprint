@@ -77,8 +77,12 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
     @Override
     public void updateScreen() {
         nameField.updateCursorCounter();
-        HologramState next = HologramClient.state;
-        if (next == null || world != mc.theWorld || !model.session.equals(next.session)) {
+        boolean local = editor.ui.session.isLocalAuthor();
+        HologramState next = local ? editor.ui.session.author()
+            .view() : HologramClient.state;
+        if (next == null || !local && world != mc.theWorld
+            || !model.session.equals(next.session)
+            || local && HologramLocalAuthorRuntime.active() != editor.ui.session.author()) {
             stale = true;
             notice = "预览会话已改变，请取消并重新打开分类";
             return;
@@ -398,7 +402,11 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
         if (!editable()) return;
         if (id == 1 && model.complete() && HologramQuantumGroupsModel.validName(nameField.getText())) {
             model.rename(nameField.getText());
-            pending = editor.saveQuantumGroups(model.export(), model.revision);
+            long result = editor.saveQuantumGroups(model.export(), model.revision);
+            if (editor.ui.session.isLocalAuthor()) {
+                if (result >= 0) deferAction(() -> mc.displayGuiScreen(editor));
+                else notice = editor.ui.session.notice();
+            } else pending = result;
         } else if (id == 3 || id == 4) model.select(id == 4);
         else if (id == 5) {
             if (model.create(nameField.getText())) loadName();

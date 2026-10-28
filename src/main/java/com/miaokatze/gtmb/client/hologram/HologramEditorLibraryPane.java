@@ -79,7 +79,10 @@ final class HologramEditorLibraryPane {
             .childPadding(3)
             .collapseDisabledChild(true);
         page.child(
-            HologramEditorNativeTheme.label(() -> "Ctrl+S 保存当前编辑蓝图；公库来源保存为本地副本。")
+            HologramEditorNativeTheme
+                .label(
+                    () -> ui.session.isLocalAuthor() ? "Ctrl+S 只保存完整恢复草稿，不等待审核或 PNG。导出与放置为独立步骤。"
+                        : "Ctrl+S 保存当前编辑蓝图；公库来源保存为本地副本。")
                 .widthRel(1f)
                 .height(30));
         IWidget name = ui.shell.adoptField(ui.library.presetNameField())
@@ -107,13 +110,18 @@ final class HologramEditorLibraryPane {
         page.child(
             action(
                 140,
-                () -> ui.library.overwriteMode() ? "更新此蓝图" : "保存蓝图",
+                () -> ui.session.isLocalAuthor() ? "保存恢复草稿" : ui.library.overwriteMode() ? "更新此蓝图" : "保存蓝图",
                 ui.library::nativeCanSave,
-                () -> "保存沿用原作者处理、结构封面与最终写盘回执；覆盖前核对真实目标。").widthRel(1f)
-                    .height(20));
+                () -> ui.session.isLocalAuthor() ? "保存完整原始内容、未知字段及待处理义务，不授予施工或发布许可。"
+                    : "保存沿用原作者处理、结构封面与最终写盘回执；覆盖前核对真实目标。").widthRel(1f)
+                        .height(20));
         page.child(
-            action(132, () -> "另存为新蓝图", ui.library::nativeCanSave, () -> "保留当前原图，另存新的蓝图与结构封面。").widthRel(1f)
-                .height(18));
+            action(
+                132,
+                () -> ui.session.isLocalAuthor() ? "另存恢复副本（当前稿不变）" : "另存为新蓝图",
+                ui.library::nativeCanSave,
+                () -> ui.session.isLocalAuthor() ? "新文档身份的完整恢复副本；不清除当前稿未保存状态。" : "保留当前原图，另存新的蓝图与结构封面。").widthRel(1f)
+                    .height(18));
         page.child(
             HologramEditorNativeTheme.label(ui.library::nativeStatus)
                 .widthRel(1f)
@@ -123,7 +131,8 @@ final class HologramEditorLibraryPane {
                 .widthRel(1f)
                 .height(20));
         page.child(
-            HologramEditorNativeTheme.label(() -> "保存时沿用现有结构预览与 PNG 封面流程。")
+            HologramEditorNativeTheme
+                .label(() -> ui.session.isLocalAuthor() ? "导出候选不是服务器审核结果；实际放置仍需权限、材料和目标校验。" : "保存时沿用现有结构预览与 PNG 封面流程。")
                 .widthRel(1f)
                 .height(30));
         page.child(
@@ -133,6 +142,22 @@ final class HologramEditorLibraryPane {
                 () -> idle() && !ui.library.nativeDedicated() && ui.library.selectedPresetExists(),
                 () -> "导出所选已保存蓝图及其原有 PNG 文件。").widthRel(1f)
                     .height(18));
+        page.child(
+            local(
+                HologramEditorControlIds.LIBRARY + 20,
+                () -> "导出候选（未获服务器审核）",
+                ui.library::canSubmitAuthorPortable,
+                () -> ui.library.submitAuthorPortable(false)).widthRel(1f)
+                    .height(20)
+                    .setEnabledIf(widget -> ui.session.isLocalAuthor()));
+        page.child(
+            local(
+                HologramEditorControlIds.LIBRARY + 21,
+                () -> "提交放置审核",
+                ui.library::canSubmitAuthorPortable,
+                () -> ui.library.submitAuthorPortable(true)).widthRel(1f)
+                    .height(20)
+                    .setEnabledIf(widget -> ui.session.isLocalAuthor()));
         save = new HologramRecessedList().paperEdges()
             .name("blueprint_save_content")
             .sizeRel(1f)

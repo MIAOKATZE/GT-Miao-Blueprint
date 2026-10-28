@@ -2118,6 +2118,7 @@ public final class HologramNetwork {
         Action(NBTTagCompound tag) {
             super(tag);
             this.tag.setInteger("clientSnapshotProtocol", 1);
+            this.tag.setInteger("clientAuthorDocuments", 1);
             this.tag.setInteger(
                 "clientSegmentProtocol",
                 "false".equals(System.getProperty("gtmb.segment.transport")) ? 0 : HologramSnapshotSegments.VERSION);

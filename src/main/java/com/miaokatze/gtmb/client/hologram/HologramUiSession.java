@@ -19,6 +19,89 @@ final class HologramUiSession {
     }
 
     private HologramState state;
+    private HologramLocalAuthorRuntime author;
+    private boolean authorSourceRequired, authorSourceAttempted;
+
+    HologramLocalAuthorRuntime author() {
+        return author;
+    }
+
+    boolean isLocalAuthor() {
+        return author != null;
+    }
+
+    boolean backgroundBusy() {
+        return author == null && HologramBackgroundTasks.busy();
+    }
+
+    /** Local binding deliberately bypasses all command tickets, source ACKs and server sequence gates. */
+    void initializeLocal(HologramLocalAuthorRuntime runtime) {
+        author = runtime;
+        state = runtime.view();
+        runtime.attach(this);
+        ui.bindings.initializeSnapshot(state);
+        ui.processing.initializeSnapshot(state);
+        ui.library.initializeBrowsing(state);
+        ui.memory.initializeTabStore();
+        ui.library.initializeTab(state);
+        ui.preview.initializeSelection(state);
+        ui.preview.initializeLayer(state);
+        ui.preview.resetCamera();
+        if (runtime.previewContext() != null) ui.preview.restoreBackgroundUiState(runtime.previewContext());
+        ui.config.syncTargetSelectors();
+    }
+
+    void localDocumentChanged(HologramState next) {
+        if (author == null) throw new IllegalStateException("No local document owner");
+        state = next;
+        ui.preview.initializeSelection(next);
+        ui.preview.syncLayerAndSelection(next);
+        ui.config.syncTargetSelectors();
+    }
+
+    void localProjectionChanged(HologramState next) {
+        if (author != null) state = next;
+    }
+
+    void localTick() {
+        if (author == null && authorSourceRequired
+            && !authorSourceAttempted
+            && !ui.workspaces.isCut()
+            && !state.data.getBoolean("capturePending")
+            && !areaImporting()
+            && !state.data.getBoolean("snapshotPending")
+            && state.completeBaseline()
+            && state.data.getInteger("job") != 1
+            && state.data.getInteger("job") != 2
+            && !HologramLibraryClient.INSTANCE.busy()
+            && !HologramBackgroundTasks.busy()) {
+            authorSourceAttempted = true;
+            HologramLibraryClient.INSTANCE.acquireAuthorSource(ui, false);
+        }
+        if (author != null) {
+            author.select(
+                ui.preview.selection()
+                    .indices());
+            author.tick();
+        }
+    }
+
+    void reattachLocal() {
+        if (author != null) {
+            author.attach(this);
+            localDocumentChanged(author.view());
+        }
+    }
+
+    void detachLocal() {
+        if (author != null) {
+            author.select(
+                ui.preview.selection()
+                    .indices());
+            author.rememberPreview(ui.preview.backgroundUiState());
+            author.detach(this);
+        }
+    }
 
     private java.util.function.BiConsumer<String, NBTTagCompound> tutorialSink;
     private final HologramTutorialGeneration tutorialGeneration = new HologramTutorialGeneration();
@@ -78,6 +161,7 @@ final class HologramUiSession {
 
     void initialize(HologramState snapshot) {
         state = snapshot;
+        authorSourceRequired = needsAuthorSource(snapshot);
         ui.bindings.initializeSnapshot(snapshot);
         ui.processing.initializeSnapshot(snapshot);
         ui.library.initializeBrowsing(snapshot);
@@ -94,13 +178,36 @@ final class HologramUiSession {
         sequence = Math.max(snapshot.data.getLong("uiSequence"), snapshot.data.getLong("materialQuoteSequence"));
         ui.preview.resetCamera();
         ui.config.syncTargetSelectors();
+        if (authorSourceRequired) return;
         ui.library.applyOpeningPurpose();
         ui.ae.receiveAeReview();
         ui.identity.offerPlacementDeidentification();
         ui.library.acceptSourceSwitchProposal();
     }
 
+    static boolean needsAuthorSource(HologramState snapshot) {
+        // Cut entry uses an already complete blueprint as a UI host, not permission to take over its workflow.
+        // HologramClient has already matched the opening request/tool/world before installing this marker.
+        return !"cutWorkspace".equals(snapshot.data.getString("openPurpose"))
+            && snapshot.data.getString("cutWorkspaceRequestId")
+                .isEmpty()
+            && snapshot.data.getBoolean("virtual")
+            && !snapshot.data.getBoolean("virtualPlacement")
+            && HologramGuidance.authorWorkspace(snapshot)
+            && !snapshot.data.getBoolean("settingsOnly")
+            && !snapshot.data.getBoolean("areaSelectionShell");
+    }
+
     void updateState(HologramState next) {
+        if (author != null) return; // Projection snapshots cannot replace an open local source.
+        if (needsAuthorSource(next)) {
+            authorSourceRequired = true;
+            state = next;
+            ui.preview.retainSelection(next);
+            ui.preview.syncLayerAndSelection(next);
+            return;
+        }
+        authorSourceRequired = false;
         ui.workspaces.acknowledged();
         HologramUiNetworkBindings.SnapshotTransition bindings = ui.bindings.captureSnapshotTransition();
         HologramUiLibrary.SnapshotTransition library = ui.library.prepareSnapshot(next);
@@ -271,6 +378,8 @@ final class HologramUiSession {
     }
 
     boolean editable() {
+        if (author != null) return author.editable();
+        if (authorSourceRequired) return false;
         if (HologramBackgroundTasks.busy()) return false;
         int job = this.state.data.getInteger("job");
         return !ui.session.areaImporting() && !this.state.data.getBoolean("targetClosed")
@@ -293,11 +402,14 @@ final class HologramUiSession {
     }
 
     NBTTagCompound cellTag() {
+        if (author != null) return ui.config.selectedNativeDetails();
         HologramState.Cell cell = selectedCell();
         return cell == null ? new NBTTagCompound() : cell.tag();
     }
 
     String editingReason() {
+        if (author != null) return author.diagnostic();
+        if (authorSourceRequired) return "正在取得完整作者源；失败时原源保留，可关闭并重新打开重试";
         if (state.data.getBoolean("attachmentPending")) return "正在生成和校验文字或图片；可按 Esc 取消后再编辑。";
         if (this.state.data.getBoolean("targetClosed")) return "控制器已拆除；保留最终统计，重新右键新控制器开启任务。";
         if (pendingTicket.sequence() >= 0) return "等待服务端回执后可操作。";
@@ -315,9 +427,49 @@ final class HologramUiSession {
         return phase;
     }
 
+    void requestAuthorSource(long taskToken) {
+        if (!authorSourceRequired || author != null)
+            throw new IllegalStateException("Not an author-source acquisition");
+        NBTTagCompound request = new NBTTagCompound();
+        request.setString("op", "acquireAuthorSource");
+        request.setString("session", state.session);
+        request.setLong("planRevision", revision());
+        sequence = Math.max(sequence, state.data.getLong("uiSequence"));
+        request.setLong("uiSequence", ++sequence);
+        request.setLong("editorWorkspaceEpoch", state.data.getLong("editorWorkspaceEpoch"));
+        request.setLong("clientTaskToken", taskToken);
+        HologramBackgroundTasks.command(state.session, sequence, "acquireAuthorSource");
+        HologramNetwork.sendAction(request);
+    }
+
+    /** Explicit author-widget port. This method never prepares or sends a wire command. */
+    void localAction(String operation, NBTTagCompound supplied) {
+        if (author == null) throw new IllegalStateException("No local author document");
+        NBTTagCompound request = supplied == null ? new NBTTagCompound() : supplied;
+        if (HologramLocalAuthorAttachmentActions.execute(author, ui, operation, request)) return;
+        if (HologramLocalAuthorActions.execute(author, ui, operation, request)) return;
+        if (HologramLocalAuthorConfigurationActions.execute(author, ui, operation, request)) return;
+        if (HologramLocalAuthorNativeActions.handles(operation)) {
+            HologramLocalAuthorNativeActions.execute(author, ui, operation, request);
+            return;
+        }
+        notice = "此操作需要显式的世界、审核或导出边界：" + operation;
+    }
+
     void send(String op, NBTTagCompound request, boolean pending) {
         if (tutorialSink != null) {
             tutorialSink.accept(op, request == null ? new NBTTagCompound() : (NBTTagCompound) request.copy());
+            return;
+        }
+        if (author != null) {
+            // This is a safety fence for remaining legacy widgets, not a local wire/ACK emulator.
+            // Ordinary edit widgets call the typed local runtime directly.
+            if ("close".equals(op) || "dismissPresetBrowse".equals(op)) return;
+            localAction(op, request);
+            return;
+        }
+        if (authorSourceRequired && !"close".equals(op) && !"cancelSourceSwitch".equals(op)) {
+            notice = editingReason();
             return;
         }
         if (!ui.diagnostics.captureRenderSmokeAction() && !HologramBackgroundTasks.commandAllowed(op)) return;
@@ -396,6 +548,7 @@ final class HologramUiSession {
     }
 
     HologramProgress progress() {
+        if (author != null) return author.progress();
         if (HologramBackgroundTasks.busy()) return HologramBackgroundTasks.progress();
         HologramProgress server = HologramClientProgress.view("server", state.session);
         if (server != null && !server.complete) return server;

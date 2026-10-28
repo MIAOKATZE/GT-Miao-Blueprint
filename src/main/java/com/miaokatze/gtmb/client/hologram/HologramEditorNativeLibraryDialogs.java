@@ -200,7 +200,7 @@ final class HologramEditorNativeLibraryDialogs {
                 .trim()
                 .isEmpty()
                 : kind == Kind.DELETE ? ui.session.editable()
-                    : ui.session.editable()
+                    : ui.library.localSourceSwitchPending() || ui.session.editable()
                         || HologramBackgroundTasks.awaitingSourceReview() && ui.session.pendingSequence() < 0;
         Supplier<String> label = () -> kind == Kind.PRESET ? "确认保存流程预设"
             : kind == Kind.DELETE ? "确认删除"

@@ -71,7 +71,7 @@ final class HologramUiLibrary {
     }
 
     private boolean dedicatedLibrary() {
-        return !ui.session.isTutorial() && HologramLibraryClient.dedicated();
+        return !ui.session.isTutorial() && (ui.session.isLocalAuthor() || HologramLibraryClient.dedicated());
     }
 
     private HologramMuiTextField presetNameField;
@@ -112,6 +112,8 @@ final class HologramUiLibrary {
     }
 
     private boolean unsavedWorkspace() {
+        if (ui.session.isLocalAuthor()) return ui.session.author()
+            .dirty();
         NBTTagCompound state = ui.session.state().data;
         return state.getBoolean("blueprintDirty")
             || !state.getBoolean("virtualPlacement") && state.getString("blueprintSource")
@@ -159,6 +161,18 @@ final class HologramUiLibrary {
     private String deferredLibraryTargetId = "";
 
     private boolean discardReview;
+    private Runnable localSourceSwitch;
+
+    boolean localSourceSwitchPending() {
+        return localSourceSwitch != null;
+    }
+
+    void confirmLocalSourceSwitch(Runnable confirmed) {
+        localSourceSwitch = confirmed;
+        discardReview = true;
+        sourceSwitchProposal = null;
+        deferredLibraryAction = -1;
+    }
 
     private boolean discardConfirmed;
 
@@ -378,6 +392,7 @@ final class HologramUiLibrary {
     }
 
     boolean nativeIdle() {
+        if (ui.session.isLocalAuthor()) return ui.session.editable();
         return ui.session.editable() && !HologramBackgroundTasks.busy()
             && (!dedicatedLibrary() || !HologramLibraryClient.INSTANCE.busy());
     }
@@ -408,6 +423,8 @@ final class HologramUiLibrary {
     }
 
     boolean nativeCanSave() {
+        if (ui.session.isLocalAuthor()) return !ui.session.author()
+            .saving() && !browsePreviewActive();
         return !ui.session.isTutorial() && !browsePreviewActive()
             && nativeIdle()
             && !ui.session.state().data.getBoolean("settingsOnly")
@@ -709,8 +726,11 @@ final class HologramUiLibrary {
             99,
             103,
             16,
-            "保存蓝图",
-            !browsePreviewActive() && idle && ui.processing.processingReady() && !ui.session.state().cells.isEmpty(),
+            ui.session.isLocalAuthor() ? "保存恢复草稿" : "保存蓝图",
+            ui.session.isLocalAuthor() ? nativeCanSave()
+                : !browsePreviewActive() && idle
+                    && ui.processing.processingReady()
+                    && !ui.session.state().cells.isEmpty(),
             mx,
             my);
         ui.canvas.button(
@@ -911,6 +931,10 @@ final class HologramUiLibrary {
     }
 
     String blueprintSaveState() {
+        if (ui.session.isLocalAuthor()) return ui.session.author()
+            .saving() ? "正在保存本地恢复草稿"
+                : ui.session.author()
+                    .dirty() ? "本地草稿有未保存修改" : "本地草稿已保存";
         if (ui.session.state().data.getBoolean("blueprintSavePending")) return HologramLibraryClient.INSTANCE.status()
             .isEmpty() ? HologramUiText.localized("gtmb.hologram.blueprint.saving", "正在传输保存，等待写盘确认")
                 : HologramLibraryClient.INSTANCE.status();
@@ -970,8 +994,9 @@ final class HologramUiLibrary {
             239,
             125,
             17,
-            "保存蓝图",
-            ui.session.editable() && ui.processing.processingReady() && !ui.session.state().cells.isEmpty(),
+            ui.session.isLocalAuthor() ? "保存恢复草稿" : "保存蓝图",
+            ui.session.isLocalAuthor() ? nativeCanSave()
+                : ui.session.editable() && ui.processing.processingReady() && !ui.session.state().cells.isEmpty(),
             mx,
             my);
         ui.canvas.button(
@@ -1047,7 +1072,8 @@ final class HologramUiLibrary {
             244,
             22,
             this.overwriteReview ? "确认覆盖保存" : "放弃改动并继续",
-            ui.session.editable() || HologramBackgroundTasks.awaitingSourceReview() && ui.session.pendingSequence() < 0,
+            ui.library.localSourceSwitchPending() || ui.session.editable()
+                || HologramBackgroundTasks.awaitingSourceReview() && ui.session.pendingSequence() < 0,
             mx,
             my);
     }
@@ -1152,9 +1178,7 @@ final class HologramUiLibrary {
                         library.previewPublic(library.selected(true));
                         return true;
                     }
-                    NBTTagCompound action = new NBTTagCompound();
-                    action.setString("presetId", library.selected(true));
-                    ui.session.send("editPreset", action, true);
+                    library.openAuthor(library.selected(true), false, this.discardConfirmed);
                 } else
                     library.sendLocal(ui.session.state(), id == 141 ? "place" : "edit", false, this.discardConfirmed);
                 if (id == 139) {
@@ -1220,12 +1244,47 @@ final class HologramUiLibrary {
     }
 
     /** The save command owns the workspace, independently of a manually selected overwrite row. */
+    boolean canSubmitAuthorPortable() {
+        return ui.session.isLocalAuthor() && ui.session.author()
+            .processingCurrent() && ui.session.editable() && !ui.session.state().cells.isEmpty();
+    }
+
+    void submitAuthorPortable(boolean place) {
+        if (!canSubmitAuthorPortable()) {
+            ui.session.notice("请先完成当前版本的本地处理流程；恢复草稿可随时保存");
+            return;
+        }
+        HologramAuthorSubmission.submit(
+            ui.session.author(),
+            ui.session.author()
+                .confirmedPolicy(),
+            place,
+            ui.preview.yaw(),
+            ui.preview.pitch());
+    }
+
     void saveCurrentBlueprint() {
         if (!nativeCanSave()) return;
         submitBlueprintSave(true);
     }
 
     private void submitBlueprintSave(boolean current) {
+        if (ui.session.isLocalAuthor()) {
+            String name = presetNameField == null ? ui.session.author()
+                .document()
+                .title() : presetNameField.getText();
+            ui.session.author()
+                .select(
+                    ui.preview.selection()
+                        .indices());
+            name = name.trim()
+                .isEmpty() ? "未命名蓝图" : name.trim();
+            if (current) ui.session.author()
+                .save(name);
+            else ui.session.author()
+                .saveCopy(name);
+            return;
+        }
         if (!ui.session.editable() || browsePreviewActive() || ui.session.state().cells.isEmpty()) return;
         if (ui.canvas.rejectLocalPlanAction(current ? 140 : 132)) return;
         NBTTagCompound options = blueprintSaveOptions();
@@ -1307,6 +1366,7 @@ final class HologramUiLibrary {
 
     boolean cancelSwitchReview(int id) {
         if (id == 225) {
+            localSourceSwitch = null;
             ui.library.cancelLibraryNavigation();
             if (this.sourceSwitchProposal != null) {
                 NBTTagCompound proposal = (NBTTagCompound) this.sourceSwitchProposal.copy();
@@ -1338,6 +1398,21 @@ final class HologramUiLibrary {
                 ui.session.notice("覆盖目标已变化，请刷新蓝图库后重新选择");
                 return true;
             }
+            if (ui.session.isLocalAuthor()) {
+                this.overwriteReview = false;
+                if (!this.overwriteTarget.startsWith("draft_")) {
+                    ui.session.notice("恢复草稿不能覆盖可分享成品；请选恢复草稿，或使用独立导出候选");
+                    return true;
+                }
+                String name = presetNameField == null ? ui.session.author()
+                    .document()
+                    .title()
+                    : presetNameField.getText()
+                        .trim();
+                ui.session.author()
+                    .saveOverwrite(this.overwriteTarget, name);
+                return true;
+            }
             NBTTagCompound request = ui.library.blueprintSaveOptions();
             request.setString("presetId", this.overwriteTarget);
             request.setBoolean("confirmOverwrite", true);
@@ -1354,6 +1429,12 @@ final class HologramUiLibrary {
     boolean confirmDiscard(int id) {
         if (id == 224 && this.discardReview) {
             this.discardReview = false;
+            if (localSourceSwitch != null) {
+                Runnable confirmed = localSourceSwitch;
+                localSourceSwitch = null;
+                confirmed.run();
+                return true;
+            }
             if (this.sourceSwitchProposal != null) {
                 NBTTagCompound proposal = (NBTTagCompound) this.sourceSwitchProposal.copy();
                 this.sourceSwitchProposal = null;
@@ -1404,9 +1485,18 @@ final class HologramUiLibrary {
         }
         if ("editPreset".equals(operation)) {
             browsePreview = false;
-            browseServerPresetId = target;
-            blueprintTab = libraryDrawer = true;
-            if (presetNameField != null) presetNameField.setFocused(false);
+            // Render diagnostics capture the local effect without opening files or inventing a wire command.
+            if (ui.diagnostics.captureRenderSmokeAction()) {
+                NBTTagCompound intent = new NBTTagCompound();
+                intent.setString("op", "openLocalAuthor");
+                intent.setString("presetId", target);
+                intent.setBoolean("confirmDiscard", confirmDiscard);
+                ui.diagnostics.capturedRenderSmokeAction(intent);
+                rememberLibraryNavigation(target, "localAuthorSource");
+                return;
+            }
+            HologramLibraryClient.INSTANCE.openAuthor(target, !dedicatedLibrary(), confirmDiscard);
+            return;
         }
         if (dedicatedLibrary()) {
             HologramLibraryClient library = HologramLibraryClient.INSTANCE;
@@ -1656,7 +1746,8 @@ final class HologramUiLibrary {
                 this.blueprintTab = true;
                 this.libraryDrawer = true;
                 this.presetNameField.setFocused(false);
-                ui.session.send("editPreset", editPreset, true);
+                HologramLibraryClient.INSTANCE
+                    .openAuthor(selectedServerPresetId(), !dedicatedLibrary(), this.discardConfirmed);
                 return true;
             default:
                 return false;

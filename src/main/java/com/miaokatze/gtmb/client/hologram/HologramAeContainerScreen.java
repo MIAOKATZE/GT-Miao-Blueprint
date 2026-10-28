@@ -37,6 +37,8 @@ public final class HologramAeContainerScreen extends ModularScreen {
 
     private static HologramAeContainerScreen active;
     private final HologramScreen editor;
+    private HologramLocalAuthorRuntime localAuthor;
+    private long localCellId = -1;
     private final Minecraft mc = Minecraft.getMinecraft();
     private Container playerContainer;
     private HologramAePreviewModel model;
@@ -62,6 +64,13 @@ public final class HologramAeContainerScreen extends ModularScreen {
         model = new HologramAePreviewModel(snapshot);
         regroup();
         buildPanel();
+    }
+
+    HologramAeContainerScreen(HologramScreen editor, HologramLocalAuthorRuntime runtime, long cellId,
+        NBTTagCompound snapshot) {
+        this(editor, snapshot);
+        this.localAuthor = runtime;
+        this.localCellId = cellId;
     }
 
     static HologramAeContainerScreen from(GuiScreen screen) {
@@ -409,11 +418,62 @@ public final class HologramAeContainerScreen extends ModularScreen {
         NBTTagCompound request = model.action("aePreviewEdit");
         request.setString("slotId", slot.id);
         request.setString("mutation", bounded == null ? "CLEAR" : "SET");
+        if (localAuthor != null) {
+            editLocal(request, bounded);
+            return;
+        }
         pending = ++editSequence;
         pendingSlot = slot.id;
         request.setLong("editSeq", pending);
         if (bounded != null) request.setTag("stack", bounded.writeToNBT(new NBTTagCompound()));
         HologramNetwork.sendAction(request);
+    }
+
+    private void editLocal(NBTTagCompound request, ItemStack bounded) {
+        try {
+            if (localAuthor.document()
+                .revision() != model.revision) throw new java.io.IOException("蓝图已修改，请重新打开原生标记编辑器");
+            com.miaokatze.gtmb.blueprint.editor.AuthorDocument.Cell cell = localAuthor.document()
+                .cell(localCellId);
+            if (cell == null) throw new java.io.IOException("原格已移除");
+            if (bounded != null) request.setTag("stack", bounded.writeToNBT(new NBTTagCompound()));
+            // Local intent does not manufacture a server preview token or edit acknowledgement.
+            request.removeTag("session");
+            request.removeTag("token");
+            com.google.gson.JsonObject result = com.miaokatze.gtmb.hologram.HologramLocalAuthorAe.edit(
+                cell.sourceCopy(),
+                localAuthor.document()
+                    .headerCopy(),
+                request);
+            com.google.gson.JsonObject changed = result.getAsJsonObject("cell");
+            // Native analysis and display preparation also complete before the atomic document edit.
+            NBTTagCompound preview = null;
+            if (!(changed.has("excluded") && changed.get("excluded")
+                .getAsBoolean()))
+                preview = com.miaokatze.gtmb.hologram.HologramLocalAuthorAe.preview(changed, model.revision + 1);
+            localAuthor.apply(
+                localAuthor.editor()
+                    .replaceCells(
+                        java.util.Collections.singletonMap(localCellId, changed),
+                        result.getAsJsonObject("headerPatch")));
+            notice = "本地标记已更新；未移动真实物品";
+            if (preview == null) {
+                returnToEditor(false);
+                return;
+            }
+            preview.setLong(
+                "planRevision",
+                localAuthor.document()
+                    .revision());
+            model = new HologramAePreviewModel(preview);
+            regroup();
+            refreshSlots();
+            selected = -1;
+            issueOffset = Math.min(issueOffset, Math.max(0, model.issues.size() - 1));
+        } catch (java.io.IOException | RuntimeException failure) {
+            clearing.clear();
+            notice = "本地标记未应用，原稿保留：" + failure.getMessage();
+        }
     }
 
     private void action(int id) {
@@ -454,6 +514,7 @@ public final class HologramAeContainerScreen extends ModularScreen {
     }
 
     void updateState(HologramState next) {
+        if (localAuthor != null) return; // Server snapshots never replace a local document-backed preview.
         String selectedId = selected >= 0 && selected < model.slots.size() ? model.slots.get(selected).id : "";
         editor.updateState(next);
         NBTTagCompound preview = next.data.getCompoundTag("aePreview");
@@ -491,7 +552,7 @@ public final class HologramAeContainerScreen extends ModularScreen {
         explicitReturn = true;
         clearing.clear();
         if (active == this) active = null;
-        if (sendClose) HologramNetwork.sendAction(model.action("aePreviewClose"));
+        if (sendClose && localAuthor == null) HologramNetwork.sendAction(model.action("aePreviewClose"));
         ClientGUI.open(editor);
     }
 

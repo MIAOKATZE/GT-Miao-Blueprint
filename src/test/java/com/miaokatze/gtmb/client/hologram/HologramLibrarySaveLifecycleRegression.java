@@ -262,6 +262,25 @@ public final class HologramLibrarySaveLifecycleRegression {
         SimpleAssert.that(
             progress.receive(event, 17, "source", 23, 31, 200 * second),
             "matching worker heartbeat covers a bounded atomic step");
+        HologramSavePreparationProgress author = new HologramSavePreparationProgress();
+        NBTTagCompound sourceEvent = (NBTTagCompound) event.copy();
+        sourceEvent.removeTag("uiSequence");
+        sourceEvent.setString("detail", "author_source");
+        SimpleAssert.that(
+            author.receiveAuthorSource(sourceEvent, 17, "source", 23, 31, second),
+            "source extraction progress has its own task/session/revision authority without a save ACK");
+        sourceEvent.setLong("done", 750);
+        SimpleAssert.that(
+            author.receiveAuthorSource(sourceEvent, 17, "source", 23, 31, 150 * second),
+            "genuinely progressing source acquisition outlives the idle timeout");
+        SimpleAssert.that(
+            !author.receiveAuthorSource(sourceEvent, 18, "source", 23, 31, 151 * second)
+                && !author.receiveAuthorSource(sourceEvent, 17, "source", 23, 32, 151 * second),
+            "old task or source revision cannot refresh acquisition activity");
+        sourceEvent.setLong("uiSequence", 24);
+        SimpleAssert.that(
+            !author.receiveAuthorSource(sourceEvent, 17, "source", 23, 31, 152 * second),
+            "encoder sequence when present must match the real source request");
         HologramLibraryClient.SaveProgress deadline = new HologramLibraryClient.SaveProgress();
         deadline.begin(second, true);
         deadline.preparation(100 * second);
