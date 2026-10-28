@@ -117,6 +117,16 @@ final class HologramEditorWorkspaces {
     }
 
     private void activate(Mode requested) {
+        if (requested == Mode.BLUEPRINT && !ui.session.isTutorial()) {
+            if (!ui.session.isLocalAuthor()) HologramLocalAuthorRuntime.openWorkspace();
+            cut = false;
+            return;
+        }
+        if (requested == Mode.PROJECTION && ui.session.isLocalAuthor()) {
+            ui.host.parent()
+                .showServerProjection();
+            return;
+        }
         if (domain(ui.session.state()) == requested) {
             if (cut && HologramCutClient.INSTANCE.workspaceSwitchBusy()) {
                 ui.session.notice("请先等待剪切操作完成，再返回工作区");

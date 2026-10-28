@@ -59,6 +59,7 @@ final class HologramUiProcessing {
     }
 
     boolean canEditBlueprintNbt() {
+        if (ui.session.isLocalAuthor()) return true;
         return ui.processing.processingReady() || ui.session.state().data.getBoolean("blueprintSaved");
     }
 
@@ -109,6 +110,12 @@ final class HologramUiProcessing {
         if (!ui.session.editable() || processingReopenSequence >= 0) return;
         reprocessCurrent = true;
         ui.session.notice("正在按当前修改准备蓝图流程；已移除的数据不会恢复。");
+        if (ui.session.isLocalAuthor()) {
+            if (HologramLocalAuthorNativeActions
+                .execute(ui.session.author(), ui, "beginBlueprintReprocessing", new NBTTagCompound()))
+                openProcessing(false);
+            return;
+        }
         ui.session.send("beginBlueprintReprocessing", new NBTTagCompound(), true);
         processingReopenSequence = ui.session.sequence();
     }
@@ -140,6 +147,12 @@ final class HologramUiProcessing {
         NBTTagCompound request = new NBTTagCompound();
         request.setLong("planRevision", sourceRevision);
         request.setTag("groups", groups.copy());
+        if (ui.session.isLocalAuthor()) return HologramLocalAuthorNativeActions
+            .execute(ui.session.author(), ui, "configureBlueprintQuantumGroups", request)
+                ? ui.session.author()
+                    .document()
+                    .revision()
+                : -1;
         ui.session.send("configureBlueprintQuantumGroups", request, true);
         return ui.session.sequence();
     }
@@ -502,7 +515,7 @@ final class HologramUiProcessing {
             274,
             318,
             20,
-            stage == 5 ? "完成处理 · 等待服务器校验"
+            stage == 5 ? ui.session.isLocalAuthor() ? "完成本地处理 · 不授予施工许可" : "完成处理 · 等待服务器校验"
                 : stage == 4 && !resourceChoicesReady() ? "请先选择每项资源路径的处理方式"
                     : this.processingFlow.optional() ? "下一步 · 本步可跳过" : "下一步",
             ui.session.editable() && ui.processing.processingChoiceReady(),
@@ -517,6 +530,10 @@ final class HologramUiProcessing {
             return true;
         }
         if (id == 220) {
+            if (ui.session.isLocalAuthor()) {
+                reopenProcessing();
+                return true;
+            }
             if (!HologramGuidance.authorWorkspace(ui.session.state())) return true;
             if (processingReady() || ui.session.state().data.getBoolean("geometryValidationPending")) {
                 reopenProcessing();
@@ -588,8 +605,13 @@ final class HologramUiProcessing {
                 request.setTag("policy", this.processingFlow.policy());
                 request.setBoolean("reprocessCurrent", reprocessCurrent);
                 this.processingFlow = null;
-                ui.session.send("processBlueprint", request, true);
-                processingSubmitSequence = ui.session.sequence();
+                if (ui.session.isLocalAuthor()) {
+                    if (HologramLocalAuthorNativeActions.execute(ui.session.author(), ui, "processBlueprint", request))
+                        openProcessingResult();
+                } else {
+                    ui.session.send("processBlueprint", request, true);
+                    processingSubmitSequence = ui.session.sequence();
+                }
             }
             return true;
         }
@@ -604,10 +626,10 @@ final class HologramUiProcessing {
                 "policy",
                 ui.session.state().data.getCompoundTag("processingPolicy")
                     .copy());
-            ui.session.send(
-                id == 293 ? "saveProcessingPreset" : id == 294 ? "updateProcessingPreset" : "deleteProcessingPreset",
-                request,
-                true);
+            String operation = id == 293 ? "saveProcessingPreset"
+                : id == 294 ? "updateProcessingPreset" : "deleteProcessingPreset";
+            if (ui.session.isLocalAuthor()) ui.session.localAction(operation, request);
+            else ui.session.send(operation, request, true);
             if (id == 295) this.selectedProcessingPreset = "";
             return true;
         }
@@ -620,8 +642,14 @@ final class HologramUiProcessing {
             this.processingPresetField.setText(row.getString("name"));
             NBTTagCompound request = new NBTTagCompound();
             request.setString("presetId", this.selectedProcessingPreset);
-            ui.session.send("loadProcessingPreset", request, true);
-            this.processingPresetLoadSequence = ui.session.sequence();
+            if (ui.session.isLocalAuthor()) {
+                if (HologramLocalAuthorNativeActions.execute(ui.session.author(), ui, "loadProcessingPreset", request))
+                    this.processingFlow.preset(ui.session.state().data.getCompoundTag("processingPolicy"));
+                else this.processingFlow.clearChoice();
+            } else {
+                ui.session.send("loadProcessingPreset", request, true);
+                this.processingPresetLoadSequence = ui.session.sequence();
+            }
         } else if (id >= 71000 && id < 72000) {
             int index = processingFlow.offset + (id - 71000) / 3, mode = (id - 71000) % 3;
             if (ui.processing.processingList("relations", 10)
@@ -694,8 +722,18 @@ final class HologramUiProcessing {
     }
 
     private void drawProcessingResult(int mx, int my) {
-        ui.canvas.text("蓝图处理已完成 · 服务器校验通过", 42, 61, 588, HologramEditorTheme.TITLE);
-        ui.canvas.text("下一步：保存这份蓝图，供蓝图库、分享与放置使用。", 42, 89, 588, HologramEditorTheme.TEXT);
+        ui.canvas.text(
+            ui.session.isLocalAuthor() ? "本地处理已完成 · 尚未获得服务器施工许可" : "蓝图处理已完成 · 服务器校验通过",
+            42,
+            61,
+            588,
+            HologramEditorTheme.TITLE);
+        ui.canvas.text(
+            ui.session.isLocalAuthor() ? "先保存恢复草稿；在保存页单独导出候选或提交放置审核。" : "下一步：保存这份蓝图，供蓝图库、分享与放置使用。",
+            42,
+            89,
+            588,
+            HologramEditorTheme.TEXT);
         ui.canvas.text("蓝图名称", 42, 110, 588, HologramEditorTheme.MUTED);
         processingBlueprintField.drawTextBox();
         boolean ready = ui.session.editable() && processingReady() && !ui.session.state().cells.isEmpty();
@@ -803,7 +841,8 @@ final class HologramUiProcessing {
                 ui.session.state().data.getCompoundTag("processingPolicy")
                     .copy());
             this.processingPresetSaveReview = false;
-            ui.session.send("saveProcessingPreset", request, true);
+            if (ui.session.isLocalAuthor()) ui.session.localAction("saveProcessingPreset", request);
+            else ui.session.send("saveProcessingPreset", request, true);
             return true;
         }
         return false;
@@ -818,12 +857,34 @@ final class HologramUiProcessing {
                 return true;
             case 142:
                 this.retainNbt = !this.retainNbt;
+                if (ui.session.isLocalAuthor()) {
+                    com.google.gson.JsonObject patch = new com.google.gson.JsonObject();
+                    patch.addProperty("retainNbt", this.retainNbt);
+                    ui.session.author()
+                        .apply(
+                            ui.session.author()
+                                .editor()
+                                .patchHeader(patch));
+                }
                 return true;
             case 143:
                 this.retainCovers = !this.retainCovers;
+                if (ui.session.isLocalAuthor()) {
+                    com.google.gson.JsonObject patch = new com.google.gson.JsonObject();
+                    patch.addProperty("retainCovers", this.retainCovers);
+                    ui.session.author()
+                        .apply(
+                            ui.session.author()
+                                .editor()
+                                .patchHeader(patch));
+                }
                 return true;
             case 132:
             case 140:
+                if (ui.session.isLocalAuthor()) {
+                    ui.library.saveCurrentBlueprint();
+                    return true;
+                }
                 if (!ui.session.editable() || !ui.processing.processingReady() || ui.session.state().cells.isEmpty())
                     return true;
                 String presetName = ui.library.presetNameField()

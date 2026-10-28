@@ -196,7 +196,8 @@ final class HologramUiDeidentification {
             if (ui.ae.aeReview() == null || ui.ae.aeReview().blockerCount == 0) return true;
             if (ui.ae.aeReview().review) ui.ae.activateAeReview(182);
             request.setBoolean("confirmDiscard", true);
-            ui.session.send("excludeBlueprintBlockers", request, true);
+            if (ui.session.isLocalAuthor()) ui.session.localAction("excludeBlueprintBlockers", request);
+            else ui.session.send("excludeBlueprintBlockers", request, true);
             return true;
         }
         if (id == 215) {
@@ -223,10 +224,10 @@ final class HologramUiDeidentification {
                 // Explicitly cancel the exact old save review; processing never confirms that nonce.
                 ui.ae.activateAeReview(182);
             }
-            ui.session.send(
-                this.deidentificationPlacement ? "configurePlacementDeidentification" : "deidentifyBlueprint",
-                request,
-                true);
+            String operation = this.deidentificationPlacement ? "configurePlacementDeidentification"
+                : "deidentifyBlueprint";
+            if (ui.session.isLocalAuthor()) ui.session.localAction(operation, request);
+            else ui.session.send(operation, request, true);
         } else if (this.deidentificationPlacement) ui.session.send("configurePlacementDeidentification", request, true);
         else ui.session.notice("已记住保存去标识等级 " + level + "，保存时将重新校验");
         this.deidentificationDrawer = false;

@@ -14,10 +14,24 @@ final class HologramSavePreparationProgress {
     private final java.util.Map<String, Long> completed = new java.util.HashMap<>();
 
     boolean receive(NBTTagCompound event, long task, String session, long sequence, long revision, long now) {
+        return receive(event, task, session, sequence, revision, now, true, "save:");
+    }
+
+    boolean receiveAuthorSource(NBTTagCompound event, long task, String session, long sequence, long revision,
+        long now) {
+        // Raw-source extraction has no save receipt/ACK; its optional later encoder sequence is still exact if present.
+        if (!"snapshot.prepare".equals(event.getString("phase"))
+            || !("author_source".equals(event.getString("detail")) || "export_json".equals(event.getString("detail"))))
+            return false;
+        return receive(event, task, session, sequence, revision, now, event.hasKey("uiSequence", 4), "author-source:");
+    }
+
+    private boolean receive(NBTTagCompound event, long task, String session, long sequence, long revision, long now,
+        boolean requireSequence, String identityPrefix) {
         String nextPhase = event.getString("phase");
         if (task <= 0 || event.getLong("clientTaskToken") != task
             || !session.equals(event.getString("session"))
-            || sequence != event.getLong("uiSequence")
+            || requireSequence && sequence != event.getLong("uiSequence")
             || revision != event.getLong("planRevision")
             || !(nextPhase.startsWith("snapshot.") || nextPhase.equals("library.prepare"))) return false;
         long nextDone = event.getLong("done"), nextTotal = event.getLong("total");
@@ -35,7 +49,7 @@ final class HologramSavePreparationProgress {
         detail = nextDetail;
         done = nextDone;
         total = nextTotal;
-        tracker.update("save:" + task, phase, detail, done, total, event.getString("unit"), false, now);
+        tracker.update(identityPrefix + task, phase, detail, done, total, event.getString("unit"), false, now);
         return true;
     }
 

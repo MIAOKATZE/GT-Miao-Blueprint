@@ -80,12 +80,17 @@ public final class HologramSnapshotRows {
     /** Owner-built pages already proved descriptor equality. Do not expand and intern their same rows again. */
     private static NBTTagCompound sharedPage(java.util.List<NBTTagCompound> source) {
         if (source.isEmpty() || !compactRow(source.get(0))) return null;
-        NBTTagList palette = source.get(0).getTagList(PALETTE, 10);
+        NBTTagList palette = source.get(0)
+            .getTagList(PALETTE, 10);
         if (palette.tagCount() < 1 || palette.tagCount() > source.size()) return null;
         for (NBTTagCompound row : source) {
-            if (row.getTag(PALETTE) != palette || row.func_150296_c().size() != 3 || !row.hasKey(POSITION, 11)
-                || !row.hasKey(DESCRIPTOR, 3) || row.getIntArray(POSITION).length != AXES.length
-                || row.getInteger(DESCRIPTOR) < 0 || row.getInteger(DESCRIPTOR) >= palette.tagCount()) return null;
+            if (row.getTag(PALETTE) != palette || row.func_150296_c()
+                .size() != 3
+                || !row.hasKey(POSITION, 11)
+                || !row.hasKey(DESCRIPTOR, 3)
+                || row.getIntArray(POSITION).length != AXES.length
+                || row.getInteger(DESCRIPTOR) < 0
+                || row.getInteger(DESCRIPTOR) >= palette.tagCount()) return null;
         }
         NBTTagCompound root = new NBTTagCompound();
         NBTTagList rows = new NBTTagList();

@@ -10,6 +10,41 @@ final class HologramSnapshotFailureCorrelationRegression {
     static void run() {
         HologramClient.clearSnapshotFailures();
         try {
+            Object world = new Object(), connection = new Object();
+            SimpleAssert.that(
+                HologramClient.snapshotTransportOriginCurrent(connection, connection),
+                "fragment from the actual current packet context may enter the inbox");
+            SimpleAssert.that(
+                !HologramClient.snapshotTransportOriginCurrent(connection, new Object()),
+                "late old-origin fragment is rejected before assembly even if the client has already reconnected");
+            SimpleAssert.that(
+                !HologramClient.snapshotTransportOriginCurrent(connection, null),
+                "disconnected client cannot relabel an old fragment as current");
+            SimpleAssert.that(
+                HologramClient.snapshotAdmissionCurrent(7, 7, world, world, connection, connection),
+                "same ingress epoch and connection may recover initial admission");
+            SimpleAssert.that(
+                !HologramClient.snapshotAdmissionCurrent(7, 8, world, world, connection, connection),
+                "queued admission recovery cannot survive inbox reset");
+            SimpleAssert.that(
+                !HologramClient.snapshotAdmissionCurrent(7, 7, world, world, connection, new Object()),
+                "queued admission recovery cannot follow a replacement connection");
+            SimpleAssert.that(
+                !HologramClient.snapshotAdmissionCurrent(7, 7, world, new Object(), connection, connection),
+                "queued admission recovery cannot follow a replaced world before inbox reset");
+            NBTTagCompound recovery = HologramClient.snapshotIngressRecovery(16);
+            SimpleAssert.eq(
+                "requestFullSnapshot",
+                recovery.getString("op"),
+                "headerless ingress has an explicit recovery request");
+            SimpleAssert.that(recovery.getBoolean("recoverTransportSequence"), "server resolves the exact sent frame");
+            SimpleAssert.eq(16L, recovery.getLong("transportSequence"), "recovery retains rejected transport identity");
+            SimpleAssert.that(
+                !recovery.hasKey("session") && !recovery.hasKey("uiSequence"),
+                "unknown initial session is never guessed from another view");
+            SimpleAssert.that(
+                HologramClient.snapshotIngressRecovery(-1) == null,
+                "unsequenced controls cannot invent transport authority");
             NBTTagCompound first = queued(17, "first", 31);
             SimpleAssert
                 .that(HologramClient.snapshotFailureHeader(first) == null, "queued metadata alone is not failure");

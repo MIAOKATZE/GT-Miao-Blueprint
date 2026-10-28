@@ -27,6 +27,8 @@ final class HologramUiTextBoxes {
     private int[] dragOrigin;
     private boolean chosen, pending;
     private long request;
+    private long localDefinitionRevision = -1, localDefinitionCell = -1;
+    private NBTTagCompound localDefinition;
     private com.miaokatze.gtmb.hologram.HologramAttachmentGeometry.Job localJob;
     private com.miaokatze.gtmb.hologram.HologramAttachmentGeometry.Job pictureOwner;
     private final HologramProgress.Tracker taskProgress = new HologramProgress.Tracker();
@@ -68,6 +70,18 @@ final class HologramUiTextBoxes {
             "cells",
             false,
             now);
+        if (ui.session.isLocalAuthor()) {
+            HologramLocalAuthorAttachmentActions operation = ui.session.author()
+                .attachments();
+            return taskProgress.update(
+                "attachment:" + request,
+                operation.phase(),
+                operation.completed(),
+                operation.total(),
+                "cells",
+                false,
+                now);
+        }
         NBTTagCompound upload = com.miaokatze.gtmb.hologram.HologramAttachmentUpload.clientProgressState();
         if (upload.getBoolean("pending")) return taskProgress.update(
             "attachment:" + request,
@@ -98,7 +112,12 @@ final class HologramUiTextBoxes {
 
     void reset() {
         closeEditor();
-        if (pending) com.miaokatze.gtmb.hologram.HologramNetwork.clearAttachmentClientTransport();
+        if (pending) {
+            if (ui.session.isLocalAuthor()) ui.session.author()
+                .attachments()
+                .cancel();
+            else com.miaokatze.gtmb.hologram.HologramNetwork.clearAttachmentClientTransport();
+        }
         if (localJob != null) localJob.cancel();
         localJob = null;
         restoringDraft = false;
@@ -128,6 +147,11 @@ final class HologramUiTextBoxes {
         String noun = picture ? "图片" : "文字";
         if (active(picture) && localJob != null) return "生成" + noun + "…";
         if (active(picture) && pending) {
+            if (ui.session.isLocalAuthor()) {
+                HologramLocalAuthorAttachmentActions operation = ui.session.author()
+                    .attachments();
+                return "处理 " + operation.completed() + "/" + operation.total();
+            }
             String transfer = com.miaokatze.gtmb.hologram.HologramAttachmentUpload.clientProgress();
             NBTTagCompound progress = ui.session.state().data.getCompoundTag("textPlacementAck");
             return !transfer.isEmpty() ? transfer
@@ -150,7 +174,9 @@ final class HologramUiTextBoxes {
             action.setLong("textRequest", ++request);
             action.setTag("textBox", draft.write());
             pending = true;
-            ui.session.send("placeTextBox", action, true);
+            if (ui.session.isLocalAuthor())
+                HologramLocalAuthorAttachmentActions.execute(ui.session.author(), ui, "placeTextBox", action);
+            else ui.session.send("placeTextBox", action, true);
             return;
         }
         // Finish native dispatch before adding a panel to the existing workbench manager.
@@ -354,6 +380,27 @@ final class HologramUiTextBoxes {
     }
 
     NBTTagCompound selectedDefinition() {
+        if (ui.session.isLocalAuthor()) {
+            if (ui.preview.selected() < 0) return null;
+            try {
+                HologramLocalAuthorRuntime owner = ui.session.author();
+                java.util.Set<Long> ids = owner.selectionIds(new int[] { ui.preview.selected() });
+                long cell = ids.iterator()
+                    .next();
+                if (localDefinitionRevision != owner.document()
+                    .revision() || localDefinitionCell != cell) {
+                    localDefinition = null;
+                    localDefinitionRevision = owner.document()
+                        .revision();
+                    localDefinitionCell = cell;
+                    localDefinition = com.miaokatze.gtmb.hologram.HologramLocalAuthorAttachments
+                        .selectedDefinition(owner.document(), ids);
+                }
+                return localDefinition; // Disposable read cache; authoritative source remains encoded in the document.
+            } catch (java.io.IOException | RuntimeException failure) {
+                return null; // Malformed native details do not rewrite or discard the source object.
+            }
+        }
         HologramState.Cell selected = ui.session.selectedCell();
         if (selected == null) return null;
         NBTTagList structures = ui.session.state().data.getTagList("structures", 10);
@@ -370,7 +417,19 @@ final class HologramUiTextBoxes {
         return definition != null && definition.hasKey("picture", 10) == picture ? definition : null;
     }
 
+    /** A document-owner callback, independent of server snapshots and ACK request sequences. */
+    void localPlacementFinished(long completedRequest, boolean accepted, String message) {
+        if (!pending || completedRequest != request) return;
+        pending = false;
+        if (accepted) reset();
+        else {
+            chosen = true;
+            if (draft != null) ui.session.notice(message + "；" + draft.noun() + "预览保留，请移动后再次确认");
+        }
+    }
+
     void acknowledge(HologramState state) {
+        if (ui.session.isLocalAuthor()) return;
         NBTTagCompound ack = state.data.getCompoundTag("textPlacementAck");
         if (!pending || ack.getLong("request") != request) return;
         if (ack.getBoolean("pending")) return;
@@ -386,7 +445,12 @@ final class HologramUiTextBoxes {
     boolean key(int key) {
         if (draft == null || ui.router.textFieldFocused()) return false;
         if (key == Keyboard.KEY_ESCAPE) {
-            if (pending) ui.session.send("cancelAttachment", new NBTTagCompound(), false);
+            if (pending) {
+                if (ui.session.isLocalAuthor()) ui.session.author()
+                    .attachments()
+                    .cancel();
+                else ui.session.send("cancelAttachment", new NBTTagCompound(), false);
+            }
             reset();
             return true;
         }
@@ -457,6 +521,12 @@ final class HologramUiTextBoxes {
     }
 
     void uploadFailed() {
+        if (ui.session.isLocalAuthor()) {
+            ui.session.author()
+                .attachments()
+                .cancel();
+            return;
+        }
         com.miaokatze.gtmb.hologram.HologramNetwork.clearAttachmentClientTransport();
         pending = false;
         chosen = true;

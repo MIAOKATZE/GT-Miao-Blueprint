@@ -398,6 +398,12 @@ final class HologramUiAeReview {
 
     void beginAeReviewNavigation(HologramAeReviewModel.Issue issue) {
         boolean replace = "replaceCell".equals(issue.resolution);
+        if (ui.session.isLocalAuthor()) {
+            ui.session.author()
+                .selectStructure(issue.structureId);
+            ui.ae.finishAeReviewNavigation(issue.x, issue.y, issue.z, issue.structureId, replace);
+            return;
+        }
         if (!HologramAeReviewNavigation
             .needsSelection(ui.session.state().data.getString("activeStructure"), issue.structureId)) {
             ui.ae.finishAeReviewNavigation(issue.x, issue.y, issue.z, issue.structureId, replace);
@@ -483,6 +489,14 @@ final class HologramUiAeReview {
 
     boolean canOpenAePreview() {
         HologramState.Cell cell = ui.session.selectedCell();
+        if (ui.session.isLocalAuthor()) return ui.session.editable() && cell != null
+            && ui.preview.selection()
+                .indices().length == 1
+            && (com.miaokatze.gtmb.hologram.HologramAeBlueprint.supports(cell.block(false), null)
+                || cell.block(false) != null && cell.block(false)
+                    .getClass()
+                    .getName()
+                    .equals("codechicken.multipart.BlockMultipart"));
         return ui.session.editable() && ui.session.pendingSequence() < 0
             && ui.preview.selection()
                 .indices().length == 1
@@ -513,6 +527,44 @@ final class HologramUiAeReview {
         request.setInteger("y", y);
         request.setInteger("z", z);
         request.setString("structureId", structureId);
+        if (ui.session.isLocalAuthor()) {
+            try {
+                HologramLocalAuthorRuntime runtime = ui.session.author();
+                com.miaokatze.gtmb.blueprint.editor.AuthorDocument.Cell selected = runtime.document()
+                    .cellAt(x, y, z);
+                if (selected == null || !structureId.isEmpty() && !selected.memberships()
+                    .isEmpty()
+                    && !selected.memberships()
+                        .contains(structureId))
+                    throw new java.io.IOException("所选原生格或结构已变化");
+                if (!selected.memberships()
+                    .isEmpty()) {
+                    boolean found = false, enabled = false;
+                    for (com.google.gson.JsonObject structure : runtime.document()
+                        .structures()) {
+                        String id = structure.has("id") ? structure.get("id")
+                            .getAsString() : "";
+                        if (!selected.memberships()
+                            .contains(id) || !structureId.isEmpty() && !structureId.equals(id)) continue;
+                        found = true;
+                        enabled |= !structure.has("enabled") || structure.get("enabled")
+                            .getAsBoolean();
+                    }
+                    if (structureId.isEmpty() ? found && !enabled : !found || !enabled)
+                        throw new java.io.IOException("所属结构未启用，请先启用后编辑原生标记");
+                }
+                NBTTagCompound preview = com.miaokatze.gtmb.hologram.HologramLocalAuthorAe.preview(
+                    selected.sourceCopy(),
+                    runtime.document()
+                        .revision());
+                this.awaitingAePreview = false;
+                aePreviewTransition = true;
+                new HologramAeContainerScreen(ui.host.parent(), runtime, selected.id(), preview).open();
+            } catch (java.io.IOException | RuntimeException failure) {
+                ui.session.notice("原生标记编辑未打开：" + failure.getMessage());
+            }
+            return;
+        }
         this.awaitingAePreview = true;
         ui.session.send("aePreviewOpen", request, true);
     }

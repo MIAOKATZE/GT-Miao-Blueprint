@@ -42,6 +42,36 @@ tasks.register<JavaExec>("runHologramTest") {
 
 tasks.named("check") { dependsOn("runHologramTest") }
 
+// Native author fixtures populate process-wide weak caches; isolate them from server lease-baseline tests.
+tasks.register<JavaExec>("runLocalAuthorTest") {
+    group = "verification"
+    description = "Checks client-owned source, native adapters, local persistence and explicit submission."
+    mainClass = "com.miaokatze.gtmb.hologram.HologramLocalAuthorRegressionTest"
+    classpath = tasks.named<JavaExec>("runHologramTest").get().classpath
+    maxHeapSize = "2g"
+    val scratchDir = layout.buildDirectory.dir("hologram-local-author-test")
+    workingDir(scratchDir)
+    doFirst { scratchDir.get().asFile.mkdirs() }
+}
+tasks.named("check") { dependsOn("runLocalAuthorTest") }
+
+// Forge captures its physical side once: validate stripped server and client World constructors in separate JVMs.
+for (side in listOf("CLIENT", "SERVER")) {
+    val taskName = "runResourceWorld${side.lowercase().replaceFirstChar { it.uppercase() }}Test"
+    tasks.register<JavaExec>(taskName) {
+        group = "verification"
+        description = "Checks detached native world storage and Forge side stripping on $side."
+        mainClass = "com.miaokatze.gtmb.hologram.HologramResourceWorldSidedRegression"
+        args(side)
+        classpath = tasks.named<JavaExec>("runHologramTest").get().classpath
+        maxHeapSize = "2g"
+        val scratchDir = layout.buildDirectory.dir("hologram-resource-world-${side.lowercase()}")
+        workingDir(scratchDir)
+        doFirst { scratchDir.get().asFile.mkdirs() }
+    }
+    tasks.named("check") { dependsOn(taskName) }
+}
+
 // This fixture saturates the process-wide quota; isolate it from caches owned by other suites.
 tasks.register<JavaExec>("runSnapshotOwnershipTest") {
     group = "verification"

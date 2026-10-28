@@ -19,6 +19,7 @@ import com.miaokatze.gtmb.hologram.HologramLibraryFacade;
 final class HologramClientLibrary {
 
     static final int MAX_BYTES = HologramBlueprintArtifact.MAX_JSON_BYTES, MAX_ENTRIES = 128;
+    static final int MAX_AUTHOR_BYTES = com.miaokatze.gtmb.blueprint.editor.AuthorDocumentIO.Limits.defaults().maxBytes;
     private final Path directory;
     private final Path metadataFile;
     private final PairIo pairIo;
@@ -137,6 +138,7 @@ final class HologramClientLibrary {
 
     List<Entry> list() throws IOException {
         List<Entry> entries = new ArrayList<>();
+        listAuthorDrafts(entries);
         java.util.Set<String> seen = new java.util.HashSet<>();
         Files.createDirectories(directory);
         displayPaths.clear();
@@ -175,6 +177,79 @@ final class HologramClientLibrary {
             return time == 0 ? a.id.compareTo(b.id) : time;
         });
         return entries;
+    }
+
+    private void listAuthorDrafts(List<Entry> entries) throws IOException {
+        Path drafts = directory.resolve("drafts");
+        if (!Files.isDirectory(drafts)) return;
+        try (java.nio.file.DirectoryStream<Path> files = Files.newDirectoryStream(drafts, "*.gtmb-draft.json")) {
+            for (Path file : files) {
+                if (entries.size() >= MAX_ENTRIES) break;
+                try {
+                    String name = file.getFileName()
+                        .toString();
+                    String id = name.substring(0, name.length() - ".gtmb-draft.json".length());
+                    if (!file.equals(authorDraftPath(id)) || Files.size(file) > MAX_AUTHOR_BYTES) continue;
+                    JsonObject metadata = draftMetadata(file, id);
+                    metadata.addProperty("sourceMod", "GTMB local recovery draft");
+                    metadata.addProperty(
+                        "createdAt",
+                        Files.getLastModifiedTime(file)
+                            .toMillis());
+                    entries.add(new Entry("draft_" + id, metadata, Files.size(file)));
+                } catch (IOException | RuntimeException damaged) {
+                    // One damaged recovery file cannot hide other documents.
+                }
+            }
+        }
+    }
+
+    /** Catalog summaries skip all opaque NBT and unknown values; opening still performs strict admission. */
+    private static JsonObject draftMetadata(Path file, String expectedId) throws IOException {
+        try (com.google.gson.stream.JsonReader reader = new com.google.gson.stream.JsonReader(
+            Files.newBufferedReader(file, StandardCharsets.UTF_8))) {
+            JsonObject metadata = null;
+            String format = "", id = "";
+            int version = -1;
+            reader.beginObject();
+            while (reader.hasNext()) {
+                String key = reader.nextName();
+                if ("format".equals(key)) format = reader.nextString();
+                else if ("documentId".equals(key)) id = reader.nextString();
+                else if ("version".equals(key)) version = reader.nextInt();
+                else if ("source".equals(key)) metadata = draftSourceMetadata(reader, true);
+                else reader.skipValue();
+            }
+            reader.endObject();
+            if (!"gtmb-author-draft".equals(format) || version != 1 || !expectedId.equals(id) || metadata == null)
+                throw new IOException("Invalid recovery draft summary");
+            return metadata;
+        }
+    }
+
+    private static JsonObject draftSourceMetadata(com.google.gson.stream.JsonReader reader, boolean envelope)
+        throws IOException {
+        JsonObject metadata = new JsonObject();
+        reader.beginObject();
+        while (reader.hasNext()) {
+            String key = reader.nextName();
+            if (envelope && "blueprint".equals(key)) metadata = draftSourceMetadata(reader, false);
+            else if ("name".equals(key) || "authorName".equals(key) || "authorUuid".equals(key)) {
+                if (reader.peek() == com.google.gson.stream.JsonToken.NULL) reader.nextNull();
+                else metadata.addProperty(key, reader.nextString());
+            } else if ("cells".equals(key) || "structures".equals(key)) {
+                int count = 0;
+                reader.beginArray();
+                while (reader.hasNext()) {
+                    reader.skipValue();
+                    count++;
+                }
+                reader.endArray();
+                metadata.addProperty("cells".equals(key) ? "displayCells" : "displayStructures", count);
+            } else reader.skipValue();
+        }
+        reader.endObject();
+        return metadata;
     }
 
     private static String stamp(Path path) throws IOException {
@@ -277,6 +352,82 @@ final class HologramClientLibrary {
         return id;
     }
 
+    /** Explicit offline candidate export, deliberately outside the reviewed library and its actor guard. */
+    Path savePortableCandidate(HologramBlueprintArtifact.Artifact artifact, java.util.function.BooleanSupplier current)
+        throws IOException {
+        if (!current.getAsBoolean()) throw new IOException("Author source changed before candidate export");
+        // Compilation already ran the native providers on the owner thread. Disk persistence verifies only
+        // the exact bounded pair; neither re-run native providers on this IO worker nor grant reviewed status.
+        Path target = directory.resolve("candidates")
+            .resolve("unreviewed_" + UUID.randomUUID() + ".json");
+        HologramBlueprintArtifact.PairWrite receipt = pairIo.write(target, artifact.json, artifact.png, current);
+        try {
+            HologramBlueprintArtifact.Artifact actual = pairIo.read(target);
+            if (!artifact.jsonSha256.equals(actual.jsonSha256) || !artifact.pngSha256.equals(actual.pngSha256))
+                throw new IOException("Candidate artifact readback differs from exact source");
+            if (!current.getAsBoolean()) throw new IOException("Author source changed during candidate export");
+            receipt.commit();
+            return target;
+        } catch (IOException | RuntimeException failure) {
+            try {
+                receipt.rollback();
+            } catch (IOException rollback) {
+                failure.addSuppressed(rollback);
+            }
+            throw failure;
+        }
+    }
+
+    /** A recovery draft is a separate, single-file artifact: no PNG, actor or portable receipt. */
+    Path saveAuthorDraft(String documentId, byte[] bytes) throws IOException {
+        Path target = authorDraftPath(documentId);
+        if (bytes == null || bytes.length == 0 || bytes.length > MAX_AUTHOR_BYTES)
+            throw new IOException("Local draft byte budget exceeded");
+        Files.createDirectories(target.getParent());
+        Path temporary = Files.createTempFile(target.getParent(), ".draft-", ".tmp");
+        try {
+            try (java.nio.channels.FileChannel output = java.nio.channels.FileChannel.open(
+                temporary,
+                java.nio.file.StandardOpenOption.WRITE,
+                java.nio.file.StandardOpenOption.TRUNCATE_EXISTING)) {
+                java.nio.ByteBuffer buffer = java.nio.ByteBuffer.wrap(bytes);
+                while (buffer.hasRemaining()) output.write(buffer);
+                output.force(true);
+            }
+            if (!java.util.Arrays.equals(bytes, Files.readAllBytes(temporary)))
+                throw new IOException("Local draft readback mismatch");
+            // Atomic rename is required; do not silently replace with a crash-vulnerable truncate/write.
+            Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            return target;
+        } finally {
+            Files.deleteIfExists(temporary);
+        }
+    }
+
+    Path authorDraftPath(String documentId) throws IOException {
+        if (documentId == null || !documentId.matches("[a-fA-F0-9-]{36}"))
+            throw new IOException("Invalid local document identity");
+        return directory.resolve("drafts")
+            .resolve(documentId + ".gtmb-draft.json");
+    }
+
+    /** Read original source bytes, never a display DTO and never require a thumbnail. */
+    byte[] authorSource(String id) throws IOException {
+        Path source = id != null && id.startsWith("draft_") ? authorDraftPath(id.substring(6)) : savedPath(id);
+        int maximum = id != null && id.startsWith("draft_") ? MAX_AUTHOR_BYTES : MAX_BYTES;
+        long size = Files.size(source);
+        if (size > maximum) throw new IOException("Local source byte budget exceeded");
+        try (java.io.InputStream input = Files.newInputStream(source);
+            java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream()) {
+            byte[] buffer = new byte[8192];
+            for (int count; (count = input.read(buffer)) != -1;) {
+                if (count > maximum - output.size()) throw new IOException("Local source byte budget exceeded");
+                output.write(buffer, 0, count);
+            }
+            return output.toByteArray();
+        }
+    }
+
     /** A JSON-only save can never acknowledge a completed native artifact. */
     String save(byte[] data, String replaceId, String playerName, String playerUuid) throws IOException {
         parse(data);
@@ -339,7 +490,7 @@ final class HologramClientLibrary {
     }
 
     Path savedPath(String id) throws IOException {
-        return file(id);
+        return id != null && id.startsWith("draft_") ? authorDraftPath(id.substring(6)) : file(id);
     }
 
     String savedName(String id) throws IOException {
@@ -347,6 +498,10 @@ final class HologramClientLibrary {
     }
 
     void delete(String id) throws IOException {
+        if (id != null && id.startsWith("draft_")) {
+            Files.deleteIfExists(authorDraftPath(id.substring(6)));
+            return;
+        }
         Path selected = file(id);
         if (!selected.equals(HologramBlueprintFiles.resolve(directory, id))) {
             HologramBlueprintFiles.managed(directory);

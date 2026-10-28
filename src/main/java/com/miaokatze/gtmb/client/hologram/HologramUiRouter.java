@@ -48,7 +48,7 @@ final class HologramUiRouter {
         ui.tools.closeTransient();
         ui.canvas.layout()
             .release();
-        if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
+        if (ui.session.backgroundBusy() && !ui.diagnostics.captureRenderSmokeAction()) {
             ui.memory.rememberUi();
             HologramBackgroundTasks.rememberUi(ui);
             HologramBackgroundTasks.detach();
@@ -72,7 +72,13 @@ final class HologramUiRouter {
     }
 
     void closeRoot() {
-        if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
+        if (ui.session.isLocalAuthor()) {
+            ui.memory.rememberUi();
+            ui.host.minecraft()
+                .displayGuiScreen(null);
+            return;
+        }
+        if (ui.session.backgroundBusy() && !ui.diagnostics.captureRenderSmokeAction()) {
             ui.memory.rememberUi();
             HologramBackgroundTasks.rememberUi(ui);
             HologramBackgroundTasks.detach();
@@ -122,7 +128,7 @@ final class HologramUiRouter {
             239,
             244,
             20,
-            importing && !HologramBackgroundTasks.busy() ? "取消导入并返回世界 · Esc / E" : "返回世界，后台继续 · Esc / E",
+            importing && !ui.session.backgroundBusy() ? "取消导入并返回世界 · Esc / E" : "返回世界，后台继续 · Esc / E",
             true,
             mx,
             my);
@@ -190,7 +196,7 @@ final class HologramUiRouter {
                 ui.canvas.layout()
                     .width() - 12,
                 22);
-            if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
+            if (ui.session.backgroundBusy() && !ui.diagnostics.captureRenderSmokeAction()) {
                 if (HologramBackgroundTasks.awaitingSourceReview() && ui.library.discardReview()) {
                     ui.library.drawBlueprintSwitchReview(mx, my);
                     ui.canvas.button(990, 470, 310, 170, 22, "后台继续 · Esc / E", true, mx, my);
@@ -207,8 +213,7 @@ final class HologramUiRouter {
             if (ui.session.areaImporting() || ui.session.state().data.getBoolean("snapshotPending")
                 || ui.session.state().data.getBoolean("placementValidating")) {
                 ui.router.drawImportBusy(mx, my);
-                if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction())
-                    drawTaskStatus(mx, my);
+                if (ui.session.backgroundBusy() && !ui.diagnostics.captureRenderSmokeAction()) drawTaskStatus(mx, my);
                 ui.canvas.incrementRenderGeneration(1, true);
                 return;
             }
@@ -604,8 +609,7 @@ final class HologramUiRouter {
                     ui.canvas.tooltip(null);
                     ui.library.drawBlueprintSwitchReview(mx, my);
                 }
-                if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction())
-                    drawTaskStatus(mx, my);
+                if (ui.session.backgroundBusy() && !ui.diagnostics.captureRenderSmokeAction()) drawTaskStatus(mx, my);
                 if (!ui.session.isTutorial()) ui.shortcuts.drawIdleHints();
                 if (ui.canvas.tooltip() != null && !ui.library.saveGuidanceOpen() && !ui.review.materialDialogOpen())
                     ui.host.renderTooltip(ui.canvas.tooltip(), mx, my, ui.host.font());
@@ -677,7 +681,7 @@ final class HologramUiRouter {
             return;
         try (HologramUiCanvas.PointerSpace ignored = ui.canvas.pointerSpace(overlaySpace())) {
             int mx = ui.canvas.localX(x), my = ui.canvas.localY(y);
-            if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
+            if (ui.session.backgroundBusy() && !ui.diagnostics.captureRenderSmokeAction()) {
                 if (button == 0) for (Control control : ui.canvas.controls())
                     if (control.enabled && control.contains(mx, my)) activate(control.id);
                 return;
@@ -740,7 +744,7 @@ final class HologramUiRouter {
         if (ui.tutorial.blockInput()) return;
         ui.shortcuts.activity();
         if (ui.tools.consumeDrag(ui.canvas.localX(x), ui.canvas.localY(y), button)) return;
-        if (HologramBackgroundTasks.busy()) return;
+        if (ui.session.backgroundBusy()) return;
         if (ui.canvas.layout()
             .drag(ui.canvas.localX(x), ui.canvas.localY(y))) return;
         ui.preview.mouseClickMove(x, y, button, elapsed);
@@ -756,7 +760,7 @@ final class HologramUiRouter {
                 .release();
             return;
         }
-        if (HologramBackgroundTasks.busy()) return;
+        if (ui.session.backgroundBusy()) return;
         ui.preview.mouseMovedOrUp(x, y, button);
     }
 
@@ -770,7 +774,7 @@ final class HologramUiRouter {
         try (HologramUiCanvas.PointerSpace ignored = ui.canvas.pointerSpace(overlaySpace())) {
             if (ui.review.materialDialogOpen()) return;
             ui.shortcuts.activity();
-            if (HologramBackgroundTasks.busy()) return;
+            if (ui.session.backgroundBusy()) return;
 
             if (ui.bindings.networkDrawer()) return;
             if (ui.session.areaImporting() || ui.ae.aeReviewNavigation() != null
@@ -864,7 +868,7 @@ final class HologramUiRouter {
         if (ui.textBoxes.key(key)) return;
         if (ui.review.consumeMaterialDialogKey(key)) return;
         if (ui.library.consumeSaveGuidanceKey(key)) return;
-        if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
+        if (ui.session.backgroundBusy() && !ui.diagnostics.captureRenderSmokeAction()) {
             if (key == Keyboard.KEY_ESCAPE || key == Keyboard.KEY_E) closeRoot();
             return;
         }
@@ -885,6 +889,14 @@ final class HologramUiRouter {
         if (ui.shortcuts.consumeBindingKey(c, key)) return;
         if (!ui.router.textFieldFocused() && ui.tools.consumeKey(c, key)) return;
         if (key == Keyboard.KEY_ESCAPE) {
+            if (ui.session.isLocalAuthor() && ui.session.author()
+                .structures()
+                .busy()) {
+                ui.session.author()
+                    .structures()
+                    .cancel();
+                return;
+            }
             if (!ui.annotations.pinnedAnnotation()
                 .isEmpty() && ui.annotations.annotationInteractive()) {
                 ui.annotations.pinnedAnnotation("");
@@ -990,14 +1002,15 @@ final class HologramUiRouter {
             return;
         }
         if (id == 330) {
-            ui.session.send("clearWorkspace", null, true);
+            if (ui.session.isLocalAuthor()) ui.session.localAction("clearWorkspace", null);
+            else ui.session.send("clearWorkspace", null, true);
             return;
         }
         if (id == 193 && (ui.session.areaImporting() || ui.session.state().data.getBoolean("snapshotPending"))) {
             closeRoot();
             return;
         }
-        if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
+        if (ui.session.backgroundBusy() && !ui.diagnostics.captureRenderSmokeAction()) {
             if (id == 990) closeRoot();
             else if (id == 991) HologramBackgroundTasks.cancel();
             else if (id == 992) HologramBackgroundTasks.togglePause();

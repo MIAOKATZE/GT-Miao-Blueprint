@@ -280,7 +280,10 @@ final class HologramSession {
         s.jobMissingCells = s.jobProtectedCells = s.jobUnsupportedCells = s.jobSkippedCells = 0;
     }
 
+    HologramSourceTransfer sourceTransfer;
+
     static void clearPending(HologramSession s) {
+        HologramSourceTransfer.cancel(s);
         HologramBuildPreparation.cancel(s);
         s.ackIndices.clear();
         s.ackSuccesses.clear();
@@ -291,6 +294,7 @@ final class HologramSession {
     }
 
     static void cancelCaptureRetry(HologramSession s) {
+        HologramSourceTransfer.cancel(s);
 
         HologramVirtualStructureEditing.cancel(s);
         if (s.capturePending && s.capture != null) s.capture.cancelPending();

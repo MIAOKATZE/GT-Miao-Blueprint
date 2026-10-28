@@ -204,6 +204,7 @@ final class HologramBlueprintServiceRegression {
             deletion((HologramSession) session);
             spatialWorkOrder((HologramSession) session);
             HologramBlueprintSourceMaterialRegression.run((HologramSession) session);
+            HologramSourceTransferRegression.run((HologramSession) session);
             capture.cells.get(0).prompt = "keep configuration";
             NBTTagCompound data = new NBTTagCompound();
             data.setString("setting", "saved-value");

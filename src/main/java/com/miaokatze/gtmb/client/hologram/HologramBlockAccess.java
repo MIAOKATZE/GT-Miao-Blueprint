@@ -42,23 +42,26 @@ final class HologramBlockAccess implements IBlockAccess {
     }
 
     public Block getBlock(int x, int y, int z) {
+        if (state.authorProjection != null) state.authorProjection.dependency(modelReader, x, y, z);
         HologramState.Cell cell = cells.at(x, y, z);
         Block block = cell == null ? null : cell.block(actual(cell));
         return block == null ? Blocks.air : block;
     }
 
     public int getBlockMetadata(int x, int y, int z) {
+        if (state.authorProjection != null) state.authorProjection.dependency(modelReader, x, y, z);
         HologramState.Cell cell = cells.at(x, y, z);
         return cell == null ? 0 : actual(cell) ? cell.meta : cell.wantMeta;
     }
 
     public TileEntity getTileEntity(int x, int y, int z) {
+        if (state.authorProjection != null) state.authorProjection.dependency(modelReader, x, y, z);
         String key = key(x, y, z);
         HologramState.Cell input = cells.at(x, y, z);
         if (input != null && input.modelPending(current)) {
             modelIncomplete = true;
             HologramSnapshotModelsClient.requestVisible(state, input, current);
-            HologramSnapshotModelsClient.dependency(modelReader, input);
+            if (state.authorProjection == null) HologramSnapshotModelsClient.dependency(modelReader, input);
             if (modelReader != null) HologramBlockRender.defer(modelReader, current);
             return null; // Unknown visual data is not a known empty tile and must not enter loaded/failure caches.
         }

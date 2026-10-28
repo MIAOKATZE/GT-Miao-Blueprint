@@ -443,6 +443,8 @@ final class HologramUiPreview {
     }
 
     boolean canMoveSelection() {
+        if ((ui.session.author() != null)) return !ui.library.browsePreviewActive() && ui.session.editable()
+            && this.selection.movable(ui.session.state());
         return !ui.library.browsePreviewActive() && ui.session.state().data.getBoolean("geometryEditable")
             && ui.session.state().data.getBoolean("virtual")
             && ui.session.state().data.getBoolean("supported")
@@ -464,11 +466,13 @@ final class HologramUiPreview {
     }
 
     String moveHandleReason() {
-        if (HologramBackgroundTasks.busy()) return "后台任务正在处理当前蓝图，完成后可使用移动轴。";
+        if (ui.session.backgroundBusy()) return "后台任务正在处理当前蓝图，完成后可使用移动轴。";
         if (!ui.session.state().data.getBoolean("virtual")) return "真实控制器模式不能移动规划坐标；返回区域总览或打开蓝图后，完整选中结构再移动。";
         if (!ui.session.editable()) return ui.session.editingReason();
-        if (!ui.session.state().data.getBoolean("supported")) return "结构尚未完整载入，暂不能移动。";
-        if (!ui.session.state().data.getBoolean("geometryEditable")) return "当前蓝图尚未开放坐标编辑。";
+        if (!(ui.session.author() != null) && !ui.session.state().data.getBoolean("supported"))
+            return "结构尚未完整载入，暂不能移动。";
+        if (!(ui.session.author() != null) && !ui.session.state().data.getBoolean("geometryEditable"))
+            return "当前蓝图尚未开放坐标编辑。";
         if (this.selection.size() == 0) return "先点击结构轮廓完整选中结构，或选择可独立编辑的方块。";
         if (!this.selection.movable(ui.session.state())) return "当前选区未包含完整结构；点击结构轮廓整选后可使用移动轴。";
         if (!ui.preview.previewInteractive()) return "先关闭当前编辑窗口，再使用预览中的移动轴。";
@@ -577,7 +581,8 @@ final class HologramUiPreview {
         request.setInteger("dz", voxel[2] - ui.session.state().data.getInteger("z"));
         request.setBoolean("airOnly", true);
         request.setString("structureId", ui.config.selectedStructureId());
-        ui.session.send("addPosition", request, true);
+        if (ui.session.isLocalAuthor()) ui.session.localAction("addPosition", request);
+        else ui.session.send("addPosition", request, true);
         return true;
     }
 
@@ -640,12 +645,29 @@ final class HologramUiPreview {
                 ui.canvas.tooltip(Collections.singletonList(stack.getDisplayName() + " · 选为目标（不消耗）"));
         }
         if (this.sourceTargets && choices.tagCount() == 0) {
-            ui.canvas.text("开启来源并准备物品", 183, 160, 194, 0xe4d3a9);
-            ui.canvas.text("然后重新扫描或重新打开", 183, 180, 194, 0xe4d3a9);
+            boolean pending = ui.session.isLocalAuthor()
+                && ui.session.state().data.getBoolean("materialCataloguePending");
+            ui.canvas.text(pending ? "正在读取真实材料来源…" : "开启来源并准备物品", 183, 160, 194, 0xe4d3a9);
+            String catalogueStatus = ui.session.state().data.getString("materialCatalogueStatus");
+            ui.canvas.text(
+                ui.session.isLocalAuthor() && !catalogueStatus.isEmpty() ? catalogueStatus : "然后重新扫描或重新打开",
+                183,
+                180,
+                194,
+                0xe4d3a9);
         }
         ui.canvas.button(66, 165, 221, 105, 17, "恢复默认壳", ui.session.editable() && ui.preview.hasSelectedPin(), mx, my);
         ItemStack picked = ui.preview.pickedTarget();
-        if (this.sourceTargets) ui.canvas.button(18, 277, 221, 119, 17, "刷新来源 · 滚轮翻页", ui.session.editable(), mx, my);
+        if (this.sourceTargets) ui.canvas.button(
+            18,
+            277,
+            221,
+            119,
+            17,
+            "刷新来源 · 滚轮翻页",
+            ui.session.editable() && !ui.session.state().data.getBoolean("materialCataloguePending"),
+            mx,
+            my);
         else ui.canvas.text(picked == null ? "未选物品" : picked.getDisplayName(), 277, 224, 119, 0xe4d3a9);
         ui.canvas.text(
             ui.session.pendingSequence() >= 0 ? "等待服务端校验目标…" : ui.session.state().data.getString("status"),
@@ -904,6 +926,38 @@ final class HologramUiPreview {
             request.setLong("planRevision", ui.session.revision());
         }
         if ("rotateCell".equals(action)) request.setLong("planRevision", ui.session.revision());
+        if (ui.session.isLocalAuthor()) {
+            HologramLocalAuthorRuntime author = ui.session.author();
+            try {
+                switch (action) {
+                    case "editCopy":
+                        author.copy(indices);
+                        break;
+                    case "editCut":
+                        author.cut(indices);
+                        break;
+                    case "editPaste":
+                        author.paste(target);
+                        break;
+                    case "editDelete":
+                        author.delete(indices);
+                        break;
+                    case "editUndo":
+                        author.undo();
+                        break;
+                    case "editRedo":
+                        author.redo();
+                        break;
+                    default:
+                        ui.session.localAction(action, request);
+                        return;
+                }
+                ui.session.notice("");
+            } catch (IllegalArgumentException | IllegalStateException failure) {
+                ui.session.notice(failure.getMessage());
+            }
+            return;
+        }
         ui.session.send(action, request, true);
     }
 
@@ -954,7 +1008,7 @@ final class HologramUiPreview {
     void movePreviewCamera() {
         long now = System.nanoTime(), previous = this.cameraFrame;
         this.cameraFrame = now;
-        if (ui.library.browsePreviewActive() || HologramBackgroundTasks.busy()
+        if (ui.library.browsePreviewActive() || ui.session.backgroundBusy()
             || previous == 0
             || !org.lwjgl.opengl.Display.isActive()
             || !ui.preview.previewInteractive()
@@ -1094,11 +1148,15 @@ final class HologramUiPreview {
                 this.inventorySlot = this.sourceChoice = -1;
                 this.inventoryDragging = false;
                 this.sourceOffset = 0;
+                if (id == 17 && ui.session.isLocalAuthor())
+                    HologramLocalAuthorMaterialCatalog.request(ui.session.author(), ui.session);
                 return true;
             case 18:
                 if (ui.session.editable()) {
                     this.sourceChoice = -1;
-                    ui.session.send("scan", null, true);
+                    if (ui.session.isLocalAuthor())
+                        HologramLocalAuthorMaterialCatalog.request(ui.session.author(), ui.session);
+                    else ui.session.send("scan", null, true);
                 }
                 return true;
             case 23:
@@ -1431,7 +1489,15 @@ final class HologramUiPreview {
                 move.setInteger("dy", offset[1]);
                 move.setInteger("dz", offset[2]);
                 move.setBoolean("copy", this.gizmoCopy);
-                ui.session.send("editMove", move, true);
+                if (ui.session.isLocalAuthor()) {
+                    try {
+                        ui.session.author()
+                            .move(this.selection.indices(), offset[0], offset[1], offset[2], this.gizmoCopy);
+                        ui.session.notice("");
+                    } catch (IllegalArgumentException | IllegalStateException failure) {
+                        ui.session.notice(failure.getMessage());
+                    }
+                } else ui.session.send("editMove", move, true);
             }
             return;
         }

@@ -143,18 +143,26 @@ public final class HologramSnapshotRowsRegression {
         for (int i = 0; i < 256; i++) source.add(builder.add(row(i)));
         NBTTagCompound page = HologramSnapshotRows.compactPage(source);
         HologramSnapshotRows.validatePage(page, source.size());
-        SimpleAssert.that(page.getTag(HologramSnapshotRows.PALETTE) == source.get(0).getTag(HologramSnapshotRows.PALETTE),
+        SimpleAssert.that(
+            page.getTag(HologramSnapshotRows.PALETTE) == source.get(0)
+                .getTag(HologramSnapshotRows.PALETTE),
             "wire projection reuses an already-proved owner palette without expanding every descriptor");
         NBTTagList projected = HologramSnapshotRows.project((NBTTagCompound) page.copy(), false);
         for (int i = 0; i < source.size(); i++) SimpleAssert.that(
             HologramSnapshotNbt.same(row(i), HologramSnapshotRows.export(projected.getCompoundTagAt(i))),
             "direct owner-page projection retains every field and coordinate");
-        source.get(0).setString("overlay", "model-only replacement");
+        source.get(0)
+            .setString("overlay", "model-only replacement");
         NBTTagCompound changed = HologramSnapshotRows.compactPage(source);
         NBTTagList overlay = HologramSnapshotRows.project(changed, false);
-        SimpleAssert.eq("model-only replacement", HologramSnapshotRows.export(overlay.getCompoundTagAt(0))
-            .getString("overlay"), "rows with overlays use exact re-interning rather than the common-page shortcut");
-        SimpleAssert.that(!HologramSnapshotRows.export(overlay.getCompoundTagAt(1)).hasKey("overlay"),
+        SimpleAssert.eq(
+            "model-only replacement",
+            HologramSnapshotRows.export(overlay.getCompoundTagAt(0))
+                .getString("overlay"),
+            "rows with overlays use exact re-interning rather than the common-page shortcut");
+        SimpleAssert.that(
+            !HologramSnapshotRows.export(overlay.getCompoundTagAt(1))
+                .hasKey("overlay"),
             "one row's overlay does not change other descriptor users");
     }
 

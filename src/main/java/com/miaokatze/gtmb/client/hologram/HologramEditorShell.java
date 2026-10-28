@@ -996,7 +996,7 @@ final class HologramEditorShell {
             && ui.preview.previewInteractive()
             && !ui.library.libraryAdminDrawer()
             && !ui.bindings.networkDrawer()
-            && !HologramBackgroundTasks.busy();
+            && !ui.session.backgroundBusy();
     }
 
     boolean hasModalPanel() {

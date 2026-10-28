@@ -64,15 +64,22 @@ final class HologramUiNetworkBindings {
             .clear();
         ui.canvas.tooltip(null);
         drawRect(35, 50, 645, 299, 0xfc172f36);
+        boolean local = ui.session.isLocalAuthor();
         boolean terminalBinding = ui.session.state().data.getCompoundTag("networkBindings")
             .getBoolean("terminalBinding");
-        ui.canvas.text(terminalBinding ? "量子网络类群 · 逐组绑定" : "量子网络类群 · 保留原网络", 50, 64, 570, 0xffe59b);
         ui.canvas.text(
-            !terminalBinding ? "自用保留原绑定，无需终端或重新绑定；原存档、原网络位置与维度仍需可访问。"
-                : ui.session.pendingSequence() >= 0 ? "正在绑定，请等待服务端确认；成功后自动选中下一个待绑定类群。"
-                    : HologramPlacementConfirmation.networksReady(ui.session.state().data)
-                        ? "步骤 3/3 · 全部类群已就绪，点击绿色“确认全部类群”；也可选择已绑类群改绑。"
-                        : "步骤 1/3 · 选择左侧待绑定类群 → 步骤 2/3 · 点击右侧绿色量子终端；成功后自动下一组。",
+            local ? "量子网络类群 · 本地提示编辑" : terminalBinding ? "量子网络类群 · 逐组绑定" : "量子网络类群 · 保留原网络",
+            50,
+            64,
+            570,
+            0xffe59b);
+        ui.canvas.text(
+            local ? "这里只编辑蓝图类群提示；真实终端、网络身份和放置权限由服务端另行核验。"
+                : !terminalBinding ? "自用保留原绑定，无需终端或重新绑定；原存档、原网络位置与维度仍需可访问。"
+                    : ui.session.pendingSequence() >= 0 ? "正在绑定，请等待服务端确认；成功后自动选中下一个待绑定类群。"
+                        : HologramPlacementConfirmation.networksReady(ui.session.state().data)
+                            ? "步骤 3/3 · 全部类群已就绪，点击绿色“确认全部类群”；也可选择已绑类群改绑。"
+                            : "步骤 1/3 · 选择左侧待绑定类群 → 步骤 2/3 · 点击右侧绿色量子终端；成功后自动下一组。",
             50,
             81,
             570,
@@ -105,7 +112,12 @@ final class HologramUiNetworkBindings {
             .getTagList("inventory", 10);
         boolean selectedTerminalBinding = groups.tagCount() > 0 && groups.getCompoundTagAt(this.networkGroupIndex)
             .getBoolean("terminalBinding");
-        ui.canvas.text(selectedTerminalBinding ? "主背包与快捷栏 · 选择终端" : "保留原绑定 · 无需量子终端", 405, 101, 216, 0xa9d6cf);
+        ui.canvas.text(
+            local ? "真实终端绑定：放置审核时选择" : selectedTerminalBinding ? "主背包与快捷栏 · 选择终端" : "保留原绑定 · 无需量子终端",
+            405,
+            101,
+            216,
+            0xa9d6cf);
         for (int slot = 0; slot < 36; slot++) {
             int x = 405 + (slot % 9) * 23;
             int y = slot < 9 ? 194 : 121 + ((slot - 9) / 9) * 23;
@@ -120,7 +132,7 @@ final class HologramUiNetworkBindings {
                 21,
                 21,
                 "",
-                selectedTerminalBinding && available && ui.session.pendingSequence() < 0,
+                !local && selectedTerminalBinding && available && ui.session.pendingSequence() < 0,
                 mx,
                 my);
             if (row != null) {
@@ -179,8 +191,9 @@ final class HologramUiNetworkBindings {
             273,
             210,
             17,
-            terminalBinding ? "确认全部类群 · 返回放置" : "返回放置 · 保留原绑定",
-            ui.session.pendingSequence() < 0 && HologramPlacementConfirmation.networksReady(ui.session.state().data),
+            local ? "完成提示编辑" : terminalBinding ? "确认全部类群 · 返回放置" : "返回放置 · 保留原绑定",
+            ui.session.pendingSequence() < 0
+                && (local || HologramPlacementConfirmation.networksReady(ui.session.state().data)),
             mx,
             my);
     }
@@ -198,9 +211,10 @@ final class HologramUiNetworkBindings {
 
     void activateNetworkBinding(int id) {
         if (id == 197 || id == 201) {
-            if (id == 197 && !HologramPlacementConfirmation.networksReady(ui.session.state().data)) return;
+            if (id == 197 && !ui.session.isLocalAuthor()
+                && !HologramPlacementConfirmation.networksReady(ui.session.state().data)) return;
             this.networkDrawer = false;
-            ui.session.send("closeNetworkBindings", new NBTTagCompound(), true);
+            if (!ui.session.isLocalAuthor()) ui.session.send("closeNetworkBindings", new NBTTagCompound(), true);
         } else if (id == 198) this.networkGroupOffset = Math.max(0, this.networkGroupOffset - 5);
         else if (id == 199) this.networkGroupOffset = this.networkGroupOffset + (5);
         else if (id == 200 && this.networkHintField != null
@@ -213,7 +227,8 @@ final class HologramUiNetworkBindings {
                             .getCompoundTagAt(this.networkGroupIndex)
                             .getString("id"));
                     action.setString("hint", this.networkHintField.getText());
-                    ui.session.send("editBlueprintNetworkHint", action, true);
+                    if (ui.session.isLocalAuthor()) ui.session.localAction("editBlueprintNetworkHint", action);
+                    else ui.session.send("editBlueprintNetworkHint", action, true);
                 } else
             if (id >= 60000 && id < 61000
                 && id - 60000 < ui.bindings.networkGroups()
@@ -228,6 +243,10 @@ final class HologramUiNetworkBindings {
                 if (id >= 61000 && id < 61036
                     && this.networkGroupIndex < ui.bindings.networkGroups()
                         .tagCount()) {
+                            if (ui.session.isLocalAuthor()) {
+                                ui.session.notice("真实终端绑定需要放置阶段的服务端审核，不是蓝图本地编辑");
+                                return;
+                            }
                             if (ui.session.pendingSequence() >= 0 || this.networkBindingNavigation.pending()) return;
                             if (!ui.bindings.networkGroups()
                                 .getCompoundTagAt(this.networkGroupIndex)
@@ -252,8 +271,9 @@ final class HologramUiNetworkBindings {
 
     boolean openBindingsControl(int id) {
         if (id == 196) {
+            if (ui.session.isLocalAuthor()) ui.session.localAction("openNetworkBindings", new NBTTagCompound());
+            else ui.session.send("openNetworkBindings", new NBTTagCompound(), true);
             ui.bindings.revealPendingNetworkGroup();
-            ui.session.send("openNetworkBindings", new NBTTagCompound(), true);
             this.networkDrawer = true;
             return true;
         }

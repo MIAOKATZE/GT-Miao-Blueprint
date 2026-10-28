@@ -12,6 +12,31 @@ final class HologramLibraryWorkflow {
 
     private HologramLibraryWorkflow() {}
 
+    /** One-time capture/source handoff, not a reviewed export or a saved-file receipt. */
+    static void acquireAuthorSource(HologramSession s, NBTTagCompound request) {
+        try {
+            if (HologramEditorWorkspaceRegistry.physicalProjection(s) || s.virtualPlacement
+                || !request.hasKey("session", 8)
+                || !s.id.equals(request.getString("session"))
+                || !request.hasKey("planRevision", 4)
+                || request.getLong("planRevision") != s.planRevision
+                || request.getLong("clientTaskToken") <= 0
+                || s.capture == null
+                || s.capture.incomplete
+                || s.capturePending
+                || s.localPlanPending
+                || s.job == 1
+                || s.job == 2
+                || s.attachmentTask != null
+                || HologramSessionPolicy.blockedByAreaImport(s)
+                || !s.blueprintSaveReceipt.isEmpty()) throw new java.io.IOException("作者来源尚未完成或已变化，请等待采集完成后重试");
+            HologramSourceTransfer.start(s, request.getLong("clientTaskToken"));
+        } catch (java.io.IOException | RuntimeException failure) {
+            HologramLibraryFacade
+                .error(s.player, "作者来源传输失败：" + failure.getMessage(), request.getLong("clientTaskToken"));
+        }
+    }
+
     /** Retires only the active draft. Saved artifacts and the player's world are not changed. */
     static void discardBlueprint(HologramSession s, NBTTagCompound request) {
         if (!request.getBoolean("confirmDiscard") || !request.hasKey("planRevision", 4)
@@ -102,7 +127,9 @@ final class HologramLibraryWorkflow {
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
         return s != null && s.player == player
             && s.libraryWorld == player.worldObj
-            && (request.getBoolean("quickPlace") ? libraryQuickCurrent(s, request) : s.libraryUiActive)
+            && ("authorSource".equals(request.getString("op"))
+                ? !HologramEditorWorkspaceRegistry.physicalProjection(s) && !s.virtualPlacement
+                : request.getBoolean("quickPlace") ? libraryQuickCurrent(s, request) : s.libraryUiActive)
             && !s.cancelled
             && !s.capturePending
             && !s.localPlanPending

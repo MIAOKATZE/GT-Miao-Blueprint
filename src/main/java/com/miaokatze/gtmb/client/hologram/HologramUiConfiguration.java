@@ -27,6 +27,76 @@ final class HologramUiConfiguration {
         this.ui = ui;
     }
 
+    private HologramLocalAuthorRuntime nativeOwner;
+    private long nativeRevision = -1, nativeCellId = -1;
+    private List<ItemStack> nativeCandidates = Collections.emptyList();
+    private NBTTagCompound nativeDetails = new NBTTagCompound();
+
+    /** Explicit selected-record native reads, cached by document identity, revision and stable cell ID. */
+    List<ItemStack> candidates() {
+        if (!ui.session.isLocalAuthor()) {
+            HologramState.Cell cell = ui.session.selectedCell();
+            return cell == null ? Collections.emptyList() : cell.candidates;
+        }
+        selectedNativeDetails();
+        return nativeCandidates;
+    }
+
+    NBTTagCompound selectedNativeDetails() {
+        HologramState.Cell view = ui.session.selectedCell();
+        if (view == null) return new NBTTagCompound();
+        if (!ui.session.isLocalAuthor()) return view.tag();
+        HologramLocalAuthorRuntime runtime = ui.session.author();
+        long id;
+        try {
+            id = runtime.selectionIds(new int[] { ui.preview.selected() })
+                .iterator()
+                .next();
+        } catch (RuntimeException stale) {
+            return new NBTTagCompound();
+        }
+        if (nativeOwner == runtime && nativeRevision == runtime.document()
+            .revision() && nativeCellId == id) return nativeDetails;
+        nativeOwner = runtime;
+        nativeRevision = runtime.document()
+            .revision();
+        nativeCellId = id;
+        nativeCandidates = Collections.emptyList();
+        nativeDetails = view.tag();
+        try {
+            com.google.gson.JsonObject source = runtime.sourceCell(id);
+            nativeCandidates = com.miaokatze.gtmb.hologram.HologramLocalAuthorConfigurations.candidates(source);
+            nativeDetails.setIntArray(
+                "hatchFacings",
+                com.miaokatze.gtmb.hologram.HologramLocalAuthorConfigurations.legalFacings(source));
+            nativeDetails.setInteger(
+                "hatchFacing",
+                source.has("facing") ? source.get("facing")
+                    .getAsInt() : -1);
+            NBTTagList roles = new NBTTagList(), stacks = new NBTTagList();
+            int[] tiers = new int[nativeCandidates.size()];
+            for (int i = 0; i < nativeCandidates.size(); i++) {
+                ItemStack target = nativeCandidates.get(i);
+                MTEHatch hatch = hatchPrototype(target);
+                tiers[i] = hatch == null ? Integer.MAX_VALUE : hatch.mTier;
+                roles.appendTag(new net.minecraft.nbt.NBTTagString(hatch == null ? "外壳/方块" : "仓室"));
+                stacks.appendTag(target.writeToNBT(new NBTTagCompound()));
+            }
+            nativeDetails.setTag("candidateRoles", roles);
+            nativeDetails.setTag("candidates", stacks);
+            nativeDetails.setIntArray("candidateTiers", tiers);
+            boolean complete = source.has("authorDeclarationComplete") && source.get("authorDeclarationComplete")
+                .getAsBoolean();
+            nativeDetails.setBoolean("candidateComplete", complete);
+            if (!complete) nativeDetails.setString("candidateBoundary", "仅列出已保存并通过本格验证的声明候选；未声称原生枚举完整");
+        } catch (java.io.IOException | RuntimeException failure) {
+            nativeDetails.setBoolean("candidateComplete", false);
+            nativeDetails
+                .setString("candidateBoundary", failure.getMessage() == null ? "原生声明读取失败" : failure.getMessage());
+        }
+        return nativeDetails;
+    }
+
     private HologramMuiTextField mainField;
 
     private HologramMuiTextField channelNameField;
@@ -161,7 +231,8 @@ final class HologramUiConfiguration {
                 .getIntArray("candidateAvailable");
             for (int row = 0; row < 2 && row + this.hatchOffset < indices.size(); row++) {
                 int index = indices.get(row + this.hatchOffset);
-                ItemStack stack = cell.candidates.get(index);
+                ItemStack stack = ui.config.candidates()
+                    .get(index);
                 ui.canvas.drawItem(stack, 284, 177 + row * 20);
                 String count = ui.session.state().data.getBoolean("creativeMaterials") ? "∞"
                     : index < available.length ? Integer.toString(available[index]) : "?";
@@ -479,7 +550,8 @@ final class HologramUiConfiguration {
             .getTagList("candidateRoles", 8);
         int[] tiers = ui.session.cellTag()
             .getIntArray("candidateTiers");
-        for (int i = 0; i < cell.candidates.size(); i++) {
+        for (int i = 0; i < ui.config.candidates()
+            .size(); i++) {
             if (this.hatchRole > 0 && !roles.get(this.hatchRole)
                 .equals(tags.getStringTagAt(i))) continue;
             if (this.hatchFilterTier >= 0 && (i >= tiers.length || tiers[i] != this.hatchFilterTier)) continue;
@@ -604,7 +676,8 @@ final class HologramUiConfiguration {
             .getIntArray("candidateTiers");
         for (int row = 0; row < 5 && this.hatchOffset + row < indices.size(); row++) {
             int index = indices.get(this.hatchOffset + row);
-            ItemStack stack = ui.session.selectedCell().candidates.get(index);
+            ItemStack stack = ui.config.candidates()
+                .get(index);
             int y = 128 + row * 21;
             ui.canvas.drawItem(stack, 165, y);
             String count = ui.session.state().data.getBoolean("creativeMaterials") ? "无限"
@@ -667,6 +740,11 @@ final class HologramUiConfiguration {
     String candidateNote() {
         HologramState.Cell cell = ui.session.selectedCell();
         if (cell == null) return "请先选择预览中的位置。";
+        if (ui.session.isLocalAuthor()) {
+            NBTTagCompound details = selectedNativeDetails();
+            return details.getBoolean("candidateComplete") ? "选项来自本格原生声明；实际成型与材料仍在放置时核验。"
+                : "原生候选尚未确认：" + details.getString("candidateBoundary");
+        }
         return cell.candidateComplete ? "选项来自本格结构声明；机器成型仍受整体结构条件限制。"
             : "仅列出已解析选项：" + cell.candidateBoundary + "；机器成型仍受整体结构条件限制。";
     }
@@ -751,7 +829,8 @@ final class HologramUiConfiguration {
         config.setBoolean("applyHatchPreset", true);
         if (!basic) config.setTag("hatchProfile", profile.copy());
         presetDrawer = false;
-        ui.session.send("configure", config, true);
+        if (ui.session.isLocalAuthor()) ui.session.localAction("configure", config);
+        else ui.session.send("configure", config, true);
     }
 
     private void manageHatchPreset(int id) {
@@ -795,7 +874,8 @@ final class HologramUiConfiguration {
             230,
             21,
             labels[i] + (ui.config.sourceEnabled(keys[i]) ? " ✓" : " ×"),
-            ui.session.editable(),
+            ui.session.editable()
+                && !(ui.session.isLocalAuthor() && ui.session.state().data.getBoolean("materialCataloguePending")),
             mx,
             my);
         int priority = Math.floorMod(ui.session.state().data.getInteger("materialPriority"), 3);
@@ -806,7 +886,8 @@ final class HologramUiConfiguration {
             230,
             21,
             "优先：" + new String[] { "主背包", "物品容器", "ME 终端" }[priority],
-            ui.session.editable(),
+            ui.session.editable()
+                && !(ui.session.isLocalAuthor() && ui.session.state().data.getBoolean("materialCataloguePending")),
             mx,
             my);
         ui.canvas.text(
@@ -815,11 +896,23 @@ final class HologramUiConfiguration {
             203,
             230,
             0xb9d5d4);
-        ui.canvas.button(1716, 166, 220, 230, 19, "使用上次预设", ui.session.editable() && lastPreset(false) != null, mx, my);
+        ui.canvas.button(
+            1716,
+            166,
+            220,
+            230,
+            19,
+            "使用上次预设",
+            ui.session.editable()
+                && !(ui.session.isLocalAuthor() && ui.session.state().data.getBoolean("materialCataloguePending"))
+                && lastPreset(false) != null,
+            mx,
+            my);
         ui.canvas.text("已绑定、有电、在范围内；遵守网络权限", 166, 245, 230, 0x94afb4);
     }
 
     String facingName() {
+        if (ui.session.isLocalAuthor() && !ui.session.state().data.hasKey("facing", 3)) return "原稿朝向（尚未原生解析）";
         int index = ui.session.state().data.getInteger("facing");
         if (index < 0 || index >= ExtendedFacing.values().length) return "未知";
         ExtendedFacing facing = ExtendedFacing.values()[index];
@@ -906,33 +999,51 @@ final class HologramUiConfiguration {
             ui.session.cellTag()
                 .getCompoundTag("targetStack"));
         int current = cell.chosenChoice;
-        if (current < 0 && target != null) for (int i = 0; i < cell.candidates.size(); i++) {
-            if (target.isItemEqual(cell.candidates.get(i))
-                && ItemStack.areItemStackTagsEqual(target, cell.candidates.get(i))) {
-                current = i;
-                break;
+        if (current < 0 && target != null) for (int i = 0; i < ui.config.candidates()
+            .size(); i++) {
+                if (target.isItemEqual(
+                    ui.config.candidates()
+                        .get(i))
+                    && ItemStack.areItemStackTagsEqual(
+                        target,
+                        ui.config.candidates()
+                            .get(i))) {
+                    current = i;
+                    break;
+                }
             }
-        }
-        MTEHatch prototype = current >= 0 && current < cell.candidates.size()
-            ? HologramUiConfiguration.hatchPrototype(cell.candidates.get(current))
-            : null;
-        if (prototype == null) for (int i = 0; i < cell.candidates.size(); i++) {
-            prototype = HologramUiConfiguration.hatchPrototype(cell.candidates.get(i));
-            if (prototype != null) {
-                current = i;
-                break;
+        MTEHatch prototype = current >= 0 && current < ui.config.candidates()
+            .size() ? HologramUiConfiguration.hatchPrototype(
+                ui.config.candidates()
+                    .get(current))
+                : null;
+        if (prototype == null) for (int i = 0; i < ui.config.candidates()
+            .size(); i++) {
+                prototype = HologramUiConfiguration.hatchPrototype(
+                    ui.config.candidates()
+                        .get(i));
+                if (prototype != null) {
+                    current = i;
+                    break;
+                }
             }
-        }
         if (prototype == null) return null;
         List<Integer> indices = new ArrayList<>();
-        for (int i = 0; i < cell.candidates.size(); i++) {
-            MTEHatch candidate = HologramUiConfiguration.hatchPrototype(cell.candidates.get(i));
+        for (int i = 0; i < ui.config.candidates()
+            .size(); i++) {
+            MTEHatch candidate = HologramUiConfiguration.hatchPrototype(
+                ui.config.candidates()
+                    .get(i));
             if (candidate != null && candidate.getClass() == prototype.getClass()) indices.add(i);
         }
         indices.sort(
             (a, b) -> Integer.compare(
-                HologramUiConfiguration.hatchPrototype(cell.candidates.get(a)).mTier,
-                HologramUiConfiguration.hatchPrototype(cell.candidates.get(b)).mTier));
+                HologramUiConfiguration.hatchPrototype(
+                    ui.config.candidates()
+                        .get(a)).mTier,
+                HologramUiConfiguration.hatchPrototype(
+                    ui.config.candidates()
+                        .get(b)).mTier));
         NBTTagCompound row = new NBTTagCompound();
         row.setString("id", "_hatch_candidate");
         row.setString("kind", "hatchCandidate");
@@ -942,7 +1053,8 @@ final class HologramUiConfiguration {
         row.setInteger("current", current);
         NBTTagList options = new NBTTagList();
         for (Integer index : indices) {
-            ItemStack stack = cell.candidates.get(index);
+            ItemStack stack = ui.config.candidates()
+                .get(index);
             NBTTagCompound option = new NBTTagCompound();
             option.setInteger("value", index);
             option.setBoolean("present", true);
@@ -1006,7 +1118,8 @@ final class HologramUiConfiguration {
             config.setInteger("selected", ui.preview.selected());
             config.setInteger("choiceindex", option.getInteger("value"));
             this.optionChannel = "";
-            ui.session.send("pin", config, true);
+            if (ui.session.isLocalAuthor()) ui.session.localAction("pin", config);
+            else ui.session.send("pin", config, true);
             return;
         }
         String id = cap.getString("id");
@@ -1016,7 +1129,8 @@ final class HologramUiConfiguration {
         else config.getCompoundTag("channels")
             .removeTag(id);
         this.optionChannel = "";
-        ui.session.send("configure", config, true);
+        if (ui.session.isLocalAuthor()) ui.session.localAction("configure", config);
+        else ui.session.send("configure", config, true);
     }
 
     static String roleLabel(String role) {
@@ -1064,13 +1178,19 @@ final class HologramUiConfiguration {
             return;
         }
         int index = cell.chosenChoice;
-        if (index < 0 && cell.targetStack != null) for (int i = 0; i < cell.candidates.size(); i++) {
-            if (cell.targetStack.isItemEqual(cell.candidates.get(i))
-                && ItemStack.areItemStackTagsEqual(cell.targetStack, cell.candidates.get(i))) {
-                index = i;
-                break;
+        if (index < 0 && cell.targetStack != null) for (int i = 0; i < ui.config.candidates()
+            .size(); i++) {
+                if (cell.targetStack.isItemEqual(
+                    ui.config.candidates()
+                        .get(i))
+                    && ItemStack.areItemStackTagsEqual(
+                        cell.targetStack,
+                        ui.config.candidates()
+                            .get(i))) {
+                    index = i;
+                    break;
+                }
             }
-        }
         NBTTagList roles = ui.session.cellTag()
             .getTagList("candidateRoles", 8);
         int[] tiers = ui.session.cellTag()
@@ -1104,7 +1224,8 @@ final class HologramUiConfiguration {
             else config.getCompoundTag("channels")
                 .setInteger(name, value);
             this.optionChannel = "";
-            ui.session.send("configure", config, true);
+            if (ui.session.isLocalAuthor()) ui.session.localAction("configure", config);
+            else ui.session.send("configure", config, true);
         } catch (NumberFormatException invalid) {
             ui.session.notice("value须为1–2147483647");
         }
@@ -1143,13 +1264,17 @@ final class HologramUiConfiguration {
         if (!ui.session.editable()) return;
         NBTTagCompound n = ui.config.configuration();
         n.setInteger(key, value);
-        ui.session.send("configure", n, true);
+        if (ui.session.isLocalAuthor() && "materialPriority".equals(key)) n.setBoolean("authorMaterialSettings", true);
+        if (ui.session.isLocalAuthor()) ui.session.localAction("configure", n);
+        else ui.session.send("configure", n, true);
     }
 
     void requestSelectedDetails() {
         if (ui.session.editable() && ui.preview.selected() >= 0
-            && ui.session.state().data.getInteger("selected") != ui.preview.selected())
-            ui.session.send("configure", ui.config.configuration(), true);
+            && ui.session.state().data.getInteger("selected") != ui.preview.selected()) {
+            if (ui.session.isLocalAuthor()) ui.session.localAction("configure", ui.config.configuration());
+            else ui.session.send("configure", ui.config.configuration(), true);
+        }
     }
 
     boolean selectRoleControl(int id) {
@@ -1206,7 +1331,8 @@ final class HologramUiConfiguration {
             if (id == 72) {
                 modeConfig.setBoolean("keepController", true);
             }
-            ui.session.send("configure", modeConfig, true);
+            if (ui.session.isLocalAuthor()) ui.session.localAction("configure", modeConfig);
+            else ui.session.send("configure", modeConfig, true);
             return true;
         }
         return false;
@@ -1273,6 +1399,14 @@ final class HologramUiConfiguration {
                     ui.session.notice("先选中结构轮廓并打开结构编辑，再设置该结构等级和信道");
                     return true;
                 }
+                if (ui.session.isLocalAuthor()) {
+                    try {
+                        HologramLocalAuthorStructureActions.inspect(ui.session.author(), ui);
+                    } catch (java.io.IOException | RuntimeException failure) {
+                        ui.session.notice("结构信道读取失败，原稿保留：" + failure.getMessage());
+                        return true;
+                    }
+                }
                 this.drawer = true;
                 ui.preview.inventory(false);
                 this.drawerOffset = 0;
@@ -1282,7 +1416,11 @@ final class HologramUiConfiguration {
                 ui.preview.inventory(true);
                 ui.preview.inventorySlot(ui.preview.sourceChoice(-1));
                 ui.preview.sourceOffset(0);
-                if (ui.session.editable()) ui.session.send("scan", null, true);
+                if (ui.session.editable()) {
+                    if (ui.session.isLocalAuthor())
+                        HologramLocalAuthorMaterialCatalog.request(ui.session.author(), ui.session);
+                    else ui.session.send("scan", null, true);
+                }
                 return true;
             case 94:
                 this.presetTier = ui.session.state().data.getInteger("hatchTier");
@@ -1340,7 +1478,8 @@ final class HologramUiConfiguration {
                 NBTTagCompound facingAction = new NBTTagCompound();
                 facingAction.setInteger("selected", ui.preview.selected());
                 facingAction.setInteger("facing", nextFacing);
-                ui.session.send("hatchFacing", facingAction, true);
+                if (ui.session.isLocalAuthor()) ui.session.localAction("hatchFacing", facingAction);
+                else ui.session.send("hatchFacing", facingAction, true);
                 return true;
             case 103:
                 this.presetTier = Math.max(0, this.presetTier - 1);
@@ -1382,7 +1521,10 @@ final class HologramUiConfiguration {
                         for (String key : new String[] { "materialMain", "materialContainers", "materialMe" })
                             sources.setBoolean(key, previousSources.getBoolean(key));
                         sources.setInteger("materialPriority", previousSources.getInteger("materialPriority"));
-                        ui.session.send("configure", sources, true);
+                        if (ui.session.isLocalAuthor()) {
+                            sources.setBoolean("authorMaterialSettings", true);
+                            ui.session.localAction("configure", sources);
+                        } else ui.session.send("configure", sources, true);
                     }
                 }
                 return true;
@@ -1396,6 +1538,9 @@ final class HologramUiConfiguration {
                 ui.session.send("clearHatchPreset", new NBTTagCompound(), true);
                 return true;
             case 62:
+                if (ui.session.isLocalAuthor()) ui.session.author()
+                    .structures()
+                    .cancel();
                 this.drawer = false;
                 this.mainField.setFocused(false);
                 this.channelNameField.setFocused(false);
@@ -1430,7 +1575,8 @@ final class HologramUiConfiguration {
                 if (ui.session.editable()) {
                     NBTTagCompound n = ui.config.configuration();
                     n.setBoolean("noHatches", !ui.session.state().data.getBoolean("noHatches"));
-                    ui.session.send("configure", n, true);
+                    if (ui.session.isLocalAuthor()) ui.session.localAction("configure", n);
+                    else ui.session.send("configure", n, true);
                 }
                 return true;
             case 80:
@@ -1447,6 +1593,8 @@ final class HologramUiConfiguration {
                 }
                 return true;
             case 78:
+                if (ui.session.isLocalAuthor())
+                    HologramLocalAuthorMaterialCatalog.request(ui.session.author(), ui.session);
                 this.sourceDrawer = true;
                 this.drawer = ui.preview.inventory(ui.position.positionDrawer(false));
                 return true;
@@ -1457,7 +1605,10 @@ final class HologramUiConfiguration {
                     String key = new String[] { "materialMain", "materialContainers", "materialMe" }[id - 84];
                     NBTTagCompound sourceConfig = ui.config.configuration();
                     sourceConfig.setBoolean(key, !ui.config.sourceEnabled(key));
-                    ui.session.send("configure", sourceConfig, true);
+                    if (ui.session.isLocalAuthor()) {
+                        sourceConfig.setBoolean("authorMaterialSettings", true);
+                        ui.session.localAction("configure", sourceConfig);
+                    } else ui.session.send("configure", sourceConfig, true);
                 }
                 return true;
             case 87:

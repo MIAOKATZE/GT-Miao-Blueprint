@@ -16,6 +16,7 @@ public final class HologramTransportControlRegression {
     }
 
     public static void run() {
+        headerlessRecovery();
         String old = System.getProperty("gtmb.segment.transport");
         ByteBuf wire = Unpooled.buffer();
         AtomicReference<NBTTagCompound> cut = new AtomicReference<>(), ordinary = new AtomicReference<>();
@@ -97,6 +98,24 @@ public final class HologramTransportControlRegression {
             check(
                 ordinary.get() == null,
                 "a cut world receipt cannot enter or wait behind the ordinary snapshot inbox");
+            AtomicReference<net.minecraft.network.NetworkManager> origin = new AtomicReference<>();
+            net.minecraft.network.NetworkManager oldConnection = new net.minecraft.network.NetworkManager(true);
+            net.minecraft.network.NetworkManager replacement = new net.minecraft.network.NetworkManager(true);
+            HologramNetwork.setClientTransportReceiver((fragment, connection) -> {
+                ordinary.set(fragment);
+                origin.set(connection);
+            });
+            NBTTagCompound fragment = new NBTTagCompound();
+            fragment.setLong("transportSequence", 91);
+            HologramNetwork.receiveTransportFragment(fragment, oldConnection);
+            check(
+                origin.get() == oldConnection && origin.get() != replacement,
+                "ordinary transport receiver keeps packet-context origin instead of a replacement connection");
+            check(ordinary.get() == fragment, "origin-aware ingress keeps the original fragment without another copy");
+            HologramNetwork.setClientTransportReceiver(null);
+            ordinary.set(null);
+            HologramNetwork.receiveTransportFragment(fragment, oldConnection);
+            check(ordinary.get() == fragment, "external legacy Consumer receiver remains a supported fallback");
         } finally {
             wire.release();
             HologramNetwork.setClientReceiver(null);
@@ -104,6 +123,51 @@ public final class HologramTransportControlRegression {
             if (old == null) System.clearProperty("gtmb.segment.transport");
             else System.setProperty("gtmb.segment.transport", old);
         }
+    }
+
+    private static void headerlessRecovery() {
+        HologramNetwork.SnapshotRecoveryWindow first = new HologramNetwork.SnapshotRecoveryWindow();
+        first.sent(71, "initial-session-not-yet-known-to-client");
+        check(!first.request(72, "initial-session-not-yet-known-to-client"), "unsent sequence cannot advance recovery");
+        check(
+            first.request(71, "initial-session-not-yet-known-to-client"),
+            "initial baseline needs no client session guess");
+        check(
+            first.poll("initial-session-not-yet-known-to-client", 100),
+            "authenticated server identity resolves recovery");
+        check(
+            !first.request(71, "initial-session-not-yet-known-to-client"),
+            "duplicate rejected frame cannot repeat recovery");
+        first.sent(72, "initial-session-not-yet-known-to-client");
+        check(first.request(72, "initial-session-not-yet-known-to-client"), "later exact frame may request recovery");
+        check(!first.poll("initial-session-not-yet-known-to-client", 101), "recovery remains rate bounded");
+        check(
+            first.poll("initial-session-not-yet-known-to-client", 120),
+            "rate limited recovery is deferred, not dropped");
+        first.sent(73, "old-session");
+        check(!first.request(73, "new-session"), "old session frame cannot resynchronize an unrelated current view");
+        first.sent(74, "old-session");
+        check(first.request(74, "old-session"), "request captured before view replacement");
+        check(!first.poll("new-session", 140), "pending recovery retires when its owning session changes");
+        HologramNetwork.SnapshotRecoveryWindow reconnect = new HologramNetwork.SnapshotRecoveryWindow();
+        check(
+            !reconnect.request(71, "initial-session-not-yet-known-to-client"),
+            "new connection has no old sent-frame authority");
+        reconnect.sent(71, "new-connection-session");
+        check(
+            reconnect.request(71, "new-connection-session"),
+            "sequence collision belongs only to the new connection's own frame");
+        check(reconnect.poll("new-connection-session", 0), "new connection has an independent recovery clock");
+        for (int i = 0; i < 100; i++) first.sent(1000 + i, "bounded");
+        check(
+            !first.request(1000, "bounded") && first.request(1099, "bounded"),
+            "sent correlation retains only a bounded recent window");
+        HologramNetwork.InboxWindow inbox = new HologramNetwork.InboxWindow();
+        inbox.enabled = true;
+        check(inbox.start(80) && inbox.start(81) && !inbox.start(82), "ordinary credit stays at two frames");
+        first.sent(80, "credit-released");
+        inbox.release(80);
+        check(first.request(80, "credit-released"), "disposal ACK cannot erase recovery provenance");
     }
 
     private static void check(boolean value, String message) {

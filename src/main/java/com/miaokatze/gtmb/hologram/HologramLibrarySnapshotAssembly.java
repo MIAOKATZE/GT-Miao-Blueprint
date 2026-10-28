@@ -75,7 +75,11 @@ final class HologramLibrarySnapshotAssembly {
             clear();
             return null;
         }
-        HologramSnapshotAssembly.Complete result = new HologramSnapshotAssembly.Complete(bytes, lease, released, sequence);
+        HologramSnapshotAssembly.Complete result = new HologramSnapshotAssembly.Complete(
+            bytes,
+            lease,
+            released,
+            sequence);
         bytes = null;
         lease = null;
         clear();

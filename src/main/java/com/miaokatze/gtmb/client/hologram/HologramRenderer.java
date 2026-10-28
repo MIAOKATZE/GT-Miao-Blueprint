@@ -103,6 +103,8 @@ final class HologramRenderer {
     private static boolean visibleEmptyCells;
 
     static void release() {
+        projectionPending = false;
+        previewKey = "";
         projectedFrame = presentedFrame = null;
         presentedState = null;
         worldRenderWitness = null;
@@ -130,6 +132,34 @@ final class HologramRenderer {
         cachedStructureBounds.clear();
     }
 
+    static void authorSnapshotChanged(HologramState previous, HologramState next,
+        Set<HologramRegionCache.Key> dependencies) {
+        // Inactive documents may be edited/saved without retiring a different document/world viewport.
+        if (visibleState == previous || previewState == previous
+            || previewPreparation != null && previewPreparation.state == previous)
+            modelSnapshotChanged(previous, next, dependencies);
+    }
+
+    static boolean authorCellVisible(HologramState state, HologramState.Cell cell) {
+        // Without a presented camera, retain rather than guessing that an unrelated viewport is offscreen.
+        if (projectedFrame == null || visibleState == null || visibleState.authorProjection != state.authorProjection)
+            return true;
+        return previewVisible(cell, visibleLayer, visibleView, visibleView == 1 || visibleMode == 2)
+            && previewRegionVisible(state, HologramRegionCache.key(cell));
+    }
+
+    static boolean authorRegionVisible(HologramState state, HologramRegionCache.Key key) {
+        if (!state.regions.regions.containsKey(key)) return false;
+        if (projectedFrame == null || visibleState == null || visibleState.authorProjection != state.authorProjection)
+            return true;
+        return previewRegionVisible(state, key);
+    }
+
+    static void releaseAuthor(HologramAuthorProjection owner) {
+        if (visibleState != null && visibleState.authorProjection == owner
+            || previewState != null && previewState.authorProjection == owner) release();
+    }
+
     /** Preserve detached geometry across a validated delta; teardown still owns world/session and reload changes. */
     static void snapshotChanged(HologramState previous, HologramState next) {
         modelSnapshotChanged(previous, next, java.util.Collections.emptySet());
@@ -151,7 +181,11 @@ final class HologramRenderer {
         if (boundsState == previous) boundsState = extentChanged ? null : next;
         if (next.topologyChanged) {
             structureBoundsState = null;
-            previewPreparation = null;
+            // Document cells keep stable slots (only deleted tail swaps change an extra slot).
+            // Dirty old/new regions are sufficient even for a coordinate or membership edit.
+            if (next.authorProjection != null && previewPreparation != null && previewPreparation.state == previous)
+                previewPreparation.update(previous, next, dirty);
+            else previewPreparation = null;
             // A changed extent changes the screen transform, not the retained native region geometry.
             if (extentChanged) for (PreviewRegion region : previewRegions.values()) {
                 region.projectedKey = "";
@@ -254,12 +288,24 @@ final class HologramRenderer {
         return boundsExtent;
     }
 
+    /** Readiness is evidence about current-camera output, not merely a visited detail cursor. */
     static boolean previewMeshReady(HologramState state) {
-        return state != null && previewState == state
-            && previewPreparation != null
-            && previewPreparation.state == state
-            && previewPreparation.pending.isEmpty()
-            && previewPreparation.detailedCompleted == state.cells.size();
+        if (state == null || previewState != state
+            || previewKey.isEmpty()
+            || projectionPending
+            || previewPreparation == null
+            || previewPreparation.state != state
+            || !previewPreparation.pending.isEmpty()
+            || previewPreparation.detailedCompleted != state.cells.size()) return false;
+        for (HologramRegionCache.Key key : state.regions.regions.keySet()) {
+            if (projectedFrame != null && !previewRegionVisible(state, key)) continue;
+            PreviewRegion region = previewRegions.get(key);
+            if (region == null || !region.complete
+                || region.unresolved != 0
+                || region.budgetLimited != 0
+                || !previewKey.equals(region.projectedKey)) return false;
+        }
+        return true;
     }
 
     static boolean previewMeshVisible(HologramState state) {
@@ -267,8 +313,14 @@ final class HologramRenderer {
     }
 
     static int previewMeshCompleted(HologramState state) {
-        return previewPreparation != null && previewPreparation.state == state ? previewPreparation.detailedCompleted
-            : 0;
+        if (previewPreparation == null || previewPreparation.state != state) return 0;
+        int unresolved = 0;
+        for (PreviewRegion region : previewRegions.values())
+            if (region.complete) unresolved += region.unresolved + region.budgetLimited;
+        PreviewTask active = previewPreparation.task;
+        if (active != null && active.refining && active.detail != null)
+            unresolved += active.detail.unresolved + active.detail.budgetLimited;
+        return Math.max(0, previewPreparation.detailedCompleted - unresolved);
     }
 
     static int previewMeshTotal(HologramState state) {
@@ -401,6 +453,17 @@ final class HologramRenderer {
         if (budgeted) {
             if (previewPreparation == null || previewPreparation.state != state)
                 previewPreparation = new PreviewPreparation(state);
+            if (state.authorProjection != null) {
+                Set<HologramRegionCache.Key> revealed = new HashSet<>();
+                for (Map.Entry<HologramRegionCache.Key, PreviewRegion> entry : previewRegions.entrySet())
+                    if (entry.getValue().deferredVisibility && previewRegionVisible(state, entry.getKey()))
+                        revealed.add(entry.getKey());
+                if (!revealed.isEmpty()) {
+                    for (HologramRegionCache.Key region : revealed) previewRegions.remove(region);
+                    previewPreparation.update(state, state, revealed);
+                    previewState = null;
+                }
+            }
             previewPreparation.advance(
                 layer,
                 view,
@@ -962,8 +1025,21 @@ final class HologramRenderer {
         int view, boolean current, boolean detailed) {
         if (!previewVisible(c, layer, view, current)) return;
         result.visible.add(c);
-        if (!detailed || !HologramSnapshotModelsClient.ready(state, c, current)) {
+        boolean visibleNative = state.authorProjection == null || projectedFrame == null
+            || previewRegionVisible(state, HologramRegionCache.key(c));
+        if (!detailed || !visibleNative || !HologramSnapshotModelsClient.ready(state, c, current)) {
+            if (detailed) {
+                result.unresolved++;
+                if (!visibleNative) result.deferredVisibility = true;
+            }
             result.cells.add(new PreviewCell(c, 63, roleLabel(c), false));
+            return;
+        }
+        if (state.authorProjection != null
+            && ("localFallback".equals(c.renderKind) || "localBudget".equals(c.renderKind))) {
+            boolean limited = "localBudget".equals(c.renderKind);
+            if (limited) result.budgetLimited++;
+            result.cells.add(new PreviewCell(c, 63, limited ? "细节预算不足，等待容量" : "预览不可用", false));
             return;
         }
         if (!HologramLinkNodePreview.prepare(c, current)
@@ -979,6 +1055,7 @@ final class HologramRenderer {
         String role = roleLabel(c);
         boolean nativeModel = !empty && HologramBlockRender.ready(c, current);
         if (!nativeModel && HologramBlockRender.deferred(c, current)) {
+            result.unresolved++;
             result.cells.add(new PreviewCell(c, 63, "细节待载入", false));
             return;
         }
@@ -1188,9 +1265,9 @@ final class HologramRenderer {
         final List<HologramState.Cell> visible = new ArrayList<>(), linked = new ArrayList<>();
         final List<PreviewCell> cells = new ArrayList<>();
         String projectedKey = "", projectionWorkKey = "";
-        int projectedCells;
+        int projectedCells, unresolved, budgetLimited;
         double depth;
-        boolean complete, hintsComplete;
+        boolean complete, hintsComplete, deferredVisibility;
         List<Face> faces = new ArrayList<>(), outlines = new ArrayList<>();
         List<RoleMarker> markers = new ArrayList<>();
         List<HologramState.Cell> nativeCells = new ArrayList<>();

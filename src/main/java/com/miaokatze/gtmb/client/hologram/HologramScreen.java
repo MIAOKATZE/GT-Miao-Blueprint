@@ -19,11 +19,18 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     private String detachedTopic;
     private Runnable detachedReturn;
     private boolean domainInitialized;
+    private long projectionRequestSequence = -1, projectionRequestEpoch = -1;
 
     HologramScreen(HologramState state) {
         super("workstation");
         ui.session.initialize(state);
         workspaceGraphs.retain(state, () -> ui);
+    }
+
+    HologramScreen(HologramLocalAuthorRuntime author) {
+        super("local_blueprint_author");
+        ui.session.initializeLocal(author);
+        workspaceGraphs.retain(author.view(), () -> ui);
     }
 
     private HologramScreen(String topic, boolean replay, Runnable returnToStorage) {
@@ -46,11 +53,51 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         detachedReturn.run();
     }
 
+    /** Explicit real-server workspace boundary; the local document is retained, never sent as authority. */
+    void showServerProjection() {
+        HologramState server = HologramClient.state;
+        if (server == null || minecraft().thePlayer == null) {
+            ui.session.notice("没有已连接的服务器投影；本地草稿保持打开");
+            return;
+        }
+        if (HologramEditorWorkspaces.domain(server) == HologramEditorWorkspaces.Mode.PROJECTION) {
+            minecraft().displayGuiScreen(new HologramScreen(server));
+            return;
+        }
+        if (HologramBackgroundTasks.busy()) {
+            ui.session.notice("请先结束当前服务器操作，再切换真实投影；本地草稿可继续编辑");
+            return;
+        }
+        NBTTagCompound request = new NBTTagCompound();
+        request.setString("op", "switchEditorWorkspace");
+        request.setString("editorWorkspace", "projection");
+        request.setString("session", server.session);
+        request.setLong("planRevision", server.data.getLong("planRevision"));
+        projectionRequestEpoch = server.data.getLong("editorWorkspaceEpoch");
+        request.setLong("editorWorkspaceEpoch", projectionRequestEpoch);
+        projectionRequestSequence = Math.max(
+            server.data.getLong("uiSequence"),
+            Math.max(HologramClient.editorWorkspaceSequence(), HologramBackgroundTasks.commandSequence(server.session)))
+            + 1;
+        request.setLong("uiSequence", projectionRequestSequence);
+        HologramBackgroundTasks.command(server.session, projectionRequestSequence, "switchEditorWorkspace");
+        com.miaokatze.gtmb.hologram.HologramNetwork.sendAction(request);
+        ui.session.notice("正在请求真实投影工作区；本地草稿保留");
+    }
+
     boolean acceptsLibraryNavigation(HologramState next) {
         return ui.library.acceptsLibraryNavigation(next);
     }
 
     void updateState(HologramState next) {
+        if (ui.session.isLocalAuthor()) {
+            if (projectionRequestSequence < 0
+                || HologramEditorWorkspaces.domain(next) != HologramEditorWorkspaces.Mode.PROJECTION
+                || next.data.getLong("uiSequence") < projectionRequestSequence
+                || next.data.getLong("editorWorkspaceEpoch") <= projectionRequestEpoch) return;
+            projectionRequestSequence = projectionRequestEpoch = -1;
+            ui.session.detachLocal();
+        }
         if (!detached && !ui.tutorial.active()
             && HologramEditorWorkspaces.domain(ui.session.state()) != HologramEditorWorkspaces.domain(next)) {
             ui.memory.rememberUi();
@@ -103,6 +150,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         // openFrom builds this graph before displayGuiScreen attaches its main panel to MUI.
         // Secondary tutorial panels therefore start from the first valid native tick, never construction.
         if (detached) return;
+        ui.session.reattachLocal();
         if (websiteConfirmationResumePending) websiteConfirmationResumePending = false;
         ui.canvas.resize();
         HologramBackgroundTasks.restoreUi(ui);
@@ -147,6 +195,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     @Override
     public void onGuiClosed() {
+        ui.session.detachLocal();
         ui.tutorial.closeWithoutProgress();
         ui.tools.closeTransient();
         ui.canvas.layout()
@@ -185,6 +234,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             return;
         }
         try (FieldGraph ignored = fieldGraph(ui)) {
+            ui.session.localTick();
             ui.router.updateScreen();
             ui.shell.tick();
         }

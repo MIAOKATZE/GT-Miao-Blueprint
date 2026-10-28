@@ -24,6 +24,8 @@ final class HologramUiNbtEditor {
     private boolean nbtDrawer;
 
     private boolean nbtPlacement;
+    private NBTTagCompound localGlobalDetails;
+    private long localGlobalRevision = -1;
 
     private int nbtOffset;
 
@@ -33,6 +35,10 @@ final class HologramUiNbtEditor {
     private boolean detailSelectionPending;
 
     private boolean nbtPathsView;
+    private HologramLocalAuthorRuntime pathOwner;
+    private long pathRevision = -1;
+    private int pathCell = -1;
+    private List<String> localPaths = java.util.Collections.emptyList();
 
     private final List<String> nbtIgnoredPaths = new ArrayList<>();
 
@@ -80,6 +86,20 @@ final class HologramUiNbtEditor {
         this.nbtPlacement = placement;
         this.nbtOffset = 0;
         this.nbtCellScope = !placement && ui.preview.selected() >= 0;
+        localGlobalDetails = null;
+        if (ui.session.isLocalAuthor() && !nbtCellScope && !placement) {
+            try {
+                localGlobalDetails = ui.session.author()
+                    .globalNbtDetails();
+                localGlobalRevision = ui.session.author()
+                    .document()
+                    .revision();
+            } catch (java.io.IOException failure) {
+                nbtDrawer = false;
+                ui.session.notice("全局 NBT 读取失败，原稿保留：" + failure.getMessage());
+                return;
+            }
+        }
         this.detailSelectionPending = nbtCellScope && HologramSnapshotDetailsClient.paged(ui.session.state().data);
         this.nbtValueIndex = -1;
         this.nbtValueField = new HologramMuiTextField(ui.host.parent(), 62, 233, 286, 17);
@@ -99,7 +119,8 @@ final class HologramUiNbtEditor {
         if (this.nbtCellScope) {
             NBTTagCompound row = ui.nbt.cellNbtRow();
             NBTTagList keys = new NBTTagList(), entries = row.getTagList("entries", 10);
-            for (int i = 0; i < entries.tagCount(); i++) {
+            if (ui.session.isLocalAuthor()) keys = row.getTagList("keys", 8);
+            else for (int i = 0; i < entries.tagCount(); i++) {
                 NBTTagCompound entry = entries.getCompoundTagAt(i);
                 if (entry.getBoolean("selected") || entry.getBoolean("blueprintSelected"))
                     keys.appendTag(new net.minecraft.nbt.NBTTagString(entry.getString("key")));
@@ -116,6 +137,15 @@ final class HologramUiNbtEditor {
     }
 
     NBTTagCompound cellNbtRow() {
+        if (ui.session.isLocalAuthor()) {
+            try {
+                return ui.session.author()
+                    .inspectNbt(ui.preview.selected(), nbtOffset, 8);
+            } catch (java.io.IOException invalid) {
+                ui.session.notice("NBT 读取失败，原始内容已保留：" + invalid.getMessage());
+                return new NBTTagCompound();
+            }
+        }
         if (HologramSnapshotDetailsClient.paged(ui.session.state().data))
             return HologramSnapshotDetailsClient.cell(ui.session.state().data, ui.preview.selected(), nbtOffset, 8);
         NBTTagList rows = ui.session.state().data.getTagList("cellNbtEntries", 10);
@@ -125,6 +155,8 @@ final class HologramUiNbtEditor {
     }
 
     NBTTagList editorNbtEntries() {
+        if (ui.session.isLocalAuthor() && !nbtCellScope && !nbtPlacement && localGlobalDetails != null)
+            return localGlobalDetails.getTagList("nbtEntries", 10);
         if (HologramSnapshotDetailsClient.paged(ui.session.state().data) && (!nbtCellScope || nbtPlacement))
             return HologramSnapshotDetailsClient.list(ui.session.state().data, "nbtEntries", 10, nbtOffset, 8);
         return this.nbtCellScope && !this.nbtPlacement ? ui.nbt.cellNbtRow()
@@ -149,7 +181,28 @@ final class HologramUiNbtEditor {
             };
         }
         LinkedHashSet<String> paths = new LinkedHashSet<>();
-        if (nbtCellScope && !nbtPlacement) {
+        if (ui.session.isLocalAuthor() && nbtCellScope && !nbtPlacement) {
+            HologramLocalAuthorRuntime owner = ui.session.author();
+            if (pathOwner != owner || pathRevision != owner.document()
+                .revision() || pathCell != ui.preview.selected()) {
+                try {
+                    long cellId = owner.selectionIds(new int[] { ui.preview.selected() })
+                        .iterator()
+                        .next();
+                    localPaths = com.miaokatze.gtmb.hologram.HologramLocalAuthorSemantics
+                        .selectedNbtPaths(owner.sourceCell(cellId));
+                } catch (java.io.IOException | RuntimeException failure) {
+                    nbtPathsView = false;
+                    ui.session.notice("NBT 路径读取失败，原稿保留：" + failure.getMessage());
+                    return java.util.Collections.emptyList();
+                }
+                pathOwner = owner;
+                pathRevision = owner.document()
+                    .revision();
+                pathCell = ui.preview.selected();
+            }
+            paths.addAll(localPaths);
+        } else if (nbtCellScope && !nbtPlacement) {
             NBTTagList entries = cellNbtRow().getTagList("entries", 10);
             for (int i = 0; i < entries.tagCount(); i++) {
                 NBTTagCompound entry = entries.getCompoundTagAt(i);
@@ -157,7 +210,9 @@ final class HologramUiNbtEditor {
                     .isEmpty()) paths.add(entry.getString("path"));
             }
         } else {
-            NBTTagList entries = ui.processing.processingList("nbtPaths", 8);
+            NBTTagList entries = ui.session.isLocalAuthor() && localGlobalDetails != null
+                ? localGlobalDetails.getTagList("nbtPaths", 8)
+                : ui.processing.processingList("nbtPaths", 8);
             for (int i = 0; i < entries.tagCount(); i++) paths.add(entries.getStringTagAt(i));
         }
         paths.addAll(nbtIgnoredPaths);
@@ -174,6 +229,14 @@ final class HologramUiNbtEditor {
     }
 
     void drawNbtEditor(int mx, int my) {
+        if (localGlobalDetails != null && ui.session.isLocalAuthor()
+            && localGlobalRevision != ui.session.author()
+                .document()
+                .revision()) {
+            nbtDrawer = false;
+            ui.session.notice("文档已变化，请重新打开全局 NBT 视图");
+            return;
+        }
         if (detailSelectionPending) {
             NBTTagCompound row = cellNbtRow();
             if (row.hasKey("index", 3)) {
@@ -286,7 +349,9 @@ final class HologramUiNbtEditor {
                                 : this.nbtCellScope ? "点击查看并编辑此值；所选格独立提交，服务端重新核价" : "取消后不保存/匹配这一根条目"),
                         430));
         }
-        if (entries.tagCount() == 0) ui.canvas.text("当前模板未包含可选设备 NBT 条目", 62, 128, 474, 0x94afb4);
+        if (entries.tagCount() == 0) ui.canvas.text("当前有界视图未包含可选设备 NBT 条目；源数据保留", 62, 128, 474, 0x94afb4);
+        if (ui.session.isLocalAuthor() && this.nbtPathsView)
+            ui.canvas.text("本视图最多展开2048项；未展开的原始 NBT 不会因此删除", 62, 220, 474, 0x94afb4);
         if (this.nbtCellScope && !this.nbtPathsView
             && this.nbtValueIndex >= 0
             && this.nbtValueIndex < ui.nbt.editorNbtEntries()
@@ -301,7 +366,7 @@ final class HologramUiNbtEditor {
                 233,
                 178,
                 17,
-                "应用此值 · 服务端校验",
+                ui.session.isLocalAuthor() ? "应用此值 · 本地事务" : "应用此值 · 服务端校验",
                 ui.session.editable() && entry.getBoolean("editable"),
                 mx,
                 my);
@@ -334,7 +399,8 @@ final class HologramUiNbtEditor {
 
     boolean resetNetworksControl(int id) {
         if (id == 195) {
-            ui.session.send("resetBlueprintNetworks", new NBTTagCompound(), true);
+            if (ui.session.isLocalAuthor()) ui.session.localAction("resetBlueprintNetworks", new NBTTagCompound());
+            else ui.session.send("resetBlueprintNetworks", new NBTTagCompound(), true);
             this.nbtDrawer = false;
             return true;
         }
@@ -406,7 +472,18 @@ final class HologramUiNbtEditor {
                         ui.preview.selection()
                             .indices());
                     request.setLong("planRevision", ui.session.revision());
-                    ui.session.send("editBlueprintCellNbt", request, true);
+                    if (ui.session.isLocalAuthor()) {
+                        try {
+                            ui.session.author()
+                                .editNbt(
+                                    ui.preview.selection()
+                                        .indices(),
+                                    changes);
+                        } catch (java.io.IOException | IllegalArgumentException | IllegalStateException failure) {
+                            ui.session.notice("NBT 修改失败，原始内容已保留：" + failure.getMessage());
+                            return true;
+                        }
+                    } else ui.session.send("editBlueprintCellNbt", request, true);
                     this.nbtDrawer = false;
                 }
                 return true;
@@ -457,11 +534,10 @@ final class HologramUiNbtEditor {
                     }
                     if (this.nbtPlacement) nbt.setBoolean("retainCovers", this.nbtSelection.retainCovers());
                     this.nbtDrawer = false;
-                    ui.session.send(
-                        this.nbtPlacement ? "configurePlacementNbt"
-                            : this.nbtCellScope ? "configureBlueprintCellNbt" : "configureBlueprintNbt",
-                        nbt,
-                        true);
+                    String operation = this.nbtPlacement ? "configurePlacementNbt"
+                        : this.nbtCellScope ? "configureBlueprintCellNbt" : "configureBlueprintNbt";
+                    if (ui.session.isLocalAuthor()) ui.session.localAction(operation, nbt);
+                    else ui.session.send(operation, nbt, true);
                 }
                 return true;
             case 228:

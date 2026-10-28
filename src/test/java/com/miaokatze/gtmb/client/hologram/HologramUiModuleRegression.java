@@ -29,6 +29,7 @@ public final class HologramUiModuleRegression {
         movementHandleControl();
         idleHintTiming();
         confirmedLibraryTargets();
+        cutEntryNeverAcquiresAuthorSource();
         controllerConstructionConfirmation();
         presentationSnapshotFailure();
         HologramSnapshotFailureCorrelationRegression.run();
@@ -388,6 +389,30 @@ public final class HologramUiModuleRegression {
         }
     }
 
+    private static void cutEntryNeverAcquiresAuthorSource() {
+        NBTTagCompound source = new NBTTagCompound();
+        source.setString("session", "cut-host");
+        source.setBoolean("virtual", true);
+        source.setBoolean("blueprintDirty", true);
+        source.setString("openPurpose", "blueprintEdit");
+        SimpleAssert.that(
+            HologramUiSession.needsAuthorSource(new HologramState(source)),
+            "ordinary complete author workspace requests its real source");
+        source.setString("openPurpose", "cutWorkspace");
+        source.setString("cutWorkspaceRequestId", "matched-physical-cut-opening");
+        SimpleAssert.that(
+            !HologramUiSession.needsAuthorSource(new HologramState(source)),
+            "Cut entry retains its matched physical workflow even when its host is a dirty blueprint");
+        source.setString("openPurpose", "blueprintEdit");
+        SimpleAssert.that(
+            !HologramUiSession.needsAuthorSource(new HologramState(source)),
+            "a matched Cut opening marker cannot be repurposed by an author display purpose");
+        source.setString("cutWorkspaceRequestId", "");
+        SimpleAssert.that(
+            HologramUiSession.needsAuthorSource(new HologramState(source)),
+            "a later ordinary author opening remains eligible after the one-shot Cut marker is retired");
+    }
+
     private static void confirmedLibraryTargets() {
         java.lang.reflect.Field singleton = null;
         Object previous = null;
@@ -440,10 +465,11 @@ public final class HologramUiModuleRegression {
                 NBTTagCompound confirmed = (NBTTagCompound) uiField(ui.diagnostics, "capturedRenderSmokeAction");
                 SimpleAssert
                     .eq("chosen-target", confirmed.getString("presetId"), "confirmation retains the clicked identity");
-                SimpleAssert.eq("editPreset", confirmed.getString("op"), "confirmation retains the original operation");
+                SimpleAssert
+                    .eq("openLocalAuthor", confirmed.getString("op"), "confirmation retains the original operation");
                 SimpleAssert.that(
-                    confirmed.getBoolean("confirmDiscard") && ui.session.sequence() == 1 && !ui.library.discardReview(),
-                    "one confirmation submits the switch through the existing discard gate without a separate discard command");
+                    confirmed.getBoolean("confirmDiscard") && ui.session.sequence() == 0 && !ui.library.discardReview(),
+                    "one confirmation opens the local source through the existing discard gate without a wire sequence without a separate discard command");
                 SimpleAssert.that(
                     originalView.equals(ui.preview.backgroundUiState())
                         && "chosen-target".equals(ui.library.libraryNavigation().targetId),
@@ -456,16 +482,16 @@ public final class HologramUiModuleRegression {
             clean.router.activate(14001);
             NBTTagCompound cleanRequest = (NBTTagCompound) uiField(clean.diagnostics, "capturedRenderSmokeAction");
             SimpleAssert.that(
-                !clean.library.discardReview() && clean.session.sequence() == 1
-                    && "editPreset".equals(cleanRequest.getString("op"))
+                !clean.library.discardReview() && clean.session.sequence() == 0
+                    && "openLocalAuthor".equals(cleanRequest.getString("op"))
                     && "chosen-target".equals(cleanRequest.getString("presetId"))
                     && !cleanRequest.getBoolean("confirmDiscard"),
-                "a clean row directly enters the real editPreset chain without an extra edit or discard action");
+                "a clean row directly enters the local source chain without an extra edit or discard action");
             SimpleAssert.that(
                 cleanView.equals(clean.preview.backgroundUiState()) && !clean.library.browsePreviewActive()
-                    && "blueprintEdit".equals(clean.library.libraryNavigation().purpose)
+                    && "localAuthorSource".equals(clean.library.libraryNavigation().purpose)
                     && !clean.library.libraryNavigation().local,
-                "integrated-library row handoff is an editable server session and preserves the current camera");
+                "integrated-library row handoff is an local source acquisition and preserves the current camera");
             NBTTagCompound nextData = (NBTTagCompound) clean.session.state().data.copy();
             HologramUiModules overwrite = librarySwitchUi();
             overwrite.session.state().data.setBoolean("blueprintProcessingRequired", true);
@@ -484,8 +510,8 @@ public final class HologramUiModuleRegression {
             nextData.setBoolean("open", true);
             HologramState next = new HologramState(nextData);
             SimpleAssert.that(
-                clean.library.acceptsLibraryNavigation(next),
-                "the real integrated-library response is accepted in the existing screen instead of reopening it");
+                !clean.library.acceptsLibraryNavigation(next),
+                "local source acquisition cannot be completed by a server display snapshot");
             clean.preview.resetSession(next);
             NBTTagCompound nextView = clean.preview.backgroundUiState();
             for (String field : new String[] { "yaw", "pitch", "zoom", "cameraX", "cameraZ" }) SimpleAssert.eq(
@@ -576,9 +602,9 @@ public final class HologramUiModuleRegression {
             rejected.router.activate(224);
             NBTTagCompound retry = (NBTTagCompound) uiField(rejected.diagnostics, "capturedRenderSmokeAction");
             SimpleAssert.that(
-                "editPreset".equals(retry.getString("op")) && "chosen-target".equals(retry.getString("presetId"))
+                "openLocalAuthor".equals(retry.getString("op")) && "chosen-target".equals(retry.getString("presetId"))
                     && retry.getBoolean("confirmDiscard")
-                    && rejected.session.sequence() == 1,
+                    && rejected.session.sequence() == 0,
                 "a server-requested confirmation retries its exact target and operation once");
             libraryCatalogControlsPreservePreview();
         } catch (ReflectiveOperationException failure) {

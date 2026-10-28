@@ -822,6 +822,7 @@ final class HologramSnapshots {
             sendProgress(s);
             return;
         }
+        if (sendLocalAuthorSource(s)) return;
         if (s.cancelled) {
             HologramSnapshotPreparation.cancel(s);
             sendComplete(s);
@@ -837,6 +838,56 @@ final class HologramSnapshots {
         } finally {
             HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.SNAPSHOT_BUILD, measured);
         }
+    }
+
+    private static boolean localAuthorSourceReady(HologramSession s) {
+        return !s.cancelled && HologramNetwork.localAuthorPeer(s.player)
+            && !"cutWorkspace".equals(s.openPurpose)
+            && s.cutWorkspaceRequestId.isEmpty()
+            && !HologramEditorWorkspaceRegistry.physicalProjection(s)
+            && !s.virtualPlacement
+            && s.capture != null
+            && !s.capture.incomplete
+            && !s.capturePending
+            && !s.localPlanPending
+            && s.job != 1
+            && s.job != 2
+            && s.attachmentTask == null
+            && !HologramSessionPolicy.blockedByAreaImport(s)
+            && s.blueprintSaveReceipt.isEmpty();
+    }
+
+    static boolean sendLocalAuthorSource(HologramSession s) {
+        if (!localAuthorSourceReady(s)) return false;
+        HologramSnapshotPreparation.cancel(s);
+        HologramWorkspace.snapshotSink()
+            .send(s.player, authorSourceState(s));
+        return true;
+    }
+
+    /** A source capability, not a lossy editor model. The client requests the complete raw document once. */
+    static NBTTagCompound authorSourceState(HologramSession s) {
+        NBTTagCompound state = new NBTTagCompound();
+        state.setString("session", s.id);
+        state.setString("generation", s.id);
+        state.setString("toolId", s.toolId);
+        state.setLong("planRevision", s.planRevision);
+        state.setLong("uiSequence", s.uiSequence);
+        state.setLong("editorWorkspaceEpoch", s.editorWorkspaceEpoch);
+        state.setLong("editorWorkspaceSequenceFloor", HologramEditorWorkspaceRegistry.sequenceFloor(s));
+        state.setString("editorWorkspace", "blueprint");
+        state.setString("workspaceTab", "blueprint");
+        state.setString("openPurpose", "blueprintEdit");
+        state.setBoolean("open", s.open);
+        state.setBoolean("virtual", true);
+        state.setBoolean("authorSourceReady", true);
+        state.setBoolean("serverLibraryEnabled", HologramLibraryFacade.enabled());
+        state.setInteger("sourceCellCount", s.capture.cells.size());
+        state.setTag("cells", new NBTTagList());
+        state.setString("status", "来源采集完成，正在交给本地蓝图编辑器");
+        s.open = false;
+        s.openPurpose = "";
+        return state;
     }
 
     private static void sendComplete(HologramSession s) {

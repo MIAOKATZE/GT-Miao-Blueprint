@@ -15,6 +15,7 @@ import com.miaokatze.gtmb.hologram.HologramSnapshotRows;
 /** Immutable client snapshot; all amounts and construction outcomes come from the server. */
 final class HologramState {
 
+    final HologramAuthorProjection authorProjection;
     final NBTTagCompound data;
     final String session;
     final List<Cell> cells;
@@ -32,6 +33,7 @@ final class HologramState {
     private int minWorldX, maxWorldX, minWorldY, maxWorldY, minWorldZ, maxWorldZ;
 
     HologramState(NBTTagCompound source) {
+        authorProjection = null;
         fullBaseline = fullBaseline(source);
         parentIdentity = null;
         changedIndices = new int[0];
@@ -68,6 +70,7 @@ final class HologramState {
     }
 
     private HologramState(Preparation ready) {
+        authorProjection = null;
         fullBaseline = ready.fullBaseline;
         parentIdentity = null;
         changedIndices = new int[0];
@@ -88,8 +91,50 @@ final class HologramState {
         maxWorldZ = ready.maxWorldZ;
     }
 
+    /** Direct document publication. No wire rows, sequence, ACK, transport codec or source reconstruction. */
+    HologramState(HologramAuthorProjection owner, NBTTagCompound metadata, HologramState base, int size,
+        java.util.Map<Integer, Cell> replacements) {
+        authorProjection = owner;
+        data = metadata;
+        session = owner.documentId();
+        fullBaseline = true;
+        parentIdentity = base == null ? null : base.identity;
+        parsedCells = replacements.size();
+        changedIndices = new int[replacements.size()];
+        int cursor = 0;
+        List<Cell> before = new ArrayList<>();
+        topologyChanged = base == null || size != base.cells.size();
+        if (base != null) for (int i = size; i < base.cells.size(); i++) before.add(base.cells.get(i));
+        for (java.util.Map.Entry<Integer, Cell> entry : replacements.entrySet()) {
+            int index = entry.getKey();
+            if (index < 0 || index >= size) throw new IllegalArgumentException("Document render slot");
+            Cell next = entry.getValue();
+            if (base != null && index < base.cells.size()) {
+                Cell old = base.cells.get(index);
+                before.add(old);
+                topologyChanged |= old.x != next.x || old.y != next.y || old.z != next.z;
+            }
+            changedIndices[cursor++] = index;
+        }
+        cells = base != null && size == base.cells.size() && replacements.isEmpty() ? base.cells
+            : new DocumentCells(base == null ? null : (DocumentCells) base.cells, size, replacements);
+        changedPreviousCells = Collections.unmodifiableList(before);
+        regions = base != null && replacements.isEmpty() && before.isEmpty() ? base.regions
+            : HologramRegionCache.document(base == null ? null : base.regions, cells, changedIndices, before);
+        structureMembers = documentMemberships(base, cells, changedIndices, before);
+        materials = Collections.emptyList();
+        int[] bounds = regions.bounds();
+        minY = minWorldY = cells.isEmpty() ? 0 : bounds[1];
+        maxY = maxWorldY = cells.isEmpty() ? 0 : bounds[4];
+        minWorldX = cells.isEmpty() ? 0 : bounds[0];
+        minWorldZ = cells.isEmpty() ? 0 : bounds[2];
+        maxWorldX = cells.isEmpty() ? 0 : bounds[3];
+        maxWorldZ = cells.isEmpty() ? 0 : bounds[5];
+    }
+
     /** Metadata decorators share geometry; preserve the incoming publication's renderer and selection obligations. */
     private HologramState(HologramState decorated, HologramState publication) {
+        authorProjection = decorated.authorProjection;
         data = decorated.data;
         session = decorated.session;
         cells = decorated.cells;
@@ -114,6 +159,7 @@ final class HologramState {
 
     /** One bounded early view shares completed cells and owns its small spatial index. */
     private HologramState(Preparation ready, int count) {
+        authorProjection = null;
         fullBaseline = false;
         parentIdentity = null;
         changedIndices = new int[0];
@@ -282,6 +328,7 @@ final class HologramState {
     }
 
     private HologramState(HologramState base, NBTTagCompound patch, boolean decoration) {
+        authorProjection = base.authorProjection;
         fullBaseline = decoration && base.fullBaseline;
         parentIdentity = base.identity;
         data = new NBTTagCompound();
@@ -391,6 +438,7 @@ final class HologramState {
 
     /** Appearance publications share the exact authority metadata object, selection and material receipts. */
     private HologramState(HologramState latest, ModelPreparation models) {
+        authorProjection = latest.authorProjection;
         fullBaseline = latest.fullBaseline;
         parentIdentity = latest.identity;
         data = latest.data;
@@ -709,6 +757,107 @@ final class HologramState {
         return Collections.unmodifiableMap(result);
     }
 
+    /** Local page directories are persistent too: no N/256 directory copy on a single-cell edit. */
+    private static final class DocumentCells extends java.util.AbstractList<Cell> implements java.util.RandomAccess {
+
+        final HologramDocumentIndex<Integer, Cell[]> pages;
+        final int size;
+
+        DocumentCells(DocumentCells base, int size, java.util.Map<Integer, Cell> replacements) {
+            this.size = size;
+            HologramDocumentIndex<Integer, Cell[]> next = base == null ? new HologramDocumentIndex<>(Integer::compare)
+                : base.pages;
+            if (base != null)
+                for (int page = (size + 255) >> 8; page < (base.size + 255) >> 8; page++) next = next.with(page, null);
+            java.util.Map<Integer, Cell[]> dirty = new java.util.LinkedHashMap<>();
+            if (base != null && size < base.size && (size & 255) != 0) {
+                int page = size >> 8;
+                Cell[] trimmed = base.pages.get(page)
+                    .clone();
+                java.util.Arrays.fill(trimmed, size & 255, 256, null);
+                dirty.put(page, trimmed);
+            }
+            for (java.util.Map.Entry<Integer, Cell> entry : replacements.entrySet()) {
+                int page = entry.getKey() >> 8;
+                Cell[] values = dirty.get(page);
+                if (values == null) {
+                    Cell[] old = base == null ? null : base.pages.get(page);
+                    values = old == null ? new Cell[256] : old.clone();
+                    dirty.put(page, values);
+                }
+                values[entry.getKey() & 255] = entry.getValue();
+            }
+            for (java.util.Map.Entry<Integer, Cell[]> page : dirty.entrySet())
+                next = next.with(page.getKey(), page.getValue());
+            pages = next;
+        }
+
+        @Override
+        public int size() {
+            return size;
+        }
+
+        @Override
+        public Cell get(int index) {
+            if (index < 0 || index >= size) throw new IndexOutOfBoundsException();
+            return pages.get(index >> 8)[index & 255];
+        }
+    }
+
+    private static final class DocumentMembers extends java.util.AbstractList<Integer> {
+
+        final HologramDocumentIndex<Integer, Integer> indices;
+
+        DocumentMembers() {
+            indices = new HologramDocumentIndex<>(Integer::compare);
+        }
+
+        DocumentMembers(HologramDocumentIndex<Integer, Integer> indices) {
+            this.indices = indices;
+        }
+
+        DocumentMembers with(int index, boolean present) {
+            return new DocumentMembers(indices.with(index, present ? index : null));
+        }
+
+        @Override
+        public int size() {
+            return indices.size();
+        }
+
+        @Override
+        public Integer get(int index) {
+            return indices.at(index);
+        }
+    }
+
+    private static java.util.Map<String, List<Integer>> documentMemberships(HologramState base, List<Cell> cells,
+        int[] changed, List<Cell> before) {
+        @SuppressWarnings("unchecked")
+        HologramDocumentIndex<String, List<Integer>> result = base == null
+            ? new HologramDocumentIndex<>(String::compareTo)
+            : (HologramDocumentIndex<String, List<Integer>>) base.structureMembers;
+        java.util.Map<Integer, Cell> oldCells = new java.util.HashMap<>();
+        for (Cell old : before) {
+            oldCells.put(old.index, old);
+            if (old.index < cells.size() && membershipIds(old).equals(membershipIds(cells.get(old.index)))) continue;
+            for (String id : membershipIds(old)) {
+                DocumentMembers members = ((DocumentMembers) result.get(id)).with(old.index, false);
+                result = result.with(id, members.isEmpty() ? null : members);
+            }
+        }
+        for (int index : changed) {
+            Cell old = oldCells.get(index);
+            if (old != null && membershipIds(old).equals(membershipIds(cells.get(index)))) continue;
+            for (String id : membershipIds(cells.get(index))) {
+                DocumentMembers members = (DocumentMembers) result.get(id);
+                if (members == null) members = new DocumentMembers();
+                result = result.with(id, members.with(index, true));
+            }
+        }
+        return result;
+    }
+
     /** Copy on write pages keep stable server indices without copying N cell references for a one-cell edit. */
     private static final class CellPages extends java.util.AbstractList<Cell> implements java.util.RandomAccess {
 
@@ -793,6 +942,48 @@ final class HologramState {
         final int hintIndex;
         final int[] hintTint;
         final List<ItemStack> candidates;
+
+        /** Cold local document geometry; native payloads stay opaque until a visible consumer requests them. */
+        Cell(int index, com.miaokatze.gtmb.blueprint.editor.AuthorDocument.Cell source) {
+            raw = null;
+            this.index = index;
+            x = dx = source.x();
+            y = dy = source.y();
+            z = dz = source.z();
+            meta = wantMeta = source.metadata();
+            id = wantId = source.block() == null ? "" : source.block();
+            chosenChoice = hatchFacing = -1;
+            actualFacing = targetFacing = source.facing();
+            status = "planned";
+            pinScope = family = renderKind = operation = exactIdentity = "";
+            role = source.controller() ? "templateController" : "";
+            prompt = source.prompt() == null ? "" : source.prompt();
+            sourceMod = sourceVersion = sourceClass = sourceWarning = networkGroup = "";
+            structureIds = Collections.unmodifiableList(new ArrayList<>(source.memberships()));
+            structureId = structureIds.isEmpty() ? "" : structureIds.get(0);
+            specialHint = new NBTTagCompound();
+            anchor = false; // Saved template controllers are not protected physical-world anchors.
+            iconOnly = sourceMissing = inScope = candidateComplete = false;
+            excluded = source.excluded();
+            missingBlock = !wantId.isEmpty() && !"minecraft:air".equals(wantId)
+                && Block.getBlockFromName(wantId) == null;
+            candidateBoundary = "Local source candidates have not been checked against native declarations";
+            actualStack = targetStack = null;
+            actualDisplay = targetDisplay = new NBTTagCompound();
+            // Local identities never leave the owner. Both views use the same source payload.
+            nativeModelId = source.id();
+            nativeModelPending = source.tileNbt() != null && !source.tileNbt()
+                .isEmpty() || source.itemNbt() != null
+                    && !source.itemNbt()
+                        .isEmpty()
+                || source.item() != null && !source.item()
+                    .isEmpty() ? 3 : 0;
+            modelSource = null;
+            hintIcons = new String[] { "", "", "", "", "", "" };
+            hintIndex = -1;
+            hintTint = new int[0];
+            candidates = Collections.emptyList();
+        }
 
         Cell(int index, NBTTagCompound n) {
             this(index, n, false);
@@ -1017,7 +1208,33 @@ final class HologramState {
         }
 
         NBTTagCompound tag() {
-            return HologramSnapshotRows.export(raw);
+            if (raw != null) return HologramSnapshotRows.export(raw);
+            NBTTagCompound row = new NBTTagCompound();
+            row.setInteger("x", x);
+            row.setInteger("y", y);
+            row.setInteger("z", z);
+            row.setInteger("dx", dx);
+            row.setInteger("dy", dy);
+            row.setInteger("dz", dz);
+            row.setString("id", id);
+            row.setString("wantId", wantId);
+            row.setInteger("meta", meta);
+            row.setInteger("wantMeta", wantMeta);
+            row.setString("status", status);
+            row.setBoolean("excluded", excluded);
+            row.setString("prompt", prompt);
+            row.setBoolean("anchor", anchor);
+            row.setString("role", role);
+            row.setInteger("targetFacing", targetFacing);
+            row.setInteger("actualFacing", actualFacing);
+            row.setString("candidateBoundary", candidateBoundary);
+            row.setString("structureId", structureId);
+            NBTTagList ids = new NBTTagList();
+            for (String member : structureIds) ids.appendTag(new net.minecraft.nbt.NBTTagString(member));
+            row.setTag("structureIds", ids);
+            row.setLong("nativeModelId", nativeModelId);
+            row.setInteger("nativeModelPending", nativeModelPending);
+            return row;
         }
 
         boolean belongsToStructure(String id) {

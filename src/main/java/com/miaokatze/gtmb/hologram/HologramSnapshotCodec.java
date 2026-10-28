@@ -75,6 +75,12 @@ public final class HologramSnapshotCodec {
         return decodeMeasured(bytes, RAW_BYTES, 512L * 1024 * 1024, current).tag;
     }
 
+    /** Bounded native payload consumer; does not use snapshot transport or construct an authority publication. */
+    public static NBTTagCompound decodeBounded(byte[] bytes, int rawLimit, long nbtLimit) throws IOException {
+        if (rawLimit < 1 || nbtLimit < 1) throw new IllegalArgumentException("NBT consumer budget");
+        return decodeMeasured(bytes, rawLimit, nbtLimit).tag;
+    }
+
     static NBTTagCompound decode(byte[] bytes, int rawLimit, long nbtLimit) throws IOException {
         return decodeMeasured(bytes, rawLimit, nbtLimit).tag;
     }

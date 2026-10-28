@@ -649,6 +649,36 @@ public final class HologramLibraryFacade {
         current.prepareDraft(player, request, preset);
     }
 
+    static void releaseAuthorSource(EntityPlayerMP player, String session, long revision, long task) {
+        HologramServerLibrary current = library;
+        if (current != null) current.releaseAuthorSource(player, session, revision, task);
+    }
+
+    static void reserveAuthorSource(EntityPlayerMP player, String session, long revision, long task)
+        throws IOException {
+        NBTTagCompound request = HologramLibraryProtocol.request("authorSource");
+        request.setString("session", session);
+        request.setLong("planRevision", revision);
+        request.setLong("clientTaskToken", task);
+        HologramServerLibrary current = library;
+        if (current == null) throw new IOException("Server library is still loading");
+        current.reserveAuthorSource(player, request);
+    }
+
+    static void downloadAuthorSource(EntityPlayerMP player, HologramSourceTransfer.OwnedSource source, String session,
+        long revision, long clientTaskToken) throws IOException {
+        NBTTagCompound request = HologramLibraryProtocol.request("authorSource");
+        request.setString("session", session);
+        request.setLong("planRevision", revision);
+        request.setLong("clientTaskToken", clientTaskToken);
+        HologramServerLibrary current = library;
+        if (current == null) {
+            source.close();
+            throw new IOException("Server library is still loading");
+        }
+        current.prepareAuthorSource(player, request, source);
+    }
+
     public static boolean consumeDownloadAllowance(UUID player, int bytes) {
         HologramServerLibrary current = library;
         return !enabled() || current != null && current.consumeDownload(player, bytes);
@@ -736,6 +766,8 @@ public final class HologramLibraryFacade {
                 }
                 String op = next.request.getString("op");
                 if ("cancel".equals(op)) HologramSnapshotPreparation.cancelSaveSource(next.player, next.request);
+                if ("cancel".equals(op) || "cancelTransfer".equals(op))
+                    HologramSourceTransfer.cancel(next.player, next.request);
                 if ("saveResultConsumed".equals(op)) {
                     consumeSavedResult(next.player, next.request);
                     continue;

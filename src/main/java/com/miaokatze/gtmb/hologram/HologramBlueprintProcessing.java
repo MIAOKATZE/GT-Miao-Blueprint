@@ -256,12 +256,29 @@ final class HologramBlueprintProcessing {
     static HologramPresets.Preset process(HologramPresets.Preset source, Policy requested, int dimension, int originX,
         int originY, int originZ) throws IOException {
         try (HologramAnalysisFacts facts = new HologramAnalysisFacts()) {
-            return process(source, requested, dimension, originX, originY, originZ, facts);
+            return process(source, requested, dimension, originX, originY, originZ, facts, null);
+        }
+    }
+
+    /** Client documents have no captured world/network authority, including in an integrated-server JVM. */
+    static HologramPresets.Preset processDetached(HologramPresets.Preset source, Policy requested, int dimension,
+        int originX, int originY, int originZ) throws IOException {
+        try (HologramAnalysisFacts facts = new HologramAnalysisFacts()) {
+            return process(
+                source,
+                requested,
+                dimension,
+                originX,
+                originY,
+                originZ,
+                facts,
+                java.util.Collections.emptyMap());
         }
     }
 
     private static HologramPresets.Preset process(HologramPresets.Preset source, Policy requested, int dimension,
-        int originX, int originY, int originZ, HologramAnalysisFacts facts) throws IOException {
+        int originX, int originY, int originZ, HologramAnalysisFacts facts, Map<String, String> networks)
+        throws IOException {
         if (source == null || requested == null) throw new IOException("没有可处理的蓝图来源");
         Policy policy = Policy.read(requested.write());
         if (!policy.complete()) throw new IOException("保存前必须明确完成全部处理阶段");
@@ -322,7 +339,7 @@ final class HologramBlueprintProcessing {
             sample.itemNbt = null;
         }
         HologramPresets.Preset result = HologramDeidentification
-            .applyOwned(selected, policy.deidentificationLevel, null, HologramAePolicy.PreparationProgress.NONE);
+            .applyOwned(selected, policy.deidentificationLevel, networks, HologramAePolicy.PreparationProgress.NONE);
         for (int i = 0; i < result.cells.size(); i++) {
             HologramPresets.Cell after = result.cells.get(i);
             after.tileNbt = selectedScopes.get(i)[0].restore(after.tileNbt);
@@ -1117,7 +1134,8 @@ final class HologramBlueprintProcessing {
 
     /** The same complete native identity obligation serves synchronous and resumed policy discovery. */
     private static boolean identityBoundary(HologramPresets.Cell cell, HologramAnalysisFacts facts) throws IOException {
-        if (HologramSnapshotMetadataSource.detached() && cell.frozenBlockResolved && cell.frozenBlock != null
+        if (HologramSnapshotMetadataSource.detached() && cell.frozenBlockResolved
+            && cell.frozenBlock != null
             && cell.metadataIdentityBoundary != null) return cell.metadataIdentityBoundary;
         NBTTagCompound identity = facts.certificate(
             cell,

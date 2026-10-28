@@ -1,0 +1,370 @@
+package com.miaokatze.gtmb.hologram;
+
+import java.io.IOException;
+import java.util.Arrays;
+import java.util.Collections;
+
+import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagList;
+
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
+import com.miaokatze.gtmb.blueprint.editor.AuthorDocument;
+import com.miaokatze.gtmb.blueprint.editor.AuthorDocumentIO;
+import com.miaokatze.gtmb.blueprint.editor.AuthorEditor;
+import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
+import com.miaokatze.gtmb.testutil.SimpleAssert;
+
+/** Detached source/native boundary evidence, not a GL capture or live-world permission test. */
+public final class HologramAuthorPortableCompilerRegression {
+
+    private HologramAuthorPortableCompilerRegression() {}
+
+    public static void main(String[] args) throws Exception {
+        if (!MinecraftTestBootstrap.enter(HologramAuthorPortableCompilerRegression.class, args)) return;
+        run();
+        System.out.println("Author portable compiler regression passed");
+    }
+
+    public static void run() throws Exception {
+        opaqueNoop();
+        plainGeometry();
+        relativeCoordinates();
+        littleTiles();
+        unsupportedAndSealed();
+        freshProcessing();
+    }
+
+    private static void opaqueNoop() throws Exception {
+        JsonObject cell = cell(0);
+        cell.addProperty("vendorExtension", "exact");
+        NBTTagCompound opaque = new NBTTagCompound();
+        opaque.setString("id", "unknownNative");
+        opaque.setString("opaque", "keep");
+        cell.addProperty("tileNbt", HologramBlueprintNbt.encodeCaptured(opaque));
+        JsonObject source = source(cell);
+        source.addProperty("unknownHeader", "retained");
+        AuthorDocument document = read(source);
+        SimpleAssert.eq(source, settle(document), "no-op boundary preserves raw unknown members and encoded NBT");
+        SimpleAssert.eq(source, document.sourceCopy(), "no-op never mutates source");
+        reject(() -> {
+            HologramAuthorPortableCompiler.requireKnownTransformExtensions(document);
+            return null;
+        }, "whole orientation cannot bypass unresolved extension guard when no translation is pending");
+        SimpleAssert.eq(source, document.sourceCopy(), "rejected orientation leaves opaque source exact");
+        JsonObject annotated = source(cell(0));
+        JsonArray hints = new JsonArray();
+        JsonObject hint = new JsonObject();
+        hint.addProperty("x1", 0);
+        hint.addProperty("y1", 0);
+        hint.addProperty("z1", 0);
+        hint.addProperty("x2", 1);
+        hint.addProperty("y2", 1);
+        hint.addProperty("z2", 1);
+        hint.addProperty("futureSpatialHint", "retain");
+        hints.add(hint);
+        annotated.add("hintAreas", hints);
+        AuthorDocument withHint = read(annotated);
+        reject(() -> {
+            HologramAuthorPortableCompiler.requireKnownTransformExtensions(withHint);
+            return null;
+        }, "whole orientation also guards transformed hint-area extensions");
+    }
+
+    private static void plainGeometry() throws Exception {
+        JsonObject declared = cell(0);
+        declared.addProperty("authorDeclarationComplete", true);
+        AuthorEditor editor = new AuthorEditor(read(source(declared)), 8);
+        HologramAuthorPortableCompiler.requireKnownTransformExtensions(editor.current());
+        editor.select(Collections.singleton(1L));
+        editor.move(2, 0, 0);
+        editor.copy(3, 0, 0);
+        AuthorEditor.Clipboard clipboard = editor.clipboard();
+        editor.paste(clipboard, 9, 0, 0);
+        AuthorDocument reopened = AuthorDocumentIO.read(
+            AuthorDocumentIO.writeDraft(editor.current(), AuthorDocumentIO.Limits.defaults()),
+            AuthorDocumentIO.Limits.defaults());
+        JsonObject result = settle(reopened);
+        SimpleAssert.eq(
+            3,
+            result.getAsJsonArray("cells")
+                .size(),
+            "moved/copy/paste records all survive");
+        SimpleAssert.that(
+            result.getAsJsonArray("cells")
+                .get(0)
+                .getAsJsonObject()
+                .get("authorDeclarationComplete")
+                .getAsBoolean(),
+            "own nonspatial declaration fact does not block geometry");
+        SimpleAssert.eq(
+            9,
+            result.getAsJsonArray("cells")
+                .get(2)
+                .getAsJsonObject()
+                .get("x")
+                .getAsInt(),
+            "clipboard final geometry not displaced again");
+        SimpleAssert.eq(
+            0,
+            reopened.cell(3)
+                .payloadX(),
+            "clipboard preserves inherited payload origin across recovery");
+        SimpleAssert.that(reopened.hasPendingObligations(), "compiler cannot clear authoritative draft obligations");
+    }
+
+    private static void relativeCoordinates() throws Exception {
+        NBTTagCompound tile = new NBTTagCompound();
+        tile.setString("id", "IC2NCInfoPanelExtender");
+        tile.setBoolean("partOfScreen", true);
+        tile.setInteger("coreX", 1);
+        tile.setInteger("coreY", 0);
+        tile.setInteger("coreZ", 0);
+        HologramCoordinatePolicies.Relation relation = new HologramCoordinatePolicies.Relation();
+        relation.id = "0,0,0:tile:nc.extender:-1";
+        relation.label = "core";
+        relation.adapter = "nc.extender";
+        relation.slot = -1;
+        relation.dx = 1;
+        relation.internal = true;
+        NBTTagList relations = new NBTTagList();
+        relations.appendTag(relation.write("relative"));
+        tile.setTag(HologramCoordinatePolicies.RELATIONS, relations);
+        JsonObject host = cell(0);
+        host.addProperty("tileNbt", HologramBlueprintNbt.encodeCanonical(tile));
+        AuthorEditor editor = new AuthorEditor(read(source(host, cell(1))), 8);
+        editor.select(Collections.singleton(1L));
+        editor.move(5, 0, 0);
+        String original = editor.current()
+            .cell(1)
+            .tileNbt();
+        NBTTagCompound settled = HologramBlueprintNbt.decode(
+            settle(editor.current()).getAsJsonArray("cells")
+                .get(0)
+                .getAsJsonObject()
+                .get("tileNbt")
+                .getAsString());
+        NBTTagCompound row = settled.getTagList(HologramCoordinatePolicies.RELATIONS, 10)
+            .getCompoundTagAt(0);
+        SimpleAssert.eq(-4, row.getInteger("dx"), "moving host alone retains actual internal endpoint");
+        SimpleAssert.eq(5, row.getInteger("x"), "native relation host moves to final coordinates");
+        SimpleAssert.eq("5,0,0:tile:nc.extender:-1", row.getString("id"), "relation identity follows final known host");
+        SimpleAssert.eq(
+            original,
+            editor.current()
+                .cell(1)
+                .tileNbt(),
+            "native coordinate resolution stays detached");
+        AuthorEditor endpoint = new AuthorEditor(read(source(host, cell(1))), 8);
+        endpoint.select(Collections.singleton(2L));
+        endpoint.move(7, 0, 0);
+        SimpleAssert.eq(
+            8,
+            relation(settle(endpoint.current())).getInteger("dx"),
+            "stationary host follows moved internal endpoint");
+        endpoint.copy(3, 0, 0);
+        reject(() -> settle(endpoint.current()), "two moved copies without original endpoint cannot be guessed");
+        AuthorEditor copiedEndpoint = new AuthorEditor(read(source(host, cell(1))), 8);
+        copiedEndpoint.select(Collections.singleton(2L));
+        copiedEndpoint.copy(3, 0, 0);
+        SimpleAssert.eq(
+            1,
+            relation(settle(copiedEndpoint.current())).getInteger("dx"),
+            "stationary host retains original endpoint when a copy is added");
+        AuthorEditor external = new AuthorEditor(read(source(host)), 8);
+        external.select(Collections.singleton(1L));
+        external.move(5, 0, 0);
+        SimpleAssert.eq(
+            -4,
+            relation(settle(external.current())).getInteger("dx"),
+            "external relative reference retains original endpoint instead of following nonexistent target");
+        relation.targetX = 1;
+        relations = new NBTTagList();
+        relations.appendTag(relation.write("absolute"));
+        tile.setTag(HologramCoordinatePolicies.RELATIONS, relations);
+        JsonObject absoluteHost = cell(0);
+        absoluteHost.addProperty("tileNbt", HologramBlueprintNbt.encodeCanonical(tile));
+        AuthorEditor absolute = new AuthorEditor(read(source(absoluteHost, cell(1))), 8);
+        absolute.select(Collections.singleton(2L));
+        absolute.move(7, 0, 0);
+        absolute.copy(3, 0, 0);
+        SimpleAssert.eq(
+            1,
+            relation(settle(absolute.current())).getInteger("targetX"),
+            "absolute endpoint never guesses between moved/copied former targets");
+        relations = new NBTTagList();
+        relations.appendTag(relation.write("clear"));
+        tile.setTag(HologramCoordinatePolicies.RELATIONS, relations);
+        JsonObject clearedHost = cell(2);
+        clearedHost.addProperty("tileNbt", HologramBlueprintNbt.encodeCanonical(tile));
+        AuthorEditor cleared = new AuthorEditor(read(source(clearedHost, cell(0))), 8);
+        cleared.select(Collections.singleton(2L));
+        cleared.move(7, 0, 0);
+        cleared.copy(3, 0, 0);
+        SimpleAssert.eq(
+            "clear",
+            relation(settle(cleared.current())).getString("mode"),
+            "cleared endpoint ignores unrelated origin-zero copy ambiguity");
+    }
+
+    private static void littleTiles() throws Exception {
+        JsonObject main = little(0, true), child = little(1, false);
+        AuthorEditor editor = new AuthorEditor(read(source(main, child)), 8);
+        editor.select(Arrays.asList(1L, 2L));
+        editor.move(10, 0, 0);
+        JsonObject result = settle(editor.current());
+        SimpleAssert.eq(
+            main.get("tileNbt"),
+            result.getAsJsonArray("cells")
+                .get(0)
+                .getAsJsonObject()
+                .get("tileNbt"),
+            "complete LT translation keeps exact encoded references");
+        editor.select(Collections.singleton(1L));
+        editor.move(2, 0, 0);
+        reject(() -> settle(editor.current()), "incomplete LT graph is an explicit failure");
+        SimpleAssert.eq(
+            12,
+            editor.current()
+                .cell(1)
+                .x(),
+            "failed native boundary retains editable geometry intent");
+    }
+
+    private static void unsupportedAndSealed() throws Exception {
+        JsonObject extended = cell(0);
+        extended.addProperty("unknownSpatialExtension", "opaque");
+        AuthorEditor editor = new AuthorEditor(read(source(extended)), 8);
+        editor.select(Collections.singleton(1L));
+        editor.copy(2, 0, 0);
+        String before = editor.current()
+            .sourceCopy()
+            .toString();
+        reject(() -> settle(editor.current()), "copy of unresolved extension cannot claim portable correctness");
+        SimpleAssert.eq(
+            before,
+            editor.current()
+                .sourceCopy()
+                .toString(),
+            "unsupported copy retains all source data");
+        JsonObject sealed = cell(0);
+        NBTTagCompound payload = new NBTTagCompound();
+        payload.setTag(HologramRecovery.TAG, new NBTTagCompound());
+        sealed.addProperty("itemNbt", HologramBlueprintNbt.encodeCaptured(payload));
+        AuthorEditor seal = new AuthorEditor(read(source(sealed)), 8);
+        seal.select(Collections.singleton(1L));
+        seal.copy(2, 0, 0);
+        reject(() -> settle(seal.current()), "copy cannot duplicate physical sealed inventory");
+    }
+
+    private static void freshProcessing() throws Exception {
+        AuthorDocument document = read(source(cell(0)));
+        reject(
+            () -> HologramAuthorPortableCompiler.compile(document, null, 0, 0, 0, 0),
+            "missing user policy is never auto-confirmed");
+        HologramBlueprintProcessing.Policy policy = policy();
+        policy.confirmedStages.clear();
+        reject(
+            () -> HologramAuthorPortableCompiler.compile(document, policy.write(), 0, 0, 0, 0),
+            "unconfirmed stages cannot export");
+        byte[] bytes = HologramAuthorPortableCompiler.compile(document, policy().write(), 0, 0, 0, 0);
+        JsonObject wrapped = HologramBlueprintCompactCodec.parse(bytes);
+        SimpleAssert.that(wrapped.has("blueprint"), "portable bytes are actual wrapped source, not display NBT");
+        SimpleAssert.that(
+            !wrapped.getAsJsonObject("blueprint")
+                .has("authorUuid"),
+            "compiler never invents server actor identity");
+        SimpleAssert.that(
+            !document.sourceCopy()
+                .has("processingNbt"),
+            "fresh processed candidate does not overwrite source draft");
+    }
+
+    private static NBTTagCompound relation(JsonObject settled) throws IOException {
+        return HologramBlueprintNbt.decode(
+            settled.getAsJsonArray("cells")
+                .get(0)
+                .getAsJsonObject()
+                .get("tileNbt")
+                .getAsString())
+            .getTagList(HologramCoordinatePolicies.RELATIONS, 10)
+            .getCompoundTagAt(0);
+    }
+
+    private static JsonObject little(int x, boolean main) throws IOException {
+        JsonObject cell = cell(x);
+        NBTTagCompound root = new NBTTagCompound(), tile = new NBTTagCompound();
+        root.setString("id", "LittleTilesTileEntity");
+        root.setInteger("tilesCount", 1);
+        tile.setInteger("bSize", 1);
+        tile.setBoolean("isStructure", true);
+        tile.setBoolean("main", main);
+        tile.setString("id", "fixed");
+        tile.setInteger("count", 1);
+        for (String axis : new String[] { "X", "Y", "Z" }) {
+            tile.setInteger("bBox0min" + axis, 0);
+            tile.setInteger("bBox0max" + axis, 16);
+        }
+        String prefix = main ? "i0" : "";
+        tile.setInteger(prefix + "coordX", main ? 1 : -1);
+        tile.setInteger(prefix + "coordY", 0);
+        tile.setInteger(prefix + "coordZ", 0);
+        tile.setInteger(prefix + "posx", 0);
+        tile.setInteger(prefix + "posy", 0);
+        tile.setInteger(prefix + "posz", 0);
+        root.setTag("t0", tile);
+        cell.addProperty("tileNbt", HologramBlueprintNbt.encodeCaptured(root));
+        return cell;
+    }
+
+    private static HologramBlueprintProcessing.Policy policy() {
+        HologramBlueprintProcessing.Policy policy = new HologramBlueprintProcessing.Policy();
+        policy.confirmedStages.addAll(HologramBlueprintProcessing.STAGES);
+        policy.autoHints = "none";
+        return policy;
+    }
+
+    private static JsonObject settle(AuthorDocument document) throws IOException {
+        return HologramAuthorPortableCompiler.settle(document, policy().write(), 0, 0, 0, 0);
+    }
+
+    private static AuthorDocument read(JsonObject source) throws IOException {
+        return AuthorDocumentIO.readExpanded(source, AuthorDocumentIO.Limits.defaults());
+    }
+
+    private static JsonObject cell(int x) {
+        JsonObject row = new JsonObject();
+        row.addProperty("x", x);
+        row.addProperty("y", 0);
+        row.addProperty("z", 0);
+        row.addProperty("block", "minecraft:stone");
+        row.addProperty("item", "minecraft:stone");
+        return row;
+    }
+
+    private static JsonObject source(JsonObject... cells) {
+        JsonObject source = new JsonObject();
+        source.addProperty("schema", 2);
+        source.addProperty("name", "candidate");
+        JsonArray rows = new JsonArray();
+        for (JsonObject cell : cells) rows.add(cell);
+        source.add("cells", rows);
+        source.add("structures", new JsonArray());
+        return source;
+    }
+
+    private interface Checked {
+
+        Object run() throws Exception;
+    }
+
+    private static void reject(Checked action, String message) throws Exception {
+        boolean failed = false;
+        try {
+            action.run();
+        } catch (IOException expected) {
+            failed = true;
+        }
+        SimpleAssert.that(failed, message);
+    }
+}

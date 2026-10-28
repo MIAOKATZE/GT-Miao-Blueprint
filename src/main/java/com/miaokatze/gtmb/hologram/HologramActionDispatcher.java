@@ -171,6 +171,10 @@ final class HologramActionDispatcher {
             HologramSnapshots.send(s);
             return;
         }
+        if ("acquireAuthorSource".equals(op)) {
+            HologramLibraryWorkflow.acquireAuthorSource(s, action);
+            return;
+        }
         if ("rotateBlueprint".equals(op)) {
             try {
                 HologramBlueprintRotation.rotate(s, action);

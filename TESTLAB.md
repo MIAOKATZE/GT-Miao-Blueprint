@@ -1,3 +1,48 @@
+# 2026-10-28：客户端作者重构的验证边界
+
+## 大图片来源兼容补充（2026-10-28）
+
+作者结构字符串上限采用既有原生 8 MiB NBT 压缩字节上限的最大 Base64 长度 **11,184,812 字符**，不再误用 compact 内容池的 2 MiB 单项限制去拒绝未入池的 `textBoxNbt`。64 MiB 文档总量、深度及原生 8 MiB 解压／压缩保护均未降低。新增真实 1024×1024 高熵像素图片定义回归：原生编码超过 2 MiB，作者导入／草稿重开保留原编码，原生再次解码、定义校验与逐像素比较通过。
+
+修正后的 `check assemble reobfJar` 在 `27-compat-check.log` **PASS，1m50s**；179/179、12/12、Industrial、ownership、CLIENT／SERVER 隔离及静态 GUI ABI 9/9 均通过，1,994 个 main／mixin／test class 均为 major 52。实机游戏、GL 与完整业务 UI 仍待外部验收。下文 log25 和核心测量保留其各自快照身份，不将其自动套用为其他提交的运行证据。
+
+
+> 以下实验室历史文档原样保留。新作者路径采用本地 `AuthorDocument`，不能用服务端 FakePlayer、DTO、codec 或旧作者 Session 的通过记录代替真实客户端业务 UI、原生渲染与性能验收。
+
+## 最终集成验证与证据边界
+
+首次完整集成验证使用 `gtmb-build-support/logs/25-integrated-check-build.log`：`check assemble reobfJar` **PASS，2m18s**；服务端回归 **179/179**、独立 JVM 本地作者 **12/12**、Industrial 回归及 snapshot ownership 检查通过；实际 Forge `SideTransformer` 的 CLIENT／SERVER 隔离测试均通过。普通 GTMB＋MUI2 2.3.92 原始 class 的静态 GUI ABI 检查 **9/9**（2,822 个引用），不加载业务 GUI、不运行 FML／GL，不能当作实机界面通过。编译产物 main 1,522／mixin 7／test 465 个 class，全部 major 52。
+
+格式器曾因只读 `~/.m2` 缓存写入失败；仅将外部 Equo/P2 缓存迁到可写工作区，未修改固定版本或关闭检查。原失败日志保留，后续 Spotless apply/check 与集成验证通过。五条原有 Mixin public-target 警告及 Netty direct-buffer fallback 警告保留；这是有边界的 PASS，不是零警告声明。
+
+两份实际私有输入构造的服务端源图已通过有界交接回归：48,003 格／375 slices／owned 13,340,090 B；123,369 格／963 slices／owned 33,561,552 B。quota 保持 **67,108,864 B**，并非放宽限额换取通过。owned 是受控图的所有权计费估算，**不是实测堆占用，也不是活世界 capture 测量**；原始私有输入不随文档公开。
+
+**最终无 overlay 核心实测已完成**：`implementation_measurements/after-integrated-results.md` 与 `48003~after-integrated.log`／`123369~after-integrated.log`。使用实际集成 `build/classes/java/main`、官方 Gson 2.2.4、JDK 8u512、`-Xms64m -Xmx768m -XX:+UseSerialGC`，每输入一次新 JVM，旧 editor/history 在 reopen 时仍存活；31/31 源码／class SHA-256 测前测后不变。
+
+| 实际输入 | readExpanded before → 最终集成 | draft read/reopen（旧 editor 存活） | 进程最大 RSS |
+| --- | --- | --- | --- |
+| 48,003 格 | 2,348.153 → 981.971 ms | 1,495.639 ms，PASS | 637,852 KiB |
+| 123,369 格 | 7,165.699 → 973.460 ms | before OOM → 3,858.441 ms，PASS | 950,852 KiB |
+
+两输入全源 JSON（含未知字段）、编码 NBT、文档 ID／revision、全部稳定格 ID／payload origin 校验通过；指定 native NBT decoder 类加载审计匹配 0（不是对所有未知 decoder 的方法计数）。123,369 格 parse 1,553.399 ms＋readExpanded 973.460 ms 约 2.527 s，**只是纯数据两阶段，不是游戏端到端 3–4 秒达标**。该输入完整校验另用 15,313.512 ms，全进程 27.584 s；校验同时持有旧／新文档与 sourceCopy，其 RSS 不代表日常编辑峰值。单次结果无 p95／统计置信结论；采样 heap 不等于 peak/live set，heap 上限不等于 RSS。文件写入计时未包含 fsync，不能代替产品原子保存耗时。
+
+测量绑定的 `AuthorDocumentIO.class` SHA-256：`524c53c1601f04aa5d5dbfe476e35a312c6001d22273a7b694bfc727484d10d0`；完整源码／class 指纹见 `after-integrated-snapshot.txt` 与 `after-integrated-postcheck.txt`。早期 frozen／overlay 数据和原 OOM 证据保留，但不冒充最终集成成绩；发布后按同核心 class hash 复核，核心变化须重跑。
+
+独立入口 `HologramLocalAuthorRegressionTest` 在单独 JVM 中完成 12 项检查：源 revision／COW／provenance、选中原生 NBT 与旧模板迁移、持久渲染目录、增量投影与延迟 payload、草稿恢复、原生附件、配置、结构再生、显式候选编译、候选配对持久化，以及真实材料样本的隐私／配置和客户端关联。独立 JVM 避免原生 fixture 初始化影响服务端进程级 lease 基线。真实业务 UI、GL、世界 capture／placement、Cut、整包内存／FPS／TPS 与完整五样本 3–4 秒目标仍需外测；不与上述已完成检查混称“未执行”。
+
+## 外部验收必须分层记录
+
+- **纯作者**：从已获得的完整本地源开始，打开、编辑、查看所有详情、撤销重做、保存重开；单独测 GTMB 作者 RPC 和服务器调度／编码活动，剔除连接基础与其他模组流量。首轮源交接、下载、终端取样、提交、施工另列，不能混入零网络断言。
+- **源保真与义务**：未知 JSON、精确 NBT 字符串、结构／分组／链接、缺失模组、未解析声明提示、移动／复制／旋转后的 payload origin 与待兑现义务；成功与失败都核对源前后差异。
+- **业务 UI 与原生效果**：结构配置、处理六阶段、NBT 保留策略和路径、AE 只标记编辑、网络分组、文字、图片、提示区、图纸库与来源切换逐项实际操作。不能用空白报告或通用方块替代原生业务。
+- **大样本**：42,319／47,192／48,003／74,499／123,369 格分别记录冷／热打开、首次可见、当前视口原生完成、全稿原生覆盖、交互延迟、内存峰值／稳定值、GC、FPS／帧时、独立服务器 MSPT／TPS。3–4 秒仅是待测目标，不是现有结果；有界可见缓存下“全稿全驻留”不是合理的完成定义。
+- **权威负例**：仅在用户隔离测试世界检查材料不足、保护／权限拒绝、工具／世界／revision 改变、重复包／过期包、物理 Cut 与作者剪切区别；确认无越权世界写入、资产复制或收费重复。
+- **兼容与压力**：新旧 peer 配对、重连、取消、队列满、过大源／NBT、缓存回收及多次开关窗口。拒绝必须明确，草稿不丢；codec 限额不等于进程内存已达标。
+
+完整外部测试步骤与回执模板随交付文档 `GTMB_客户端作者重构_外部测试清单.md` 提供。本节不自动启用实验室、不操作实际世界、不替用户运行破坏性用例。手工测试前备份存档、实例配置、库和草稿；生产存档不用于 Cut／回滚验证。测试结果必须保留具体 commit、实例／模组版本、样本 hash、日志及 PASS／FAIL／BLOCKED／NOT RUN 状态；不可把未执行计入通过。
+
+---
+
 # GTMB agent test laboratory
 
 The agent laboratory is an administrator tool for repeatable, common-side tests. It is disabled by default. It uses an isolated, save-local dimension and a survival Forge FakePlayer for the small suites; the separately opted-in composite suite uses one explicitly configured, connected survival test client. It is not a claim that every installed mod, client renderer, GUI or network connection has passed testing.

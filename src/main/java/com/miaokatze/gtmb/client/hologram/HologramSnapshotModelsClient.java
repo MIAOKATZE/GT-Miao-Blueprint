@@ -65,6 +65,10 @@ final class HologramSnapshotModelsClient {
     }
 
     static void requestVisible(HologramState state, HologramState.Cell cell, boolean current) {
+        if (state != null && state.authorProjection != null) {
+            state.authorProjection.request(state, cell);
+            return;
+        }
         HologramState live = HologramClient.state;
         if (!context(live) || !live.session.equals(state.session) || cell.index < 0 || cell.index >= live.cells.size())
             return;
@@ -87,7 +91,9 @@ final class HologramSnapshotModelsClient {
                 HologramState.Cell neighbor = state.regions.at(cell.x + x, cell.y + y, cell.z + z);
                 if (neighbor != null && neighbor.modelPending(current)) {
                     requestVisible(state, neighbor, current);
-                    dependency(cell, neighbor);
+                    if (state.authorProjection != null)
+                        state.authorProjection.dependency(cell, neighbor.x, neighbor.y, neighbor.z);
+                    else dependency(cell, neighbor);
                     ready = false;
                 }
             }

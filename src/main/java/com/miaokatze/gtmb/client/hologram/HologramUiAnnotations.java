@@ -350,7 +350,8 @@ final class HologramUiAnnotations {
                         ui.preview.selection()
                             .indices());
                     flags.setBoolean("excluded", id == 155);
-                    ui.session.send("editCellFlags", flags, true);
+                    if (ui.session.isLocalAuthor()) ui.session.localAction("editCellFlags", flags);
+                    else ui.session.send("editCellFlags", flags, true);
                 }
                 return true;
             case 158:
@@ -361,11 +362,10 @@ final class HologramUiAnnotations {
                         "indices",
                         ui.preview.selection()
                             .indices());
-                    ui.session.send(
-                        this.promptScope == 0 ? "editBlueprintPrompt"
-                            : this.promptScope == 1 ? "editCellFlags" : "editHintArea",
-                        prompt,
-                        true);
+                    String operation = this.promptScope == 0 ? "editBlueprintPrompt"
+                        : this.promptScope == 1 ? "editCellFlags" : "editHintArea";
+                    if (ui.session.isLocalAuthor()) ui.session.localAction(operation, prompt);
+                    else ui.session.send(operation, prompt, true);
                     ui.session.notice(
                         "提示已提交 · " + HologramAnnotations.scope(
                             ui.session.state(),
@@ -377,7 +377,10 @@ final class HologramUiAnnotations {
                 }
                 return true;
             case 160:
-                if (ui.session.editable()) ui.session.send("calibrateBlueprintVersions", null, true);
+                if (ui.session.editable()) {
+                    if (ui.session.isLocalAuthor()) ui.session.localAction("calibrateBlueprintVersions", null);
+                    else ui.session.send("calibrateBlueprintVersions", null, true);
+                }
                 return true;
             default:
                 return false;
