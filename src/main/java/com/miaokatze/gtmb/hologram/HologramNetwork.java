@@ -112,6 +112,7 @@ public final class HologramNetwork {
 
     public static void init() {
         if (channel != null) return;
+        HologramResourceWorld.init();
         channel = NetworkRegistry.INSTANCE.newSimpleChannel("gtmb_hologram");
         channel.registerMessage(ServerHandler.class, Action.class, 0, Side.SERVER);
         channel.registerMessage(ClientHandler.class, State.class, 1, Side.CLIENT);

@@ -11,6 +11,7 @@ import net.minecraft.init.Blocks;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.profiler.Profiler;
 import net.minecraft.tileentity.TileEntity;
+import net.minecraft.village.VillageCollection;
 import net.minecraft.world.EnumSkyBlock;
 import net.minecraft.world.World;
 import net.minecraft.world.WorldProvider;
@@ -25,12 +26,18 @@ import net.minecraft.world.storage.ISaveHandler;
 import net.minecraft.world.storage.MapStorage;
 import net.minecraft.world.storage.WorldInfo;
 
+import cpw.mods.fml.relauncher.FMLLaunchHandler;
+import cpw.mods.fml.relauncher.Side;
+import cpw.mods.fml.relauncher.SideOnly;
+
 /** Single detached cell for audited persistence/drop callbacks, on either logical side. */
 final class HologramResourceWorld extends World {
 
     // Forge adds these exact, unmapped fields in the patched 1.7.10 World source.
     private static final Field SAVE_CACHE = worldCacheField("s_savehandler", ISaveHandler.class);
     private static final Field MAP_CACHE = worldCacheField("s_mapStorage", MapStorage.class);
+
+    private static boolean registered;
 
     private final Block block;
     private final int metadata;
@@ -39,15 +46,28 @@ final class HologramResourceWorld extends World {
 
     /** A detached controller may inspect any declaration coordinate; every other cell is read-only air. */
     static HologramResourceWorld declarations(Block block, int metadata) {
-        // GT's alignment setter must keep its native dummy-world branch and never publish a real-world packet.
-        gregtech.api.GregTechAPI.addDummyWorld(HologramResourceWorld.class);
         HologramResourceWorld world = create(block, metadata);
         world.declarations = true;
         return world;
     }
 
-    /** Main-thread callers retain their own in-memory storage without disturbing Forge's live shared cache. */
+    /** Register before either client or server starts native inspection; GT's registry is process-global. */
+    static synchronized void init() {
+        if (registered) return;
+        // Alignment setters must take GT's dummy-world branch rather than publishing real-world packets.
+        gregtech.api.GregTechAPI.addDummyWorld(HologramResourceWorld.class);
+        registered = true;
+    }
+
+    /** Dedicated-server callers retain the original storage contract; physical clients never touch its cache. */
     static synchronized HologramResourceWorld create(Block block, int metadata) {
+        // Physical side is intentional: an integrated server shares Forge's static cache with its client.
+        // The annotated constructor is stripped on dedicated servers and is only resolved on this branch.
+        if (FMLLaunchHandler.side() == Side.CLIENT) {
+            HologramResourceWorld created = new HologramResourceWorld(block, metadata, new WorldProviderSurface());
+            HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.MATERIAL_WORLD_CREATED, 1);
+            return created;
+        }
         try {
             Object previousSave = SAVE_CACHE.get(null);
             Object previousMap = MAP_CACHE.get(null);
@@ -90,6 +110,32 @@ final class HologramResourceWorld extends World {
         this.metadata = metadata;
         // Native server readers (notably EnderIO) must not enter client-only Minecraft branches.
         isRemote = false;
+    }
+
+    /**
+     * Forge's CLIENT constructor does not call getMapStorage and therefore cannot overwrite a concurrently
+     * constructed server world's cache. Complete its detached state explicitly, matching the common constructor:
+     * separate map/per-world stores, villages in per-world storage, registered provider, and native server semantics.
+     */
+    @SideOnly(Side.CLIENT)
+    private HologramResourceWorld(Block block, int metadata, WorldProvider provider) {
+        super(
+            new MemorySaveHandler(),
+            "GTMB material inspection",
+            provider,
+            new WorldSettings(0L, WorldSettings.GameType.CREATIVE, false, false, WorldType.DEFAULT),
+            new Profiler());
+        this.block = block;
+        this.metadata = metadata;
+        isRemote = false;
+        mapStorage = new MapStorage(saveHandler);
+        worldInfo = saveHandler.loadWorldInfo();
+        this.provider.registerWorld(this);
+        chunkProvider = createChunkProvider();
+        villageCollectionObj = new VillageCollection(this);
+        perWorldStorage.setData("villages", villageCollectionObj);
+        calculateInitialSkylight();
+        this.provider.calculateInitialWeather();
     }
 
     /** Common-side persistence stub. No directory, chunk, player or map file can be opened. */
