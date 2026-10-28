@@ -1,3 +1,76 @@
+# 2026-10-28：客户端作者文档重构（当前分支）
+
+> 本节说明 `refactor/client-author-document-20261028` 相对 `c249291` 的新作者路径。以下原版本章节全部保留作历史背景；其中“服务端作者会话／快照驱动作者编辑”的表述，不再代表已接入本地文档的新作者路径。服务器规划、真实施工、材料与物理 Cut 的权威边界没有随作者迁移而移交客户端。本文描述实现，不替代实机验收。
+
+## 一份源文档、单向视图、明确跨界
+
+```text
+完整源 JSON / gtmb-author-draft / 一次性服务端源交接
+  → AuthorDocumentIO（有界语法、结构与来源检查）
+  → AuthorDocument + AuthorEditor（本地源真值、原子修改、历史）
+  → HologramLocalAuthorRuntime（作者生命周期与既有业务 UI 适配）
+  → HologramAuthorProjection → HologramState → 渲染 / 只读 UI
+
+显式保存草稿 → 本地恢复文件（不是可施工证明）
+显式处理 + 导出 → PortableCompiler → 原生 PNG + JSON → 未审核候选
+显式放置 → 既有私有 contentOnly admission → 服务端核验 / 规划 / 材料 / 世界事务
+```
+
+`blueprint.editor` 中的 `AuthorDocument`、`AuthorEditor`、`AuthorDocumentIO`、`AuthorTree` 不依赖 Minecraft、注册表、服务器会话、网络 codec 或原生 NBT 解码器。源 JSON 是唯一可写真值；向调用方返回防御性副本。未修改的未知字段与编码 NBT 字符串保留，不从显示 DTO、快照或渲染缓存反向拼回源数据。结构准入不等于原生兼容、资产、所有权、材料或可移植性审查。
+
+`AuthorDocument` 使用稳定文档／单元 ID、64 格写时复制页及持久位置／分组索引。编辑按事务发布一次或完全不发布；撤销重做恢复内容、选择及来源信息，但发布新的单调 revision，废弃分支的单元 ID 不复用。当前 runtime 使用最多 64 条历史，同时受保守保留源字节预算约束；这不是 JVM 总堆占用上限。普通选中格编辑不应通过完整快照往返；导入、保存、显式全源处理仍可能遍历全稿。
+
+几何位置与原生 payload 的坐标基准不是一回事。文档记录每格 payload origin 和有序 pending obligations；移动／复制后可以先保留原始 payload，由显式原生编译边界兑现坐标、链接、附件与兼容性义务。保存、撤销、再打开不能自行清除这些义务。未知变换语义、歧义链接、不完整原生结构必须保留原稿并明确拒绝，不能以“预览有形状”冒充可安全施工。
+
+## 模块职责与限制
+
+| 模块 | 当前职责 | 不代表什么 |
+| --- | --- | --- |
+| `HologramLocalAuthorRuntime` | 持有编辑器、选区／剪贴板、处理报告版本、草稿保存状态及可丢弃投影；窗口关闭重开不把源所有权交给窗口 | 不是服务端 Session，也不能凭本地 revision 获得权限 |
+| `HologramLocalAuthor*Actions` 与 common-side `HologramLocalAuthor*` | 连接现有注释、NBT、处理、配置、结构、AE、文字／图片等业务能力；需要原生事实的工作仍通过明确适配器执行 | 不是仅保留空壳预览的简化编辑器；也不表示所有业务控件已实机验证 |
+| `HologramAuthorProjection` / `HologramDocumentIndex` | 稳定源 ID 与稠密渲染槽位分离，单向增量投影，可见格原生 payload 延迟解码与缓存回收 | 不持有源写权限；失败占位不删原 NBT，也不成为审核通过 |
+| `HologramSourceTransfer` | 从实际服务端捕获／规划源，一次性、有界、owner-thread 交接完整作者源；检查玩家、连接、世界、session、revision、任务 token | 不可用显示快照补成“完整源”；不是持续远程作者写循环 |
+| `HologramAuthorPortableCompiler` | 冻结源、兑现支持的原生空间义务、按明确策略重新处理、原生验证并产生独立候选 | 不修改活动草稿，不制造作者身份或服务端审核回执 |
+| `HologramAuthorSubmission` | 版本／上下文栅栏、owner-thread 原生编译、原生渲染上下文 PNG、受限 IO 与 JSON/PNG 配对 | 当前同步原生编译不是已证明有 tick 预算的导出流水线 |
+| `HologramClientLibrary` | 恢复草稿原子替换及回读、候选配对回读；区分本地草稿和审核库条目 | 不把候选自动列为已审核库，不以导出清除源 dirty 状态 |
+
+投影当前常量：待解码队列 512、依赖边 65,536、原生驻留计费预算 32 MiB；每次推进最多 4 格并使用约 2 ms 的协作 deadline。单个原生调用不可据此宣称可抢占，缓存计费也不等于整个客户端内存。源传递当前最多保留 2 个 lease、单份计费上限 64 MiB、每次最多 256 步并检查协作时间预算。整包总内存、FPS、TPS 与五个样本的游戏端到端表现仍须独立测量；已完成的两份真实输入核心测量及源交接回归见本节验证回执。
+
+## 三种文件／准入状态不可混称
+
+1. **恢复草稿**：`MiaoBlueprints/drafts/<UUID>.gtmb-draft.json`，格式 `gtmb-author-draft` v1。保留完整源、稳定身份、payload origin 和未兑现义务；无需 PNG、作者身份证明或服务器。未知草稿版本／字段拒绝而非丢弃。成功落盘与仍在保存、失败、过期版本必须区分。
+2. **未审核候选**：显式处理并导出后，`MiaoBlueprints/candidates/unreviewed_<UUID>.json` 与 `.png`。配对哈希／回读一致性只证明文件配对；不证明服务器授权，也不应进入已审核库列表。导出失败或期间源变化，原草稿与义务保留。
+3. **服务器 admission／施工**：显式放置将冻结候选交给既有私有 `contentOnly` 内容准入；之后仍由服务器校验内容、身份、世界／工具上下文、材料、权限、预期现场与真实事务。正式审核发布另有工作流。客户端不能制造 ACK 或跳过权威材料／Cut 资产检查。
+
+## UI、传输及兼容边界
+
+本地作者的常规编辑从 UI 进入本地 runtime／actions；`HologramUiSession.send` 在已有本地作者时留有安全栅栏，不为旧控件模拟线协议或服务器 ACK。未取得完整作者源时，界面应明确等待／失败，不能把空报告标成已完成，也不能允许显示快照成为作者真值。已有结构配置、来源选择、处理、NBT、AE、网络分组、注释、文字图片、库保存及世界施工能力都在验收范围，不能仅以主菜单启动通过宣称功能完整。
+
+纯作者阶段的目标是 **零 GTMB 作者业务 RPC、零由这些编辑引起的服务器作者负载**，不是游戏连接上绝无 keepalive、移动或其他模组流量。源获取、远端库下载、真实终端／库存访问、正式提交与施工是单列的显式网络边界。新能力通过连接绑定的 `supportsAuthorDocuments` 协商；旧 peer、重连、任务取消、限额及过期传输应分别验证，不能把旧协议兼容说明扩展成所有混装版本均已实测。
+
+schema-1 模板通过原有原生适配器尝试明确升级；升级失败保留可读原稿及恢复保存，不因缺失模组捏造兼容性。物理 Cut 与 `editCut`（作者规划排除／剪贴板）仍是不同功能。世界资源、剪切资产和持久恢复的历史安全规则继续适用。
+
+## 本轮验证回执（不替代实机验收）
+
+最终集成验证使用 `gtmb-build-support/logs/25-integrated-check-build.log`：`check assemble reobfJar` **PASS，2m18s**；服务端回归 **179/179**、独立 JVM 本地作者 **12/12**、Industrial 回归及 snapshot ownership 检查通过；实际 Forge `SideTransformer` 的 CLIENT／SERVER 隔离测试均通过。普通 GTMB＋MUI2 2.3.92 原始 class 的静态 GUI ABI 检查 **9/9**（2,822 个引用），不加载业务 GUI、不运行 FML／GL，不能当作实机界面通过。编译产物 main 1,522／mixin 7／test 465 个 class，全部 major 52。
+
+格式器曾因只读 `~/.m2` 缓存写入失败；仅将外部 Equo/P2 缓存迁到可写工作区，未修改固定版本或关闭检查。原失败日志保留，后续 Spotless apply/check 与集成验证通过。五条原有 Mixin public-target 警告及 Netty direct-buffer fallback 警告保留；这是有边界的 PASS，不是零警告声明。
+
+两份实际私有输入构造的服务端源图已通过有界交接回归：48,003 格／375 slices／owned 13,340,090 B；123,369 格／963 slices／owned 33,561,552 B。quota 保持 **67,108,864 B**，并非放宽限额换取通过。owned 是受控图的所有权计费估算，**不是实测堆占用，也不是活世界 capture 测量**；原始私有输入不随文档公开。
+
+**最终无 overlay 核心实测已完成**：`implementation_measurements/after-integrated-results.md` 与 `48003~after-integrated.log`／`123369~after-integrated.log`。使用实际集成 `build/classes/java/main`、官方 Gson 2.2.4、JDK 8u512、`-Xms64m -Xmx768m -XX:+UseSerialGC`，每输入一次新 JVM，旧 editor/history 在 reopen 时仍存活；31/31 源码／class SHA-256 测前测后不变。
+
+| 实际输入 | readExpanded before → 最终集成 | draft read/reopen（旧 editor 存活） | 进程最大 RSS |
+| --- | --- | --- | --- |
+| 48,003 格 | 2,348.153 → 981.971 ms | 1,495.639 ms，PASS | 637,852 KiB |
+| 123,369 格 | 7,165.699 → 973.460 ms | before OOM → 3,858.441 ms，PASS | 950,852 KiB |
+
+两输入全源 JSON（含未知字段）、编码 NBT、文档 ID／revision、全部稳定格 ID／payload origin 校验通过；指定 native NBT decoder 类加载审计匹配 0（不是对所有未知 decoder 的方法计数）。123,369 格 parse 1,553.399 ms＋readExpanded 973.460 ms 约 2.527 s，**只是纯数据两阶段，不是游戏端到端 3–4 秒达标**。该输入完整校验另用 15,313.512 ms，全进程 27.584 s；校验同时持有旧／新文档与 sourceCopy，其 RSS 不代表日常编辑峰值。单次结果无 p95／统计置信结论；采样 heap 不等于 peak/live set，heap 上限不等于 RSS。文件写入计时未包含 fsync，不能代替产品原子保存耗时。
+
+测量绑定的 `AuthorDocumentIO.class` SHA-256：`524c53c1601f04aa5d5dbfe476e35a312c6001d22273a7b694bfc727484d10d0`；完整源码／class 指纹见 `after-integrated-snapshot.txt` 与 `after-integrated-postcheck.txt`。早期 frozen／overlay 数据和原 OOM 证据保留，但不冒充最终集成成绩；发布后按同核心 class hash 复核，核心变化须重跑。
+
+---
+
 v0.1.23 的 `HologramPictureBox` 在公共侧只处理有界 ARGB 样本、固定材质色板、滤镜、量化和边缘连通抠图，不引用客户端或 AWT。`HologramPictureFiles` 仅在客户端访问实例内 `MiaoBlueprintPicture`，在解码前核对文件和图像尺寸；原生 `HologramPictureEditorScreen` 使用有界单工作线程处理读取、预览和几何，过期回调按代数丢弃。图片定义嵌入既有 `textBoxNbt` 的 `picture` 分量，以 `gtmb_picture_` 区分整体身份；文字与图片共用 `HologramTextWorkflow` 的权限、版本、冲突与原子 staging。共享 `HologramMicroTiles` 按材质分别精确合并，混色整格不误折叠为单一普通方块。文字旧布局及旧序列化保留；复制、快照、世界姿态、撤销和删除均沿用既有附加链。
 
 v0.1.22 使用共用 `HologramGizmo` / `HologramGizmoRenderer` 提供轴线与 XY/XZ/YZ 面平移。文字的 R/Alt+R 先经工作区权限/结构范围检查，再通过 `HologramTextWorkflow.rotateSelected` 重建整个对象并原子校验；有界立方体朝向替代无限追加旋转历史。`layoutVersion` 区分历史旋转式竖向与新逐字直立栅格；当前弧形、弯曲及扭转以横行或竖列中点为基准。微体素用 BitSet 去重后按 X/Z/Y 贪心合并精确长方体，填满整格且无额外染色的等价普通实心立方体在服务端落为无 TileEntity 的普通方块，仍保留文字定义与归属。`editDelete` 仅接纳无活动控制器结构的作者蓝图，复用几何 staging/单步撤销，控制器 `restoreCell` 原意保留。文字属性共用稳定草稿值，原生 MUI2 调色及只读背包采样子窗口不触发真实槽位搬运。加载材料时的 `HologramPlacementLoadingScreen` 属于快捷放置允许的过渡界面。
