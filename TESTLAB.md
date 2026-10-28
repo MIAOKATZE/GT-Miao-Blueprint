@@ -1,10 +1,17 @@
 # 2026-10-28：客户端作者重构的验证边界
 
+## 大图片来源兼容补充（2026-10-28）
+
+作者结构字符串上限采用既有原生 8 MiB NBT 压缩字节上限的最大 Base64 长度 **11,184,812 字符**，不再误用 compact 内容池的 2 MiB 单项限制去拒绝未入池的 `textBoxNbt`。64 MiB 文档总量、深度及原生 8 MiB 解压／压缩保护均未降低。新增真实 1024×1024 高熵像素图片定义回归：原生编码超过 2 MiB，作者导入／草稿重开保留原编码，原生再次解码、定义校验与逐像素比较通过。
+
+修正后的 `check assemble reobfJar` 在 `27-compat-check.log` **PASS，1m50s**；179/179、12/12、Industrial、ownership、CLIENT／SERVER 隔离及静态 GUI ABI 9/9 均通过，1,994 个 main／mixin／test class 均为 major 52。实机游戏、GL 与完整业务 UI 仍待外部验收。下文 log25 和核心测量保留其各自快照身份，不将其自动套用为其他提交的运行证据。
+
+
 > 以下实验室历史文档原样保留。新作者路径采用本地 `AuthorDocument`，不能用服务端 FakePlayer、DTO、codec 或旧作者 Session 的通过记录代替真实客户端业务 UI、原生渲染与性能验收。
 
 ## 最终集成验证与证据边界
 
-最终集成验证使用 `gtmb-build-support/logs/25-integrated-check-build.log`：`check assemble reobfJar` **PASS，2m18s**；服务端回归 **179/179**、独立 JVM 本地作者 **12/12**、Industrial 回归及 snapshot ownership 检查通过；实际 Forge `SideTransformer` 的 CLIENT／SERVER 隔离测试均通过。普通 GTMB＋MUI2 2.3.92 原始 class 的静态 GUI ABI 检查 **9/9**（2,822 个引用），不加载业务 GUI、不运行 FML／GL，不能当作实机界面通过。编译产物 main 1,522／mixin 7／test 465 个 class，全部 major 52。
+首次完整集成验证使用 `gtmb-build-support/logs/25-integrated-check-build.log`：`check assemble reobfJar` **PASS，2m18s**；服务端回归 **179/179**、独立 JVM 本地作者 **12/12**、Industrial 回归及 snapshot ownership 检查通过；实际 Forge `SideTransformer` 的 CLIENT／SERVER 隔离测试均通过。普通 GTMB＋MUI2 2.3.92 原始 class 的静态 GUI ABI 检查 **9/9**（2,822 个引用），不加载业务 GUI、不运行 FML／GL，不能当作实机界面通过。编译产物 main 1,522／mixin 7／test 465 个 class，全部 major 52。
 
 格式器曾因只读 `~/.m2` 缓存写入失败；仅将外部 Equo/P2 缓存迁到可写工作区，未修改固定版本或关闭检查。原失败日志保留，后续 Spotless apply/check 与集成验证通过。五条原有 Mixin public-target 警告及 Netty direct-buffer fallback 警告保留；这是有边界的 PASS，不是零警告声明。
 

@@ -113,5 +113,56 @@ public final class HologramLocalAuthorAttachmentsRegression {
             restored.write()
                 .getString("vendorPicture"),
             "picture extensions survive settings edits");
+        largeNativePictureDefinition();
+    }
+
+    private static void largeNativePictureDefinition() throws Exception {
+        HologramPictureBox picture = new HologramPictureBox();
+        picture.filename = "large-picture.png";
+        picture.originalWidth = picture.originalHeight = picture.sourceWidth = picture.sourceHeight = 1024;
+        picture.width = picture.height = picture.shortSide = 1024;
+        picture.source = new int[1024 * 1024];
+        int random = 0x13579bdf;
+        for (int i = 0; i < picture.source.length; i++) {
+            random ^= random << 13;
+            random ^= random >>> 17;
+            random ^= random << 5;
+            picture.source[i] = random;
+        }
+        HologramTextBox definition = new HologramTextBox();
+        definition.id = HologramPictureBox.PREFIX + "22222222-2222-2222-2222-222222222222";
+        definition.picture = picture;
+        definition.validate();
+        String encoded = HologramBlueprintNbt.encodeCaptured(definition.write());
+        SimpleAssert.that(
+            encoded.length() > 2 * 1024 * 1024
+                && encoded.length() <= ((HologramBlueprintNbt.MAX_COMPRESSED + 2) / 3) * 4,
+            "native-valid maximum-size picture exceeds dictionary cap but fits native compressed envelope");
+        JsonObject group = new JsonObject();
+        group.addProperty("id", definition.id);
+        group.addProperty("textBoxNbt", encoded);
+        JsonArray structures = new JsonArray();
+        structures.add(group);
+        JsonObject source = new JsonObject();
+        source.addProperty("schema", 2);
+        source.add("structures", structures);
+        source.add("cells", new JsonArray());
+        AuthorDocumentIO.Limits limits = AuthorDocumentIO.Limits.defaults();
+        AuthorDocument imported = AuthorDocumentIO.readExpanded(source, limits);
+        AuthorDocument reopened = AuthorDocumentIO.read(AuthorDocumentIO.writeDraft(imported, limits), limits);
+        String restoredEncoded = reopened.structures()
+            .get(0)
+            .get("textBoxNbt")
+            .getAsString();
+        SimpleAssert
+            .eq(encoded, restoredEncoded, "large native picture encoding survives opaque author draft roundtrip");
+        HologramTextBox restored = HologramTextBox.read(HologramBlueprintNbt.decode(restoredEncoded));
+        restored.validate();
+        SimpleAssert.eq(definition.id, restored.id, "large native picture retains attachment identity");
+        SimpleAssert.that(
+            restored.picture != null && restored.picture.sourceWidth == 1024
+                && restored.picture.sourceHeight == 1024
+                && java.util.Arrays.equals(picture.source, restored.picture.source),
+            "reopened native definition validates and retains every source pixel");
     }
 }

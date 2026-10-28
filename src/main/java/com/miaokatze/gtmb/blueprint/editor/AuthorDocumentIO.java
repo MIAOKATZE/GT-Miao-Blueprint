@@ -58,7 +58,10 @@ public final class AuthorDocumentIO {
         }
 
         public static Limits defaults() {
-            return new Limits(64 * 1024 * 1024, 999_999, 32, 16_000_000, 2 * 1024 * 1024, 30_000_000, 4096);
+            // Attachment textBoxNbt is not a compact NBT-dictionary entry. Preserve the legacy native
+            // compressed 8 MiB envelope (Base64 upper bound); aggregate JSON/native decode limits stay separate.
+            int maxEncodedNativeNbt = ((8 * 1024 * 1024 + 2) / 3) * 4;
+            return new Limits(64 * 1024 * 1024, 999_999, 32, 16_000_000, maxEncodedNativeNbt, 30_000_000, 4096);
         }
     }
 

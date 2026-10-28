@@ -33,6 +33,7 @@ public final class AuthorDocumentRegression {
         regenerationAndResolution();
         annotationsAdmissionAndAdd();
         boundedOwnedCopyAndByteOracle();
+        largeOpaqueAttachment();
         treeIndex();
     }
 
@@ -766,6 +767,98 @@ public final class AuthorDocumentRegression {
             AuthorDocumentIO.readExpanded(occurrence, tiny);
             throw new AssertionError("Shared primitive bypassed occurrence quota");
         } catch (IOException expected) { /* logical per-occurrence bytes, not unique retained strings */ }
+    }
+
+    private static void largeOpaqueAttachment() throws Exception {
+        AuthorDocumentIO.Limits limits = AuthorDocumentIO.Limits.defaults();
+        check(limits.maxStringChars == ((8 * 1024 * 1024 + 2) / 3) * 4, "legacy compressed NBT Base64 ceiling");
+        check(
+            limits.maxBytes == 64 * 1024 * 1024 && limits.maxDepth == 32,
+            "attachment compatibility retains aggregate and depth guards");
+        String encoded = largePicturePayload();
+        check(
+            encoded.length() > 2 * 1024 * 1024 && encoded.length() < limits.maxStringChars,
+            "maximum-size high-entropy picture exceeds the unrelated compact-dictionary string cap");
+        JsonObject source = new JsonObject();
+        source.addProperty("schema", 2);
+        JsonArray structures = new JsonArray();
+        JsonObject picture = new JsonObject();
+        picture.addProperty("id", "gtmb_picture_00000000-0000-0000-0000-000000000001");
+        picture.addProperty("textBoxNbt", encoded);
+        structures.add(picture);
+        source.add("structures", structures);
+        source.add("cells", new JsonArray());
+        AuthorDocument imported = AuthorDocumentIO.readExpanded(source, limits);
+        check(
+            imported.groups.get(
+                picture.get("id")
+                    .getAsString()).source.get("textBoxNbt")
+                == picture.get("textBoxNbt"),
+            "large encoded attachment remains an opaque shared immutable value, never decoded by import");
+        byte[] draft = AuthorDocumentIO.writeDraft(imported, limits);
+        AuthorDocument reopened = AuthorDocumentIO.read(draft, limits);
+        check(
+            encoded.equals(
+                reopened.structures()
+                    .get(0)
+                    .get("textBoxNbt")
+                    .getAsString()),
+            "large picture NBT survives draft save/reopen byte-for-byte as encoded text");
+        char[] tooLarge = new char[limits.maxStringChars + 1];
+        Arrays.fill(tooLarge, 'A');
+        picture.addProperty("textBoxNbt", new String(tooLarge));
+        try {
+            AuthorDocumentIO.readExpanded(source, limits);
+            throw new AssertionError("Attachment string larger than legacy compressed NBT Base64 ceiling admitted");
+        } catch (IOException expected) { /* independent per-string ceiling remains enforced */ }
+    }
+
+    /** Builds a real gzip/Base64 NBT picture fixture with Java I/O only; no native NBT decoder/classes. */
+    private static String largePicturePayload() throws IOException {
+        java.io.ByteArrayOutputStream compressed = new java.io.ByteArrayOutputStream();
+        try (java.io.DataOutputStream output = new java.io.DataOutputStream(
+            new java.io.BufferedOutputStream(new java.util.zip.GZIPOutputStream(compressed)))) {
+            output.writeByte(10);
+            output.writeUTF("");
+            output.writeByte(8);
+            output.writeUTF("id");
+            output.writeUTF("gtmb_picture_00000000-0000-0000-0000-000000000001");
+            nbtInteger(output, "pixelX", 1);
+            nbtInteger(output, "pixelY", 1);
+            nbtInteger(output, "thickness", 1);
+            output.writeByte(10);
+            output.writeUTF("picture");
+            output.writeByte(8);
+            output.writeUTF("filename");
+            output.writeUTF("large-picture.png");
+            for (String key : new String[] { "originalWidth", "originalHeight", "sourceWidth", "sourceHeight", "width",
+                "height", "shortSide" }) nbtInteger(output, key, 1024);
+            nbtInteger(output, "saturation", 100);
+            output.writeByte(1);
+            output.writeUTF("keepAspect");
+            output.writeByte(1);
+            output.writeByte(11);
+            output.writeUTF("source");
+            output.writeInt(1024 * 1024);
+            int random = 0x13579bdf;
+            for (int i = 0; i < 1024 * 1024; i++) {
+                random ^= random << 13;
+                random ^= random >>> 17;
+                random ^= random << 5;
+                output.writeInt(random);
+            }
+            output.writeByte(0);
+            output.writeByte(0);
+        }
+        check(compressed.size() <= 8 * 1024 * 1024, "picture fixture within native compressed-byte budget");
+        return java.util.Base64.getEncoder()
+            .encodeToString(compressed.toByteArray());
+    }
+
+    private static void nbtInteger(java.io.DataOutputStream output, String key, int value) throws IOException {
+        output.writeByte(3);
+        output.writeUTF(key);
+        output.writeInt(value);
     }
 
     private static void treeIndex() {
