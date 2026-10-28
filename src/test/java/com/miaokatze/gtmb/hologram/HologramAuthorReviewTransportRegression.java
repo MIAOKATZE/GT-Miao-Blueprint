@@ -33,13 +33,14 @@ final class HologramAuthorReviewTransportRegression {
     private HologramAuthorReviewTransportRegression() {}
 
     static void run() throws Exception {
+        cacheIdentityAccounting();
         deadlines();
         correlation();
         compilePayloadDoesNotDuplicateSource();
         selectedCellQuery();
         EntityPlayerMP player = HologramLibraryPreparationRegression.connectedPlayer("AuthorReviewOwner");
         long baseline = HologramProcessGovernor.retainedBytes();
-        Map<String, Long> cacheBaseline = cacheCharges();
+        Map<Object, CacheCharge> cacheBaseline = cacheCharges();
         ThreadPoolExecutor io = (ThreadPoolExecutor) get(HologramAuthorReviewService.class, "IO");
         AuthorDocument frozen = source();
         byte[] draft = AuthorDocumentIO.writeDraft(frozen, HologramAuthorReviewProtocol.limits());
@@ -112,19 +113,7 @@ final class HologramAuthorReviewTransportRegression {
             SimpleAssert.that(
                 Arrays.equals(draft, AuthorDocumentIO.writeDraft(frozen, HologramAuthorReviewProtocol.limits())),
                 "review retains exact source, unknown fields, origins and obligations");
-            Map<String, Long> cacheDelta = cacheCharges();
-            for (Map.Entry<String, Long> entry : cacheBaseline.entrySet())
-                cacheDelta.merge(entry.getKey(), -entry.getValue(), Long::sum);
-            cacheDelta.values()
-                .removeIf(value -> value == 0L);
-            long cacheGrowth = 0;
-            for (Map.Entry<String, Long> entry : cacheDelta.entrySet()) {
-                SimpleAssert.that(
-                    "nbt.exact-cache".equals(entry.getKey()) || "analysis.domain-cache".equals(entry.getKey()),
-                    "only identified native analysis caches may change during explicit review: " + cacheDelta);
-                cacheGrowth += entry.getValue();
-            }
-            System.out.println("Author review named cache charge delta: " + cacheDelta);
+            long cacheGrowth = cacheDelta(cacheBaseline, cacheCharges(), true);
             long beforeCancel = HologramProcessGovernor.retainedBytes();
             HologramAuthorReviewService
                 .receive(player, HologramAuthorReviewProtocol.packet(proof, "authorReviewCancel"));
@@ -157,20 +146,24 @@ final class HologramAuthorReviewTransportRegression {
                 NBTTagCompound cancelled = proof(frozen, bytes, 102);
                 HologramAuthorReviewService.receive(player, cancelled);
                 upload(player, cancelled, bytes);
+                Object queuedTicket = active().get(player.getUniqueID());
                 HologramAuthorReviewService
                     .receive(player, HologramAuthorReviewProtocol.packet(cancelled, "authorReviewCancel"));
                 SimpleAssert.that(active().isEmpty(), "cancel retires exact ticket immediately");
-                SimpleAssert.that(
-                    HologramProcessGovernor.retainedBytes() > retiredBaseline,
-                    "queued source bytes keep lease until worker retires");
+                SimpleAssert.eq(
+                    1,
+                    ((AtomicInteger) get(queuedTicket, "references")).get(),
+                    "cancelled queued source retains exactly its worker reference");
+                assertReviewBytes(
+                    baseline,
+                    cacheBaseline,
+                    HologramAuthorReviewProtocol.RETAINED_BYTES,
+                    "queued source retains the exact ticket reservation until its worker retires");
             } finally {
                 release.countDown();
             }
             barrier(io);
-            SimpleAssert.eq(
-                retiredBaseline,
-                HologramProcessGovernor.retainedBytes(),
-                "cancelled worker closes retained lease exactly once");
+            assertReviewBytes(baseline, cacheBaseline, 0, "cancelled worker closes retained lease exactly once");
             int calls = callbacks.get();
             ownerCallbacks();
             SimpleAssert.eq(calls, callbacks.get(), "cancelled source never reaches legacy callback");
@@ -184,14 +177,14 @@ final class HologramAuthorReviewTransportRegression {
                 Arrays.copyOfRange(bytes, 0, Math.min(bytes.length, HologramLibraryProtocol.CHUNK_BYTES)));
             HologramAuthorReviewService.receive(player, gap);
             SimpleAssert.that(active().isEmpty(), "out-of-order review upload fails closed");
-            SimpleAssert.eq(retiredBaseline, HologramProcessGovernor.retainedBytes(), "malformed upload closes quota");
+            assertReviewBytes(baseline, cacheBaseline, 0, "malformed upload closes quota");
 
             NBTTagCompound toolChanged = proof(frozen, bytes, 104);
             HologramAuthorReviewService.receive(player, toolChanged);
             player.inventory.currentItem = 1;
             HologramAuthorReviewService.tick();
             SimpleAssert.that(active().isEmpty(), "tool change retires independent review capability");
-            SimpleAssert.eq(retiredBaseline, HologramProcessGovernor.retainedBytes(), "tool retirement closes quota");
+            assertReviewBytes(baseline, cacheBaseline, 0, "tool retirement closes quota");
             player.inventory.currentItem = 0;
             attachmentTransport(player, io);
         } finally {
@@ -365,9 +358,20 @@ final class HologramAuthorReviewTransportRegression {
             "even real progress never extends hard retention ceiling");
     }
 
-    /** Attribute cache residency by the actual transferred lease owner, without clearing or collecting caches. */
-    private static Map<String, Long> cacheCharges() throws Exception {
-        Map<String, Long> charges = new java.util.TreeMap<>();
+    private static final class CacheCharge {
+
+        final String owner;
+        final long bytes;
+
+        CacheCharge(String owner, long bytes) {
+            this.owner = owner;
+            this.bytes = bytes;
+        }
+    }
+
+    /** Capture actual lease identities, not cache values; weak owners remain free to retire naturally. */
+    private static Map<Object, CacheCharge> cacheCharges() throws Exception {
+        Map<Object, CacheCharge> charges = new java.util.IdentityHashMap<>();
         Map<?, ?> owners = (Map<?, ?>) get(HologramRetainedCache.class, "OWNERS");
         Object[] snapshot;
         synchronized (owners) {
@@ -377,10 +381,67 @@ final class HologramAuthorReviewTransportRegression {
         for (Object owner : snapshot) synchronized (owner) {
             for (Object leaseObject : (java.util.Set<?>) get(owner, "leases")) {
                 HologramProcessGovernor.Lease lease = (HologramProcessGovernor.Lease) leaseObject;
-                charges.merge(lease.owner(), lease.bytes(), Long::sum);
+                SimpleAssert.eq(
+                    null,
+                    charges.put(lease, new CacheCharge(lease.owner(), lease.bytes())),
+                    "one cache reservation has exactly one retained owner");
             }
         }
         return charges;
+    }
+
+    /** Only proven pre-existing identities may retire; new unexpected owners cannot hide behind that retirement. */
+    private static long cacheDelta(Map<Object, CacheCharge> before, Map<Object, CacheCharge> after, boolean log) {
+        Map<String, Long> added = new java.util.TreeMap<>(), retired = new java.util.TreeMap<>();
+        long bytes = 0;
+        for (Map.Entry<Object, CacheCharge> entry : before.entrySet()) {
+            CacheCharge old = entry.getValue(), current = after.get(entry.getKey());
+            if (current == null) {
+                retired.merge(old.owner, old.bytes, Long::sum);
+                bytes -= old.bytes;
+            } else {
+                SimpleAssert.eq(old.owner, current.owner, "retained cache lease owner is immutable");
+                SimpleAssert.eq(old.bytes, current.bytes, "retained cache lease charge is immutable");
+            }
+        }
+        for (Map.Entry<Object, CacheCharge> entry : after.entrySet()) {
+            if (before.containsKey(entry.getKey())) continue;
+            CacheCharge fresh = entry.getValue();
+            SimpleAssert.that(
+                "nbt.exact-cache".equals(fresh.owner) || "analysis.domain-cache".equals(fresh.owner),
+                "explicit review created an unexpected cache lease: " + fresh.owner + " bytes=" + fresh.bytes);
+            added.merge(fresh.owner, fresh.bytes, Long::sum);
+            bytes += fresh.bytes;
+        }
+        if (log) System.out.println("Author review cache identities: added=" + added + "; retired=" + retired);
+        return bytes;
+    }
+
+    private static void assertReviewBytes(long baseline, Map<Object, CacheCharge> cacheBaseline, long reviewBytes,
+        String message) throws Exception {
+        long expected = baseline + cacheDelta(cacheBaseline, cacheCharges(), false) + reviewBytes;
+        SimpleAssert.eq(expected, HologramProcessGovernor.retainedBytes(), message);
+    }
+
+    private static void cacheIdentityAccounting() {
+        Object retiredSchemaLease = new Object(), retainedLease = new Object(), analysisLease = new Object();
+        Map<Object, CacheCharge> before = new java.util.IdentityHashMap<>(), after = new java.util.IdentityHashMap<>();
+        before.put(retiredSchemaLease, new CacheCharge("schema.page.resident", 100));
+        before.put(retainedLease, new CacheCharge("nbt.exact-cache", 7));
+        after.put(retainedLease, new CacheCharge("nbt.exact-cache", 7));
+        after.put(analysisLease, new CacheCharge("analysis.domain-cache", 20));
+        SimpleAssert.eq(
+            -80L,
+            cacheDelta(before, after, false),
+            "exact old weak-cache retirement and expected new analysis ownership are independently accounted");
+        after.put(new Object(), new CacheCharge("schema.page.resident", 1));
+        boolean rejected = false;
+        try {
+            cacheDelta(before, after, false);
+        } catch (AssertionError expected) {
+            rejected = true;
+        }
+        SimpleAssert.that(rejected, "new unexpected lease is rejected even when its owner's net bytes decreased");
     }
 
     private static void compilePayloadDoesNotDuplicateSource() throws Exception {
