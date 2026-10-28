@@ -58,7 +58,7 @@ final class HologramRenderer {
     private static final long PREVIEW_BUILD_NANOS = 2_000_000L;
     private static PreviewPreparation previewPreparation;
     private static boolean projectionPending;
-    private static int modelDemandCursor;
+    private static int modelDemandCursor, modelDependencyCursor;
     private static final List<HologramState.Cell> linkedPreviewCells = new ArrayList<>();
     static int lastPreviewBuiltRegions, lastSnapshotDirtyRegions;
     private static List<RoleMarker> cachedMarkers = new ArrayList<>();
@@ -564,6 +564,16 @@ final class HologramRenderer {
                 Face face = cachedOutlines.get(Math.floorMod(modelDemandCursor++, cachedOutlines.size()));
                 HologramSnapshotModelsClient.requestVisible(state, face.cell, currentView);
             }
+            if (state.authorProjection != null) {
+                modelDependencyCursor = retryAuthorModelDemands(
+                    state,
+                    cachedOutlines.size(),
+                    index -> cachedOutlines.get(index).cell,
+                    modelDependencyCursor,
+                    currentView,
+                    Math.min(projectionDeadline, System.nanoTime() + 250_000L),
+                    System::nanoTime);
+            }
         }
         int hovered = -1;
         double hoveredDepth = Double.NEGATIVE_INFINITY;
@@ -763,6 +773,22 @@ final class HologramRenderer {
         presentedFrame = projectedFrame;
         presentedState = state;
         return hovered;
+    }
+
+    /**
+     * A full demand queue can reject a connected model's neighbor even after the reader itself is loaded.
+     * Retry readiness, not only the reader payload, without rebuilding cached regions or scanning every model.
+     * The cursor survives yields; one bounded 27-cell neighborhood may finish past the shared frame deadline.
+     */
+    static int retryAuthorModelDemands(HologramState state, int count,
+        java.util.function.IntFunction<HologramState.Cell> cellAt, int cursor, boolean current, long deadline,
+        java.util.function.LongSupplier clock) {
+        if (state == null || state.authorProjection == null || count <= 0) return cursor;
+        for (int work = 0; work < Math.min(16, count) && (work == 0 || clock.getAsLong() < deadline); work++) {
+            HologramState.Cell cell = cellAt.apply(Math.floorMod(cursor++, count));
+            HologramSnapshotModelsClient.ready(state, cell, current);
+        }
+        return cursor;
     }
 
     /** Native blocks and linked TE previews consume the exact camera used by face projection and picking. */
