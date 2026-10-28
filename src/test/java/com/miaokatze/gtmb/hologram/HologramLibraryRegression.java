@@ -49,6 +49,7 @@ public final class HologramLibraryRegression {
         publicStorageUpgrade();
         boundedUpgradeReport();
         publicExpandedBudgetBeforePublish();
+        publicOwnerAdmission();
         contentAdmissionWithoutWorkspace();
         integratedPrivateIngress();
         trustedCacheQuotasAndSavedReceipt();
@@ -72,6 +73,7 @@ public final class HologramLibraryRegression {
         permissions();
         streamingDraftProgress();
         cancelledServerPreparationReleasesQueue();
+        HologramLibraryStartupRegression.run();
     }
 
     @SuppressWarnings("unchecked")
@@ -263,6 +265,80 @@ public final class HologramLibraryRegression {
             count += size;
         }
         SimpleAssert.eq(1024, count, "large public catalogs report every entry without a burst mailbox overflow");
+    }
+
+    private static void publicOwnerAdmission() throws Exception {
+        Path root = Files.createTempDirectory("gtmb-public-owner-review-");
+        HologramServerLibrary store = new HologramServerLibrary(root.resolve("entries"), root.resolve("library.cfg"));
+        try {
+            runWorker(store, () -> {});
+            Object publisher = peer(player(UUID.randomUUID(), "ReviewedPublisher"));
+            HologramBlueprintProcessing.Policy policy = HologramBlueprintProcessing.defaults("self", 0);
+            policy.confirmedStages.addAll(HologramBlueprintProcessing.STAGES);
+            HologramPresets.Preset source = HologramBlueprintProcessing
+                .processDetached(blueprint(), policy, 0, 0, 0, 0);
+            NBTTagCompound receipt = HologramBlueprintNbt.decode(source.processingNbt);
+            NBTTagCompound forged = new NBTTagCompound();
+            forged.setBoolean("forgedApproval", true);
+            receipt.setTag("extensions", forged);
+            source.processingNbt = HologramBlueprintNbt.encodeCanonical(receipt);
+            byte[] original = HologramServerLibrary.encodeShare(source);
+            java.util.concurrent.atomic.AtomicInteger calls = new java.util.concurrent.atomic.AtomicInteger();
+            Thread owner = Thread.currentThread();
+            try (
+                com.miaokatze.gtmb.api.GTMBExtensions.Registration registration = com.miaokatze.gtmb.api.BlueprintSnapshots
+                    .register(
+                        "gtmb_test:public-owner-admission",
+                        com.miaokatze.gtmb.api.BlueprintSnapshots.Stage.AUTHORING_COMPLETE,
+                        snapshot -> {
+                            SimpleAssert.that(
+                                Thread.currentThread() == owner,
+                                "public completion callback runs on server owner rather than library IO");
+                            calls.incrementAndGet();
+                            NBTTagCompound report = new NBTTagCompound();
+                            report.setString("proof", "actual-owner-review");
+                            return report;
+                        })) {
+                transfer(store, publisher, original, "", false);
+                SimpleAssert.eq(1, calls.get(), "one completion callback before public storage");
+                String id = HologramBlueprintFiles.managedPublic(root.resolve("entries"))
+                    .keySet()
+                    .iterator()
+                    .next();
+                NBTTagCompound accepted = HologramBlueprintNbt.decode(store.get(id).processingNbt);
+                SimpleAssert.that(
+                    !accepted.getCompoundTag("extensions")
+                        .hasKey("forgedApproval"),
+                    "publication replaces forged incoming extension reports");
+                SimpleAssert.eq(
+                    "actual-owner-review",
+                    accepted.getCompoundTag("extensions")
+                        .getCompoundTag("gtmb_test:public-owner-admission")
+                        .getString("proof"),
+                    "published bytes contain the actual owner-derived report");
+                byte[] before = Files.readAllBytes(HologramBlueprintFiles.resolve(root.resolve("entries"), id));
+                try (
+                    com.miaokatze.gtmb.api.GTMBExtensions.Registration reject = com.miaokatze.gtmb.api.BlueprintSnapshots
+                        .register(
+                            "gtmb_test:public-owner-veto",
+                            com.miaokatze.gtmb.api.BlueprintSnapshots.Stage.AUTHORING_COMPLETE,
+                            snapshot -> { throw new IOException("owner publication veto"); })) {
+                    denied(
+                        () -> transfer(store, publisher, original, id, false),
+                        "actual owner veto prevents public storage replacement");
+                }
+                SimpleAssert.that(
+                    Arrays.equals(
+                        before,
+                        Files.readAllBytes(HologramBlueprintFiles.resolve(root.resolve("entries"), id))),
+                    "owner review rejection preserves previous public artifact bytes");
+                SimpleAssert.eq(0, (Integer) get(store, "activeUploads"), "public rejection releases upload slot");
+                SimpleAssert.eq(0L, (Long) get(store, "reservedBytes"), "public rejection releases byte quota");
+                SimpleAssert.eq(0L, (Long) get(store, "reviewDtoBytes"), "public rejection releases DTO quota");
+            }
+        } finally {
+            store.stop();
+        }
     }
 
     private static void publicExpandedBudgetBeforePublish() throws Exception {
@@ -1907,8 +1983,14 @@ public final class HologramLibraryRegression {
                     HologramLibraryProtocol.digest()
                         .digest(bytes)));
         begin.setString("replaceId", replace);
-        runWorker(store, () -> handle(store, peer, begin));
+        EntityPlayerMP publisher = (EntityPlayerMP) get(peer, "player");
+        net.minecraft.network.NetHandlerPlayServer previousConnection = publisher.playerNetServerHandler;
+        EntityPlayerMP connected = previousConnection == null
+            ? HologramLibraryPreparationRegression.connectedPlayer("UploadReviewConnection")
+            : null;
+        if (connected != null) publisher.playerNetServerHandler = connected.playerNetServerHandler;
         try {
+            runWorker(store, () -> handle(store, peer, begin));
             for (int offset = 0, index = 0; offset
                 < bytes.length; offset += HologramLibraryProtocol.CHUNK_BYTES, index++) {
                 NBTTagCompound chunk = HologramLibraryProtocol.request("uploadChunk");
@@ -1922,9 +2004,38 @@ public final class HologramLibraryRegression {
                         Math.min(bytes.length, offset + HologramLibraryProtocol.CHUNK_BYTES)));
                 runWorker(store, () -> handle(store, peer, chunk));
             }
+            Object upload = get(peer, "upload");
+            if (upload == null) {
+                SimpleAssert.that(
+                    !HologramAuthorServerReview.hasExternalCallbacks(),
+                    "only builtin publication completes directly on the established IO path");
+            } else {
+                SimpleAssert.that(
+                    (Boolean) get(upload, "reviewPending"),
+                    "external public upload waits for native owner review before storage");
+                HologramWorkBudget.startServerTick();
+                try {
+                    com.miaokatze.gtmb.util.ServerTaskScheduler.INSTANCE.onServerTick(
+                        new cpw.mods.fml.common.gameevent.TickEvent.ServerTickEvent(
+                            cpw.mods.fml.common.gameevent.TickEvent.Phase.END));
+                } finally {
+                    HologramWorkBudget.endServerTick();
+                }
+                SimpleAssert.that((Boolean) get(upload, "reviewDone"), "public owner review returns a bounded outcome");
+                runWorker(store, () -> invoke(store, "finishReviewedUpload", peer));
+                SimpleAssert.that(get(peer, "upload") == null, "publication releases the upload reservation");
+                String rejection = (String) get(upload, "reviewFailure");
+                if (rejection != null) throw new IOException(rejection);
+            }
         } catch (Exception failure) {
             runWorker(store, () -> invoke(store, "abort", peer));
             throw failure;
+        } finally {
+            if (connected != null) {
+                connected.playerNetServerHandler.netManager.channel()
+                    .close();
+                publisher.playerNetServerHandler = previousConnection;
+            }
         }
     }
 

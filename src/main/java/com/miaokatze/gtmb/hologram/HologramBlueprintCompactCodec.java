@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 
 import com.google.gson.ExclusionStrategy;
 import com.google.gson.FieldAttributes;
@@ -24,6 +25,8 @@ import com.google.gson.stream.JsonWriter;
 public final class HologramBlueprintCompactCodec {
 
     private static final String ENCODING = "gtmb-dictionary-1";
+    private static final Pattern COORDINATE = Pattern.compile("-?[0-9]+");
+    private static final Pattern DICTIONARY_INDEX = Pattern.compile("0|[1-9][0-9]{0,9}");
     static final int MAX_DICTIONARY = 65536;
     static final int MAX_CELLS = HologramBlueprintLimits.MAX_CELLS;
     private static final Gson GSON = new GsonBuilder().serializeNulls()
@@ -145,7 +148,26 @@ public final class HologramBlueprintCompactCodec {
         try {
             JsonElement value = new JsonParser().parse(text);
             if (!value.isJsonObject()) throw new IOException("Blueprint JSON root must be an object");
-            JsonObject root = value.getAsJsonObject();
+            return expandOwned(value.getAsJsonObject(), limit, null);
+        } catch (RuntimeException invalid) {
+            throw new IOException("Invalid compact blueprint JSON", invalid);
+        }
+    }
+
+    /**
+     * Internal author adapter operation: mutates its caller-owned strict parse tree, but retains no aliases.
+     * Unlike parse(), this does not parse text or relax grammar. The caller must complete document admission.
+     */
+    public static void expandAuthorInput(JsonObject root,
+        com.miaokatze.gtmb.blueprint.editor.AuthorDocumentIO.Limits limits) throws IOException {
+        if (limits.maxBytes > HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES)
+            throw new IOException("Blueprint JSON byte budget");
+        expandOwned(root, limits.maxBytes, limits);
+    }
+
+    private static JsonObject expandOwned(JsonObject root, int limit,
+        com.miaokatze.gtmb.blueprint.editor.AuthorDocumentIO.Limits authorLimits) throws IOException {
+        try {
             if (!root.has("encoding")) {
                 List<JsonObject> legacy = new ArrayList<>();
                 if (root.has("blueprint")) legacy.add(object(root.get("blueprint")));
@@ -217,6 +239,7 @@ public final class HologramBlueprintCompactCodec {
                 total += size;
                 if (total > limit) throw new IOException("Expanded blueprint collection byte budget");
             }
+            if (authorLimits != null) preflightAuthorExpansion(root, blueprints, materials, authorLimits);
             for (JsonObject blueprint : blueprints) {
                 resolveNbt(blueprint, nbt);
                 for (String field : new String[] { "cells", "palette" }) {
@@ -246,6 +269,55 @@ public final class HologramBlueprintCompactCodec {
         }
     }
 
+    /** Logical node/depth/cell limits are checked before allocating any expanded material containers. */
+    private static void preflightAuthorExpansion(JsonObject root, List<JsonObject> blueprints, JsonArray materials,
+        com.miaokatze.gtmb.blueprint.editor.AuthorDocumentIO.Limits limits) throws IOException {
+        long nodes = nodeCount(root) - nodeCount(root.get("materials")) - nodeCount(root.get("nbt")) - 1;
+        long[] materialNodes = new long[materials.size()];
+        int[] materialDepths = new int[materials.size()];
+        for (int i = 0; i < materials.size(); i++) {
+            materialNodes[i] = nodeCount(materials.get(i));
+            materialDepths[i] = valueDepth(materials.get(i));
+        }
+        int blueprintDepth = root.has("presets") ? 2 : 1;
+        for (JsonObject blueprint : blueprints) for (String field : new String[] { "cells", "palette" }) {
+            JsonElement value = blueprint.get(field);
+            if (value == null || value.isJsonNull()) continue;
+            JsonArray rows = array(value);
+            if (field.equals("cells") && rows.size() > limits.maxCells)
+                throw new IOException("Cell count budget exceeded");
+            for (JsonElement row : rows) {
+                int ref = index(
+                    row.getAsJsonArray()
+                        .get(0),
+                    materials.size());
+                // The reference is [id, coordinates]; expanded cell is material + coordinates, one object.
+                nodes += materialNodes[ref] - 3;
+                // Author documents reserve two levels for their durable draft source envelope.
+                if (blueprintDepth + 4 + materialDepths[ref] > limits.maxDepth)
+                    throw new IOException("JSON structure budget exceeded");
+            }
+        }
+        if (nodes > limits.maxNodes) throw new IOException("JSON structure budget exceeded");
+    }
+
+    private static long nodeCount(JsonElement value) {
+        long nodes = 1;
+        if (value.isJsonObject()) for (Map.Entry<String, JsonElement> field : value.getAsJsonObject()
+            .entrySet()) nodes += nodeCount(field.getValue());
+        else if (value.isJsonArray()) for (JsonElement child : value.getAsJsonArray()) nodes += nodeCount(child);
+        return nodes;
+    }
+
+    private static int valueDepth(JsonElement value) {
+        int depth = 0;
+        if (value.isJsonObject()) for (Map.Entry<String, JsonElement> field : value.getAsJsonObject()
+            .entrySet()) depth = Math.max(depth, 1 + valueDepth(field.getValue()));
+        else if (value.isJsonArray())
+            for (JsonElement child : value.getAsJsonArray()) depth = Math.max(depth, 1 + valueDepth(child));
+        return depth;
+    }
+
     private static long expandedSize(JsonObject blueprint, JsonArray materials, long[] nbtSizes, long[] sizes)
         throws IOException {
         long size = 2;
@@ -266,13 +338,14 @@ public final class HologramBlueprintCompactCodec {
                     int ref = index(row.get(0), materials.size());
                     JsonObject coordinates = object(row.get(1));
                     for (Map.Entry<String, JsonElement> coordinate : coordinates.entrySet()) {
-                        if (!coordinate.getKey()
-                            .matches("[xyz]")) throw new IOException("Invalid compact coordinate field");
+                        if (!("x".equals(coordinate.getKey()) || "y".equals(coordinate.getKey())
+                            || "z".equals(coordinate.getKey())))
+                            throw new IOException("Invalid compact coordinate field");
                         JsonElement number = coordinate.getValue();
                         if (!number.isJsonPrimitive() || !number.getAsJsonPrimitive()
                             .isNumber()
-                            || !number.getAsString()
-                                .matches("-?[0-9]+"))
+                            || !COORDINATE.matcher(number.getAsString())
+                                .matches())
                             throw new IOException("Invalid compact coordinate");
                         try {
                             Integer.parseInt(number.getAsString());
@@ -327,8 +400,8 @@ public final class HologramBlueprintCompactCodec {
         if (value == null || !value.isJsonPrimitive()
             || !value.getAsJsonPrimitive()
                 .isNumber()
-            || !value.getAsString()
-                .matches("0|[1-9][0-9]{0,9}"))
+            || !DICTIONARY_INDEX.matcher(value.getAsString())
+                .matches())
             throw new IOException("Invalid blueprint dictionary reference");
         long index = Long.parseLong(value.getAsString());
         if (index >= count) throw new IOException("Blueprint dictionary reference out of range");
@@ -397,31 +470,64 @@ public final class HologramBlueprintCompactCodec {
 
     // Gson's own escaping determines the exact expanded UTF-8 budget; no expanded string is allocated.
     private static long measure(JsonElement value) throws IOException {
-        final long[] count = { 0 };
-        java.io.Writer writer = new java.io.Writer() {
-
-            @Override
-            public void write(char[] chars, int offset, int length) throws IOException {
-                for (int i = offset; i < offset + length; i++) {
-                    char c = chars[i];
-                    count[0] += c < 0x80 ? 1 : c < 0x800 ? 2 : Character.isLowSurrogate(c) ? 1 : 3;
-                }
-                if (count[0] > HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES)
-                    throw new IOException("Expanded JSON byte budget");
-            }
-
-            @Override
-            public void flush() {}
-
-            @Override
-            public void close() {}
-        };
+        CountingWriter writer = new CountingWriter();
         GSON.toJson(value, writer);
-        return count[0];
+        return writer.count;
+    }
+
+    private static final class CountingWriter extends java.io.Writer {
+
+        private long count;
+
+        @Override
+        public void write(char[] chars, int offset, int length) throws IOException {
+            for (int i = offset; i < offset + length; i++) count(chars[i]);
+            checkBudget();
+        }
+
+        @Override
+        public void write(String value, int offset, int length) throws IOException {
+            for (int i = offset; i < offset + length; i++) count(value.charAt(i));
+            checkBudget();
+        }
+
+        @Override
+        public void write(int value) throws IOException {
+            count((char) value);
+            checkBudget();
+        }
+
+        private void count(char c) {
+            // Preserve the existing admission formula, including isolated surrogate code units. Gson still owns
+            // escaping; changing malformed-surrogate accounting would be a separate format/budget decision.
+            count += c < 0x80 ? 1 : c < 0x800 ? 2 : Character.isLowSurrogate(c) ? 1 : 3;
+        }
+
+        private void checkBudget() throws IOException {
+            if (count > HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES)
+                throw new IOException("Expanded JSON byte budget");
+        }
+
+        @Override
+        public void flush() {}
+
+        @Override
+        public void close() {}
     }
 
     static byte[] encode(HologramPresets.Preset blueprint, HologramDraftEncoding.Progress progress) throws IOException {
         return encode(java.util.Collections.singletonList(blueprint), false, null, progress);
+    }
+
+    /** Capture source provenance is transport metadata, separate from portable preset DTOs. */
+    static byte[] encodeAuthorSource(HologramPresets.Preset blueprint,
+        com.miaokatze.gtmb.blueprint.editor.AuthorDocument.SourceFrame frame, HologramDraftEncoding.Progress progress)
+        throws IOException {
+        JsonObject fields = new JsonObject();
+        fields.add(
+            com.miaokatze.gtmb.blueprint.editor.AuthorDocumentIO.SOURCE_FRAME_FIELD,
+            com.miaokatze.gtmb.blueprint.editor.AuthorDocumentIO.sourceFrameJson(frame));
+        return encode(java.util.Collections.singletonList(blueprint), false, fields, progress);
     }
 
     static byte[] encodeLibrary(List<HologramPresets.Preset> presets) throws IOException {
@@ -441,8 +547,10 @@ public final class HologramBlueprintCompactCodec {
         if (presets.size() > 32) throw new IOException("Blueprint collection entry budget");
         for (HologramPresets.Preset preset : presets) total += (long) preset.cells.size() + preset.palette.size();
         final long all = total;
+        final int envelopeSchema = extra == null
+            || extra.has(com.miaokatze.gtmb.blueprint.editor.AuthorDocumentIO.SOURCE_FRAME_FIELD) ? 2 : 1;
         JsonObject rootMetadata = new JsonObject();
-        rootMetadata.addProperty("schema", extra == null ? 2 : 1);
+        rootMetadata.addProperty("schema", envelopeSchema);
         if (extra != null) for (Map.Entry<String, JsonElement> field : extra.entrySet())
             rootMetadata.add(field.getKey(), field.getValue());
         rootMetadata.add(
@@ -465,7 +573,7 @@ public final class HologramBlueprintCompactCodec {
             public void write(JsonWriter output, Encoded ignored) throws IOException {
                 output.beginObject()
                     .name("schema")
-                    .value(extra == null ? 2 : 1)
+                    .value(envelopeSchema)
                     .name("encoding")
                     .value(ENCODING);
                 if (extra != null) for (Map.Entry<String, JsonElement> field : extra.entrySet()) {

@@ -32,9 +32,40 @@ public final class HologramLocalAuthorRegressionTest {
             cases,
             "draft_persistence_and_recovery",
             com.miaokatze.gtmb.client.hologram.HologramLocalAuthorPersistenceRegression::run);
+        add(
+            cases,
+            "author_save_name_preservation",
+            com.miaokatze.gtmb.client.hologram.HologramAuthorSaveNameRegression::run);
+        add(
+            cases,
+            "author_model_deadline_scheduling",
+            com.miaokatze.gtmb.client.hologram.HologramAuthorProjectionSchedulerRegression::run);
+        add(
+            cases,
+            "author_owned_row_isolation",
+            com.miaokatze.gtmb.client.hologram.HologramAuthorOwnedRowRegression::run);
+        add(
+            cases,
+            "author_saturated_neighbor_demand",
+            com.miaokatze.gtmb.client.hologram.HologramAuthorModelDemandRegression::run);
+        add(
+            cases,
+            "bounded_material_dedup_cache",
+            com.miaokatze.gtmb.client.hologram.HologramMaterialCacheRegression::run);
+        add(
+            cases,
+            "author_hidden_budget_recovery",
+            com.miaokatze.gtmb.client.hologram.HologramAuthorBudgetRecoveryRegression::run);
         add(cases, "atomic_native_attachments", HologramLocalAuthorAttachmentsRegression::run);
         add(cases, "native_configuration_contract", HologramLocalAuthorConfigurationsRegression::run);
         add(cases, "native_structure_regeneration", HologramLocalAuthorStructuresRegression::run);
+        add(cases, "legacy_extension_owner_boundary", HologramExtensionExecutionRegression::run);
+        add(cases, "native_structure_and_configuration_server_review", HologramAuthorNativeReviewRegression::run);
+        add(cases, "explicit_server_review_transport", HologramAuthorReviewTransportRegression::run);
+        add(
+            cases,
+            "server_review_client_correlation",
+            com.miaokatze.gtmb.client.hologram.HologramAuthorReviewFlowRegression::run);
         add(cases, "explicit_portable_candidate", HologramAuthorPortableCompilerRegression::run);
         add(
             cases,

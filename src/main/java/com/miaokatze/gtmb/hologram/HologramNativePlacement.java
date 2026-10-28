@@ -36,28 +36,45 @@ public final class HologramNativePlacement {
     }
 
     private static final Map<String, Adapter> ADAPTERS = new LinkedHashMap<>();
+    private static final java.util.Set<String> CLIENT_SAFE = new java.util.HashSet<>();
     private static long generation;
 
     static {
-        register("gtmb:native", new Builtin());
-        register("gtmb:ae", new HologramAeBlueprint.NativeAdapter());
+        register("gtmb:native", new Builtin(), true);
+        register("gtmb:ae", new HologramAeBlueprint.NativeAdapter(), true);
     }
 
     private HologramNativePlacement() {}
 
     /** Registration is explicit: unknown persistence formats never acquire support by field guessing. */
     public static synchronized void register(String id, Adapter adapter) {
+        register(id, adapter, false);
+    }
+
+    /** Explicit detached-client capability; old registrations remain owner-thread-only in local authoring. */
+    public static synchronized void register(String id, Adapter adapter, boolean clientSafe) {
         if (id == null || id.isEmpty() || adapter == null || ADAPTERS.containsKey(id))
             throw new IllegalArgumentException("native placement adapter");
         ADAPTERS.put(id, adapter);
+        if (clientSafe) CLIENT_SAFE.add(id);
         generation++;
     }
 
     /** Remove only the expected registration; legacy replacement/other adapters remain untouched. */
     public static synchronized boolean unregister(String id, Adapter expected) {
         boolean removed = ADAPTERS.remove(id, expected);
-        if (removed) generation++;
+        if (removed) {
+            CLIENT_SAFE.remove(id);
+            generation++;
+        }
         return removed;
+    }
+
+    /** Registration metadata only; never probes third-party applicability callbacks. */
+    static synchronized boolean hasExternalAdapters() {
+        for (Adapter adapter : ADAPTERS.values())
+            if (!(adapter instanceof Builtin) && !(adapter instanceof HologramAeBlueprint.NativeAdapter)) return true;
+        return false;
     }
 
     static synchronized long generation() {
@@ -66,9 +83,16 @@ public final class HologramNativePlacement {
 
     public static synchronized Adapter adapter(Block block) {
         if (block == null) return null;
-        List<Adapter> snapshot = new ArrayList<>(ADAPTERS.values());
-        for (int i = snapshot.size() - 1; i >= 0; i--) if (snapshot.get(i)
-            .supports(block)) return snapshot.get(i);
+        List<Map.Entry<String, Adapter>> snapshot = new ArrayList<>(ADAPTERS.entrySet());
+        for (int i = snapshot.size() - 1; i >= 0; i--) {
+            Map.Entry<String, Adapter> entry = snapshot.get(i);
+            HologramExtensionExecution.requireBuiltinIo(
+                entry.getValue() instanceof Builtin || entry.getValue() instanceof HologramAeBlueprint.NativeAdapter,
+                entry.getKey());
+            HologramExtensionExecution.requireClientSafe(CLIENT_SAFE.contains(entry.getKey()), entry.getKey());
+            if (entry.getValue()
+                .supports(block)) return entry.getValue();
+        }
         return null;
     }
 

@@ -4,6 +4,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.io.OutputStreamWriter;
+import java.io.Reader;
 import java.math.BigDecimal;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
@@ -28,6 +29,7 @@ import com.google.gson.stream.JsonToken;
 /** Bounded structural I/O, deliberately not a native NBT parser or a portable-export certificate. */
 public final class AuthorDocumentIO {
 
+    public static final String SOURCE_FRAME_FIELD = "gtmbAuthorSourceFrame";
     public static final String DRAFT_FORMAT = "gtmb-author-draft";
     private static final Gson GSON = new GsonBuilder().serializeNulls()
         .disableHtmlEscaping()
@@ -66,18 +68,103 @@ public final class AuthorDocumentIO {
     }
 
     public static AuthorDocument read(byte[] bytes, Limits limits) throws IOException {
+        return importOwned(parseOwned(bytes, limits), limits);
+    }
+
+    /** Internal ownership boundary: only package adapters may receive this fresh, unaliased parse tree. */
+    static JsonObject parseOwned(byte[] bytes, Limits limits) throws IOException {
         if (bytes == null || bytes.length > limits.maxBytes) throw new IOException("Document byte budget exceeded");
         java.nio.charset.CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder()
             .onMalformedInput(CodingErrorAction.REPORT)
             .onUnmappableCharacter(CodingErrorAction.REPORT);
         try (JsonReader reader = new JsonReader(
-            new java.io.InputStreamReader(new java.io.ByteArrayInputStream(bytes), decoder))) {
+            new StrictLexicalReader(new java.io.InputStreamReader(new java.io.ByteArrayInputStream(bytes), decoder)))) {
             reader.setLenient(false);
             JsonElement root = readValue(reader, limits, 0, new long[] { 0 });
             if (reader.peek() != JsonToken.END_DOCUMENT) throw new IOException("Trailing JSON content");
+            return object(root, "document");
+        } catch (IllegalStateException | NumberFormatException e) {
+            throw new IOException("Invalid document JSON", e);
+        }
+    }
+
+    /**
+     * Gson 2.2.4's strict mode still accepts raw string controls, arbitrary escapes and mixed-case literals.
+     * Guard only those lexical gaps, in constant space; Gson continues to own JSON structure and number grammar.
+     */
+    private static final class StrictLexicalReader extends Reader {
+
+        private final Reader source;
+        private boolean quoted, escaped, token, keyword;
+        private int unicodeDigits;
+
+        StrictLexicalReader(Reader source) {
+            this.source = source;
+        }
+
+        @Override
+        public int read(char[] chars, int offset, int length) throws IOException {
+            int count = source.read(chars, offset, length);
+            if (count < 0 && quoted) throw new IOException("Unterminated JSON string");
+            for (int i = offset; i < offset + count; i++) check(chars[i]);
+            return count;
+        }
+
+        private void check(char c) throws IOException {
+            if (quoted) {
+                if (unicodeDigits > 0) {
+                    if (!(c >= '0' && c <= '9' || c >= 'a' && c <= 'f' || c >= 'A' && c <= 'F'))
+                        throw new IOException("Invalid JSON Unicode escape");
+                    unicodeDigits--;
+                } else if (escaped) {
+                    escaped = false;
+                    if (c == 'u') unicodeDigits = 4;
+                    else if (c != '"' && c != '\\'
+                        && c != '/'
+                        && c != 'b'
+                        && c != 'f'
+                        && c != 'n'
+                        && c != 'r'
+                        && c != 't') throw new IOException("Invalid JSON string escape");
+                } else if (c < 0x20) throw new IOException("Unescaped JSON string control");
+                else if (c == '\\') escaped = true;
+                else if (c == '"') quoted = false;
+                return;
+            }
+            if (c == '"') {
+                quoted = true;
+                token = false;
+            } else if (c == '{' || c == '}'
+                || c == '['
+                || c == ']'
+                || c == ':'
+                || c == ','
+                || c == ' '
+                || c == '\t'
+                || c == '\r'
+                || c == '\n') {
+                    token = false;
+                } else {
+                    if (!token) {
+                        token = true;
+                        keyword = c == 't' || c == 'T' || c == 'f' || c == 'F' || c == 'n' || c == 'N';
+                    }
+                    if (keyword && c >= 'A' && c <= 'Z') throw new IOException("JSON keywords must be lowercase");
+                }
+        }
+
+        @Override
+        public void close() throws IOException {
+            source.close();
+        }
+    }
+
+    /** Consumes a fresh internal tree. Callers must neither retain nor publish any of its mutable containers. */
+    static AuthorDocument importOwned(JsonObject owned, Limits limits) throws IOException {
+        try {
             OwnedTree admitted = new OwnedTree(limits, false);
-            admitted.visit(root, 0);
-            return importOwned(object(root, "document"), limits, admitted);
+            admitted.visit(owned, 0);
+            return importOwned(owned, limits, admitted);
         } catch (IllegalStateException | NumberFormatException e) {
             throw new IOException("Invalid document JSON", e);
         }
@@ -122,6 +209,10 @@ public final class AuthorDocumentIO {
                 .value(document.revision);
             writer.name("nextCellId")
                 .value(document.nextId);
+            if (document.sourceFrame.known) {
+                writer.name("sourceFrame");
+                GSON.toJson(sourceFrameJson(document.sourceFrame), writer);
+            }
             writer.name("payloadOrigins")
                 .beginArray();
             for (AuthorDocument.Cell cell : document.cells()) writer.beginArray()
@@ -202,6 +293,7 @@ public final class AuthorDocumentIO {
 
     private static AuthorDocument importOwned(JsonObject root, Limits limits, OwnedTree admitted) throws IOException {
         JsonObject source = root;
+        AuthorDocument.SourceFrame frame = AuthorDocument.SourceFrame.UNKNOWN;
         String id = UUID.randomUUID()
             .toString();
         long revision = 0, nextId = 1;
@@ -224,7 +316,8 @@ public final class AuthorDocumentIO {
                     && !key.equals("cellIds")
                     && !key.equals("source")
                     && !key.equals("obligations")
-                    && !key.equals("payloadOrigins")) throw new IOException("Unsupported draft envelope field: " + key);
+                    && !key.equals("payloadOrigins")
+                    && !key.equals("sourceFrame")) throw new IOException("Unsupported draft envelope field: " + key);
             }
             id = text(root, "documentId", true);
             try {
@@ -241,6 +334,7 @@ public final class AuthorDocumentIO {
             ids = array(root.get("cellIds"), "cellIds");
             origins = array(root.get("payloadOrigins"), "payloadOrigins");
             source = object(root.get("source"), "source");
+            if (root.has("sourceFrame")) frame = readSourceFrame(root.get("sourceFrame"));
             JsonArray pending = array(root.get("obligations"), "obligations");
             if (pending.size() > limits.maxObligations) throw new IOException("Pending obligation budget exceeded");
             for (JsonElement row : pending) {
@@ -263,6 +357,12 @@ public final class AuthorDocumentIO {
         if (sourceStats.depth + 2 > limits.maxDepth) throw new IOException("JSON structure budget exceeded");
         long retainedNodes = sourceStats.nodes, retainedBytes = sourceStats.bytes;
         boolean wrapped = source.has("blueprint");
+        if (wrapped && source.has(SOURCE_FRAME_FIELD)) {
+            AuthorDocument.SourceFrame transported = readSourceFrame(source.remove(SOURCE_FRAME_FIELD));
+            if (frame.known && !frame.equals(transported))
+                throw new IOException("Conflicting source coordinate frames");
+            frame = transported;
+        }
         JsonObject header = wrapped ? object(source.remove("blueprint"), "blueprint") : source;
         checkStringFields(header, "name", "prompt", "processingNbt", "quantumGroupingNbt", "sourceMod", "sourceClass");
         int schema = integer(header, "schema", 1);
@@ -337,6 +437,7 @@ public final class AuthorDocumentIO {
         else if (nextId <= maximum) throw new IOException("Draft cell identity counter reused");
         requireDraftBudget(limits, retainedBytes, retainedNodes, cells.size(), obligations);
         return new AuthorDocument(
+            frame,
             id,
             revision,
             nextId,
@@ -357,6 +458,30 @@ public final class AuthorDocumentIO {
             obligations,
             schema == 1 ? "Legacy controller template: use the explicit schema-1 conversion workflow before editing"
                 : null);
+    }
+
+    public static JsonObject sourceFrameJson(AuthorDocument.SourceFrame frame) {
+        if (frame == null || !frame.known) throw new IllegalArgumentException("Unknown capture source frame");
+        JsonObject value = new JsonObject();
+        value.addProperty("dimension", frame.dimension);
+        value.addProperty("x", frame.x);
+        value.addProperty("y", frame.y);
+        value.addProperty("z", frame.z);
+        return value;
+    }
+
+    private static AuthorDocument.SourceFrame readSourceFrame(JsonElement value) throws IOException {
+        JsonObject frame = object(value, "source frame");
+        if (frame.entrySet()
+            .size() != 4 || !frame.has("dimension")
+            || !frame.has("x")
+            || !frame.has("y")
+            || !frame.has("z")) throw new IOException("Invalid source coordinate frame");
+        return AuthorDocument.SourceFrame.captured(
+            integer(frame, "dimension", 0),
+            integer(frame, "x", 0),
+            integer(frame, "y", 0),
+            integer(frame, "z", 0));
     }
 
     /** Source admission reserves durable identity/provenance overhead, not only bare JSON bytes. */
@@ -508,7 +633,11 @@ public final class AuthorDocumentIO {
                 String number = r.nextString();
                 stringBudget(number, limits);
                 try {
-                    return new JsonPrimitive(new BigDecimal(number));
+                    // Validate the same finite decimal domain without additionally normalizing tokens:
+                    // compact references such as 0e0 must remain rejected, just as in the legacy Gson path.
+                    // Gson itself canonicalizes integral -0 to 0; numeric fidelity is by value, not spelling.
+                    new BigDecimal(number);
+                    return new JsonPrimitive(new com.google.gson.internal.LazilyParsedNumber(number));
                 } catch (NumberFormatException e) {
                     throw new IOException("Invalid JSON number", e);
                 }

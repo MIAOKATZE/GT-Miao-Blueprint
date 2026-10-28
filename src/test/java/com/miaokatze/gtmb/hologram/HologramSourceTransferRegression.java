@@ -16,6 +16,9 @@ final class HologramSourceTransferRegression {
 
     static void run(HologramSession owner) throws IOException, ReflectiveOperationException {
         HologramSession s = fixture(owner);
+        s.x = 100;
+        s.y = 64;
+        s.z = -200;
         HologramCapture.Cell unknown = cell(s, 0);
         unknown.unknown = true;
         unknown.blueprintBlock = "missingmod:machine";
@@ -50,6 +53,17 @@ final class HologramSourceTransferRegression {
         s.virtualPreset.hintAreas.add(hint);
         s.virtualPreset.retainedNbtKeys = new ArrayList<>(Arrays.asList("configuration"));
         HologramSourceTransfer transfer = attach(s, 71);
+        Field frameField = HologramSourceTransfer.class.getDeclaredField("sourceFrame");
+        frameField.setAccessible(true);
+        com.miaokatze.gtmb.blueprint.editor.AuthorDocument.SourceFrame frame = (com.miaokatze.gtmb.blueprint.editor.AuthorDocument.SourceFrame) frameField
+            .get(transfer);
+        SimpleAssert.eq(
+            com.miaokatze.gtmb.blueprint.editor.AuthorDocument.SourceFrame.captured(s.dimension, 100, 64, -200),
+            frame,
+            "transfer freezes actual session coordinate basis");
+        s.x++;
+        SimpleAssert.that(!transfer.sourceUnchanged(), "origin changes invalidate the frozen transfer");
+        s.x--;
         HologramPresets.Preset output = result(transfer);
         SimpleAssert.that(!transfer.step(0, Long.MAX_VALUE, () -> 0), "zero work cannot project metadata or cells");
         SimpleAssert.that(!transfer.step(100, 0, () -> 0), "expired deadline performs no first operation");

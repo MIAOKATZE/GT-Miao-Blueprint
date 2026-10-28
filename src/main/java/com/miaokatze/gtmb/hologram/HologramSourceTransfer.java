@@ -23,6 +23,7 @@ final class HologramSourceTransfer {
     private final String session;
     private final long revision, task;
     private final int size;
+    private final com.miaokatze.gtmb.blueprint.editor.AuthorDocument.SourceFrame sourceFrame;
     private final Set<String> palette = new HashSet<>();
     private HologramBlueprintProjection.Header header;
     private HologramPresets.Preset result;
@@ -45,6 +46,8 @@ final class HologramSourceTransfer {
         session = s.id;
         revision = s.planRevision;
         size = capture.cells.size();
+        sourceFrame = com.miaokatze.gtmb.blueprint.editor.AuthorDocument.SourceFrame
+            .captured(s.dimension, s.x, s.y, s.z);
         header = new HologramBlueprintProjection.Header(s, original == null ? "未命名蓝图" : original.name);
         result = header.result;
     }
@@ -106,7 +109,11 @@ final class HologramSourceTransfer {
     }
 
     boolean sourceUnchanged() {
-        return s.sourceTransfer == this && s.capture == capture
+        return s.sourceTransfer == this && sourceFrame.dimension == s.dimension
+            && sourceFrame.x == s.x
+            && sourceFrame.y == s.y
+            && sourceFrame.z == s.z
+            && s.capture == capture
             && s.virtualPreset == original
             && capture.cells.size() == size
             && s.player.worldObj == world
@@ -373,7 +380,7 @@ final class HologramSourceTransfer {
 
     private OwnedSource detach() {
         if (!headerReady || cursor != size || !current()) throw new IllegalStateException("Source is not complete");
-        OwnedSource owned = new OwnedSource(result, lease);
+        OwnedSource owned = new OwnedSource(result, sourceFrame, lease);
         lease = null;
         result = null;
         header = null;
@@ -394,9 +401,12 @@ final class HologramSourceTransfer {
 
         private HologramPresets.Preset source;
         private final Lease lease;
+        final com.miaokatze.gtmb.blueprint.editor.AuthorDocument.SourceFrame sourceFrame;
 
-        private OwnedSource(HologramPresets.Preset source, Lease lease) {
+        private OwnedSource(HologramPresets.Preset source,
+            com.miaokatze.gtmb.blueprint.editor.AuthorDocument.SourceFrame sourceFrame, Lease lease) {
             this.source = source;
+            this.sourceFrame = sourceFrame;
             this.lease = lease;
         }
 

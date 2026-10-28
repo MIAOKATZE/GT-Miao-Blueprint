@@ -24,6 +24,8 @@ public final class AuthorDocumentRegression {
     public static void run() throws Exception {
         losslessAndImmutable();
         boundedAdmission();
+        strictLexicalAdmission();
+        revisionCeiling();
         localGeometryAndHistory();
         sharedGroupsAndAttachments();
         clipboardAndNativeBoundary();
@@ -35,6 +37,162 @@ public final class AuthorDocumentRegression {
         boundedOwnedCopyAndByteOracle();
         largeOpaqueAttachment();
         treeIndex();
+        sourceWorldFrame();
+    }
+
+    private static void strictLexicalAdmission() throws Exception {
+        for (int c = 0; c < 0x20; c++) {
+            rejectIO("{\"schema\":2,\"future\":\"a" + (char) c + "b\"}", "raw C0 value " + c);
+            rejectIO("{\"schema\":2,\"a" + (char) c + "b\":null}", "raw C0 key " + c);
+            String escaped = "\\u" + String.format("%04x", c);
+            JsonObject admitted = read("{\"schema\":2,\"" + escaped + "\":\"" + escaped + "\"}").sourceCopy();
+            check(
+                admitted.get(String.valueOf((char) c))
+                    .getAsString()
+                    .charAt(0) == c,
+                "escaped C0 key/value " + c);
+        }
+        for (String bad : new String[] { "\\q", "\\'", "\\v", "\\0", "\\\n", "\\\t", "\\uG000", "\\u0g00", "\\u00x0",
+            "\\u000z" }) {
+            rejectIO("{\"schema\":2,\"future\":\"" + bad + "\"}", "invalid value escape");
+            rejectIO("{\"schema\":2,\"" + bad + "\":null}", "invalid key escape");
+        }
+        for (String keyword : new String[] { "true", "false", "null" }) {
+            for (int i = 0; i < keyword.length(); i++) {
+                String bad = keyword.substring(0, i) + Character.toUpperCase(keyword.charAt(i))
+                    + keyword.substring(i + 1);
+                rejectIO("{\"schema\":2,\"future\":[" + bad + "]}", "mixed-case keyword " + bad);
+            }
+        }
+        for (String tail : new String[] { "", "\\", "\\u", "\\u12", "\\u1234" }) {
+            rejectIO("{\"schema\":2,\"future\":\"" + tail, "unterminated string/escape");
+            rejectIO("{\"schema\":2,\"" + tail, "unterminated key/escape");
+        }
+        String escaped = "\\\"\\\\\\/\\b\\f\\n\\r\\t\\u0041\\u00aF\\uD83D\\uDE00";
+        String valid = "{\"schema\":2,\"" + escaped
+            + "\":\""
+            + escaped
+            + "\",\"future\":[true,false,null,1E2,1e-2,-0,\"TRUE False nUlL\"]}";
+        check(
+            read(valid).sourceCopy()
+                .equals(new JsonParser().parse(valid)),
+            "valid escaped keys and unknown values");
+        // Gson reads into a 1024-character buffer. Shift each token across every nearby split point.
+        for (int offset = 1016; offset < 1028; offset++) {
+            char[] spaces = new char[offset];
+            Arrays.fill(spaces, ' ');
+            String prefix = "{\"schema\":2,\"future\":";
+            String keyPrefix = "{\"schema\":2,";
+            prefix += new String(spaces, 0, offset - prefix.length());
+            keyPrefix += new String(spaces, 0, offset - keyPrefix.length());
+            for (String value : new String[] { "\"" + escaped + "\"", "\"\\u0041\"", "\"\\uD83D\\uDE00\"", "\"\\\"\"",
+                "\"\\\\\"", "\"\\/\"", "\"\\b\\f\\n\\r\\t\"", "true", "false", "null", "1E2", "-0" })
+                read(prefix + value + "}");
+            read(keyPrefix + "\"" + escaped + "\":null}");
+            read(keyPrefix + "\"\\u0041\":null}");
+            for (String bad : new String[] { "\"\\q\"", "\"\\u00x0\"", "\"a\nb\"", "truE", "falsE", "nulL" })
+                rejectIO(prefix + bad + "}", "invalid token spanning reader buffer");
+            rejectIO(keyPrefix + "\"\\u00x0\":null}", "invalid key spanning reader buffer");
+        }
+    }
+
+    private static void revisionCeiling() throws Exception {
+        AuthorDocument seed = read("{\"schema\":2,\"cells\":[{\"x\":0}]}")
+            .withSourceFrame(AuthorDocument.SourceFrame.captured(7, -100, 64, 200));
+        AuthorEditor editor = new AuthorEditor(seed.withRevision(Long.MAX_VALUE - 2, seed.nextId), 8);
+        editor.select(Collections.singleton(1L));
+        editor.copy(1, 0, 0);
+        AuthorDocument ceiling = editor.current();
+        check(
+            ceiling.revision() == Long.MAX_VALUE - 1 && editor.canUndo(),
+            "last persistable revision is editable into");
+        reject(() -> editor.copy(1, 0, 0), "edit beyond persistable revision");
+        reject(() -> editor.undo(), "undo beyond persistable revision");
+        check(
+            editor.current() == ceiling && editor.selection()
+                .equals(Collections.singleton(2L)) && editor.canUndo() && !editor.canRedo(),
+            "exhausted edit/undo preserve document, selection and history");
+        AuthorDocument reopened = AuthorDocumentIO.read(
+            AuthorDocumentIO.writeDraft(ceiling, AuthorDocumentIO.Limits.defaults()),
+            AuthorDocumentIO.Limits.defaults());
+        check(
+            reopened.revision() == ceiling.revision() && reopened.sourceFrame()
+                .equals(seed.sourceFrame())
+                && reopened.sourceCopy()
+                    .equals(ceiling.sourceCopy()),
+            "last persistable revision reopens with source frame and source intact");
+        AuthorEditor replay = new AuthorEditor(seed.withRevision(Long.MAX_VALUE - 3, seed.nextId), 8);
+        replay.select(Collections.singleton(1L));
+        replay.copy(1, 0, 0);
+        replay.undo();
+        AuthorDocument beforeRedo = replay.current();
+        reject(() -> replay.redo(), "redo beyond persistable revision");
+        check(
+            replay.current() == beforeRedo && replay.selection()
+                .equals(Collections.singleton(1L)) && !replay.canUndo() && replay.canRedo(),
+            "exhausted redo preserves document, selection and history");
+    }
+
+    private static void sourceWorldFrame() throws Exception {
+        AuthorDocument plain = read("{\"schema\":2,\"cells\":[{\"x\":0,\"tileNbt\":\"opaque-exact\"}]}");
+        check(!plain.sourceFrame().known, "old files have unknown source, not invented zero capture");
+        AuthorDocument.SourceFrame frame = AuthorDocument.SourceFrame.captured(7, -100, 64, 200);
+        AuthorDocument captured = plain.withSourceFrame(frame);
+        check(
+            captured.sourceCopy()
+                .equals(plain.sourceCopy()),
+            "world frame does not normalize source or NBT");
+        AuthorEditor editor = new AuthorEditor(captured, 8);
+        editor.select(Collections.singleton(1L));
+        editor.move(4, 0, 0);
+        editor.copy(5, 0, 0);
+        AuthorDocument saved = AuthorDocumentIO.read(
+            AuthorDocumentIO.writeDraft(editor.current(), AuthorDocumentIO.Limits.defaults()),
+            AuthorDocumentIO.Limits.defaults());
+        check(
+            saved.sourceFrame()
+                .equals(frame),
+            "draft saves source dimension and origin separately");
+        check(
+            saved.cell(2)
+                .payloadX() == 0,
+            "world frame never replaces local per-cell payload origin");
+        check(
+            saved.forkCopy()
+                .sourceFrame()
+                .equals(frame),
+            "save as retains capture provenance");
+        editor.undo();
+        check(
+            editor.current()
+                .sourceFrame()
+                .equals(frame),
+            "undo retains frame");
+        editor.redo();
+        check(
+            editor.current()
+                .sourceFrame()
+                .equals(frame),
+            "redo retains frame");
+        AuthorEditor other = new AuthorEditor(plain, 8);
+        boolean rejected = false;
+        try {
+            other.paste(editor.clipboard(), 20, 0, 0);
+        } catch (IllegalArgumentException expected) {
+            rejected = true;
+        }
+        check(rejected && other.current() == plain, "cross-frame opaque paste is atomic refusal");
+        AuthorEditor geometry = new AuthorEditor(read("{\"schema\":2,\"cells\":[{\"x\":0}]}"), 8);
+        geometry.select(Collections.singleton(1L));
+        editor.paste(geometry.clipboard(), 30, 0, 0);
+        check(
+            editor.current()
+                .cellAt(30, 0, 0) != null,
+            "plain geometry may cross source frames");
+        String draft = new String(
+            AuthorDocumentIO.writeDraft(plain, AuthorDocumentIO.Limits.defaults()),
+            StandardCharsets.UTF_8);
+        check(!draft.contains("sourceFrame"), "old plain draft serialization unchanged");
     }
 
     private static void losslessAndImmutable() throws Exception {

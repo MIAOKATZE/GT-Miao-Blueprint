@@ -47,7 +47,11 @@ tasks.register<JavaExec>("runLocalAuthorTest") {
     group = "verification"
     description = "Checks client-owned source, native adapters, local persistence and explicit submission."
     mainClass = "com.miaokatze.gtmb.hologram.HologramLocalAuthorRegressionTest"
-    classpath = tasks.named<JavaExec>("runHologramTest").get().classpath
+    // The attachment boundary fixture exercises the actual pinned LittleTiles block, not a replacement stub.
+    classpath = tasks.named<JavaExec>("runHologramTest").get().classpath +
+        configurations.detachedConfiguration(
+            dependencies.create("com.github.GTNewHorizons:LittleTiles:1.6.59:dev")
+        ).apply { isTransitive = false }
     maxHeapSize = "2g"
     val scratchDir = layout.buildDirectory.dir("hologram-local-author-test")
     workingDir(scratchDir)
@@ -83,6 +87,20 @@ tasks.register<JavaExec>("runSnapshotOwnershipTest") {
     doFirst { scratchDir.get().asFile.mkdirs() }
 }
 tasks.named("check") { dependsOn("runSnapshotOwnershipTest") }
+
+// Large frame fixtures need exact lease baselines, independent of other suites' weak-cache retirement.
+tasks.register<JavaExec>("runSnapshotFrameReferencesTest") {
+    group = "verification"
+    description = "Checks bounded snapshot reference-cache ownership at the 128/129-page boundary."
+    dependsOn("compileTestJava")
+    mainClass = "com.miaokatze.gtmb.hologram.HologramSnapshotFrameReferencesRegression"
+    classpath = tasks.named<JavaExec>("runHologramTest").get().classpath
+    maxHeapSize = "2g"
+    val scratchDir = layout.buildDirectory.dir("hologram-snapshot-frame-references")
+    workingDir(scratchDir)
+    doFirst { scratchDir.get().asFile.mkdirs() }
+}
+tasks.named("check") { dependsOn("runSnapshotFrameReferencesTest") }
 
 tasks.register<JavaExec>("runBlueprintValidationBenchmark") {
     group = "verification"

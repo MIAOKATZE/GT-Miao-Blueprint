@@ -16,8 +16,19 @@ import net.minecraftforge.fluids.FluidStack;
 public final class ResourceContainers {
 
     private static final int MAX_SLOTS = 512;
-    private static final Map<String, FluidCodec> CODECS = new LinkedHashMap<>();
+    private static final Map<String, Entry> CODECS = new LinkedHashMap<>();
     private static long generation;
+
+    private static final class Entry {
+
+        final FluidCodec codec;
+        final boolean clientSafe;
+
+        Entry(FluidCodec codec, boolean clientSafe) {
+            this.codec = codec;
+            this.clientSafe = clientSafe;
+        }
+    }
 
     private ResourceContainers() {}
 
@@ -83,15 +94,21 @@ public final class ResourceContainers {
 
     /** Register a trusted codec in declaration order. Closing its handle invalidates cached material plans. */
     public static GTMBExtensions.Registration register(String id, FluidCodec codec) {
+        return register(id, codec, false);
+    }
+
+    /** Opt in only when decode is safe on the client game thread as well as the server owner thread. */
+    public static GTMBExtensions.Registration register(String id, FluidCodec codec, boolean clientSafe) {
         if (codec == null) throw new IllegalArgumentException("codec");
+        Entry entry = new Entry(codec, clientSafe);
         return GTMBExtensions.install(id, "resource-fluid-container", () -> {
             synchronized (CODECS) {
-                CODECS.put(id, codec);
+                CODECS.put(id, entry);
                 generation++;
             }
             return () -> {
                 synchronized (CODECS) {
-                    if (CODECS.remove(id, codec)) generation++;
+                    if (CODECS.remove(id, entry)) generation++;
                 }
             };
         });
@@ -113,14 +130,16 @@ public final class ResourceContainers {
 
     /** Production inspection entry point; a null result leaves the ordinary strict resource inspector in charge. */
     public static List<FluidAmount> decode(Context context) throws IOException {
-        Map<String, FluidCodec> entries;
+        Map<String, Entry> entries;
         synchronized (CODECS) {
             entries = new LinkedHashMap<>(CODECS);
         }
-        for (Map.Entry<String, FluidCodec> entry : entries.entrySet()) {
+        for (Map.Entry<String, Entry> entry : entries.entrySet()) {
+            com.miaokatze.gtmb.hologram.HologramExtensionExecution.requireBuiltinIo(false, entry.getKey());
+            com.miaokatze.gtmb.hologram.HologramExtensionExecution
+                .requireClientSafe(entry.getValue().clientSafe, entry.getKey());
             try {
-                List<FluidAmount> result = entry.getValue()
-                    .decode(context);
+                List<FluidAmount> result = entry.getValue().codec.decode(context);
                 if (result != null) return checked(result);
             } catch (IOException | RuntimeException | LinkageError failure) {
                 throw new IOException(

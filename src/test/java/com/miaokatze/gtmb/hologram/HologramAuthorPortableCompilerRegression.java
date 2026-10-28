@@ -30,9 +30,12 @@ public final class HologramAuthorPortableCompilerRegression {
         opaqueNoop();
         plainGeometry();
         relativeCoordinates();
+        indexedCopiedEndpoints();
         littleTiles();
         unsupportedAndSealed();
         freshProcessing();
+        captureSourceFrames();
+        crossDimensionSettlement();
     }
 
     private static void opaqueNoop() throws Exception {
@@ -178,6 +181,26 @@ public final class HologramAuthorPortableCompilerRegression {
             -4,
             relation(settle(external.current())).getInteger("dx"),
             "external relative reference retains original endpoint instead of following nonexistent target");
+        AuthorEditor motif = new AuthorEditor(read(source(host, cell(1))), 8);
+        motif.select(Arrays.asList(1L, 2L));
+        motif.copy(5, 2, -3);
+        JsonObject copiedMotif = settle(motif.current());
+        SimpleAssert.eq(
+            1,
+            relationAt(copiedMotif, 2).getInteger("dx"),
+            "copied linked motif retains its internal endpoint delta");
+        SimpleAssert
+            .eq(0, relationAt(copiedMotif, 2).getInteger("dy"), "copied linked motif uses the matching y translation");
+        SimpleAssert
+            .eq(0, relationAt(copiedMotif, 2).getInteger("dz"), "copied linked motif uses the matching z translation");
+        AuthorEditor excludedEndpoint = new AuthorEditor(read(source(host, cell(1))), 8);
+        excludedEndpoint.select(Collections.singleton(2L));
+        excludedEndpoint.move(7, 0, 0);
+        excludedEndpoint.setExcluded(true);
+        SimpleAssert.eq(
+            1,
+            relation(settle(excludedEndpoint.current())).getInteger("dx"),
+            "excluded moved endpoint cannot redirect the retained external reference");
         relation.targetX = 1;
         relations = new NBTTagList();
         relations.appendTag(relation.write("absolute"));
@@ -205,6 +228,105 @@ public final class HologramAuthorPortableCompilerRegression {
             "clear",
             relation(settle(cleared.current())).getString("mode"),
             "cleared endpoint ignores unrelated origin-zero copy ambiguity");
+    }
+
+    private static void indexedCopiedEndpoints() throws Exception {
+        int copies = 4096;
+        JsonObject[] rows = new JsonObject[copies * 2];
+        for (int i = 0; i < copies; i++) {
+            rows[i * 2] = cell(i * 3);
+            rows[i * 2 + 1] = cell(i * 3 + 1);
+            // Distinct three-dimensional translations, not just the common x-only case.
+            rows[i * 2].addProperty("y", i % 17);
+            rows[i * 2 + 1].addProperty("y", i % 17);
+            rows[i * 2].addProperty("z", -i);
+            rows[i * 2 + 1].addProperty("z", -i);
+        }
+        JsonObject draft = new com.google.gson.JsonParser()
+            .parse(
+                new String(
+                    AuthorDocumentIO.writeDraft(read(source(rows)), AuthorDocumentIO.Limits.defaults()),
+                    java.nio.charset.StandardCharsets.UTF_8))
+            .getAsJsonObject();
+        JsonArray origins = new JsonArray();
+        for (int i = 0; i < rows.length; i++) {
+            JsonArray origin = new JsonArray();
+            origin.add(new com.google.gson.JsonPrimitive(i % 2));
+            origin.add(new com.google.gson.JsonPrimitive(0));
+            origin.add(new com.google.gson.JsonPrimitive(0));
+            origins.add(origin);
+        }
+        draft.add("payloadOrigins", origins);
+        java.util.List<AuthorDocument.Cell> cells = new java.util.ArrayList<>();
+        for (AuthorDocument.Cell cell : read(draft).cells()) cells.add(cell);
+        final int[] sourceReads = { 0 };
+        java.util.List<AuthorDocument.Cell> counted = new java.util.AbstractList<AuthorDocument.Cell>() {
+
+            @Override
+            public AuthorDocument.Cell get(int index) {
+                sourceReads[0]++;
+                return cells.get(index);
+            }
+
+            @Override
+            public int size() {
+                return cells.size();
+            }
+        };
+        HologramAuthorPortableCompiler.EndpointIndex index = new HologramAuthorPortableCompiler.EndpointIndex(
+            counted,
+            Collections.emptySet());
+        SimpleAssert.eq(cells.size(), sourceReads[0], "endpoint index visits each source cell exactly once");
+        for (int i = 0; i < copies; i++) SimpleAssert.eq(
+            Integer.valueOf(i * 2 + 1),
+            index.target(1, 0, 0, cells.get(i * 2)),
+            "each copied host resolves only its matching translated endpoint");
+        SimpleAssert.eq(
+            cells.size(),
+            sourceReads[0],
+            "thousands of endpoint lookups never revisit source candidates (no quadratic source-list scan)");
+        SimpleAssert.eq(null, index.target(2, 0, 0, cells.get(0)), "missing payload origin stays external");
+        HologramAuthorPortableCompiler.EndpointIndex ambiguous = new HologramAuthorPortableCompiler.EndpointIndex(
+            Arrays.asList(cells.get(1), cells.get(1)),
+            Collections.emptySet());
+        reject(() -> ambiguous.target(1, 0, 0, cells.get(0)), "duplicate same-shift endpoint stays ambiguous");
+        HologramAuthorPortableCompiler.EndpointIndex unrelatedDuplicate = new HologramAuthorPortableCompiler.EndpointIndex(
+            Arrays.asList(cells.get(1), cells.get(1), cells.get(3)),
+            Collections.emptySet());
+        SimpleAssert.eq(
+            Integer.valueOf(2),
+            unrelatedDuplicate.target(1, 0, 0, cells.get(2)),
+            "duplicate at another shift cannot invalidate a unique matching endpoint");
+        HologramAuthorPortableCompiler.EndpointIndex fallback = new HologramAuthorPortableCompiler.EndpointIndex(
+            Collections.singletonList(cells.get(3)),
+            Collections.emptySet());
+        SimpleAssert.eq(
+            Integer.valueOf(0),
+            fallback.target(1, 0, 0, cells.get(0)),
+            "stationary host follows a sole moved endpoint");
+        JsonObject excluded = cell(1), disabled = cell(2), enabled = cell(3);
+        excluded.addProperty("excluded", true);
+        disabled.addProperty("structureId", "disabled");
+        enabled.addProperty("structureId", "enabled");
+        JsonObject filteredSource = source(excluded, disabled, enabled);
+        for (String id : new String[] { "disabled", "enabled" }) {
+            JsonObject structure = new JsonObject();
+            structure.addProperty("id", id);
+            structure.addProperty("enabled", "enabled".equals(id));
+            filteredSource.getAsJsonArray("structures")
+                .add(structure);
+        }
+        java.util.List<AuthorDocument.Cell> filtered = new java.util.ArrayList<>();
+        for (AuthorDocument.Cell cell : read(filteredSource).cells()) filtered.add(cell);
+        HologramAuthorPortableCompiler.EndpointIndex eligible = new HologramAuthorPortableCompiler.EndpointIndex(
+            filtered,
+            Collections.singleton("enabled"));
+        SimpleAssert.eq(null, eligible.target(1, 0, 0, cells.get(0)), "excluded endpoint is not indexed");
+        SimpleAssert.eq(null, eligible.target(2, 0, 0, cells.get(0)), "disabled-membership endpoint is not indexed");
+        SimpleAssert.eq(
+            Integer.valueOf(2),
+            eligible.target(3, 0, 0, cells.get(0)),
+            "enabled-membership endpoint remains eligible");
     }
 
     private static void littleTiles() throws Exception {
@@ -278,6 +400,287 @@ public final class HologramAuthorPortableCompilerRegression {
             !document.sourceCopy()
                 .has("processingNbt"),
             "fresh processed candidate does not overwrite source draft");
+    }
+
+    private static void captureSourceFrames() throws Exception {
+        for (int originX : new int[] { 100, -100 }) {
+            AuthorDocument.SourceFrame frame = AuthorDocument.SourceFrame.captured(7, originX, 64, 200);
+            NBTTagCompound tile = new NBTTagCompound();
+            tile.setString("id", "IC2NCInfoPanelExtender");
+            tile.setBoolean("partOfScreen", true);
+            tile.setInteger("coreX", originX + 1);
+            tile.setInteger("coreY", 64);
+            tile.setInteger("coreZ", 200);
+            JsonObject host = cell(0);
+            String opaque = HologramBlueprintNbt.encodeCaptured(tile);
+            host.addProperty("tileNbt", opaque);
+            JsonObject raw = source(host, cell(1));
+            HologramBlueprintProcessing.Policy policy = policy();
+            policy.coordinateDefault = "auto";
+            policy.tendency = "share";
+            AuthorDocument unknown = read(raw);
+            reject(
+                () -> HologramAuthorPortableCompiler.compile(unknown, policy.write()),
+                "old raw world links without provenance must not silently clear at zero");
+            SimpleAssert.eq(
+                opaque,
+                unknown.cell(1)
+                    .tileNbt(),
+                "missing provenance refusal keeps exact source");
+            AuthorDocument captured = unknown.withSourceFrame(frame);
+            byte[] transport = HologramBlueprintCompactCodec
+                .encodeAuthorSource(HologramLocalAuthorSemantics.preset(raw), frame, (done, total) -> {});
+            AuthorDocument transferred = read(HologramBlueprintCompactCodec.parse(transport));
+            SimpleAssert.eq(frame, transferred.sourceFrame(), "compact capture handoff retains source frame");
+            SimpleAssert.eq(
+                opaque,
+                transferred.cell(1)
+                    .tileNbt(),
+                "handoff does not eagerly normalize native payload");
+            JsonObject direct = HologramLocalAuthorSemantics.process(raw, policy.write(), frame);
+            SimpleAssert.eq("relative", relation(direct).getString("mode"), "nonzero captured link remains internal");
+            SimpleAssert.eq(1, relation(direct).getInteger("dx"), "source origin subtracted exactly once");
+            JsonObject turned = rotateCoordinateFixture(raw, frame);
+            int[] expectedTurn = HologramVirtualTransform.turn(1, 0, 0, false);
+            SimpleAssert.eq(
+                "relative",
+                relation(turned).getString("mode"),
+                "raw capture rotation declares its internal link before transforming geometry");
+            SimpleAssert.eq(expectedTurn[0], relation(turned).getInteger("dx"), "rotated raw link x");
+            SimpleAssert.eq(expectedTurn[2], relation(turned).getInteger("dz"), "rotated raw link z");
+            SimpleAssert.that(!turned.has("processingNbt"), "rotation cannot manufacture processing approval");
+            AuthorEditor rotatedEditor = new AuthorEditor(captured, 8);
+            rotatedEditor.replaceResolvedSource(captured.revision(), turned);
+            SimpleAssert.eq(
+                frame,
+                rotatedEditor.current()
+                    .sourceFrame(),
+                "whole rotation retains capture frame");
+            JsonObject rotatedPortable = HologramBlueprintCompactCodec
+                .parse(HologramAuthorPortableCompiler.compile(rotatedEditor.current(), policy.write()))
+                .getAsJsonObject("blueprint");
+            SimpleAssert.eq(
+                expectedTurn[2],
+                relation(rotatedPortable).getInteger("dz"),
+                "rotation then compile does not restore the unrotated raw endpoint");
+            AuthorEditor editor = new AuthorEditor(captured, 8);
+            editor.select(Arrays.asList(1L, 2L));
+            editor.move(3, 0, 0);
+            editor.copy(10, 0, 0);
+            AuthorDocument reopened = AuthorDocumentIO.read(
+                AuthorDocumentIO.writeDraft(editor.current(), AuthorDocumentIO.Limits.defaults()),
+                AuthorDocumentIO.Limits.defaults());
+            JsonObject settled = HologramAuthorPortableCompiler.settle(reopened, policy.write());
+            for (int index : new int[] { 0, 2 }) {
+                NBTTagCompound descriptor = relationAt(settled, index);
+                SimpleAssert.eq("relative", descriptor.getString("mode"), "move/copy retains captured internal links");
+                SimpleAssert.eq(1, descriptor.getInteger("dx"), "copy points to its matching copied endpoint");
+            }
+            JsonObject processed = HologramLocalAuthorSemantics.process(settled, policy.write(), frame);
+            AuthorEditor resolved = new AuthorEditor(reopened, 8);
+            resolved.replaceResolvedSource(reopened.revision(), processed);
+            SimpleAssert.eq(
+                frame,
+                resolved.current()
+                    .sourceFrame(),
+                "processing retains world frame");
+            SimpleAssert.eq(
+                3,
+                resolved.current()
+                    .cell(1)
+                    .payloadX(),
+                "processing rebases only local payload origin");
+            byte[] compiled = HologramAuthorPortableCompiler.compile(resolved.current(), policy.write());
+            JsonObject portable = HologramBlueprintCompactCodec.parse(compiled)
+                .getAsJsonObject("blueprint");
+            SimpleAssert.eq(
+                relationAt(processed, 0),
+                relationAt(portable, 0),
+                "postprocess compile does not double-offset captured links");
+            SimpleAssert.eq(
+                relationAt(processed, 2),
+                relationAt(portable, 2),
+                "copied link remains stable through postprocess compile");
+            // Portable relative descriptors remain usable without capture provenance on import.
+            HologramAuthorPortableCompiler.compile(read(portable), policy.write());
+            HologramCoordinatePolicies.Relation absolute = new HologramCoordinatePolicies.Relation();
+            absolute.id = "0,0,0:tile:nc.extender:-1";
+            absolute.label = "core";
+            absolute.adapter = "nc.extender";
+            absolute.slot = -1;
+            absolute.targetX = originX + 1;
+            absolute.targetY = 64;
+            absolute.targetZ = 200;
+            NBTTagList declarations = new NBTTagList();
+            declarations.appendTag(absolute.write("absolute"));
+            tile.setTag(HologramCoordinatePolicies.RELATIONS, declarations);
+            JsonObject fixed = cell(0);
+            fixed.addProperty("tileNbt", HologramBlueprintNbt.encodeCanonical(tile));
+            AuthorEditor absoluteEditor = new AuthorEditor(read(source(fixed, cell(1))).withSourceFrame(frame), 8);
+            absoluteEditor.select(Collections.singleton(1L));
+            absoluteEditor.move(6, 0, 0);
+            SimpleAssert.eq(
+                originX + 1,
+                relation(HologramAuthorPortableCompiler.settle(absoluteEditor.current(), policy().write()))
+                    .getInteger("targetX"),
+                "absolute world endpoint never shifted with capture origin");
+            JsonObject rotatedAbsolute = rotateCoordinateFixture(source(fixed, cell(1)), frame);
+            SimpleAssert.eq(
+                "absolute",
+                relation(rotatedAbsolute).getString("mode"),
+                "rotation preserves explicitly absolute mode");
+            SimpleAssert.eq(
+                originX + 1,
+                relation(rotatedAbsolute).getInteger("targetX"),
+                "rotation preserves exact absolute world endpoint");
+            declarations = new NBTTagList();
+            declarations.appendTag(absolute.write("clear"));
+            tile.setTag(HologramCoordinatePolicies.RELATIONS, declarations);
+            fixed.addProperty("tileNbt", HologramBlueprintNbt.encodeCanonical(tile));
+            SimpleAssert.eq(
+                "clear",
+                relation(rotateCoordinateFixture(source(fixed, cell(1)), frame)).getString("mode"),
+                "rotation cannot resurrect an explicitly cleared endpoint");
+        }
+        AuthorDocument.SourceFrame frame = AuthorDocument.SourceFrame.captured(7, 100, 64, 200);
+        for (int targetDimension : new int[] { 7, 8 }) {
+            NBTTagCompound tile = new NBTTagCompound(), target = new NBTTagCompound();
+            target.setInteger("x", 101);
+            target.setInteger("y", 64);
+            target.setInteger("z", 200);
+            target.setInteger("dim", targetDimension);
+            target.setString("type", "water");
+            tile.setTag("gtsr.hubPos", target);
+            JsonObject host = cell(0);
+            host.addProperty("tileNbt", HologramBlueprintNbt.encodeCaptured(tile));
+            try (HologramAnalysisFacts facts = new HologramAnalysisFacts()) {
+                HologramCoordinatePolicies.Relation relation = HologramCoordinatePolicies
+                    .inspect(
+                        HologramLocalAuthorSemantics.preset(source(host, cell(1))),
+                        frame.dimension,
+                        frame.x,
+                        frame.y,
+                        frame.z,
+                        facts)
+                    .get(0);
+                SimpleAssert.eq(
+                    targetDimension == 7,
+                    relation.internal,
+                    "capture dimension distinguishes internal hub from cross-dimension world endpoint");
+            }
+        }
+    }
+
+    private static void crossDimensionSettlement() throws Exception {
+        AuthorDocument.SourceFrame frame = AuthorDocument.SourceFrame.captured(7, 100, 64, 200);
+        for (int targetDimension : new int[] { 7, 8 }) {
+            for (String tendency : new String[] { "self", "share" }) {
+                for (boolean copied : new boolean[] { false, true }) {
+                    NBTTagCompound tile = new NBTTagCompound(), target = new NBTTagCompound();
+                    target.setInteger("x", 101);
+                    target.setInteger("y", 64);
+                    target.setInteger("z", 200);
+                    target.setInteger("dim", targetDimension);
+                    target.setString("type", "water");
+                    tile.setTag("gtsr.hubPos", target);
+                    JsonObject host = cell(0);
+                    host.addProperty("tileNbt", HologramBlueprintNbt.encodeCaptured(tile));
+                    AuthorEditor editor = new AuthorEditor(read(source(host, cell(1))).withSourceFrame(frame), 8);
+                    editor.select(Collections.singleton(2L));
+                    editor.move(5, 0, 0);
+                    if (copied) editor.copy(3, 0, 0);
+                    AuthorDocument document = editor.current();
+                    JsonObject before = document.sourceCopy();
+                    HologramBlueprintProcessing.Policy policy = policy();
+                    policy.tendency = tendency;
+                    if (targetDimension == 7 && copied) {
+                        try {
+                            HologramAuthorPortableCompiler.settle(document, policy.write());
+                            throw new AssertionError("same-dimension ambiguous endpoint was accepted");
+                        } catch (IOException expected) {
+                            SimpleAssert.that(
+                                expected.getMessage()
+                                    .contains("Ambiguous"),
+                                "same-dimension control rejects endpoint ambiguity, not an unrelated failure");
+                        }
+                    } else {
+                        JsonObject settled = HologramAuthorPortableCompiler.settle(document, policy.write());
+                        NBTTagCompound descriptor = relationAt(settled, 0);
+                        SimpleAssert.eq(
+                            targetDimension == 7,
+                            descriptor.getBoolean("internal"),
+                            "only same-dimension moved endpoints can become internal");
+                        if (targetDimension == 8) {
+                            NBTTagCompound payload = HologramBlueprintNbt.decode(
+                                settled.getAsJsonArray("cells")
+                                    .get(0)
+                                    .getAsJsonObject()
+                                    .get("tileNbt")
+                                    .getAsString());
+                            if ("self".equals(tendency)) {
+                                SimpleAssert.eq(
+                                    "absolute",
+                                    descriptor.getString("mode"),
+                                    "self preserves foreign endpoint as absolute despite unrelated local copies");
+                                SimpleAssert
+                                    .eq(8, descriptor.getInteger("targetDimension"), "foreign dimension remains exact");
+                                SimpleAssert
+                                    .eq(101, descriptor.getInteger("targetX"), "foreign target x remains exact");
+                                SimpleAssert.eq(64, descriptor.getInteger("targetY"), "foreign target y remains exact");
+                                SimpleAssert
+                                    .eq(200, descriptor.getInteger("targetZ"), "foreign target z remains exact");
+                                SimpleAssert.eq(
+                                    target,
+                                    payload.getCompoundTag("gtsr.hubPos"),
+                                    "self retains exact foreign native binding");
+                            } else {
+                                SimpleAssert.eq(
+                                    "clear",
+                                    descriptor.getString("mode"),
+                                    "share clears foreign binding instead of resolving unrelated local copies");
+                                SimpleAssert
+                                    .that(!payload.hasKey("gtsr.hubPos"), "share removes foreign native binding");
+                            }
+                        }
+                    }
+                    SimpleAssert.eq(
+                        before,
+                        document.sourceCopy(),
+                        "successful and rejected dimension-aware settlement leave authoritative source unchanged");
+                    SimpleAssert.eq(frame, document.sourceFrame(), "settlement leaves capture provenance unchanged");
+                }
+            }
+        }
+    }
+
+    /** Isolates coordinate provenance from real mod orientation support; no claim of native NC pose support. */
+    private static JsonObject rotateCoordinateFixture(JsonObject source, AuthorDocument.SourceFrame frame)
+        throws IOException {
+        HologramBlockTransforms.Adapter fixture = new HologramBlockTransforms.Adapter() {
+
+            public boolean accepts(HologramBlockTransforms.Data data) {
+                return data.id("IC2NCInfoPanelExtender");
+            }
+
+            public void turn(HologramBlockTransforms.Data data, boolean vertical) { /* orientation-neutral fixture */ }
+        };
+        HologramBlockTransforms.register(fixture);
+        try {
+            return HologramLocalAuthorSemantics.rotateBlueprint(source, frame);
+        } finally {
+            HologramBlockTransforms.unregister(fixture);
+        }
+    }
+
+    private static NBTTagCompound relationAt(JsonObject source, int index) throws IOException {
+        return HologramBlueprintNbt.decode(
+            source.getAsJsonArray("cells")
+                .get(index)
+                .getAsJsonObject()
+                .get("tileNbt")
+                .getAsString())
+            .getTagList(HologramCoordinatePolicies.RELATIONS, 10)
+            .getCompoundTagAt(0);
     }
 
     private static NBTTagCompound relation(JsonObject settled) throws IOException {

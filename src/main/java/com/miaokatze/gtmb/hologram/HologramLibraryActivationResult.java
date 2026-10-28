@@ -17,6 +17,7 @@ final class HologramLibraryActivationResult implements HologramLibraryFacade.Act
     private volatile String pendingFailure;
     private volatile boolean probeMiss;
     private Runnable prepared;
+    private HologramPresets.Preset reviewedSource;
     private boolean preparedClaimed;
     private BooleanSupplier confirmationCurrent = () -> true;
 
@@ -47,6 +48,16 @@ final class HologramLibraryActivationResult implements HologramLibraryFacade.Act
     @Override
     public void waitingForConfirmation(BooleanSupplier current) {
         confirmationCurrent = current == null ? () -> true : current;
+    }
+
+    /** In-memory provenance only: never accept a serialized report as this activation's owner review. */
+    void reviewedSource(HologramPresets.Preset source) {
+        if (!current()) throw new IllegalStateException("Blueprint activation review expired");
+        reviewedSource = source;
+    }
+
+    boolean isReviewedSource(HologramPresets.Preset source) {
+        return source != null && reviewedSource == source;
     }
 
     boolean terminal() {
@@ -98,6 +109,7 @@ final class HologramLibraryActivationResult implements HologramLibraryFacade.Act
         if (probeMiss) {
             terminal = true;
             prepared = null;
+            reviewedSource = null;
             pendingFailure = null;
             confirmationCurrent = () -> true;
             return;
@@ -121,6 +133,7 @@ final class HologramLibraryActivationResult implements HologramLibraryFacade.Act
         }
         terminal = true;
         prepared = null;
+        reviewedSource = null;
         pendingFailure = null;
         confirmationCurrent = () -> true;
         NBTTagCompound result = envelope(reply);
@@ -133,6 +146,7 @@ final class HologramLibraryActivationResult implements HologramLibraryFacade.Act
         if (terminal) return;
         terminal = true;
         prepared = null;
+        reviewedSource = null;
         pendingFailure = null;
         confirmationCurrent = () -> true;
         NBTTagCompound result = envelope("error");

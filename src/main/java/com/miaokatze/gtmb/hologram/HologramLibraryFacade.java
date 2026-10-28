@@ -149,7 +149,9 @@ public final class HologramLibraryFacade {
             UUID owner = actorId(player);
             boolean chunk = HologramLibraryProtocol.uploadChunk(request);
             HologramServerLibrary current = library;
-            boolean admitted = chunk && current != null && current.uploadAdmitted(player, request);
+            boolean admitted = chunk
+                && ("authorReviewChunk".equals(operation) ? HologramAuthorReviewService.admitted(player, request)
+                    : current != null && current.uploadAdmitted(player, request));
             HologramLibraryProtocol.RequestQuota quota = pending.get(owner);
             if (quota == null) {
                 if (pending.size() >= 64) {
@@ -188,7 +190,8 @@ public final class HologramLibraryFacade {
 
     /** Integrated worlds use private content transport while public publishing and administration stay disabled. */
     static boolean integratedOperation(String operation) {
-        return "quickBootstrap".equals(operation) || "quickCancel".equals(operation)
+        return HologramAuthorReviewProtocol.operation(operation) || "quickBootstrap".equals(operation)
+            || "quickCancel".equals(operation)
             || "publicPrepare".equals(operation)
             || "contentResolve".equals(operation)
             || "privateBegin".equals(operation)
@@ -217,7 +220,10 @@ public final class HologramLibraryFacade {
             }
             result.prepared(reply, () -> {
                 try {
-                    receiver.accept(player, frozen, preset, result);
+                    HologramPresets.Preset reviewed = HologramAuthorServerReview.admitValidatedOwned(preset);
+                    if (!result.current()) throw new IOException("Blueprint activation changed during owner review");
+                    result.reviewedSource(reviewed);
+                    receiver.accept(player, frozen, reviewed, result);
                 } catch (IOException | RuntimeException | LinkageError failure) {
                     result.failed(failure.getMessage());
                 }
@@ -289,6 +295,8 @@ public final class HologramLibraryFacade {
         if (result == null || !result.matches(request) || !result.current())
             throw new IOException("Blueprint activation confirmation expired; select the blueprint again");
         try {
+            if (!result.isReviewedSource(preset))
+                throw new IOException("Blueprint activation source differs from its owner review");
             privateReceiver.accept(player, request, preset, result);
         } catch (IOException | RuntimeException failure) {
             result.failed(failure.getMessage());
@@ -719,6 +727,7 @@ public final class HologramLibraryFacade {
             inboundQuota.clear();
         }
         savedResults.clear();
+        HologramAuthorReviewService.clear();
         cancelActivations();
         callbacks.clear();
         callbackDepth();
@@ -727,6 +736,7 @@ public final class HologramLibraryFacade {
 
     /** Keep committed save receipts and library ownership; reset only transient admission/transport work. */
     static synchronized void restartRuntime() {
+        HologramAuthorReviewService.clear();
         cancelActivations();
         synchronized (pending) {
             inbound.clear();
@@ -746,6 +756,7 @@ public final class HologramLibraryFacade {
             MinecraftServer server = MinecraftServer.getServer();
             if (event.phase != TickEvent.Phase.END || server == null) return;
             pruneSavedResults();
+            HologramAuthorReviewService.tick();
             pollActivations();
             HologramServerLibrary current = library;
             if (current == null) {
@@ -765,6 +776,10 @@ public final class HologramLibraryFacade {
                     if (next.quota.empty()) pending.remove(actorId(next.player), next.quota);
                 }
                 String op = next.request.getString("op");
+                if (HologramAuthorReviewProtocol.operation(op)) {
+                    HologramAuthorReviewService.receive(next.player, next.request);
+                    continue;
+                }
                 if ("cancel".equals(op)) HologramSnapshotPreparation.cancelSaveSource(next.player, next.request);
                 if ("cancel".equals(op) || "cancelTransfer".equals(op))
                     HologramSourceTransfer.cancel(next.player, next.request);

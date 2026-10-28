@@ -596,7 +596,7 @@ final class HologramUiRouter {
                     ui.canvas.tooltip(null);
                     ui.identity.drawDeidentification(mx, my);
                 }
-                if (ui.processing.processingFlow() != null) {
+                if (ui.processing.processingVisible()) {
                     ui.canvas.controls()
                         .clear();
                     ui.canvas.tooltip(null);

@@ -84,7 +84,54 @@ public final class HologramLocalAuthorStructuresRegression {
         SimpleAssert.that(
             HologramLocalAuthorStructures.mergeCell(current, baseline, null, true) == null,
             "core removes only this membership from departed shared cell");
+        retainedContainerOwnership();
         nativeDeadline();
+    }
+
+    private static void retainedContainerOwnership() throws Exception {
+        for (boolean removed : new boolean[] { false, true }) {
+            JsonObject baseline = row("stone"), current = copy(baseline);
+            // Intentionally non-interned; an opaque native payload must not be serialized/decoded/copied as text.
+            String payload = new String(new char[] { 'o', 'p', 'a', 'q', 'u', 'e', '\n', '\u4e2d' });
+            current.addProperty("tileNbt", payload);
+            current.add(
+                "futureExtension",
+                new JsonParser()
+                    .parse("{\"nested\":[{\"value\":\"before\"},null,1.2500,-0,9223372036854775808123,1e+20]}"));
+            String before = current.toString();
+            JsonObject result = HologramLocalAuthorStructures
+                .mergeCell(current, baseline, removed ? null : row("glass"), false);
+            SimpleAssert.eq(before, current.toString(), "reconciliation leaves retained source untouched");
+            SimpleAssert.eq(
+                current.get("futureExtension")
+                    .toString(),
+                result.get("futureExtension")
+                    .toString(),
+                "unknown nested null/numeric lexical values survive both retention branches");
+            SimpleAssert.that(
+                payload == result.get("tileNbt")
+                    .getAsString(),
+                "immutable opaque NBT String is shared, not serialized and reparsed");
+            JsonArray sourceNested = current.getAsJsonObject("futureExtension")
+                .getAsJsonArray("nested");
+            JsonArray resultNested = result.getAsJsonObject("futureExtension")
+                .getAsJsonArray("nested");
+            resultNested.get(0)
+                .getAsJsonObject()
+                .addProperty("value", "result edit");
+            SimpleAssert.eq(
+                "before",
+                sourceNested.get(0)
+                    .getAsJsonObject()
+                    .get("value")
+                    .getAsString(),
+                "mutating copied nested object cannot affect retained source");
+            sourceNested.add(new JsonObject());
+            SimpleAssert.eq(6, resultNested.size(), "mutating source nested array cannot affect copied result");
+            SimpleAssert.that(
+                sourceNested.get(2) == resultNested.get(2),
+                "immutable numeric primitive retains its original lexical representation");
+        }
     }
 
     private static void nativeDeadline() throws Exception {
@@ -104,14 +151,57 @@ public final class HologramLocalAuthorStructuresRegression {
                 .setName(threadName);
         }
         gregtech.api.GregTechAPI.METATILEENTITIES[id] = prototype;
-        try {
+        java.util.concurrent.atomic.AtomicInteger completed = new java.util.concurrent.atomic.AtomicInteger();
+        try (com.miaokatze.gtmb.api.GTMBExtensions.Registration extension = com.miaokatze.gtmb.api.BlueprintSnapshots
+            .register(
+                "gtmb_test:declaration-not-capture",
+                com.miaokatze.gtmb.api.BlueprintSnapshots.Stage.CAPTURE_COMPLETE,
+                snapshot -> {
+                    completed.incrementAndGet();
+                    return new net.minecraft.nbt.NBTTagCompound();
+                })) {
             HologramDynamicDefinitionRegression.DynamicController machine = (HologramDynamicDefinitionRegression.DynamicController) HologramDetachedController
                 .create(id, com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing.DEFAULT);
             net.minecraft.item.ItemStack signal = new net.minecraft.item.ItemStack(net.minecraft.init.Blocks.stone, 1);
             com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor
                 .setChannelData(signal, "shape", 1);
-            HologramCapture capture = HologramCapture
-                .collect(machine, signal, machine.getExtendedFacing(), null, System.nanoTime() - 1L);
+            java.util.concurrent.atomic.AtomicInteger sourceCalls = new java.util.concurrent.atomic.AtomicInteger();
+            try (com.miaokatze.gtmb.api.GTMBExtensions.Registration legacy = com.miaokatze.gtmb.api.StructureSources
+                .register(
+                    "gtmb_test:legacy-declaration-source",
+                    HologramDynamicDefinitionRegression.DynamicController.class,
+                    (controller, trigger) -> {
+                        sourceCalls.incrementAndGet();
+                        return null;
+                    })) {
+                try {
+                    HologramCapture.collectDeclaration(
+                        machine,
+                        signal,
+                        machine.getExtendedFacing(),
+                        null,
+                        System.nanoTime() + 100_000_000L);
+                    throw new AssertionError("synthetic declaration accepted a legacy source callback");
+                } catch (HologramExtensionExecution.ReviewRequired expected) {}
+                SimpleAssert
+                    .eq(0, sourceCalls.get(), "synthetic entry blocks matching legacy describe before invocation");
+                SimpleAssert.eq(0, machine.constructions, "rejected source cannot fall through to native construct");
+                SimpleAssert.eq(0, completed.get(), "rejected declaration cannot emit capture completion");
+            }
+            HologramCapture capture;
+            try (com.miaokatze.gtmb.api.GTMBExtensions.Registration safe = com.miaokatze.gtmb.api.StructureSources
+                .register(
+                    "gtmb_test:safe-declaration-source",
+                    HologramDynamicDefinitionRegression.DynamicController.class,
+                    (controller, trigger) -> {
+                        sourceCalls.incrementAndGet();
+                        return null;
+                    },
+                    true)) {
+                capture = HologramCapture
+                    .collectDeclaration(machine, signal, machine.getExtendedFacing(), null, System.nanoTime() - 1L);
+            }
+            SimpleAssert.eq(1, sourceCalls.get(), "explicit client-safe declaration source executes once");
             SimpleAssert
                 .that(capture.pending && !capture.incomplete, "explicit expired client slice yields native traversal");
             long deadline = System.nanoTime() + 5_000_000_000L;
@@ -121,6 +211,15 @@ public final class HologramLocalAuthorStructuresRegression {
                 .that(!capture.pending && !capture.incomplete, "existing server-default overload resumes same capture");
             SimpleAssert.eq(1, machine.constructions, "continuation never reenters native construct");
             SimpleAssert.eq(0, prototype.constructions, "native declaration never mutates registry prototype");
+            SimpleAssert.eq(0, completed.get(), "synthetic declaration does not masquerade as captured world data");
+            HologramCapture actual = HologramCapture.collect(machine, signal, machine.getExtendedFacing());
+            deadline = System.nanoTime() + 5_000_000_000L;
+            while (actual.pending && System.nanoTime() < deadline)
+                actual = HologramCapture.collect(machine, signal, machine.getExtendedFacing(), actual);
+            SimpleAssert.that(!actual.pending && !actual.incomplete, "actual capture completes");
+            SimpleAssert.eq(1, completed.get(), "actual capture keeps complete callback");
+            HologramCapture.collect(machine, signal, machine.getExtendedFacing(), actual);
+            SimpleAssert.eq(1, completed.get(), "completed capture cannot repeat completion callback");
         } finally {
             gregtech.api.GregTechAPI.METATILEENTITIES[id] = previous;
         }

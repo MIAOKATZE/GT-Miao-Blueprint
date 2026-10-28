@@ -82,14 +82,15 @@ final class HologramSnapshotModelsClient {
     }
 
     static boolean ready(HologramState state, HologramState.Cell cell, boolean current) {
-        if (cell.nativeModelId <= 0 && cell.nativeModelPending == 0) return true;
-        boolean ready = !cell.modelPending(current);
+        boolean budget = resumableBudget(state, cell);
+        if (!budget && cell.nativeModelId <= 0 && cell.nativeModelPending == 0) return true;
+        boolean ready = !cell.modelPending(current) && !budget;
         if (!ready) requestVisible(state, cell, current);
         // Native connected models may inspect diagonal neighbors; block/meta are already in the cold index.
         if (HologramNativeTiles.supported(cell.block(current || cell.anchor))) {
             for (int x = -1; x <= 1; x++) for (int y = -1; y <= 1; y++) for (int z = -1; z <= 1; z++) {
                 HologramState.Cell neighbor = state.regions.at(cell.x + x, cell.y + y, cell.z + z);
-                if (neighbor != null && neighbor.modelPending(current)) {
+                if (neighbor != null && (neighbor.modelPending(current) || resumableBudget(state, neighbor))) {
                     requestVisible(state, neighbor, current);
                     if (state.authorProjection != null)
                         state.authorProjection.dependency(cell, neighbor.x, neighbor.y, neighbor.z);
@@ -99,6 +100,11 @@ final class HologramSnapshotModelsClient {
             }
         }
         return ready;
+    }
+
+    /** A local budget shell is unknown appearance, not a terminal unsupported/known-empty tile. */
+    static boolean resumableBudget(HologramState state, HologramState.Cell cell) {
+        return state != null && state.authorProjection != null && cell != null && "localBudget".equals(cell.renderKind);
     }
 
     static void dependency(HologramState.Cell reader, HologramState.Cell input) {

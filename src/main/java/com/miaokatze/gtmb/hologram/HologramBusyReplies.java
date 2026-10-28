@@ -36,7 +36,7 @@ final class HologramBusyReplies {
         }
         NBTTagCompound proof = new NBTTagCompound();
         for (String key : new String[] { "session", "op", "action", "requestId", "transfer", "saveReceipt", "localId",
-            "replaceLocalId", "jsonSha256", "previewSha256" }) {
+            "replaceLocalId", "jsonSha256", "previewSha256", "documentId", "sourceHash", "intent" }) {
             if (!request.hasKey(key, 8)) continue;
             String value = request.getString(key);
             proof.setString(key, value.substring(0, Math.min(128, value.length())));
@@ -78,7 +78,9 @@ final class HologramBusyReplies {
                         HologramService.librarySaveCancelled(player, proof.getCompoundTag("cancelSaveProof"));
                         proof.removeTag("cancelSaveProof");
                     }
-                    proof.setString("op", "error");
+                    proof.setString(
+                        "op",
+                        HologramAuthorReviewProtocol.operation(proof.getString("op")) ? "authorReviewError" : "error");
                     proof.setString("code", "busy");
                     proof.setString("message", "服务器蓝图库请求繁忙，请稍后重试");
                     HologramNetwork.sendLibraryReply(player, proof);

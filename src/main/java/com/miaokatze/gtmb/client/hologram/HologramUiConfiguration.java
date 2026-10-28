@@ -12,6 +12,8 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
 import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
+import com.miaokatze.gtmb.blueprint.editor.AuthorDocument;
+import com.miaokatze.gtmb.hologram.HologramExtensionExecution;
 
 import gregtech.api.GregTechAPI;
 import gregtech.api.enums.GTValues;
@@ -31,6 +33,7 @@ final class HologramUiConfiguration {
     private long nativeRevision = -1, nativeCellId = -1;
     private List<ItemStack> nativeCandidates = Collections.emptyList();
     private NBTTagCompound nativeDetails = new NBTTagCompound();
+    private boolean nativeReviewRequired;
 
     /** Explicit selected-record native reads, cached by document identity, revision and stable cell ID. */
     List<ItemStack> candidates() {
@@ -38,6 +41,7 @@ final class HologramUiConfiguration {
             HologramState.Cell cell = ui.session.selectedCell();
             return cell == null ? Collections.emptyList() : cell.candidates;
         }
+        if (ui.session.selectedCell() == null) return Collections.emptyList();
         selectedNativeDetails();
         return nativeCandidates;
     }
@@ -62,7 +66,9 @@ final class HologramUiConfiguration {
             .revision();
         nativeCellId = id;
         nativeCandidates = Collections.emptyList();
-        nativeDetails = view.tag();
+        nativeReviewRequired = false;
+        nativeDetails = (NBTTagCompound) view.tag()
+            .copy();
         try {
             com.google.gson.JsonObject source = runtime.sourceCell(id);
             nativeCandidates = com.miaokatze.gtmb.hologram.HologramLocalAuthorConfigurations.candidates(source);
@@ -73,28 +79,118 @@ final class HologramUiConfiguration {
                 "hatchFacing",
                 source.has("facing") ? source.get("facing")
                     .getAsInt() : -1);
-            NBTTagList roles = new NBTTagList(), stacks = new NBTTagList();
-            int[] tiers = new int[nativeCandidates.size()];
-            for (int i = 0; i < nativeCandidates.size(); i++) {
-                ItemStack target = nativeCandidates.get(i);
-                MTEHatch hatch = hatchPrototype(target);
-                tiers[i] = hatch == null ? Integer.MAX_VALUE : hatch.mTier;
-                roles.appendTag(new net.minecraft.nbt.NBTTagString(hatch == null ? "外壳/方块" : "仓室"));
-                stacks.appendTag(target.writeToNBT(new NBTTagCompound()));
-            }
-            nativeDetails.setTag("candidateRoles", roles);
-            nativeDetails.setTag("candidates", stacks);
-            nativeDetails.setIntArray("candidateTiers", tiers);
+            describeCandidates(nativeDetails, nativeCandidates);
             boolean complete = source.has("authorDeclarationComplete") && source.get("authorDeclarationComplete")
                 .getAsBoolean();
             nativeDetails.setBoolean("candidateComplete", complete);
             if (!complete) nativeDetails.setString("candidateBoundary", "仅列出已保存并通过本格验证的声明候选；未声称原生枚举完整");
+        } catch (HologramExtensionExecution.ReviewRequired serverOnly) {
+            nativeReviewRequired = true;
+            unavailableCandidates("此扩展需要服务器分析；点击查看可替换方块或类型选择，原稿保留");
         } catch (java.io.IOException | RuntimeException failure) {
-            nativeDetails.setBoolean("candidateComplete", false);
-            nativeDetails
-                .setString("candidateBoundary", failure.getMessage() == null ? "原生声明读取失败" : failure.getMessage());
+            unavailableCandidates(failure.getMessage() == null ? "原生声明读取失败" : failure.getMessage());
         }
         return nativeDetails;
+    }
+
+    private static void describeCandidates(NBTTagCompound details, List<ItemStack> candidates) {
+        NBTTagList roles = new NBTTagList(), stacks = new NBTTagList();
+        int[] tiers = new int[candidates.size()];
+        for (int i = 0; i < candidates.size(); i++) {
+            ItemStack target = candidates.get(i);
+            MTEHatch hatch = hatchPrototype(target);
+            tiers[i] = hatch == null ? Integer.MAX_VALUE : hatch.mTier;
+            roles.appendTag(new net.minecraft.nbt.NBTTagString(hatch == null ? "外壳/方块" : "仓室"));
+            stacks.appendTag(target.writeToNBT(new NBTTagCompound()));
+        }
+        details.setTag("candidateRoles", roles);
+        details.setTag("candidates", stacks);
+        details.setIntArray("candidateTiers", tiers);
+    }
+
+    /** Never expose partial builtin candidates after a legacy applicability callback was withheld. */
+    private void unavailableCandidates(String reason) {
+        nativeCandidates = Collections.emptyList();
+        describeCandidates(nativeDetails, nativeCandidates);
+        nativeDetails.setIntArray("hatchFacings", new int[0]);
+        nativeDetails.setBoolean("candidateComplete", false);
+        nativeDetails.setString("candidateBoundary", reason == null ? "原生候选分析未完成" : reason);
+    }
+
+    private boolean selectedReviewCurrent(HologramLocalAuthorRuntime runtime, AuthorDocument frozen, long cellId) {
+        if (!ui.session.isLocalAuthor() || ui.session.author() != runtime
+            || HologramLocalAuthorRuntime.active() != runtime
+            || runtime.document() != frozen
+            || nativeOwner != runtime
+            || nativeRevision != frozen.revision()
+            || nativeCellId != cellId) return false;
+        try {
+            return runtime.selectionIds(new int[] { ui.preview.selected() })
+                .contains(cellId);
+        } catch (RuntimeException stale) {
+            return false;
+        }
+    }
+
+    /** Called only by an intentional details action; getters/rendering never send this request. */
+    private void requestNativeDetails() {
+        selectedNativeDetails();
+        if (!nativeReviewRequired || nativeOwner == null) return;
+        final HologramLocalAuthorRuntime runtime = nativeOwner;
+        final AuthorDocument frozen = runtime.document();
+        final long cellId = nativeCellId;
+        if (!selectedReviewCurrent(runtime, frozen, cellId)) return;
+        if (HologramAuthorReviewClient.busy(runtime)) {
+            ui.session.notice("正在服务器核对当前请求；可取消后重新分析本格候选");
+            return;
+        }
+        NBTTagCompound policy = new NBTTagCompound();
+        policy.setLong("cellId", cellId);
+        nativeDetails.setString("candidateBoundary", "正在服务器分析本格候选与合法朝向；原稿不变");
+        ui.session.notice("正在服务器分析所选格的替换候选与朝向；不施工、不扣除材料");
+        HologramAuthorReviewClient
+            .request(runtime, "candidates", policy, () -> selectedReviewCurrent(runtime, frozen, cellId), reply -> {
+                if (!selectedReviewCurrent(runtime, frozen, cellId)) return;
+                try {
+                    NBTTagCompound report = (NBTTagCompound) reply.getCompoundTag("report")
+                        .copy();
+                    NBTTagList stacks = report.getTagList("candidates", 10);
+                    if (!report.hasKey("candidates", 9) || stacks.tagCount() > 4096
+                        || !report.hasKey("hatchFacings", 11)
+                        || !report.hasKey("hatchFacing", 3)
+                        || !report.hasKey("candidateComplete", 1)) throw new IllegalArgumentException("服务器候选明细无效");
+                    List<ItemStack> reviewed = new ArrayList<>();
+                    for (int i = 0; i < stacks.tagCount(); i++) {
+                        ItemStack candidate = ItemStack.loadItemStackFromNBT(stacks.getCompoundTagAt(i));
+                        if (candidate == null || candidate.getItem() == null)
+                            throw new IllegalArgumentException("服务器候选包含本客户端不可识别的物品");
+                        reviewed.add(candidate);
+                    }
+                    describeCandidates(report, reviewed);
+                    NBTTagCompound installed = (NBTTagCompound) nativeDetails.copy();
+                    for (String key : new String[] { "candidates", "candidateRoles", "candidateTiers", "hatchFacings",
+                        "hatchFacing", "candidateComplete", "candidateBoundary" }) {
+                        installed.removeTag(key);
+                        if (report.hasKey(key)) installed.setTag(
+                            key,
+                            report.getTag(key)
+                                .copy());
+                    }
+                    nativeDetails = installed;
+                    nativeCandidates = Collections.unmodifiableList(reviewed);
+                    nativeReviewRequired = false;
+                    hatchOffset = hatchRole = 0;
+                    hatchFilterTier = -1;
+                    ui.session.notice("服务器候选分析已返回；选择只更新规划，实际施工仍须独立核验");
+                } catch (RuntimeException invalid) {
+                    unavailableCandidates(invalid.getMessage());
+                    ui.session.notice("服务器候选未应用，原稿保留：" + invalid.getMessage());
+                }
+            }, failure -> {
+                if (!selectedReviewCurrent(runtime, frozen, cellId)) return;
+                unavailableCandidates(failure.getMessage() == null ? "服务器候选分析未完成" : failure.getMessage());
+                ui.session.notice("服务器候选分析未完成，原稿保留：" + failure.getMessage());
+            });
     }
 
     private HologramMuiTextField mainField;
@@ -1270,10 +1366,13 @@ final class HologramUiConfiguration {
     }
 
     void requestSelectedDetails() {
+        if (ui.session.isLocalAuthor()) {
+            if (ui.session.editable() && ui.preview.selected() >= 0) requestNativeDetails();
+            return;
+        }
         if (ui.session.editable() && ui.preview.selected() >= 0
             && ui.session.state().data.getInteger("selected") != ui.preview.selected()) {
-            if (ui.session.isLocalAuthor()) ui.session.localAction("configure", ui.config.configuration());
-            else ui.session.send("configure", ui.config.configuration(), true);
+            ui.session.send("configure", ui.config.configuration(), true);
         }
     }
 
@@ -1464,6 +1563,13 @@ final class HologramUiConfiguration {
             case 99:
             case 102:
                 if (!ui.session.editable()) return true;
+                if (id == 99 && ui.session.isLocalAuthor()) {
+                    selectedNativeDetails();
+                    if (nativeReviewRequired) {
+                        requestNativeDetails();
+                        return true;
+                    }
+                }
                 int[] facings = ui.session.cellTag()
                     .getIntArray("hatchFacings");
                 int nextFacing = -1;

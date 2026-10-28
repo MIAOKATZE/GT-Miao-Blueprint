@@ -148,7 +148,7 @@ final class HologramEditorLegacyDialogs {
             48,
             622,
             256,
-            () -> ui.processing.processingFlow() != null,
+            ui.processing::processingVisible,
             ui.processing::drawProcessingFlow,
             ui.processing::consumeProcessingKey,
             ui.processing::consumeProcessingWheel);

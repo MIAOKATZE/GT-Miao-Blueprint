@@ -23,6 +23,7 @@ public final class HologramLocalAuthorConfigurationsRegression {
     }
 
     public static void run() throws Exception {
+        externalSampleProvenance();
         JsonObject cell = new JsonObject();
         cell.addProperty("block", "minecraft:stone");
         cell.addProperty("item", "minecraft:stone");
@@ -118,4 +119,70 @@ public final class HologramLocalAuthorConfigurationsRegression {
         }
         SimpleAssert.that(refused, "ordinary block cannot pretend to have an AE native slot editor");
     }
+
+    private static void externalSampleProvenance() throws Exception {
+        JsonObject source = new JsonObject();
+        source.addProperty("block", "minecraft:stone");
+        source.addProperty("item", "minecraft:stone");
+        String original = source.toString();
+        ItemStack inventory = new ItemStack(Blocks.stone);
+        NBTTagCompound tag = new NBTTagCompound(), target = new NBTTagCompound();
+        target.setInteger("x", 101);
+        target.setInteger("y", 64);
+        target.setInteger("z", 200);
+        target.setInteger("dim", 7);
+        target.setString("type", "water");
+        tag.setTag(HologramNativeHubData.HUB_POS, target);
+        inventory.setTagCompound(tag);
+        boolean refused = false;
+        try {
+            HologramLocalAuthorConfigurations.targetExternal(source, inventory, false);
+        } catch (IOException expected) {
+            refused = true;
+        }
+        SimpleAssert.that(refused, "foreign raw item world links cannot inherit capture provenance");
+        SimpleAssert.eq(original, source.toString(), "foreign sample refusal leaves source exact");
+        SimpleAssert.eq(tag, inventory.getTagCompound(), "foreign sample is not normalized in place");
+        HologramCoordinatePolicies.Relation relation = new HologramCoordinatePolicies.Relation();
+        relation.id = "0,0,0:item:gtsr.hub:-1";
+        relation.label = "hub";
+        relation.payload = "item";
+        relation.adapter = HologramNativeHubData.HUB;
+        relation.dx = 1;
+        net.minecraft.nbt.NBTTagList rows = new net.minecraft.nbt.NBTTagList();
+        rows.appendTag(relation.write("relative"));
+        tag = new NBTTagCompound();
+        tag.setTag(HologramCoordinatePolicies.RELATIONS, rows);
+        inventory.setTagCompound(tag);
+        refused = false;
+        try {
+            HologramLocalAuthorConfigurations.targetExternal(source, inventory, true);
+        } catch (IOException expected) {
+            refused = true;
+        }
+        SimpleAssert.that(refused, "relative sample cannot mix current position with old pending payload origin");
+        SimpleAssert.that(
+            HologramLocalAuthorConfigurations.targetExternal(source, inventory, false)
+                .has("itemNbt"),
+            "portable relative sample allowed after pending transform is settled");
+        rows = new net.minecraft.nbt.NBTTagList();
+        relation.targetX = 101;
+        relation.targetY = 64;
+        relation.targetZ = 200;
+        relation.targetDimension = 7;
+        rows.appendTag(relation.write("absolute"));
+        tag.setTag(HologramCoordinatePolicies.RELATIONS, rows);
+        SimpleAssert.that(
+            HologramLocalAuthorConfigurations.targetExternal(source, inventory, true)
+                .has("itemNbt"),
+            "declared absolute item endpoint does not depend on pending local origin");
+        inventory.setTagCompound(new NBTTagCompound());
+        inventory.getTagCompound()
+            .setString("display", "ordinary sample");
+        SimpleAssert.that(
+            HologramLocalAuthorConfigurations.targetExternal(source, inventory, true)
+                .has("itemNbt"),
+            "ordinary noncoordinate sample remains compatible");
+    }
+
 }

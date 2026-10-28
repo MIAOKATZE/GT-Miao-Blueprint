@@ -680,7 +680,7 @@ public final class AuthorEditor {
             z = Math.min(z, cell.z());
         }
         for (String group : groups) structures.add(current.groups.get(group));
-        return new Clipboard(cells, structures, x, y, z);
+        return new Clipboard(cells, structures, x, y, z, current.sourceFrame);
     }
 
     /** Legacy author cut means excluding source cells, not deleting geometry or moving world assets. */
@@ -692,6 +692,13 @@ public final class AuthorEditor {
     public Change paste(Clipboard clipboard, int x, int y, int z) {
         requireEditable();
         if (clipboard == null) throw new IllegalArgumentException("Missing clipboard");
+        if (!current.sourceFrame.equals(clipboard.sourceFrame)) {
+            for (AuthorDocument.Cell cell : clipboard.cells) if (cell.tileNbt() != null && !cell.tileNbt()
+                .isEmpty() || cell.itemNbt() != null
+                    && !cell.itemNbt()
+                        .isEmpty())
+                throw new IllegalArgumentException("Cannot paste native payloads across source coordinate frames");
+        }
         Transaction tx = new Transaction();
         int dx = difference(x, clipboard.x), dy = difference(y, clipboard.y), dz = difference(z, clipboard.z);
         Set<Long> replaced = new LinkedHashSet<>();
@@ -814,7 +821,8 @@ public final class AuthorEditor {
     }
 
     private void requireClock() {
-        if (clock == Long.MAX_VALUE) throw new IllegalStateException("Revision budget exhausted");
+        // Persisted drafts exclude MAX_VALUE; never publish an edit/history revision that cannot reopen.
+        if (clock >= Long.MAX_VALUE - 1) throw new IllegalStateException("Revision budget exhausted");
     }
 
     private void requireEditable() {
@@ -1172,6 +1180,7 @@ public final class AuthorEditor {
                 throw invalid(e);
             }
             return new AuthorDocument(
+                current.sourceFrame,
                 current.id,
                 revision,
                 nextId,
@@ -1199,8 +1208,11 @@ public final class AuthorEditor {
         private final List<AuthorDocument.Cell> cells;
         private final List<AuthorDocument.Group> groups;
         private final int x, y, z;
+        private final AuthorDocument.SourceFrame sourceFrame;
 
-        private Clipboard(List<AuthorDocument.Cell> cells, List<AuthorDocument.Group> groups, int x, int y, int z) {
+        private Clipboard(List<AuthorDocument.Cell> cells, List<AuthorDocument.Group> groups, int x, int y, int z,
+            AuthorDocument.SourceFrame sourceFrame) {
+            this.sourceFrame = sourceFrame;
             this.cells = Collections.unmodifiableList(cells);
             this.groups = Collections.unmodifiableList(groups);
             this.x = x;

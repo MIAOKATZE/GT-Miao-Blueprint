@@ -53,7 +53,8 @@ final class HologramServerLibrary {
     private volatile boolean ready;
     private volatile long runtimeEpoch;
     private volatile String loadFailure;
-    private long storedBytes, publicDtoBytes, reservedBytes, downloadBytes, catalogRevision = 1;
+    private volatile Startup startup = new Startup(0);
+    private long storedBytes, publicDtoBytes, reviewDtoBytes, reservedBytes, downloadBytes, catalogRevision = 1;
     private int activeDownloads;
     private int activeUploads, cursor;
     private final HologramLibraryProtocol.FairBudget uploadBudget = new HologramLibraryProtocol.FairBudget(true);
@@ -70,13 +71,9 @@ final class HologramServerLibrary {
         worker.execute(() -> {
             try {
                 config = new HologramLibraryConfig(configFile.toFile());
-                load();
-                ready = true;
+                advanceStartup();
             } catch (IOException | RuntimeException failure) {
-                GTMiaoBlueprint.LOG.error("Server blueprint library could not load", failure);
-                loadFailure = failure.getMessage() == null ? failure.getClass()
-                    .getSimpleName() : failure.getMessage();
-                closed = true;
+                failStartup(startup, failure);
             }
         });
         worker.scheduleAtFixedRate(this::pumpSafely, 50, 50, TimeUnit.MILLISECONDS);
@@ -193,6 +190,7 @@ final class HologramServerLibrary {
         if (closed || !peer.online
             || upload == null
             || !upload.valid
+            || upload.reviewPending
             || !HologramLibraryProtocol.uploadChunk(request)
             || !upload.transfer.equals(request.getString("transfer"))
             || upload.request.getLong("clientTaskToken") != request.getLong("clientTaskToken")) return false;
@@ -236,6 +234,7 @@ final class HologramServerLibrary {
     }
 
     synchronized void heartbeat() {
+        advanceStartupOwner();
         for (Peer peer : peers.values()) {
             peer.online = peer.player.playerNetServerHandler != null
                 && peer.player.playerNetServerHandler.netManager != null
@@ -336,6 +335,11 @@ final class HologramServerLibrary {
         if (!available()) throw new IOException(unavailableMessage());
     }
 
+    boolean consumeReviewUpload(UUID owner, int bytes) {
+        HologramLibraryConfig.View view = config();
+        return view != null && uploadBudget.take(owner, bytes, view.uploadKiB * 1024, System.nanoTime());
+    }
+
     boolean consumeDownload(UUID owner, int bytes) {
         HologramLibraryConfig.View view = config();
         return view != null && downloadBudget.take(owner, bytes, view.downloadKiB * 1024, System.nanoTime());
@@ -351,7 +355,10 @@ final class HologramServerLibrary {
 
     private void pumpSafely() {
         try {
-            if (!closed && config != null) pump();
+            if (!closed && config != null) {
+                if (!ready) advanceStartup();
+                if (available()) pump();
+            }
         } catch (RuntimeException failure) {
             GTMiaoBlueprint.LOG.warn("Server library worker failure", failure);
             loadFailure = failure.getMessage() == null ? failure.getClass()
@@ -416,6 +423,7 @@ final class HologramServerLibrary {
                 control = peer.requests.pollControl();
             }
             if (control != null) process(peer, control);
+            finishReviewedUpload(peer);
         }
         // Every peer gets one opportunity per round; no UUID can drain the shared bucket first.
         for (int pass = 0; pass < 4; pass++) {
@@ -837,6 +845,7 @@ final class HologramServerLibrary {
         Upload upload;
         try {
             upload = new Upload(request, temp, Files.newOutputStream(temp));
+            upload.reviewEpoch = runtimeEpoch;
         } catch (IOException failure) {
             Files.deleteIfExists(temp);
             throw failure;
@@ -878,27 +887,127 @@ final class HologramServerLibrary {
             if (upload.previewUpload) {
                 HologramLibraryFacade.verifySavedPreview(peer.player, upload.request, artifact);
             } else {
-                HologramPresets.Preset blueprint = canonical(
-                    HologramBlueprintSharing.decodeUnchecked(new String(artifact.json, StandardCharsets.UTF_8)));
-                if (upload.privateUpload) {
-                    String jsonHash = HologramBlueprintContentHash.of(artifact.json);
-                    if ((upload.request.getBoolean("hashProbe") || upload.request.getBoolean("contentOnly"))
-                        && !jsonHash.equals(upload.request.getString("jsonHash")))
-                        throw new IOException("Blueprint JSON digest mismatch");
-                    if (draftTaskCurrent(peer.player, upload.request) && upload.valid) {
-                        int contentBytes = HologramBlueprintCompactCodec.encode(blueprint, (done, total) -> {}).length;
-                        boolean retained = trusted
-                            .put(peer.owner, peer, peer.world, runtimeEpoch, jsonHash, blueprint, contentBytes);
-                        if (upload.request.getBoolean("contentOnly")) {
-                            if (!retained) throw new IOException(
-                                "Blueprint exceeds the temporary content cache allowance; preparation was not retained");
-                            send(peer, contentReply(upload.request, jsonHash, false, false));
-                        } else HologramLibraryFacade.importPrivate(peer.player, upload.request, blueprint);
+                // Preserve established builtin IO work; externally registered callbacks require owner review.
+                HologramPresets.Preset blueprint = HologramBlueprintSharing
+                    .decodeUnchecked(new String(artifact.json, StandardCharsets.UTF_8));
+                if (!HologramNativePlacement.hasExternalAdapters()
+                    && !com.miaokatze.gtmb.api.ResourceContainers.hasCodecs()) {
+                    HologramPresets.Preset canonical;
+                    try (HologramExtensionExecution.Scope builtins = HologramExtensionExecution.builtinLibraryIo()) {
+                        canonical = canonical(blueprint);
+                    } catch (IOException | RuntimeException failure) {
+                        if (!requiresOwnerReview(failure)) throw failure;
+                        // A registration may race the cheap registry query. The scope never calls it on IO.
+                        beginUploadReview(peer, upload, blueprint, artifact, false);
+                        return;
                     }
-                } else publish(peer, upload, blueprint, artifact);
+                    if (upload.privateUpload || !HologramAuthorServerReview.hasExternalCallbacks()) {
+                        HologramAuthorServerReview.clearUntrustedReportsOwned(canonical);
+                        completeUpload(peer, upload, canonical, artifact);
+                    } else {
+                        beginUploadReview(peer, upload, canonical, artifact, true);
+                        return;
+                    }
+                } else {
+                    beginUploadReview(peer, upload, blueprint, artifact, false);
+                    return;
+                }
             }
             abort(peer);
         } else upload.ackPending = true;
+    }
+
+    private static boolean requiresOwnerReview(Throwable failure) {
+        if (failure instanceof HologramExtensionExecution.ReviewRequired) return true;
+        if (failure.getCause() != null && requiresOwnerReview(failure.getCause())) return true;
+        for (Throwable suppressed : failure.getSuppressed()) if (requiresOwnerReview(suppressed)) return true;
+        return false;
+    }
+
+    /**
+     * Explicit external compatibility path: retain the upload reservation without blocking the worker. Native
+     * canonicalization/legacy callbacks are synchronous on the owner; this path does not promise tick slicing.
+     */
+    private void beginUploadReview(Peer peer, Upload upload, HologramPresets.Preset blueprint,
+        HologramBlueprintArtifact.Artifact artifact, boolean canonicalReady) throws IOException {
+        long weight = HologramTrustedBlueprintCache.dtoWeight(blueprint, artifact.json.length);
+        if (weight > MAX_PUBLIC_DTO_BYTES - reviewDtoBytes)
+            throw new IOException("Blueprint owner review expanded DTO budget is full; retry");
+        upload.reviewDtoBytes = weight;
+        reviewDtoBytes += weight;
+        final long epoch = runtimeEpoch;
+        upload.reviewEpoch = epoch;
+        upload.reviewPending = true;
+        upload.reviewArtifact = artifact;
+        if (!HologramLibraryFacade.scheduleLibraryCallback(peer.player, upload.request, () -> {
+            if (!uploadReviewCurrent(peer, upload, epoch)) return;
+            if (upload.privateUpload && !(upload.request.getBoolean("contentOnly")
+                ? contentOwnerCurrent(peer) && contentCurrent(peer, upload.request)
+                : upload.request.getString("action")
+                    .isEmpty() ? HologramLibraryService.sessionCurrent(peer.player, upload.request)
+                        : HologramLibraryFacade.activationCurrent(peer.player, upload.request))) {
+                upload.valid = false;
+                return;
+            }
+            try {
+                HologramPresets.Preset reviewed = canonicalReady ? blueprint : canonical(blueprint);
+                // Private activation owns its one final review; a content cache hit is not an approval.
+                if (!upload.privateUpload) reviewed = HologramAuthorServerReview.admit(reviewed);
+                if (uploadReviewCurrent(peer, upload, epoch)) upload.reviewed = reviewed;
+            } catch (IOException | RuntimeException | LinkageError failure) {
+                upload.reviewFailure = failure.getMessage() == null ? "Blueprint owner review failed"
+                    : failure.getMessage();
+            } finally {
+                upload.reviewDone = true;
+            }
+        })) throw new IOException("Blueprint owner review queue is busy; retry");
+    }
+
+    private boolean uploadReviewCurrent(Peer peer, Upload upload, long epoch) {
+        return !closed && peer.online
+            && peer.upload == upload
+            && upload.valid
+            && runtimeEpoch == epoch
+            && (upload.request.getLong("clientTaskToken") == 0
+                || upload.request.getLong("clientTaskToken") > peer.retiredThrough);
+    }
+
+    /** The sole IO pump consumes the reviewed outcome, persists/cache-admits it, and releases every reservation. */
+    private void finishReviewedUpload(Peer peer) {
+        Upload upload = peer.upload;
+        if (upload == null || !upload.reviewPending || !upload.reviewDone) return;
+        try {
+            if (!uploadReviewCurrent(peer, upload, upload.reviewEpoch)) return;
+            if (upload.reviewFailure != null) throw new IOException(upload.reviewFailure);
+            HologramPresets.Preset blueprint = upload.reviewed;
+            if (blueprint == null) throw new IOException("Blueprint owner review was retired; retry");
+            completeUpload(peer, upload, blueprint, upload.reviewArtifact);
+        } catch (IOException | RuntimeException failure) {
+            upload.reviewFailure = failure.getMessage();
+            error(peer, failure.getMessage(), upload.request);
+        } finally {
+            abort(peer);
+        }
+    }
+
+    private void completeUpload(Peer peer, Upload upload, HologramPresets.Preset blueprint,
+        HologramBlueprintArtifact.Artifact artifact) throws IOException {
+        if (upload.privateUpload) {
+            String jsonHash = HologramBlueprintContentHash.of(artifact.json);
+            if ((upload.request.getBoolean("hashProbe") || upload.request.getBoolean("contentOnly"))
+                && !jsonHash.equals(upload.request.getString("jsonHash")))
+                throw new IOException("Blueprint JSON digest mismatch");
+            if (draftTaskCurrent(peer.player, upload.request)) {
+                int contentBytes = HologramBlueprintCompactCodec.encode(blueprint, (done, total) -> {}).length;
+                boolean retained = trusted
+                    .put(peer.owner, peer, peer.world, runtimeEpoch, jsonHash, blueprint, contentBytes);
+                if (upload.request.getBoolean("contentOnly")) {
+                    if (!retained) throw new IOException(
+                        "Blueprint exceeds the temporary content cache allowance; preparation was not retained");
+                    send(peer, contentReply(upload.request, jsonHash, false, false));
+                } else HologramLibraryFacade.importPrivate(peer.player, upload.request, blueprint);
+            }
+        } else publish(peer, upload, blueprint, artifact);
     }
 
     private void publish(Peer peer, Upload upload, HologramPresets.Preset blueprint,
@@ -935,9 +1044,7 @@ final class HologramServerLibrary {
             blueprint.id,
             bytes,
             boundPreview,
-            () -> peer.online && !closed
-                && (upload.request.getLong("clientTaskToken") == 0
-                    || upload.request.getLong("clientTaskToken") > peer.retiredThrough));
+            () -> uploadReviewCurrent(peer, upload, upload.reviewEpoch));
         Map<String, Entry> next = new LinkedHashMap<>(published);
         next.put(blueprint.id, replacement);
         publishIndex(next);
@@ -1013,43 +1120,173 @@ final class HologramServerLibrary {
         return count;
     }
 
-    private void load() throws IOException {
-        Files.createDirectories(directory);
-        try (DirectoryStream<Path> files = Files.newDirectoryStream(directory, "incoming-*.tmp")) {
-            for (Path path : files) Files.deleteIfExists(path);
+    /** IO never waits for the owner: one pending entry hands off through volatile continuation state. */
+    private void advanceStartup() {
+        Startup load = startup;
+        if (!startupCurrent(load)) return;
+        try {
+            if (load.files == null) {
+                Files.createDirectories(directory);
+                try (DirectoryStream<Path> files = Files.newDirectoryStream(directory, "incoming-*.tmp")) {
+                    for (Path path : files) {
+                        if (!startupCurrent(load)) return;
+                        Files.deleteIfExists(path);
+                    }
+                }
+                Map<String, Path> files = HologramBlueprintFiles.managedPublic(directory);
+                if (files.size() > MAX_ENTRIES) throw new IOException("Server blueprint index entry budget");
+                load.files = files.entrySet()
+                    .iterator();
+            }
+            while (startupCurrent(load)) {
+                PendingStartup pending = load.pending;
+                if (pending != null) {
+                    pending.validation.advanceData();
+                    if (!pending.validation.done()) return;
+                    pending.envelope.blueprint = pending.validation.result();
+                    admitStartup(load, pending.envelope, pending.bytes, pending.storedBytes);
+                    synchronized (this) {
+                        load.pending = null;
+                        pending.validation.close();
+                    }
+                    continue;
+                }
+                if (!load.files.hasNext()) {
+                    synchronized (this) {
+                        if (!startupCurrent(load)) return;
+                        publishIndex(load.loaded);
+                        storedBytes = load.storedBytes;
+                        publicDtoBytes = load.dtoBytes;
+                        startup = null;
+                        ready = true;
+                    }
+                    return;
+                }
+                Map.Entry<String, Path> member = load.files.next();
+                String id = HologramLibraryService.publicId(member.getKey());
+                HologramBlueprintArtifact.Artifact artifact = HologramBlueprintArtifact.readPair(member.getValue());
+                byte[] bytes = artifact.json;
+                int stored = bytes.length + artifact.png.length;
+                if (stored > MAX_STORED_BYTES - load.storedBytes)
+                    throw new IOException("Server blueprint index byte budget");
+                com.google.gson.JsonObject root = HologramBlueprintCompactCodec.parse(bytes);
+                HologramBlueprintVersions.validateJson(root.get("blueprint"));
+                Envelope envelope = GSON.fromJson(root, Envelope.class);
+                if (envelope == null || envelope.schema != 1
+                    || envelope.blueprint == null
+                    || !id.equals(envelope.blueprint.id)
+                    || envelope.uploadedBy == null
+                    || envelope.uploadedBy.length() > 64) throw new IOException("Invalid server blueprint envelope");
+                UUID.fromString(envelope.owner);
+                if (!HologramNativePlacement.hasExternalAdapters()
+                    && !com.miaokatze.gtmb.api.ResourceContainers.hasCodecs()) {
+                    HologramPresets.Preset canonical;
+                    try (HologramExtensionExecution.Scope builtins = HologramExtensionExecution.builtinLibraryIo()) {
+                        canonical = canonical(envelope.blueprint);
+                    } catch (IOException | RuntimeException failure) {
+                        if (!requiresOwnerReview(failure)) throw failure;
+                        // The registry query is only a fast path hint. No racing external callback ran on IO.
+                        beginStartupOwner(load, envelope, bytes, stored);
+                        return;
+                    }
+                    // Only install the copied result after the sticky scope has closed successfully.
+                    envelope.blueprint = canonical;
+                    admitStartup(load, envelope, bytes, stored);
+                } else {
+                    beginStartupOwner(load, envelope, bytes, stored);
+                    return;
+                }
+            }
+        } catch (IOException | RuntimeException | LinkageError failure) {
+            failStartup(load, failure);
         }
-        Map<String, Entry> loaded = new LinkedHashMap<>();
-        for (Map.Entry<String, Path> member : HologramBlueprintFiles.managedPublic(directory)
-            .entrySet()) {
-            String id = HologramLibraryService.publicId(member.getKey());
-            if (loaded.size() >= MAX_ENTRIES) throw new IOException("Server blueprint index entry budget");
-            HologramBlueprintArtifact.Artifact artifact = HologramBlueprintArtifact.readPair(member.getValue());
-            byte[] bytes = artifact.json;
-            if (bytes.length + artifact.png.length > MAX_STORED_BYTES - storedBytes)
-                throw new IOException("Server blueprint index byte budget");
-            com.google.gson.JsonObject root = HologramBlueprintCompactCodec.parse(bytes);
-            HologramBlueprintVersions.validateJson(root.get("blueprint"));
-            Envelope envelope = GSON.fromJson(root, Envelope.class);
-            if (envelope == null || envelope.schema != 1
-                || envelope.blueprint == null
-                || !id.equals(envelope.blueprint.id)
-                || envelope.uploadedBy == null
-                || envelope.uploadedBy.length() > 64) throw new IOException("Invalid server blueprint envelope");
-            UUID.fromString(envelope.owner);
-            envelope.blueprint = canonical(envelope.blueprint);
-            Entry entry = new Entry(
-                envelope,
-                bytes.length + artifact.png.length,
-                HologramBlueprintContentHash.of(envelope.blueprint),
-                1,
-                bytes);
-            if (entry.dtoBytes > MAX_PUBLIC_DTO_BYTES - publicDtoBytes)
-                throw new IOException("Server library expanded DTO memory budget exceeded");
-            loaded.put(id, entry);
-            publicDtoBytes += entry.dtoBytes;
-            storedBytes += bytes.length + artifact.png.length;
+    }
+
+    private void beginStartupOwner(Startup load, Envelope envelope, byte[] bytes, int stored) throws IOException {
+        // Copy/normalization stays on IO just as canonical(); the parsed source is not shared with a player.
+        envelope.blueprint = HologramPresets.copy(envelope.blueprint);
+        if (HologramTrustedBlueprintCache.dtoWeight(envelope.blueprint, bytes.length)
+            > MAX_PUBLIC_DTO_BYTES - load.dtoBytes)
+            throw new IOException("Server library expanded DTO memory budget exceeded");
+        PendingStartup pending = new PendingStartup(
+            envelope,
+            bytes,
+            stored,
+            new HologramLibraryStartupValidation(envelope.blueprint, () -> startupCurrent(load)));
+        synchronized (this) {
+            if (startupCurrent(load)) load.pending = pending;
+            else pending.validation.close();
         }
-        publishIndex(loaded);
+    }
+
+    private void admitStartup(Startup load, Envelope envelope, byte[] bytes, int stored) throws IOException {
+        Entry entry = new Entry(envelope, stored, HologramBlueprintContentHash.of(envelope.blueprint), 1, bytes);
+        if (entry.dtoBytes > MAX_PUBLIC_DTO_BYTES - load.dtoBytes)
+            throw new IOException("Server library expanded DTO memory budget exceeded");
+        if (!startupCurrent(load)) return;
+        load.loaded.put(envelope.blueprint.id, entry);
+        load.dtoBytes += entry.dtoBytes;
+        load.storedBytes += stored;
+    }
+
+    private void advanceStartupOwner() {
+        Startup load = startup;
+        if (!startupCurrent(load)) return;
+        PendingStartup pending = load.pending;
+        if (pending == null) return;
+        try {
+            pending.validation.advanceOwner();
+        } catch (IOException | RuntimeException | LinkageError failure) {
+            failStartup(load, failure);
+        }
+    }
+
+    private boolean startupCurrent(Startup load) {
+        return load != null && startup == load && !closed && load.epoch == runtimeEpoch;
+    }
+
+    private synchronized void failStartup(Startup load, Throwable failure) {
+        if (!startupCurrent(load)) return;
+        GTMiaoBlueprint.LOG.error("Server blueprint library could not load", failure);
+        loadFailure = failure.getMessage() == null ? failure.getClass()
+            .getSimpleName() : failure.getMessage();
+        closed = true;
+        retireStartup();
+    }
+
+    private void retireStartup() {
+        Startup previous = startup;
+        startup = null;
+        PendingStartup pending = previous == null ? null : previous.pending;
+        if (pending != null) pending.validation.close();
+    }
+
+    private static final class Startup {
+
+        final long epoch;
+        final Map<String, Entry> loaded = new LinkedHashMap<>();
+        java.util.Iterator<Map.Entry<String, Path>> files;
+        volatile PendingStartup pending;
+        long storedBytes, dtoBytes;
+
+        Startup(long epoch) {
+            this.epoch = epoch;
+        }
+    }
+
+    private static final class PendingStartup {
+
+        final Envelope envelope;
+        final byte[] bytes;
+        final int storedBytes;
+        final HologramLibraryStartupValidation validation;
+
+        PendingStartup(Envelope envelope, byte[] bytes, int storedBytes, HologramLibraryStartupValidation validation) {
+            this.envelope = envelope;
+            this.bytes = bytes;
+            this.storedBytes = storedBytes;
+            this.validation = validation;
+        }
     }
 
     private HologramBlueprintArtifact.Artifact storedArtifact(Entry entry) throws IOException {
@@ -1254,7 +1491,7 @@ final class HologramServerLibrary {
                 rejectDropPayload(HologramBlueprintNbt.decode(cell.itemNbt));
             }
         }
-        // Portable library data has no live-world context, including while canonicalizing on the I/O worker.
+        // Portable data has no live-world context; external callbacks require owner scheduling or a rejecting IO scope.
         HologramAePolicy.Draft draft = HologramAePolicy.sanitizeOwned(
             copy,
             Collections.emptyMap(),
@@ -1387,7 +1624,7 @@ final class HologramServerLibrary {
         throws IOException {
         try {
             if (!"authorSource".equals(request.getString("op"))) throw new IOException("Invalid source purpose");
-            prepareDetachedDraft(player, request, source.take(), source::close);
+            prepareDetachedDraft(player, request, source.take(), source.sourceFrame, source::close);
         } catch (IOException | RuntimeException failure) {
             source.close();
             throw failure;
@@ -1396,6 +1633,17 @@ final class HologramServerLibrary {
 
     private void prepareDetachedDraft(EntityPlayerMP player, NBTTagCompound request, HologramPresets.Preset detached,
         Runnable release) throws IOException {
+        prepareDetachedDraft(
+            player,
+            request,
+            detached,
+            com.miaokatze.gtmb.blueprint.editor.AuthorDocument.SourceFrame.UNKNOWN,
+            release);
+    }
+
+    private void prepareDetachedDraft(EntityPlayerMP player, NBTTagCompound request, HologramPresets.Preset detached,
+        com.miaokatze.gtmb.blueprint.editor.AuthorDocument.SourceFrame sourceFrame, Runnable release)
+        throws IOException {
         checkAvailable();
         synchronized (this) {
             UUID owner = HologramLibraryFacade.actorId(player);
@@ -1459,7 +1707,7 @@ final class HologramServerLibrary {
                     }
                 };
                 byte[] encoded = "authorSource".equals(identity.getString("op"))
-                    ? HologramBlueprintCompactCodec.encode(detached, progress)
+                    ? HologramBlueprintCompactCodec.encodeAuthorSource(detached, sourceFrame, progress)
                     : HologramDraftEncoding.encode(detached, progress);
                 if (preparation.valid && epoch == runtimeEpoch && !closed) {
                     if (!identity.getString("saveReceipt")
@@ -1510,6 +1758,8 @@ final class HologramServerLibrary {
     /** Retire capabilities immediately; serialize temporary-file cleanup with the existing writer. */
     synchronized void restartRuntime() {
         runtimeEpoch++;
+        retireStartup();
+        if (!ready && !closed) startup = new Startup(runtimeEpoch);
         HologramPresets.clearContentCache();
         trusted.clear();
         materialPreviews.clear();
@@ -1708,6 +1958,8 @@ final class HologramServerLibrary {
             upload = peer.upload;
             if (upload == null) return;
             upload.valid = false;
+            upload.reviewed = null;
+            upload.reviewArtifact = null;
             peer.upload = null;
             if (upload.request.getBoolean("contentOnly")) retireContent(peer, upload.request);
             peer.requests.discard(upload.transfer, upload.request.getLong("clientTaskToken"));
@@ -1719,6 +1971,8 @@ final class HologramServerLibrary {
             GTMiaoBlueprint.LOG.warn("Library temporary upload cleanup failed", failure);
         }
         reservedBytes -= upload.total;
+        reviewDtoBytes -= upload.reviewDtoBytes;
+        upload.reviewDtoBytes = 0;
         activeUploads--;
         uploadBudget.cancel(peer.owner);
     }
@@ -1736,6 +1990,8 @@ final class HologramServerLibrary {
     void stop() {
         closed = true;
         synchronized (this) {
+            runtimeEpoch++;
+            retireStartup();
             for (Peer peer : peers.values()) if (peer.preparation != null) retirePreparation(peer.preparation);
         }
         trusted.clear();
@@ -1865,6 +2121,11 @@ final class HologramServerLibrary {
         boolean ackPending;
         long lastActivity = System.nanoTime();
         volatile boolean valid = true;
+        volatile boolean reviewPending, reviewDone;
+        long reviewEpoch, reviewDtoBytes;
+        volatile HologramPresets.Preset reviewed;
+        volatile String reviewFailure;
+        HologramBlueprintArtifact.Artifact reviewArtifact;
 
         Upload(NBTTagCompound request, Path temp, OutputStream output) {
             this.request = request;

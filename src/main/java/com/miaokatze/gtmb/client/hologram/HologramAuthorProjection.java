@@ -12,6 +12,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.LongSupplier;
 
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
@@ -143,6 +144,13 @@ final class HologramAuthorProjection implements AutoCloseable {
         check();
         if (state.authorProjection != this || index(cell.nativeModelId) != cell.index) return;
         HologramState.Cell latest = view.cells.get(cell.index);
+        if ("localBudget".equals(latest.renderKind)) {
+            // A visible reader can need a hidden-layer neighbor even when the bounded dependency graph
+            // overflowed. Renew demand in the existing queue; advance must admit its known cost before decoding.
+            Long need = budgetDeferred.get(cell.nativeModelId);
+            if (need != null && need <= MAX_RESIDENT && queued.size() < MAX_QUEUED) queued.add(cell.nativeModelId);
+            return;
+        }
         if (!latest.modelPending(false) && !latest.modelPending(true)) {
             loaded.get(cell.nativeModelId);
             return;
@@ -152,13 +160,18 @@ final class HologramAuthorProjection implements AutoCloseable {
 
     /** Called on the owning client thread. One payload/native preparation is an indivisible bounded operation. */
     boolean advance() {
+        return advance(System::nanoTime);
+    }
+
+    /** Cooperative deadline; the clock seam keeps scheduling contracts independent of machine speed. */
+    boolean advance(LongSupplier nanoTime) {
         check();
         if (queued.isEmpty() && budgetDeferred.isEmpty()) return false;
-        long deadline = System.nanoTime() + 2_000_000L;
+        long deadline = nanoTime.getAsLong() + 2_000_000L;
         Map<Integer, HologramState.Cell> replacements = new LinkedHashMap<>();
         // Rotate a bounded set of deferred cells. Recovery does not repeatedly decode a known-too-large demand.
         int retries = Math.min(8, budgetDeferred.size());
-        for (int retry = 0; retry < retries && System.nanoTime() < deadline; retry++) {
+        for (int retry = 0; retry < retries && nanoTime.getAsLong() < deadline; retry++) {
             Iterator<Map.Entry<Long, Long>> waiting = budgetDeferred.entrySet()
                 .iterator();
             Map.Entry<Long, Long> first = waiting.next();
@@ -166,17 +179,27 @@ final class HologramAuthorProjection implements AutoCloseable {
             waiting.remove();
             int slot = index(id);
             if (slot < 0) continue;
-            if (HologramRenderer.authorCellVisible(view, view.cells.get(slot)) && queued.size() < MAX_QUEUED
-                && makeRoom(need, replacements)) queued.add(id);
-            else budgetDeferred.put(id, need);
+            if (retainedVisible(view.cells.get(slot)) && queued.size() < MAX_QUEUED && makeRoom(need, replacements))
+                queued.add(id);
+            // Keep the cost until queued execution: earlier items may consume the capacity just checked.
+            budgetDeferred.put(id, need);
         }
         int work = 0;
-        while (!queued.isEmpty() && work < 4 && (work == 0 || System.nanoTime() < deadline)) {
+        // UI ticks must not impose an additional four-cell/80-per-second ceiling when preparation is cheap.
+        // Consume at most this bounded demand batch, even if callbacks request more work or a clock stalls.
+        int remaining = queued.size();
+        while (!queued.isEmpty() && remaining-- > 0 && (work == 0 || nanoTime.getAsLong() < deadline)) {
             Iterator<Long> iterator = queued.iterator();
             long id = iterator.next();
             iterator.remove();
+            work++; // Failed known-cost admissions consume the deadline too; they must not spin with work == 0.
             int index = index(id);
             if (index < 0) continue;
+            Long knownNeed = budgetDeferred.get(id);
+            if (knownNeed != null) {
+                if (!makeRoom(knownNeed, replacements)) continue;
+                budgetDeferred.remove(id);
+            }
             AuthorDocument.Cell source = document.cell(id);
             HologramState.Cell cold = new HologramState.Cell(index, source);
             NBTTagCompound row = cold.tag();
@@ -212,8 +235,7 @@ final class HologramAuthorProjection implements AutoCloseable {
                 Long old = loaded.put(id, charge);
                 resident += charge - (old == null ? 0 : old);
             }
-            replacements.put(index, new HologramState.Cell(index, row));
-            work++;
+            replacements.put(index, HologramState.Cell.takeOwnedLocalRow(index, row));
         }
         if (replacements.isEmpty()) return false;
         publish(view.data, replacements);
@@ -314,6 +336,7 @@ final class HologramAuthorProjection implements AutoCloseable {
         data.setBoolean("virtualLocked", !document.editable());
         data.setString("session", document.documentId());
         data.setString("blueprintName", document.title());
+        data.setString("virtualPresetName", document.title());
         data.setString("title", document.title());
         data.setLong("planRevision", document.revision());
         data.setString("authorDiagnostic", document.diagnostic());

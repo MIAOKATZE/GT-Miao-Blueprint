@@ -65,6 +65,8 @@ public final class HologramCapture {
     private int declaredAnchorIndex = -1;
     HologramStructureCursor structureCursor;
     boolean walkingComplete;
+    private boolean declarationOnly;
+    private boolean extensionsComplete;
     HologramExtensionSnapshots.CaptureTask extensionTask;
     Cell current;
     HologramChannelTrace.Report channelReport;
@@ -152,14 +154,25 @@ public final class HologramCapture {
         return collect(machine, trigger, facing, resumed, System.nanoTime() + CAPTURE_TIME_NS);
     }
 
-    /** Explicit owner-thread slice for detached client declarations; never enters global server work-budget state. */
+    /** Synthetic declarations are not a completed capture of a live controller. */
+    static HologramCapture collectDeclaration(MTEEnhancedMultiBlockBase<?> machine, ItemStack trigger,
+        ExtendedFacing facing, HologramCapture resumed, long deadline) {
+        try (HologramExtensionExecution.Scope local = HologramExtensionExecution.localAuthor()) {
+            HologramCapture capture = resumed == null ? new HologramCapture(machine, trigger) : resumed;
+            capture.declarationOnly = true;
+            return collect(machine, trigger, facing, capture, deadline);
+        }
+    }
+
+    /** Explicit owner-thread slice. */
     @SuppressWarnings({ "rawtypes", "unchecked" })
     static HologramCapture collect(MTEEnhancedMultiBlockBase<?> machine, ItemStack trigger, ExtendedFacing facing,
         HologramCapture resumed, long deadline) {
         HologramCapture capture = resumed == null ? new HologramCapture(machine, trigger) : resumed;
         // Native construct/discovery is indivisible. Keep its existing safety fuse separate from the
         // cooperative walking deadline; a short client slice must yield, not fail inside buildPiece.
-        capture.deadline = resumed == null ? Math.max(deadline, System.nanoTime() + CAPTURE_TIME_NS) : deadline;
+        boolean discover = capture.definition == null && capture.pieces.isEmpty();
+        capture.deadline = discover ? Math.max(deadline, System.nanoTime() + CAPTURE_TIME_NS) : deadline;
         capture.pending = false;
         if (capture.walkingComplete) {
             capture.deadline = HologramWorkBudget.captureDeadline(capture.deadline);
@@ -170,7 +183,7 @@ public final class HologramCapture {
         HologramChannelTrace.Scope scope = HologramChannelTrace.begin(machine);
         ACTIVE.set(capture);
         try {
-            if (resumed == null) {
+            if (discover) {
                 com.miaokatze.gtmb.api.StructureSources.Plan supplied = com.miaokatze.gtmb.api.StructureSources
                     .resolve(machine, trigger);
                 if (supplied != null) {
@@ -242,8 +255,10 @@ public final class HologramCapture {
     }
 
     private void finishExtensions() {
-        if (incomplete || !com.miaokatze.gtmb.api.BlueprintSnapshots
-            .hasProcessors(com.miaokatze.gtmb.api.BlueprintSnapshots.Stage.CAPTURE_COMPLETE)) {
+        if (declarationOnly || extensionsComplete
+            || incomplete
+            || !com.miaokatze.gtmb.api.BlueprintSnapshots
+                .hasProcessors(com.miaokatze.gtmb.api.BlueprintSnapshots.Stage.CAPTURE_COMPLETE)) {
             cancelPending();
             extensionTask = null;
             return;
@@ -253,6 +268,7 @@ public final class HologramCapture {
             pending = !extensionTask.step(this, CELLS_PER_BATCH, deadline);
             if (!pending) {
                 extensionReports = extensionTask.result();
+                extensionsComplete = true;
                 extensionTask = null;
             }
         } catch (java.io.IOException rejected) {

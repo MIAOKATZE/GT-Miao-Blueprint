@@ -105,7 +105,7 @@ public final class BlueprintSnapshots {
         }
     }
 
-    /** Pure inspection entry point, also used by production capture and authoring. No session or world access. */
+    /** Explicit synchronous caller-thread inspection. Automatic capture/authoring invokes it on the server owner. */
     public static NBTTagCompound inspect(Snapshot snapshot) throws IOException {
         Map<String, Entry> entries;
         synchronized (PROCESSORS) {

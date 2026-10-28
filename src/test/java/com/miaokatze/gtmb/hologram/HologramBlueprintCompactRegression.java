@@ -24,6 +24,7 @@ public final class HologramBlueprintCompactRegression {
             roundtripAndMeasurements();
             distinctions();
             malformed();
+            countingWriterParity();
         } catch (Exception failure) {
             throw new AssertionError("compact blueprint regression", failure);
         }
@@ -181,10 +182,20 @@ public final class HologramBlueprintCompactRegression {
             "coordinates retain exact integer range");
         String noNbt = HologramBlueprintContentHash.of(json(minimal()));
         SimpleAssert.that(!hashes.contains(noNbt), "missing NBT differs from explicit null");
+        // Gson 2.2.4 normalizes a raw -0 number to 0 before dictionary validation; retain that legacy behavior.
+        byte[] zeroReference = json(minimal());
+        String zeroJson = new String(zeroReference, StandardCharsets.UTF_8);
+        String negativeZeroJson = zeroJson.replace("[[0,{}]]", "[[-0,{}]]");
+        SimpleAssert.that(!zeroJson.equals(negativeZeroJson), "negative-zero fixture reaches the raw parser boundary");
+        SimpleAssert.eq(
+            HologramBlueprintCompactCodec.parse(zeroReference),
+            HologramBlueprintCompactCodec.parse(negativeZeroJson.getBytes(StandardCharsets.UTF_8)),
+            "raw negative-zero dictionary reference preserves legacy normalization and acceptance");
     }
 
     private static void malformed() throws Exception {
-        for (String ref : new String[] { "-1", "1", "0.0", "\"0\"", "null", "{}", "[0]" }) {
+        for (String ref : new String[] { "-1", "1", "0.0", "0e0", "00", "+0", "10000000000", "\"0\"", "null", "{}",
+            "[0]" }) {
             JsonObject root = minimal();
             JsonArray row = new JsonArray();
             row.add(new JsonParser().parse(ref));
@@ -228,6 +239,54 @@ public final class HologramBlueprintCompactRegression {
             .getAsJsonArray("cells");
         for (int i = 0; i < 64; i++) rows.add(new JsonParser().parse("[0,{}]"));
         denied(bomb, "small repeated refs cannot expand beyond logical byte budget");
+    }
+
+    private static void countingWriterParity() throws Exception {
+        java.lang.reflect.Method measure = HologramBlueprintCompactCodec.class
+            .getDeclaredMethod("measure", com.google.gson.JsonElement.class);
+        measure.setAccessible(true);
+        Gson gson = new com.google.gson.GsonBuilder().serializeNulls()
+            .create();
+        String[] strings = { "", "ascii", "\"\\\b\f\n\r\t", "<>&='", "\u0000\u001f\u007f\u0080\u07ff\u0800",
+            "中文\u2028\u2029", "\ud83d\ude00", "\ud800", "\udc00", "\udc00\ud800" };
+        for (String string : strings) {
+            JsonObject value = new JsonObject();
+            value.addProperty(string, string);
+            value.add("null", com.google.gson.JsonNull.INSTANCE);
+            value.add("numbers", new JsonParser().parse("[-0,1.2500,1e+20,9223372036854775808123]"));
+            String encoded = gson.toJson(value);
+            long expected = 0;
+            for (int i = 0; i < encoded.length(); i++) {
+                char c = encoded.charAt(i);
+                expected += c < 0x80 ? 1 : c < 0x800 ? 2 : Character.isLowSurrogate(c) ? 1 : 3;
+            }
+            SimpleAssert.eq(
+                expected,
+                measure.invoke(null, value),
+                "Gson escaping and prior UTF-16 admission accounting are unchanged");
+        }
+        // Exercise all Writer entry points and exact budget boundary without allocating a 128 MiB fixture.
+        Class<?> type = Class.forName(HologramBlueprintCompactCodec.class.getName() + "$CountingWriter");
+        java.lang.reflect.Constructor<?> constructor = type.getDeclaredConstructor();
+        constructor.setAccessible(true);
+        java.io.Writer writer = (java.io.Writer) constructor.newInstance();
+        java.lang.reflect.Field count = type.getDeclaredField("count");
+        count.setAccessible(true);
+        writer.write("skip\u0800\ud83d\ude00end", 4, 3);
+        writer.write(new char[] { 'x', '\u0080', 'x' }, 1, 1);
+        writer.write(0x10041); // Writer.write(int) uses only the low sixteen bits.
+        writer.write("<>");
+        SimpleAssert.eq(12L, count.getLong(writer), "String slices, char slices, int and whole String agree");
+        count.setLong(writer, (long) HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES - 1);
+        writer.write('a');
+        SimpleAssert.eq(
+            (long) HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES,
+            count.getLong(writer),
+            "exact existing byte budget remains admissible");
+        try {
+            writer.write("b");
+            throw new AssertionError("one byte beyond expanded budget accepted");
+        } catch (IOException expected) {}
     }
 
     private static JsonObject minimal() {
