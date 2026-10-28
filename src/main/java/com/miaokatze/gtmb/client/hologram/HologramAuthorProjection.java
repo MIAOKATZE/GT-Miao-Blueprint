@@ -12,6 +12,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.LongSupplier;
 
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
@@ -152,13 +153,18 @@ final class HologramAuthorProjection implements AutoCloseable {
 
     /** Called on the owning client thread. One payload/native preparation is an indivisible bounded operation. */
     boolean advance() {
+        return advance(System::nanoTime);
+    }
+
+    /** Cooperative deadline; the clock seam keeps scheduling contracts independent of machine speed. */
+    boolean advance(LongSupplier nanoTime) {
         check();
         if (queued.isEmpty() && budgetDeferred.isEmpty()) return false;
-        long deadline = System.nanoTime() + 2_000_000L;
+        long deadline = nanoTime.getAsLong() + 2_000_000L;
         Map<Integer, HologramState.Cell> replacements = new LinkedHashMap<>();
         // Rotate a bounded set of deferred cells. Recovery does not repeatedly decode a known-too-large demand.
         int retries = Math.min(8, budgetDeferred.size());
-        for (int retry = 0; retry < retries && System.nanoTime() < deadline; retry++) {
+        for (int retry = 0; retry < retries && nanoTime.getAsLong() < deadline; retry++) {
             Iterator<Map.Entry<Long, Long>> waiting = budgetDeferred.entrySet()
                 .iterator();
             Map.Entry<Long, Long> first = waiting.next();
@@ -171,7 +177,10 @@ final class HologramAuthorProjection implements AutoCloseable {
             else budgetDeferred.put(id, need);
         }
         int work = 0;
-        while (!queued.isEmpty() && work < 4 && (work == 0 || System.nanoTime() < deadline)) {
+        // UI ticks must not impose an additional four-cell/80-per-second ceiling when preparation is cheap.
+        // Consume at most this bounded demand batch, even if callbacks request more work or a clock stalls.
+        int remaining = queued.size();
+        while (!queued.isEmpty() && remaining-- > 0 && (work == 0 || nanoTime.getAsLong() < deadline)) {
             Iterator<Long> iterator = queued.iterator();
             long id = iterator.next();
             iterator.remove();
