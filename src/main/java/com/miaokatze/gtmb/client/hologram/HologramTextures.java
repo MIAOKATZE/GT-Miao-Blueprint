@@ -3,8 +3,8 @@ package com.miaokatze.gtmb.client.hologram;
 import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.HashMap;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -71,7 +71,9 @@ final class HologramTextures {
         }
     }
 
-    private static final Map<String, Material> CACHE = new HashMap<>();
+    // Only the optional cross-cell dedup index is bounded here. Live per-cell materials, native tiles,
+    // and GL geometry have separate owners; these limits are not a whole-preview heap bound.
+    private static final MaterialCache CACHE = new MaterialCache(2048, 2L * 1024 * 1024);
     private static final Map<HologramState.Cell, Material[]> RESOLVED = new IdentityHashMap<>();
     private static HologramState snapshot;
     private static final Field MULTI = texturesField(GTMultiTextureRender.class);
@@ -79,6 +81,53 @@ final class HologramTextures {
     private static boolean reloadInstalled;
 
     private HologramTextures() {}
+
+    /** Exact keys preserve all NBT identity; eviction sacrifices reuse, never a cell's resolved material. */
+    static final class MaterialCache {
+
+        private final int maxEntries;
+        private final long maxKeyBytes;
+        private final LinkedHashMap<String, Material> entries = new LinkedHashMap<>(16, .75f, true);
+        private long keyBytes;
+
+        MaterialCache(int maxEntries, long maxKeyBytes) {
+            if (maxEntries < 1 || maxKeyBytes < 0) throw new IllegalArgumentException("Material cache limits");
+            this.maxEntries = maxEntries;
+            this.maxKeyBytes = maxKeyBytes;
+        }
+
+        Material get(String key) {
+            return entries.get(key);
+        }
+
+        void put(String key, Material material) {
+            if (key == null || material == null) throw new IllegalArgumentException("Material cache entry");
+            // Charge UTF-16 character storage conservatively, even on compact-string JVMs.
+            long cost = 2L * key.length();
+            if (cost > maxKeyBytes) return;
+            if (entries.remove(key) != null) keyBytes -= cost;
+            while (!entries.isEmpty() && (entries.size() >= maxEntries || keyBytes + cost > maxKeyBytes)) {
+                java.util.Iterator<String> oldest = entries.keySet().iterator();
+                keyBytes -= 2L * oldest.next().length();
+                oldest.remove();
+            }
+            entries.put(key, material);
+            keyBytes += cost;
+        }
+
+        void clear() {
+            entries.clear();
+            keyBytes = 0;
+        }
+
+        int size() {
+            return entries.size();
+        }
+
+        long retainedKeyBytes() {
+            return keyBytes;
+        }
+    }
 
     static void clear() {
         CACHE.clear();
