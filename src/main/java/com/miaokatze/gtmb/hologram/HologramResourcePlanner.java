@@ -618,8 +618,10 @@ final class HologramResourcePlanner {
             ItemStack target = HologramCellPolicy.targetFor(s, c, i);
             if (s.mode != 2 && s.virtual && s.virtualPreset.schema >= 2) {
                 try {
-                    s.blueprintResources.merge(HologramCellPolicy.resourcePlan(s, c));
-                    HologramEnergyPayload.Prepared cache = HologramCellPolicy.cachePlan(s, c, i);
+                    HologramEnergyPayload.Prepared[] prepared = new HologramEnergyPayload.Prepared[1];
+                    s.blueprintResources.merge(HologramCellPolicy.resourcePlan(s, c, prepared));
+                    HologramEnergyPayload.Prepared cache = prepared[0] == null ? HologramCellPolicy.cachePlan(s, c, i)
+                        : prepared[0];
                     s.blueprintEnergy.merge(cache.demand);
                     if (!cache.demand.empty()) s.blueprintEnergyCells.add(cache.demand);
                     for (String warning : cache.warnings)

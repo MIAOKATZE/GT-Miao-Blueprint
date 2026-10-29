@@ -137,15 +137,21 @@ final class HologramArea extends HologramAreaSelection {
                     cell.z = z - minZ;
                     cell.block = String.valueOf(Block.blockRegistry.getNameForObject(block));
                     cell.metadata = meta;
-                    if (sample != null && sample.hasTagCompound())
-                        cell.itemNbt = HologramBlueprintNbt.encodeCaptured(block, sample.getTagCompound());
-                    if (tile != null) {
-                        cell.tileNbt = HologramAeBlueprint.supports(block, data)
-                            ? HologramBlueprintNbt.encodeCanonical(block, data)
-                            : HologramBlueprintNbt.encodeCaptured(block, data);
+                    int cellExpandedNbt = 0;
+                    if (sample != null && sample.hasTagCompound()) {
+                        HologramBlueprintNbt.Encoded encoded = HologramBlueprintNbt
+                            .encodeCapturedWithSize(block, sample.getTagCompound());
+                        cell.itemNbt = encoded.value;
+                        cellExpandedNbt += encoded.expandedBytes;
                     }
-                    expandedNbt += HologramBlueprintNbt.expandedBytes(cell.tileNbt)
-                        + HologramBlueprintNbt.expandedBytes(cell.itemNbt);
+                    if (tile != null) {
+                        HologramBlueprintNbt.Encoded encoded = HologramAeBlueprint.supports(block, data)
+                            ? HologramBlueprintNbt.encodeCanonicalWithSize(block, data)
+                            : HologramBlueprintNbt.encodeCapturedWithSize(block, data);
+                        cell.tileNbt = encoded.value;
+                        cellExpandedNbt += encoded.expandedBytes;
+                    }
+                    expandedNbt += cellExpandedNbt;
                     if (expandedNbt > 64L * 1024 * 1024) throw new IOException("区域设备 NBT 超过 64MiB 上限，请拆分选区");
                     if (tile instanceof IGregTechTileEntity) {
                         IGregTechTileEntity gt = (IGregTechTileEntity) tile;

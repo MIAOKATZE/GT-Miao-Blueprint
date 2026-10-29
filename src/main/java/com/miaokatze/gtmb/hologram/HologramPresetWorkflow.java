@@ -155,7 +155,7 @@ final class HologramPresetWorkflow {
             HologramBlueprintData.detachAreaOverview(s);
             HologramBlueprintRotation.reset(s);
             s.virtualPreset = preset;
-            s.processingSource = HologramPresets.copy(preset);
+            s.processingSource = HologramBlueprintRotation.copyPreset(preset);
             s.blueprintSaveReceipt = "";
             s.processingPolicy = HologramBlueprintProcessing.policy(preset);
             s.processingReviewed = false;

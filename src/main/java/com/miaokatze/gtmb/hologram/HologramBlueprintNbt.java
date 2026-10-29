@@ -56,6 +56,30 @@ final class HologramBlueprintNbt {
         return encode(tag, false, true, block);
     }
 
+    /** Capture already knows the exact expanded size while writing the bounded transport. */
+    static Encoded encodeCapturedWithSize(Block block, NBTTagCompound tag) throws IOException {
+        return encodeWithSize(tag, false, true, block);
+    }
+
+    static Encoded encodeCanonicalWithSize(Block block, NBTTagCompound tag) throws IOException {
+        return encodeWithSize(
+            tag == null ? null : canonicalActorPayload(block, tag, null, "", false),
+            false,
+            true,
+            null);
+    }
+
+    static final class Encoded {
+
+        final String value;
+        final int expandedBytes;
+
+        private Encoded(String value, int expandedBytes) {
+            this.value = value;
+            this.expandedBytes = expandedBytes;
+        }
+    }
+
     /** AE schemas already handled identities; never recursively rewrite encoded pattern recipe data. */
     static String encodeCanonical(NBTTagCompound tag) throws IOException {
         return encode(tag, false);
@@ -124,21 +148,30 @@ final class HologramBlueprintNbt {
 
     private static String encode(NBTTagCompound tag, boolean rewriteOwnership, boolean resolveItems, Block block)
         throws IOException {
-        if (tag == null) return null;
+        return encodeWithSize(tag, rewriteOwnership, resolveItems, block).value;
+    }
+
+    private static Encoded encodeWithSize(NBTTagCompound tag, boolean rewriteOwnership, boolean resolveItems,
+        Block block) throws IOException {
+        if (tag == null) return new Encoded(null, 0);
         checkDepth(tag, 0);
         NBTTagCompound copy = (NBTTagCompound) tag.copy();
         if (block != null) HologramCarpentersCompatibility.stripOwner(block, copy);
         if (rewriteOwnership) rewrite(copy, null, "", false, false);
         if (resolveItems) stableItems(copy, true);
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-        try (DataOutputStream output = new DataOutputStream(
-            new LimitedOutput(new GZIPOutputStream(new LimitedOutput(bytes, MAX_COMPRESSED)), MAX_EXPANDED))) {
+        LimitedOutput expanded = new LimitedOutput(
+            new GZIPOutputStream(new LimitedOutput(bytes, MAX_COMPRESSED)),
+            MAX_EXPANDED);
+        try (DataOutputStream output = new DataOutputStream(expanded)) {
             output.writeByte(10);
             output.writeUTF("");
             writeCanonicalPayload(copy, output, 0);
         }
-        return Base64.getEncoder()
-            .encodeToString(bytes.toByteArray());
+        return new Encoded(
+            Base64.getEncoder()
+                .encodeToString(bytes.toByteArray()),
+            expanded.written);
     }
 
     /** Validate before native copy can recurse, including when a caller supplies a cyclic compound. */

@@ -334,8 +334,10 @@ final class HologramResourceTask {
         ItemStack target = HologramCellPolicy.targetFor(s, c, i);
         if (s.mode != 2 && s.virtualPreset.schema >= 2 && !classifier.emptyOrdinary(s, c, i)) {
             try {
-                merge = aggregate.merge(HologramCellPolicy.resourcePlan(s, c));
-                HologramEnergyPayload.Prepared cache = HologramCellPolicy.cachePlan(s, c, i);
+                HologramEnergyPayload.Prepared[] prepared = new HologramEnergyPayload.Prepared[1];
+                merge = aggregate.merge(HologramCellPolicy.resourcePlan(s, c, prepared));
+                HologramEnergyPayload.Prepared cache = prepared[0] == null ? HologramCellPolicy.cachePlan(s, c, i)
+                    : prepared[0];
                 s.blueprintEnergy.merge(cache.demand);
                 if (!cache.demand.empty()) s.blueprintEnergyCells.add(cache.demand);
                 for (String warning : cache.warnings)
