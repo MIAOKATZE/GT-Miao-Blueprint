@@ -113,7 +113,6 @@ public final class HologramLocalAuthorRegressionTest {
         add(cases, "native_structure_regeneration", HologramLocalAuthorStructuresRegression::run);
         add(cases, "legacy_extension_owner_boundary", HologramExtensionExecutionRegression::run);
         add(cases, "native_structure_and_configuration_server_review", HologramAuthorNativeReviewRegression::run);
-        add(cases, "explicit_server_review_transport", HologramAuthorReviewTransportRegression::run);
         add(
             cases,
             "server_review_client_correlation",

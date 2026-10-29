@@ -71,6 +71,19 @@ tasks.register<JavaExec>("runLocalAuthorTest") {
 }
 tasks.named("check") { dependsOn("runLocalAuthorTest") }
 
+// Review transport asserts exact lease ownership; earlier native fixtures may retire unrelated weak owners.
+tasks.register<JavaExec>("runAuthorReviewTransportTest") {
+    group = "verification"
+    description = "Checks explicit review transport and exact ticket ownership in an isolated JVM."
+    mainClass = "com.miaokatze.gtmb.hologram.HologramAuthorReviewTransportTest"
+    classpath = tasks.named<JavaExec>("runLocalAuthorTest").get().classpath
+    maxHeapSize = "2g"
+    val scratchDir = layout.buildDirectory.dir("hologram-author-review-transport-test")
+    workingDir(scratchDir)
+    doFirst { scratchDir.get().asFile.mkdirs() }
+}
+tasks.named("check") { dependsOn("runAuthorReviewTransportTest") }
+
 // Forge captures its physical side once: validate stripped server and client World constructors in separate JVMs.
 for (side in listOf("CLIENT", "SERVER")) {
     val taskName = "runResourceWorld${side.lowercase().replaceFirstChar { it.uppercase() }}Test"
