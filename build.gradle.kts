@@ -42,6 +42,18 @@ tasks.register<JavaExec>("runHologramTest") {
 
 tasks.named("check") { dependsOn("runHologramTest") }
 
+// Exact governor lease baselines must not include other suites' weak-cache retirement.
+tasks.register<JavaExec>("runProcessGovernorTest") {
+    group = "verification"
+    description = "Checks process governor admission, transfer, singleflight and retired-owner lifecycle in isolation."
+    mainClass = "com.miaokatze.gtmb.hologram.HologramProcessGovernorRegression"
+    classpath = tasks.named<JavaExec>("runHologramTest").get().classpath
+    val scratchDir = layout.buildDirectory.dir("hologram-process-governor")
+    workingDir(scratchDir)
+    doFirst { scratchDir.get().asFile.mkdirs() }
+}
+tasks.named("check") { dependsOn("runProcessGovernorTest") }
+
 // Native author fixtures populate process-wide weak caches; isolate them from server lease-baseline tests.
 tasks.register<JavaExec>("runLocalAuthorTest") {
     group = "verification"

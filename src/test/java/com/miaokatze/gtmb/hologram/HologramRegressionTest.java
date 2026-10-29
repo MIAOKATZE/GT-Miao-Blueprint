@@ -108,13 +108,6 @@ public final class HologramRegressionTest {
         cases.put("picture_exact_raster_reuse", HologramPictureRasterRegression::run);
         cases.put("build_confirmation_and_finish_continuations", HologramBuildContinuationRegression::run);
         cases.put("cut_sparse_selection_and_preparation", HologramCutSparseRegression::run);
-        cases.put("process_cpu_memory_and_singleflight", () -> {
-            try {
-                HologramProcessGovernorRegression.run();
-            } catch (Exception failure) {
-                throw new AssertionError(failure);
-            }
-        });
         cases.put("blueprint_actual_cell_limits_and_sparse_area_scanning", HologramBlueprintLimitsRegression::run);
         cases.put(
             "blueprint_client_cell_admission_is_strict_and_atomic",
