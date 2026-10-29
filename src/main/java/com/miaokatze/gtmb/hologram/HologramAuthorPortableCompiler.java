@@ -80,6 +80,11 @@ public final class HologramAuthorPortableCompiler {
             if (!HologramBlueprintProcessing.complete(candidate)) throw new IOException("候选处理尚未完成");
             processed = HologramLocalAuthorSemantics.delta(processed, beforeStamp, GSON.toJsonTree(candidate))
                 .getAsJsonObject();
+            // This is a newly processed candidate, not the original saved artifact. Its inherited coverage
+            // describes old content/rules only. The existing server reviewed-save path recomputes the marker
+            // with HologramVoucherCoverage on its permitted native boundary; offline compilation must not
+            // call those resource/native providers merely to manufacture a catalogue ribbon.
+            processed.remove("fullyVoucherCovered");
             if (!root.has("blueprint")) {
                 root = new JsonObject();
                 root.addProperty("schema", 2);

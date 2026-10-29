@@ -227,6 +227,9 @@ final class HologramClientLibrary {
         }
     }
 
+    // A recovery source can retain historical fullyVoucherCovered=true after edits. Do not promote that
+    // raw history to a current catalogue ribbon. Original formal artifacts use displayMetadata unchanged;
+    // newly saved formal artifacts receive a fresh marker from the server reviewed-save coverage task.
     private static JsonObject draftSourceMetadata(com.google.gson.stream.JsonReader reader, boolean envelope)
         throws IOException {
         JsonObject metadata = new JsonObject(), wrapped = null;

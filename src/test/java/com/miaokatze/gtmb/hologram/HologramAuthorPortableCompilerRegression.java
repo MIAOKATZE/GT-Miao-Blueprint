@@ -34,6 +34,8 @@ public final class HologramAuthorPortableCompilerRegression {
         littleTiles();
         unsupportedAndSealed();
         freshProcessing();
+        candidateCoverageBoundary();
+        HologramAuthorFormalSaveCompatibilityRegression.run();
         explicitNullSourceBoundaries();
         captureSourceFrames();
         crossDimensionSettlement();
@@ -401,6 +403,83 @@ public final class HologramAuthorPortableCompilerRegression {
             !document.sourceCopy()
                 .has("processingNbt"),
             "fresh processed candidate does not overwrite source draft");
+    }
+
+    private static void candidateCoverageBoundary() throws Exception {
+        java.lang.reflect.Field config = DecorationVoucherConfig.class.getDeclaredField("current");
+        config.setAccessible(true);
+        Object previous = config.get(null);
+        try {
+            config.set(null, DecorationVoucherConfig.defaults());
+            JsonObject wool = cell(0);
+            wool.addProperty("block", "minecraft:wool");
+            wool.addProperty("item", "minecraft:wool");
+            JsonObject raw = source(wool);
+            raw.addProperty("fullyVoucherCovered", true);
+            raw.addProperty("futureCoverageDescription", "opaque historical data");
+            AuthorDocument saved = read(raw);
+            SimpleAssert.eq(raw, settle(saved), "view/settlement retains original formal coverage history");
+            AuthorDocument recovered = AuthorDocumentIO.read(
+                AuthorDocumentIO.writeDraft(saved, AuthorDocumentIO.Limits.defaults()),
+                AuthorDocumentIO.Limits.defaults());
+            SimpleAssert.eq(raw, recovered.sourceCopy(), "recovery retains original source coverage verbatim");
+            JsonObject candidate = HologramBlueprintCompactCodec
+                .parse(HologramAuthorPortableCompiler.compile(saved, policy().write(), 0, 0, 0, 0))
+                .getAsJsonObject("blueprint");
+            SimpleAssert.that(!candidate.has("fullyVoucherCovered"), "new candidate cannot inherit old current-true");
+            SimpleAssert.eq(raw, saved.sourceCopy(), "compiling never clears the original formal source marker");
+            SimpleAssert.eq(
+                raw.get("futureCoverageDescription"),
+                candidate.get("futureCoverageDescription"),
+                "unknown source descriptions survive derived coverage invalidation");
+            reject(() -> {
+                HologramAuthorFormalSaveCompatibility.requireCompatible(
+                    HologramAuthorSourceJson.encode(candidate, HologramBlueprintArtifact.MAX_JSON_BYTES));
+                return null;
+            }, "lossless export can retain extensions that typed formal save must refuse");
+            HologramPresets.Preset decorative = HologramLocalAuthorSemantics.preset(candidate);
+            HologramVoucherCoverage.Builder review = new HologramVoucherCoverage.Builder(decorative);
+            while (!review.step()) {}
+            SimpleAssert.that(review.result(), "reviewed-save builder freshly recognizes pure decorative candidate");
+            SimpleAssert.that(
+                decorative.fullyVoucherCovered == null,
+                "coverage inspection itself grants neither a persisted marker nor payment permission");
+
+            net.minecraft.block.Block machine = DecorationVoucherRegression.registeredFixture(
+                "gregtech:gtmb_voucher_coverage_fixture",
+                new net.minecraft.block.Block(net.minecraft.block.material.Material.iron) {});
+            JsonObject industrial = cell(0);
+            String machineName = (String) net.minecraft.block.Block.blockRegistry.getNameForObject(machine);
+            industrial.addProperty("block", machineName);
+            industrial.addProperty("item", machineName);
+            AuthorEditor editor = new AuthorEditor(saved, 8);
+            editor.replaceCells(Collections.singletonMap(1L, industrial));
+            JsonObject edited = editor.current().sourceCopy();
+            SimpleAssert.that(
+                edited.get("fullyVoucherCovered").getAsBoolean(),
+                "editing preserves raw source history rather than silently rewriting it");
+            JsonObject changed = HologramBlueprintCompactCodec
+                .parse(HologramAuthorPortableCompiler.compile(editor.current(), policy().write(), 0, 0, 0, 0))
+                .getAsJsonObject("blueprint");
+            SimpleAssert.that(!changed.has("fullyVoucherCovered"), "industrial edit cannot export stale true");
+            HologramVoucherCoverage.Builder rejected = new HologramVoucherCoverage.Builder(
+                HologramLocalAuthorSemantics.preset(changed));
+            while (!rejected.step()) {}
+            SimpleAssert.that(!rejected.result(), "reviewed-save builder rejects actual industrial material");
+            SimpleAssert.eq(edited, editor.current().sourceCopy(), "coverage review leaves edited source intact");
+
+            raw.remove("fullyVoucherCovered");
+            JsonObject fresh = HologramBlueprintCompactCodec
+                .parse(HologramAuthorPortableCompiler.compile(read(raw), policy().write(), 0, 0, 0, 0))
+                .getAsJsonObject("blueprint");
+            SimpleAssert.that(!fresh.has("fullyVoucherCovered"), "new offline pure decoration stays unreviewed");
+            HologramVoucherCoverage.Builder freshReview = new HologramVoucherCoverage.Builder(
+                HologramLocalAuthorSemantics.preset(fresh));
+            while (!freshReview.step()) {}
+            SimpleAssert.that(freshReview.result(), "formal-save coverage can promote a new pure-decoration source");
+        } finally {
+            config.set(null, previous);
+        }
     }
 
     private static void explicitNullSourceBoundaries() throws Exception {
