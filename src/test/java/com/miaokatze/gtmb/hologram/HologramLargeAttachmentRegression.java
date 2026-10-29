@@ -24,8 +24,9 @@ public final class HologramLargeAttachmentRegression {
 
     public static void run() {
         try {
-            fragmentedPicture();
+            // Keep exact lease assertions ahead of fixtures that create collectible decoded payloads.
             retainedPipeline();
+            fragmentedPicture();
             largeGeometry();
             savedPictureDefinitions();
             authoringOccupancy();

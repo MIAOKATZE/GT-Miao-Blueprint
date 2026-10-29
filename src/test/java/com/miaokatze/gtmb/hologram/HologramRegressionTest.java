@@ -130,9 +130,8 @@ public final class HologramRegressionTest {
         cases.put(
             "isometric_camera_policy_loaded_surface_and_signed_floating_target",
             () -> com.miaokatze.gtmb.client.hologram.HologramIsometricCameraRegression.main(new String[0]));
-        cases.put(
-            "large_attachment_vanilla_boundary_compact_geometry_and_local_presets",
-            HologramLargeAttachmentRegression::run);
+        // Exact attachment byte ownership is checked by runLargeAttachmentTest in a fresh JVM;
+        // unrelated weak-cache retirement can legitimately change this shared process's total.
         cases.put(
             "picture_attachment_palette_filters_background_volume_and_portability",
             HologramPictureBoxRegression::run);

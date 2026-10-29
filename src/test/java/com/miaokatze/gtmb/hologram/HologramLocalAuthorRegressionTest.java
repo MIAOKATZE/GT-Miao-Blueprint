@@ -34,6 +34,10 @@ public final class HologramLocalAuthorRegressionTest {
             com.miaokatze.gtmb.client.hologram.HologramLocalAuthorPersistenceRegression::run);
         add(
             cases,
+            "finished_library_source_selection_and_save_lifecycle",
+            com.miaokatze.gtmb.client.hologram.HologramAuthorLibraryLifecycleRegression::run);
+        add(
+            cases,
             "author_save_name_preservation",
             com.miaokatze.gtmb.client.hologram.HologramAuthorSaveNameRegression::run);
         add(
@@ -100,6 +104,16 @@ public final class HologramLocalAuthorRegressionTest {
             cases,
             "author_hidden_budget_recovery",
             com.miaokatze.gtmb.client.hologram.HologramAuthorBudgetRecoveryRegression::run);
+        // Adaptive/resident and transient-pressure assertions run in runAuthorNativeBudgetTest;
+        // the full suite includes exact process-wide lease baselines and needs an isolated JVM.
+        add(
+            cases,
+            "author_exact_cell_publication_dependencies",
+            com.miaokatze.gtmb.client.hologram.HologramExactAuthorPublicationRegression::run);
+        add(
+            cases,
+            "preview_continuous_camera_and_reveal_lifecycle",
+            com.miaokatze.gtmb.client.hologram.HologramPreviewCameraLifecycleRegression::run);
         add(
             cases,
             "detail_region_publication",

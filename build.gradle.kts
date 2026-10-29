@@ -84,6 +84,32 @@ tasks.register<JavaExec>("runAuthorReviewTransportTest") {
 }
 tasks.named("check") { dependsOn("runAuthorReviewTransportTest") }
 
+// This suite checks the exact retained total while attachment decode is pending. Earlier suites may
+// legitimately retire unrelated weak-owner caches on admission, so keep every assertion in a fresh JVM.
+tasks.register<JavaExec>("runLargeAttachmentTest") {
+    group = "verification"
+    description = "Checks the full large attachment packet, retention, geometry and preset suite in isolation."
+    mainClass = "com.miaokatze.gtmb.hologram.HologramLargeAttachmentTest"
+    classpath = tasks.named<JavaExec>("runHologramTest").get().classpath
+    maxHeapSize = "2g"
+    val scratchDir = layout.buildDirectory.dir("hologram-large-attachment-test")
+    workingDir(scratchDir)
+    doFirst { scratchDir.get().asFile.mkdirs() }
+}
+tasks.named("check") { dependsOn("runLargeAttachmentTest") }
+
+tasks.register<JavaExec>("runAuthorNativeBudgetTest") {
+    group = "verification"
+    description = "Checks adaptive preview admission and exact transient decode lease ownership in isolation."
+    mainClass = "com.miaokatze.gtmb.client.hologram.HologramAuthorNativeBudgetRegression"
+    classpath = tasks.named<JavaExec>("runLocalAuthorTest").get().classpath
+    maxHeapSize = "2g"
+    val scratchDir = layout.buildDirectory.dir("hologram-author-native-budget-test")
+    workingDir(scratchDir)
+    doFirst { scratchDir.get().asFile.mkdirs() }
+}
+tasks.named("check") { dependsOn("runAuthorNativeBudgetTest") }
+
 // Forge captures its physical side once: validate stripped server and client World constructors in separate JVMs.
 for (side in listOf("CLIENT", "SERVER")) {
     val taskName = "runResourceWorld${side.lowercase().replaceFirstChar { it.uppercase() }}Test"
