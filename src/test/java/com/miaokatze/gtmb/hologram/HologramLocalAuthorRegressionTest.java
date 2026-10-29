@@ -62,6 +62,10 @@ public final class HologramLocalAuthorRegressionTest {
             com.miaokatze.gtmb.client.hologram.HologramStaticPreviewMaterialRegression::run);
         add(
             cases,
+            "preview_draw_phase_accounting",
+            com.miaokatze.gtmb.client.hologram.HologramPreviewDrawWorkRegression::run);
+        add(
+            cases,
             "text_placement_picking_readiness",
             com.miaokatze.gtmb.client.hologram.HologramTextPlacementPickingRegression::run);
         add(
