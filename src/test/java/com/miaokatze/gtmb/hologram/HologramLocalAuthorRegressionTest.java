@@ -100,6 +100,14 @@ public final class HologramLocalAuthorRegressionTest {
             cases,
             "material_hint_tint_key_identity",
             com.miaokatze.gtmb.client.hologram.HologramMaterialTintKeyRegression::run);
+        add(
+            cases,
+            "bounded_native_dependency_preparation",
+            com.miaokatze.gtmb.client.hologram.HologramNativePreparationRegression::run);
+        add(
+            cases,
+            "capture_preparation_request_lifetime",
+            com.miaokatze.gtmb.client.hologram.HologramCapturePreparationRegression::run);
         add(cases, "atomic_native_attachments", HologramLocalAuthorAttachmentsRegression::run);
         add(cases, "native_configuration_contract", HologramLocalAuthorConfigurationsRegression::run);
         add(cases, "native_structure_regeneration", HologramLocalAuthorStructuresRegression::run);

@@ -483,6 +483,7 @@ final class HologramRenderer {
         lastPreviewBuiltRegions = 0;
         long preparationStarted = System.nanoTime();
         long projectionDeadline = preparationStarted + PREVIEW_BUILD_NANOS;
+        if (!budgeted) HologramBlockRender.endPreparationSlice();
         if (budgeted) {
             if (previewPreparation == null || previewPreparation.state != state)
                 previewPreparation = new PreviewPreparation(state);
@@ -497,11 +498,10 @@ final class HologramRenderer {
                     previewState = null;
                 }
             }
-            previewPreparation.advance(
-                layer,
-                view,
-                currentView,
-                preparationDeadline(state, key, projectionDeadline, System.nanoTime()));
+            long nativeDeadline = preparationDeadline(state, key, projectionDeadline, System.nanoTime());
+            HologramBlockRender.beginPreparationSlice(nativeDeadline);
+            nativePreparationChanged(state, HologramBlockRender.retryDeferred(state));
+            previewPreparation.advance(layer, view, currentView, nativeDeadline);
             if (previewPreparation.publishProgress()) previewState = null;
         }
         long projectionStarted = System.nanoTime();
@@ -1548,6 +1548,8 @@ final class HologramRenderer {
         // Indexing and list compilation share a small frame budget. No structure coordinates
         // are discarded; distant groups remain cached and are built when the player approaches.
         long deadline = System.nanoTime() + WORLD_BUILD_NANOS;
+        HologramBlockRender.beginPreparationSlice(deadline);
+        nativePreparationChanged(state, HologramBlockRender.retryDeferred(state));
         int[] anchor = state.data.getBoolean("virtual") && state.data.getBoolean("moving")
             ? HologramClient.movingAnchor(state)
             : null;
@@ -1750,6 +1752,20 @@ final class HologramRenderer {
         group.geometry = group.gt = group.fallback = group.ghosts = 0;
     }
 
+    /** Same-access preparation has no source publication: wake only consumers that actually resolved. */
+    static void nativePreparationChanged(HologramState state, Set<HologramRegionCache.Key> dirty) {
+        if (dirty.isEmpty()) return;
+        if (previewPreparation != null && previewPreparation.state == state) {
+            for (HologramRegionCache.Key key : dirty) previewRegions.remove(key);
+            previewPreparation.update(state, state, dirty);
+            previewState = null;
+        }
+        if (worldState == state) for (HologramRegionCache.Key key : dirty) {
+            WorldGroup group = worldGroups.get(coordinate(key.x, key.y, key.z));
+            if (group != null) invalidateWorldGroup(group);
+        }
+    }
+
     /** Group lists refer to native lists, so discard them before releasing their native snapshot. */
     static void nativeSnapshotChanged() {
         clearWorldGroups();
@@ -1906,6 +1922,25 @@ final class HologramRenderer {
         }
     }
 
+    /** Material callbacks run only in the prepass; list emission consumes the exact selected object. */
+    static final class PreparedWorldMaterials {
+
+        private final Map<HologramState.Cell, HologramTextures.Material> values = new java.util.IdentityHashMap<>();
+
+        void prepare(HologramState.Cell cell, boolean payloadReady, boolean nativeDeferred,
+            java.util.function.Supplier<HologramTextures.Material> light,
+            java.util.function.Supplier<HologramTextures.Material> detailed) {
+            values.put(cell, payloadReady && !nativeDeferred ? detailed.get() : light.get());
+        }
+
+        HologramTextures.Material get(HologramState.Cell cell) {
+            HologramTextures.Material material = values.get(cell);
+            if (material == null)
+                throw new IllegalStateException("world material was not prepared before list emission");
+            return material;
+        }
+    }
+
     private static boolean compileWorldGroup(WorldGroup group, boolean removal, boolean light, long deadline) {
         int list = GL11.glGenLists(1);
         if (list == 0) return false;
@@ -1914,6 +1949,9 @@ final class HologramRenderer {
         int start = light ? group.lightBuilt : group.built;
         int limit = Math.min(start + WORLD_MESH_BATCH, group.cells.size()), end = start;
         List<HologramState.Cell> cells = new ArrayList<>();
+        PreparedWorldMaterials materials = new PreparedWorldMaterials();
+        Set<HologramState.Cell> preparedCells = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        Set<HologramState.Cell> nativeFamilies = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         // Native lists and material callbacks must finish before opening the group's list/tessellator.
         // The deadline is checked per cell, rather than after baking a whole 256-cell native batch.
         while (end < limit && (end == start || System.nanoTime() < deadline)) {
@@ -1921,13 +1959,19 @@ final class HologramRenderer {
             if (HologramJobVisuals.completed(worldState, cell)) continue;
             cells.add(cell);
             if (!worldGhosts.contains(coordinate(cell.x, cell.y, cell.z))) continue;
-            if (light || !HologramSnapshotModelsClient.ready(worldState, cell, false))
-                HologramLightPreview.material(cell, false);
-            else {
+            boolean modelReady = !light && HologramSnapshotModelsClient.ready(worldState, cell, false);
+            if (modelReady) preparedCells.add(cell);
+            if (HologramNativeTiles.supported(cell.block(false))) nativeFamilies.add(cell);
+            if (modelReady) {
                 HologramBlockRender.ready(cell, false);
-                HologramTextures.material(cell, false);
                 HologramLinkNodePreview.prepare(cell, false);
             }
+            materials.prepare(
+                cell,
+                modelReady,
+                HologramBlockRender.deferred(cell, false),
+                () -> HologramLightPreview.material(cell, false),
+                () -> HologramTextures.material(cell, false));
         }
         GL11.glNewList(list, GL11.GL_COMPILE);
         Tessellator t = Tessellator.instance;
@@ -1935,17 +1979,15 @@ final class HologramRenderer {
         t.startDrawingQuads();
         for (HologramState.Cell c : cells) {
             if (!worldGhosts.contains(coordinate(c.x, c.y, c.z))) continue;
-            boolean modelReady = !light && HologramSnapshotModelsClient.ready(worldState, c, false);
-            if (modelReady && HologramBlockRender.ready(c, false)) {
+            boolean modelReady = !light && preparedCells.contains(c);
+            if (modelReady && HologramBlockRender.cachedReady(c, false)) {
                 lastWorldGhosts++;
                 continue;
             }
-            if (HologramBlockRender.deferred(c, false)) modelReady = false;
-            HologramTextures.Material material = !modelReady ? HologramLightPreview.material(c, false)
-                : HologramTextures.material(c, false);
+            HologramTextures.Material material = materials.get(c);
             lastWorldGhosts++;
             if (material.gregTech) lastWorldGTGeometry++;
-            if (material.fallback || HologramNativeTiles.supported(c.block(false))) lastWorldFallback++;
+            if (material.fallback || nativeFamilies.contains(c)) lastWorldFallback++;
             for (HologramGeometry.Surface surface : material.geometry) {
                 int side = surface.side;
                 int[] normal = NORMALS[side];
@@ -1974,16 +2016,16 @@ final class HologramRenderer {
         GL11.glBlendFunc(0x8003, 0x8004); // GL_CONSTANT_ALPHA / GL_ONE_MINUS_CONSTANT_ALPHA
         GL11.glEnable(GL11.GL_BLEND);
         for (HologramState.Cell c : cells) if (!light && worldGhosts.contains(coordinate(c.x, c.y, c.z))
-            && HologramSnapshotModelsClient.ready(worldState, c, false)
-            && HologramBlockRender.ready(c, false)) {
+            && preparedCells.contains(c)
+            && HologramBlockRender.cachedReady(c, false)) {
                 GL11.glPushMatrix();
                 GL11.glTranslated(c.x, c.y, c.z);
                 HologramBlockRender.draw(c, false);
                 GL11.glPopMatrix();
             }
         GL11.glPopAttrib();
-        for (HologramState.Cell c : cells) if (!light && worldGhosts.contains(coordinate(c.x, c.y, c.z))
-            && HologramSnapshotModelsClient.ready(worldState, c, false)) {
+        for (HologramState.Cell c : cells)
+            if (!light && worldGhosts.contains(coordinate(c.x, c.y, c.z)) && preparedCells.contains(c)) {
                 GL11.glPushMatrix();
                 GL11.glTranslated(c.x, c.y, c.z);
                 HologramLinkNodePreview.draw(c, false, .38f);

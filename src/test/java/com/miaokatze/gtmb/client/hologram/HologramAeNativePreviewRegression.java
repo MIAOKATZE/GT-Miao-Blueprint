@@ -186,6 +186,7 @@ public final class HologramAeNativePreviewRegression {
         }
         check(rejected, "malformed visual frame rejected without native deserialization");
         cableBusDeclaredTarget();
+        cablePreparationCycle();
         System.out.println("AE-NATIVE-PREVIEW visual projection/getters/source-immutable/no-grid PASS");
     }
 
@@ -248,6 +249,69 @@ public final class HologramAeNativePreviewRegression {
                 "actual CBC native client reader leaves complete canonical source unchanged");
         } catch (java.io.IOException invalid) {
             throw new AssertionError("CBC canonical client fixture", invalid);
+        }
+    }
+
+    /** Real registered AE topology consumes DATA neighbors without imposing a cyclic LOAD dependency. */
+    public static void cablePreparationCycle() throws ReflectiveOperationException {
+        Block cable = null;
+        for (Object candidate : Block.blockRegistry)
+            if (candidate instanceof Block && candidate.getClass() == appeng.block.networking.BlockCableBus.class)
+                cable = (Block) candidate;
+        check(cable != null, "registered cable pair preparation fixture");
+        NBTTagCompound payload = com.miaokatze.gtmb.hologram.HologramNativeCompatibilityFixture.seed(cable, 0, 64, 0);
+        payload.removeTag("gtmb.aeCableVisual"); // Exercise actual reviewed topology inference, not captured mask
+                                                 // replay.
+        net.minecraft.nbt.NBTTagList rows = new net.minecraft.nbt.NBTTagList();
+        for (int x = 0; x < 2; x++) {
+            NBTTagCompound row = new NBTTagCompound(), display = new NBTTagCompound();
+            row.setString("id", Block.blockRegistry.getNameForObject(cable));
+            row.setString("wantId", Block.blockRegistry.getNameForObject(cable));
+            row.setInteger("x", x);
+            row.setInteger("y", 64);
+            display.setTag("nativeTile", payload.copy());
+            row.setTag("targetDisplay", display);
+            rows.appendTag(row);
+        }
+        NBTTagCompound scene = new NBTTagCompound();
+        scene.setTag("cells", rows);
+        HologramState state = new HologramState(scene);
+        HologramBlockAccess access = new HologramBlockAccess(state);
+        try {
+            check(
+                access.prepare(state.cells.get(0), new HologramNativePreparation.Budget(1, 32, () -> 0L))
+                    == HologramNativePreparation.Outcome.READY,
+                "unprimed cable neighbor supplies decoded DATA without a false cycle");
+            check(
+                access.outcome(state.cells.get(1)) == HologramNativePreparation.Outcome.WAITING,
+                "neighbor DATA is not falsely marked topology complete");
+            check(
+                access.prepare(state.cells.get(1), new HologramNativePreparation.Budget(1, 32, () -> 0L))
+                    == HologramNativePreparation.Outcome.READY,
+                "opposite topology completes against first cable DATA");
+            appeng.tile.networking.TileCableBus left = (appeng.tile.networking.TileCableBus) access
+                .getTileEntity(0, 64, 0);
+            appeng.tile.networking.TileCableBus right = (appeng.tile.networking.TileCableBus) access
+                .getTileEntity(1, 64, 0);
+            int east = 1 << net.minecraftforge.common.util.ForgeDirection.EAST.ordinal();
+            int west = 1 << net.minecraftforge.common.util.ForgeDirection.WEST.ordinal();
+            check(
+                HologramAeNativePreview.cableVisual(left.getCableBus())
+                    .getInteger("connections") == east,
+                "real left cable infers only the east connection");
+            check(
+                HologramAeNativePreview.cableVisual(right.getCableBus())
+                    .getInteger("connections") == west,
+                "real right cable infers only the west connection");
+            for (appeng.tile.networking.TileCableBus tile : new appeng.tile.networking.TileCableBus[] { left, right })
+                assertDetached(
+                    (AENetworkProxy) get(
+                        appeng.parts.AEBasePart.class,
+                        tile.getCableBus()
+                            .getPart(net.minecraftforge.common.util.ForgeDirection.UNKNOWN),
+                        "proxy"));
+        } finally {
+            access.close();
         }
     }
 

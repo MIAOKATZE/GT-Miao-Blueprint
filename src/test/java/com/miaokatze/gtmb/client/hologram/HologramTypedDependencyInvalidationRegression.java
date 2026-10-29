@@ -174,6 +174,11 @@ public final class HologramTypedDependencyInvalidationRegression {
                     .hasTileEntity(input.wantMeta),
                 "non-tile host fixture");
             HologramBlockAccess access = new HologramBlockAccess(state);
+            Field owner = field(HologramBlockRender.class, "snapshot"),
+                target = field(HologramBlockRender.class, "target");
+            Object oldOwner = owner.get(null), oldTarget = target.get(null);
+            owner.set(null, state);
+            target.set(null, access);
             access.beginModel(reader);
             try {
                 SimpleAssert.eq(null, access.getTileEntity(input.x, input.y, input.z), "unknown tile unavailable");
@@ -188,8 +193,34 @@ public final class HologramTypedDependencyInvalidationRegression {
                     "unknown cannot become terminal failure");
                 SimpleAssert.eq(true, HologramBlockRender.deferred(reader, false), "native reader is deferred");
                 SimpleAssert.eq(1, graph(projection, "readers").size(), "actual unknown read records tile dependency");
+                ((Map<?, ?>) field(HologramBlockRender.class, "DEFERRED").get(null)).remove(reader);
+                owner.set(null, null);
+                HologramBlockAccess privateAccess = new HologramBlockAccess(state);
+                privateAccess.beginModel(reader);
+                SimpleAssert.eq(
+                    null,
+                    privateAccess.getTileEntity(input.x, input.y, input.z),
+                    "private capture access still rejects unknown tile");
+                SimpleAssert.eq(false, privateAccess.endModel(), "private access remains incomplete");
+                SimpleAssert.eq(
+                    false,
+                    HologramBlockRender.deferred(reader, false),
+                    "private/non-current access cannot pollute the global native retry queue");
+                SimpleAssert.eq(
+                    0,
+                    ((Set<?>) field(HologramBlockAccess.class, "loaded").get(privateAccess)).size(),
+                    "private unknown remains outside known-empty cache");
+                SimpleAssert.eq(
+                    0,
+                    ((Map<?, ?>) field(HologramBlockAccess.class, "failures").get(privateAccess)).size(),
+                    "private unknown remains retryable rather than failed");
+                SimpleAssert.eq(1, graph(projection, "readers").size(), "private read retains dependency provenance");
+                privateAccess.close();
             } finally {
                 ((Map<?, ?>) field(HologramBlockRender.class, "DEFERRED").get(null)).remove(reader);
+                owner.set(null, oldOwner);
+                target.set(null, oldTarget);
+                access.close();
             }
         }
     }

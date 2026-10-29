@@ -29,6 +29,7 @@ import net.minecraft.block.Block;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.OpenGlHelper;
 import net.minecraft.client.renderer.Tessellator;
+import net.minecraft.client.resources.IReloadableResourceManager;
 import net.minecraft.client.shader.Framebuffer;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.Item;
@@ -61,6 +62,7 @@ import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.EventPriority;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.common.gameevent.TickEvent;
+import cpw.mods.fml.common.network.FMLNetworkEvent;
 import cpw.mods.fml.relauncher.ReflectionHelper;
 
 /** Detached native model capture. JSON/NBT decoding and PNG encoding belong to the library IO worker. */
@@ -73,6 +75,7 @@ public final class HologramBlueprintPreview {
     private static final Map<NBTTagCompound, SourceReceipt> SOURCES = new IdentityHashMap<>();
     private static final ArrayDeque<NBTTagCompound> SOURCE_ORDER = new ArrayDeque<>();
     private static final AtomicLong CAPTURE_GENERATION = new AtomicLong();
+    private static final AtomicLong RESOURCE_GENERATION = new AtomicLong();
     private static volatile NBTTagCompound captureWitness = new NBTTagCompound();
     private static volatile boolean installed;
     private static boolean capturing;
@@ -193,7 +196,12 @@ public final class HologramBlueprintPreview {
 
     static Request capture(NBTTagCompound exactSnapshot, double yaw, double pitch, BooleanSupplier current,
         Consumer<BufferedImage> done, Consumer<Throwable> failure) {
-        Request request = new Request(exactSnapshot, yaw, pitch, current, done, failure);
+        return capture(exactSnapshot, yaw, pitch, current, done, failure, () -> {});
+    }
+
+    static Request capture(NBTTagCompound exactSnapshot, double yaw, double pitch, BooleanSupplier current,
+        Consumer<BufferedImage> done, Consumer<Throwable> failure, Runnable progress) {
+        Request request = new Request(exactSnapshot, yaw, pitch, current, done, failure, progress);
         if (!REQUESTS.offer(request)) {
             request.fail(new IOException("Blueprint preview queue is full"));
             return request;
@@ -210,10 +218,22 @@ public final class HologramBlueprintPreview {
 
     static synchronized void install() {
         if (installed) return;
+        // Registration can synchronously invoke the reload listener; do it before any private access exists.
+        HologramTextures.installReloadListener();
         FMLCommonHandler.instance()
             .bus()
             .register(LISTENER);
+        if (Minecraft.getMinecraft()
+            .getResourceManager() instanceof IReloadableResourceManager)
+            ((IReloadableResourceManager) Minecraft.getMinecraft()
+                .getResourceManager()).registerReloadListener(manager -> RESOURCE_GENERATION.incrementAndGet());
         installed = true;
+    }
+
+    @SubscribeEvent
+    public void disconnected(FMLNetworkEvent.ClientDisconnectionFromServerEvent event) {
+        RESOURCE_GENERATION.incrementAndGet();
+        for (Request request : REQUESTS) request.cancel();
     }
 
     /** The renderer uses this scoped flag to omit editor outlines, role labels, selection, and annotations. */
@@ -281,17 +301,17 @@ public final class HologramBlueprintPreview {
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public void onRenderTick(TickEvent.RenderTickEvent event) {
         if (event.phase != TickEvent.Phase.END) return;
-        Request request = REQUESTS.poll();
+        // Keep the active request in the bounded queue: active + waiting must never exceed four.
+        Request request = REQUESTS.peek();
         if (request == null) return;
         try {
+            long deadline = System.nanoTime() + 2_000_000L;
+            HologramNativePreparation.Budget budget = new HologramNativePreparation.Budget(
+                deadline,
+                32,
+                System::nanoTime);
+            if (!request.prepare(deadline, budget)) return;
             request.requireCurrent();
-            if (request.preparation == null)
-                request.preparation = new HologramState.Preparation(request.snapshot, true);
-            if (!request.preparation.step(256, 2_000_000L)) {
-                if (!REQUESTS.offer(request)) request.fail(new IOException("Blueprint preview queue is full"));
-                return;
-            }
-            request.preparedState = request.preparation.result();
             BufferedImage image = render(request);
             request.requireCurrent();
             if (request.completed.compareAndSet(false, true)) {
@@ -300,6 +320,11 @@ public final class HologramBlueprintPreview {
             }
         } catch (Throwable failure) {
             request.fail(failure);
+        } finally {
+            if (request.completed.get()) {
+                REQUESTS.remove(request);
+                request.releasePreparation();
+            }
         }
     }
 
@@ -310,6 +335,7 @@ public final class HologramBlueprintPreview {
         private final BooleanSupplier current;
         private final Consumer<BufferedImage> done;
         private final Consumer<Throwable> failure;
+        private final Runnable progress;
         private final String sourceJsonSha256;
         private final AtomicBoolean completed = new AtomicBoolean();
         private String rgbSha256 = "";
@@ -318,9 +344,18 @@ public final class HologramBlueprintPreview {
         private volatile boolean cancelled;
         private HologramState.Preparation preparation;
         private HologramState preparedState;
+        private HologramBlockAccess target, actual;
+        private int validationCursor, targetCursor, actualCursor;
+        private boolean validated, needsTarget, needsActual, nativeStarted;
+        private long resourceGeneration;
 
         Request(NBTTagCompound snapshot, double yaw, double pitch, BooleanSupplier current,
             Consumer<BufferedImage> done, Consumer<Throwable> failure) {
+            this(snapshot, yaw, pitch, current, done, failure, () -> {});
+        }
+
+        Request(NBTTagCompound snapshot, double yaw, double pitch, BooleanSupplier current,
+            Consumer<BufferedImage> done, Consumer<Throwable> failure, Runnable progress) {
             if (!Double.isFinite(yaw) || !Double.isFinite(pitch))
                 throw new IllegalArgumentException("Invalid preview camera");
             this.yaw = yaw;
@@ -331,6 +366,113 @@ public final class HologramBlueprintPreview {
             this.current = Objects.requireNonNull(current);
             this.done = Objects.requireNonNull(done);
             this.failure = Objects.requireNonNull(failure);
+            this.progress = Objects.requireNonNull(progress);
+        }
+
+        /** Client-thread only; one shared deadline/callback budget covers both state and native preparation. */
+        boolean prepare(long deadline, HologramNativePreparation.Budget budget) throws IOException {
+            requireCurrent();
+            if (preparedState == null) {
+                if (preparation == null) preparation = new HologramState.Preparation(snapshot, true);
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) return false;
+                boolean ready = preparation.step(256, remaining);
+                if (preparation.lastStepWork > 0) progressed();
+                if (!ready) return false;
+                preparedState = preparation.result();
+                if (snapshot.getBoolean("displayPartial") || snapshot.getBoolean("partial")
+                    || preparedState.cells.size() != snapshot.getTagList("cells", 10)
+                        .tagCount())
+                    throw new IOException("Blueprint preview is not completely prepared");
+            }
+            int scanned = 0;
+            while (!validated && validationCursor < preparedState.cells.size()
+                && scanned < 256
+                && System.nanoTime() < deadline) {
+                requireCurrent();
+                scanned++;
+                HologramState.Cell cell = preparedState.cells.get(validationCursor++);
+                if (cell.nativeModelPending != 0) throw new IOException(
+                    "Blueprint preview model source is incomplete; canonical capture is required");
+                int sides = captureSides(preparedState, cell);
+                if ((sides & 1) != 0) requireSide(cell, false);
+                if ((sides & 2) != 0) requireSide(cell, true);
+            }
+            if (scanned > 0) progressed();
+            if (validationCursor != preparedState.cells.size()) return false;
+            validated = true;
+            if (!nativeStarted) {
+                requireCurrent();
+                resourceGeneration = RESOURCE_GENERATION.get();
+                if (needsTarget) target = new HologramBlockAccess(preparedState, false);
+                if (needsActual) actual = new HologramBlockAccess(preparedState, true);
+                nativeStarted = true;
+            }
+            requireCurrent();
+            int before = budget.used();
+            int oldTarget = targetCursor, oldActual = actualCursor;
+            try {
+                scanned = 0;
+                while (target != null && targetCursor < preparedState.cells.size()
+                    && scanned < 256
+                    && System.nanoTime() < deadline) {
+                    scanned++;
+                    if (!prepareCell(target, preparedState.cells.get(targetCursor), budget)) return false;
+                    targetCursor++;
+                }
+                while (actual != null && actualCursor < preparedState.cells.size()
+                    && scanned < 256
+                    && System.nanoTime() < deadline) {
+                    scanned++;
+                    if (!prepareCell(actual, preparedState.cells.get(actualCursor), budget)) return false;
+                    actualCursor++;
+                }
+                return (target == null || targetCursor == preparedState.cells.size())
+                    && (actual == null || actualCursor == preparedState.cells.size());
+            } finally {
+                if (budget.used() > before || targetCursor != oldTarget || actualCursor != oldActual) progressed();
+            }
+        }
+
+        private void requireSide(HologramState.Cell cell, boolean side) {
+            if (!HologramNativeTiles.supported(cell.block(side))) return;
+            if (side) needsActual = true;
+            else needsTarget = true;
+        }
+
+        private boolean prepareCell(HologramBlockAccess access, HologramState.Cell cell,
+            HologramNativePreparation.Budget budget) throws IOException {
+            requireCurrent();
+            HologramNativePreparation.Outcome outcome = access.prepare(cell, budget);
+            requireCurrent();
+            if (outcome == HologramNativePreparation.Outcome.FAILED) throw new IOException(
+                "Native blueprint preparation failed at " + cell.x
+                    + ","
+                    + cell.y
+                    + ","
+                    + cell.z
+                    + ": "
+                    + access.failure(cell.x, cell.y, cell.z));
+            return outcome != HologramNativePreparation.Outcome.WAITING;
+        }
+
+        private void progressed() {
+            requireCurrent();
+            progress.run();
+        }
+
+        private void adoptPreparedAccesses() {
+            requireCurrent();
+            HologramBlockRender.adoptPreparedAccesses(preparedState, target, actual);
+            target = actual = null; // Ownership, not detached tile contents, transfers exactly once.
+        }
+
+        private void releasePreparation() {
+            if (target != null) target.close();
+            if (actual != null) actual.close();
+            target = actual = null;
+            preparation = null;
+            preparedState = null;
         }
 
         void cancel() {
@@ -338,7 +480,10 @@ public final class HologramBlueprintPreview {
         }
 
         private void requireCurrent() {
-            if (cancelled || !current.getAsBoolean()) throw new CancellationException("Stale blueprint preview");
+            if (cancelled || completed.get() || !current.getAsBoolean())
+                throw new CancellationException("Stale blueprint preview");
+            if (nativeStarted && resourceGeneration != RESOURCE_GENERATION.get())
+                throw new CancellationException("Blueprint preview render resources changed");
         }
 
         private void fail(Throwable cause) {
@@ -416,21 +561,10 @@ public final class HologramBlueprintPreview {
             HologramRenderer.selectedStructureId = "";
             capturing = true;
             request.requireCurrent();
+            request.adoptPreparedAccesses();
             HologramRenderer
                 .preview(state, 0, 0, SIZE, SIZE, request.yaw, request.pitch, 1, Integer.MAX_VALUE, 0, -1, -1, -1, -1);
-            // A native shape must never be silently replaced with the renderer's diagnostic cube fallback.
-            for (HologramState.Cell cell : state.cells) {
-                Block block = cell.block(false);
-                if (HologramNativeTiles.supported(block)) {
-                    if (!HologramBlockRender.ready(cell, false)) throw new IOException(
-                        "Native blueprint model unavailable: " + cell.wantId
-                            + ": "
-                            + HologramBlockRender.failure(cell, false));
-                    if (HologramBlockRender.missingTexture(cell, false))
-                        throw new IOException("Native blueprint material unavailable: " + cell.wantId);
-                } else if (block != Blocks.air && HologramTextures.material(cell, false).fallback)
-                    throw new IOException("Blueprint material unavailable: " + cell.wantId);
-            }
+            validateModels(state, RENDER_INSPECTION);
             request.nativeRendering = true;
             request.requireCurrent();
             saved.unbindPixelBuffers();
@@ -491,6 +625,64 @@ public final class HologramBlueprintPreview {
                 } finally {
                     tess.restore();
                 }
+            }
+        }
+    }
+
+    /** Preserve target validation and include the actual side drawn by mode 2; normalize and deduplicate. */
+    static int captureSides(HologramState state, HologramState.Cell cell) {
+        int sides = HologramBlockRender.effectiveCurrent(cell, false) ? 2 : 1;
+        if (state.data.getInteger("mode") == 2) sides |= 2;
+        return sides;
+    }
+
+    /** CPU tests inject only model/material observations, not the effective-side or rejection policy. */
+    interface CaptureInspection {
+
+        boolean ready(HologramState.Cell cell, boolean current);
+
+        String failure(HologramState.Cell cell, boolean current);
+
+        boolean missingTexture(HologramState.Cell cell, boolean current);
+
+        boolean materialFallback(HologramState.Cell cell, boolean current);
+    }
+
+    private static final CaptureInspection RENDER_INSPECTION = new CaptureInspection() {
+
+        public boolean ready(HologramState.Cell cell, boolean current) {
+            return HologramBlockRender.ready(cell, current);
+        }
+
+        public String failure(HologramState.Cell cell, boolean current) {
+            return HologramBlockRender.failure(cell, current);
+        }
+
+        public boolean missingTexture(HologramState.Cell cell, boolean current) {
+            return HologramBlockRender.missingTexture(cell, current);
+        }
+
+        public boolean materialFallback(HologramState.Cell cell, boolean current) {
+            return HologramTextures.material(cell, current).fallback;
+        }
+    };
+
+    /** A native shape or material must never be silently replaced with a diagnostic fallback in capture. */
+    static void validateModels(HologramState state, CaptureInspection inspection) throws IOException {
+        for (HologramState.Cell cell : state.cells) {
+            int sides = captureSides(state, cell);
+            for (int side = 0; side < 2; side++) {
+                if ((sides & (1 << side)) == 0) continue;
+                boolean current = side == 1;
+                Block block = cell.block(current);
+                String id = current ? cell.id : cell.wantId;
+                if (HologramNativeTiles.supported(block)) {
+                    if (!inspection.ready(cell, current)) throw new IOException(
+                        "Native blueprint model unavailable: " + id + ": " + inspection.failure(cell, current));
+                    if (inspection.missingTexture(cell, current))
+                        throw new IOException("Native blueprint material unavailable: " + id);
+                } else if (block != Blocks.air && inspection.materialFallback(cell, current))
+                    throw new IOException("Blueprint material unavailable: " + id);
             }
         }
     }

@@ -29,7 +29,7 @@ import cpw.mods.fml.relauncher.ReflectionHelper;
 final class HologramBlockRender {
 
     private static final Map<HologramState.Cell, Model[]> MODELS = new IdentityHashMap<>();
-    private static final Map<HologramState.Cell, Integer> DEFERRED = new IdentityHashMap<>();
+    private static final DeferredMap DEFERRED = new DeferredMap();
     private static final Map<String, String> FAILURES = new HashMap<>();
     private static final Set<String> WARNED_FAILURES = new HashSet<>();
     private static HologramState snapshot;
@@ -50,6 +50,7 @@ final class HologramBlockRender {
         field(Tessellator.class, "isColorDisabled", "field_78410_t"),
         field(Tessellator.class, "drawMode", "field_78409_u") };
 
+    private static HologramNativePreparation.Budget preparationBudget;
     static int compiled, vertices;
 
     private HologramBlockRender() {}
@@ -71,7 +72,10 @@ final class HologramBlockRender {
         DEFERRED.clear();
         FAILURES.clear();
         snapshot = null;
+        if (target != null) target.close();
+        if (actual != null) actual.close();
         target = actual = null;
+        preparationBudget = null;
         compiled = vertices = 0;
     }
 
@@ -89,30 +93,129 @@ final class HologramBlockRender {
         }
         snapshot = next;
         // The spatial index is shared; constructing these views does not walk all cells.
+        if (target != null) target.close();
+        if (actual != null) actual.close();
         target = new HologramBlockAccess(next, false);
         actual = new HologramBlockAccess(next, true);
     }
 
     static String failure(HologramState.Cell cell, boolean current) {
+        current = effectiveCurrent(cell, current);
         return FAILURES.getOrDefault((current ? cell.id : cell.wantId), "");
+    }
+
+    static boolean effectiveCurrent(HologramState.Cell cell, boolean current) {
+        return current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
+    }
+
+    /** Pure query, safe inside a parent display list/tessellator. No adapters or factories run. */
+    static boolean cachedReady(HologramState.Cell cell, boolean current) {
+        Model[] pair = MODELS.get(cell);
+        Model model = pair == null ? null : pair[effectiveCurrent(cell, current) ? 1 : 0];
+        return model != null && model.list != 0;
+    }
+
+    static void beginPreparationSlice(long deadline) {
+        preparationBudget = new HologramNativePreparation.Budget(deadline, 32, System::nanoTime);
+    }
+
+    static void endPreparationSlice() {
+        preparationBudget = null;
+    }
+
+    /** The existing deferred map is also the fair retry order; this is not a second preparation queue. */
+    static Set<HologramRegionCache.Key> retryDeferred(HologramState state) {
+        Set<HologramRegionCache.Key> changed = new HashSet<>();
+        if (snapshot != state || preparationBudget == null || !callbacksSafe()) return changed;
+        int remaining = Math.min(32, DEFERRED.size());
+        while (remaining-- > 0 && preparationBudget.available() && !DEFERRED.isEmpty()) {
+            HologramState.Cell cell = DEFERRED.rotate();
+            int mask = DEFERRED.getOrDefault(cell, 0);
+            for (boolean current : new boolean[] { false, true }) {
+                int bit = current ? 1 : 2;
+                if ((mask & bit) == 0 || !preparationBudget.available()) continue;
+                ready(cell, current);
+                // Iterate stored sides explicitly; public queries normalize requested sides for display consumers.
+                if (!deferredSide(cell, current)) changed.add(HologramRegionCache.key(cell));
+            }
+        }
+        return changed;
+    }
+
+    /** Whole-owner handoff for a completed capture preflight; detached tiles are never transplanted. */
+    static void adoptPreparedAccesses(HologramState state, HologramBlockAccess preparedTarget,
+        HologramBlockAccess preparedActual) {
+        if (preparedTarget != null && !preparedTarget.owns(state, false)
+            || preparedActual != null && !preparedActual.owns(state, true))
+            throw new IllegalArgumentException("native capture access owner mismatch");
+        if (!callbacksSafe()) throw new IllegalStateException("native capture handoff inside active tessellator");
+        HologramRenderer.nativeSnapshotChanged();
+        clear();
+        snapshot = state;
+        HologramLinkNodePreview.begin();
+        target = preparedTarget == null ? new HologramBlockAccess(state, false) : preparedTarget;
+        actual = preparedActual == null ? new HologramBlockAccess(state, true) : preparedActual;
+    }
+
+    private static boolean callbacksSafe() {
+        try {
+            return !DRAWING.getBoolean(Tessellator.instance);
+        } catch (IllegalAccessException | RuntimeException unavailable) {
+            return false;
+        }
     }
 
     static boolean ready(HologramState.Cell cell, boolean current) {
         if (snapshot == null) return false;
-        current = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
-        if (!HologramSnapshotModelsClient.ready(snapshot, cell, current)) return false;
-        if (!HologramNativeTiles.supported(cell.block(current))) return false;
-        Model[] pair = MODELS.computeIfAbsent(cell, unused -> new Model[2]);
+        current = effectiveCurrent(cell, current);
+        Model[] pair = MODELS.get(cell);
         int side = current ? 1 : 0;
-        if (pair[side] == null) pair[side] = compile(cell, current);
+        if (pair != null && pair[side] != null) return pair[side].list != 0;
+        // In particular, never turn an active parent tessellator into a cached native failure.
+        if (!callbacksSafe()) return false;
+        if (!HologramNativeTiles.supported(cell.block(current))) {
+            undefer(cell, current);
+            return false;
+        }
+        if (!HologramSnapshotModelsClient.ready(snapshot, cell, current)) {
+            defer(cell, current);
+            return false;
+        }
+        HologramNativePreparation.Budget budget = preparationBudget == null
+            ? new HologramNativePreparation.Budget(Long.MAX_VALUE, 32, System::nanoTime)
+            : preparationBudget;
+        if (!budget.available()) {
+            defer(cell, current);
+            return false;
+        }
+        pair = MODELS.computeIfAbsent(cell, unused -> new Model[2]);
+        pair[side] = compile(cell, current, budget);
         return pair[side] != null && pair[side].list != 0;
     }
 
+    private static void undefer(HologramState.Cell cell, boolean current) {
+        current = effectiveCurrent(cell, current);
+        int remaining = DEFERRED.getOrDefault(cell, 0) & ~(current ? 1 : 2);
+        if (remaining == 0) DEFERRED.remove(cell);
+        else DEFERRED.put(cell, remaining);
+    }
+
+    static void defer(HologramState owner, HologramState.Cell cell, boolean current) {
+        // Independent capture preflight must never enqueue cells into a live preview's retry map.
+        if (snapshot == owner) defer(cell, current);
+    }
+
     static void defer(HologramState.Cell cell, boolean current) {
+        current = effectiveCurrent(cell, current);
         DEFERRED.put(cell, DEFERRED.getOrDefault(cell, 0) | (current ? 1 : 2));
     }
 
     static boolean deferred(HologramState.Cell cell, boolean current) {
+        return deferredSide(cell, effectiveCurrent(cell, current));
+    }
+
+    /** Raw stored-side predicate for retry traversal only; target and actual ordinary models stay independent. */
+    private static boolean deferredSide(HologramState.Cell cell, boolean current) {
         return (DEFERRED.getOrDefault(cell, 0) & (current ? 1 : 2)) != 0;
     }
 
@@ -144,21 +247,25 @@ final class HologramBlockRender {
     }
 
     static int vertexCount(HologramState.Cell cell, boolean current) {
+        current = effectiveCurrent(cell, current);
         Model[] pair = MODELS.get(cell);
         return pair == null || pair[current ? 1 : 0] == null ? 0 : pair[current ? 1 : 0].vertices;
     }
 
     static int uniquePositions(HologramState.Cell cell, boolean current) {
+        current = effectiveCurrent(cell, current);
         Model[] pair = MODELS.get(cell);
         return pair == null || pair[current ? 1 : 0] == null ? 0 : pair[current ? 1 : 0].positions;
     }
 
     static boolean missingTexture(HologramState.Cell cell, boolean current) {
+        current = effectiveCurrent(cell, current);
         Model[] pair = MODELS.get(cell);
         return pair != null && pair[current ? 1 : 0] != null && pair[current ? 1 : 0].missingTexture;
     }
 
     static List<double[]> positions(HologramState.Cell cell, boolean current) {
+        current = effectiveCurrent(cell, current);
         Model[] pair = MODELS.get(cell);
         return pair == null || pair[current ? 1 : 0] == null ? java.util.Collections.emptyList()
             : pair[current ? 1 : 0].points;
@@ -166,6 +273,7 @@ final class HologramBlockRender {
 
     /** Opt-in AE GL evidence: detached geometry, UVs and emitted packed vertex colors. */
     static List<double[]> attributes(HologramState.Cell cell, boolean current) {
+        current = effectiveCurrent(cell, current);
         Model[] pair = MODELS.get(cell);
         return pair == null || pair[current ? 1 : 0] == null ? java.util.Collections.emptyList()
             : pair[current ? 1 : 0].attributes;
@@ -173,6 +281,7 @@ final class HologramBlockRender {
 
     /** Smoke evidence that a nondegenerate native face used a particular atlas material. */
     static boolean usesIcon(HologramState.Cell cell, boolean current, IIcon icon) {
+        current = effectiveCurrent(cell, current);
         Model[] pair = MODELS.get(cell);
         if (pair == null || pair[current ? 1 : 0] == null || icon == null) return false;
         for (double[] uv : pair[current ? 1 : 0].textureCenters)
@@ -182,31 +291,64 @@ final class HologramBlockRender {
         return false;
     }
 
-    @SuppressWarnings("unchecked")
-    private static Model compile(HologramState.Cell cell, boolean current) {
+    private static Model compile(HologramState.Cell cell, boolean current, HologramNativePreparation.Budget budget) {
         Block block = cell.block(current);
         HologramBlockAccess access = current ? actual : target;
+        HologramNativePreparation.Outcome outcome = access.prepare(cell, budget);
+        if (outcome == HologramNativePreparation.Outcome.WAITING) {
+            defer(cell, current);
+            return null;
+        }
+        if (outcome == HologramNativePreparation.Outcome.FAILED) {
+            undefer(cell, current);
+            return failed(cell, current, "native tile unavailable: " + access.failure(cell.x, cell.y, cell.z));
+        }
+        TileEntity tile;
+        boolean complete;
         access.beginModel(cell);
-        TileEntity tile = access.getTileEntity(cell.x, cell.y, cell.z);
-        if (!access.endModel()) return null;
+        try {
+            tile = access.getTileEntity(cell.x, cell.y, cell.z);
+        } finally {
+            complete = access.endModel();
+        }
+        if (!complete) {
+            defer(cell, current);
+            return null;
+        }
         HologramNativeRenderRegistry.Adapter adapter = HologramNativeRenderRegistry.adapter(block);
         if (tile == null
-            && (adapter == null || adapter.requiresTile(block, access.getBlockMetadata(cell.x, cell.y, cell.z))))
+            && (adapter == null || adapter.requiresTile(block, access.getBlockMetadata(cell.x, cell.y, cell.z)))) {
+            undefer(cell, current);
             return failed(cell, current, "native tile unavailable: " + access.failure(cell.x, cell.y, cell.z));
-        access.beginModel(cell);
-        Model model = compile(cell, current, access, tile, adapter);
-        if (!access.endModel()) {
+        }
+        if (!budget.take()) {
             defer(cell, current);
+            return null;
+        }
+        Model model;
+        // An earlier yield must not suppress a genuine terminal renderer diagnostic.
+        undefer(cell, current);
+        access.beginModel(cell, true);
+        try {
+            model = compile(cell, current, access, tile, adapter);
+        } finally {
+            complete = access.endModel();
+        }
+        if (!complete) {
             if (model.list != 0) {
                 GL11.glDeleteLists(model.list, 1);
                 compiled--;
                 vertices -= model.vertices;
             }
+            if (!access.modelFailure()
+                .isEmpty()) {
+                undefer(cell, current);
+                return failed(cell, current, access.modelFailure());
+            }
+            defer(cell, current);
             return null;
         }
-        int remaining = DEFERRED.getOrDefault(cell, 0) & ~(current ? 1 : 2);
-        if (remaining == 0) DEFERRED.remove(cell);
-        else DEFERRED.put(cell, remaining);
+        undefer(cell, current);
         return model;
     }
 
@@ -425,6 +567,113 @@ final class HologramBlockRender {
                 current ? "current" : "target",
                 message);
         return new Model(0, 0, 0, java.util.Collections.emptyList(), java.util.Collections.emptyList(), false);
+    }
+
+    /** Identity keys with a bounded-work rotation; unlike LinkedHashMap this never calls Cell.equals. */
+    private static final class DeferredMap extends java.util.AbstractMap<HologramState.Cell, Integer> {
+
+        private final IdentityHashMap<HologramState.Cell, Entry> index = new IdentityHashMap<>();
+        private Entry first, last;
+
+        private static final class Entry extends java.util.AbstractMap.SimpleEntry<HologramState.Cell, Integer> {
+
+            Entry before, after;
+
+            Entry(HologramState.Cell key, Integer value) {
+                super(key, value);
+            }
+        }
+
+        public Integer get(Object key) {
+            Entry entry = index.get(key);
+            return entry == null ? null : entry.getValue();
+        }
+
+        public boolean containsKey(Object key) {
+            return index.containsKey(key);
+        }
+
+        public int size() {
+            return index.size();
+        }
+
+        public Integer put(HologramState.Cell key, Integer value) {
+            Entry entry = index.get(key);
+            if (entry != null) return entry.setValue(value);
+            entry = new Entry(key, value);
+            index.put(key, entry);
+            append(entry);
+            return null;
+        }
+
+        private void append(Entry entry) {
+            entry.before = last;
+            entry.after = null;
+            if (last == null) first = entry;
+            else last.after = entry;
+            last = entry;
+        }
+
+        private void unlink(Entry entry) {
+            if (entry.before == null) first = entry.after;
+            else entry.before.after = entry.after;
+            if (entry.after == null) last = entry.before;
+            else entry.after.before = entry.before;
+        }
+
+        public Integer remove(Object key) {
+            Entry entry = index.remove(key);
+            if (entry == null) return null;
+            unlink(entry);
+            return entry.getValue();
+        }
+
+        public void clear() {
+            index.clear();
+            first = last = null;
+        }
+
+        HologramState.Cell rotate() {
+            Entry entry = first;
+            if (entry != last) {
+                unlink(entry);
+                append(entry);
+            }
+            return entry.getKey();
+        }
+
+        public Set<Map.Entry<HologramState.Cell, Integer>> entrySet() {
+            return new java.util.AbstractSet<Map.Entry<HologramState.Cell, Integer>>() {
+
+                public int size() {
+                    return index.size();
+                }
+
+                public java.util.Iterator<Map.Entry<HologramState.Cell, Integer>> iterator() {
+                    return new java.util.Iterator<Map.Entry<HologramState.Cell, Integer>>() {
+
+                        Entry next = first, previous;
+
+                        public boolean hasNext() {
+                            return next != null;
+                        }
+
+                        public Map.Entry<HologramState.Cell, Integer> next() {
+                            if (next == null) throw new java.util.NoSuchElementException();
+                            previous = next;
+                            next = next.after;
+                            return previous;
+                        }
+
+                        public void remove() {
+                            if (previous == null) throw new IllegalStateException();
+                            DeferredMap.this.remove(previous.getKey());
+                            previous = null;
+                        }
+                    };
+                }
+            };
+        }
     }
 
     private static Field field(Class<?> type, String... names) {
