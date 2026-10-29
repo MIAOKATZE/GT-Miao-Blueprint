@@ -36,7 +36,7 @@ public final class HologramAuthorReviewProtocol {
                     .getAsString()))
             structures.add(structure);
         selected.add("structures", structures);
-        return HologramBlueprintSharing.encodeBounded(new com.google.gson.Gson(), selected, MAX_BYTES);
+        return HologramAuthorSourceJson.encode(selected, MAX_BYTES);
     }
 
     public static boolean operation(String op) {
