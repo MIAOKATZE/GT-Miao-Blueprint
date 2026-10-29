@@ -298,9 +298,203 @@ public final class HologramResourcePlannerRegression {
         }
         deferredLifecycle(player);
         classifierReuse(player, world);
+        constructionPreflight(player, world);
         authoringPlan(player, unsafe);
         currentCellPreparation(player);
         aeReadyReaders(player);
+    }
+
+    private static void constructionPreflight(EntityPlayerMP player, HologramServiceEditRegression.ReadOnlyWorld world)
+        throws Exception {
+        boolean creative = player.capabilities.isCreativeMode;
+        player.capabilities.isCreativeMode = false;
+        try {
+            HologramSession original = preflightSession(player, 65), optimized = preflightSession(player, 65);
+            world.occupied = Blocks.dirt;
+            world.occupiedX = 0;
+            resetWorldReads(world);
+            int blocked = originalBlocked(original);
+            List<Long> originalReads = worldReads(world);
+            resetWorldReads(world);
+            SimpleAssert
+                .that(!HologramPlanPolicy.constructionAllowed(optimized), "preflight still rejects the whole build");
+            SimpleAssert.eq(2, blocked, "the reference pass finds both separated obstructions");
+            SimpleAssert.eq(
+                "选定范围有 2 格结构占位被遮挡，已整体拒绝补建，请清空后重试",
+                optimized.status,
+                "optimized preflight preserves the complete blocked count and feedback");
+            int oldPlans = 0, newPlans = 0;
+            for (HologramCapture.Cell cell : original.capture.cells) if (cell.resourcePlanKey != null) oldPlans++;
+            for (HologramCapture.Cell cell : optimized.capture.cells) if (cell.resourcePlanKey != null) newPlans++;
+            SimpleAssert.eq(65, oldPlans, "the reference path actually prepares every uncached ordinary resource plan");
+            SimpleAssert.eq(0, newPlans, "the ordinary proof avoids all 65 redundant resource preparations");
+            SimpleAssert
+                .eq(originalReads.get(0), worldReads(world).get(0), "one live load observation remains per cell");
+            System.out.println(
+                "GTMB_CONSTRUCTION_PREFLIGHT cells=65 blocked=" + blocked
+                    + " resourcePrepares="
+                    + oldPlans
+                    + "->"
+                    + newPlans
+                    + " worldReads="
+                    + originalReads
+                    + "->"
+                    + worldReads(world));
+
+            for (int scenario = 0; scenario < 14; scenario++) {
+                original = preflightSession(player, 1);
+                optimized = preflightSession(player, 1);
+                world.occupied = null;
+                world.occupant = null;
+                world.unloaded = world.denyMine = false;
+                for (HologramSession s : new HologramSession[] { original, optimized }) {
+                    HologramCapture.Cell cell = s.capture.cells.get(0);
+                    NBTTagCompound payload = new NBTTagCompound();
+                    if (scenario == 0) {
+                        NBTTagList inventory = new NBTTagList();
+                        inventory.appendTag(new ItemStack(Items.diamond, 2).writeToNBT(new NBTTagCompound()));
+                        payload.setTag("Inventory", inventory);
+                        cell.tileNbt = HologramBlueprintNbt.encodeCaptured(payload);
+                    } else if (scenario == 1) {
+                        world.occupied = Blocks.stone;
+                        world.occupant = new net.minecraft.tileentity.TileEntity();
+                    } else if (scenario == 2) {
+                        cell.unknown = cell.userPosition = true;
+                        s.pins.clear();
+                    } else if (scenario == 3) world.unloaded = true;
+                    else if (scenario == 4) cell.anchor = true;
+                    else if (scenario == 5 || scenario == 13) {
+                        payload.setTag("customAsset", new ItemStack(Items.diamond).writeToNBT(new NBTTagCompound()));
+                        cell.tileNbt = HologramBlueprintNbt.encodeCaptured(payload);
+                        s.virtualPreset.retainCovers = false;
+                        world.occupied = Blocks.dirt;
+                        if (scenario == 13) {
+                            SimpleAssert.that(
+                                !HologramCellPolicy.resourcePlanValid(s, cell),
+                                "history contains a real resource error");
+                            cell.tileNbt = "";
+                        }
+                    } else if (scenario == 6) {
+                        world.occupied = Blocks.dirt;
+                        world.denyMine = true;
+                    } else if (scenario == 7) world.denyMine = true;
+                    else if (scenario == 8) cell.itemNbt = HologramBlueprintNbt.encodeCaptured(payload);
+                    else if (scenario == 9) {
+                        cell.block = Blocks.chest;
+                        s.pins.put(0, new ItemStack(Blocks.chest));
+                    } else if (scenario == 10) {
+                        s.virtual = false;
+                        s.virtualPreset = null;
+                    } else if (scenario == 11) cell.excluded = true;
+                    else if (scenario == 12) {
+                        cell.block = Blocks.air;
+                        cell.blueprintBlock = "minecraft:air";
+                        cell.userPosition = true;
+                        s.pins.clear();
+                    }
+                }
+                resetWorldReads(world);
+                blocked = originalBlocked(original);
+                originalReads = worldReads(world);
+                resetWorldReads(world);
+                SimpleAssert.eq(
+                    blocked == 0,
+                    HologramPlanPolicy.constructionAllowed(optimized),
+                    "original/optimized preflight admission agrees in scenario " + scenario);
+                // Ordinary cases may save additional identity reads. Every fallback keeps the original observation
+                // cost.
+                if (scenario != 6 && scenario != 7) SimpleAssert.eq(
+                    originalReads,
+                    worldReads(world),
+                    "fallback never adds a preliminary world read in scenario " + scenario);
+                SimpleAssert.eq(
+                    original.capture.cells.get(0).resourceError,
+                    optimized.capture.cells.get(0).resourceError,
+                    "resource errors retain their original priority and refresh in scenario " + scenario);
+                if (scenario == 5) SimpleAssert.that(
+                    optimized.capture.cells.get(0).resourceError.contains("customAsset") && blocked == 0,
+                    "resource rejection precedes obstruction counting");
+                if (scenario == 13) SimpleAssert.that(
+                    optimized.capture.cells.get(0).resourceError.isEmpty()
+                        && optimized.capture.cells.get(0).resourcePlanKey.tile.isEmpty(),
+                    "historical errors force fallback and refresh the changed exact key");
+                if (scenario == 7) SimpleAssert.eq(
+                    originalReads.get(4),
+                    worldReads(world).get(4),
+                    "the ordinary proof retains the live mine-permission callback");
+            }
+            resourceGenerationPreflight(player);
+        } finally {
+            world.occupied = null;
+            world.occupant = null;
+            world.unloaded = world.denyMine = false;
+            player.capabilities.isCreativeMode = creative;
+        }
+    }
+
+    private static HologramSession preflightSession(EntityPlayerMP player, int size) {
+        HologramSession s = session(player, size);
+        s.virtualPreset.schema = 2;
+        s.virtualLocked = true;
+        s.mode = 0;
+        for (int i = 0; i < size; i++) s.pins.put(i, new ItemStack(Blocks.stone));
+        return s;
+    }
+
+    /** The exact loop replaced in constructionAllowed, retained here as the reference path. */
+    private static int originalBlocked(HologramSession s) {
+        int blocked = 0;
+        for (int i = 0; i < s.capture.cells.size(); i++) {
+            HologramCapture.Cell cell = s.capture.cells.get(i);
+            if (HologramSessionPolicy.inScope(s, cell, i) && "blocked".equals(HologramPlanPolicy.classify(s, cell, i)))
+                blocked++;
+        }
+        return blocked;
+    }
+
+    private static void resetWorldReads(HologramServiceEditRegression.ReadOnlyWorld world) {
+        world.loadReads = world.blockReads = world.metaReads = world.tileReads = world.permissionReads = 0;
+    }
+
+    private static List<Long> worldReads(HologramServiceEditRegression.ReadOnlyWorld world) {
+        return java.util.Arrays
+            .asList(world.loadReads, world.blockReads, world.metaReads, world.tileReads, world.permissionReads);
+    }
+
+    private static void resourceGenerationPreflight(EntityPlayerMP player) throws Exception {
+        HologramSession s = preflightSession(player, 1);
+        HologramCapture.Cell cell = s.capture.cells.get(0);
+        s.virtualPreset.retainCovers = false;
+        NBTTagCompound payload = new NBTTagCompound(), container = new NBTTagCompound();
+        container.setTag("nativeSlots", new NBTTagCompound());
+        payload.setTag("CustomFluidState", container);
+        cell.tileNbt = HologramBlueprintNbt.encodeCaptured(payload);
+        SimpleAssert.that(
+            !HologramCellPolicy.resourcePlanValid(s, cell),
+            "the unregistered container starts with a real error");
+        try (com.miaokatze.gtmb.api.GTMBExtensions.Registration registration = com.miaokatze.gtmb.api.ResourceContainers
+            .register(
+                "test:preflight-fluid-generation",
+                context -> context.path.equals("CustomFluidState") ? java.util.Collections.emptyList() : null)) {
+            SimpleAssert.that(registration.active(), "the test resource provider is active");
+            HologramPlanPolicy.constructionAllowed(s);
+            SimpleAssert.that(
+                cell.resourceError.isEmpty(),
+                "a provider generation change refreshes historical resource errors");
+            SimpleAssert.eq(
+                com.miaokatze.gtmb.api.ResourceContainers.generation(),
+                cell.resourcePlanKey.generation,
+                "fallback refreshes the resource key to the registered provider generation");
+        }
+        HologramCellPolicy.ResourcePlanKey registeredKey = cell.resourcePlanKey;
+        HologramPlanPolicy.constructionAllowed(s);
+        SimpleAssert.that(
+            !cell.resourceError.isEmpty() && cell.resourcePlanKey != registeredKey,
+            "removing a provider cannot reuse its previously accepted nonempty payload");
+        SimpleAssert.eq(
+            com.miaokatze.gtmb.api.ResourceContainers.generation(),
+            cell.resourcePlanKey.generation,
+            "the rejected resource key records the current provider generation");
     }
 
     private static void currentCellPreparation(EntityPlayerMP player) throws Exception {
