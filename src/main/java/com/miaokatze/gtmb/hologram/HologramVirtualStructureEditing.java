@@ -361,6 +361,7 @@ final class HologramVirtualStructureEditing {
         void publish() throws IOException {
             HologramCapture merged = new HologramCapture(null, HologramSessionPolicy.trigger(s));
             Map<String, ItemStack> previousPins = new HashMap<>();
+            Map<String, List<ItemStack>> reconciledTargets = new HashMap<>();
             for (int i = 0; i < original.cells.size(); i++) {
                 HologramCapture.Cell cell = original.cells.get(i);
                 String key = HologramValues.position(cell);
@@ -374,6 +375,10 @@ final class HologramVirtualStructureEditing {
                     || s.virtualEdited.contains(key)
                     || payload
                         && (replacement == null || cell.block != replacement.block || cell.meta != replacement.meta)) {
+                    if (own && shared && replacement != null) {
+                        cell = reconcileSharedCandidates(cell, replacement);
+                        reconciledTargets.put(key, cell.structureTargets);
+                    }
                     if (own && shared && replacement == null && !s.virtualEdited.contains(key)) {
                         List<String> ids = new ArrayList<>(cell.memberships());
                         ids.remove(source.id);
@@ -440,6 +445,8 @@ final class HologramVirtualStructureEditing {
                     if (cell.structureTargets != null)
                         saved.allowedTargets = HologramBlueprintData.savedTargets(cell.structureTargets);
                 } else saved = HologramSnapshotMetadataSource.copyCell(saved);
+                if (reconciledTargets.containsKey(key))
+                    saved.allowedTargets = HologramBlueprintData.savedTargets(reconciledTargets.get(key));
                 saved.structureId = cell.structureId;
                 saved.structureIds = new ArrayList<>(cell.memberships());
                 replacementPreset.cells.add(saved);
@@ -456,6 +463,8 @@ final class HologramVirtualStructureEditing {
                     String worldKey = (s.x + saved.x) + "," + (s.y + saved.y) + "," + (s.z + saved.z);
                     HologramPresets.Cell row = old == null || targets.containsKey(worldKey) ? saved
                         : HologramSnapshotMetadataSource.copyCell(old);
+                    if (reconciledTargets.containsKey(worldKey))
+                        row.allowedTargets = HologramBlueprintData.savedTargets(reconciledTargets.get(worldKey));
                     row.structureId = saved.structureId;
                     row.structureIds = new ArrayList<>(saved.memberships());
                     raw.cells.add(row);
@@ -510,6 +519,22 @@ final class HologramVirtualStructureEditing {
                 controllerItemNbt,
                 machine.getExtendedFacing()
                     .ordinal());
+        }
+
+        /** Retained shared source is not a target replacement, but its advisory declaration must still narrow. */
+        private static HologramCapture.Cell reconcileSharedCandidates(HologramCapture.Cell retained,
+            HologramCapture.Cell declared) {
+            HologramCapture.Cell result = HologramBlueprintData
+                .blueprintCell(retained, retained.x, retained.y, retained.z);
+            result.structureTargets = new ArrayList<>();
+            if (retained.structureTargets != null && declared.structureTargets != null)
+                for (ItemStack target : declared.structureTargets) if (retained.structureTargets.stream()
+                    .anyMatch(old -> HologramValues.sameMaterial(old, target)))
+                    result.structureTargets.add(target.copy());
+            result.candidates = null;
+            result.candidateComplete = false;
+            result.candidateBoundary = "共享格仅保留原候选与当前成员声明的交集；未重新验证其他成员";
+            return result;
         }
 
         private static void append(HologramCapture capture, HologramCapture.Cell cell) throws IOException {
