@@ -61,6 +61,9 @@ final class HologramRenderer {
     private static PreviewPreparation previewPreparation;
     private static boolean projectionPending;
     private static int modelDemandCursor, modelDependencyCursor;
+    // Scalar render-thread diagnostics only. Reading these never traverses source cells or native geometry.
+    private static long previewFrames, previewPreparationNanos, previewProjectionNanos, previewDrawNanos;
+    private static final double[] NO_SCREEN_MOVE = { 0, 0 };
     private static final List<HologramState.Cell> linkedPreviewCells = new ArrayList<>();
     static int lastPreviewBuiltRegions, lastSnapshotDirtyRegions;
     private static List<RoleMarker> cachedMarkers = new ArrayList<>();
@@ -86,7 +89,7 @@ final class HologramRenderer {
     }
 
     private static double[] moveScreen(HologramState.Cell cell) {
-        if (!moving(cell)) return new double[] { 0, 0 };
+        if (!moving(cell)) return NO_SCREEN_MOVE;
         double[] from = projectedFrame.projectScreen(0, 0, 0),
             to = projectedFrame.projectScreen(moveOffset[0], moveOffset[1], moveOffset[2]);
         return new double[] { to[0] - from[0], to[1] - from[1] };
@@ -105,6 +108,7 @@ final class HologramRenderer {
     private static boolean visibleEmptyCells;
 
     static void release() {
+        previewFrames = previewPreparationNanos = previewProjectionNanos = previewDrawNanos = 0;
         projectionPending = false;
         previewKey = "";
         projectedFrame = presentedFrame = null;
@@ -337,6 +341,35 @@ final class HologramRenderer {
         return state == null ? 0 : state.cells.size();
     }
 
+    static boolean projectionCaughtUp(HologramState state, String key) {
+        return state != null && previewState == state && key.equals(previewKey) && !projectionPending;
+    }
+
+    static boolean cheapOcclusionReady(HologramState state, String key) {
+        return previewPreparation != null && previewPreparation.state == state
+            && previewPreparation.hintsReady()
+            && projectionCaughtUp(state, key);
+    }
+
+    static long preparationDeadline(HologramState state, String key, long frameDeadline, long now) {
+        // Reuse the unneeded projection half only after reveal invalidation and exact camera/owner checks.
+        // The shared 2 ms cooperative deadline is unchanged; an individual native callback may overrun it.
+        return projectionCaughtUp(state, key) ? frameDeadline : Math.min(frameDeadline, now + PREVIEW_BUILD_NANOS / 2);
+    }
+
+    /**
+     * Cumulative phase costs since release; sample differences, not the configured FPS cap, show cadence.
+     * Draw includes demand retries and GUI presentation; these are CPU wall times, not GPU timings.
+     */
+    static net.minecraft.nbt.NBTTagCompound previewWorkInspection() {
+        net.minecraft.nbt.NBTTagCompound result = new net.minecraft.nbt.NBTTagCompound();
+        result.setLong("frames", previewFrames);
+        result.setLong("preparationNanos", previewPreparationNanos);
+        result.setLong("projectionNanos", previewProjectionNanos);
+        result.setLong("drawNanos", previewDrawNanos);
+        return result;
+    }
+
     /** Detached counters from the frame actually presented for this exact snapshot. No native factory or draw. */
     static net.minecraft.nbt.NBTTagCompound lessonInspection(HologramState state) {
         net.minecraft.nbt.NBTTagCompound result = new net.minecraft.nbt.NBTTagCompound();
@@ -448,7 +481,8 @@ final class HologramRenderer {
                 cz,
                 boundsExtent);
         lastPreviewBuiltRegions = 0;
-        long projectionDeadline = System.nanoTime() + PREVIEW_BUILD_NANOS;
+        long preparationStarted = System.nanoTime();
+        long projectionDeadline = preparationStarted + PREVIEW_BUILD_NANOS;
         if (budgeted) {
             if (previewPreparation == null || previewPreparation.state != state)
                 previewPreparation = new PreviewPreparation(state);
@@ -467,9 +501,11 @@ final class HologramRenderer {
                 layer,
                 view,
                 currentView,
-                Math.min(projectionDeadline, System.nanoTime() + PREVIEW_BUILD_NANOS / 2));
+                preparationDeadline(state, key, projectionDeadline, System.nanoTime()));
             if (previewPreparation.publishProgress()) previewState = null;
         }
+        long projectionStarted = System.nanoTime();
+        previewPreparationNanos += projectionStarted - preparationStarted;
         if (previewState != state || !key.equals(previewKey) || projectionPending) {
             List<Face> faces = new ArrayList<>();
             List<RoleMarker> markers = new ArrayList<>();
@@ -544,6 +580,11 @@ final class HologramRenderer {
             cachedOutlines = outlines;
             cachedExtent = boundsExtent;
         }
+        long drawStarted = System.nanoTime();
+        previewProjectionNanos += drawStarted - projectionStarted;
+        // An opaque source neighbor is not a presented occluder until progressive projection catches up.
+        // Keep all cheap faces while a new camera or dirty region is still incomplete.
+        boolean cheapOcclusionReady = cheapOcclusionReady(state, key);
         List<Face> faces = cachedFaces;
         List<RoleMarker> markers = cachedMarkers;
         double extent = cachedExtent;
@@ -601,15 +642,19 @@ final class HologramRenderer {
             Tessellator t = Tessellator.instance;
             t.startDrawingQuads();
             for (Face face : faces) {
-                boolean inside = face.contains(mouseX, mouseY) && mouseX >= x
-                    && mouseX < x + width
+                boolean inside = mouseX >= x && mouseX < x + width
                     && mouseY >= y
-                    && mouseY < y + height;
+                    && mouseY < y + height
+                    && face.contains(mouseX, mouseY);
                 if (inside && face.depth >= hoveredDepth) {
                     hovered = face.cell.index;
                     hoveredDepth = face.depth;
                 }
                 if (face.empty || face.nativeModel) continue;
+                // Keep all provisional faces for picking and all outlines for selection. A move can expose
+                // previously buried faces without rebuilding this cache, so disable cheap culling during it.
+                if (cheapOcclusionReady && HologramLightPreview
+                    .hideInteriorFace(face.cheapHidden, moveOffset[0], moveOffset[1], moveOffset[2])) continue;
                 float shade = face.side == 1 ? 1 : face.side < 2 ? .6f : .8f;
                 double[] shifted = moveScreen(face.cell);
                 int sampleIndex = 0;
@@ -763,6 +808,8 @@ final class HologramRenderer {
         if (!previewPickingReady(state, mouseX, mouseY)) hovered = -1;
         presentedFrame = projectedFrame;
         presentedState = state;
+        previewDrawNanos += System.nanoTime() - drawStarted;
+        previewFrames++;
         return hovered;
     }
 
@@ -1057,10 +1104,15 @@ final class HologramRenderer {
 
     private static void previewCell(HologramState state, PreviewRegion result, HologramState.Cell c, int layer,
         int view, boolean current, boolean detailed) {
-        if (!previewVisible(c, layer, view, current)) return;
-        result.visible.add(c);
         boolean visibleNative = state.authorProjection == null || projectedFrame == null
             || previewRegionVisible(state, HologramRegionCache.key(c));
+        previewCell(state, result, c, layer, view, current, detailed, visibleNative);
+    }
+
+    private static void previewCell(HologramState state, PreviewRegion result, HologramState.Cell c, int layer,
+        int view, boolean current, boolean detailed, boolean visibleNative) {
+        if (!previewVisible(c, layer, view, current)) return;
+        result.visible.add(c);
         if (detailed && visibleNative && HologramSnapshotModelsClient.resumableBudget(state, c)) {
             HologramSnapshotModelsClient.requestVisible(state, c, current);
             result.budgetLimited++;
@@ -1072,7 +1124,11 @@ final class HologramRenderer {
                 result.unresolved++;
                 if (!visibleNative) result.deferredVisibility = true;
             }
-            result.cells.add(new PreviewCell(c, 63, roleLabel(c), false));
+            String role = roleLabel(c);
+            int cheapFaces = !detailed && role.isEmpty() && c.prompt.isEmpty() && !c.anchor
+                ? cheapExposed(state, c, layer, view, current)
+                : 63;
+            result.cells.add(new PreviewCell(c, 63, role, false, cheapFaces));
             return;
         }
         if (state.authorProjection != null && "localFallback".equals(c.renderKind)) {
@@ -1108,6 +1164,20 @@ final class HologramRenderer {
         if (!empty && role.isEmpty() && c.iconOnly) role = "占位";
         if (!c.prompt.isEmpty()) role = role.isEmpty() ? "提示" : role + " · 提示";
         if (exposed != 0 || !role.isEmpty()) result.cells.add(new PreviewCell(c, exposed, role, true));
+    }
+
+    /** Draw-only cheap mask: it cannot remove source accounting, pick faces, outlines or detailed work. */
+    private static int cheapExposed(HologramState state, HologramState.Cell cell, int layer, int view,
+        boolean current) {
+        if (!HologramLightPreview.staticOpaqueCube(cell, current)) return 63;
+        int exposed = 63;
+        for (int side = 0; side < 6; side++) {
+            int[] normal = NORMALS[side];
+            HologramState.Cell neighbor = state.regions.at(cell.x + normal[0], cell.y + normal[1], cell.z + normal[2]);
+            if (neighbor != null && previewVisible(neighbor, layer, view, current)
+                && HologramLightPreview.staticOpaqueCube(neighbor, current)) exposed &= ~(1 << side);
+        }
+        return exposed;
     }
 
     /** Client render-thread cursor: each cell invokes the existing native/texture path exactly once. */
@@ -1167,7 +1237,15 @@ final class HologramRenderer {
                             + (local[2] + .5) * (projected[4][axis] - projected[0][axis]);
                     }
                 }
-                region.faces.add(new Face(c, points, surface.side, currentView, surface, previewCell.detailed));
+                region.faces.add(
+                    new Face(
+                        c,
+                        points,
+                        surface.side,
+                        currentView,
+                        surface,
+                        previewCell.detailed,
+                        (previewCell.cheapFaces & 1 << surface.side) == 0));
             }
         }
         if (region.projectedCells == region.cells.size()) {
@@ -1184,7 +1262,7 @@ final class HologramRenderer {
         final Set<HologramRegionCache.Key> cheapPending = new LinkedHashSet<>();
         PreviewTask task;
         int completed, published, detailedCompleted;
-        boolean firstHintsPresented, allHintsPresented;
+        boolean firstHintsPresented, allHintsPresented, detailPublicationPending;
 
         PreviewPreparation(HologramState state) {
             this.state = state;
@@ -1241,10 +1319,15 @@ final class HologramRenderer {
 
         void advance(int layer, int view, boolean current, long deadline, java.util.function.LongSupplier clock) {
             int work = 0, slice = 0;
+            boolean visibleNative = true;
             while (!pending.isEmpty() && (work == 0 || clock.getAsLong() < deadline)) {
                 if (task == null) {
                     task = nextTask();
                     slice = 0;
+                    // Camera and owner are fixed for this advance call. Region visibility is shared by every
+                    // cell in the slice; recomputing its eight projected corners per cell allocates needlessly.
+                    visibleNative = state.authorProjection == null || projectedFrame == null
+                        || previewRegionVisible(state, task.key);
                 }
                 if (task.region == null) {
                     task.region = new PreviewRegion();
@@ -1252,7 +1335,15 @@ final class HologramRenderer {
                     lastPreviewBuiltRegions++;
                 }
                 PreviewRegion result = task.refining ? task.detail : task.region;
-                previewCell(state, result, task.cells.get(task.cell++), layer, view, current, task.refining);
+                previewCell(
+                    state,
+                    result,
+                    task.cells.get(task.cell++),
+                    layer,
+                    view,
+                    current,
+                    task.refining,
+                    visibleNative);
                 result.projectedKey = "";
                 completed++;
                 if (task.refining) detailedCompleted++;
@@ -1310,10 +1401,14 @@ final class HologramRenderer {
         boolean publishProgress() {
             // Geometric milestones avoid quadratic reprojection, but the last cheap pass must be visible even
             // when it lands between milestones. This is not a native-ready or current-camera-ready assertion.
+            // Replacing cheap output with a completed detail region is a separate publication event: after
+            // publishing N cheap cells, count doubling alone would hide every detail region until 2N.
             boolean allHints = hintsReady();
-            if (allHints && !allHintsPresented || completed > published
-                && (published == 0 || completed >= 2L * published || completed == 2L * state.cells.size())) {
+            if (detailPublicationPending || allHints && !allHintsPresented
+                || completed > published
+                    && (published == 0 || completed >= 2L * published || completed == 2L * state.cells.size())) {
                 if (allHints) allHintsPresented = true;
+                detailPublicationPending = false;
                 published = completed;
                 return true;
             }
@@ -1324,6 +1419,7 @@ final class HologramRenderer {
             task.detail.complete = true;
             task.detail.hintsComplete = true;
             previewRegions.put(task.key, task.detail);
+            detailPublicationPending = true;
             pending.remove(task.key);
             task = null;
         }
@@ -1359,13 +1455,18 @@ final class HologramRenderer {
     private static final class PreviewCell {
 
         final HologramState.Cell cell;
-        final int exposed;
+        final int exposed, cheapFaces;
         final String role;
         final boolean detailed;
 
         PreviewCell(HologramState.Cell cell, int exposed, String role, boolean detailed) {
+            this(cell, exposed, role, detailed, 63);
+        }
+
+        PreviewCell(HologramState.Cell cell, int exposed, String role, boolean detailed, int cheapFaces) {
             this.cell = cell;
             this.exposed = exposed;
+            this.cheapFaces = cheapFaces;
             this.role = role;
             this.detailed = detailed;
         }
@@ -2003,7 +2104,7 @@ final class HologramRenderer {
         final int side;
         final double depth;
         final HologramTextures.Material material;
-        final boolean empty, nativeModel;
+        final boolean empty, nativeModel, cheapHidden;
         final HologramGeometry.Surface surface;
 
         Face(HologramState.Cell cell, double[][] points, int side, boolean current) {
@@ -2016,10 +2117,16 @@ final class HologramRenderer {
 
         Face(HologramState.Cell cell, double[][] points, int side, boolean current, HologramGeometry.Surface surface,
             boolean detailed) {
+            this(cell, points, side, current, surface, detailed, false);
+        }
+
+        Face(HologramState.Cell cell, double[][] points, int side, boolean current, HologramGeometry.Surface surface,
+            boolean detailed, boolean cheapHidden) {
             this.cell = cell;
             this.points = points;
             this.side = side;
             this.surface = surface;
+            this.cheapHidden = !detailed && cheapHidden;
             empty = !cell.anchor && !cell.iconOnly && (current ? cell.id : cell.wantId).equals("minecraft:air");
             nativeModel = detailed && !empty && HologramBlockRender.ready(cell, current);
             material = empty ? null

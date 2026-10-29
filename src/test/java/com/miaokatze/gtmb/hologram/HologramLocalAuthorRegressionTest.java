@@ -78,8 +78,20 @@ public final class HologramLocalAuthorRegressionTest {
             com.miaokatze.gtmb.client.hologram.HologramAuthorBudgetRecoveryRegression::run);
         add(
             cases,
+            "detail_region_publication",
+            com.miaokatze.gtmb.client.hologram.HologramDetailPublicationRegression::run);
+        add(
+            cases,
             "author_publication_cost_and_native_retention",
             com.miaokatze.gtmb.client.hologram.HologramAuthorPublicationCostRegression::run);
+        add(
+            cases,
+            "visible_detail_work_and_camera_slices",
+            com.miaokatze.gtmb.client.hologram.HologramVisibleDetailWorkRegression::run);
+        add(
+            cases,
+            "conservative_cheap_draw_occlusion",
+            com.miaokatze.gtmb.client.hologram.HologramCheapOcclusionRegression::run);
         add(cases, "atomic_native_attachments", HologramLocalAuthorAttachmentsRegression::run);
         add(cases, "native_configuration_contract", HologramLocalAuthorConfigurationsRegression::run);
         add(cases, "native_structure_regeneration", HologramLocalAuthorStructuresRegression::run);
