@@ -38,6 +38,8 @@ final class HologramRenderer {
     private static final double[][] VERTICES = { { -.5, -.5, -.5 }, { .5, -.5, -.5 }, { .5, .5, -.5 }, { -.5, .5, -.5 },
         { -.5, -.5, .5 }, { .5, -.5, .5 }, { .5, .5, .5 }, { -.5, .5, .5 } };
 
+    private static final int[] PREVIEW_EDGE_MASKS = previewEdgeMasks();
+
     private HologramRenderer() {}
 
     static int lastWorldGeometry, lastWorldGTGeometry, lastWorldFallback, lastWorldMatched, lastWorldGhosts;
@@ -63,6 +65,7 @@ final class HologramRenderer {
     private static int modelDemandCursor, modelDependencyCursor;
     // Scalar render-thread diagnostics only. Reading these never traverses source cells or native geometry.
     private static long previewFrames, previewPreparationNanos, previewProjectionNanos, previewDrawNanos;
+    private static final HologramPreviewDrawWork previewDrawWork = new HologramPreviewDrawWork();
     // Ephemeral observation windows, not document IDs. No source/owner objects are retained by diagnostics.
     private static long previewReleaseEpoch;
     private static long previewModelPublications, previewModelPublicationDirtyRegions;
@@ -115,6 +118,7 @@ final class HologramRenderer {
 
     static void release() {
         previewReleaseEpoch++;
+        previewDrawWork.reset();
         previewFrames = previewPreparationNanos = previewProjectionNanos = previewDrawNanos = 0;
         previewModelPublications = previewModelPublicationDirtyRegions = 0;
         previewNativeWakes = previewNativeWakeDirtyRegions = 0;
@@ -408,6 +412,7 @@ final class HologramRenderer {
         result.setLong("cursorResets", previewCursorResets);
         result.setLong("discardedCheapVisits", previewDiscardedCheapVisits);
         result.setLong("discardedDetailVisits", previewDiscardedDetailVisits);
+        previewDrawWork.appendInspection(result);
         return result;
     }
 
@@ -641,235 +646,275 @@ final class HologramRenderer {
         }
         long drawStarted = System.nanoTime();
         previewProjectionNanos += drawStarted - projectionStarted;
-        // An opaque source neighbor is not a presented occluder until progressive projection catches up.
-        // Keep all cheap faces while a new camera or dirty region is still incomplete.
-        boolean cheapOcclusionReady = cheapOcclusionReady(state, key);
-        List<Face> faces = cachedFaces;
-        List<RoleMarker> markers = cachedMarkers;
-        double extent = cachedExtent;
-        lastPreviewRoleMarkers = lastPreviewAnchorMarkers = 0;
-        if (!HologramBlueprintPreview.cleanCapture()) {
-            if (selected >= 0 && selected < state.cells.size())
-                HologramSnapshotModelsClient.requestVisible(state, state.cells.get(selected), currentView);
-            for (int work = 0; work < Math.min(128, cachedOutlines.size()); work++) {
-                Face face = cachedOutlines.get(Math.floorMod(modelDemandCursor++, cachedOutlines.size()));
-                HologramSnapshotModelsClient.requestVisible(state, face.cell, currentView);
-            }
-            if (state.authorProjection != null) {
-                modelDependencyCursor = retryAuthorModelDemands(
-                    state,
-                    cachedOutlines.size(),
-                    index -> cachedOutlines.get(index).cell,
-                    modelDependencyCursor,
-                    currentView,
-                    Math.min(projectionDeadline, System.nanoTime() + 250_000L),
-                    System::nanoTime);
-            }
-        }
-        int hovered = -1;
-        double hoveredDepth = Double.NEGATIVE_INFINITY;
-        GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
+        HologramPreviewDrawWork.Phase drawPhase = HologramPreviewDrawWork.Phase.DEMANDS;
+        previewDrawWork.beginPhase(drawPhase);
         try {
-            GL11.glDisable(GL11.GL_LIGHTING);
-            // GUI ortho spans +/-1000 around z=0. Normalize model depth independently of zoom,
-            // and clear only this viewport so schematic faces and outlines share reliable occlusion.
-            Minecraft mc = Minecraft.getMinecraft();
-            int factor = new net.minecraft.client.gui.ScaledResolution(mc, mc.displayWidth, mc.displayHeight)
-                .getScaleFactor();
-            // HologramScreen supplies a framebuffer scissor after its origin/scale transform.
-            // x/y here are model-local coordinates; replacing that rectangle clips the model
-            // against the wrong part of the screen. Retain the caller's transformed viewport.
-            if (!GL11.glIsEnabled(GL11.GL_SCISSOR_TEST)) {
-                GL11.glEnable(GL11.GL_SCISSOR_TEST);
-                GL11.glScissor(x * factor, mc.displayHeight - (y + height) * factor, width * factor, height * factor);
-            }
-            GL11.glEnable(GL11.GL_DEPTH_TEST);
-            GL11.glDepthFunc(GL11.GL_LEQUAL);
-            GL11.glDepthMask(true);
-            GL11.glClearDepth(1);
-            GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
-            GL11.glEnable(GL11.GL_BLEND);
-            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-            GL11.glDisable(GL11.GL_CULL_FACE);
-            GL11.glEnable(GL11.GL_TEXTURE_2D);
-            mc.getTextureManager()
-                .bindTexture(TextureMap.locationBlocksTexture);
-            GL11.glEnable(GL11.GL_ALPHA_TEST);
-            GL11.glAlphaFunc(GL11.GL_GREATER, .01f);
-            double depthScale = 128 / extent;
-            HologramSourcePreviewReference.captureCamera(depthScale);
-            Tessellator t = Tessellator.instance;
-            t.startDrawingQuads();
-            for (Face face : faces) {
-                boolean inside = mouseX >= x && mouseX < x + width
-                    && mouseY >= y
-                    && mouseY < y + height
-                    && face.contains(mouseX, mouseY);
-                if (inside && face.depth >= hoveredDepth) {
-                    hovered = face.cell.index;
-                    hoveredDepth = face.depth;
+            // Source occupancy is insufficient: certify each currently presented region once, not per face.
+            // Repair elsewhere must not turn a completed static shell back into a volume of submitted lines.
+            updatePresentedOcclusion(state, key, budgeted);
+            List<Face> faces = cachedFaces;
+            List<RoleMarker> markers = cachedMarkers;
+            double extent = cachedExtent;
+            lastPreviewRoleMarkers = lastPreviewAnchorMarkers = 0;
+            if (!HologramBlueprintPreview.cleanCapture()) {
+                if (selected >= 0 && selected < state.cells.size())
+                    HologramSnapshotModelsClient.requestVisible(state, state.cells.get(selected), currentView);
+                for (int work = 0; work < Math.min(128, cachedOutlines.size()); work++) {
+                    Face face = cachedOutlines.get(Math.floorMod(modelDemandCursor++, cachedOutlines.size()));
+                    HologramSnapshotModelsClient.requestVisible(state, face.cell, currentView);
                 }
-                if (face.empty || face.nativeModel) continue;
-                // Keep all provisional faces for picking and all outlines for selection. A move can expose
-                // previously buried faces without rebuilding this cache, so disable cheap culling during it.
-                if (cheapOcclusionReady && HologramLightPreview
-                    .hideInteriorFace(face.cheapHidden, moveOffset[0], moveOffset[1], moveOffset[2])) continue;
-                float shade = face.side == 1 ? 1 : face.side < 2 ? .6f : .8f;
-                double[] shifted = moveScreen(face.cell);
-                int sampleIndex = 0;
-                for (HologramTextures.Sample sample : face.samples()) {
-                    setSampleColor(t, sample, shade, moving(face.cell) ? .38f : .96f);
-                    if (face.cell.sourceMissing && !face.cell.missingBlock) t.setColorRGBA_F(.55f, .55f, .55f, .78f);
-                    for (int i = 0; i < 4; i++) {
-                        int vertex = FACES[face.side][i];
-                        double[] point = face.points[vertex];
-                        t.addVertexWithUV(
-                            point[0] + shifted[0],
-                            point[1] + shifted[1],
-                            point[2] * depthScale + sampleIndex * .015,
-                            textureU(sample.icon, face.side, face.local(vertex)),
-                            textureV(sample.icon, face.side, face.local(vertex)));
+                if (state.authorProjection != null) {
+                    modelDependencyCursor = retryAuthorModelDemands(
+                        state,
+                        cachedOutlines.size(),
+                        index -> cachedOutlines.get(index).cell,
+                        modelDependencyCursor,
+                        currentView,
+                        Math.min(projectionDeadline, System.nanoTime() + 250_000L),
+                        System::nanoTime);
+                }
+            }
+            previewDrawWork.endPhase(drawPhase);
+            drawPhase = HologramPreviewDrawWork.Phase.FACES_AND_HIT;
+            previewDrawWork.beginPhase(drawPhase);
+            long submittedQuads = 0, submittedLineVertices = 0, linkedDrawCalls = 0;
+            int hovered = -1;
+            double hoveredDepth = Double.NEGATIVE_INFINITY;
+            GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
+            try {
+                GL11.glDisable(GL11.GL_LIGHTING);
+                // GUI ortho spans +/-1000 around z=0. Normalize model depth independently of zoom,
+                // and clear only this viewport so schematic faces and outlines share reliable occlusion.
+                Minecraft mc = Minecraft.getMinecraft();
+                int factor = new net.minecraft.client.gui.ScaledResolution(mc, mc.displayWidth, mc.displayHeight)
+                    .getScaleFactor();
+                // HologramScreen supplies a framebuffer scissor after its origin/scale transform.
+                // x/y here are model-local coordinates; replacing that rectangle clips the model
+                // against the wrong part of the screen. Retain the caller's transformed viewport.
+                if (!GL11.glIsEnabled(GL11.GL_SCISSOR_TEST)) {
+                    GL11.glEnable(GL11.GL_SCISSOR_TEST);
+                    GL11.glScissor(
+                        x * factor,
+                        mc.displayHeight - (y + height) * factor,
+                        width * factor,
+                        height * factor);
+                }
+                GL11.glEnable(GL11.GL_DEPTH_TEST);
+                GL11.glDepthFunc(GL11.GL_LEQUAL);
+                GL11.glDepthMask(true);
+                GL11.glClearDepth(1);
+                GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
+                GL11.glEnable(GL11.GL_BLEND);
+                GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+                GL11.glDisable(GL11.GL_CULL_FACE);
+                GL11.glEnable(GL11.GL_TEXTURE_2D);
+                mc.getTextureManager()
+                    .bindTexture(TextureMap.locationBlocksTexture);
+                GL11.glEnable(GL11.GL_ALPHA_TEST);
+                GL11.glAlphaFunc(GL11.GL_GREATER, .01f);
+                double depthScale = 128 / extent;
+                HologramSourcePreviewReference.captureCamera(depthScale);
+                Tessellator t = Tessellator.instance;
+                t.startDrawingQuads();
+                previewDrawWork.recordFacesVisited(faces.size());
+                for (Face face : faces) {
+                    boolean inside = mouseX >= x && mouseX < x + width
+                        && mouseY >= y
+                        && mouseY < y + height
+                        && face.contains(mouseX, mouseY);
+                    if (inside && face.depth >= hoveredDepth) {
+                        hovered = face.cell.index;
+                        hoveredDepth = face.depth;
                     }
-                    sampleIndex++;
+                    if (face.empty || face.nativeModel) continue;
+                    // Keep all provisional faces for picking and all outlines for selection. A move can expose
+                    // previously buried faces without rebuilding this cache, so disable cheap culling during it.
+                    if ((face.drawFaces() & 1 << face.side) == 0) continue;
+                    float shade = face.side == 1 ? 1 : face.side < 2 ? .6f : .8f;
+                    double[] shifted = moveScreen(face.cell);
+                    int sampleIndex = 0;
+                    for (HologramTextures.Sample sample : face.samples()) {
+                        setSampleColor(t, sample, shade, moving(face.cell) ? .38f : .96f);
+                        if (face.cell.sourceMissing && !face.cell.missingBlock)
+                            t.setColorRGBA_F(.55f, .55f, .55f, .78f);
+                        for (int i = 0; i < 4; i++) {
+                            int vertex = FACES[face.side][i];
+                            double[] point = face.points[vertex];
+                            t.addVertexWithUV(
+                                point[0] + shifted[0],
+                                point[1] + shifted[1],
+                                point[2] * depthScale + sampleIndex * .015,
+                                textureU(sample.icon, face.side, face.local(vertex)),
+                                textureV(sample.icon, face.side, face.local(vertex)));
+                        }
+                        sampleIndex++;
+                        submittedQuads++;
+                    }
                 }
-            }
-            t.draw();
-            HologramNativeRasterSmoke.Frame raster = HologramNativeRasterSmoke
-                .begin(state, view == 1 || state.data.getInteger("mode") == 2);
-            for (HologramState.Cell cell : nativePreviewCells) {
-                HologramNativeRasterSmoke.Slice pixels = null;
-                if (raster != null) for (Face outline : cachedOutlines) if (outline.cell == cell) {
-                    pixels = raster.before(outline.points, depthScale);
-                    break;
+                t.draw();
+                previewDrawWork.recordQuads(submittedQuads);
+                previewDrawWork.endPhase(drawPhase);
+                drawPhase = HologramPreviewDrawWork.Phase.NATIVE_PLAYBACK;
+                previewDrawWork.beginPhase(drawPhase);
+                HologramNativeRasterSmoke.Frame raster = HologramNativeRasterSmoke
+                    .begin(state, view == 1 || state.data.getInteger("mode") == 2);
+                previewDrawWork.recordSmokeActive(raster != null);
+                previewDrawWork.recordNativeCalls(nativePreviewCells.size());
+                for (HologramState.Cell cell : nativePreviewCells) {
+                    HologramNativeRasterSmoke.Slice pixels = null;
+                    if (raster != null) for (Face outline : cachedOutlines) if (outline.cell == cell) {
+                        pixels = raster.before(outline.points, depthScale);
+                        break;
+                    }
+                    GL11.glPushMatrix();
+                    applyPreviewTransform(cell, depthScale);
+                    if (moving(cell)) GL11.glTranslated(moveOffset[0], moveOffset[1], moveOffset[2]);
+                    GL11.glPushAttrib(GL11.GL_COLOR_BUFFER_BIT);
+                    if (moving(cell)) {
+                        GL11.glEnable(GL11.GL_BLEND);
+                        GL14.glBlendColor(1, 1, 1, .38f);
+                        GL11.glBlendFunc(0x8003, 0x8004);
+                    }
+                    HologramBlockRender.draw(cell, view == 1 || state.data.getInteger("mode") == 2);
+                    GL11.glPopAttrib();
+                    GL11.glPopMatrix();
+                    if (pixels != null) raster.after(cell, pixels);
                 }
-                GL11.glPushMatrix();
-                applyPreviewTransform(cell, depthScale);
-                if (moving(cell)) GL11.glTranslated(moveOffset[0], moveOffset[1], moveOffset[2]);
-                GL11.glPushAttrib(GL11.GL_COLOR_BUFFER_BIT);
-                if (moving(cell)) {
-                    GL11.glEnable(GL11.GL_BLEND);
-                    GL14.glBlendColor(1, 1, 1, .38f);
-                    GL11.glBlendFunc(0x8003, 0x8004);
+                HologramNativeRasterSmoke.finish(raster);
+                previewDrawWork.endPhase(drawPhase);
+                drawPhase = HologramPreviewDrawWork.Phase.LINKED;
+                previewDrawWork.beginPhase(drawPhase);
+                for (HologramState.Cell cell : linkedPreviewCells) {
+                    boolean current = view == 1 || state.data.getInteger("mode") == 2;
+                    if (HologramLinkNodePreview.prepare(cell, current)
+                        .isEmpty()) continue;
+                    GL11.glPushMatrix();
+                    applyPreviewTransform(cell, depthScale);
+                    HologramLinkNodePreview.draw(cell, current, .96f);
+                    linkedDrawCalls++;
+                    GL11.glPopMatrix();
                 }
-                HologramBlockRender.draw(cell, view == 1 || state.data.getInteger("mode") == 2);
-                GL11.glPopAttrib();
-                GL11.glPopMatrix();
-                if (pixels != null) raster.after(cell, pixels);
-            }
-            HologramNativeRasterSmoke.finish(raster);
-            for (HologramState.Cell cell : linkedPreviewCells) {
-                boolean current = view == 1 || state.data.getInteger("mode") == 2;
-                if (HologramLinkNodePreview.prepare(cell, current)
-                    .isEmpty()) continue;
-                GL11.glPushMatrix();
-                applyPreviewTransform(cell, depthScale);
-                HologramLinkNodePreview.draw(cell, current, .96f);
-                GL11.glPopMatrix();
-            }
-            GL11.glDisable(GL11.GL_TEXTURE_2D);
-            // Read face depth without writing line depth. The small z bias avoids coplanar
-            // flicker while keeping back edges hidden; all cells retain clear wireframes.
-            GL11.glDepthMask(false);
-            t.startDrawing(GL11.GL_LINES);
-            java.util.Set<Integer> related = selection == null ? java.util.Collections.emptySet()
-                : selection.related(state);
-            if (!HologramBlueprintPreview.cleanCapture()) for (Face face : cachedOutlines) {
-                boolean chosen = face.cell.index == selected
-                    || selection != null && selection.contains(face.cell.index);
-                boolean relatedCasing = !chosen && related.contains(face.cell.index);
-                t.setColorRGBA_F(
-                    chosen ? 1 : relatedCasing ? .78f : .2f,
-                    chosen ? .92f : relatedCasing ? .61f : .7f,
-                    chosen ? .5f : relatedCasing ? 1 : .8f,
-                    chosen || relatedCasing ? 1 : face.empty ? .18f : .45f);
-                for (int[] edge : EDGES) {
-                    double[] a = face.points[edge[0]], b = face.points[edge[1]];
-                    t.addVertex(a[0], a[1], a[2] * depthScale + .15);
-                    t.addVertex(b[0], b[1], b[2] * depthScale + .15);
+                GL11.glDisable(GL11.GL_TEXTURE_2D);
+                previewDrawWork.recordLinkedCalls(linkedDrawCalls);
+                previewDrawWork.endPhase(drawPhase);
+                drawPhase = HologramPreviewDrawWork.Phase.OUTLINES;
+                previewDrawWork.beginPhase(drawPhase);
+                // Read face depth without writing line depth. The small z bias avoids coplanar
+                // flicker while keeping back edges hidden; ordinary static hints retain exterior voxel grid lines.
+                GL11.glDepthMask(false);
+                t.startDrawing(GL11.GL_LINES);
+                java.util.Set<Integer> related = selection == null ? java.util.Collections.emptySet()
+                    : selection.related(state);
+                if (!HologramBlueprintPreview.cleanCapture()) for (Face face : cachedOutlines) {
+                    boolean chosen = face.cell.index == selected
+                        || selection != null && selection.contains(face.cell.index);
+                    boolean relatedCasing = !chosen && related.contains(face.cell.index);
+                    int edges = previewOutlineEdges(face, chosen || relatedCasing);
+                    if (edges == 0) continue;
+                    t.setColorRGBA_F(
+                        chosen ? 1 : relatedCasing ? .78f : .2f,
+                        chosen ? .92f : relatedCasing ? .61f : .7f,
+                        chosen ? .5f : relatedCasing ? 1 : .8f,
+                        chosen || relatedCasing ? 1 : face.empty ? .18f : .45f);
+                    for (int edgeIndex = 0; edgeIndex < EDGES.length; edgeIndex++) {
+                        if ((edges & 1 << edgeIndex) == 0) continue;
+                        int[] edge = EDGES[edgeIndex];
+                        double[] a = face.points[edge[0]], b = face.points[edge[1]];
+                        t.addVertex(a[0], a[1], a[2] * depthScale + .15);
+                        t.addVertex(b[0], b[1], b[2] * depthScale + .15);
+                        submittedLineVertices += 2;
+                    }
                 }
-            }
-            t.draw();
-            GL11.glDisable(GL11.GL_DEPTH_TEST);
-            GL11.glLineWidth(2.5f);
-            t.startDrawing(GL11.GL_LINES);
-            String hoveredStructure = pickStructure(mouseX, mouseY);
-            if (!HologramBlueprintPreview.cleanCapture())
-                for (Map.Entry<String, double[][]> entry : structureBoxes.entrySet()) {
-                    if (entry.getKey()
-                        .equals(hoveredStructure)) t.setColorRGBA_F(1, 1, .8f, 1);
-                    else if (entry.getKey()
-                        .equals(selectedStructureId)) t.setColorRGBA_F(1, .78f, .3f, .95f);
-                    else if (missingStructures.contains(entry.getKey())) t.setColorRGBA_F(.65f, .65f, .65f, .72f);
-                    else if (com.miaokatze.gtmb.hologram.HologramTextBox.isAttachmentId(entry.getKey()))
-                        t.setColorRGBA_F(.78f, .52f, 1, .85f);
-                    else t.setColorRGBA_F(.45f, .85f, 1, .72f);
-                    for (int[] edge : EDGES) {
-                        double[] a = entry.getValue()[edge[0]], b = entry.getValue()[edge[1]];
+                t.draw();
+                previewDrawWork.recordLineVertices(submittedLineVertices);
+                previewDrawWork.endPhase(drawPhase);
+                drawPhase = HologramPreviewDrawWork.Phase.OVERLAY;
+                previewDrawWork.beginPhase(drawPhase);
+                GL11.glDisable(GL11.GL_DEPTH_TEST);
+                GL11.glLineWidth(2.5f);
+                t.startDrawing(GL11.GL_LINES);
+                String hoveredStructure = pickStructure(mouseX, mouseY);
+                if (!HologramBlueprintPreview.cleanCapture())
+                    for (Map.Entry<String, double[][]> entry : structureBoxes.entrySet()) {
+                        if (entry.getKey()
+                            .equals(hoveredStructure)) t.setColorRGBA_F(1, 1, .8f, 1);
+                        else if (entry.getKey()
+                            .equals(selectedStructureId)) t.setColorRGBA_F(1, .78f, .3f, .95f);
+                        else if (missingStructures.contains(entry.getKey())) t.setColorRGBA_F(.65f, .65f, .65f, .72f);
+                        else if (com.miaokatze.gtmb.hologram.HologramTextBox.isAttachmentId(entry.getKey()))
+                            t.setColorRGBA_F(.78f, .52f, 1, .85f);
+                        else t.setColorRGBA_F(.45f, .85f, 1, .72f);
+                        for (int[] edge : EDGES) {
+                            double[] a = entry.getValue()[edge[0]], b = entry.getValue()[edge[1]];
+                            t.addVertex(a[0], a[1], 1);
+                            t.addVertex(b[0], b[1], 1);
+                        }
+                    }
+                t.draw();
+                GL11.glLineWidth(1.5f);
+                t.startDrawing(GL11.GL_LINES);
+                t.setColorRGBA_F(.95f, .77f, .39f, .48f);
+                if (!HologramBlueprintPreview.cleanCapture())
+                    for (double[][] box : hintBoxes.values()) for (int[] edge : EDGES) {
+                        double[] a = box[edge[0]], b = box[edge[1]];
                         t.addVertex(a[0], a[1], 1);
                         t.addVertex(b[0], b[1], 1);
                     }
+                t.draw();
+                GL11.glEnable(GL11.GL_TEXTURE_2D);
+                GL11.glColor4f(1, 1, 1, 1);
+                if (!HologramBlueprintPreview.cleanCapture()) for (RoleMarker marker : markers) {
+                    if (!marker.cell.anchor
+                        && (marker.x < x || marker.x >= x + width || marker.y < y || marker.y >= y + height)) continue;
+                    float labelScale = marker.cell.anchor || marker.cell.missingBlock ? 1f : .7f;
+                    int labelWidth = Math.round(mc.fontRenderer.getStringWidth(marker.label) * labelScale);
+                    int lx = Math.max(x + 2, Math.min(x + width - labelWidth - 4, (int) marker.x - labelWidth / 2));
+                    int ly = Math.max(y + 2, Math.min(y + height - 12, (int) marker.y - 4));
+                    net.minecraft.client.gui.Gui.drawRect(
+                        lx - 2,
+                        ly - 1,
+                        lx + labelWidth + 2,
+                        ly + Math.round(9 * labelScale) + 1,
+                        marker.cell.anchor ? 0xee514025 : 0xda102a34);
+                    GL11.glPushMatrix();
+                    try {
+                        GL11.glTranslatef(lx, ly, 0);
+                        GL11.glScalef(labelScale, labelScale, 1);
+                        mc.fontRenderer.drawStringWithShadow(
+                            marker.label,
+                            0,
+                            0,
+                            marker.cell.sourceMissing ? 0xff7272
+                                : marker.cell.missingBlock ? 0xff6be4 : marker.cell.anchor ? 0xffffbd : 0x9ceaf3);
+                    } finally {
+                        GL11.glPopMatrix();
+                    }
+                    marker.left = lx - 2;
+                    marker.top = ly - 1;
+                    marker.right = lx + labelWidth + 2;
+                    marker.bottom = ly + Math.round(9 * labelScale) + 1;
+                    if (mouseX >= lx - 2 && mouseX < lx + labelWidth + 2
+                        && mouseY >= ly - 1
+                        && mouseY < ly + Math.round(9 * labelScale) + 1) hovered = marker.cell.index;
+                    lastPreviewRoleMarkers++;
+                    if (marker.cell.anchor) lastPreviewAnchorMarkers++;
                 }
-            t.draw();
-            GL11.glLineWidth(1.5f);
-            t.startDrawing(GL11.GL_LINES);
-            t.setColorRGBA_F(.95f, .77f, .39f, .48f);
-            if (!HologramBlueprintPreview.cleanCapture())
-                for (double[][] box : hintBoxes.values()) for (int[] edge : EDGES) {
-                    double[] a = box[edge[0]], b = box[edge[1]];
-                    t.addVertex(a[0], a[1], 1);
-                    t.addVertex(b[0], b[1], 1);
-                }
-            t.draw();
-            GL11.glEnable(GL11.GL_TEXTURE_2D);
-            GL11.glColor4f(1, 1, 1, 1);
-            if (!HologramBlueprintPreview.cleanCapture()) for (RoleMarker marker : markers) {
-                if (!marker.cell.anchor
-                    && (marker.x < x || marker.x >= x + width || marker.y < y || marker.y >= y + height)) continue;
-                float labelScale = marker.cell.anchor || marker.cell.missingBlock ? 1f : .7f;
-                int labelWidth = Math.round(mc.fontRenderer.getStringWidth(marker.label) * labelScale);
-                int lx = Math.max(x + 2, Math.min(x + width - labelWidth - 4, (int) marker.x - labelWidth / 2));
-                int ly = Math.max(y + 2, Math.min(y + height - 12, (int) marker.y - 4));
-                net.minecraft.client.gui.Gui.drawRect(
-                    lx - 2,
-                    ly - 1,
-                    lx + labelWidth + 2,
-                    ly + Math.round(9 * labelScale) + 1,
-                    marker.cell.anchor ? 0xee514025 : 0xda102a34);
-                GL11.glPushMatrix();
-                try {
-                    GL11.glTranslatef(lx, ly, 0);
-                    GL11.glScalef(labelScale, labelScale, 1);
-                    mc.fontRenderer.drawStringWithShadow(
-                        marker.label,
-                        0,
-                        0,
-                        marker.cell.sourceMissing ? 0xff7272
-                            : marker.cell.missingBlock ? 0xff6be4 : marker.cell.anchor ? 0xffffbd : 0x9ceaf3);
-                } finally {
-                    GL11.glPopMatrix();
-                }
-                marker.left = lx - 2;
-                marker.top = ly - 1;
-                marker.right = lx + labelWidth + 2;
-                marker.bottom = ly + Math.round(9 * labelScale) + 1;
-                if (mouseX >= lx - 2 && mouseX < lx + labelWidth + 2
-                    && mouseY >= ly - 1
-                    && mouseY < ly + Math.round(9 * labelScale) + 1) hovered = marker.cell.index;
-                lastPreviewRoleMarkers++;
-                if (marker.cell.anchor) lastPreviewAnchorMarkers++;
+            } finally {
+                // Depth is framebuffer data, not an attribute: do not leave schematic depth in later GUI overlays.
+                GL11.glDepthMask(true);
+                GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
+                GL11.glPopAttrib();
             }
+            if (!previewPickingReady(state, mouseX, mouseY)) hovered = -1;
+            presentedFrame = projectedFrame;
+            presentedState = state;
+            previewDrawWork.endPhase(drawPhase);
+            previewDrawNanos += System.nanoTime() - drawStarted;
+            previewFrames++;
+            return hovered;
         } finally {
-            // Depth is framebuffer data, not an attribute: do not leave schematic depth in later GUI overlays.
-            GL11.glDepthMask(true);
-            GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
-            GL11.glPopAttrib();
+            previewDrawWork.endPhase(drawPhase);
         }
-        if (!previewPickingReady(state, mouseX, mouseY)) hovered = -1;
-        presentedFrame = projectedFrame;
-        presentedState = state;
-        previewDrawNanos += System.nanoTime() - drawStarted;
-        previewFrames++;
-        return hovered;
     }
 
     /**
@@ -1239,7 +1284,7 @@ final class HologramRenderer {
         if (exposed != 0 || !role.isEmpty()) result.add(new PreviewCell(c, exposed, role, true));
     }
 
-    /** Draw-only cheap mask: it cannot remove source accounting, pick faces, outlines or detailed work. */
+    /** Draw-only cheap mask: it cannot remove source accounting, pick/outline records or detailed work. */
     private static int cheapExposed(HologramState state, HologramState.Cell cell, int layer, int view,
         boolean current) {
         if (!HologramLightPreview.staticOpaqueCube(cell, current)) return 63;
@@ -1251,6 +1296,52 @@ final class HologramRenderer {
                 && HologramLightPreview.staticOpaqueCube(neighbor, current)) exposed &= ~(1 << side);
         }
         return exposed;
+    }
+
+    /**
+     * O(regions) presentation certificate. A complete own-region shell proves internal neighbors; boundary
+     * neighbors additionally require their own current-camera presentation. No block/material callbacks,
+     * source walks or neighbor lookups occur in the per-face/per-edge draw loops.
+     */
+    private static void updatePresentedOcclusion(HologramState state, String key, boolean budgeted) {
+        for (Map.Entry<HologramRegionCache.Key, PreviewRegion> entry : previewRegions.entrySet()) {
+            PreviewRegion region = entry.getValue();
+            region.presentedOcclusion = region.hintsComplete && key.equals(region.projectedKey)
+                && key.equals(region.projectionWorkKey)
+                && (!budgeted || previewRegionVisible(state, entry.getKey())) ? 0 : -1;
+        }
+        for (Map.Entry<HologramRegionCache.Key, PreviewRegion> entry : previewRegions.entrySet()) {
+            PreviewRegion region = entry.getValue();
+            if (region.presentedOcclusion < 0) continue;
+            HologramRegionCache.Key own = entry.getKey();
+            for (int side = 0; side < 6; side++) {
+                int[] normal = NORMALS[side];
+                PreviewRegion neighbor = previewRegions
+                    .get(new HologramRegionCache.Key(own.x + normal[0], own.y + normal[1], own.z + normal[2]));
+                if (neighbor != null && neighbor.presentedOcclusion >= 0) region.presentedOcclusion |= 1 << side;
+            }
+        }
+    }
+
+    /** Keep exterior voxel grid lines, but never submit the twelve edges of a buried ordinary hint. */
+    private static int previewOutlineEdges(Face face, boolean emphasized) {
+        return emphasized ? 4095 : PREVIEW_EDGE_MASKS[face.drawFaces()];
+    }
+
+    private static int[] previewEdgeMasks() {
+        int[] masks = new int[64];
+        for (int faces = 1; faces < masks.length; faces++) for (int side = 0; side < 6; side++) {
+            if ((faces & 1 << side) == 0) continue;
+            for (int edge = 0; edge < EDGES.length; edge++) {
+                boolean a = false, b = false;
+                for (int vertex : FACES[side]) {
+                    a |= vertex == EDGES[edge][0];
+                    b |= vertex == EDGES[edge][1];
+                }
+                if (a && b) masks[faces] |= 1 << edge;
+            }
+        }
+        return masks;
     }
 
     /** Fair projection admission is independent from depth order and survives repeatedly dirty near regions. */
@@ -1338,7 +1429,9 @@ final class HologramRenderer {
             // Resolve once for this projection unit, not again for its outline and every face. Never retain
             // a negative readiness result across units/frames: deferred native work can become ready later.
             PreviewAppearance appearance = new PreviewAppearance(c, currentView, previewCell.detailed, resolver, true);
-            region.outlines.add(new Face(c, projected, 0, null, previewCell.detailed, false, appearance));
+            region.outlines.add(
+                new Face(c, projected, 0, null, previewCell.detailed, false, appearance)
+                    .cheapHull(region, previewCell));
             if (appearance.nativeReady) {
                 region.nativeCells.add(c);
                 // Cell picking keeps the established voxel contract while the drawing uses
@@ -1369,7 +1462,7 @@ final class HologramRenderer {
                         surface,
                         previewCell.detailed,
                         (previewCell.cheapFaces & 1 << surface.side) == 0,
-                        appearance));
+                        appearance).cheapHull(region, previewCell));
             }
         }
         if (region.projectionTodo.isEmpty()) {
@@ -1623,6 +1716,7 @@ final class HologramRenderer {
         final List<PreviewCell> cells = new ArrayList<>();
         String projectedKey = "", projectionWorkKey = "";
         int projectedCells, unresolved, budgetLimited;
+        int presentedOcclusion = -1;
         double depth;
         boolean complete, hintsComplete, deferredVisibility;
         List<Face> faces = new ArrayList<>(), outlines = new ArrayList<>();
@@ -1686,16 +1780,21 @@ final class HologramRenderer {
         void remove(Set<Integer> changed) {
             visible.removeIf(cell -> changed.contains(cell.index));
             linked.removeIf(cell -> changed.contains(cell.index));
-            java.util.Iterator<PreviewCell> iterator = cells.iterator();
-            while (iterator.hasNext()) {
-                PreviewCell cell = iterator.next();
-                if (!changed.contains(cell.cell.index)) continue;
-                if ((cell.pending & 1) != 0) unresolved--;
-                if ((cell.pending & 2) != 0) budgetLimited--;
-                iterator.remove();
-            }
+            // Stable compaction avoids one ArrayList tail shift for every repaired cell in a dense region.
+            int retained = 0;
             deferredVisibility = false;
-            for (PreviewCell cell : cells) deferredVisibility |= (cell.pending & 4) != 0;
+            for (int at = 0; at < cells.size(); at++) {
+                PreviewCell cell = cells.get(at);
+                if (changed.contains(cell.cell.index)) {
+                    if ((cell.pending & 1) != 0) unresolved--;
+                    if ((cell.pending & 2) != 0) budgetLimited--;
+                } else {
+                    cells.set(retained++, cell);
+                    deferredVisibility |= (cell.pending & 4) != 0;
+                }
+            }
+            cells.subList(retained, cells.size())
+                .clear();
             invalidateProjectedCells(changed);
         }
     }
@@ -2458,6 +2557,8 @@ final class HologramRenderer {
         final HologramTextures.Material material;
         final boolean empty, nativeModel, cheapHidden;
         final HologramGeometry.Surface surface;
+        private PreviewRegion cheapRegion;
+        private int cheapFaces = 63, cheapBoundary;
 
         Face(HologramState.Cell cell, double[][] points, int side, boolean current) {
             this(cell, points, side, current, null);
@@ -2497,6 +2598,27 @@ final class HologramRenderer {
             double d = 0;
             for (int index : FACES[side]) d += points[index][2];
             depth = d / 4;
+        }
+
+        Face cheapHull(PreviewRegion region, PreviewCell preview) {
+            if (!preview.detailed && preview.cheapFaces != 63) {
+                cheapRegion = region;
+                cheapFaces = preview.cheapFaces;
+                cheapBoundary = ((cell.y & 15) == 0 ? 1 : 0) | ((cell.y & 15) == 15 ? 2 : 0)
+                    | ((cell.z & 15) == 0 ? 4 : 0)
+                    | ((cell.z & 15) == 15 ? 8 : 0)
+                    | ((cell.x & 15) == 0 ? 16 : 0)
+                    | ((cell.x & 15) == 15 ? 32 : 0);
+            }
+            return this;
+        }
+
+        int drawFaces() {
+            if (cheapRegion == null || cheapRegion.presentedOcclusion < 0
+                || moveOffset[0] != 0
+                || moveOffset[1] != 0
+                || moveOffset[2] != 0) return 63;
+            return cheapFaces | (cheapBoundary & ~cheapRegion.presentedOcclusion);
         }
 
         List<HologramTextures.Sample> samples() {
