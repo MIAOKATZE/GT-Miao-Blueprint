@@ -172,6 +172,19 @@ final class HologramTextures {
         }
         int index = current ? 1 : 0;
         if (pair[index] != null) return pair[index];
+        String key = cacheKey(cell, current);
+        Material material = CACHE.get(key);
+        if (material == null) {
+            material = resolve(cell, current);
+            CACHE.put(key, material);
+        }
+        pair[index] = material;
+        return material;
+    }
+
+    /** Pure cache identity; material resolution and native rendering remain separate. */
+    static String cacheKey(HologramState.Cell cell, boolean current) {
+        current = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
         ItemStack stack = current ? cell.actualStack : cell.targetStack;
         String key = (current ? cell.id : cell.wantId) + ":"
             + (current ? cell.meta : cell.wantMeta)
@@ -185,13 +198,9 @@ final class HologramTextures {
             + Arrays.toString(cell.hintTint);
         key += ":" + (current ? cell.actualFacing : cell.targetFacing);
         key += ":" + (current ? cell.actualDisplay : cell.targetDisplay);
-        Material material = CACHE.get(key);
-        if (material == null) {
-            material = resolve(cell, current);
-            CACHE.put(key, material);
-        }
-        pair[index] = material;
-        return material;
+        // Untinted icon hints use semantic cell colors, not only icon/stack/display identity.
+        if (cell.iconOnly && cell.hintTint.length < 3) key += ":hintColor=" + cell.textureColor();
+        return key;
     }
 
     @SuppressWarnings("unchecked")

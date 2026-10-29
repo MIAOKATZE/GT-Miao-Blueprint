@@ -96,6 +96,10 @@ public final class HologramLocalAuthorRegressionTest {
             cases,
             "conservative_cheap_draw_occlusion",
             com.miaokatze.gtmb.client.hologram.HologramCheapOcclusionRegression::run);
+        add(
+            cases,
+            "material_hint_tint_key_identity",
+            com.miaokatze.gtmb.client.hologram.HologramMaterialTintKeyRegression::run);
         add(cases, "atomic_native_attachments", HologramLocalAuthorAttachmentsRegression::run);
         add(cases, "native_configuration_contract", HologramLocalAuthorConfigurationsRegression::run);
         add(cases, "native_structure_regeneration", HologramLocalAuthorStructuresRegression::run);
