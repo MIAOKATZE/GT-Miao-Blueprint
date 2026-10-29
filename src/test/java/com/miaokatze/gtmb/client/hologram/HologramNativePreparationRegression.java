@@ -1033,7 +1033,11 @@ public final class HologramNativePreparationRegression {
 
     @SuppressWarnings("unchecked")
     private static void wakeupAndIdentity() throws ReflectiveOperationException {
-        HologramState state = state(row(0, 1, -1, false), row(16, 2, -1, false), row(48, 3, -1, false));
+        HologramState state = state(
+            row(0, 1, -1, false),
+            row(1, 2, -1, false),
+            row(16, 3, -1, false),
+            row(48, 4, -1, false));
         Field regionsField = field(HologramRenderer.class, "previewRegions");
         Map<Object, Object> regions = (Map<Object, Object>) regionsField.get(null);
         Map<Object, Object> savedRegions = new java.util.LinkedHashMap<>(regions);
@@ -1053,6 +1057,21 @@ public final class HologramNativePreparationRegression {
             regionConstructor.setAccessible(true);
             Object complete = regionConstructor.newInstance();
             field(regionType, "complete").setBoolean(complete, true);
+            field(regionType, "hintsComplete").setBoolean(complete, true);
+            field(regionType, "projectedKey").set(complete, "stale-first-projection");
+            Class<?> cellType = Class.forName(HologramRenderer.class.getName() + "$PreviewCell");
+            Constructor<?> cellConstructor = cellType
+                .getDeclaredConstructor(HologramState.Cell.class, int.class, String.class, boolean.class);
+            cellConstructor.setAccessible(true);
+            List<Object> firstOutput = (List<Object>) field(regionType, "cells").get(complete);
+            Object affectedOutput = cellConstructor.newInstance(state.cells.get(0), 63, "", true);
+            Object sameRegionOutput = cellConstructor.newInstance(state.cells.get(1), 63, "", true);
+            firstOutput.add(affectedOutput);
+            firstOutput.add(sameRegionOutput);
+            List<HologramState.Cell> firstVisible = (List<HologramState.Cell>) field(regionType, "visible")
+                .get(complete);
+            firstVisible.add(state.cells.get(0));
+            firstVisible.add(state.cells.get(1));
             HologramRegionCache.Key first = HologramRegionCache.key(state.cells.get(0));
             regions.put(first, complete);
             Class<?> preparationType = Class.forName(HologramRenderer.class.getName() + "$PreviewPreparation");
@@ -1060,13 +1079,20 @@ public final class HologramNativePreparationRegression {
             constructor.setAccessible(true);
             Object preparation = constructor.newInstance(state);
             Map<Object, Object> pending = (Map<Object, Object>) field(preparationType, "pending").get(preparation);
-            HologramRegionCache.Key other = HologramRegionCache.key(state.cells.get(1));
+            HologramRegionCache.Key other = HologramRegionCache.key(state.cells.get(2));
             Object untouched = pending.get(other);
             field(untouched.getClass(), "cell").setInt(untouched, 1);
+            Object otherRegion = regionConstructor.newInstance();
+            Object otherOutput = cellConstructor.newInstance(state.cells.get(2), 63, "", false);
+            List<Object> otherCells = (List<Object>) field(regionType, "cells").get(otherRegion);
+            otherCells.add(otherOutput);
+            field(regionType, "projectedKey").set(otherRegion, "valid-other-projection");
+            field(untouched.getClass(), "region").set(untouched, otherRegion);
+            regions.put(other, otherRegion);
             preparationField.set(null, preparation);
             previewStateField.set(null, state);
             worldStateField.set(null, null);
-            HologramRenderer.nativePreparationChanged(state, Collections.singleton(first));
+            HologramRenderer.nativePreparationCellsChanged(state, Collections.singleton(state.cells.get(0)));
             SimpleAssert.that(
                 pending.containsKey(first),
                 "same-access progress wakes a previously completed unresolved region");
@@ -1075,7 +1101,41 @@ public final class HologramNativePreparationRegression {
                 "native wakeup preserves unrelated partial region/cursor");
             SimpleAssert
                 .eq(null, previewStateField.get(null), "resolved region publication requests projection refresh");
-            SimpleAssert.that(!regions.containsKey(first), "only affected consumer region is rebuilt");
+            Object repairing = pending.get(first);
+            Set<Integer> revisit = (Set<Integer>) field(repairing.getClass(), "revisit").get(repairing);
+            Set<Integer> valid = (Set<Integer>) field(repairing.getClass(), "valid").get(repairing);
+            SimpleAssert.that(
+                regions.get(first) == complete && !field(regionType, "complete").getBoolean(complete),
+                "affected region is retained but cannot claim complete during exact repair");
+            SimpleAssert.that(
+                firstOutput.size() == 1 && firstOutput.get(0) == sameRegionOutput
+                    && !firstOutput.contains(affectedOutput)
+                    && firstVisible.equals(Collections.singletonList(state.cells.get(1))),
+                "exact wake removes stale affected geometry and visibility, retaining same-region unrelated output");
+            SimpleAssert.that(
+                revisit.equals(Collections.singleton(0)) && valid.equals(Collections.singleton(1))
+                    && field(repairing.getClass(), "cell").getInt(repairing) == 2,
+                "exact affected slot is requeued without rewinding the completed base cursor");
+            SimpleAssert.eq(
+                "",
+                field(regionType, "projectedKey").get(complete),
+                "affected projection is invalidated before repair publication");
+            SimpleAssert.that(
+                regions.get(other) == otherRegion && otherCells.size() == 1
+                    && otherCells.get(0) == otherOutput
+                    && "valid-other-projection".equals(field(regionType, "projectedKey").get(otherRegion)),
+                "unrelated region retains exact output and projection as well as its cursor");
+            HologramRenderer.nativePreparationChanged(state, Collections.singleton(first));
+            SimpleAssert.that(
+                firstOutput.isEmpty() && firstVisible.isEmpty()
+                    && revisit.equals(new java.util.HashSet<>(java.util.Arrays.asList(0, 1)))
+                    && valid.isEmpty(),
+                "conservative region wake retires every affected output and deduplicates exact slot repairs");
+            SimpleAssert.that(
+                regions.get(first) == complete && field(repairing.getClass(), "cell").getInt(repairing) == 2
+                    && pending.get(other) == untouched
+                    && otherCells.get(0) == otherOutput,
+                "region wake preserves base progress and unrelated output rather than replacing whole region");
 
             deferred.clear();
             HologramState duplicate = state(row(0, 1, -1, false));

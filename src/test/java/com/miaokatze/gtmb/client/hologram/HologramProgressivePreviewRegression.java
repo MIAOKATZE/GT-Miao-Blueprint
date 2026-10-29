@@ -207,12 +207,11 @@ public final class HologramProgressivePreviewRegression {
         Class<?> regionType = nested("PreviewRegion"), cellType = nested("PreviewCell");
         Object region = construct(regionType, new Class<?>[0]);
         List<Object> cells = (List<Object>) field(regionType, "cells").get(region);
-        HologramState.Cell cell = new HologramState.Cell(0, cell(0, 0, 0));
         for (int i = 0; i < 300; i++) cells.add(
             construct(
                 cellType,
                 new Class<?>[] { HologramState.Cell.class, int.class, String.class, boolean.class },
-                cell,
+                new HologramState.Cell(i, cell(i & 15, i >> 8, (i >> 4) & 15)),
                 0,
                 "",
                 false));

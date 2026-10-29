@@ -34,6 +34,14 @@ public final class HologramAuthorRegionFairnessRegression {
         allSourceRegionsProduceVisibleCheapOutput();
         finiteRegionSlices();
         finalCheapPublish();
+        modelPublicationStreamMustNotStarveUnchangedDetail();
+        repeatedNativeWakeRepairsCompletedRegionOnce();
+        modelReorderingRetainsExactVisibleCells();
+        boundaryAppearanceRepairsOnlyAdjacentShellCell();
+        distinctNativeWakesPreserveSameRegionProjection();
+        dirtyProjectionPrefixCannotStarveFarRegion();
+        sourcePublicationDoesNotCountAsModelReadiness();
+        sourceEditsRetirePendingRepairsAndTailSlots();
         publicationsPreserveOtherCursors();
         everyPartialTaskCounts();
         linearSparseRegionScheduling();
@@ -183,6 +191,53 @@ public final class HologramAuthorRegionFairnessRegression {
         }
     }
 
+    /**
+     * Exercise real author decode failure -> model-only publication -> renderer invalidation -> scheduler.
+     * The detail layer is deliberately hidden to isolate scheduling from native/GL timing; the cheap pass
+     * produces visible production PreviewCells. No task, queue, progress counter, or update result is mocked.
+     */
+    private static void modelPublicationStreamMustNotStarveUnchangedDetail() throws Exception {
+        try (Fixture fixture = new Fixture(5, 64, true)) {
+            for (int cell = 0; cell < 320; cell++) {
+                AtomicLong clock = new AtomicLong();
+                fixture.advance.invoke(
+                    fixture.preparation,
+                    Integer.MAX_VALUE,
+                    0,
+                    false,
+                    0L,
+                    (LongSupplier) clock::getAndIncrement);
+            }
+            SimpleAssert.eq(true, fixture.call("hintsReady"), "all source hints exist before native replies");
+            fixture.step(3);
+            HologramRegionCache.Key stableKey = new HologramRegionCache.Key(0, 0, 0);
+            Object stable = fixture.pending()
+                .get(stableKey);
+            SimpleAssert.eq(4, integer(stable, "cell"), "unchanged detail starts with a real partial cursor");
+            for (int index = 0; index < 64; index++) {
+                HologramState before = fixture.projection.view();
+                fixture.projection.request(before, before.cells.get(4 * 64 + index));
+                SimpleAssert.eq(true, fixture.projection.advance(() -> 0), "one real model result publishes");
+                HologramState after = fixture.projection.view();
+                SimpleAssert.that(after != before && after.modelOnly, "the stream consists of genuine model deltas");
+                SimpleAssert.that(
+                    field(fixture.type, "state").get(fixture.preparation) == after,
+                    "production publication advances the preparation owner without recreating it");
+                SimpleAssert.that(
+                    fixture.pending()
+                        .get(stableKey) == stable,
+                    "distant publications do not replace the unchanged partial task");
+                fixture.step(0);
+            }
+            SimpleAssert.that(
+                integer(stable, "cell") > 4,
+                "unchanged native detail must advance during model publications, not only after replies stop");
+            fixture.drain();
+            SimpleAssert.eq(640, fixture.count("completed"), "finite publications converge to exact two-pass counts");
+            SimpleAssert.eq(320, fixture.count("detailedCompleted"), "all source detail completes after the stream");
+        }
+    }
+
     private static void publicationsPreserveOtherCursors() throws Exception {
         for (boolean refining : new boolean[] { false, true }) try (Fixture fixture = new Fixture(5, 64, true)) {
             if (refining) for (int cell = 0; cell < 320; cell++) fixture.step(0);
@@ -215,12 +270,10 @@ public final class HologramAuthorRegionFairnessRegression {
                 previous = current;
             }
             if (refining) {
-                SimpleAssert
-                    .eq(4, previous, "cheap invalidations defer native work without discarding its partial detail");
-                SimpleAssert.eq(
-                    4,
-                    fixture.count("detailedCompleted"),
-                    "retained partial native accounting survives the publication stream");
+                SimpleAssert.that(previous > 4, "unchanged detail advances while distant model publications continue");
+                SimpleAssert.that(
+                    fixture.count("detailedCompleted") > 4,
+                    "appearance repairs do not globally preempt already started detail work");
             } else SimpleAssert
                 .that(previous > 4, "unchanged regions make cheap progress throughout the publication stream");
             fixture.drain();
@@ -234,6 +287,379 @@ public final class HologramAuthorRegionFairnessRegression {
                     true,
                     field(region.getClass(), "complete").getBoolean(region),
                     "every source region has final detail output");
+        }
+    }
+
+    private static void repeatedNativeWakeRepairsCompletedRegionOnce() throws Exception {
+        try (Fixture fixture = new Fixture(2, 8, true)) {
+            fixture.drain();
+            fixture.call("publishProgress");
+            HologramState state = fixture.projection.view();
+            Set<HologramState.Cell> changed = java.util.Collections.singleton(state.cells.get(0));
+            for (int event = 0; event < 32; event++) HologramRenderer.nativePreparationCellsChanged(state, changed);
+            SimpleAssert.eq(false, fixture.call("hintsReady"), "completed-region hole is not ready cheap coverage");
+            SimpleAssert.eq(
+                false,
+                field(fixture.type, "allHintsPresented").getBoolean(fixture.preparation),
+                "invalidated hints cannot remain marked presented");
+            SimpleAssert.eq(15, fixture.count("detailedCompleted"), "duplicate wake events invalidate one cell once");
+            Object task = fixture.pending()
+                .get(new HologramRegionCache.Key(0, 0, 0));
+            SimpleAssert.eq(8, integer(task, "cell"), "completed region retains its exhausted base cursor");
+            SimpleAssert.eq(
+                1,
+                ((Set<?>) field(task.getClass(), "revisit").get(task)).size(),
+                "repair queue is bounded by affected cells, not readiness event count");
+            SimpleAssert.eq(
+                false,
+                field(
+                    field(task.getClass(), "detail").get(task)
+                        .getClass(),
+                    "complete").getBoolean(field(task.getClass(), "detail").get(task)),
+                "pending repair cannot claim complete");
+            fixture.step(0);
+            SimpleAssert
+                .eq(16, fixture.count("detailedCompleted"), "one hidden-cell repair restores exact detail count");
+            SimpleAssert.that(
+                fixture.pending()
+                    .isEmpty(),
+                "one-cell wake never schedules a full region rebuild");
+            SimpleAssert.eq(
+                false,
+                field(fixture.type, "allHintsPresented").getBoolean(fixture.preparation),
+                "repaired hints wait for their actual publication boundary");
+            SimpleAssert.eq(true, fixture.call("publishProgress"), "repaired region publishes anew");
+            SimpleAssert.eq(
+                true,
+                field(fixture.type, "allHintsPresented").getBoolean(fixture.preparation),
+                "only republished repaired hints become presented");
+        }
+    }
+
+    private static void modelReorderingRetainsExactVisibleCells() throws Exception {
+        try (Fixture fixture = new Fixture(1, 8, true)) {
+            for (int cell = 0; cell < 11; cell++) fixture.visibleStep(0);
+            HologramState before = fixture.projection.view();
+            fixture.projection.request(before, before.cells.get(6));
+            fixture.projection.advance(() -> 0);
+            HologramState after = fixture.projection.view();
+            SimpleAssert.that(after.modelOnly, "real readiness publication retains source topology");
+            for (int step = 0; step < 32 && !fixture.pending()
+                .isEmpty(); step++) fixture.visibleStep(0);
+            SimpleAssert.that(
+                fixture.pending()
+                    .isEmpty(),
+                "base and repair cursors converge after region list reorder");
+            SimpleAssert.eq(8, fixture.count("detailedCompleted"), "revisited cells count only once");
+            Object region = fixture.regions()
+                .get(new HologramRegionCache.Key(0, 0, 0));
+            Set<Integer> seen = new java.util.HashSet<>();
+            for (Object value : (Collection<?>) field(region.getClass(), "visible").get(region)) {
+                HologramState.Cell cell = (HologramState.Cell) value;
+                SimpleAssert.that(seen.add(cell.index), "repair output contains no duplicate stable slots");
+                SimpleAssert
+                    .that(cell == after.cells.get(cell.index), "every repaired output uses the current immutable cell");
+            }
+            SimpleAssert.eq(8, seen.size(), "reordering skips no visible source cell");
+            SimpleAssert.eq(4, integer(region, "unresolved"), "old unresolved outputs are replaced, not accumulated");
+        }
+    }
+
+    private static void boundaryAppearanceRepairsOnlyAdjacentShellCell() throws Exception {
+        try (Fixture fixture = new Fixture(2, 16, true, 16)) {
+            HologramState cold = fixture.projection.view();
+            for (int index = 0; index < 32; index++)
+                if (index != 15) fixture.projection.request(cold, cold.cells.get(index));
+            fixture.projection.advance(() -> 0);
+            fixture.visibleDrain();
+            SimpleAssert.eq(32, fixture.count("detailedCompleted"), "visible fixture reaches every detail cell");
+            HologramState before = fixture.projection.view();
+            fixture.projection.request(before, before.cells.get(15));
+            fixture.projection.advance(() -> 0);
+            Object neighbor = fixture.pending()
+                .get(new HologramRegionCache.Key(1, 0, 0));
+            SimpleAssert.that(neighbor != null, "boundary appearance invalidates the adjacent shell consumer");
+            Set<?> repairs = (Set<?>) field(neighbor.getClass(), "revisit").get(neighbor);
+            SimpleAssert.eq(
+                java.util.Collections.singleton(16),
+                repairs,
+                "halo shell repair does not reset every neighboring-region detail cell");
+            Object region = field(neighbor.getClass(), "detail").get(neighbor);
+            SimpleAssert.eq(
+                false,
+                field(region.getClass(), "hintsComplete").getBoolean(region),
+                "removed stale shell geometry blocks picking until its repair is presented");
+            for (Object value : (Collection<?>) field(region.getClass(), "visible").get(region)) SimpleAssert.that(
+                ((HologramState.Cell) value).index != 16,
+                "the old exposed-face consumer is absent until refreshed");
+            fixture.visibleDrain();
+            SimpleAssert.eq(64, fixture.count("completed"), "neighbor and native repairs restore exact progress");
+            SimpleAssert.eq(
+                0,
+                HologramRenderer.previewMeshTotal(fixture.projection.view())
+                    - HologramRenderer.previewMeshCompleted(fixture.projection.view()),
+                "terminal fallback cells do not retain obsolete unresolved counts");
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void dirtyProjectionPrefixCannotStarveFarRegion() throws Exception {
+        try (Fixture fixture = new Fixture(2, 8, true)) {
+            for (int cell = 0; cell < 16; cell++) fixture.visibleStep(0);
+            HologramState state = fixture.projection.view();
+            java.util.List<HologramTextures.Sample>[] sides = new java.util.List[6], covers = new java.util.List[6];
+            for (int side = 0; side < 6; side++) sides[side] = covers[side] = java.util.Collections.emptyList();
+            HologramTextures.Material material = new HologramTextures.Material(
+                sides,
+                covers,
+                HologramGeometry.cube(),
+                false,
+                false,
+                false,
+                false);
+            Map<net.minecraft.block.Block, Map<Integer, HologramTextures.Material>> materials = (Map<net.minecraft.block.Block, Map<Integer, HologramTextures.Material>>) field(
+                HologramLightPreview.class,
+                "MATERIALS").get(null);
+            Map<Integer, HologramTextures.Material> byMeta = new java.util.HashMap<>();
+            byMeta.put(0, material);
+            materials.put(net.minecraft.init.Blocks.stone, byMeta);
+            field(HologramRenderer.class, "projectedFrame")
+                .set(null, new HologramEditorCameraFrame(0, 0, 500, 500, 0, 0, 1, 16, 0, 0, 64));
+            Method project = HologramRenderer.class.getDeclaredMethod(
+                "projectPreviewRegions",
+                java.util.List.class,
+                HologramState.class,
+                String.class,
+                int.class,
+                boolean.class,
+                boolean.class,
+                long.class,
+                LongSupplier.class);
+            project.setAccessible(true);
+            java.util.List<?> ordered = new java.util.ArrayList<>(
+                fixture.regions()
+                    .values());
+            for (int frame = 0; frame < 16; frame++) {
+                // Same-state actual readiness wakes invalidate the prefix through the production repair path.
+                HologramRenderer
+                    .nativePreparationCellsChanged(state, java.util.Collections.singleton(state.cells.get(0)));
+                // A repaired first-visible cell can reverse the presentation depth order each frame.
+                if (frame > 0) java.util.Collections.reverse(ordered);
+                AtomicLong clock = new AtomicLong();
+                project.invoke(
+                    null,
+                    ordered,
+                    state,
+                    "fixed-camera",
+                    63,
+                    false,
+                    true,
+                    0L,
+                    (LongSupplier) clock::getAndIncrement);
+            }
+            Object far = fixture.regions()
+                .get(new HologramRegionCache.Key(2, 0, 0));
+            SimpleAssert.eq(
+                8,
+                integer(far, "projectedCells"),
+                "a repeatedly invalidated prefix cannot consume every projection admission");
+            SimpleAssert.eq(
+                "fixed-camera",
+                field(far.getClass(), "projectedKey").get(far),
+                "the far region completes real CPU face projection while prefix repairs continue");
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void distinctNativeWakesPreserveSameRegionProjection() throws Exception {
+        try (Fixture fixture = new Fixture(1, 8, true)) {
+            HologramState cold = fixture.projection.view();
+            for (HologramState.Cell cell : cold.cells) fixture.projection.request(cold, cell);
+            fixture.projection.advance(() -> 0);
+            fixture.visibleDrain();
+            HologramState state = fixture.projection.view();
+            java.util.List<HologramTextures.Sample>[] sides = new java.util.List[6], covers = new java.util.List[6];
+            for (int side = 0; side < 6; side++) sides[side] = covers[side] = java.util.Collections.emptyList();
+            HologramTextures.Material material = new HologramTextures.Material(
+                sides,
+                covers,
+                HologramGeometry.cube(),
+                false,
+                false,
+                false,
+                false);
+            Map<net.minecraft.block.Block, Map<Integer, HologramTextures.Material>> materials = (Map<net.minecraft.block.Block, Map<Integer, HologramTextures.Material>>) field(
+                HologramLightPreview.class,
+                "MATERIALS").get(null);
+            Map<Integer, HologramTextures.Material> byMeta = new java.util.HashMap<>();
+            byMeta.put(0, material);
+            materials.put(net.minecraft.init.Blocks.stone, byMeta);
+            field(HologramRenderer.class, "projectedFrame")
+                .set(null, new HologramEditorCameraFrame(0, 0, 500, 500, 0, 0, 1, 4, 0, 0, 16));
+            Method project = HologramRenderer.class.getDeclaredMethod(
+                "projectPreviewRegions",
+                java.util.List.class,
+                HologramState.class,
+                String.class,
+                int.class,
+                boolean.class,
+                boolean.class,
+                long.class,
+                LongSupplier.class);
+            project.setAccessible(true);
+            java.util.List<?> ordered = new java.util.ArrayList<>(
+                fixture.regions()
+                    .values());
+            Object region = ordered.get(0);
+            project.invoke(null, ordered, state, "same-camera", 63, false, true, 0L, (LongSupplier) () -> 0);
+            Object firstOutline = ((java.util.List<?>) field(region.getClass(), "outlines").get(region)).get(0);
+            // Controlled notifications enter the actual readiness -> repair -> projection path. The native bridge
+            // has its own exact-consumer regression; this CPU fixture makes no native-renderer/GL claim.
+            for (int index = 2; index < 8; index++) {
+                HologramRenderer
+                    .nativePreparationCellsChanged(state, java.util.Collections.singleton(state.cells.get(index)));
+                for (Object outline : (Collection<?>) field(region.getClass(), "outlines").get(region))
+                    SimpleAssert.that(
+                        ((HologramState.Cell) field(outline.getClass(), "cell").get(outline)).index != index,
+                        "an affected slot's obsolete projected output is removed before repair");
+                fixture.visibleStep(0);
+                fixture.call("publishProgress");
+                project.invoke(null, ordered, state, "same-camera", 63, false, true, 0L, (LongSupplier) () -> 0);
+                Collection<?> outlines = (Collection<?>) field(region.getClass(), "outlines").get(region);
+                SimpleAssert.that(
+                    outlines.contains(firstOutline),
+                    "same-camera repair preserves unchanged already-projected output identity");
+                boolean secondProjected = false;
+                for (Object outline : outlines)
+                    secondProjected |= ((HologramState.Cell) field(outline.getClass(), "cell").get(outline)).index == 1;
+                SimpleAssert.that(
+                    secondProjected,
+                    "distinct later native consumers cannot repeatedly reproject the unchanged prefix");
+            }
+            project
+                .invoke(null, ordered, state, "same-camera", 63, false, true, Long.MAX_VALUE, (LongSupplier) () -> 0);
+            SimpleAssert
+                .eq(8, integer(region, "projectedCells"), "finite distinct repairs finish exact projection count");
+            Object oldAffectedOutline = null;
+            for (Object outline : (Collection<?>) field(region.getClass(), "outlines").get(region))
+                if (((HologramState.Cell) field(outline.getClass(), "cell").get(outline)).index == 2)
+                    oldAffectedOutline = outline;
+            SimpleAssert.that(oldAffectedOutline != null, "the next wake targets genuinely projected output");
+            HologramRenderer.nativePreparationCellsChanged(state, java.util.Collections.singleton(state.cells.get(2)));
+            Collection<?> retainedOutlines = (Collection<?>) field(region.getClass(), "outlines").get(region);
+            SimpleAssert.that(
+                !retainedOutlines.contains(oldAffectedOutline),
+                "a fully projected affected outline is removed before any repair work");
+            SimpleAssert.that(
+                retainedOutlines.contains(firstOutline),
+                "removing a projected neighbor still retains unchanged outline identity");
+            SimpleAssert.eq(7, integer(region, "projectedCells"), "only the affected projected slot loses readiness");
+            fixture.visibleStep(0);
+            project.invoke(null, ordered, state, "same-camera", 63, false, true, 0L, (LongSupplier) () -> 0);
+            SimpleAssert.eq(8, integer(region, "projectedCells"), "one repair projection restores exact readiness");
+            SimpleAssert.that(
+                !((Collection<?>) field(region.getClass(), "outlines").get(region)).contains(oldAffectedOutline),
+                "repaired output cannot resurrect the obsolete outline object");
+            Set<Integer> projectedSlots = new java.util.HashSet<>();
+            for (Object outline : (Collection<?>) field(region.getClass(), "outlines").get(region)) {
+                HologramState.Cell cell = (HologramState.Cell) field(outline.getClass(), "cell").get(outline);
+                SimpleAssert.that(projectedSlots.add(cell.index), "repair projection never duplicates an outline slot");
+                SimpleAssert
+                    .that(cell == state.cells.get(cell.index), "repaired projection uses current cell identity");
+            }
+            SimpleAssert.eq(8, projectedSlots.size(), "all repaired projection slots remain represented");
+            project.invoke(null, ordered, state, "new-camera", 63, false, true, 0L, (LongSupplier) () -> 0);
+            SimpleAssert
+                .eq(1, integer(region, "projectedCells"), "a different camera still restarts projection honestly");
+            SimpleAssert.that(
+                !((Collection<?>) field(region.getClass(), "outlines").get(region)).contains(firstOutline),
+                "changed-camera output cannot reuse old projected coordinates");
+        }
+    }
+
+    private static void sourceEditsRetirePendingRepairsAndTailSlots() throws Exception {
+        // Isolate move, delete, and move-then-delete without draining in between the two source transactions.
+        for (int scenario = 0; scenario < 3; scenario++) try (Fixture fixture = new Fixture(3, 8, true)) {
+            com.miaokatze.gtmb.blueprint.editor.AuthorDocument document = (com.miaokatze.gtmb.blueprint.editor.AuthorDocument) field(
+                HologramAuthorProjection.class,
+                "document").get(fixture.projection);
+            com.miaokatze.gtmb.blueprint.editor.AuthorEditor editor = new com.miaokatze.gtmb.blueprint.editor.AuthorEditor(
+                document,
+                8);
+            fixture.visibleDrain();
+            HologramState before = fixture.projection.view();
+            long firstId = fixture.projection.cellId(0), tailId = fixture.projection.cellId(23);
+            Set<HologramState.Cell> wakes = new java.util.HashSet<>();
+            wakes.add(before.cells.get(0));
+            wakes.add(before.cells.get(16));
+            HologramRenderer.nativePreparationCellsChanged(before, wakes);
+            SimpleAssert.eq(
+                2,
+                fixture.pending()
+                    .size(),
+                "two source regions have real pending appearance repairs");
+            editor.select(java.util.Collections.singleton(firstId));
+            if (scenario != 1) {
+                fixture.projection.update(editor.move(48, 0, 0));
+                SimpleAssert.eq(48, fixture.projection.view().cells.get(0).x, "source move relocates the stable slot");
+            }
+            if (scenario != 0) {
+                fixture.projection.update(editor.delete());
+                SimpleAssert
+                    .eq(tailId, fixture.projection.cellId(0), "delete swaps the cross-region tail into slot zero");
+                SimpleAssert.eq(-1L, fixture.projection.cellId(23), "old tail slot is retired, not queued for repair");
+            }
+            fixture.visibleDrain();
+            HologramState after = fixture.projection.view();
+            int total = scenario == 0 ? 24 : 23;
+            SimpleAssert
+                .eq(2 * total, fixture.count("completed"), "source reset repairs restore exact two-pass accounting");
+            SimpleAssert.eq(total, fixture.count("detailedCompleted"), "source reset counts each current slot once");
+            Set<Integer> seen = new java.util.HashSet<>();
+            for (Object region : fixture.regions()
+                .values()) {
+                SimpleAssert.eq(
+                    true,
+                    field(region.getClass(), "complete").getBoolean(region),
+                    "all surviving source regions complete after edits during repair");
+                for (Object value : (Collection<?>) field(region.getClass(), "visible").get(region)) {
+                    HologramState.Cell cell = (HologramState.Cell) value;
+                    SimpleAssert.that(
+                        cell.index < total && seen.add(cell.index),
+                        "tail swap creates no stale or duplicate slot");
+                    SimpleAssert
+                        .that(cell == after.cells.get(cell.index), "source edit output references the current cell");
+                }
+            }
+            SimpleAssert.eq(total, seen.size(), "move/delete pending repairs skip no current visible cell");
+            SimpleAssert
+                .eq(null, after.regions.at(0, 0, 0), "old source coordinate has no retained cell after the edit");
+        }
+    }
+
+    private static void sourcePublicationDoesNotCountAsModelReadiness() throws Exception {
+        try (Fixture fixture = new Fixture(1, 8, true)) {
+            com.miaokatze.gtmb.blueprint.editor.AuthorDocument document = (com.miaokatze.gtmb.blueprint.editor.AuthorDocument) field(
+                HologramAuthorProjection.class,
+                "document").get(fixture.projection);
+            com.miaokatze.gtmb.blueprint.editor.AuthorEditor editor = new com.miaokatze.gtmb.blueprint.editor.AuthorEditor(
+                document,
+                8);
+            HologramState cold = fixture.projection.view();
+            fixture.projection.request(cold, cold.cells.get(0));
+            fixture.projection.advance(() -> 0);
+            long publications = HologramRenderer.previewWorkInspection()
+                .getLong("modelPublications");
+            SimpleAssert.eq(1L, publications, "actual native readiness is counted as one model publication");
+            JsonObject patch = new JsonObject();
+            patch.addProperty("metadata", 1);
+            fixture.projection.update(editor.patchCell(fixture.projection.cellId(0), patch));
+            SimpleAssert.eq(false, fixture.projection.view().modelOnly, "real source patch is not a readiness update");
+            SimpleAssert.eq(
+                publications,
+                HologramRenderer.previewWorkInspection()
+                    .getLong("modelPublications"),
+                "source edits do not inflate model readiness publication diagnostics");
         }
     }
 
@@ -357,11 +783,15 @@ public final class HologramAuthorRegionFairnessRegression {
         final Method advance;
 
         Fixture(int regions, int cellsPerRegion, boolean invalidPayload) throws Exception {
+            this(regions, cellsPerRegion, invalidPayload, 32);
+        }
+
+        Fixture(int regions, int cellsPerRegion, boolean invalidPayload, int spacing) throws Exception {
             HologramRenderer.release();
             JsonArray rows = new JsonArray();
             for (int region = 0; region < regions; region++) for (int index = 0; index < cellsPerRegion; index++) {
                 JsonObject row = new JsonObject();
-                row.addProperty("x", region * 32 + (index & 15));
+                row.addProperty("x", region * spacing + (index & 15));
                 row.addProperty("y", index >>> 8);
                 row.addProperty("z", index >>> 4 & 15);
                 row.addProperty("block", "minecraft:stone");
@@ -393,6 +823,23 @@ public final class HologramAuthorRegionFairnessRegression {
                 false,
                 (long) deadline,
                 (LongSupplier) clock::getAndIncrement);
+        }
+
+        void visibleStep(int deadline) throws Exception {
+            AtomicLong clock = new AtomicLong();
+            advance.invoke(
+                preparation,
+                Integer.MAX_VALUE,
+                0,
+                false,
+                (long) deadline,
+                (LongSupplier) clock::getAndIncrement);
+        }
+
+        void visibleDrain() throws Exception {
+            for (int pass = 0; pass < 2; pass++)
+                advance.invoke(preparation, Integer.MAX_VALUE, 0, false, Long.MAX_VALUE, (LongSupplier) () -> 0);
+            SimpleAssert.that(pending().isEmpty(), "available time drains visible base and repair work");
         }
 
         void drain() throws Exception {
