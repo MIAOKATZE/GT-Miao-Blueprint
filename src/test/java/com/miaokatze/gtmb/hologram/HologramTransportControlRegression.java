@@ -17,6 +17,7 @@ public final class HologramTransportControlRegression {
 
     public static void run() {
         headerlessRecovery();
+        inboxCapabilityAdvertisement();
         String old = System.getProperty("gtmb.segment.transport");
         ByteBuf wire = Unpooled.buffer();
         AtomicReference<NBTTagCompound> cut = new AtomicReference<>(), ordinary = new AtomicReference<>();
@@ -122,6 +123,39 @@ public final class HologramTransportControlRegression {
             HologramNetwork.setCutReceiver(null);
             if (old == null) System.clearProperty("gtmb.segment.transport");
             else System.setProperty("gtmb.segment.transport", old);
+        }
+    }
+
+    private static void inboxCapabilityAdvertisement() {
+        try {
+            HologramNetwork.setClientReceiver(value -> {});
+            assertInboxAdvertisement(0, "Consumer-only peer does not negotiate owned inbox credits");
+            HologramNetwork
+                .setClientOriginFrameReceiver((frame, sequence, connection) -> frame.close(), connection -> true);
+            assertInboxAdvertisement(2, "origin-owned receiver negotiates the actual two-frame server window");
+            HologramNetwork.setClientFrameReceiver((frame, sequence) -> frame.close());
+            assertInboxAdvertisement(2, "legacy owned-frame receiver keeps the same credit protocol");
+            HologramNetwork.setClientReceiver(null);
+            assertInboxAdvertisement(0, "absent receivers cannot advertise owned-frame credit support");
+        } finally {
+            HologramNetwork.setClientReceiver(null);
+        }
+    }
+
+    private static void assertInboxAdvertisement(int expected, String message) {
+        NBTTagCompound source = new NBTTagCompound();
+        source.setString("session", "inbox-capability");
+        HologramNetwork.Action action = new HologramNetwork.Action(source);
+        check(action.tag.getInteger("clientSnapshotInbox") == expected, message + " (constructor)");
+        check(!source.hasKey("clientSnapshotInbox"), "capability advertisement preserves caller ownership");
+        ByteBuf wire = Unpooled.buffer();
+        try {
+            action.toBytes(wire);
+            HologramNetwork.Action decoded = new HologramNetwork.Action();
+            decoded.fromBytes(wire);
+            check(decoded.tag.getInteger("clientSnapshotInbox") == expected, message + " (real wire round trip)");
+        } finally {
+            wire.release();
         }
     }
 

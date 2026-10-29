@@ -101,6 +101,21 @@ public final class HologramSnapshotAssembly {
         private final java.util.function.LongConsumer released;
         private final long sequence;
         private boolean closed;
+        private volatile java.util.function.BooleanSupplier current = () -> true;
+
+        /** Local admission context, never serialized and independent of reservation disposal. */
+        public void bindCurrent(java.util.function.BooleanSupplier current) {
+            this.current = java.util.Objects.requireNonNull(current);
+        }
+
+        public boolean current() {
+            return current.getAsBoolean();
+        }
+
+        /** Snapshot only the admission predicate; never return a method reference retaining this byte owner. */
+        public java.util.function.BooleanSupplier detachedContext() {
+            return current;
+        }
 
         Complete(byte[] bytes, HologramTransportMemory.Lease lease) {
             this(bytes, lease, null, -1);

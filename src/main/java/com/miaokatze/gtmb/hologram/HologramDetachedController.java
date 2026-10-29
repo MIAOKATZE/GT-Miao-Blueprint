@@ -37,6 +37,12 @@ final class HologramDetachedController {
     }
 
     static MTEEnhancedMultiBlockBase<?> create(int id, ExtendedFacing facing, NBTTagCompound state) throws IOException {
+        return create(id, facing, state, false);
+    }
+
+    /** Preserve native saved roll/flip only when the caller has no explicit full-orientation override. */
+    static MTEEnhancedMultiBlockBase<?> create(int id, ExtendedFacing facing, NBTTagCompound state,
+        boolean preserveSavedAlignment) throws IOException {
         if (id < 0 || id >= GregTechAPI.METATILEENTITIES.length
             || !(GregTechAPI.METATILEENTITIES[id] instanceof MTEEnhancedMultiBlockBase))
             throw new IOException("来源控制器未注册，原蓝图已保留");
@@ -48,6 +54,7 @@ final class HologramDetachedController {
         tile.zCoord = 0;
         world.tile = tile;
         NBTTagCompound owned = state == null ? null : (NBTTagCompound) state.copy();
+        boolean savedAlignment = preserveSavedAlignment && owned != null && !owned.hasNoTags();
         if (owned != null) {
             owned.setInteger("x", 0);
             owned.setInteger("y", 128);
@@ -57,7 +64,11 @@ final class HologramDetachedController {
         if (!(tile.getMetaTileEntity() instanceof MTEEnhancedMultiBlockBase)
             || tile.getMetaTileEntity() == GregTechAPI.METATILEENTITIES[id]) throw new IOException("来源控制器无法创建独立声明实例");
         MTEEnhancedMultiBlockBase<?> machine = (MTEEnhancedMultiBlockBase<?>) tile.getMetaTileEntity();
-        machine.setExtendedFacing(facing);
+        // The supplied direction already includes the selected cell's explicit front or the prior preset fallback.
+        // Never inherit the detached base tile's default front, and never replay native load just to recover roll.
+        machine.setExtendedFacing(
+            savedAlignment ? machine.getExtendedFacing()
+                .with(facing.getDirection()) : facing);
         return machine;
     }
 }

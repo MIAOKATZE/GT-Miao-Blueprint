@@ -172,6 +172,19 @@ final class HologramTextures {
         }
         int index = current ? 1 : 0;
         if (pair[index] != null) return pair[index];
+        String key = cacheKey(cell, current);
+        Material material = CACHE.get(key);
+        if (material == null) {
+            material = resolve(cell, current);
+            CACHE.put(key, material);
+        }
+        pair[index] = material;
+        return material;
+    }
+
+    /** Pure cache identity; material resolution and native rendering remain separate. */
+    static String cacheKey(HologramState.Cell cell, boolean current) {
+        current = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
         ItemStack stack = current ? cell.actualStack : cell.targetStack;
         String key = (current ? cell.id : cell.wantId) + ":"
             + (current ? cell.meta : cell.wantMeta)
@@ -185,13 +198,9 @@ final class HologramTextures {
             + Arrays.toString(cell.hintTint);
         key += ":" + (current ? cell.actualFacing : cell.targetFacing);
         key += ":" + (current ? cell.actualDisplay : cell.targetDisplay);
-        Material material = CACHE.get(key);
-        if (material == null) {
-            material = resolve(cell, current);
-            CACHE.put(key, material);
-        }
-        pair[index] = material;
-        return material;
+        // Untinted icon hints use semantic cell colors, not only icon/stack/display identity.
+        if (cell.iconOnly && cell.hintTint.length < 3) key += ":hintColor=" + cell.textureColor();
+        return key;
     }
 
     @SuppressWarnings("unchecked")
@@ -287,6 +296,36 @@ final class HologramTextures {
             pipe && thickness < 1);
     }
 
+    /**
+     * Only called after LightPreview's exact-class, effective-side and payload admission. Reuses the detailed
+     * texture walker, but never constructs machines, covers or native models. Failure must not become an
+     * opacity certificate, even if an ordinary background getIcon would happen to be non-null.
+     */
+    @SuppressWarnings("unchecked")
+    static Material staticBlockMaterial(Block block, int meta) {
+        List<Sample>[] sides = (List<Sample>[]) new List<?>[6];
+        List<Sample>[] covers = (List<Sample>[]) new List<?>[6];
+        boolean layered = block instanceof IBlockWithTextures;
+        try {
+            ITexture[][] textures = layered ? ((IBlockWithTextures) block).getInventoryTextures(meta) : null;
+            for (int side = 0; side < 6; side++) {
+                sides[side] = new ArrayList<>();
+                covers[side] = java.util.Collections.emptyList();
+                if (layered) {
+                    if (textures == null || side >= textures.length || textures[side] == null) return null;
+                    for (ITexture texture : textures[side]) if (!append(sides[side], texture, side, 0)) return null;
+                } else {
+                    IIcon icon = block.getIcon(side, meta);
+                    if (icon != null) sides[side].add(new Sample(icon, block.getRenderColor(meta)));
+                }
+                if (sides[side].isEmpty()) return null;
+            }
+            return new Material(sides, covers, HologramGeometry.cube(), layered, false, false, false);
+        } catch (RuntimeException unavailable) {
+            return null;
+        }
+    }
+
     static ITexture coverTexture(NBTTagCompound row, int side, boolean pipe) {
         Cover cover = CoverRegistry
             .buildCoverFromNbt((NBTTagCompound) row.copy(), ForgeDirection.getOrientation(side), null);
@@ -305,17 +344,24 @@ final class HologramTextures {
         return HologramMachineTextures.inventorySide(front, side);
     }
 
-    private static void append(List<Sample> samples, ITexture texture, int side, int depth) {
-        if (texture == null || depth > 8) return;
+    private static boolean append(List<Sample> samples, ITexture texture, int side, int depth) {
+        if (texture == null) return true;
+        if (depth > 8) return false;
         Field field = texture instanceof GTMultiTextureRender ? MULTI
             : texture instanceof GTSidedTextureRender ? SIDED : null;
         if (field != null) {
             try {
                 ITexture[] children = (ITexture[]) field.get(texture);
                 if (texture instanceof GTSidedTextureRender) {
-                    if (side < children.length) append(samples, children[side], side, depth + 1);
-                } else for (ITexture child : children) append(samples, child, side, depth + 1);
-            } catch (IllegalAccessException ignored) {}
+                    return side < children.length && append(samples, children[side], side, depth + 1);
+                } else {
+                    boolean complete = true;
+                    for (ITexture child : children) complete &= append(samples, child, side, depth + 1);
+                    return complete;
+                }
+            } catch (IllegalAccessException ignored) {
+                return false;
+            }
         } else if (texture instanceof IIconTexture) {
             IIcon icon = ((IIconTexture) texture).getIcon(side, null);
             int color = 0xffffff;
@@ -329,6 +375,7 @@ final class HologramTextures {
                 IIcon overlay = ((GTRenderedTexture) texture).getIcon(ForgeDirection.getOrientation(side), true, null);
                 if (overlay != null) samples.add(new Sample(overlay, 0xffffff));
             }
+            return icon != null;
         } else if (texture instanceof IBlockContainer) {
             // Native facade/CTM textures still identify their copied block and metadata.
             // Sample that block in isolation; a connected-texture world is intentionally not fabricated.
@@ -345,8 +392,10 @@ final class HologramTextures {
                 } catch (ReflectiveOperationException | SecurityException ignored) {}
                 IIcon icon = block.getIcon(copiedSide, copied.getMeta());
                 if (icon != null) samples.add(new Sample(icon, block.getRenderColor(copied.getMeta())));
+                return icon != null;
             }
         }
+        return false;
     }
 
     private static Field texturesField(Class<?> type) {

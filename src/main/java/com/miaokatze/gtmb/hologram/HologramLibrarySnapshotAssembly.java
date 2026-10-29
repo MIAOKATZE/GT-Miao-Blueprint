@@ -86,6 +86,10 @@ final class HologramLibrarySnapshotAssembly {
         return result;
     }
 
+    synchronized void expire(long now) {
+        if (bytes != null && now - activity > HologramLibraryProtocol.TIMEOUT_NANOS) clear();
+    }
+
     synchronized void supersede(long sequence) {
         if (sequence > newest) {
             clear();

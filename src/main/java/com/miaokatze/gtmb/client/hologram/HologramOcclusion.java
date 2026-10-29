@@ -9,9 +9,9 @@ final class HologramOcclusion {
 
     static boolean fullCube(Block block, boolean partial, boolean nativeModel, boolean iconOnly) {
         // Native geometry can leave openings even when its host reports solid attachment sides.
-        // Keep adjacent faces until that renderer supplies an audited face-coverage contract.
+        // Exact opaque Chisel CTM cubes cover their faces; partial/native subclasses do not inherit that rule.
         return block != null && !partial
-            && !nativeModel
+            && (!nativeModel || HologramChiselNativeRender.opaqueCube(block))
             && !iconOnly
             && block.isOpaqueCube()
             && block.renderAsNormalBlock();

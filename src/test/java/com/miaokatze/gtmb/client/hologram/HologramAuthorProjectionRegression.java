@@ -109,6 +109,16 @@ public final class HologramAuthorProjectionRegression {
             advance.setAccessible(true);
             java.util.function.LongSupplier available = () -> 0;
             advance.invoke(preparation, Integer.MIN_VALUE, 0, false, Long.MAX_VALUE, available);
+            // Cheap-first scheduling visits the far one-cell region before refining the first region.
+            advance.invoke(preparation, Integer.MIN_VALUE, 0, false, 0L, available);
+            SimpleAssert.eq(
+                101,
+                field(type, "completed").getInt(preparation),
+                "fixture finishes every source hint before detail");
+            SimpleAssert.eq(
+                0,
+                field(type, "detailedCompleted").getInt(preparation),
+                "full cheap coverage is not native refinement");
             advance.invoke(preparation, Integer.MIN_VALUE, 0, false, 0L, available);
             Map<?, ?> pending = (Map<?, ?>) field(type, "pending").get(preparation);
             Object task = pending.get(new HologramRegionCache.Key(0, 0, 0));

@@ -294,10 +294,15 @@ final class HologramSession {
     }
 
     static void cancelCaptureRetry(HologramSession s) {
+        cancelCaptureRetry(s, null);
+    }
+
+    /** Reset retry bookkeeping without retiring the exact capture whose next slice is about to run. */
+    static void cancelCaptureRetry(HologramSession s, HologramCapture continuing) {
         HologramSourceTransfer.cancel(s);
 
         HologramVirtualStructureEditing.cancel(s);
-        if (s.capturePending && s.capture != null) s.capture.cancelPending();
+        if (s.capturePending && s.capture != null && s.capture != continuing) s.capture.cancelPending();
         s.capturePending = false;
         s.captureRetryDue = 0;
         s.retryChannels = null;

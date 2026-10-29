@@ -1,3 +1,48 @@
+# 2026-10-29 静态实体材质与已呈现外壳
+
+此轮针对精确395e6af6外部S3失败继续修复；旧本机30秒未完成结论保留，不用组件PASS覆盖。0.1.48之后的粗预览提前返回会保留内部格线框且只取普通getIcon，因此先恢复可证明的静态材质，再减少已呈现实体内部绘制。未取消分帧预算或原生/服务端校验。
+
+- LightPreview只对既有精确vanilla普通立方体和审计过的GT BlockCasings5（coil）取完整静态材质。复用GT纹理层与tint遍历；任何未知层、缺失材质、pending/NBT/外部adapter均不能借用完整材质或新的GT遮挡证明。不能将它推广为所有IBlockWithTextures、机器或Chisel的完整静态替代；Chisel CTM原生路径保留。GT旧/新coil配置按既有场景/资源释放边界重新取样，不能宣称动态配置无条件即时刷新。
+- 保留完整source/pick/outline记录和原细化/原生就绪计数，只改变实际提交的粗预览面与边。自身区域及跨边界邻区必须已经在当前相机完成提示投影，才采用已审计的不透明外壳mask；无关区域补算不再全局取消这个证明。未知/透明/部分形状保持保守，移动恢复完整表示，选中/关联项保留完整轮廓。边界缺失、切层、相机与补算后重新验证，不拿未呈现邻居遮挡本格。
+- 区域批量移除由逐项ArrayList搬移改为稳定一次压缩；保留原顺序、unresolved/budget及deferred计数。
+- 未新增GL缓存或扩大预算；修复不以减少逻辑源数据、伪造完成率或绕过点击就绪为代价。绘制负担降低的生产路径组件计数不等于真实FPS、完整UV/CTM或3–4秒达标。
+
+诊断沿用releaseEpoch窗口，新增六个粗阶段：drawDemands、drawFacesAndHit、drawNativePlayback、drawLinked、drawOutlines、drawOverlay各自Nanos/Calls。它们是渲染线程墙钟，包含可能的驱动等待，不是GPU时间。drawFacesVisited、drawQuads、drawNativeCalls、drawLinkedDrawCalls为工作调用计数；drawOutlineLineVertices只统计体素线框，排除结构/提示框。drawLinkedCalls是阶段次数，不能与drawLinkedDrawCalls混用。drawSmokeActive/drawSmokeFrames记录实际光栅探针启用情况。读诊断只生成固定大小标量，不遍历蓝图。
+
+新测试覆盖真实GT纹理容器的层/色、metadata及actual/target/protected/anchor边界、相机/视口/跨区已呈现证明、真实native repair接线、30³实体外壳计数、稳定压缩与计时窗口。测试纹理/相机存在控制夹具，未在云端启动真实游戏；实际截图与小图/大图加载对照由本机执行。最终精确commit/tree、命令、退出码与产物SHA以本轮PR回执为准。
+
+---
+
+# 2026年10月29日 S3 实测反馈后的持续推进修复
+
+本轮承接 PR #67 的 `b2e22399`，保留用户加入的 governor 独立 JVM 测试。实机反馈属于其父提交 `2a5b0a82`：S3 为 48,003 格、41 区，30 秒仍缺 1 区、36 区未完成。下述机制修复与组件回归不能代替新候选的实机验收。
+
+- 模型就绪不再把已经完成的 cheap 阶段重新放回优先队列。作者 model-only 补丁保留原始细化游标，以稳定槽位读取当前不可变 Cell，对已访问的受影响项去重补算。补算与首次细化轮换；源编辑、拓扑改变仍走保守失效。原生依赖仍按已有区域级证据保守处理，不凭无证据的逐格推断保留 GL 模型。
+- 同一个原生访问对象的就绪通知按实际消费者修复。GUI 投影使用稳定源区域键调度，不把会随深度变化的呈现排序当工作顺序。同一相机下，每区以槽位 FIFO 和已投影集合保留未受影响的输出；补算只移除旧项并排到队尾。相机变化完整重投影。记录集合受当前输出/源格数约束，不新增 NBT 副本，但确有额外的槽位索引内存，不据此声称整包峰值下降。
+- 原生 BlockAccess 仅在同一作者、直接后继、model-only、无拓扑变化且安全调用边界内保留未受影响的 DATA/READY 对象与续行。受影响区域及其传递 tile 读者仍清退，命中活动根/栈则取消该续行。源、网络、拓扑等其他切换保留原有完整退役；没有新增可重入发布或跨系统事务承诺。
+- 每个投影单元只解析一次原生就绪与材质，并给轮廓和各面共享本次结果。负结果不跨重投影缓存；保留空格、实际侧、anchor/protected、部分形状及选择语义。
+- 文字组件放置先检查当前呈现、相机和点击处的区域就绪，再处理 gizmo、邻格或空平面。阻塞不能被空平面兜底绕过；邻格选中最大深度的命中面，而非最后遍历的面。未完成但不覆盖点击处的区域不全局禁用放置。
+- `previewWorkInspection` 新增 releaseEpoch 和累计发布、唤醒、cheap/detail 工作次数及游标丢弃计数。它们是工作事件，不是独立格数或原生成功数。只能在相同 releaseEpoch 内结合外部单调时钟比较阶段耗时与帧次数；快照身份变化本身不等于全局重置。
+
+保留原 2ms 协作式准备期限、32MiB 行账本及其他准入限制。单个外部回调、区域过滤、全局列表聚合及实际绘制并非硬实时预算，仍需实测；不宣称 3–4 秒、复杂装饰或全视口正确已通过。
+
+---
+
+# 2026-10-29 PR #67：全区域准备与装饰数据准入
+
+基线 `3e3e0e2` 的本地三样本完整区域验收为 FAIL：S3 / S4 / S5 在 90 秒终点分别缺少 29/41、15/107、48/231 个源区域。下列修改是对此基线的增量；旧组件 PASS、已缓存子集 pending=0 和宿主材质名单均不能证明完整原生视口正确。
+
+- **事实与几何分离。** 精确匹配 block / ItemBlock / metadata、无 tile 与 item payload、无 TE 的静态来源直接生成独立 actual/target 栈事实，不再用 render type、normal-cube 或 adapter 支持与否决定是否需要解码。机器、未知物品/身份不匹配与任何非空编码 payload 仍沿原边界。事实就绪不新增几何能力、不覆盖外部 adapter，也不把未知形状认证为普通立方体。
+- **按保留对象计费。** 原生行按最终 owned 行、共享 display / serialized stack 与两份独立 ItemStack tag、可变长度字段/成员等估算，替代原始输入统一乘四。可信 display/nativeTile 与 stack/tag 包装单独计入，不挤占合法源 NBT 的既有深度限额。32 MiB、codec 限制、已知成本在重解码前检查和有限驱逐保持不变。固定结构余量是估价，不是实测堆；临时解码、源文档、旧快照、原生 tile / GL 仍不属于此账本，不据此宣称 S4 全部能容纳。
+- **全源廉价阶段优先。** 源区域的 cheap FIFO 与 detail 待办分开，选择为常数时间；期限或最多 1024 格后轮转，保留每区局部游标。全部 cheap 完成必须发布，未缓存区域仍属于分母；所有部分细化任务的 unresolved / budget 都计入进度。廉价覆盖不等于真实原生细节/相机投影完成。单个原生回调和最终投影发布仍不可抢占。
+- **依赖按读取内容分类。** block / metadata / presence 读取与 tile 读取使用两个私有图，共享原 65,536 条边上限。纯模型发布不沿静态读取链传递，但仍保留紧邻遮挡 halo；真实源/拓扑变化沿两类依赖失效，溢出仍保守清退。RenderWorld.blockExists 对应的 presence 读取也登记静态依赖。精确选中的内置 Chisel 静态族不预先强求 27 邻居的 opaque 数据，任何实际 tile 读取和外部 adapter 仍保留 unknown / defer 保护，不能把未解 payload 当作已知空 tile。
+
+新增组件回归覆盖密集 41 区、稀疏 4096 区、局部 dirty 风暴、owned 字节账本与 510/511/512 深度、远端 presence/source 编辑及溢出边界。GT 来源事实夹具使用实际 GT 类与物品，但部分 Block 是跳过完整初始化的类壳，不能当作真实 GT 生命周期或 GL 证据。旧细化夹具只调整 cheap-first 前置步骤，原游标/身份/精确计数断言保留；版本回归与基线已有 `RELEASE_VERSION=0.1.56` 对齐，没有改版本凑通过。
+
+最终源码、构建命令、测试计数和普通 JAR SHA-256 以本轮 PR 回执为准。云端未运行游戏；本地先 S3、30 秒有界终点，失败即停止该候选长测，再按实际结果决定 S4/S5。需独立核对完整 source / camera-visible region、实际模型形状/UV/纹理、点击与相机变化；不宣称 3–4 秒目标、完整 UI 或无泄漏已验收。
+
+---
+
 # 2026-10-28 PR #66 本机反馈后的定向修复
 
 反馈候选 `5cba71b` 的本机报告确认：未编辑名称的恢复保存会改成默认名；五样本来源/粗几何就绪为 0.714–1.238 秒，但完整原生视口和几何点选仍未验收。五次约 3 秒至 4 秒的未解数均减少 80，与 UI tick 每次最多 4 项的源码限流相符；这不是全部耗时的归因，也不是新候选的性能成绩。
@@ -305,3 +350,64 @@ Values
 ### 显式兼容审核的有界时限
 
 `HologramAuthorReviewDeadline` 集中管理双方协商的速率/大小预算：上传和结果下载分别采用两倍最多两个审核槽位的公平份额传输时间，加 30 秒固定余量；本地准备/握手各有两分钟上限，上传完成后的服务端解码、原生处理与结果编码共用两分钟窗口。30 分钟硬保留上限独立于实际进度；轮询、等待回复、重复阶段通知不能续期。实际结果大小仅在编码后已知，因此先检查剩余硬上限才发布结果。无法满足该保守预算的上传在 Ready/上传前拒绝，结果在首个结果字节前拒绝，并报告大小、速率与阶段。共享库的其他未来流量仍可能触发真实进度超时；该策略不声称所有持续推进的原生任务或任意竞争都能完成。配置在处理中变化会明确中止并要求按新预算重试，不会静默沿用不可能满足的旧预算。
+
+## PR67 细化发布与原生缓存续审（2026-10-29）
+
+`36980a62fa2694da3d97ffed8b9289126d251e8a` 的本地 S3 实测不是验收通过：48,003 格 cheap 已覆盖 41 个源区域，但 30.221 秒仍有 35 个区域未完成细化、detail visited=5,144。该事实与旧 `3e3e0e2` 的报告分别保留；visited、cheap、native faces 与完整几何不得混为一个完成率。
+
+后续实现维持以下边界：
+
+- 完成一个 detail 区域即产生可合并的发布事件，不等待 cheap+detail 的几何倍增阈值。cheap 的倍增发布与最后一批强制发布仍保留。
+- 区域可见性在每个时间片内复用，下一时间片重新计算。只有当前 owner/相机 key 完全追平、没有投影待办时，细化才使用原 2 ms 共享预算中暂不需要的投影一半；其他情况仍为原一半。原生回调和至少一个投影单元可越过合作式截止线，这不是硬实时保证或增加资源限额。
+- model-only 的 shell/面遮挡仍失效紧邻 halo；native list 仅退休真实变更区域和 tile 依赖闭包。来源变化仍遍历静态与 tile 两类依赖，溢出仍保守退休整个 owner。世界 list 先于它引用的 native list 退休，不共享或移植 detached TileEntity 缓存。
+- 缓存 tile 在其他模型的调用中完成 hydration/topology 时，嵌套读取同时属于 active model 与各 tile owner。pending/budget 读取污染所有 active tile scope；未完整构造的 tile 连同 loaded/topology/failure 标记被清退，后续重试重新发起需求，不能因缓存命中把未知邻居变成已知空值。scope 在正常、早退和异常路径均归还。
+- 本地空间索引按触及 region 做一次 identity 过滤，保留 survivor 与 changed 的原顺序、未触及 region 共享、旧快照、重复坐标拒绝及边界。不是全量重建，也不扩大缓存。
+- 原生顶点检查每完整 quad 只算一次退化判定，以原始 xyz 整数位去重，保持负零/NaN、UV 缺失判断和 smoke 有序证据；不改变原注册 renderer、真实顶点、render pass 或 GL 状态恢复。
+- cheap 隐藏面仅在精确静态不透明证明及当前完整投影后少发绘制顶点。所有 pick Face、outline、source/visible 计数仍保留；未知/native/带 payload/外部 adapter 不自动套用该证明，任何 moveOffset 都禁用该裁剪。不能把 cheap 图形当作最终几何。
+- 无显式完整 hintTint 的 iconOnly 材质键包含实际语义颜色，避免状态不同的占位共用错误颜色。普通材质与明确 tint 的既有共享规则不变。
+
+`previewWorkInspection()` 是 render-thread 标量观察入口，返回 release 以来的 frames、preparationNanos、projectionNanos、drawNanos 副本。应同窗口取差并另外测探针开销；draw 包含需求重试和 GUI 绘制。这些 elapsed 值不包含前置 view/bounds/camera setup、其他 tick 的作者发布，也不是 GPU 时间或总帧时间。关闭/释放后重开观察窗口，不能跨 owner 切换拼接。
+
+新增组件回归覆盖区域发布、实际可见普通 cube 的 detail/CPU 投影、相机时间片、缓存 tile 真实扩展读取与重试、批量索引、顶点旧算法差分、cheap 绘制证书和材质颜色键。预置材质、伪时钟和无 GL list fixture 不代表真实纹理、UV、复杂 native shape 或 S3 的 3–4 秒目标通过。
+
+### 保留的兼容缺口
+
+另有一个已确认的既存边界未在本轮扩大重构：外部 adapter 的 `loadTile` 若读取“payload 已就绪、但本 access 尚未 hydrate”的另一个 native tile，`loadingTile` 的非递归保护仍可能返回缓存空值；仅补依赖边不能追溯这次读取。它不同于本轮修复的 pending/budget 输入，也尚未证实是 S3 的触发原因。彻底处理需要有界 detached-tile 准备顺序、循环依赖和终结失败策略，不能通过递归展开、无限重试或擅自收紧公共扩展契约解决。本轮不声称所有外部 hydration 组合兼容。
+
+新候选继续由本地按 S3 的完整 source 与独立 viewport 分母在 3/4/15/30 秒验收，30 秒失败即停，再决定 S4/S5 与真实点击、形状、UV 测试。代码检查通过不覆盖这些实机阶段。
+
+## 蓝图、结构与剪切联合续审（2026-10-29）
+
+本节是对前述 PR67 阶段记录的续篇。此前记录的 ready-but-unhydrated 邻居缺口已在本候选引入显式准备生命周期；历史失败与历史未执行状态不改写为新候选通过。
+
+### 数据、任务与服务器权限
+
+- AuthorEditor 使用有界源树的精确 JSON 值比较，避免 Gson 把不同的大整数/小数折叠为一次无操作；对象无序、数组有序，普通等值数字仍可无操作。无法精确表示的极端数字不退回 double/long 相等。原 payload origin、稳定 ID、COW、撤销和义务保持。
+- 恢复目录的流式摘要区分 bare/wrapped 源，不将外层未知同名字段误作蓝图字段；可恢复的 null 数组和描述性元数据不被目录额外拒绝。严格重开与服务端准入仍独立执行。
+- 原始 JSON 候选编码单独保留显式 null；typed DTO/delta 的既有 Gson 约定不改。离线导出、服务端处理返回和选中上下文不能静默抹掉未改动的未知 null 字段。
+- 真正的 Capture 完成回调、仅生成结构声明的 server-owner 路径和 client-safe 声明路径彼此独立。继续同一采集不能取消它自己的 DTO 完成 Future；显式取消/替换仍退休旧任务。公开区域选择取消入口复用完整 import owner 清理，不只改 importing 标记。
+- 未指定显式全局姿态覆盖时，重建成员保留原生加载的 roll/flip；所选 front 及原 fallback 仍决定方向，既有 DetachedController 调用默认语义不变。共享成员重建收窄建议候选及两份持久源的 allowedTargets，不覆盖选中源/NBT或外部成员；空交集保持显式不完整，既有 exact-source replay 语义不作为非源候选兜底。
+- Cut 的 world-write request 从排队、分步准备到最终结果始终拥有精确 player/connection/request 身份。仍可执行的任务只能返回非终结 request_pending，不能凭尚无 durable tombstone 宣称未执行。重复 live ID 合并；旧死亡/重生 actor、连接替换、拷贝/入队异常都退休旧能力。原 durable world transaction、磁盘回读、资源及重放屏障不变。
+- identity Cut 仍做必要关系搬移和输出隔离，但不预先深拷贝永远不会使用的 LittleTiles 旋转图。
+
+### 入站与内存所有权
+
+库/display 帧在组装前、异步解码和消费发布时均保留原连接及 epoch 约束。库分片空闲超时主动退还占用与 credit；新 origin receiver 与 legacy owned receiver 均协商两帧背压。延迟结果仅保留不含 payload 的 context supplier，不能在退还 credit 后通过闭包继续持有 Complete.bytes。
+
+附件的原 ticket/压缩预算持有到解码及 owner 回调结束，展开 NBT 使用既有 owned bounded decode；取消的在途 worker 在退出前保留必要所有权，已排队回调仅持 ticket。限额、严格解码和最终会话/权限检查未放宽。这些账本不是整个 JVM、长期文档或所有原生 tile 的堆上限。
+
+### 有界原生准备及捕获
+
+每个 detached access 只有一条迭代准备 lane；不递归运行 native callbacks，也没有第二个无界根请求队列。状态明确区分已知缺席、等待、数据可用、完整就绪和终结失败。最多 512 个依赖 frame、每 frame 512 次尝试；每个调用者已有时间片共享最多 32 次准备回调/阶段尝试。新限额描述的是准备工作元数据/次数，不提高原 appearance queue、依赖图或 decoded-row 配额，也不承诺能抢占单个卡住的外部回调。
+
+待输入/预算不等于空 tile，半成品不缓存；终结依赖失败优先于同时出现的未知读取，普通 callback 在未知输入后的异常仍可重试。AE 的已审查拓扑读取有私有 DATA 视图，不能把该权限带进外部 loadTile。真实 LOAD 循环和超限明确失败，不能无限等待或制造默认空邻居。**这是可观察的兼容边界变化：任意循环 LOAD 回调，包括读取后忽略未知值的回调，不再保证旧的“空邻居即成功”行为。**已审查的 AE DATA/拓扑循环与这种 LOAD 循环不同，实机兼容仍须验证。
+
+同一 access 的准备进展会精确唤醒受影响区域/世界分组，不依赖额外 source publication，不清空无关游标。world list 开始前冻结实际所用材质，list/tessellator 活跃期间只查询缓存，不能触发 tile、adapter 或纹理准备。defer/ready/诊断查询统一 effective actual/target 选择，原始逐侧重试位仍独立。
+
+截图 Request 留在容量四的队头直到终结；状态准备与 native 预准备共用既有 END 时间片。请求私有 access 跨帧保持，最后在正常旧 list 退休后交接完整同一 owner；取消/重载仅在拥有线程回调退出后清理，真正有工作推进才刷新进度。最终 one-shot GL 渲染仍沿用原行为，并未被这些 CPU 准备限额变成硬实时。渲染的 mode2/anchor/protected 有效侧和保留的 target 验证政策都检查真实 native 模型/缺失纹理，不能接受诊断立方体 PNG。
+
+### 验证与未证明事项
+
+两轮分块调查、交叉审查和纠正后的独立复核覆盖数据、结构、Cut、通信和 native/capture。无游戏的整合回归覆盖 183 个主套件项、35 个本地作者项；精确提交的完整 clean/字节码/产物回执由交付记录单列，不能从本节文字推断任意后续提交通过。
+
+真实 AE 注册、复杂原生模型/UV、世界 list 渲染、截图/重载交互、大蓝图 3–4 秒及峰值内存由外部实机验收。保留持续传输与固定总超时的策略问题、重复 DTO/NBT miss 路径及可见网格批处理等优化方向；未在缺乏实测成本分解时一并改写。MatterManipulator 的 descriptor/job 分离和 mutable stack copy-on-output 值得复用，但其提示立方体、浅 clone 或新旧版本的世界通知策略不替代本项目的真实 native 和 durable Cut 契约。

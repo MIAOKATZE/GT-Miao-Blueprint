@@ -158,10 +158,23 @@ public final class HologramCapture {
     static HologramCapture collectDeclaration(MTEEnhancedMultiBlockBase<?> machine, ItemStack trigger,
         ExtendedFacing facing, HologramCapture resumed, long deadline) {
         try (HologramExtensionExecution.Scope local = HologramExtensionExecution.localAuthor()) {
-            HologramCapture capture = resumed == null ? new HologramCapture(machine, trigger) : resumed;
-            capture.declarationOnly = true;
-            return collect(machine, trigger, facing, capture, deadline);
+            return collectSynthetic(machine, trigger, facing, resumed, deadline);
         }
+    }
+
+    /** Legacy server editors may read server-only sources, but synthetic geometry is still not a world capture. */
+    static HologramCapture collectServerDeclaration(MTEEnhancedMultiBlockBase<?> machine, ItemStack trigger,
+        ExtendedFacing facing, HologramCapture resumed, long deadline) {
+        if (!HologramWorkBudget.isServerOwnerThread() || HologramExtensionExecution.localAuthorActive())
+            throw new IllegalStateException("Server declaration requires the server owner outside local author scope");
+        return collectSynthetic(machine, trigger, facing, resumed, deadline);
+    }
+
+    private static HologramCapture collectSynthetic(MTEEnhancedMultiBlockBase<?> machine, ItemStack trigger,
+        ExtendedFacing facing, HologramCapture resumed, long deadline) {
+        HologramCapture capture = resumed == null ? new HologramCapture(machine, trigger) : resumed;
+        capture.declarationOnly = true;
+        return collect(machine, trigger, facing, capture, deadline);
     }
 
     /** Explicit owner-thread slice. */

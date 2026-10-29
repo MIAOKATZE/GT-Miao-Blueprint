@@ -177,6 +177,8 @@ final class HologramLegacyStructureScopeRegression {
     }
 
     private static HologramVirtualStructureEditing.Task edit(HologramSession session, int height) throws Exception {
+        HologramWorkBudget.startServerTick();
+        HologramWorkBudget.endServerTick();
         NBTTagCompound channels = new NBTTagCompound();
         channels.setInteger("height", height);
         HologramPresets.Structure source = session.virtualPreset.structures.get(0);
@@ -187,9 +189,32 @@ final class HologramLegacyStructureScopeRegression {
             channels);
         session.channels = channels;
         HologramBlueprintData.storeStructureConfiguration(session, source);
-        int polls = 0;
-        while (!task.step() && ++polls < 2048) {}
-        SimpleAssert.that(polls < 2048, "legacy scope recovery and generation have bounded continuations");
+        java.util.concurrent.atomic.AtomicInteger captures = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger sources = new java.util.concurrent.atomic.AtomicInteger();
+        Thread owner = Thread.currentThread();
+        try (
+            com.miaokatze.gtmb.api.GTMBExtensions.Registration sourceExtension = com.miaokatze.gtmb.api.StructureSources
+                .register("gtmb_test:legacy-scope-source", LegacyController.class, (controller, trigger) -> {
+                    SimpleAssert.that(Thread.currentThread() == owner, "legacy source retains server owner execution");
+                    sources.incrementAndGet();
+                    return null;
+                });
+            com.miaokatze.gtmb.api.GTMBExtensions.Registration observer = com.miaokatze.gtmb.api.BlueprintSnapshots
+                .register(
+                    "gtmb_test:legacy-scope-not-capture",
+                    com.miaokatze.gtmb.api.BlueprintSnapshots.Stage.CAPTURE_COMPLETE,
+                    snapshot -> {
+                        captures.incrementAndGet();
+                        return null;
+                    })) {
+            int polls = 0;
+            while (!task.step() && ++polls < 2048) {}
+            SimpleAssert.that(polls < 2048, "legacy scope recovery and generation have bounded continuations");
+            SimpleAssert.that(sources.get() > 0, "synthetic server declarations retain legacy StructureSources");
+        } finally {
+            SimpleAssert
+                .eq(0, captures.get(), "legacy inference probes and regeneration never emit capture completion");
+        }
         task.publish();
         return task;
     }

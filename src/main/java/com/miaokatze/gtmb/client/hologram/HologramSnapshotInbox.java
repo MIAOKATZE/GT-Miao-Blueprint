@@ -49,6 +49,12 @@ final class HologramSnapshotInbox<T> implements AutoCloseable {
         final long transportSequence;
         final long retainedBytes;
         private AutoCloseable retained;
+        private java.util.function.BooleanSupplier current = () -> true;
+
+        boolean current() {
+            return current.getAsBoolean();
+        }
+
         com.miaokatze.gtmb.hologram.HologramProcessGovernor.Lease materialized;
 
         Result(T value, Exception failure, long transportSequence) {
@@ -73,7 +79,7 @@ final class HologramSnapshotInbox<T> implements AutoCloseable {
         /** Work admission ends at publication, even when a view keeps the immutable model alive. */
         void publish(java.util.function.Consumer<? super T> consumer) {
             try {
-                consumer.accept(value);
+                if (current()) consumer.accept(value);
             } finally {
                 close();
             }
@@ -319,7 +325,9 @@ final class HologramSnapshotInbox<T> implements AutoCloseable {
     }
 
     private synchronized boolean current(Entry<T> entry) {
-        return !closed && entry.epoch == epoch;
+        return !closed && entry.epoch == epoch
+            && (!(entry.reservation instanceof com.miaokatze.gtmb.hologram.HologramSnapshotAssembly.Complete)
+                || ((com.miaokatze.gtmb.hologram.HologramSnapshotAssembly.Complete) entry.reservation).current());
     }
 
     private void decodeLoop() {
@@ -421,6 +429,14 @@ final class HologramSnapshotInbox<T> implements AutoCloseable {
                     continue;
                 }
                 entry.bytes = null;
+                if (result != null) {
+                    final long admittedEpoch = entry.epoch;
+                    final java.util.function.BooleanSupplier context = entry.reservation instanceof com.miaokatze.gtmb.hologram.HologramSnapshotAssembly.Complete
+                        ? ((com.miaokatze.gtmb.hologram.HologramSnapshotAssembly.Complete) entry.reservation)
+                            .detachedContext()
+                        : null;
+                    result.current = () -> epoch() == admittedEpoch && (context == null || context.getAsBoolean());
+                }
                 if (entry.epoch == epoch) entry.result = result;
                 else {
                     release(entry);

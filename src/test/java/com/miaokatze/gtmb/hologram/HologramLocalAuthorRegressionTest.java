@@ -42,8 +42,52 @@ public final class HologramLocalAuthorRegressionTest {
             com.miaokatze.gtmb.client.hologram.HologramAuthorProjectionSchedulerRegression::run);
         add(
             cases,
+            "author_preview_native_owner_and_regions",
+            com.miaokatze.gtmb.client.hologram.HologramAuthorPreviewOwnershipRegression::run);
+        add(
+            cases,
+            "author_whole_source_region_fairness",
+            com.miaokatze.gtmb.client.hologram.HologramAuthorRegionFairnessRegression::run);
+        add(
+            cases,
+            "preview_work_observation_windows",
+            com.miaokatze.gtmb.client.hologram.HologramPreviewWorkInspectionRegression::run);
+        add(
+            cases,
+            "preview_projection_appearance_reuse",
+            com.miaokatze.gtmb.client.hologram.HologramProjectionAppearanceRegression::run);
+        add(
+            cases,
+            "static_preview_full_material",
+            com.miaokatze.gtmb.client.hologram.HologramStaticPreviewMaterialRegression::run);
+        add(
+            cases,
+            "presented_hull_draw_contract",
+            com.miaokatze.gtmb.client.hologram.HologramPresentedHullRegression::run);
+        add(
+            cases,
+            "preview_draw_phase_accounting",
+            com.miaokatze.gtmb.client.hologram.HologramPreviewDrawWorkRegression::run);
+        add(
+            cases,
+            "text_placement_picking_readiness",
+            com.miaokatze.gtmb.client.hologram.HologramTextPlacementPickingRegression::run);
+        add(
+            cases,
+            "author_typed_dependency_invalidation",
+            com.miaokatze.gtmb.client.hologram.HologramTypedDependencyInvalidationRegression::run);
+        add(
+            cases,
+            "author_plain_block_descriptor_budget",
+            com.miaokatze.gtmb.client.hologram.HologramAuthorPlainBlockRegression::run);
+        add(
+            cases,
             "author_owned_row_isolation",
             com.miaokatze.gtmb.client.hologram.HologramAuthorOwnedRowRegression::run);
+        add(
+            cases,
+            "author_final_owned_payload_accounting",
+            com.miaokatze.gtmb.client.hologram.HologramAuthorOwnershipBudgetRegression::run);
         add(
             cases,
             "author_saturated_neighbor_demand",
@@ -56,12 +100,43 @@ public final class HologramLocalAuthorRegressionTest {
             cases,
             "author_hidden_budget_recovery",
             com.miaokatze.gtmb.client.hologram.HologramAuthorBudgetRecoveryRegression::run);
+        add(
+            cases,
+            "detail_region_publication",
+            com.miaokatze.gtmb.client.hologram.HologramDetailPublicationRegression::run);
+        add(
+            cases,
+            "author_publication_cost_and_native_retention",
+            com.miaokatze.gtmb.client.hologram.HologramAuthorPublicationCostRegression::run);
+        add(
+            cases,
+            "visible_detail_work_and_camera_slices",
+            com.miaokatze.gtmb.client.hologram.HologramVisibleDetailWorkRegression::run);
+        add(
+            cases,
+            "native_vertex_inspection_equivalence",
+            com.miaokatze.gtmb.client.hologram.HologramNativeGeometryInspectionRegression::run);
+        add(
+            cases,
+            "conservative_cheap_draw_occlusion",
+            com.miaokatze.gtmb.client.hologram.HologramCheapOcclusionRegression::run);
+        add(
+            cases,
+            "material_hint_tint_key_identity",
+            com.miaokatze.gtmb.client.hologram.HologramMaterialTintKeyRegression::run);
+        add(
+            cases,
+            "bounded_native_dependency_preparation",
+            com.miaokatze.gtmb.client.hologram.HologramNativePreparationRegression::run);
+        add(
+            cases,
+            "capture_preparation_request_lifetime",
+            com.miaokatze.gtmb.client.hologram.HologramCapturePreparationRegression::run);
         add(cases, "atomic_native_attachments", HologramLocalAuthorAttachmentsRegression::run);
         add(cases, "native_configuration_contract", HologramLocalAuthorConfigurationsRegression::run);
         add(cases, "native_structure_regeneration", HologramLocalAuthorStructuresRegression::run);
         add(cases, "legacy_extension_owner_boundary", HologramExtensionExecutionRegression::run);
         add(cases, "native_structure_and_configuration_server_review", HologramAuthorNativeReviewRegression::run);
-        add(cases, "explicit_server_review_transport", HologramAuthorReviewTransportRegression::run);
         add(
             cases,
             "server_review_client_correlation",

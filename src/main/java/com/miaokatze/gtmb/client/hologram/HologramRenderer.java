@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -37,6 +38,8 @@ final class HologramRenderer {
     private static final double[][] VERTICES = { { -.5, -.5, -.5 }, { .5, -.5, -.5 }, { .5, .5, -.5 }, { -.5, .5, -.5 },
         { -.5, -.5, .5 }, { .5, -.5, .5 }, { .5, .5, .5 }, { -.5, .5, .5 } };
 
+    private static final int[] PREVIEW_EDGE_MASKS = previewEdgeMasks();
+
     private HologramRenderer() {}
 
     static int lastWorldGeometry, lastWorldGTGeometry, lastWorldFallback, lastWorldMatched, lastWorldGhosts;
@@ -56,9 +59,20 @@ final class HologramRenderer {
     private static final Set<Coordinate> occluders = new HashSet<>();
     private static final Map<HologramRegionCache.Key, PreviewRegion> previewRegions = new LinkedHashMap<>();
     private static final long PREVIEW_BUILD_NANOS = 2_000_000L;
+    private static final int PREVIEW_REGION_SLICE = 1024;
     private static PreviewPreparation previewPreparation;
     private static boolean projectionPending;
     private static int modelDemandCursor, modelDependencyCursor;
+    // Scalar render-thread diagnostics only. Reading these never traverses source cells or native geometry.
+    private static long previewFrames, previewPreparationNanos, previewProjectionNanos, previewDrawNanos;
+    private static final HologramPreviewDrawWork previewDrawWork = new HologramPreviewDrawWork();
+    // Ephemeral observation windows, not document IDs. No source/owner objects are retained by diagnostics.
+    private static long previewReleaseEpoch;
+    private static long previewModelPublications, previewModelPublicationDirtyRegions;
+    private static long previewNativeWakes, previewNativeWakeDirtyRegions;
+    private static long previewCheapVisitCalls, previewDetailVisitCalls;
+    private static long previewCursorResets, previewDiscardedCheapVisits, previewDiscardedDetailVisits;
+    private static final double[] NO_SCREEN_MOVE = { 0, 0 };
     private static final List<HologramState.Cell> linkedPreviewCells = new ArrayList<>();
     static int lastPreviewBuiltRegions, lastSnapshotDirtyRegions;
     private static List<RoleMarker> cachedMarkers = new ArrayList<>();
@@ -84,7 +98,7 @@ final class HologramRenderer {
     }
 
     private static double[] moveScreen(HologramState.Cell cell) {
-        if (!moving(cell)) return new double[] { 0, 0 };
+        if (!moving(cell)) return NO_SCREEN_MOVE;
         double[] from = projectedFrame.projectScreen(0, 0, 0),
             to = projectedFrame.projectScreen(moveOffset[0], moveOffset[1], moveOffset[2]);
         return new double[] { to[0] - from[0], to[1] - from[1] };
@@ -103,6 +117,13 @@ final class HologramRenderer {
     private static boolean visibleEmptyCells;
 
     static void release() {
+        previewReleaseEpoch++;
+        previewDrawWork.reset();
+        previewFrames = previewPreparationNanos = previewProjectionNanos = previewDrawNanos = 0;
+        previewModelPublications = previewModelPublicationDirtyRegions = 0;
+        previewNativeWakes = previewNativeWakeDirtyRegions = 0;
+        previewCheapVisitCalls = previewDetailVisitCalls = 0;
+        previewCursorResets = previewDiscardedCheapVisits = previewDiscardedDetailVisits = 0;
         projectionPending = false;
         previewKey = "";
         projectedFrame = presentedFrame = null;
@@ -174,7 +195,11 @@ final class HologramRenderer {
         Set<HologramRegionCache.Key> dirty = HologramRegionCache.affected(next);
         dirty.addAll(modelDependencies);
         lastSnapshotDirtyRegions = dirty.size();
-        for (HologramRegionCache.Key key : dirty) previewRegions.remove(key);
+        if (next.modelOnly) recordPreviewModelPublication(dirty.size());
+        boolean continuation = next.authorProjection != null && next.modelOnly
+            && previewPreparation != null
+            && previewPreparation.state == previous;
+        if (!continuation) for (HologramRegionCache.Key key : dirty) previewRegions.remove(key);
         if (visibleState == previous) visibleState = next;
         boolean extentChanged = next.topologyChanged
             && !java.util.Arrays.equals(previous.regions.bounds(), next.regions.bounds());
@@ -192,7 +217,22 @@ final class HologramRenderer {
                 region.projectionWorkKey = "";
             }
         } else if (previewPreparation != null && previewPreparation.state == previous) {
-            previewPreparation.update(previous, next, dirty);
+            if (continuation) {
+                Set<Integer> repair = new HashSet<>();
+                Set<HologramRegionCache.Key> nativeRegions = HologramRegionCache.changedRegions(next);
+                nativeRegions.addAll(modelDependencies);
+                // Native provenance is conservative at region granularity. Shell exposure is only six-neighbor.
+                for (HologramRegionCache.Key key : nativeRegions) for (HologramState.Cell cell : next.regions.regions
+                    .getOrDefault(key, java.util.Collections.emptyList())) repair.add(cell.index);
+                for (int index : next.changedIndices) {
+                    HologramState.Cell cell = next.cells.get(index);
+                    for (int[] n : NORMALS) {
+                        HologramState.Cell neighbor = next.regions.at(cell.x + n[0], cell.y + n[1], cell.z + n[2]);
+                        if (neighbor != null) repair.add(neighbor.index);
+                    }
+                }
+                previewPreparation.repair(next, repair);
+            } else previewPreparation.update(previous, next, dirty);
         }
         if (structureBoundsState == previous) {
             boolean sameMemberships = true;
@@ -249,7 +289,16 @@ final class HologramRenderer {
             worldState = next;
         }
         // World lists must be retired before the native lists they reference.
-        HologramBlockRender.advance(previous, next, dirty);
+        Set<HologramRegionCache.Key> nativeDirty = dirty;
+        if (next.authorProjection != null && next.modelOnly) {
+            // Readiness/material changes still rebuild shell faces throughout the halo above.
+            // Native lists consume unchanged block/meta/presence facts, or tracked tile reads;
+            // halo-only native lists need not be deleted and compiled again. Tile overflow is
+            // already represented by the conservative whole-owner dependency set.
+            nativeDirty = HologramRegionCache.changedRegions(next);
+            nativeDirty.addAll(modelDependencies);
+        }
+        HologramBlockRender.advance(previous, next, nativeDirty);
         HologramTextures.advance(previous, next);
         HologramLinkNodePreview.advance(previous, next);
     }
@@ -317,14 +366,76 @@ final class HologramRenderer {
         int unresolved = 0;
         for (PreviewRegion region : previewRegions.values())
             if (region.complete) unresolved += region.unresolved + region.budgetLimited;
-        PreviewTask active = previewPreparation.task;
-        if (active != null && active.refining && active.detail != null)
-            unresolved += active.detail.unresolved + active.detail.budgetLimited;
+        for (PreviewTask pending : previewPreparation.pending.values()) if (pending.refining && pending.detail != null)
+            unresolved += pending.detail.unresolved + pending.detail.budgetLimited;
         return Math.max(0, previewPreparation.detailedCompleted - unresolved);
     }
 
     static int previewMeshTotal(HologramState state) {
         return state == null ? 0 : state.cells.size();
+    }
+
+    static boolean projectionCaughtUp(HologramState state, String key) {
+        return state != null && previewState == state && key.equals(previewKey) && !projectionPending;
+    }
+
+    static boolean cheapOcclusionReady(HologramState state, String key) {
+        return previewPreparation != null && previewPreparation.state == state
+            && previewPreparation.hintsReady()
+            && projectionCaughtUp(state, key);
+    }
+
+    static long preparationDeadline(HologramState state, String key, long frameDeadline, long now) {
+        // Reuse the unneeded projection half only after reveal invalidation and exact camera/owner checks.
+        // The shared 2 ms cooperative deadline is unchanged; an individual native callback may overrun it.
+        return projectionCaughtUp(state, key) ? frameDeadline : Math.min(frameDeadline, now + PREVIEW_BUILD_NANOS / 2);
+    }
+
+    /**
+     * Cumulative phase costs within releaseEpoch; compare only matching epochs. Frame cadence additionally
+     * requires an external monotonic elapsed-time interval, not phase totals or the configured FPS cap.
+     * Draw includes demand retries and GUI presentation; these are CPU wall times, not GPU timings.
+     */
+    static net.minecraft.nbt.NBTTagCompound previewWorkInspection() {
+        net.minecraft.nbt.NBTTagCompound result = new net.minecraft.nbt.NBTTagCompound();
+        result.setLong("releaseEpoch", previewReleaseEpoch);
+        result.setLong("frames", previewFrames);
+        result.setLong("preparationNanos", previewPreparationNanos);
+        result.setLong("projectionNanos", previewProjectionNanos);
+        result.setLong("drawNanos", previewDrawNanos);
+        result.setLong("modelPublications", previewModelPublications);
+        result.setLong("modelPublicationDirtyRegions", previewModelPublicationDirtyRegions);
+        result.setLong("nativeWakes", previewNativeWakes);
+        result.setLong("nativeWakeDirtyRegions", previewNativeWakeDirtyRegions);
+        result.setLong("cheapVisitCalls", previewCheapVisitCalls);
+        result.setLong("detailVisitCalls", previewDetailVisitCalls);
+        result.setLong("cursorResets", previewCursorResets);
+        result.setLong("discardedCheapVisits", previewDiscardedCheapVisits);
+        result.setLong("discardedDetailVisits", previewDiscardedDetailVisits);
+        previewDrawWork.appendInspection(result);
+        return result;
+    }
+
+    // Render-thread event totals within releaseEpoch, not unique regions/cells or native completion counts.
+    static void recordPreviewModelPublication(int dirtyRegions) {
+        previewModelPublications++;
+        previewModelPublicationDirtyRegions += Math.max(0, dirtyRegions);
+    }
+
+    static void recordPreviewNativeWake(int dirtyRegions) {
+        previewNativeWakes++;
+        previewNativeWakeDirtyRegions += Math.max(0, dirtyRegions);
+    }
+
+    static void recordPreviewCellWork(boolean detailed) {
+        if (detailed) previewDetailVisitCalls++;
+        else previewCheapVisitCalls++;
+    }
+
+    static void recordPreviewCursorReset(int cheapVisits, int detailVisits) {
+        previewCursorResets++;
+        previewDiscardedCheapVisits += Math.max(0, cheapVisits);
+        previewDiscardedDetailVisits += Math.max(0, detailVisits);
     }
 
     /** Detached counters from the frame actually presented for this exact snapshot. No native factory or draw. */
@@ -405,18 +516,7 @@ final class HologramRenderer {
         boolean budgeted = !HologramBlueprintPreview.cleanCapture();
         int mode = state.data.getInteger("mode");
         boolean currentView = view == 1 || mode == 2;
-        if (visibleState != state || visibleLayer != layer
-            || visibleView != view
-            || visibleMode != mode
-            || visibleEmptyCells != showEmptyCells) {
-            visibleState = state;
-            visibleLayer = layer;
-            visibleView = view;
-            visibleMode = mode;
-            visibleEmptyCells = showEmptyCells;
-            previewRegions.clear();
-            previewPreparation = null;
-        }
+        preparePreviewView(state, layer, view);
         if (boundsState != state) {
             boundsState = state;
             boundsX = boundsY = boundsZ = 0;
@@ -449,7 +549,9 @@ final class HologramRenderer {
                 cz,
                 boundsExtent);
         lastPreviewBuiltRegions = 0;
-        long projectionDeadline = System.nanoTime() + PREVIEW_BUILD_NANOS;
+        long preparationStarted = System.nanoTime();
+        long projectionDeadline = preparationStarted + PREVIEW_BUILD_NANOS;
+        if (!budgeted) HologramBlockRender.endPreparationSlice();
         if (budgeted) {
             if (previewPreparation == null || previewPreparation.state != state)
                 previewPreparation = new PreviewPreparation(state);
@@ -464,21 +566,14 @@ final class HologramRenderer {
                     previewState = null;
                 }
             }
-            previewPreparation.advance(
-                layer,
-                view,
-                currentView,
-                Math.min(projectionDeadline, System.nanoTime() + PREVIEW_BUILD_NANOS / 2));
-            int prepared = previewPreparation.completed;
-            // Reproject at geometrically growing milestones. Rebuilding every accumulated face after each
-            // time slice would turn a linear preparation into quadratic work on large library previews.
-            if (prepared > previewPreparation.published
-                && (previewPreparation.published == 0 || prepared >= 2L * previewPreparation.published
-                    || prepared == 2L * state.cells.size())) {
-                previewPreparation.published = prepared;
-                previewState = null;
-            }
+            long nativeDeadline = preparationDeadline(state, key, projectionDeadline, System.nanoTime());
+            HologramBlockRender.beginPreparationSlice(nativeDeadline);
+            nativePreparationCellsChanged(state, HologramBlockRender.retryDeferredCells(state));
+            previewPreparation.advance(layer, view, currentView, nativeDeadline);
+            if (previewPreparation.publishProgress()) previewState = null;
         }
+        long projectionStarted = System.nanoTime();
+        previewPreparationNanos += projectionStarted - preparationStarted;
         if (previewState != state || !key.equals(previewKey) || projectionPending) {
             List<Face> faces = new ArrayList<>();
             List<RoleMarker> markers = new ArrayList<>();
@@ -513,23 +608,19 @@ final class HologramRenderer {
                 region.depth = first == null ? 0 : projectedFrame.project(first.dx, first.dy, first.dz)[2];
             }
             orderedRegions.sort(Comparator.comparingDouble(region -> region.depth));
-            projectionPending = false;
-            int projectedWork = 0;
+            projectPreviewRegions(
+                orderedRegions,
+                state,
+                key,
+                facing,
+                currentView,
+                budgeted,
+                projectionDeadline,
+                System::nanoTime);
+            // Fair work selection is separate from stable depth-ordered presentation.
             for (PreviewRegion region : orderedRegions) {
                 if (budgeted && !region.visible.isEmpty()
                     && !previewRegionVisible(state, HologramRegionCache.key(region.visible.get(0)))) continue;
-                if (!key.equals(region.projectedKey)) {
-                    if (!budgeted || projectedWork == 0 || System.nanoTime() < projectionDeadline)
-                        projectedWork += projectPreviewRegion(
-                            region,
-                            key,
-                            facing,
-                            currentView,
-                            budgeted,
-                            projectionDeadline,
-                            Integer.MAX_VALUE);
-                    if (!key.equals(region.projectedKey)) projectionPending = true;
-                }
                 if (!key.equals(region.projectionWorkKey)) continue;
                 faces.addAll(region.faces);
                 outlines.addAll(region.outlines);
@@ -553,226 +644,277 @@ final class HologramRenderer {
             cachedOutlines = outlines;
             cachedExtent = boundsExtent;
         }
-        List<Face> faces = cachedFaces;
-        List<RoleMarker> markers = cachedMarkers;
-        double extent = cachedExtent;
-        lastPreviewRoleMarkers = lastPreviewAnchorMarkers = 0;
-        if (!HologramBlueprintPreview.cleanCapture()) {
-            if (selected >= 0 && selected < state.cells.size())
-                HologramSnapshotModelsClient.requestVisible(state, state.cells.get(selected), currentView);
-            for (int work = 0; work < Math.min(128, cachedOutlines.size()); work++) {
-                Face face = cachedOutlines.get(Math.floorMod(modelDemandCursor++, cachedOutlines.size()));
-                HologramSnapshotModelsClient.requestVisible(state, face.cell, currentView);
-            }
-            if (state.authorProjection != null) {
-                modelDependencyCursor = retryAuthorModelDemands(
-                    state,
-                    cachedOutlines.size(),
-                    index -> cachedOutlines.get(index).cell,
-                    modelDependencyCursor,
-                    currentView,
-                    Math.min(projectionDeadline, System.nanoTime() + 250_000L),
-                    System::nanoTime);
-            }
-        }
-        int hovered = -1;
-        double hoveredDepth = Double.NEGATIVE_INFINITY;
-        GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
+        long drawStarted = System.nanoTime();
+        previewProjectionNanos += drawStarted - projectionStarted;
+        HologramPreviewDrawWork.Phase drawPhase = HologramPreviewDrawWork.Phase.DEMANDS;
+        previewDrawWork.beginPhase(drawPhase);
         try {
-            GL11.glDisable(GL11.GL_LIGHTING);
-            // GUI ortho spans +/-1000 around z=0. Normalize model depth independently of zoom,
-            // and clear only this viewport so schematic faces and outlines share reliable occlusion.
-            Minecraft mc = Minecraft.getMinecraft();
-            int factor = new net.minecraft.client.gui.ScaledResolution(mc, mc.displayWidth, mc.displayHeight)
-                .getScaleFactor();
-            // HologramScreen supplies a framebuffer scissor after its origin/scale transform.
-            // x/y here are model-local coordinates; replacing that rectangle clips the model
-            // against the wrong part of the screen. Retain the caller's transformed viewport.
-            if (!GL11.glIsEnabled(GL11.GL_SCISSOR_TEST)) {
-                GL11.glEnable(GL11.GL_SCISSOR_TEST);
-                GL11.glScissor(x * factor, mc.displayHeight - (y + height) * factor, width * factor, height * factor);
-            }
-            GL11.glEnable(GL11.GL_DEPTH_TEST);
-            GL11.glDepthFunc(GL11.GL_LEQUAL);
-            GL11.glDepthMask(true);
-            GL11.glClearDepth(1);
-            GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
-            GL11.glEnable(GL11.GL_BLEND);
-            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-            GL11.glDisable(GL11.GL_CULL_FACE);
-            GL11.glEnable(GL11.GL_TEXTURE_2D);
-            mc.getTextureManager()
-                .bindTexture(TextureMap.locationBlocksTexture);
-            GL11.glEnable(GL11.GL_ALPHA_TEST);
-            GL11.glAlphaFunc(GL11.GL_GREATER, .01f);
-            double depthScale = 128 / extent;
-            HologramSourcePreviewReference.captureCamera(depthScale);
-            Tessellator t = Tessellator.instance;
-            t.startDrawingQuads();
-            for (Face face : faces) {
-                boolean inside = face.contains(mouseX, mouseY) && mouseX >= x
-                    && mouseX < x + width
-                    && mouseY >= y
-                    && mouseY < y + height;
-                if (inside && face.depth >= hoveredDepth) {
-                    hovered = face.cell.index;
-                    hoveredDepth = face.depth;
+            // Source occupancy is insufficient: certify each currently presented region once, not per face.
+            // Repair elsewhere must not turn a completed static shell back into a volume of submitted lines.
+            updatePresentedOcclusion(state, key, budgeted);
+            List<Face> faces = cachedFaces;
+            List<RoleMarker> markers = cachedMarkers;
+            double extent = cachedExtent;
+            lastPreviewRoleMarkers = lastPreviewAnchorMarkers = 0;
+            if (!HologramBlueprintPreview.cleanCapture()) {
+                if (selected >= 0 && selected < state.cells.size())
+                    HologramSnapshotModelsClient.requestVisible(state, state.cells.get(selected), currentView);
+                for (int work = 0; work < Math.min(128, cachedOutlines.size()); work++) {
+                    Face face = cachedOutlines.get(Math.floorMod(modelDemandCursor++, cachedOutlines.size()));
+                    HologramSnapshotModelsClient.requestVisible(state, face.cell, currentView);
                 }
-                if (face.empty || face.nativeModel) continue;
-                float shade = face.side == 1 ? 1 : face.side < 2 ? .6f : .8f;
-                double[] shifted = moveScreen(face.cell);
-                int sampleIndex = 0;
-                for (HologramTextures.Sample sample : face.samples()) {
-                    setSampleColor(t, sample, shade, moving(face.cell) ? .38f : .96f);
-                    if (face.cell.sourceMissing && !face.cell.missingBlock) t.setColorRGBA_F(.55f, .55f, .55f, .78f);
-                    for (int i = 0; i < 4; i++) {
-                        int vertex = FACES[face.side][i];
-                        double[] point = face.points[vertex];
-                        t.addVertexWithUV(
-                            point[0] + shifted[0],
-                            point[1] + shifted[1],
-                            point[2] * depthScale + sampleIndex * .015,
-                            textureU(sample.icon, face.side, face.local(vertex)),
-                            textureV(sample.icon, face.side, face.local(vertex)));
+                if (state.authorProjection != null) {
+                    modelDependencyCursor = retryAuthorModelDemands(
+                        state,
+                        cachedOutlines.size(),
+                        index -> cachedOutlines.get(index).cell,
+                        modelDependencyCursor,
+                        currentView,
+                        Math.min(projectionDeadline, System.nanoTime() + 250_000L),
+                        System::nanoTime);
+                }
+            }
+            previewDrawWork.endPhase(drawPhase);
+            drawPhase = HologramPreviewDrawWork.Phase.FACES_AND_HIT;
+            previewDrawWork.beginPhase(drawPhase);
+            long submittedQuads = 0, submittedLineVertices = 0, linkedDrawCalls = 0;
+            int hovered = -1;
+            double hoveredDepth = Double.NEGATIVE_INFINITY;
+            GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
+            try {
+                GL11.glDisable(GL11.GL_LIGHTING);
+                // GUI ortho spans +/-1000 around z=0. Normalize model depth independently of zoom,
+                // and clear only this viewport so schematic faces and outlines share reliable occlusion.
+                Minecraft mc = Minecraft.getMinecraft();
+                int factor = new net.minecraft.client.gui.ScaledResolution(mc, mc.displayWidth, mc.displayHeight)
+                    .getScaleFactor();
+                // HologramScreen supplies a framebuffer scissor after its origin/scale transform.
+                // x/y here are model-local coordinates; replacing that rectangle clips the model
+                // against the wrong part of the screen. Retain the caller's transformed viewport.
+                if (!GL11.glIsEnabled(GL11.GL_SCISSOR_TEST)) {
+                    GL11.glEnable(GL11.GL_SCISSOR_TEST);
+                    GL11.glScissor(
+                        x * factor,
+                        mc.displayHeight - (y + height) * factor,
+                        width * factor,
+                        height * factor);
+                }
+                GL11.glEnable(GL11.GL_DEPTH_TEST);
+                GL11.glDepthFunc(GL11.GL_LEQUAL);
+                GL11.glDepthMask(true);
+                GL11.glClearDepth(1);
+                GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
+                GL11.glEnable(GL11.GL_BLEND);
+                GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+                GL11.glDisable(GL11.GL_CULL_FACE);
+                GL11.glEnable(GL11.GL_TEXTURE_2D);
+                mc.getTextureManager()
+                    .bindTexture(TextureMap.locationBlocksTexture);
+                GL11.glEnable(GL11.GL_ALPHA_TEST);
+                GL11.glAlphaFunc(GL11.GL_GREATER, .01f);
+                double depthScale = 128 / extent;
+                HologramSourcePreviewReference.captureCamera(depthScale);
+                Tessellator t = Tessellator.instance;
+                t.startDrawingQuads();
+                previewDrawWork.recordFacesVisited(faces.size());
+                for (Face face : faces) {
+                    boolean inside = mouseX >= x && mouseX < x + width
+                        && mouseY >= y
+                        && mouseY < y + height
+                        && face.contains(mouseX, mouseY);
+                    if (inside && face.depth >= hoveredDepth) {
+                        hovered = face.cell.index;
+                        hoveredDepth = face.depth;
                     }
-                    sampleIndex++;
+                    if (face.empty || face.nativeModel) continue;
+                    // Keep all provisional faces for picking and all outlines for selection. A move can expose
+                    // previously buried faces without rebuilding this cache, so disable cheap culling during it.
+                    if ((face.drawFaces() & 1 << face.side) == 0) continue;
+                    float shade = face.side == 1 ? 1 : face.side < 2 ? .6f : .8f;
+                    double[] shifted = moveScreen(face.cell);
+                    int sampleIndex = 0;
+                    for (HologramTextures.Sample sample : face.samples()) {
+                        setSampleColor(t, sample, shade, moving(face.cell) ? .38f : .96f);
+                        if (face.cell.sourceMissing && !face.cell.missingBlock)
+                            t.setColorRGBA_F(.55f, .55f, .55f, .78f);
+                        for (int i = 0; i < 4; i++) {
+                            int vertex = FACES[face.side][i];
+                            double[] point = face.points[vertex];
+                            t.addVertexWithUV(
+                                point[0] + shifted[0],
+                                point[1] + shifted[1],
+                                point[2] * depthScale + sampleIndex * .015,
+                                textureU(sample.icon, face.side, face.local(vertex)),
+                                textureV(sample.icon, face.side, face.local(vertex)));
+                        }
+                        sampleIndex++;
+                        submittedQuads++;
+                    }
                 }
-            }
-            t.draw();
-            HologramNativeRasterSmoke.Frame raster = HologramNativeRasterSmoke
-                .begin(state, view == 1 || state.data.getInteger("mode") == 2);
-            for (HologramState.Cell cell : nativePreviewCells) {
-                HologramNativeRasterSmoke.Slice pixels = null;
-                if (raster != null) for (Face outline : cachedOutlines) if (outline.cell == cell) {
-                    pixels = raster.before(outline.points, depthScale);
-                    break;
+                t.draw();
+                previewDrawWork.recordQuads(submittedQuads);
+                previewDrawWork.endPhase(drawPhase);
+                drawPhase = HologramPreviewDrawWork.Phase.NATIVE_PLAYBACK;
+                previewDrawWork.beginPhase(drawPhase);
+                HologramNativeRasterSmoke.Frame raster = HologramNativeRasterSmoke
+                    .begin(state, view == 1 || state.data.getInteger("mode") == 2);
+                previewDrawWork.recordSmokeActive(raster != null);
+                previewDrawWork.recordNativeCalls(nativePreviewCells.size());
+                for (HologramState.Cell cell : nativePreviewCells) {
+                    HologramNativeRasterSmoke.Slice pixels = null;
+                    if (raster != null) for (Face outline : cachedOutlines) if (outline.cell == cell) {
+                        pixels = raster.before(outline.points, depthScale);
+                        break;
+                    }
+                    GL11.glPushMatrix();
+                    applyPreviewTransform(cell, depthScale);
+                    if (moving(cell)) GL11.glTranslated(moveOffset[0], moveOffset[1], moveOffset[2]);
+                    GL11.glPushAttrib(GL11.GL_COLOR_BUFFER_BIT);
+                    if (moving(cell)) {
+                        GL11.glEnable(GL11.GL_BLEND);
+                        GL14.glBlendColor(1, 1, 1, .38f);
+                        GL11.glBlendFunc(0x8003, 0x8004);
+                    }
+                    HologramBlockRender.draw(cell, view == 1 || state.data.getInteger("mode") == 2);
+                    GL11.glPopAttrib();
+                    GL11.glPopMatrix();
+                    if (pixels != null) raster.after(cell, pixels);
                 }
-                GL11.glPushMatrix();
-                applyPreviewTransform(cell, depthScale);
-                if (moving(cell)) GL11.glTranslated(moveOffset[0], moveOffset[1], moveOffset[2]);
-                GL11.glPushAttrib(GL11.GL_COLOR_BUFFER_BIT);
-                if (moving(cell)) {
-                    GL11.glEnable(GL11.GL_BLEND);
-                    GL14.glBlendColor(1, 1, 1, .38f);
-                    GL11.glBlendFunc(0x8003, 0x8004);
+                HologramNativeRasterSmoke.finish(raster);
+                previewDrawWork.endPhase(drawPhase);
+                drawPhase = HologramPreviewDrawWork.Phase.LINKED;
+                previewDrawWork.beginPhase(drawPhase);
+                for (HologramState.Cell cell : linkedPreviewCells) {
+                    boolean current = view == 1 || state.data.getInteger("mode") == 2;
+                    if (HologramLinkNodePreview.prepare(cell, current)
+                        .isEmpty()) continue;
+                    GL11.glPushMatrix();
+                    applyPreviewTransform(cell, depthScale);
+                    HologramLinkNodePreview.draw(cell, current, .96f);
+                    linkedDrawCalls++;
+                    GL11.glPopMatrix();
                 }
-                HologramBlockRender.draw(cell, view == 1 || state.data.getInteger("mode") == 2);
-                GL11.glPopAttrib();
-                GL11.glPopMatrix();
-                if (pixels != null) raster.after(cell, pixels);
-            }
-            HologramNativeRasterSmoke.finish(raster);
-            for (HologramState.Cell cell : linkedPreviewCells) {
-                boolean current = view == 1 || state.data.getInteger("mode") == 2;
-                if (HologramLinkNodePreview.prepare(cell, current)
-                    .isEmpty()) continue;
-                GL11.glPushMatrix();
-                applyPreviewTransform(cell, depthScale);
-                HologramLinkNodePreview.draw(cell, current, .96f);
-                GL11.glPopMatrix();
-            }
-            GL11.glDisable(GL11.GL_TEXTURE_2D);
-            // Read face depth without writing line depth. The small z bias avoids coplanar
-            // flicker while keeping back edges hidden; all cells retain clear wireframes.
-            GL11.glDepthMask(false);
-            t.startDrawing(GL11.GL_LINES);
-            java.util.Set<Integer> related = selection == null ? java.util.Collections.emptySet()
-                : selection.related(state);
-            if (!HologramBlueprintPreview.cleanCapture()) for (Face face : cachedOutlines) {
-                boolean chosen = face.cell.index == selected
-                    || selection != null && selection.contains(face.cell.index);
-                boolean relatedCasing = !chosen && related.contains(face.cell.index);
-                t.setColorRGBA_F(
-                    chosen ? 1 : relatedCasing ? .78f : .2f,
-                    chosen ? .92f : relatedCasing ? .61f : .7f,
-                    chosen ? .5f : relatedCasing ? 1 : .8f,
-                    chosen || relatedCasing ? 1 : face.empty ? .18f : .45f);
-                for (int[] edge : EDGES) {
-                    double[] a = face.points[edge[0]], b = face.points[edge[1]];
-                    t.addVertex(a[0], a[1], a[2] * depthScale + .15);
-                    t.addVertex(b[0], b[1], b[2] * depthScale + .15);
+                GL11.glDisable(GL11.GL_TEXTURE_2D);
+                previewDrawWork.recordLinkedCalls(linkedDrawCalls);
+                previewDrawWork.endPhase(drawPhase);
+                drawPhase = HologramPreviewDrawWork.Phase.OUTLINES;
+                previewDrawWork.beginPhase(drawPhase);
+                // Read face depth without writing line depth. The small z bias avoids coplanar
+                // flicker while keeping back edges hidden; ordinary static hints retain exterior voxel grid lines.
+                GL11.glDepthMask(false);
+                t.startDrawing(GL11.GL_LINES);
+                java.util.Set<Integer> related = selection == null ? java.util.Collections.emptySet()
+                    : selection.related(state);
+                if (!HologramBlueprintPreview.cleanCapture()) for (Face face : cachedOutlines) {
+                    boolean chosen = face.cell.index == selected
+                        || selection != null && selection.contains(face.cell.index);
+                    boolean relatedCasing = !chosen && related.contains(face.cell.index);
+                    int edges = previewOutlineEdges(face, chosen || relatedCasing);
+                    if (edges == 0) continue;
+                    t.setColorRGBA_F(
+                        chosen ? 1 : relatedCasing ? .78f : .2f,
+                        chosen ? .92f : relatedCasing ? .61f : .7f,
+                        chosen ? .5f : relatedCasing ? 1 : .8f,
+                        chosen || relatedCasing ? 1 : face.empty ? .18f : .45f);
+                    for (int edgeIndex = 0; edgeIndex < EDGES.length; edgeIndex++) {
+                        if ((edges & 1 << edgeIndex) == 0) continue;
+                        int[] edge = EDGES[edgeIndex];
+                        double[] a = face.points[edge[0]], b = face.points[edge[1]];
+                        t.addVertex(a[0], a[1], a[2] * depthScale + .15);
+                        t.addVertex(b[0], b[1], b[2] * depthScale + .15);
+                        submittedLineVertices += 2;
+                    }
                 }
-            }
-            t.draw();
-            GL11.glDisable(GL11.GL_DEPTH_TEST);
-            GL11.glLineWidth(2.5f);
-            t.startDrawing(GL11.GL_LINES);
-            String hoveredStructure = pickStructure(mouseX, mouseY);
-            if (!HologramBlueprintPreview.cleanCapture())
-                for (Map.Entry<String, double[][]> entry : structureBoxes.entrySet()) {
-                    if (entry.getKey()
-                        .equals(hoveredStructure)) t.setColorRGBA_F(1, 1, .8f, 1);
-                    else if (entry.getKey()
-                        .equals(selectedStructureId)) t.setColorRGBA_F(1, .78f, .3f, .95f);
-                    else if (missingStructures.contains(entry.getKey())) t.setColorRGBA_F(.65f, .65f, .65f, .72f);
-                    else if (com.miaokatze.gtmb.hologram.HologramTextBox.isAttachmentId(entry.getKey()))
-                        t.setColorRGBA_F(.78f, .52f, 1, .85f);
-                    else t.setColorRGBA_F(.45f, .85f, 1, .72f);
-                    for (int[] edge : EDGES) {
-                        double[] a = entry.getValue()[edge[0]], b = entry.getValue()[edge[1]];
+                t.draw();
+                previewDrawWork.recordLineVertices(submittedLineVertices);
+                previewDrawWork.endPhase(drawPhase);
+                drawPhase = HologramPreviewDrawWork.Phase.OVERLAY;
+                previewDrawWork.beginPhase(drawPhase);
+                GL11.glDisable(GL11.GL_DEPTH_TEST);
+                GL11.glLineWidth(2.5f);
+                t.startDrawing(GL11.GL_LINES);
+                String hoveredStructure = pickStructure(mouseX, mouseY);
+                if (!HologramBlueprintPreview.cleanCapture())
+                    for (Map.Entry<String, double[][]> entry : structureBoxes.entrySet()) {
+                        if (entry.getKey()
+                            .equals(hoveredStructure)) t.setColorRGBA_F(1, 1, .8f, 1);
+                        else if (entry.getKey()
+                            .equals(selectedStructureId)) t.setColorRGBA_F(1, .78f, .3f, .95f);
+                        else if (missingStructures.contains(entry.getKey())) t.setColorRGBA_F(.65f, .65f, .65f, .72f);
+                        else if (com.miaokatze.gtmb.hologram.HologramTextBox.isAttachmentId(entry.getKey()))
+                            t.setColorRGBA_F(.78f, .52f, 1, .85f);
+                        else t.setColorRGBA_F(.45f, .85f, 1, .72f);
+                        for (int[] edge : EDGES) {
+                            double[] a = entry.getValue()[edge[0]], b = entry.getValue()[edge[1]];
+                            t.addVertex(a[0], a[1], 1);
+                            t.addVertex(b[0], b[1], 1);
+                        }
+                    }
+                t.draw();
+                GL11.glLineWidth(1.5f);
+                t.startDrawing(GL11.GL_LINES);
+                t.setColorRGBA_F(.95f, .77f, .39f, .48f);
+                if (!HologramBlueprintPreview.cleanCapture())
+                    for (double[][] box : hintBoxes.values()) for (int[] edge : EDGES) {
+                        double[] a = box[edge[0]], b = box[edge[1]];
                         t.addVertex(a[0], a[1], 1);
                         t.addVertex(b[0], b[1], 1);
                     }
+                t.draw();
+                GL11.glEnable(GL11.GL_TEXTURE_2D);
+                GL11.glColor4f(1, 1, 1, 1);
+                if (!HologramBlueprintPreview.cleanCapture()) for (RoleMarker marker : markers) {
+                    if (!marker.cell.anchor
+                        && (marker.x < x || marker.x >= x + width || marker.y < y || marker.y >= y + height)) continue;
+                    float labelScale = marker.cell.anchor || marker.cell.missingBlock ? 1f : .7f;
+                    int labelWidth = Math.round(mc.fontRenderer.getStringWidth(marker.label) * labelScale);
+                    int lx = Math.max(x + 2, Math.min(x + width - labelWidth - 4, (int) marker.x - labelWidth / 2));
+                    int ly = Math.max(y + 2, Math.min(y + height - 12, (int) marker.y - 4));
+                    net.minecraft.client.gui.Gui.drawRect(
+                        lx - 2,
+                        ly - 1,
+                        lx + labelWidth + 2,
+                        ly + Math.round(9 * labelScale) + 1,
+                        marker.cell.anchor ? 0xee514025 : 0xda102a34);
+                    GL11.glPushMatrix();
+                    try {
+                        GL11.glTranslatef(lx, ly, 0);
+                        GL11.glScalef(labelScale, labelScale, 1);
+                        mc.fontRenderer.drawStringWithShadow(
+                            marker.label,
+                            0,
+                            0,
+                            marker.cell.sourceMissing ? 0xff7272
+                                : marker.cell.missingBlock ? 0xff6be4 : marker.cell.anchor ? 0xffffbd : 0x9ceaf3);
+                    } finally {
+                        GL11.glPopMatrix();
+                    }
+                    marker.left = lx - 2;
+                    marker.top = ly - 1;
+                    marker.right = lx + labelWidth + 2;
+                    marker.bottom = ly + Math.round(9 * labelScale) + 1;
+                    if (mouseX >= lx - 2 && mouseX < lx + labelWidth + 2
+                        && mouseY >= ly - 1
+                        && mouseY < ly + Math.round(9 * labelScale) + 1) hovered = marker.cell.index;
+                    lastPreviewRoleMarkers++;
+                    if (marker.cell.anchor) lastPreviewAnchorMarkers++;
                 }
-            t.draw();
-            GL11.glLineWidth(1.5f);
-            t.startDrawing(GL11.GL_LINES);
-            t.setColorRGBA_F(.95f, .77f, .39f, .48f);
-            if (!HologramBlueprintPreview.cleanCapture())
-                for (double[][] box : hintBoxes.values()) for (int[] edge : EDGES) {
-                    double[] a = box[edge[0]], b = box[edge[1]];
-                    t.addVertex(a[0], a[1], 1);
-                    t.addVertex(b[0], b[1], 1);
-                }
-            t.draw();
-            GL11.glEnable(GL11.GL_TEXTURE_2D);
-            GL11.glColor4f(1, 1, 1, 1);
-            if (!HologramBlueprintPreview.cleanCapture()) for (RoleMarker marker : markers) {
-                if (!marker.cell.anchor
-                    && (marker.x < x || marker.x >= x + width || marker.y < y || marker.y >= y + height)) continue;
-                float labelScale = marker.cell.anchor || marker.cell.missingBlock ? 1f : .7f;
-                int labelWidth = Math.round(mc.fontRenderer.getStringWidth(marker.label) * labelScale);
-                int lx = Math.max(x + 2, Math.min(x + width - labelWidth - 4, (int) marker.x - labelWidth / 2));
-                int ly = Math.max(y + 2, Math.min(y + height - 12, (int) marker.y - 4));
-                net.minecraft.client.gui.Gui.drawRect(
-                    lx - 2,
-                    ly - 1,
-                    lx + labelWidth + 2,
-                    ly + Math.round(9 * labelScale) + 1,
-                    marker.cell.anchor ? 0xee514025 : 0xda102a34);
-                GL11.glPushMatrix();
-                try {
-                    GL11.glTranslatef(lx, ly, 0);
-                    GL11.glScalef(labelScale, labelScale, 1);
-                    mc.fontRenderer.drawStringWithShadow(
-                        marker.label,
-                        0,
-                        0,
-                        marker.cell.sourceMissing ? 0xff7272
-                            : marker.cell.missingBlock ? 0xff6be4 : marker.cell.anchor ? 0xffffbd : 0x9ceaf3);
-                } finally {
-                    GL11.glPopMatrix();
-                }
-                marker.left = lx - 2;
-                marker.top = ly - 1;
-                marker.right = lx + labelWidth + 2;
-                marker.bottom = ly + Math.round(9 * labelScale) + 1;
-                if (mouseX >= lx - 2 && mouseX < lx + labelWidth + 2
-                    && mouseY >= ly - 1
-                    && mouseY < ly + Math.round(9 * labelScale) + 1) hovered = marker.cell.index;
-                lastPreviewRoleMarkers++;
-                if (marker.cell.anchor) lastPreviewAnchorMarkers++;
+            } finally {
+                // Depth is framebuffer data, not an attribute: do not leave schematic depth in later GUI overlays.
+                GL11.glDepthMask(true);
+                GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
+                GL11.glPopAttrib();
             }
+            if (!previewPickingReady(state, mouseX, mouseY)) hovered = -1;
+            presentedFrame = projectedFrame;
+            presentedState = state;
+            previewDrawWork.endPhase(drawPhase);
+            previewDrawNanos += System.nanoTime() - drawStarted;
+            previewFrames++;
+            return hovered;
         } finally {
-            // Depth is framebuffer data, not an attribute: do not leave schematic depth in later GUI overlays.
-            GL11.glDepthMask(true);
-            GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
-            GL11.glPopAttrib();
+            previewDrawWork.endPhase(drawPhase);
         }
-        if (!previewPickingReady(state, mouseX, mouseY)) hovered = -1;
-        presentedFrame = projectedFrame;
-        presentedState = state;
-        return hovered;
     }
 
     /**
@@ -789,6 +931,26 @@ final class HologramRenderer {
             HologramSnapshotModelsClient.ready(state, cell, current);
         }
         return cursor;
+    }
+
+    /** Native snapshot ownership and view changes invalidate the cooperative region cursor together. */
+    static void preparePreviewView(HologramState state, int layer, int view) {
+        int mode = state.data.getInteger("mode");
+        if (visibleState != state || visibleLayer != layer
+            || visibleView != view
+            || visibleMode != mode
+            || visibleEmptyCells != showEmptyCells) {
+            visibleState = state;
+            visibleLayer = layer;
+            visibleView = view;
+            visibleMode = mode;
+            visibleEmptyCells = showEmptyCells;
+            if (previewPreparation != null) recordPreviewCursorReset(
+                previewPreparation.completed - previewPreparation.detailedCompleted,
+                previewPreparation.detailedCompleted);
+            previewRegions.clear();
+            previewPreparation = null;
+        }
     }
 
     /** Native blocks and linked TE previews consume the exact camera used by face projection and picking. */
@@ -838,11 +1000,22 @@ final class HologramRenderer {
 
     /** Use the same visible faces as selection, including the camera-facing placement side. */
     static int[] pickAdjacentVoxel(int x, int y) {
+        if (!placementPickingReady(presentedState, x, y)) return null;
         Face hit = null;
-        for (Face face : cachedFaces) if (!face.empty && face.contains(x, y)) hit = face;
+        for (Face face : cachedFaces)
+            if (!face.empty && (hit == null || face.depth >= hit.depth) && face.contains(x, y)) hit = face;
         if (hit == null) return null;
         int[] normal = NORMALS[hit.side];
         return new int[] { hit.cell.x + normal[0], hit.cell.y + normal[1], hit.cell.z + normal[2] };
+    }
+
+    /** Gate the entire placement click, including its empty-plane fallback, against the presented scene. */
+    static boolean placementPickingReady(HologramState state, int x, int y) {
+        return state != null && state == presentedState
+            && presentedFrame != null
+            && presentedFrame == projectedFrame
+            && presentedFrame.coordinates.contains(x, y)
+            && previewPickingReady(state, x, y);
     }
 
     /** Intersect the orthographic view ray with a horizontal plane at an absolute world Y. */
@@ -1049,14 +1222,19 @@ final class HologramRenderer {
 
     private static void previewCell(HologramState state, PreviewRegion result, HologramState.Cell c, int layer,
         int view, boolean current, boolean detailed) {
-        if (!previewVisible(c, layer, view, current)) return;
-        result.visible.add(c);
         boolean visibleNative = state.authorProjection == null || projectedFrame == null
             || previewRegionVisible(state, HologramRegionCache.key(c));
+        previewCell(state, result, c, layer, view, current, detailed, visibleNative);
+    }
+
+    private static void previewCell(HologramState state, PreviewRegion result, HologramState.Cell c, int layer,
+        int view, boolean current, boolean detailed, boolean visibleNative) {
+        if (!previewVisible(c, layer, view, current)) return;
+        result.visible.add(c);
         if (detailed && visibleNative && HologramSnapshotModelsClient.resumableBudget(state, c)) {
             HologramSnapshotModelsClient.requestVisible(state, c, current);
             result.budgetLimited++;
-            result.cells.add(new PreviewCell(c, 63, "细节预算不足，等待容量", false));
+            result.add(new PreviewCell(c, 63, "细节预算不足，等待容量", false, 63, 2));
             return;
         }
         if (!detailed || !visibleNative || !HologramSnapshotModelsClient.ready(state, c, current)) {
@@ -1064,11 +1242,15 @@ final class HologramRenderer {
                 result.unresolved++;
                 if (!visibleNative) result.deferredVisibility = true;
             }
-            result.cells.add(new PreviewCell(c, 63, roleLabel(c), false));
+            String role = roleLabel(c);
+            int cheapFaces = !detailed && role.isEmpty() && c.prompt.isEmpty() && !c.anchor
+                ? cheapExposed(state, c, layer, view, current)
+                : 63;
+            result.add(new PreviewCell(c, 63, role, false, cheapFaces, detailed ? visibleNative ? 1 : 5 : 0));
             return;
         }
         if (state.authorProjection != null && "localFallback".equals(c.renderKind)) {
-            result.cells.add(new PreviewCell(c, 63, "预览不可用", false));
+            result.add(new PreviewCell(c, 63, "预览不可用", false));
             return;
         }
         if (!HologramLinkNodePreview.prepare(c, current)
@@ -1082,21 +1264,117 @@ final class HologramRenderer {
         }
         boolean empty = !c.anchor && !c.iconOnly && (current ? c.id : c.wantId).equals("minecraft:air");
         String role = roleLabel(c);
+        boolean chiselCube = HologramChiselNativeRender.opaqueCube(c, current);
+        // Audited solid CTM cubes need no native list when every face is hidden by another shown opaque voxel.
+        if (chiselCube && exposed == 0 && role.isEmpty() && c.prompt.isEmpty()) return;
         boolean nativeModel = !empty && HologramBlockRender.ready(c, current);
         if (!nativeModel && HologramBlockRender.deferred(c, current)) {
             result.unresolved++;
-            result.cells.add(new PreviewCell(c, 63, "细节待载入", false));
+            result.add(new PreviewCell(c, 63, "细节待载入", false, 63, 1));
             return;
         }
         HologramTextures.Material material = empty ? null : HologramTextures.material(c, current);
-        if (nativeModel || !empty && material.partial) exposed = 63;
+        if (nativeModel && !chiselCube || !empty && material.partial) exposed = 63;
         if (c.missingBlock) role = "缺失方块";
         else if (c.sourceMissing && c.anchor) role = "来源结构缺失";
         if (!nativeModel && !empty && role.isEmpty() && material.fallback) role = "材质缺失";
         if (!nativeModel && !empty && HologramNativeTiles.supported(c.block(current || c.anchor))) role = "模型缺失";
         if (!empty && role.isEmpty() && c.iconOnly) role = "占位";
         if (!c.prompt.isEmpty()) role = role.isEmpty() ? "提示" : role + " · 提示";
-        if (exposed != 0 || !role.isEmpty()) result.cells.add(new PreviewCell(c, exposed, role, true));
+        if (exposed != 0 || !role.isEmpty()) result.add(new PreviewCell(c, exposed, role, true));
+    }
+
+    /** Draw-only cheap mask: it cannot remove source accounting, pick/outline records or detailed work. */
+    private static int cheapExposed(HologramState state, HologramState.Cell cell, int layer, int view,
+        boolean current) {
+        if (!HologramLightPreview.staticOpaqueCube(cell, current)) return 63;
+        int exposed = 63;
+        for (int side = 0; side < 6; side++) {
+            int[] normal = NORMALS[side];
+            HologramState.Cell neighbor = state.regions.at(cell.x + normal[0], cell.y + normal[1], cell.z + normal[2]);
+            if (neighbor != null && previewVisible(neighbor, layer, view, current)
+                && HologramLightPreview.staticOpaqueCube(neighbor, current)) exposed &= ~(1 << side);
+        }
+        return exposed;
+    }
+
+    /**
+     * O(regions) presentation certificate. A complete own-region shell proves internal neighbors; boundary
+     * neighbors additionally require their own current-camera presentation. No block/material callbacks,
+     * source walks or neighbor lookups occur in the per-face/per-edge draw loops.
+     */
+    private static void updatePresentedOcclusion(HologramState state, String key, boolean budgeted) {
+        for (Map.Entry<HologramRegionCache.Key, PreviewRegion> entry : previewRegions.entrySet()) {
+            PreviewRegion region = entry.getValue();
+            region.presentedOcclusion = region.hintsComplete && key.equals(region.projectedKey)
+                && key.equals(region.projectionWorkKey)
+                && (!budgeted || previewRegionVisible(state, entry.getKey())) ? 0 : -1;
+        }
+        for (Map.Entry<HologramRegionCache.Key, PreviewRegion> entry : previewRegions.entrySet()) {
+            PreviewRegion region = entry.getValue();
+            if (region.presentedOcclusion < 0) continue;
+            HologramRegionCache.Key own = entry.getKey();
+            for (int side = 0; side < 6; side++) {
+                int[] normal = NORMALS[side];
+                PreviewRegion neighbor = previewRegions
+                    .get(new HologramRegionCache.Key(own.x + normal[0], own.y + normal[1], own.z + normal[2]));
+                if (neighbor != null && neighbor.presentedOcclusion >= 0) region.presentedOcclusion |= 1 << side;
+            }
+        }
+    }
+
+    /** Keep exterior voxel grid lines, but never submit the twelve edges of a buried ordinary hint. */
+    private static int previewOutlineEdges(Face face, boolean emphasized) {
+        return emphasized ? 4095 : PREVIEW_EDGE_MASKS[face.drawFaces()];
+    }
+
+    private static int[] previewEdgeMasks() {
+        int[] masks = new int[64];
+        for (int faces = 1; faces < masks.length; faces++) for (int side = 0; side < 6; side++) {
+            if ((faces & 1 << side) == 0) continue;
+            for (int edge = 0; edge < EDGES.length; edge++) {
+                boolean a = false, b = false;
+                for (int vertex : FACES[side]) {
+                    a |= vertex == EDGES[edge][0];
+                    b |= vertex == EDGES[edge][1];
+                }
+                if (a && b) masks[faces] |= 1 << edge;
+            }
+        }
+        return masks;
+    }
+
+    /** Fair projection admission is independent from depth order and survives repeatedly dirty near regions. */
+    private static void projectPreviewRegions(List<PreviewRegion> ordered, HologramState state, String key, int facing,
+        boolean current, boolean budgeted, long deadline, java.util.function.LongSupplier clock) {
+        projectionPending = false;
+        int work = 0;
+        // The depth-sorted presentation list can reorder whenever a repaired first visible cell changes.
+        // Remember a source-region key instead of an index into that unstable list.
+        List<HologramRegionCache.Key> order = new ArrayList<>(state.regions.regions.keySet());
+        int start = previewPreparation == null || order.isEmpty() ? 0
+            : (order.indexOf(previewPreparation.projectionAfter) + 1) % order.size();
+        for (int offset = 0; offset < order.size(); offset++) {
+            HologramRegionCache.Key regionKey = order.get((start + offset) % order.size());
+            PreviewRegion region = previewRegions.get(regionKey);
+            if (region == null) continue;
+            if (budgeted && !region.visible.isEmpty()
+                && !previewRegionVisible(state, HologramRegionCache.key(region.visible.get(0)))) continue;
+            if (key.equals(region.projectedKey)) continue;
+            if (!budgeted || work == 0 || clock.getAsLong() < deadline) {
+                work += projectPreviewRegion(
+                    region,
+                    key,
+                    facing,
+                    current,
+                    budgeted,
+                    deadline,
+                    Integer.MAX_VALUE,
+                    clock);
+                if (previewPreparation != null) previewPreparation.projectionAfter = regionKey;
+            }
+            if (!key.equals(region.projectedKey)) projectionPending = true;
+        }
     }
 
     /** Client render-thread cursor: each cell invokes the existing native/texture path exactly once. */
@@ -1107,19 +1385,35 @@ final class HologramRenderer {
 
     private static int projectPreviewRegion(PreviewRegion region, String key, int facing, boolean currentView,
         boolean budgeted, long deadline, int maxCells, java.util.function.LongSupplier clock) {
+        return projectPreviewRegion(
+            region,
+            key,
+            facing,
+            currentView,
+            budgeted,
+            deadline,
+            maxCells,
+            clock,
+            PREVIEW_APPEARANCE);
+    }
+
+    private static int projectPreviewRegion(PreviewRegion region, String key, int facing, boolean currentView,
+        boolean budgeted, long deadline, int maxCells, java.util.function.LongSupplier clock,
+        PreviewAppearanceResolver resolver) {
         if (!key.equals(region.projectionWorkKey)) {
+            region.invalidateProjection();
             region.projectionWorkKey = key;
-            region.projectedKey = "";
-            region.projectedCells = 0;
-            region.faces.clear();
-            region.outlines.clear();
-            region.markers.clear();
-            region.nativeCells.clear();
+            for (PreviewCell cell : region.cells) region.projectionTodo.put(cell.cell.index, cell);
         }
         int work = 0;
-        while (region.projectedCells < region.cells.size()
+        while (!region.projectionTodo.isEmpty()
             && (!budgeted || work < maxCells && (work == 0 || clock.getAsLong() < deadline))) {
-            PreviewCell previewCell = region.cells.get(region.projectedCells++);
+            java.util.Iterator<PreviewCell> pending = region.projectionTodo.values()
+                .iterator();
+            PreviewCell previewCell = pending.next();
+            pending.remove();
+            region.projected.add(previewCell.cell.index);
+            region.projectedCells = region.projected.size();
             work++;
             HologramState.Cell c = previewCell.cell;
             int exposed = previewCell.exposed & facing;
@@ -1132,17 +1426,21 @@ final class HologramRenderer {
             }
             if (!HologramBlueprintPreview.cleanCapture() && !role.isEmpty() && (c.anchor || region.markers.size() < 64))
                 region.markers.add(new RoleMarker(c, projected, role));
-            region.outlines.add(new Face(c, projected, 0, currentView, null, previewCell.detailed));
-            if (previewCell.detailed && HologramBlockRender.ready(c, currentView)) {
+            // Resolve once for this projection unit, not again for its outline and every face. Never retain
+            // a negative readiness result across units/frames: deferred native work can become ready later.
+            PreviewAppearance appearance = new PreviewAppearance(c, currentView, previewCell.detailed, resolver, true);
+            region.outlines.add(
+                new Face(c, projected, 0, null, previewCell.detailed, false, appearance)
+                    .cheapHull(region, previewCell));
+            if (appearance.nativeReady) {
                 region.nativeCells.add(c);
                 // Cell picking keeps the established voxel contract while the drawing uses
                 // the mod's actual triangles, materials, covers and part geometry.
-                for (int side = 0; side < 6; side++)
-                    if ((exposed & 1 << side) != 0) region.faces.add(new Face(c, projected, side, currentView));
+                for (int side = 0; side < 6; side++) if ((exposed & 1 << side) != 0)
+                    region.faces.add(new Face(c, projected, side, null, true, false, appearance));
                 continue;
             }
-            HologramTextures.Material material = previewCell.detailed ? HologramTextures.material(c, currentView)
-                : HologramLightPreview.material(c, currentView);
+            HologramTextures.Material material = appearance.geometryMaterial;
             for (HologramGeometry.Surface surface : material.geometry) {
                 if ((exposed & (1 << surface.side)) == 0) continue;
                 double[][] points = projected;
@@ -1156,10 +1454,18 @@ final class HologramRenderer {
                             + (local[2] + .5) * (projected[4][axis] - projected[0][axis]);
                     }
                 }
-                region.faces.add(new Face(c, points, surface.side, currentView, surface, previewCell.detailed));
+                region.faces.add(
+                    new Face(
+                        c,
+                        points,
+                        surface.side,
+                        surface,
+                        previewCell.detailed,
+                        (previewCell.cheapFaces & 1 << surface.side) == 0,
+                        appearance).cheapHull(region, previewCell));
             }
         }
-        if (region.projectedCells == region.cells.size()) {
+        if (region.projectionTodo.isEmpty()) {
             region.faces.sort(Comparator.comparingDouble(face -> face.depth));
             region.projectedKey = key;
         }
@@ -1170,9 +1476,11 @@ final class HologramRenderer {
 
         HologramState state;
         final Map<HologramRegionCache.Key, PreviewTask> pending = new LinkedHashMap<>();
+        final Set<HologramRegionCache.Key> cheapPending = new LinkedHashSet<>();
         PreviewTask task;
         int completed, published, detailedCompleted;
-        boolean firstHintsPresented;
+        HologramRegionCache.Key projectionAfter;
+        boolean firstHintsPresented, allHintsPresented, detailPublicationPending;
 
         PreviewPreparation(HologramState state) {
             this.state = state;
@@ -1187,6 +1495,7 @@ final class HologramRenderer {
                 } else {
                     previewRegions.remove(entry.getKey());
                     pending.put(entry.getKey(), new PreviewTask(entry.getKey(), entry.getValue()));
+                    cheapPending.add(entry.getKey());
                 }
             }
         }
@@ -1196,21 +1505,71 @@ final class HologramRenderer {
             state = next;
             for (HologramRegionCache.Key key : dirty) {
                 PreviewTask old = pending.remove(key);
+                cheapPending.remove(key);
                 if (old != null) {
-                    completed -= old.cell + (old.refining ? old.cells.size() : 0);
-                    if (old.refining) detailedCompleted -= old.cell;
+                    recordPreviewCursorReset(
+                        old.refining ? old.cells.size() : old.cell,
+                        old.refining ? old.valid.size() : 0);
+                    completed -= old.refining ? old.valid.size() + old.cells.size() : old.cell;
+                    if (old.refining) detailedCompleted -= old.valid.size();
                     if (task == old) task = null;
                 } else {
                     List<HologramState.Cell> before = previous.regions.regions.get(key);
                     if (before != null) {
+                        recordPreviewCursorReset(before.size(), before.size());
                         completed -= 2 * before.size();
                         detailedCompleted -= before.size();
                     }
                 }
                 List<HologramState.Cell> cells = next.regions.regions.get(key);
-                if (cells != null) pending.put(key, new PreviewTask(key, cells));
+                if (cells != null) {
+                    pending.put(key, new PreviewTask(key, cells));
+                    cheapPending.add(key);
+                }
             }
             published = Math.min(published, completed);
+            if (!dirty.isEmpty()) allHintsPresented = false;
+        }
+
+        /** Appearance readiness is not a new source pass. Retain base cursors and deduplicate repairs by slot. */
+        void repair(HologramState next, Set<Integer> indices) {
+            state = next;
+            Map<HologramRegionCache.Key, Set<Integer>> regions = new LinkedHashMap<>();
+            for (int index : indices)
+                regions.computeIfAbsent(HologramRegionCache.key(next.cells.get(index)), ignored -> new HashSet<>())
+                    .add(index);
+            for (Map.Entry<HologramRegionCache.Key, Set<Integer>> entry : regions.entrySet()) {
+                PreviewTask changed = pending.get(entry.getKey());
+                PreviewRegion retained = previewRegions.get(entry.getKey());
+                if (changed == null) {
+                    if (retained == null) continue; // Initial cheap work has not reached this region yet.
+                    changed = new PreviewTask(entry.getKey(), next.regions.regions.get(entry.getKey()));
+                    changed.cell = changed.cells.size();
+                    changed.refining = true;
+                    changed.region = changed.detail = retained;
+                    for (HologramState.Cell cell : changed.cells) changed.valid.add(cell.index);
+                    pending.put(entry.getKey(), changed);
+                }
+                Set<Integer> affected = entry.getValue();
+                if (changed.region != null && changed.region != changed.detail)
+                    changed.region.refreshCheap(next, affected);
+                if (changed.detail != null) {
+                    changed.detail.remove(affected);
+                    for (int index : affected) if (changed.valid.remove(index)) {
+                        changed.revisit.add(index);
+                        completed--;
+                        detailedCompleted--;
+                    }
+                    changed.detail.complete = false;
+                    if (changed.region == changed.detail) {
+                        changed.detail.hintsComplete = false;
+                        allHintsPresented = false;
+                    }
+                }
+            }
+            published = Math.min(published, completed);
+            // Even a same-owner native result must retire obsolete projected faces before another draw.
+            detailPublicationPending |= !indices.isEmpty();
         }
 
         void advance(int layer, int view, boolean current) {
@@ -1222,25 +1581,16 @@ final class HologramRenderer {
         }
 
         void advance(int layer, int view, boolean current, long deadline, java.util.function.LongSupplier clock) {
-            int work = 0;
-            if (task != null && !previewRegionVisible(state, task.key)) task = null;
+            int work = 0, slice = 0;
+            boolean visibleNative = true;
             while (!pending.isEmpty() && (work == 0 || clock.getAsLong() < deadline)) {
-                if (task == null) task = nextTask();
-                if (task.cell == task.cells.size()) {
-                    if (!task.refining) {
-                        task.region.hintsComplete = true;
-                        task.refining = true;
-                        task.cell = 0;
-                        task.detail = new PreviewRegion();
-                        // Preserve the first cheap visual feedback; later regions consume the shared frame deadline.
-                        if (!firstHintsPresented) {
-                            firstHintsPresented = true;
-                            break;
-                        }
-                        continue;
-                    }
-                    completeTask();
-                    continue;
+                if (task == null) {
+                    task = nextTask();
+                    slice = 0;
+                    // Camera and owner are fixed for this advance call. Region visibility is shared by every
+                    // cell in the slice; recomputing its eight projected corners per cell allocates needlessly.
+                    visibleNative = state.authorProjection == null || projectedFrame == null
+                        || previewRegionVisible(state, task.key);
                 }
                 if (task.region == null) {
                     task.region = new PreviewRegion();
@@ -1248,28 +1598,98 @@ final class HologramRenderer {
                     lastPreviewBuiltRegions++;
                 }
                 PreviewRegion result = task.refining ? task.detail : task.region;
-                previewCell(state, result, task.cells.get(task.cell++), layer, view, current, task.refining);
+                boolean revisit = task.refining && !task.revisit.isEmpty()
+                    && (task.cell == task.cells.size() || task.repairTurn);
+                int index;
+                if (revisit) {
+                    java.util.Iterator<Integer> repairs = task.revisit.iterator();
+                    index = repairs.next();
+                    repairs.remove();
+                } else index = task.cells.get(task.cell++).index;
+                if (task.refining) task.repairTurn = !revisit;
+                previewCell(state, result, state.cells.get(index), layer, view, current, task.refining, visibleNative);
+                recordPreviewCellWork(task.refining);
                 result.projectedKey = "";
                 completed++;
-                if (task.refining) detailedCompleted++;
+                if (task.refining) {
+                    task.valid.add(index);
+                    detailedCompleted++;
+                }
                 work++;
+                slice++;
+                if (task.cell == task.cells.size() && task.revisit.isEmpty()) {
+                    if (task.refining) completeTask();
+                    else {
+                        cheapPending.remove(task.key);
+                        task.region.hintsComplete = true;
+                        task.refining = true;
+                        task.cell = 0;
+                        task.detail = new PreviewRegion();
+                        rotateTask();
+                        // Keep the existing first cheap feedback boundary, never enter detail ahead of hints.
+                        if (!firstHintsPresented) {
+                            firstHintsPresented = true;
+                            break;
+                        }
+                    }
+                } else if (slice >= PREVIEW_REGION_SLICE) rotateTask();
             }
-            if (task != null && task.refining && task.cell == task.cells.size()) completeTask();
+            // A deadline is a yield, not ownership of the next frame. Keep the exact partial cursor at the tail.
+            rotateTask();
         }
 
         private PreviewTask nextTask() {
-            PreviewTask first = null;
-            for (PreviewTask candidate : pending.values()) {
-                if (first == null) first = candidate;
-                if (previewRegionVisible(state, candidate.key)) return candidate;
+            // Include every source region, not just the currently cached or clipped subset. Native work cannot
+            // hold up cheap coverage elsewhere; FIFO also avoids permanent offscreen starvation after a pan.
+            // A separate cheap FIFO avoids scanning every detailed task on each selection (quadratic for
+            // sparse blueprints), including when a single dirty region re-enters cheap preparation.
+            if (!cheapPending.isEmpty()) return pending.get(
+                cheapPending.iterator()
+                    .next());
+            return pending.values()
+                .iterator()
+                .next();
+        }
+
+        private void rotateTask() {
+            if (task == null) return;
+            pending.remove(task.key);
+            pending.put(task.key, task);
+            if (!task.refining) {
+                cheapPending.remove(task.key);
+                cheapPending.add(task.key);
             }
-            return first;
+            task = null;
+        }
+
+        boolean hintsReady() {
+            if (completed - detailedCompleted != state.cells.size()) return false;
+            for (PreviewRegion region : previewRegions.values()) if (!region.hintsComplete) return false;
+            return true;
+        }
+
+        boolean publishProgress() {
+            // Geometric milestones avoid quadratic reprojection, but the last cheap pass must be visible even
+            // when it lands between milestones. This is not a native-ready or current-camera-ready assertion.
+            // Replacing cheap output with a completed detail region is a separate publication event: after
+            // publishing N cheap cells, count doubling alone would hide every detail region until 2N.
+            boolean allHints = hintsReady();
+            if (detailPublicationPending || allHints && !allHintsPresented
+                || completed > published
+                    && (published == 0 || completed >= 2L * published || completed == 2L * state.cells.size())) {
+                if (allHints) allHintsPresented = true;
+                detailPublicationPending = false;
+                published = completed;
+                return true;
+            }
+            return false;
         }
 
         private void completeTask() {
             task.detail.complete = true;
             task.detail.hintsComplete = true;
             previewRegions.put(task.key, task.detail);
+            detailPublicationPending = true;
             pending.remove(task.key);
             task = null;
         }
@@ -1279,9 +1699,10 @@ final class HologramRenderer {
 
         final HologramRegionCache.Key key;
         final List<HologramState.Cell> cells;
+        final Set<Integer> valid = new HashSet<>(), revisit = new LinkedHashSet<>();
         PreviewRegion region, detail;
         int cell;
-        boolean refining;
+        boolean refining, repairTurn;
 
         PreviewTask(HologramRegionCache.Key key, List<HologramState.Cell> cells) {
             this.key = key;
@@ -1295,23 +1716,109 @@ final class HologramRenderer {
         final List<PreviewCell> cells = new ArrayList<>();
         String projectedKey = "", projectionWorkKey = "";
         int projectedCells, unresolved, budgetLimited;
+        int presentedOcclusion = -1;
         double depth;
         boolean complete, hintsComplete, deferredVisibility;
         List<Face> faces = new ArrayList<>(), outlines = new ArrayList<>();
         List<RoleMarker> markers = new ArrayList<>();
         List<HologramState.Cell> nativeCells = new ArrayList<>();
+        final Map<Integer, PreviewCell> projectionTodo = new LinkedHashMap<>();
+        final Set<Integer> projected = new HashSet<>();
+
+        void add(PreviewCell cell) {
+            cells.add(cell);
+            if (!projectionWorkKey.isEmpty()) projectionTodo.put(cell.cell.index, cell);
+            projectedKey = "";
+        }
+
+        void invalidateProjection() {
+            projectedKey = projectionWorkKey = "";
+            projectedCells = 0;
+            projectionTodo.clear();
+            projected.clear();
+            faces.clear();
+            outlines.clear();
+            markers.clear();
+            nativeCells.clear();
+        }
+
+        /** A same-camera repair removes only obsolete coordinates; unrelated pending admission stays FIFO. */
+        void invalidateProjectedCells(Set<Integer> changed) {
+            projectionTodo.keySet()
+                .removeAll(changed);
+            projected.removeAll(changed);
+            projectedCells = projected.size();
+            faces.removeIf(face -> changed.contains(face.cell.index));
+            outlines.removeIf(face -> changed.contains(face.cell.index));
+            markers.removeIf(marker -> changed.contains(marker.cell.index));
+            nativeCells.removeIf(cell -> changed.contains(cell.index));
+            projectedKey = "";
+        }
+
+        /** Provisional faces use current immutable cells, without invoking native callbacks during publication. */
+        void refreshCheap(HologramState state, Set<Integer> changed) {
+            invalidateProjectedCells(changed);
+            for (int at = 0; at < visible.size(); at++) {
+                HologramState.Cell cell = visible.get(at);
+                if (changed.contains(cell.index)) visible.set(at, state.cells.get(cell.index));
+            }
+            for (int at = 0; at < cells.size(); at++) {
+                PreviewCell cell = cells.get(at);
+                if (changed.contains(cell.cell.index)) {
+                    PreviewCell replacement = new PreviewCell(
+                        state.cells.get(cell.cell.index),
+                        63,
+                        roleLabel(state.cells.get(cell.cell.index)),
+                        false);
+                    cells.set(at, replacement);
+                    if (!projectionWorkKey.isEmpty()) projectionTodo.put(replacement.cell.index, replacement);
+                }
+            }
+        }
+
+        /** Bounded by this 16-cube region, not the document or number of publication events. */
+        void remove(Set<Integer> changed) {
+            visible.removeIf(cell -> changed.contains(cell.index));
+            linked.removeIf(cell -> changed.contains(cell.index));
+            // Stable compaction avoids one ArrayList tail shift for every repaired cell in a dense region.
+            int retained = 0;
+            deferredVisibility = false;
+            for (int at = 0; at < cells.size(); at++) {
+                PreviewCell cell = cells.get(at);
+                if (changed.contains(cell.cell.index)) {
+                    if ((cell.pending & 1) != 0) unresolved--;
+                    if ((cell.pending & 2) != 0) budgetLimited--;
+                } else {
+                    cells.set(retained++, cell);
+                    deferredVisibility |= (cell.pending & 4) != 0;
+                }
+            }
+            cells.subList(retained, cells.size())
+                .clear();
+            invalidateProjectedCells(changed);
+        }
     }
 
     private static final class PreviewCell {
 
         final HologramState.Cell cell;
-        final int exposed;
+        final int exposed, cheapFaces, pending;
         final String role;
         final boolean detailed;
 
         PreviewCell(HologramState.Cell cell, int exposed, String role, boolean detailed) {
+            this(cell, exposed, role, detailed, 63);
+        }
+
+        PreviewCell(HologramState.Cell cell, int exposed, String role, boolean detailed, int cheapFaces) {
+            this(cell, exposed, role, detailed, cheapFaces, 0);
+        }
+
+        PreviewCell(HologramState.Cell cell, int exposed, String role, boolean detailed, int cheapFaces, int pending) {
             this.cell = cell;
             this.exposed = exposed;
+            this.cheapFaces = cheapFaces;
+            this.pending = pending;
             this.role = role;
             this.detailed = detailed;
         }
@@ -1393,6 +1900,8 @@ final class HologramRenderer {
         // Indexing and list compilation share a small frame budget. No structure coordinates
         // are discarded; distant groups remain cached and are built when the player approaches.
         long deadline = System.nanoTime() + WORLD_BUILD_NANOS;
+        HologramBlockRender.beginPreparationSlice(deadline);
+        nativePreparationCellsChanged(state, HologramBlockRender.retryDeferredCells(state));
         int[] anchor = state.data.getBoolean("virtual") && state.data.getBoolean("moving")
             ? HologramClient.movingAnchor(state)
             : null;
@@ -1595,6 +2104,42 @@ final class HologramRenderer {
         group.geometry = group.gt = group.fallback = group.ghosts = 0;
     }
 
+    /** Same-access preparation has no source publication: wake only consumers that actually resolved. */
+    static void nativePreparationChanged(HologramState state, Set<HologramRegionCache.Key> dirty) {
+        if (dirty.isEmpty()) return;
+        recordPreviewNativeWake(dirty.size());
+        if (previewPreparation != null && previewPreparation.state == state) {
+            Set<Integer> indices = new HashSet<>();
+            for (HologramRegionCache.Key key : dirty) for (HologramState.Cell cell : state.regions.regions
+                .getOrDefault(key, java.util.Collections.emptyList())) indices.add(cell.index);
+            previewPreparation.repair(state, indices);
+            previewState = null;
+        }
+        if (worldState == state) for (HologramRegionCache.Key key : dirty) {
+            WorldGroup group = worldGroups.get(coordinate(key.x, key.y, key.z));
+            if (group != null) invalidateWorldGroup(group);
+        }
+    }
+
+    static void nativePreparationCellsChanged(HologramState state, Set<HologramState.Cell> changed) {
+        if (changed.isEmpty()) return;
+        Set<Integer> indices = new HashSet<>();
+        Set<HologramRegionCache.Key> regions = new HashSet<>();
+        for (HologramState.Cell cell : changed) {
+            indices.add(cell.index);
+            regions.add(HologramRegionCache.key(cell));
+        }
+        recordPreviewNativeWake(regions.size());
+        if (previewPreparation != null && previewPreparation.state == state) {
+            previewPreparation.repair(state, indices);
+            previewState = null;
+        }
+        if (worldState == state) for (HologramRegionCache.Key key : regions) {
+            WorldGroup group = worldGroups.get(coordinate(key.x, key.y, key.z));
+            if (group != null) invalidateWorldGroup(group);
+        }
+    }
+
     /** Group lists refer to native lists, so discard them before releasing their native snapshot. */
     static void nativeSnapshotChanged() {
         clearWorldGroups();
@@ -1751,6 +2296,25 @@ final class HologramRenderer {
         }
     }
 
+    /** Material callbacks run only in the prepass; list emission consumes the exact selected object. */
+    static final class PreparedWorldMaterials {
+
+        private final Map<HologramState.Cell, HologramTextures.Material> values = new java.util.IdentityHashMap<>();
+
+        void prepare(HologramState.Cell cell, boolean payloadReady, boolean nativeDeferred,
+            java.util.function.Supplier<HologramTextures.Material> light,
+            java.util.function.Supplier<HologramTextures.Material> detailed) {
+            values.put(cell, payloadReady && !nativeDeferred ? detailed.get() : light.get());
+        }
+
+        HologramTextures.Material get(HologramState.Cell cell) {
+            HologramTextures.Material material = values.get(cell);
+            if (material == null)
+                throw new IllegalStateException("world material was not prepared before list emission");
+            return material;
+        }
+    }
+
     private static boolean compileWorldGroup(WorldGroup group, boolean removal, boolean light, long deadline) {
         int list = GL11.glGenLists(1);
         if (list == 0) return false;
@@ -1759,6 +2323,9 @@ final class HologramRenderer {
         int start = light ? group.lightBuilt : group.built;
         int limit = Math.min(start + WORLD_MESH_BATCH, group.cells.size()), end = start;
         List<HologramState.Cell> cells = new ArrayList<>();
+        PreparedWorldMaterials materials = new PreparedWorldMaterials();
+        Set<HologramState.Cell> preparedCells = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+        Set<HologramState.Cell> nativeFamilies = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
         // Native lists and material callbacks must finish before opening the group's list/tessellator.
         // The deadline is checked per cell, rather than after baking a whole 256-cell native batch.
         while (end < limit && (end == start || System.nanoTime() < deadline)) {
@@ -1766,13 +2333,19 @@ final class HologramRenderer {
             if (HologramJobVisuals.completed(worldState, cell)) continue;
             cells.add(cell);
             if (!worldGhosts.contains(coordinate(cell.x, cell.y, cell.z))) continue;
-            if (light || !HologramSnapshotModelsClient.ready(worldState, cell, false))
-                HologramLightPreview.material(cell, false);
-            else {
+            boolean modelReady = !light && HologramSnapshotModelsClient.ready(worldState, cell, false);
+            if (modelReady) preparedCells.add(cell);
+            if (HologramNativeTiles.supported(cell.block(false))) nativeFamilies.add(cell);
+            if (modelReady) {
                 HologramBlockRender.ready(cell, false);
-                HologramTextures.material(cell, false);
                 HologramLinkNodePreview.prepare(cell, false);
             }
+            materials.prepare(
+                cell,
+                modelReady,
+                HologramBlockRender.deferred(cell, false),
+                () -> HologramLightPreview.material(cell, false),
+                () -> HologramTextures.material(cell, false));
         }
         GL11.glNewList(list, GL11.GL_COMPILE);
         Tessellator t = Tessellator.instance;
@@ -1780,17 +2353,15 @@ final class HologramRenderer {
         t.startDrawingQuads();
         for (HologramState.Cell c : cells) {
             if (!worldGhosts.contains(coordinate(c.x, c.y, c.z))) continue;
-            boolean modelReady = !light && HologramSnapshotModelsClient.ready(worldState, c, false);
-            if (modelReady && HologramBlockRender.ready(c, false)) {
+            boolean modelReady = !light && preparedCells.contains(c);
+            if (modelReady && HologramBlockRender.cachedReady(c, false)) {
                 lastWorldGhosts++;
                 continue;
             }
-            if (HologramBlockRender.deferred(c, false)) modelReady = false;
-            HologramTextures.Material material = !modelReady ? HologramLightPreview.material(c, false)
-                : HologramTextures.material(c, false);
+            HologramTextures.Material material = materials.get(c);
             lastWorldGhosts++;
             if (material.gregTech) lastWorldGTGeometry++;
-            if (material.fallback || HologramNativeTiles.supported(c.block(false))) lastWorldFallback++;
+            if (material.fallback || nativeFamilies.contains(c)) lastWorldFallback++;
             for (HologramGeometry.Surface surface : material.geometry) {
                 int side = surface.side;
                 int[] normal = NORMALS[side];
@@ -1819,16 +2390,16 @@ final class HologramRenderer {
         GL11.glBlendFunc(0x8003, 0x8004); // GL_CONSTANT_ALPHA / GL_ONE_MINUS_CONSTANT_ALPHA
         GL11.glEnable(GL11.GL_BLEND);
         for (HologramState.Cell c : cells) if (!light && worldGhosts.contains(coordinate(c.x, c.y, c.z))
-            && HologramSnapshotModelsClient.ready(worldState, c, false)
-            && HologramBlockRender.ready(c, false)) {
+            && preparedCells.contains(c)
+            && HologramBlockRender.cachedReady(c, false)) {
                 GL11.glPushMatrix();
                 GL11.glTranslated(c.x, c.y, c.z);
                 HologramBlockRender.draw(c, false);
                 GL11.glPopMatrix();
             }
         GL11.glPopAttrib();
-        for (HologramState.Cell c : cells) if (!light && worldGhosts.contains(coordinate(c.x, c.y, c.z))
-            && HologramSnapshotModelsClient.ready(worldState, c, false)) {
+        for (HologramState.Cell c : cells)
+            if (!light && worldGhosts.contains(coordinate(c.x, c.y, c.z)) && preparedCells.contains(c)) {
                 GL11.glPushMatrix();
                 GL11.glTranslated(c.x, c.y, c.z);
                 HologramLinkNodePreview.draw(c, false, .38f);
@@ -1924,6 +2495,7 @@ final class HologramRenderer {
         current = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
         if (cell.modelPending(current)) return false;
         Block block = cell.block(current);
+        if (HologramChiselNativeRender.opaqueCube(block)) return !cell.iconOnly;
         return HologramOcclusion.fullCube(
             block,
             HologramTextures.material(cell, current).partial,
@@ -1941,6 +2513,41 @@ final class HologramRenderer {
         return icon.getMinV() + (icon.getMaxV() - icon.getMinV()) * v;
     }
 
+    interface PreviewAppearanceResolver {
+
+        boolean nativeReady(HologramState.Cell cell, boolean current);
+
+        HologramTextures.Material material(HologramState.Cell cell, boolean current, boolean detailed);
+    }
+
+    private static final PreviewAppearanceResolver PREVIEW_APPEARANCE = new PreviewAppearanceResolver() {
+
+        public boolean nativeReady(HologramState.Cell cell, boolean current) {
+            return HologramBlockRender.ready(cell, current);
+        }
+
+        public HologramTextures.Material material(HologramState.Cell cell, boolean current, boolean detailed) {
+            return detailed ? HologramTextures.material(cell, current) : HologramLightPreview.material(cell, current);
+        }
+    };
+
+    private static final class PreviewAppearance {
+
+        final boolean empty, nativeReady, nativeModel;
+        final HologramTextures.Material material, geometryMaterial;
+
+        PreviewAppearance(HologramState.Cell cell, boolean current, boolean detailed,
+            PreviewAppearanceResolver resolver, boolean projection) {
+            empty = !cell.anchor && !cell.iconOnly && (current ? cell.id : cell.wantId).equals("minecraft:air");
+            nativeReady = detailed && (projection || !empty) && resolver.nativeReady(cell, current);
+            nativeModel = !empty && nativeReady;
+            // Projection historically resolves empty-voxel pick geometry, whereas standalone empty Faces
+            // have null materials and never run preparation callbacks. Preserve both contracts.
+            geometryMaterial = projection || !empty ? resolver.material(cell, current, detailed) : null;
+            material = empty ? null : geometryMaterial;
+        }
+    }
+
     private static final class Face {
 
         final HologramState.Cell cell;
@@ -1948,8 +2555,10 @@ final class HologramRenderer {
         final int side;
         final double depth;
         final HologramTextures.Material material;
-        final boolean empty, nativeModel;
+        final boolean empty, nativeModel, cheapHidden;
         final HologramGeometry.Surface surface;
+        private PreviewRegion cheapRegion;
+        private int cheapFaces = 63, cheapBoundary;
 
         Face(HologramState.Cell cell, double[][] points, int side, boolean current) {
             this(cell, points, side, current, null);
@@ -1961,17 +2570,55 @@ final class HologramRenderer {
 
         Face(HologramState.Cell cell, double[][] points, int side, boolean current, HologramGeometry.Surface surface,
             boolean detailed) {
+            this(cell, points, side, current, surface, detailed, false);
+        }
+
+        Face(HologramState.Cell cell, double[][] points, int side, boolean current, HologramGeometry.Surface surface,
+            boolean detailed, boolean cheapHidden) {
+            this(
+                cell,
+                points,
+                side,
+                surface,
+                detailed,
+                cheapHidden,
+                new PreviewAppearance(cell, current, detailed, PREVIEW_APPEARANCE, false));
+        }
+
+        Face(HologramState.Cell cell, double[][] points, int side, HologramGeometry.Surface surface, boolean detailed,
+            boolean cheapHidden, PreviewAppearance appearance) {
             this.cell = cell;
             this.points = points;
             this.side = side;
             this.surface = surface;
-            empty = !cell.anchor && !cell.iconOnly && (current ? cell.id : cell.wantId).equals("minecraft:air");
-            nativeModel = detailed && !empty && HologramBlockRender.ready(cell, current);
-            material = empty ? null
-                : detailed ? HologramTextures.material(cell, current) : HologramLightPreview.material(cell, current);
+            this.cheapHidden = !detailed && cheapHidden;
+            empty = appearance.empty;
+            nativeModel = appearance.nativeModel;
+            material = appearance.material;
             double d = 0;
             for (int index : FACES[side]) d += points[index][2];
             depth = d / 4;
+        }
+
+        Face cheapHull(PreviewRegion region, PreviewCell preview) {
+            if (!preview.detailed && preview.cheapFaces != 63) {
+                cheapRegion = region;
+                cheapFaces = preview.cheapFaces;
+                cheapBoundary = ((cell.y & 15) == 0 ? 1 : 0) | ((cell.y & 15) == 15 ? 2 : 0)
+                    | ((cell.z & 15) == 0 ? 4 : 0)
+                    | ((cell.z & 15) == 15 ? 8 : 0)
+                    | ((cell.x & 15) == 0 ? 16 : 0)
+                    | ((cell.x & 15) == 15 ? 32 : 0);
+            }
+            return this;
+        }
+
+        int drawFaces() {
+            if (cheapRegion == null || cheapRegion.presentedOcclusion < 0
+                || moveOffset[0] != 0
+                || moveOffset[1] != 0
+                || moveOffset[2] != 0) return 63;
+            return cheapFaces | (cheapBoundary & ~cheapRegion.presentedOcclusion);
         }
 
         List<HologramTextures.Sample> samples() {

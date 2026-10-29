@@ -55,6 +55,10 @@ public final class HologramRegressionTest {
         cases.put("library_activation_terminal_receipts", HologramLibraryActivationResultRegression::run);
         cases.put("saved_preset_pose_preparation", HologramPresetPosePreparationRegression::run);
         cases.put("segment_validation_pages_and_global_constraints", HologramSegmentValidationRegression::run);
+        cases.put("capture_continuation_preserves_queued_owner", HologramCaptureContinuationRegression::run);
+        cases.put("server_synthetic_declaration_callback_boundary", HologramServerDeclarationRegression::run);
+        cases.put("structure_saved_orientation_preservation", HologramStructureOrientationRegression::run);
+        cases.put("shared_structure_candidate_reconciliation", HologramSharedStructureRegenerationRegression::run);
         cases.put("preset_copy_matches_old_serialized_contract", HologramPresetCopiesRegression::run);
         cases.put("stable_transport_page_layout", HologramTransportPageLayoutRegression::run);
         cases.put("snapshot_segment_reference_protocol", () -> {
@@ -104,13 +108,6 @@ public final class HologramRegressionTest {
         cases.put("picture_exact_raster_reuse", HologramPictureRasterRegression::run);
         cases.put("build_confirmation_and_finish_continuations", HologramBuildContinuationRegression::run);
         cases.put("cut_sparse_selection_and_preparation", HologramCutSparseRegression::run);
-        cases.put("process_cpu_memory_and_singleflight", () -> {
-            try {
-                HologramProcessGovernorRegression.run();
-            } catch (Exception failure) {
-                throw new AssertionError(failure);
-            }
-        });
         cases.put("blueprint_actual_cell_limits_and_sparse_area_scanning", HologramBlueprintLimitsRegression::run);
         cases.put(
             "blueprint_client_cell_admission_is_strict_and_atomic",

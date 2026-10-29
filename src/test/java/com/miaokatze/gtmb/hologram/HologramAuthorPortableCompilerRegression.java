@@ -34,6 +34,7 @@ public final class HologramAuthorPortableCompilerRegression {
         littleTiles();
         unsupportedAndSealed();
         freshProcessing();
+        explicitNullSourceBoundaries();
         captureSourceFrames();
         crossDimensionSettlement();
     }
@@ -400,6 +401,170 @@ public final class HologramAuthorPortableCompilerRegression {
             !document.sourceCopy()
                 .has("processingNbt"),
             "fresh processed candidate does not overwrite source draft");
+    }
+
+    private static void explicitNullSourceBoundaries() throws Exception {
+        JsonObject row = cell(0);
+        addNullExtensions(row);
+        NBTTagCompound payload = new NBTTagCompound();
+        payload.setString("vendor", "opaque source payload");
+        row.addProperty("itemNbt", HologramBlueprintNbt.encodeCaptured(payload));
+        JsonObject raw = source(row);
+        addNullExtensions(raw);
+        JsonObject envelope = new JsonObject();
+        addNullExtensions(envelope);
+        envelope.add("blueprint", raw);
+        AuthorDocument document = read(envelope);
+        byte[] original = AuthorDocumentIO.writeDraft(document, AuthorDocumentIO.Limits.defaults());
+        String originalSource = document.sourceCopy()
+            .toString();
+        String originalPayload = document.cell(1)
+            .itemNbt();
+
+        JsonObject local = HologramLocalAuthorSemantics.process(raw, policy().write(), 0, 0, 0, 0);
+        assertNullBlueprint(local, "local processing");
+        JsonObject candidate = HologramBlueprintCompactCodec
+            .parse(HologramAuthorPortableCompiler.compile(document, policy().write(), 0, 0, 0, 0));
+        assertNullExtensions(candidate, "offline envelope");
+        assertNullBlueprint(candidate.getAsJsonObject("blueprint"), "offline candidate");
+        SimpleAssert.that(
+            !candidate.getAsJsonObject("blueprint")
+                .has("authorUuid"),
+            "raw source encoding does not invent actor identity");
+
+        // Selected context is read-only; test its fidelity separately from the destructive process-install path.
+        JsonObject selected = AuthorDocumentIO
+            .read(HologramAuthorReviewProtocol.selectedCellSource(document, 1), HologramAuthorReviewProtocol.limits())
+            .sourceCopy();
+        assertNullBlueprint(selected, "selected inspector context");
+        SimpleAssert
+            .that(!selected.has("blueprint"), "selected inspector remains bare and limited to selected context");
+
+        java.lang.reflect.Field owner = HologramWorkBudget.class.getDeclaredField("serverOwner");
+        owner.setAccessible(true);
+        Object previousOwner = owner.get(null);
+        HologramWorkBudget.startServerTick();
+        HologramWorkBudget.endServerTick();
+        try {
+            HologramAuthorServerReview.Result reviewed = HologramAuthorServerReview
+                .review(document, "process", policy().write());
+            NBTTagCompound response = HologramAuthorReviewProtocol
+                .decode(HologramAuthorReviewProtocol.encode(HologramAuthorReviewService.resultPayload(reviewed, null)));
+            JsonObject processed = AuthorDocumentIO
+                .read(response.getByteArray("source"), HologramAuthorReviewProtocol.limits())
+                .sourceCopy();
+            assertNullBlueprint(processed, "server process wire source");
+            SimpleAssert
+                .eq(local.get("vendor"), processed.get("vendor"), "local and server unknown nested values agree");
+            JsonObject replacement = document.sourceCopy();
+            replacement.add("blueprint", processed);
+            AuthorEditor editor = new AuthorEditor(document, 8);
+            editor.replaceResolvedSource(document.revision(), replacement);
+            assertNullBlueprint(
+                editor.current()
+                    .sourceCopy()
+                    .getAsJsonObject("blueprint"),
+                "installed server process");
+            AuthorDocument reopened = AuthorDocumentIO.read(
+                AuthorDocumentIO.writeDraft(editor.current(), AuthorDocumentIO.Limits.defaults()),
+                AuthorDocumentIO.Limits.defaults());
+            assertNullExtensions(reopened.sourceCopy(), "processed recovery envelope");
+            assertNullBlueprint(
+                reopened.sourceCopy()
+                    .getAsJsonObject("blueprint"),
+                "processed recovery source");
+            editor.undo();
+            SimpleAssert.eq(
+                originalSource,
+                editor.current()
+                    .sourceCopy()
+                    .toString(),
+                "undo restores exact original source");
+            SimpleAssert.eq(
+                originalPayload,
+                editor.current()
+                    .cell(1)
+                    .itemNbt(),
+                "undo restores opaque original payload");
+            editor.redo();
+            assertNullBlueprint(
+                editor.current()
+                    .sourceCopy()
+                    .getAsJsonObject("blueprint"),
+                "redo retains null source fields");
+
+            HologramAuthorServerReview.Result compiled = HologramAuthorServerReview
+                .review(document, "compile", policy().write());
+            JsonObject serverCandidate = HologramBlueprintCompactCodec.parse(compiled.compiled);
+            assertNullExtensions(serverCandidate, "server compiled envelope");
+            assertNullBlueprint(serverCandidate.getAsJsonObject("blueprint"), "server compiled candidate");
+        } finally {
+            owner.set(null, previousOwner);
+        }
+        SimpleAssert.eq(
+            originalSource,
+            document.sourceCopy()
+                .toString(),
+            "compile/review never mutate frozen raw source");
+        SimpleAssert.eq(
+            originalPayload,
+            document.cell(1)
+                .itemNbt(),
+            "compile/review never mutate opaque source payload");
+        SimpleAssert.that(
+            Arrays.equals(original, AuthorDocumentIO.writeDraft(document, AuthorDocumentIO.Limits.defaults())),
+            "compile/review retain exact original recovery bytes");
+    }
+
+    private static void addNullExtensions(JsonObject object) {
+        object.add("vendorNull", com.google.gson.JsonNull.INSTANCE);
+        JsonObject vendor = new JsonObject();
+        vendor.add("nested", com.google.gson.JsonNull.INSTANCE);
+        JsonArray array = new JsonArray();
+        array.add(com.google.gson.JsonNull.INSTANCE);
+        array.add(new com.google.gson.JsonPrimitive("middle"));
+        JsonObject tail = new JsonObject();
+        tail.add("last", com.google.gson.JsonNull.INSTANCE);
+        array.add(tail);
+        vendor.add("array", array);
+        object.add("vendor", vendor);
+    }
+
+    private static void assertNullBlueprint(JsonObject object, String label) {
+        assertNullExtensions(object, label + " header");
+        assertNullExtensions(
+            object.getAsJsonArray("cells")
+                .get(0)
+                .getAsJsonObject(),
+            label + " cell");
+    }
+
+    private static void assertNullExtensions(JsonObject object, String label) {
+        SimpleAssert.that(
+            object.has("vendorNull") && object.get("vendorNull")
+                .isJsonNull(),
+            label + " explicit null");
+        SimpleAssert.that(!object.has("vendorAbsent"), label + " absent member stays absent");
+        JsonObject vendor = object.getAsJsonObject("vendor");
+        SimpleAssert.that(
+            vendor.has("nested") && vendor.get("nested")
+                .isJsonNull(),
+            label + " nested null");
+        JsonArray array = vendor.getAsJsonArray("array");
+        SimpleAssert.that(
+            array.size() == 3 && array.get(0)
+                .isJsonNull()
+                && "middle".equals(
+                    array.get(1)
+                        .getAsString())
+                && array.get(2)
+                    .getAsJsonObject()
+                    .has("last")
+                && array.get(2)
+                    .getAsJsonObject()
+                    .get("last")
+                    .isJsonNull(),
+            label + " ordered array and object nulls");
     }
 
     private static void captureSourceFrames() throws Exception {

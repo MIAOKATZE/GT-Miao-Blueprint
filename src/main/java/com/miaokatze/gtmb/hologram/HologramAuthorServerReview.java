@@ -406,7 +406,7 @@ public final class HologramAuthorServerReview {
                 .getAsJsonObject();
             root.add("blueprint", source);
             byte[] compiled = "compile".equals(operation)
-                ? HologramBlueprintSharing.encodeBounded(GSON, root, HologramBlueprintArtifact.MAX_JSON_BYTES)
+                ? HologramAuthorSourceJson.encode(root, HologramBlueprintArtifact.MAX_JSON_BYTES)
                 : null;
             NBTTagCompound report = HologramLocalAuthorSemantics.processingState(source, policy, frozen.sourceFrame());
             return new Result(report, source, compiled);

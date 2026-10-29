@@ -286,7 +286,7 @@ public final class AuthorEditor {
                 "excluded",
                 "allowedTargets"));
         JsonObject raw = merge(cell.source, owned);
-        if (raw.equals(cell.source)) return unchanged();
+        if (AuthorJsonValues.equal(raw, cell.source)) return unchanged();
         Transaction tx = new Transaction();
         tx.put(checkedCell(id, raw));
         return commit(tx, selection);
@@ -307,12 +307,12 @@ public final class AuthorEditor {
             AuthorDocument.Cell replacement = checkedCell(old.id, checkedObject(entry.getValue()));
             if (!old.position.equals(replacement.position) || !old.memberships.equals(replacement.memberships))
                 throw new IllegalArgumentException("Native cell replacement cannot change geometry/membership");
-            if (!old.source.equals(replacement.source)) tx.put(replacement);
+            if (!AuthorJsonValues.equal(old.source, replacement.source)) tx.put(replacement);
         }
         JsonObject headerChanges = validatedHeaderPatch(headerPatch);
         if (!headerChanges.entrySet()
             .isEmpty()) tx.header = merge(current.header, headerChanges);
-        if (tx.changed.isEmpty() && tx.header.equals(current.header)) return unchanged();
+        if (tx.changed.isEmpty() && AuthorJsonValues.equal(tx.header, current.header)) return unchanged();
         return commit(tx, selection);
     }
 
@@ -355,7 +355,7 @@ public final class AuthorEditor {
         }
         if (!candidate.editable() || candidate.wrapped != current.wrapped || candidate.count != current.count)
             throw new IllegalArgumentException("Processing changed document shape");
-        if (!candidate.envelope.equals(current.envelope))
+        if (!AuthorJsonValues.equal(candidate.envelope, current.envelope))
             throw new IllegalArgumentException("Processing changed source envelope");
         Transaction tx = new Transaction();
         for (AuthorDocument.Cell cell : candidate.cells()) {
@@ -364,7 +364,7 @@ public final class AuthorEditor {
             AuthorDocument.Cell old = requireCell(id);
             if (!old.memberships.equals(cell.memberships))
                 throw new IllegalArgumentException("Processing changed memberships");
-            if (!old.source.equals(cell.source))
+            if (!AuthorJsonValues.equal(old.source, cell.source))
                 tx.put(new AuthorDocument.Cell(id, cell.source, cell.position, cell.memberships, old.payloadOrigin));
         }
         if (!candidate.groupOrder.equals(current.groupOrder))
@@ -372,14 +372,15 @@ public final class AuthorEditor {
         boolean groupsChanged = false;
         for (String id : current.groupOrder) {
             AuthorDocument.Group next = candidate.groups.get(id), old = current.groups.get(id);
-            if (!next.source.equals(old.source)) {
+            if (!AuthorJsonValues.equal(next.source, old.source)) {
                 tx.putGroup(id, new AuthorDocument.Group(next.source, old.members));
                 tx.changed.addAll(old.members);
                 groupsChanged = true;
             }
         }
         tx.header = candidate.header;
-        if (tx.changed.isEmpty() && !groupsChanged && tx.header.equals(current.header)) return unchanged();
+        if (tx.changed.isEmpty() && !groupsChanged && AuthorJsonValues.equal(tx.header, current.header))
+            return unchanged();
         return commit(tx, selection);
     }
 
@@ -558,7 +559,7 @@ public final class AuthorEditor {
         if (!candidate.editable() || candidate.wrapped != current.wrapped
             || candidate.count != current.count
             || !candidate.groupOrder.equals(current.groupOrder)
-            || !candidate.envelope.equals(current.envelope))
+            || !AuthorJsonValues.equal(candidate.envelope, current.envelope))
             throw new IllegalArgumentException("Native transform changed source identity/shape");
         Transaction tx = new Transaction();
         java.util.Iterator<AuthorDocument.Cell> before = current.cells()
@@ -570,7 +571,7 @@ public final class AuthorEditor {
                 throw new IllegalStateException("Resolve pending native payload translation before rotating");
             if (!old.memberships.equals(cell.memberships))
                 throw new IllegalArgumentException("Native transform changed memberships");
-            if (!old.source.equals(cell.source) || (resolved && old.payloadPositionPending())) {
+            if (!AuthorJsonValues.equal(old.source, cell.source) || (resolved && old.payloadPositionPending())) {
                 tx.removePosition(old);
                 replacements.add(new AuthorDocument.Cell(old.id, cell.source, cell.position, cell.memberships));
             }
@@ -579,7 +580,7 @@ public final class AuthorEditor {
         boolean groupsChanged = false;
         for (String id : current.groupOrder) {
             AuthorDocument.Group old = current.groups.get(id), next = candidate.groups.get(id);
-            if (!old.source.equals(next.source)) {
+            if (!AuthorJsonValues.equal(old.source, next.source)) {
                 tx.putGroup(id, new AuthorDocument.Group(next.source, old.members));
                 tx.changed.addAll(old.members);
                 groupsChanged = true;
@@ -588,7 +589,7 @@ public final class AuthorEditor {
         tx.header = candidate.header;
         if (resolved) tx.obligations = null;
         if (tx.changed.isEmpty() && !groupsChanged
-            && tx.header.equals(current.header)
+            && AuthorJsonValues.equal(tx.header, current.header)
             && !(resolved && current.hasPendingObligations())) return unchanged();
         return commit(tx, selection);
     }
@@ -655,7 +656,7 @@ public final class AuthorEditor {
             }
         }
         JsonObject raw = merge(group.source, owned);
-        if (raw.equals(group.source)) return unchanged();
+        if (AuthorJsonValues.equal(raw, group.source)) return unchanged();
         Transaction tx = new Transaction();
         tx.putGroup(id, new AuthorDocument.Group(raw, group.members));
         tx.changed.addAll(group.members);

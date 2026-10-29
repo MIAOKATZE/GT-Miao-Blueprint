@@ -32,10 +32,20 @@ final class HologramRegionCache {
             index = retained;
         }
         Map<Key, List<HologramState.Cell>> replacements = new LinkedHashMap<>();
+        Map<Key, java.util.Set<HologramState.Cell>> removed = new LinkedHashMap<>();
         for (HologramState.Cell cell : before) {
             Key key = key(cell);
-            replacements.computeIfAbsent(key, unused -> new ArrayList<>(previous.regions.get(key)))
-                .remove(cell);
+            removed.computeIfAbsent(key, unused -> Collections.newSetFromMap(new java.util.IdentityHashMap<>()))
+                .add(cell);
+        }
+        // A native batch can replace many cells in one dense region. Repeated ArrayList.remove
+        // searches and shifts cost O(changed * regionSize); filter each old region once instead.
+        // Keep the old survivor order, then append replacements in the original changed order.
+        for (Map.Entry<Key, java.util.Set<HologramState.Cell>> entry : removed.entrySet()) {
+            List<HologramState.Cell> retained = new ArrayList<>();
+            for (HologramState.Cell cell : previous.regions.get(entry.getKey())) if (!entry.getValue()
+                .contains(cell)) retained.add(cell);
+            replacements.put(entry.getKey(), retained);
         }
         for (int slot : changed) {
             HologramState.Cell cell = cells.get(slot);
@@ -347,6 +357,14 @@ final class HologramRegionCache {
         java.util.Set<Key> result = new java.util.HashSet<>();
         for (HologramState.Cell old : state.changedPreviousCells) affect(result, old);
         for (int index : state.changedIndices) affect(result, state.cells.get(index));
+        return result;
+    }
+
+    /** Opaque appearance publication leaves neighboring cold block/meta facts unchanged. */
+    static java.util.Set<Key> changedRegions(HologramState state) {
+        java.util.Set<Key> result = new java.util.HashSet<>();
+        for (HologramState.Cell old : state.changedPreviousCells) result.add(key(old));
+        for (int index : state.changedIndices) result.add(key(state.cells.get(index)));
         return result;
     }
 

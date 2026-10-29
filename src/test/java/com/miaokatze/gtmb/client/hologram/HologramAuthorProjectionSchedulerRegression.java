@@ -48,7 +48,7 @@ public final class HologramAuthorProjectionSchedulerRegression {
             SimpleAssert.eq(12, resolved(projection.view()), "successful preparations also exceed four per tick");
             SimpleAssert
                 .eq(12, ((java.util.Map<?, ?>) field("loaded").get(projection)).size(), "all successes are charged");
-            long charge = 8192 + 4L * HologramSnapshotCodec.retainedEstimate(nativeData);
+            long charge = HologramAuthorProjection.residentCharge(ownedRow(projection.view().cells.get(0)));
             SimpleAssert
                 .eq(12 * charge, field("resident").getLong(projection), "resident accounting is exact per batch");
             for (int i = 0; i < 12; i++) SimpleAssert.eq(
@@ -182,6 +182,12 @@ public final class HologramAuthorProjectionSchedulerRegression {
             refused = true;
         }
         SimpleAssert.eq(true, refused, "closed projections cannot resume queued work");
+    }
+
+    private static NBTTagCompound ownedRow(HologramState.Cell cell) throws ReflectiveOperationException {
+        Field raw = HologramState.Cell.class.getDeclaredField("raw");
+        raw.setAccessible(true);
+        return (NBTTagCompound) raw.get(cell);
     }
 
     private static Field field(String name) throws ReflectiveOperationException {

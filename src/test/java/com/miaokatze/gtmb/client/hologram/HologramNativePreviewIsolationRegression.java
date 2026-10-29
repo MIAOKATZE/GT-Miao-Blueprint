@@ -179,20 +179,40 @@ public final class HologramNativePreviewIsolationRegression {
             scene.setTag("cells", rows);
             HologramBlockAccess access = access(new HologramState(scene), false);
             NeighborTile.reads = 0;
-            SimpleAssert.that(access.getTileEntity(0, 64, 0) != null, "connected surface admits first tile");
-            SimpleAssert.eq(1, NeighborTile.reads, "native neighbor callbacks do not recursively load the surface");
-            for (int x = 1; x < 2048; x++) SimpleAssert.that(
-                access.getTileEntity(x, 64, 0) != null,
-                "deferred neighbor remains available for its own render request");
-            SimpleAssert.eq(2048, NeighborTile.reads, "every host is decoded once without recursion");
+            SimpleAssert.eq(
+                null,
+                access.getTileEntity(0, 64, 0),
+                "cyclic neighbor-reading loader cannot publish speculative absence as success");
             SimpleAssert.that(
-                access.getTileEntity(0, 64, 0)
-                    .getWorldObj()
-                    .getTileEntity(1, 64, 0) != null,
-                "completed adjacent hosts remain visible for native face culling");
+                NeighborTile.reads <= HologramNativePreparation.MAX_CALLBACKS,
+                "one request bounds callbacks rather than recursively loading the surface");
+            HologramState state = (HologramState) privateField(HologramBlockAccess.class, "state").get(access);
+            int slices = 0;
+            while (access.outcome(state.cells.get(0)) == HologramNativePreparation.Outcome.WAITING && slices++ < 32)
+                access.prepare(state.cells.get(0), new HologramNativePreparation.Budget(1, 32, () -> 0L));
+            SimpleAssert.eq(
+                HologramNativePreparation.Outcome.FAILED,
+                access.outcome(state.cells.get(0)),
+                "cyclic/oversized load dependency has an explicit finite terminal outcome");
+            SimpleAssert.that(
+                access.failure(0, 64, 0)
+                    .contains("budget")
+                    || access.failure(0, 64, 0)
+                        .contains("cycle"),
+                "bounded refusal retains diagnostic rather than claiming empty neighbor compatibility");
+            int reads = NeighborTile.reads;
+            SimpleAssert.eq(null, access.getTileEntity(0, 64, 0), "terminal failed loader remains unavailable");
+            SimpleAssert.eq(reads, NeighborTile.reads, "terminal cached failure does not retry every frame");
         } finally {
             HologramNativeRenderRegistry.unregister(adapter);
         }
+    }
+
+    private static java.lang.reflect.Field privateField(Class<?> type, String name)
+        throws ReflectiveOperationException {
+        java.lang.reflect.Field field = type.getDeclaredField(name);
+        field.setAccessible(true);
+        return field;
     }
 
     public static final class NeighborTile extends TileEntity {

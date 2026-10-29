@@ -12,6 +12,8 @@ public final class HologramLibrarySnapshotAssemblyRegression {
 
     public static void run() {
         connectionOwnedCredit();
+        idleExpiry();
+        originAdmission();
         byte[] source = new byte[HologramLibraryProtocol.CHUNK_BYTES + 3];
         Arrays.fill(source, (byte) 7);
         byte[] hash = HologramLibraryProtocol.digest()
@@ -41,6 +43,108 @@ public final class HologramLibrarySnapshotAssemblyRegression {
         HologramTransportMemory.Lease all = HologramTransportMemory.reserve(HologramSnapshotAssembly.MAX_BYTES);
         check(all != null, "expiry and digest failure release admission");
         all.close();
+    }
+
+    private static void idleExpiry() {
+        java.util.List<Long> released = new java.util.ArrayList<>();
+        HologramLibrarySnapshotAssembly assembly = new HologramLibrarySnapshotAssembly(released::add);
+        byte[] first = new byte[HologramLibraryProtocol.CHUNK_BYTES];
+        byte[] last = new byte[] { 1 };
+        byte[] whole = new byte[first.length + 1];
+        whole[first.length] = 1;
+        byte[] hash = HologramLibraryProtocol.digest()
+            .digest(whole);
+        long before = HologramProcessGovernor.retainedBytes();
+        assembly.acceptReserved(1, whole.length, 0, first, hash, 0);
+        check(HologramProcessGovernor.retainedBytes() == before + whole.length, "partial frame owns announced bytes");
+        assembly.expire(HologramLibraryProtocol.TIMEOUT_NANOS + 1);
+        assembly.expire(HologramLibraryProtocol.TIMEOUT_NANOS + 2);
+        check(
+            HologramProcessGovernor.retainedBytes() == before && released.size() == 1,
+            "idle tick with no incoming packet releases exactly one byte reservation and credit");
+        check(
+            assembly.acceptReserved(1, whole.length, 0, first, hash, 1) == null,
+            "expired sequence cannot restart its reservation");
+        assembly.acceptReserved(2, whole.length, 0, first, hash, 2);
+        HologramSnapshotAssembly.Complete complete = assembly.acceptReserved(2, whole.length, 1, last, hash, 3);
+        assembly.expire(HologramLibraryProtocol.TIMEOUT_NANOS + 4);
+        check(complete != null && released.size() == 1, "expiry does not dispose transferred complete ownership");
+        complete.close();
+        check(
+            released.size() == 2 && HologramProcessGovernor.retainedBytes() == before,
+            "complete owner returns its credit once");
+    }
+
+    private static void originAdmission() {
+        RecordingConnection old = new RecordingConnection(), current = new RecordingConnection();
+        java.util.concurrent.atomic.AtomicReference<net.minecraft.network.NetworkManager> origin = new java.util.concurrent.atomic.AtomicReference<>(
+            current);
+        HologramNetwork.setClientOriginFrameReceiver(
+            (frame, sequence, connection) -> frame.close(),
+            connection -> connection == origin.get());
+        byte[] source = new byte[HologramLibraryProtocol.CHUNK_BYTES + 1];
+        byte[] hash = HologramLibraryProtocol.digest()
+            .digest(source);
+        byte[] first = Arrays.copyOf(source, HologramLibraryProtocol.CHUNK_BYTES);
+        try {
+            check(
+                HologramNetwork.acceptLibrarySnapshot(
+                    current,
+                    new HologramNetwork.LibrarySnapshotFragment(11, source.length, 0, hash, first)) == null,
+                "current connection owns partial library assembly");
+            check(
+                HologramNetwork.acceptLibrarySnapshot(
+                    old,
+                    new HologramNetwork.LibrarySnapshotFragment(99, source.length, 0, hash, first)) == null,
+                "open but retired origin is rejected at actual library admission");
+            HologramNetwork.receiveSnapshotFragment(new HologramNetwork.Fragment(100, 1, 0, new byte[] { 0 }), old);
+            HologramSnapshotAssembly.Complete complete = HologramNetwork.acceptLibrarySnapshot(
+                current,
+                new HologramNetwork.LibrarySnapshotFragment(11, source.length, 1, hash, new byte[] { 0 }));
+            check(complete != null, "rejected old origin cannot reset the new partial assembler");
+            complete.close();
+            java.util.concurrent.atomic.AtomicInteger receives = new java.util.concurrent.atomic.AtomicInteger();
+            HologramNetwork.setClientTransportReceiver((frame, connection) -> receives.incrementAndGet());
+            HologramNetwork.receiveTransportFragment(new net.minecraft.nbt.NBTTagCompound(), old);
+            check(receives.get() == 0, "origin-aware ordinary/display ingress rejects stale origin before dispatch");
+            HologramNetwork.receiveTransportFragment(new net.minecraft.nbt.NBTTagCompound(), current);
+            check(receives.get() == 1, "current origin still reaches transport consumer");
+            try {
+                byte[] header = HologramSnapshotCodec.compress(new net.minecraft.nbt.NBTTagCompound());
+                HologramNetwork.DisplayFragment display = new HologramNetwork.DisplayFragment(
+                    12,
+                    1,
+                    0,
+                    new byte[] { 0 },
+                    header);
+                HologramNetwork.receiveDisplayFragment(display, old);
+                check(receives.get() == 1, "actual display handler boundary rejects old packet origin");
+                HologramNetwork.receiveDisplayFragment(display, current);
+                check(receives.get() == 2, "actual display handler delivers current packet origin");
+            } catch (java.io.IOException failed) {
+                throw new IllegalStateException(failed);
+            }
+            java.util.concurrent.atomic.AtomicInteger frames = new java.util.concurrent.atomic.AtomicInteger();
+            HologramNetwork.setClientOriginFrameReceiver((frame, sequence, connection) -> {
+                check(connection == current, "owned library handoff carries exact packet connection");
+                frames.incrementAndGet();
+                frame.close();
+            }, connection -> connection == origin.get());
+            byte[] single = new byte[] { 9 };
+            HologramNetwork.LibrarySnapshotFragment completePacket = new HologramNetwork.LibrarySnapshotFragment(
+                13,
+                1,
+                0,
+                HologramLibraryProtocol.digest()
+                    .digest(single),
+                single);
+            HologramNetwork.receiveLibrarySnapshot(completePacket, old);
+            check(frames.get() == 0, "actual library handler cannot relabel old frame with current epoch");
+            HologramNetwork.receiveLibrarySnapshot(completePacket, current);
+            check(frames.get() == 1, "actual library handler retains current-origin delivery");
+        } finally {
+            HologramNetwork.setClientReceiver(null);
+        }
     }
 
     private static void connectionOwnedCredit() {

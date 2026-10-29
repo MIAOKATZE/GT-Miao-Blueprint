@@ -3015,6 +3015,10 @@ final class HologramLibraryClient {
                                 failure -> {
                                     if (token != generation) return;
                                     failSave("结构预览保存失败：" + HologramUiText.reason(failure.getMessage()), failure);
+                                },
+                                () -> {
+                                    if (saveSourceCurrent(token, saveSession, saveRevision))
+                                        saveProgress.progress(System.nanoTime());
                                 });
                             traceSave("preview_capture_queued");
                         };

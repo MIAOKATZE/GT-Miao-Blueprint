@@ -1,7 +1,6 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import java.lang.reflect.Field;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -30,7 +29,7 @@ import cpw.mods.fml.relauncher.ReflectionHelper;
 final class HologramBlockRender {
 
     private static final Map<HologramState.Cell, Model[]> MODELS = new IdentityHashMap<>();
-    private static final Map<HologramState.Cell, Integer> DEFERRED = new IdentityHashMap<>();
+    private static final DeferredMap DEFERRED = new DeferredMap();
     private static final Map<String, String> FAILURES = new HashMap<>();
     private static final Set<String> WARNED_FAILURES = new HashSet<>();
     private static HologramState snapshot;
@@ -51,6 +50,7 @@ final class HologramBlockRender {
         field(Tessellator.class, "isColorDisabled", "field_78410_t"),
         field(Tessellator.class, "drawMode", "field_78409_u") };
 
+    private static HologramNativePreparation.Budget preparationBudget;
     static int compiled, vertices;
 
     private HologramBlockRender() {}
@@ -72,7 +72,10 @@ final class HologramBlockRender {
         DEFERRED.clear();
         FAILURES.clear();
         snapshot = null;
+        if (target != null) target.close();
+        if (actual != null) actual.close();
         target = actual = null;
+        preparationBudget = null;
         compiled = vertices = 0;
     }
 
@@ -89,31 +92,142 @@ final class HologramBlockRender {
             }
         }
         snapshot = next;
-        // The spatial index is shared; constructing these views does not walk all cells.
-        target = new HologramBlockAccess(next, false);
-        actual = new HologramBlockAccess(next, true);
+        // Author appearance publications keep unrelated DATA/READY objects and dependency continuations.
+        // Source/network/topology changes retain the original whole-access retirement boundary.
+        if (target == null || !target.advance(previous, next, dirty)) {
+            if (target != null) target.close();
+            target = new HologramBlockAccess(next, false);
+        }
+        if (actual == null || !actual.advance(previous, next, dirty)) {
+            if (actual != null) actual.close();
+            actual = new HologramBlockAccess(next, true);
+        }
     }
 
     static String failure(HologramState.Cell cell, boolean current) {
+        current = effectiveCurrent(cell, current);
         return FAILURES.getOrDefault((current ? cell.id : cell.wantId), "");
+    }
+
+    static boolean effectiveCurrent(HologramState.Cell cell, boolean current) {
+        return current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
+    }
+
+    /** Pure query, safe inside a parent display list/tessellator. No adapters or factories run. */
+    static boolean cachedReady(HologramState.Cell cell, boolean current) {
+        Model[] pair = MODELS.get(cell);
+        Model model = pair == null ? null : pair[effectiveCurrent(cell, current) ? 1 : 0];
+        return model != null && model.list != 0;
+    }
+
+    static void beginPreparationSlice(long deadline) {
+        preparationBudget = new HologramNativePreparation.Budget(deadline, 32, System::nanoTime);
+    }
+
+    static void endPreparationSlice() {
+        preparationBudget = null;
+    }
+
+    /** The existing deferred map is also the fair retry order; this is not a second preparation queue. */
+    static Set<HologramRegionCache.Key> retryDeferred(HologramState state) {
+        Set<HologramRegionCache.Key> changed = new HashSet<>();
+        for (HologramState.Cell cell : retryDeferredCells(state)) changed.add(HologramRegionCache.key(cell));
+        return changed;
+    }
+
+    /** Return the consumers that actually resolved, not every neighbor sharing their region. */
+    static Set<HologramState.Cell> retryDeferredCells(HologramState state) {
+        Set<HologramState.Cell> changed = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
+        if (snapshot != state || preparationBudget == null || !callbacksSafe()) return changed;
+        int remaining = Math.min(32, DEFERRED.size());
+        while (remaining-- > 0 && preparationBudget.available() && !DEFERRED.isEmpty()) {
+            HologramState.Cell cell = DEFERRED.rotate();
+            int mask = DEFERRED.getOrDefault(cell, 0);
+            for (boolean current : new boolean[] { false, true }) {
+                int bit = current ? 1 : 2;
+                if ((mask & bit) == 0 || !preparationBudget.available()) continue;
+                ready(cell, current);
+                // Iterate stored sides explicitly; public queries normalize requested sides for display consumers.
+                if (!deferredSide(cell, current)) changed.add(cell);
+            }
+        }
+        return changed;
+    }
+
+    /** Whole-owner handoff for a completed capture preflight; detached tiles are never transplanted. */
+    static void adoptPreparedAccesses(HologramState state, HologramBlockAccess preparedTarget,
+        HologramBlockAccess preparedActual) {
+        if (preparedTarget != null && !preparedTarget.owns(state, false)
+            || preparedActual != null && !preparedActual.owns(state, true))
+            throw new IllegalArgumentException("native capture access owner mismatch");
+        if (!callbacksSafe()) throw new IllegalStateException("native capture handoff inside active tessellator");
+        HologramRenderer.nativeSnapshotChanged();
+        clear();
+        snapshot = state;
+        HologramLinkNodePreview.begin();
+        target = preparedTarget == null ? new HologramBlockAccess(state, false) : preparedTarget;
+        actual = preparedActual == null ? new HologramBlockAccess(state, true) : preparedActual;
+    }
+
+    private static boolean callbacksSafe() {
+        try {
+            return !DRAWING.getBoolean(Tessellator.instance);
+        } catch (IllegalAccessException | RuntimeException unavailable) {
+            return false;
+        }
     }
 
     static boolean ready(HologramState.Cell cell, boolean current) {
         if (snapshot == null) return false;
-        current = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
-        if (!HologramSnapshotModelsClient.ready(snapshot, cell, current)) return false;
-        if (!HologramNativeTiles.supported(cell.block(current))) return false;
-        Model[] pair = MODELS.computeIfAbsent(cell, unused -> new Model[2]);
+        current = effectiveCurrent(cell, current);
+        Model[] pair = MODELS.get(cell);
         int side = current ? 1 : 0;
-        if (pair[side] == null) pair[side] = compile(cell, current);
+        if (pair != null && pair[side] != null) return pair[side].list != 0;
+        // In particular, never turn an active parent tessellator into a cached native failure.
+        if (!callbacksSafe()) return false;
+        if (!HologramNativeTiles.supported(cell.block(current))) {
+            undefer(cell, current);
+            return false;
+        }
+        if (!HologramSnapshotModelsClient.ready(snapshot, cell, current)) {
+            defer(cell, current);
+            return false;
+        }
+        HologramNativePreparation.Budget budget = preparationBudget == null
+            ? new HologramNativePreparation.Budget(Long.MAX_VALUE, 32, System::nanoTime)
+            : preparationBudget;
+        if (!budget.available()) {
+            defer(cell, current);
+            return false;
+        }
+        pair = MODELS.computeIfAbsent(cell, unused -> new Model[2]);
+        pair[side] = compile(cell, current, budget);
         return pair[side] != null && pair[side].list != 0;
     }
 
+    private static void undefer(HologramState.Cell cell, boolean current) {
+        current = effectiveCurrent(cell, current);
+        int remaining = DEFERRED.getOrDefault(cell, 0) & ~(current ? 1 : 2);
+        if (remaining == 0) DEFERRED.remove(cell);
+        else DEFERRED.put(cell, remaining);
+    }
+
+    static void defer(HologramState owner, HologramState.Cell cell, boolean current) {
+        // Independent capture preflight must never enqueue cells into a live preview's retry map.
+        if (snapshot == owner) defer(cell, current);
+    }
+
     static void defer(HologramState.Cell cell, boolean current) {
+        current = effectiveCurrent(cell, current);
         DEFERRED.put(cell, DEFERRED.getOrDefault(cell, 0) | (current ? 1 : 2));
     }
 
     static boolean deferred(HologramState.Cell cell, boolean current) {
+        return deferredSide(cell, effectiveCurrent(cell, current));
+    }
+
+    /** Raw stored-side predicate for retry traversal only; target and actual ordinary models stay independent. */
+    private static boolean deferredSide(HologramState.Cell cell, boolean current) {
         return (DEFERRED.getOrDefault(cell, 0) & (current ? 1 : 2)) != 0;
     }
 
@@ -145,21 +259,25 @@ final class HologramBlockRender {
     }
 
     static int vertexCount(HologramState.Cell cell, boolean current) {
+        current = effectiveCurrent(cell, current);
         Model[] pair = MODELS.get(cell);
         return pair == null || pair[current ? 1 : 0] == null ? 0 : pair[current ? 1 : 0].vertices;
     }
 
     static int uniquePositions(HologramState.Cell cell, boolean current) {
+        current = effectiveCurrent(cell, current);
         Model[] pair = MODELS.get(cell);
         return pair == null || pair[current ? 1 : 0] == null ? 0 : pair[current ? 1 : 0].positions;
     }
 
     static boolean missingTexture(HologramState.Cell cell, boolean current) {
+        current = effectiveCurrent(cell, current);
         Model[] pair = MODELS.get(cell);
         return pair != null && pair[current ? 1 : 0] != null && pair[current ? 1 : 0].missingTexture;
     }
 
     static List<double[]> positions(HologramState.Cell cell, boolean current) {
+        current = effectiveCurrent(cell, current);
         Model[] pair = MODELS.get(cell);
         return pair == null || pair[current ? 1 : 0] == null ? java.util.Collections.emptyList()
             : pair[current ? 1 : 0].points;
@@ -167,6 +285,7 @@ final class HologramBlockRender {
 
     /** Opt-in AE GL evidence: detached geometry, UVs and emitted packed vertex colors. */
     static List<double[]> attributes(HologramState.Cell cell, boolean current) {
+        current = effectiveCurrent(cell, current);
         Model[] pair = MODELS.get(cell);
         return pair == null || pair[current ? 1 : 0] == null ? java.util.Collections.emptyList()
             : pair[current ? 1 : 0].attributes;
@@ -174,6 +293,7 @@ final class HologramBlockRender {
 
     /** Smoke evidence that a nondegenerate native face used a particular atlas material. */
     static boolean usesIcon(HologramState.Cell cell, boolean current, IIcon icon) {
+        current = effectiveCurrent(cell, current);
         Model[] pair = MODELS.get(cell);
         if (pair == null || pair[current ? 1 : 0] == null || icon == null) return false;
         for (double[] uv : pair[current ? 1 : 0].textureCenters)
@@ -183,31 +303,64 @@ final class HologramBlockRender {
         return false;
     }
 
-    @SuppressWarnings("unchecked")
-    private static Model compile(HologramState.Cell cell, boolean current) {
+    private static Model compile(HologramState.Cell cell, boolean current, HologramNativePreparation.Budget budget) {
         Block block = cell.block(current);
         HologramBlockAccess access = current ? actual : target;
+        HologramNativePreparation.Outcome outcome = access.prepare(cell, budget);
+        if (outcome == HologramNativePreparation.Outcome.WAITING) {
+            defer(cell, current);
+            return null;
+        }
+        if (outcome == HologramNativePreparation.Outcome.FAILED) {
+            undefer(cell, current);
+            return failed(cell, current, "native tile unavailable: " + access.failure(cell.x, cell.y, cell.z));
+        }
+        TileEntity tile;
+        boolean complete;
         access.beginModel(cell);
-        TileEntity tile = access.getTileEntity(cell.x, cell.y, cell.z);
-        if (!access.endModel()) return null;
+        try {
+            tile = access.getTileEntity(cell.x, cell.y, cell.z);
+        } finally {
+            complete = access.endModel();
+        }
+        if (!complete) {
+            defer(cell, current);
+            return null;
+        }
         HologramNativeRenderRegistry.Adapter adapter = HologramNativeRenderRegistry.adapter(block);
         if (tile == null
-            && (adapter == null || adapter.requiresTile(block, access.getBlockMetadata(cell.x, cell.y, cell.z))))
+            && (adapter == null || adapter.requiresTile(block, access.getBlockMetadata(cell.x, cell.y, cell.z)))) {
+            undefer(cell, current);
             return failed(cell, current, "native tile unavailable: " + access.failure(cell.x, cell.y, cell.z));
-        access.beginModel(cell);
-        Model model = compile(cell, current, access, tile, adapter);
-        if (!access.endModel()) {
+        }
+        if (!budget.take()) {
             defer(cell, current);
+            return null;
+        }
+        Model model;
+        // An earlier yield must not suppress a genuine terminal renderer diagnostic.
+        undefer(cell, current);
+        access.beginModel(cell, true);
+        try {
+            model = compile(cell, current, access, tile, adapter);
+        } finally {
+            complete = access.endModel();
+        }
+        if (!complete) {
             if (model.list != 0) {
                 GL11.glDeleteLists(model.list, 1);
                 compiled--;
                 vertices -= model.vertices;
             }
+            if (!access.modelFailure()
+                .isEmpty()) {
+                undefer(cell, current);
+                return failed(cell, current, access.modelFailure());
+            }
+            defer(cell, current);
             return null;
         }
-        int remaining = DEFERRED.getOrDefault(cell, 0) & ~(current ? 1 : 2);
-        if (remaining == 0) DEFERRED.remove(cell);
-        else DEFERRED.put(cell, remaining);
+        undefer(cell, current);
         return model;
     }
 
@@ -254,11 +407,10 @@ final class HologramBlockRender {
         boolean invokedNative = false;
         HologramAeNativeRender.CableContext aeCableContext = null;
         HologramRenderWorld.CarpenterContext carpenterContext = null;
-        Set<String> positions = new HashSet<>();
-        List<double[]> points = new ArrayList<>();
-        List<double[]> textureCenters = new ArrayList<>();
-        List<double[]> attributes = new ArrayList<>();
-        boolean missing = false;
+        boolean extendedSmoke = Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke");
+        HologramNativeGeometryInspection inspection = new HologramNativeGeometryInspection(
+            extendedSmoke,
+            extendedSmoke || Boolean.getBoolean("gtmb.hologram.aeClientSmoke"));
         int previousPass = MinecraftForgeClient.getRenderPass();
         int previousWorldPass = ForgeHooksClient.getWorldRenderPass();
         double ox = 0, oy = 0, oz = 0;
@@ -316,6 +468,7 @@ final class HologramBlockRender {
                 WORLD_PASS.setInt(null, pass);
                 ForgeHooksClient.setRenderPass(pass);
                 if (sourceReference && !block.canRenderInPass(pass)) continue;
+                if (adapter == HologramChiselNativeRender.INSTANCE && !block.canRenderInPass(pass)) continue;
                 if (aeCableContext != null && block.getClass() == appeng.block.networking.BlockCableBus.class
                     && !block.canRenderInPass(pass)) continue;
                 tess.startDrawingQuads();
@@ -329,44 +482,11 @@ final class HologramBlockRender {
                 count += emitted;
                 if (emitted > 0) {
                     int[] raw = HologramVertexData.read(tess, emitted);
-                    int stride = 8;
-                    if (stride >= 3) for (int v = 0; v < emitted; v++) {
-                        int quad = v / 4 * 4;
-                        if (quad + 3 < emitted && !usableQuad(raw, stride, quad)) continue;
-                        int start = v * stride;
-                        if (positions.add(raw[start] + ":" + raw[start + 1] + ":" + raw[start + 2])
-                            && Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke"))
-                            points.add(
-                                new double[] { Float.intBitsToFloat(raw[start]), Float.intBitsToFloat(raw[start + 1]),
-                                    Float.intBitsToFloat(raw[start + 2]) });
-                    }
                     IIcon absent = Minecraft.getMinecraft()
                         .getTextureMapBlocks()
                         .getAtlasSprite("missingno");
-                    if (stride >= 5) for (int v = 0; v + 3 < emitted; v += 4) {
-                        if (!usableQuad(raw, stride, v)) continue;
-                        double u = 0, w = 0;
-                        for (int corner = 0; corner < 4; corner++) {
-                            u += Float.intBitsToFloat(raw[(v + corner) * stride + 3]) / 4.0;
-                            w += Float.intBitsToFloat(raw[(v + corner) * stride + 4]) / 4.0;
-                        }
-                        if (Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke"))
-                            textureCenters.add(new double[] { u, w });
-                        if (u > absent.getMinU() + 1e-6 && u < absent.getMaxU() - 1e-6
-                            && w > absent.getMinV() + 1e-6
-                            && w < absent.getMaxV() - 1e-6) missing = true;
-                    }
-                    if (stride >= 6 && (Boolean.getBoolean("gtmb.hologram.aeClientSmoke")
-                        || Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke")))
-                        for (int v = 0; v < emitted; v++) {
-                            int quad = v / 4 * 4;
-                            if (quad + 3 >= emitted || !usableQuad(raw, stride, quad)) continue;
-                            int offset = v * stride;
-                            attributes.add(
-                                new double[] { Float.intBitsToFloat(raw[offset]), Float.intBitsToFloat(raw[offset + 1]),
-                                    Float.intBitsToFloat(raw[offset + 2]), Float.intBitsToFloat(raw[offset + 3]),
-                                    Float.intBitsToFloat(raw[offset + 4]), raw[offset + 5] });
-                        }
+                    inspection
+                        .inspect(raw, emitted, absent.getMinU(), absent.getMaxU(), absent.getMinV(), absent.getMaxV());
                 }
                 tess.draw();
             }
@@ -374,16 +494,30 @@ final class HologramBlockRender {
             opened = false;
             // EnderIO deliberately emits a zero-area quad in its empty alpha pass.
             // That sentinel alone is not a usable native preview model.
-            if (count == 0 || positions.size() < 3) {
+            if (count == 0 || inspection.uniquePositions() < 3) {
                 GL11.glDeleteLists(list, 1);
-                if (sourceReference) return new Model(0, 0, 0, points, textureCenters, missing, attributes);
+                if (sourceReference) return new Model(
+                    0,
+                    0,
+                    0,
+                    inspection.points,
+                    inspection.textureCenters,
+                    inspection.missingTexture,
+                    inspection.attributes);
                 return failed(cell, current, "native renderer produced no usable geometry");
             }
             if (!sourceReference) {
                 compiled++;
                 vertices += count;
             }
-            return new Model(list, count, positions.size(), points, textureCenters, missing, attributes);
+            return new Model(
+                list,
+                count,
+                inspection.uniquePositions(),
+                inspection.points,
+                inspection.textureCenters,
+                inspection.missingTexture,
+                inspection.attributes);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError failedNative) {
             if (list != 0) {
                 if (opened) {
@@ -447,6 +581,113 @@ final class HologramBlockRender {
         return new Model(0, 0, 0, java.util.Collections.emptyList(), java.util.Collections.emptyList(), false);
     }
 
+    /** Identity keys with a bounded-work rotation; unlike LinkedHashMap this never calls Cell.equals. */
+    private static final class DeferredMap extends java.util.AbstractMap<HologramState.Cell, Integer> {
+
+        private final IdentityHashMap<HologramState.Cell, Entry> index = new IdentityHashMap<>();
+        private Entry first, last;
+
+        private static final class Entry extends java.util.AbstractMap.SimpleEntry<HologramState.Cell, Integer> {
+
+            Entry before, after;
+
+            Entry(HologramState.Cell key, Integer value) {
+                super(key, value);
+            }
+        }
+
+        public Integer get(Object key) {
+            Entry entry = index.get(key);
+            return entry == null ? null : entry.getValue();
+        }
+
+        public boolean containsKey(Object key) {
+            return index.containsKey(key);
+        }
+
+        public int size() {
+            return index.size();
+        }
+
+        public Integer put(HologramState.Cell key, Integer value) {
+            Entry entry = index.get(key);
+            if (entry != null) return entry.setValue(value);
+            entry = new Entry(key, value);
+            index.put(key, entry);
+            append(entry);
+            return null;
+        }
+
+        private void append(Entry entry) {
+            entry.before = last;
+            entry.after = null;
+            if (last == null) first = entry;
+            else last.after = entry;
+            last = entry;
+        }
+
+        private void unlink(Entry entry) {
+            if (entry.before == null) first = entry.after;
+            else entry.before.after = entry.after;
+            if (entry.after == null) last = entry.before;
+            else entry.after.before = entry.before;
+        }
+
+        public Integer remove(Object key) {
+            Entry entry = index.remove(key);
+            if (entry == null) return null;
+            unlink(entry);
+            return entry.getValue();
+        }
+
+        public void clear() {
+            index.clear();
+            first = last = null;
+        }
+
+        HologramState.Cell rotate() {
+            Entry entry = first;
+            if (entry != last) {
+                unlink(entry);
+                append(entry);
+            }
+            return entry.getKey();
+        }
+
+        public Set<Map.Entry<HologramState.Cell, Integer>> entrySet() {
+            return new java.util.AbstractSet<Map.Entry<HologramState.Cell, Integer>>() {
+
+                public int size() {
+                    return index.size();
+                }
+
+                public java.util.Iterator<Map.Entry<HologramState.Cell, Integer>> iterator() {
+                    return new java.util.Iterator<Map.Entry<HologramState.Cell, Integer>>() {
+
+                        Entry next = first, previous;
+
+                        public boolean hasNext() {
+                            return next != null;
+                        }
+
+                        public Map.Entry<HologramState.Cell, Integer> next() {
+                            if (next == null) throw new java.util.NoSuchElementException();
+                            previous = next;
+                            next = next.after;
+                            return previous;
+                        }
+
+                        public void remove() {
+                            if (previous == null) throw new IllegalStateException();
+                            DeferredMap.this.remove(previous.getKey());
+                            previous = null;
+                        }
+                    };
+                }
+            };
+        }
+    }
+
     private static Field field(Class<?> type, String... names) {
         return ReflectionHelper.findField(type, names);
     }
@@ -486,21 +727,6 @@ final class HologramBlockRender {
         } catch (ReflectiveOperationException | RuntimeException | LinkageError absentOptionalContext) {
             // The GL/Tessellator scope below is unconditional even without an optional shader bridge.
         }
-    }
-
-    private static boolean usableQuad(int[] raw, int stride, int first) {
-        for (int triangle = 0; triangle < 2; triangle++) {
-            int a = first * stride, b = (first + triangle + 1) * stride, c = (first + triangle + 2) * stride;
-            double bx = Float.intBitsToFloat(raw[b]) - Float.intBitsToFloat(raw[a]);
-            double by = Float.intBitsToFloat(raw[b + 1]) - Float.intBitsToFloat(raw[a + 1]);
-            double bz = Float.intBitsToFloat(raw[b + 2]) - Float.intBitsToFloat(raw[a + 2]);
-            double cx = Float.intBitsToFloat(raw[c]) - Float.intBitsToFloat(raw[a]);
-            double cy = Float.intBitsToFloat(raw[c + 1]) - Float.intBitsToFloat(raw[a + 1]);
-            double cz = Float.intBitsToFloat(raw[c + 2]) - Float.intBitsToFloat(raw[a + 2]);
-            double nx = by * cz - bz * cy, ny = bz * cx - bx * cz, nz = bx * cy - by * cx;
-            if (nx * nx + ny * ny + nz * nz > 1e-18) return true;
-        }
-        return false;
     }
 
     private static void pushMatrices() {

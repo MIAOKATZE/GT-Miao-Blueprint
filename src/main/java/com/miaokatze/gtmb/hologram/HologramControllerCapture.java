@@ -163,7 +163,7 @@ final class HologramControllerCapture {
         HologramCapture resumed = !resetAttempts && s.capture != null && s.capture.pending ? s.capture : null;
         HologramMaterialAccess.refreshMaterialChoices(s);
         boolean calibrate = s.calibratePending, build = !resetAttempts && s.buildAfterCapture;
-        HologramSession.cancelCaptureRetry(s);
+        HologramSession.cancelCaptureRetry(s, resumed);
         s.calibratePending = calibrate;
         s.buildAfterCapture = build;
         if (resetAttempts) s.captureAttempts = 0;

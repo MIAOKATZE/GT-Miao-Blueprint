@@ -1,3 +1,30 @@
+# 2026-10-29 静态实体材质与已呈现外壳
+
+此轮针对精确395e6af6外部S3失败继续修复；旧本机30秒未完成结论保留，不用组件PASS覆盖。0.1.48之后的粗预览提前返回会保留内部格线框且只取普通getIcon，因此先恢复可证明的静态材质，再减少已呈现实体内部绘制。未取消分帧预算或原生/服务端校验。
+
+- LightPreview只对既有精确vanilla普通立方体和审计过的GT BlockCasings5（coil）取完整静态材质。复用GT纹理层与tint遍历；任何未知层、缺失材质、pending/NBT/外部adapter均不能借用完整材质或新的GT遮挡证明。不能将它推广为所有IBlockWithTextures、机器或Chisel的完整静态替代；Chisel CTM原生路径保留。GT旧/新coil配置按既有场景/资源释放边界重新取样，不能宣称动态配置无条件即时刷新。
+- 保留完整source/pick/outline记录和原细化/原生就绪计数，只改变实际提交的粗预览面与边。自身区域及跨边界邻区必须已经在当前相机完成提示投影，才采用已审计的不透明外壳mask；无关区域补算不再全局取消这个证明。未知/透明/部分形状保持保守，移动恢复完整表示，选中/关联项保留完整轮廓。边界缺失、切层、相机与补算后重新验证，不拿未呈现邻居遮挡本格。
+- 区域批量移除由逐项ArrayList搬移改为稳定一次压缩；保留原顺序、unresolved/budget及deferred计数。
+- 未新增GL缓存或扩大预算；修复不以减少逻辑源数据、伪造完成率或绕过点击就绪为代价。绘制负担降低的生产路径组件计数不等于真实FPS、完整UV/CTM或3–4秒达标。
+
+诊断沿用releaseEpoch窗口，新增六个粗阶段：drawDemands、drawFacesAndHit、drawNativePlayback、drawLinked、drawOutlines、drawOverlay各自Nanos/Calls。它们是渲染线程墙钟，包含可能的驱动等待，不是GPU时间。drawFacesVisited、drawQuads、drawNativeCalls、drawLinkedDrawCalls为工作调用计数；drawOutlineLineVertices只统计体素线框，排除结构/提示框。drawLinkedCalls是阶段次数，不能与drawLinkedDrawCalls混用。drawSmokeActive/drawSmokeFrames记录实际光栅探针启用情况。读诊断只生成固定大小标量，不遍历蓝图。
+
+新测试覆盖真实GT纹理容器的层/色、metadata及actual/target/protected/anchor边界、相机/视口/跨区已呈现证明、真实native repair接线、30³实体外壳计数、稳定压缩与计时窗口。测试纹理/相机存在控制夹具，未在云端启动真实游戏；实际截图与小图/大图加载对照由本机执行。最终精确commit/tree、命令、退出码与产物SHA以本轮PR回执为准。
+
+---
+
+# 2026年10月29日 S3 持续推进回归
+
+本轮在真实生产调度/发布与 CPU 投影路径上覆盖持续 model-only 回复、同区域不同消费者逐次就绪、深度排序变化、同相机输出保留、补算去重、源移动/删除/跨区尾槽交换，以及呈现未完成时的文字组件放置。外部回调夹具不等于真实 AE/FMP/GL，控制材质不等于纹理图集验收。
+
+测试编排保留用户的 `runProcessGovernorTest`。`HologramAuthorReviewTransportRegression` 全部原断言保持不变，改由 `runAuthorReviewTransportTest` 独立 JVM 执行并挂入 `check`：其进程级账本基线不能混入其他套件遗留的弱引用 owner 退役。单跑 local-author 不包含这个独立门禁，完整验证应运行 `check`。
+
+后续本机仍先 S3，分别采样 3/4/15/30 秒，核对完整 source 与独立 viewport 分母、缺失/未完成/pending 区域、实际画面、原生失败与退化状态。30 秒失败就停，不进入 S4/S5。新增 releaseEpoch 与累计阶段/工作计数用于区分重复处理和正常补算，不可将 cheap/detail 两类访问次数相加解释成完成率。记录普通 JAR SHA、commit/tree、实例依赖、退出码、堆与进程 RSS；私有源和截图留在本机。
+
+两次确定性红例分别针对“持续回复使未改细化停滞”和“同区就绪导致投影前缀反复重算”。最终执行计数、真实日志和精确产物身份以本轮 PR 回执为准。任何历史 PASS 不覆盖新候选。
+
+---
+
 # 2026-10-28 两轮独立审查后的增量回执
 
 本轮在发布前完成两轮独立审查；第一轮以0e12997为冻结候选，修正后第二轮以35c5ce0为冻结候选，第二轮新增修正随后由原审查者做定向复核。审查同时覆盖正确性、性能与耦合/扩展性，不以测试绿灯证明不存在问题。附件 NativeCapture 路径曾因忽略 NBT 参数重载而被误报，已用真实签名排除，未据此扩张公共API。
@@ -271,3 +298,11 @@ packet attribution or TPS. Full server tick-stall observations and matching clie
 belong to the separate native probe receipts. Fair version comparison requires the same fixture inputs,
 input digest, assertions, heap limits, mod environment and actor mode. Each absent runtime receipt remains
 **PENDING**. Source implementation and this document do not certify that a new composite run passed.
+
+## Backend architecture continuation gates (2026-10-29)
+
+New main-suite entries cover capture continuation ownership, synthetic server declaration scope, saved member orientation and shared declaration candidate reconciliation. Local-author entries cover bounded native preparation and capture-request ownership; existing author, persistence, transport, attachment, Cut and area suites contain additional exact-value/nullable-source, stale-origin, credit/ownership, respawn and cancellation regressions.
+
+Native preparation CPU fixtures prove iteration, finite cycles/limits, exact owner cleanup, waiting/failure distinction and pure material-selection seams. They do not prove actual GL output. The existing registered-AE preview fixture now includes connected cable DATA/topology preparation, but requires genuine AE registration and remains an external/native gate when the headless harness lacks it. The old 2048 cyclic neighbor-loading fixture retains boundedness/isolation assertions and now explicitly expects a terminal cyclic LOAD diagnostic, not a silently accepted empty-neighbor model.
+
+External acceptance must bind exact commit/tree, normal JAR hash and runtime configuration. Begin S3 with full source plus independently computed viewport denominators at 3/4/15/30 seconds; 30 seconds is a fail-stop ceiling, not relaxation of the 3–4 second objective. Only continue S4/S5 after the chosen S3 gate. Separately exercise mode2/anchor/protected capture validation, source replacement/cancel/reload, actual connected AE/FMP, complex shapes/UV, structure/member regeneration and large Cut timeout/respawn reconciliation in isolated test saves. Do not use production saves or conflate pure JVM, static GUI ABI and native gameplay results.

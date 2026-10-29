@@ -490,6 +490,9 @@ final class HologramUiTextBoxes {
     boolean mouse(int mx, int my, int button) {
         if (draft == null || pending || button != 0 || !ui.canvas.inViewport(mx, my)) return false;
         for (HologramUiCanvas.Control control : ui.canvas.controls()) if (control.contains(mx, my)) return false;
+        // An unavailable local projection is not an empty hit: consume without moving the draft or
+        // falling through to the horizontal plane behind an undisplayed/stale scene segment.
+        if (!HologramRenderer.placementPickingReady(ui.session.state(), mx, my)) return true;
         int axis = chosen ? gizmo.pick(mx, my) : -1;
         if (axis >= 0) {
             gizmo.begin(axis, mx, my);

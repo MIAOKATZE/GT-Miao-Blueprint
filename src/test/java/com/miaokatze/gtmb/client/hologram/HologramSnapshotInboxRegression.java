@@ -29,6 +29,66 @@ public final class HologramSnapshotInboxRegression {
         ownerDisplayAdmission();
         ownerOrdinaryRecovery();
         retiredActiveSlotRelease();
+        contextSurvivesDecode();
+    }
+
+    private static void contextSurvivesDecode() {
+        java.util.concurrent.atomic.AtomicBoolean current = new java.util.concurrent.atomic.AtomicBoolean(true);
+        AtomicInteger released = new AtomicInteger(), published = new AtomicInteger();
+        com.miaokatze.gtmb.hologram.HologramSnapshotAssembly assembly = new com.miaokatze.gtmb.hologram.HologramSnapshotAssembly(
+            1,
+            sequence -> released.incrementAndGet());
+        com.miaokatze.gtmb.hologram.HologramSnapshotAssembly.Complete frame = assembly
+            .acceptReserved(5, 1, 0, new byte[] { 1 }, 0);
+        java.util.function.BooleanSupplier context = current::get;
+        frame.bindCurrent(context);
+        SimpleAssert.that(
+            frame.detachedContext() == context,
+            "detached context is the original payload-free predicate, not Complete::current");
+        try (HologramSnapshotInbox<String> inbox = new HologramSnapshotInbox<>(2, 16, bytes -> "old-origin")) {
+            SimpleAssert.that(inbox.offer(frame.bytes, 5, frame, inbox.epoch(), null), "owned frame enters inbox");
+            HologramSnapshotInbox.Result<String> result = inbox.awaitNext();
+            SimpleAssert.that(result.current(), "decoded result keeps its admitted current origin");
+            SimpleAssert.eq(1, released.get(), "poll returns exact credit once before delayed publication");
+            assertDetachedContext(result, context, inbox);
+            current.set(false);
+            SimpleAssert.that(!result.current(), "connection transition invalidates already-decoded result");
+            result.publish(value -> published.incrementAndGet());
+            SimpleAssert.eq(0, published.get(), "publication itself refuses retired-origin result");
+            result.close();
+            SimpleAssert.eq(1, released.get(), "later disposal cannot duplicate old credit");
+        }
+    }
+
+    /** Deterministic capture-shape proof: the retained Result owns only epoch + inbox + the original token. */
+    private static void assertDetachedContext(HologramSnapshotInbox.Result<?> result,
+        java.util.function.BooleanSupplier expected, HologramSnapshotInbox<?> inbox) {
+        try {
+            java.lang.reflect.Field current = HologramSnapshotInbox.Result.class.getDeclaredField("current");
+            current.setAccessible(true);
+            Object guard = current.get(result);
+            boolean tokenFound = false;
+            for (java.lang.reflect.Field field : guard.getClass()
+                .getDeclaredFields()) {
+                if (java.lang.reflect.Modifier.isStatic(field.getModifiers())) continue;
+                field.setAccessible(true);
+                Object captured = field.get(guard);
+                SimpleAssert.that(
+                    !(captured instanceof com.miaokatze.gtmb.hologram.HologramSnapshotAssembly.Complete)
+                        && !(captured instanceof byte[]),
+                    "publication guard cannot capture released compressed owner/payload");
+                SimpleAssert.that(
+                    field.getType()
+                        .isPrimitive() || captured == expected
+                        || captured == inbox,
+                    "publication guard has no hidden wrapper retaining the completed frame");
+                tokenFound |= captured == expected;
+            }
+            SimpleAssert
+                .that(tokenFound, "publication guard directly retains only the detached original context token");
+        } catch (ReflectiveOperationException failure) {
+            throw new IllegalStateException(failure);
+        }
     }
 
     /** Isolated-process coverage: saturating the shared quota must not interfere with other suites' caches. */

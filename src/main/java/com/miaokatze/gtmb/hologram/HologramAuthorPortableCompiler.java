@@ -87,7 +87,7 @@ public final class HologramAuthorPortableCompiler {
             root.add("blueprint", processed);
             root.remove("previewBinding"); // A fresh PNG binds the new exact bytes below, never an old thumbnail
                                            // receipt.
-            return HologramBlueprintSharing.encodeBounded(GSON, root, HologramBlueprintArtifact.MAX_JSON_BYTES);
+            return HologramAuthorSourceJson.encode(root, HologramBlueprintArtifact.MAX_JSON_BYTES);
         }
     }
 
