@@ -245,7 +245,9 @@ public final class HologramClient {
         });
         HologramNetwork.setClientReceiver(HologramClient::enqueueReceived);
         HologramNetwork.setClientTransportReceiver(HologramClient::enqueueReceived);
-        HologramNetwork.setClientFrameReceiver(HologramClient::enqueueComplete);
+        HologramNetwork.setClientOriginFrameReceiver(
+            HologramClient::enqueueComplete,
+            origin -> snapshotTransportOriginCurrent(origin, snapshotConnection(Minecraft.getMinecraft())));
         HologramNetwork.setClientInteractionSender(HologramClient::use);
         HologramClient listener = new HologramClient();
         MinecraftForge.EVENT_BUS.register(listener);
@@ -979,6 +981,7 @@ public final class HologramClient {
         if (event.phase != TickEvent.Phase.END) return;
         HologramIsometricCamera.INSTANCE.tick();
         syncSnapshotWorld();
+        HologramNetwork.expireLibraryClientTransport(System.nanoTime());
         HologramBackgroundTasks.tick();
         HologramSnapshotRetentions.reap();
         installDecoded(snapshotInbox.poll());
@@ -1734,6 +1737,14 @@ public final class HologramClient {
             return;
         }
         if (complete != null) {
+            complete.bindCurrent(
+                () -> snapshotAdmissionCurrent(
+                    admissionEpoch,
+                    snapshotInbox.epoch(),
+                    admissionWorld,
+                    mc.theWorld,
+                    admissionConnection,
+                    snapshotConnection(mc)));
             long sequence = nbt.getLong("transportSequence");
             if (nbt.getBoolean("transportDisplay")) {
                 if (!offerSnapshot(complete, sequence, epoch, true)) {
@@ -1748,10 +1759,24 @@ public final class HologramClient {
         }
     }
 
-    private static void enqueueComplete(HologramSnapshotAssembly.Complete complete, long sequence) {
+    private static void enqueueComplete(HologramSnapshotAssembly.Complete complete, long sequence,
+        net.minecraft.network.NetworkManager origin) {
         Minecraft mc = Minecraft.getMinecraft();
         if (mc.func_152345_ab()) syncSnapshotWorld();
+        if (!snapshotTransportOriginCurrent(origin, snapshotConnection(mc))) {
+            complete.close();
+            return;
+        }
         long epoch = snapshotInbox.epoch();
+        Object world = mc.theWorld;
+        complete.bindCurrent(
+            () -> snapshotAdmissionCurrent(
+                epoch,
+                snapshotInbox.epoch(),
+                world,
+                mc.theWorld,
+                origin,
+                snapshotConnection(mc)));
         if (!offerSnapshot(complete, sequence, epoch, false) && snapshotInbox.epoch() == epoch)
             rejectSnapshotIngress(sequence, null);
     }
@@ -1935,6 +1960,10 @@ public final class HologramClient {
 
     private static void installDecoded(HologramSnapshotInbox.Result<NBTTagCompound> result) {
         if (result == null) return;
+        if (!result.current()) {
+            result.close();
+            return;
+        }
         if (result.failure != null) {
             HologramClientProgress.decoded(result.transportSequence, false);
             if (result.failure instanceof HologramSnapshotInbox.AdmissionException) {
@@ -2064,6 +2093,10 @@ public final class HologramClient {
     }
 
     private static void publishDecoded(HologramSnapshotInbox.Result<NBTTagCompound> result, HologramState prepared) {
+        if (!result.current()) {
+            result.close();
+            return;
+        }
         if (!reserveMaterialized(result)) return;
         result.publish(value -> installSnapshot(value, prepared));
     }

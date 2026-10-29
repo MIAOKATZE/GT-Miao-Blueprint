@@ -37,6 +37,15 @@ public final class HologramNetwork {
     private static volatile java.util.function.BiConsumer<NBTTagCompound, net.minecraft.network.NetworkManager> authorMaterialReceiver;
     private static volatile java.util.function.BiConsumer<NBTTagCompound, net.minecraft.network.NetworkManager> transportReceiver;
     private static volatile java.util.function.BiConsumer<HologramSnapshotAssembly.Complete, Long> frameReceiver;
+    private static volatile OriginFrameReceiver originFrameReceiver;
+    private static volatile java.util.function.Predicate<net.minecraft.network.NetworkManager> clientTransportCurrent;
+
+    public interface OriginFrameReceiver {
+
+        void accept(HologramSnapshotAssembly.Complete frame, long sequence,
+            net.minecraft.network.NetworkManager connection);
+    }
+
     private static volatile Consumer<NBTTagCompound> interactionSender;
     private static volatile Consumer<NBTTagCompound> libraryReceiver;
     private static volatile Consumer<NBTTagCompound> libraryProbeReceiver;
@@ -159,6 +168,8 @@ public final class HologramNetwork {
         receiver = value;
         transportReceiver = null;
         frameReceiver = null;
+        originFrameReceiver = null;
+        clientTransportCurrent = null;
         resetLibrarySnapshots();
     }
 
@@ -166,6 +177,27 @@ public final class HologramNetwork {
     public static void setClientFrameReceiver(
         java.util.function.BiConsumer<HologramSnapshotAssembly.Complete, Long> value) {
         frameReceiver = value;
+        originFrameReceiver = null;
+        clientTransportCurrent = null;
+    }
+
+    /** Built-in ingress rejects retired packet origins before any shared assembler state is touched. */
+    public static void setClientOriginFrameReceiver(OriginFrameReceiver receiver,
+        java.util.function.Predicate<net.minecraft.network.NetworkManager> current) {
+        frameReceiver = null;
+        originFrameReceiver = receiver;
+        clientTransportCurrent = current;
+    }
+
+    static boolean clientTransportCurrent(net.minecraft.network.NetworkManager connection) {
+        java.util.function.Predicate<net.minecraft.network.NetworkManager> current = clientTransportCurrent;
+        return connection != null && (current == null || current.test(connection));
+    }
+
+    public static void expireLibraryClientTransport(long now) {
+        synchronized (libraryTransportLock) {
+            librarySnapshots.expire(now);
+        }
     }
 
     /** Ordinary fragments carry the packet context's origin instead of inferring it after a reconnect. */
@@ -175,6 +207,7 @@ public final class HologramNetwork {
     }
 
     static void receiveTransportFragment(NBTTagCompound envelope, net.minecraft.network.NetworkManager connection) {
+        if (!clientTransportCurrent(connection)) return;
         java.util.function.BiConsumer<NBTTagCompound, net.minecraft.network.NetworkManager> transport = transportReceiver;
         if (transport != null) transport.accept(envelope, connection);
         else {
@@ -1849,9 +1882,10 @@ public final class HologramNetwork {
     /** The handler and regression harness share the actual rejection/recovery boundary. No frame is queued here. */
     static HologramSnapshotAssembly.Complete acceptLibrarySnapshot(net.minecraft.network.NetworkManager connection,
         LibrarySnapshotFragment message) {
-        if (connection == null || !connection.isChannelOpen()) return null;
+        if (!clientTransportCurrent(connection) || !connection.isChannelOpen()) return null;
         try {
             synchronized (libraryTransportLock) {
+                if (!clientTransportCurrent(connection)) return null;
                 return librarySnapshots(connection).acceptReserved(
                     message.sequence,
                     message.total,
@@ -1876,49 +1910,69 @@ public final class HologramNetwork {
     public static final class LibrarySnapshotHandler implements IMessageHandler<LibrarySnapshotFragment, IMessage> {
 
         public IMessage onMessage(LibrarySnapshotFragment message, MessageContext context) {
-            observeFragment(
-                "snapshot",
-                message.sequence,
-                message.total,
-                message.index,
-                message.bytes.length,
-                HologramLibraryProtocol.CHUNK_BYTES);
-            HologramSnapshotAssembly.Complete admitted = acceptLibrarySnapshot(
+            return receiveLibrarySnapshot(
+                message,
                 context.getClientHandler()
-                    .getNetworkManager(),
-                message);
-            if (admitted == null) return null;
-            java.util.function.BiConsumer<HologramSnapshotAssembly.Complete, Long> frames = frameReceiver;
-            if (frames != null) {
-                frames.accept(admitted, message.sequence);
-                return null;
-            }
-            // External/old receiver implementations retain their original fragment-envelope API.
-            byte[] complete = admitted.bytes;
+                    .getNetworkManager());
+        }
+    }
+
+    static IMessage receiveLibrarySnapshot(LibrarySnapshotFragment message,
+        net.minecraft.network.NetworkManager connection) {
+        if (!clientTransportCurrent(connection) || !connection.isChannelOpen()) return null;
+        observeFragment(
+            "snapshot",
+            message.sequence,
+            message.total,
+            message.index,
+            message.bytes.length,
+            HologramLibraryProtocol.CHUNK_BYTES);
+        HologramSnapshotAssembly.Complete admitted = acceptLibrarySnapshot(connection, message);
+        if (admitted == null) return null;
+        if (!clientTransportCurrent(connection)) {
             admitted.close();
-            Consumer<NBTTagCompound> current = receiver;
+            return null;
+        }
+        OriginFrameReceiver boundFrames = originFrameReceiver;
+        if (boundFrames != null) {
             try {
-                if (current == null) return null;
-                for (int offset = 0, index = 0; offset
-                    < complete.length; offset += HologramSnapshotAssembly.CHUNK_BYTES, index++) {
-                    NBTTagCompound envelope = new NBTTagCompound();
-                    envelope.setBoolean("transportFragment", true);
-                    envelope.setLong("transportSequence", message.sequence);
-                    envelope.setInteger("transportTotal", complete.length);
-                    envelope.setInteger("transportIndex", index);
-                    envelope.setByteArray(
-                        "transportBytes",
-                        Arrays.copyOfRange(
-                            complete,
-                            offset,
-                            Math.min(complete.length, offset + HologramSnapshotAssembly.CHUNK_BYTES)));
-                    current.accept(envelope);
-                }
-            } finally {
+                boundFrames.accept(admitted, message.sequence, connection);
+            } catch (RuntimeException | Error failed) {
                 admitted.close();
+                throw failed;
             }
             return null;
         }
+        java.util.function.BiConsumer<HologramSnapshotAssembly.Complete, Long> frames = frameReceiver;
+        if (frames != null) {
+            frames.accept(admitted, message.sequence);
+            return null;
+        }
+        // External/old receiver implementations retain their original fragment-envelope API.
+        byte[] complete = admitted.bytes;
+        admitted.close();
+        Consumer<NBTTagCompound> current = receiver;
+        try {
+            if (current == null) return null;
+            for (int offset = 0, index = 0; offset
+                < complete.length; offset += HologramSnapshotAssembly.CHUNK_BYTES, index++) {
+                NBTTagCompound envelope = new NBTTagCompound();
+                envelope.setBoolean("transportFragment", true);
+                envelope.setLong("transportSequence", message.sequence);
+                envelope.setInteger("transportTotal", complete.length);
+                envelope.setInteger("transportIndex", index);
+                envelope.setByteArray(
+                    "transportBytes",
+                    Arrays.copyOfRange(
+                        complete,
+                        offset,
+                        Math.min(complete.length, offset + HologramSnapshotAssembly.CHUNK_BYTES)));
+                current.accept(envelope);
+            }
+        } finally {
+            admitted.close();
+        }
+        return null;
     }
 
     public static final class DisplayFragment implements IMessage {
@@ -1956,25 +2010,32 @@ public final class HologramNetwork {
     public static final class DisplayFragmentHandler implements IMessageHandler<DisplayFragment, IMessage> {
 
         public IMessage onMessage(DisplayFragment message, MessageContext context) {
-            Consumer<NBTTagCompound> current = receiver;
-            if (current == null) return null;
-            try {
-                NBTTagCompound header = HologramSnapshotCodec.decode(message.header, 65536, 262144);
-                Fragment frame = message.fragment;
-                NBTTagCompound envelope = new NBTTagCompound();
-                envelope.setBoolean("transportFragment", true);
-                envelope.setBoolean("transportDisplay", true);
-                envelope.setTag("transportHeader", header);
-                envelope.setLong("transportSequence", frame.sequence);
-                envelope.setInteger("transportTotal", frame.total);
-                envelope.setInteger("transportIndex", frame.index);
-                envelope.setByteArray("transportBytes", frame.bytes);
-                current.accept(envelope);
-            } catch (IOException malformed) {
-                throw new IllegalArgumentException("display fragment metadata", malformed);
-            }
-            return null;
+            return receiveDisplayFragment(
+                message,
+                context.getClientHandler()
+                    .getNetworkManager());
         }
+    }
+
+    static IMessage receiveDisplayFragment(DisplayFragment message, net.minecraft.network.NetworkManager connection) {
+        if (!clientTransportCurrent(connection) || !connection.isChannelOpen()) return null;
+        if (receiver == null && transportReceiver == null) return null;
+        try {
+            NBTTagCompound header = HologramSnapshotCodec.decode(message.header, 65536, 262144);
+            Fragment frame = message.fragment;
+            NBTTagCompound envelope = new NBTTagCompound();
+            envelope.setBoolean("transportFragment", true);
+            envelope.setBoolean("transportDisplay", true);
+            envelope.setTag("transportHeader", header);
+            envelope.setLong("transportSequence", frame.sequence);
+            envelope.setInteger("transportTotal", frame.total);
+            envelope.setInteger("transportIndex", frame.index);
+            envelope.setByteArray("transportBytes", frame.bytes);
+            receiveTransportFragment(envelope, connection);
+        } catch (IOException malformed) {
+            throw new IllegalArgumentException("display fragment metadata", malformed);
+        }
+        return null;
     }
 
     /** Raw compressed slices stay below both the Forge packet and per-NBT limits. */
@@ -2026,30 +2087,36 @@ public final class HologramNetwork {
     public static final class FragmentHandler implements IMessageHandler<Fragment, IMessage> {
 
         public IMessage onMessage(Fragment msg, MessageContext ctx) {
-            observeFragment(
-                "snapshot",
-                msg.sequence,
-                msg.total,
-                msg.index,
-                msg.bytes.length,
-                HologramSnapshotAssembly.CHUNK_BYTES);
-            net.minecraft.network.NetworkManager connection = ctx.getClientHandler()
-                .getNetworkManager();
-            synchronized (libraryTransportLock) {
-                if (!connection.isChannelOpen()) return null;
-                librarySnapshots(connection).supersede(msg.sequence);
-            }
-            if (receiver != null || transportReceiver != null) {
-                NBTTagCompound envelope = new NBTTagCompound();
-                envelope.setBoolean("transportFragment", true);
-                envelope.setLong("transportSequence", msg.sequence);
-                envelope.setInteger("transportTotal", msg.total);
-                envelope.setInteger("transportIndex", msg.index);
-                envelope.setByteArray("transportBytes", msg.bytes);
-                receiveTransportFragment(envelope, connection);
-            }
-            return null;
+            return receiveSnapshotFragment(
+                msg,
+                ctx.getClientHandler()
+                    .getNetworkManager());
         }
+    }
+
+    static IMessage receiveSnapshotFragment(Fragment msg, net.minecraft.network.NetworkManager connection) {
+        if (!clientTransportCurrent(connection) || !connection.isChannelOpen()) return null;
+        observeFragment(
+            "snapshot",
+            msg.sequence,
+            msg.total,
+            msg.index,
+            msg.bytes.length,
+            HologramSnapshotAssembly.CHUNK_BYTES);
+        synchronized (libraryTransportLock) {
+            if (!clientTransportCurrent(connection) || !connection.isChannelOpen()) return null;
+            librarySnapshots(connection).supersede(msg.sequence);
+        }
+        if (receiver != null || transportReceiver != null) {
+            NBTTagCompound envelope = new NBTTagCompound();
+            envelope.setBoolean("transportFragment", true);
+            envelope.setLong("transportSequence", msg.sequence);
+            envelope.setInteger("transportTotal", msg.total);
+            envelope.setInteger("transportIndex", msg.index);
+            envelope.setByteArray("transportBytes", msg.bytes);
+            receiveTransportFragment(envelope, connection);
+        }
+        return null;
     }
 
     public static class Packet implements IMessage {
@@ -2124,7 +2191,7 @@ public final class HologramNetwork {
                 "false".equals(System.getProperty("gtmb.segment.transport")) ? 0 : HologramSnapshotSegments.VERSION);
             this.tag
                 .setInteger("clientSnapshotRows", "false".equals(System.getProperty("gtmb.segment.transport")) ? 0 : 1);
-            this.tag.setInteger("clientSnapshotInbox", frameReceiver == null ? 0 : 2);
+            this.tag.setInteger("clientSnapshotInbox", frameReceiver != null || originFrameReceiver != null ? 2 : 0);
         }
     }
 
