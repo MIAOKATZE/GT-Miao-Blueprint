@@ -547,6 +547,50 @@ final class HologramAreaPreparationRegression {
                 !HologramAreaWorkflow.importOwned(previous, area),
                 "changing the physical tool rejects completion");
             player.inventory.mainInventory[0] = held;
+            // Exercise the public legacy cancellation entry, not only the cleanup helper it should delegate to.
+            HologramAreaPreparation cancelledPreparation = new HologramAreaPreparation();
+            java.util.concurrent.FutureTask<HologramPresets.Preset> pending = new java.util.concurrent.FutureTask<>(
+                () -> { throw new AssertionError("cancelled import task must never run"); });
+            Field taskField = HologramAreaPreparation.class.getDeclaredField("task");
+            taskField.setAccessible(true);
+            taskField.set(cancelledPreparation, pending);
+            area.preparation = cancelledPreparation;
+            area.staging = staged;
+            area.population = population;
+            area.declarationSessions.put("unfinished", staged);
+            area.importing = true;
+            previous.areaImportPreviousDirty = true;
+            previous.areaImportPreviousSource = "original-draft";
+            previous.blueprintDirty = false;
+            previous.blueprintSource = "pending-import";
+            previous.projectionAreaImportDiscard = true;
+            long selectionSequence = previous.areaSelectionSequence;
+            try {
+                HologramService.toggleAreaSelection(player);
+                SimpleAssert.that(pending.isCancelled(), "public toggle cancels the queued canonicalization future");
+                SimpleAssert.that(
+                    !area.importing && !area.selecting
+                        && area.staging == null
+                        && area.population == null
+                        && area.planTask == null
+                        && area.declarationSessions.isEmpty(),
+                    "public toggle releases unfinished capture/projection ownership");
+                SimpleAssert.that(
+                    previous.blueprintDirty && "original-draft".equals(previous.blueprintSource)
+                        && !previous.projectionAreaImportDiscard
+                        && previous.pins.size() == 1,
+                    "public toggle preserves original draft facts and restores dirty/source state");
+                SimpleAssert.that(
+                    HologramWorkspace.find(identity) == previous
+                        && previous.areaSelectionSequence == selectionSequence + 1,
+                    "public toggle keeps the original editor and emits its normal selection-state receipt");
+            } finally {
+                cancelledPreparation.cancel();
+            }
+            area.importing = true;
+            SimpleAssert.that(
+                HologramAreaWorkflow.importOwned(previous, area),
+                "disconnect fixture is live before closing its connection");
             embedded.close();
             SimpleAssert.that(
                 !HologramAreaWorkflow.importOwned(previous, area),

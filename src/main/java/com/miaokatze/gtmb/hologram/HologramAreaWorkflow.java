@@ -27,8 +27,7 @@ final class HologramAreaWorkflow {
         HologramArea area = HologramWorkspace.AREAS
             .computeIfAbsent(player.getUniqueID(), ignored -> new HologramArea());
         if (area.importing) {
-            area.importing = false;
-            s.status = "区域导入已取消，原规划保留";
+            cancelAreaImport(s);
         } else {
             area.selecting = !area.selecting;
             if (area.selecting) retireFinishedPlacement(s);
