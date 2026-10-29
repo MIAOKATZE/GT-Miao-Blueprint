@@ -400,6 +400,7 @@ public final class HologramResourcePlannerRegression {
         SimpleAssert.that(HologramBuildPreparation.aeReady(s), "ordinary valid payload remains ready");
         NBTTagCompound binding = new NBTTagCompound();
         binding.setString(HologramNetworkBindings.GROUP, "q1");
+        binding.setString(HologramNetworkBindings.ROLE, "join");
         cell.tileNbt = HologramBlueprintNbt.encodeCanonical(binding);
         SimpleAssert.that(!HologramBuildPreparation.aeReady(s), "an active missing network binding still blocks");
         SimpleAssert.that(s.networkBindingRequested && s.status.contains("q1"), "binding failure retains its feedback");
