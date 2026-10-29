@@ -58,12 +58,17 @@ public final class HologramNetworkBindingsRegression {
         }
         for (int i = 0; i < 96; i++) {
             HologramPresets.Cell cell = HologramPresets.cell(new ItemStack(Blocks.stone), i, 0, 0, -1, false);
+            cell.block = "minecraft:stone";
             cell.tileNbt = encoded[i % 4];
             source.cells.add(cell);
         }
         net.minecraft.block.Block recognized = DecorationVoucherRegression
             .registeredFixture("gtmb:ae_scan_summary_fixture", new appeng.block.GtmbAeStaticFixture());
         HologramPresets.Cell aeCell = HologramPresets.cell(new ItemStack(recognized), 96, 0, 0, -1, false);
+        aeCell.block = net.minecraft.block.Block.blockRegistry.getNameForObject(recognized);
+        SimpleAssert.that(
+            aeCell.block() == recognized && HologramAeBlueprint.supports(aeCell.block()),
+            "the actual registered fixture resolves to its AE block identity before scanning");
         aeCell.tileNbt = encoded[0];
         source.cells.add(aeCell);
         HologramPresets.Preset reference = HologramBlueprintRotation.copyPreset(source),

@@ -316,7 +316,10 @@ public final class HologramResourcePlannerRegression {
         for (HologramSession s : new HologramSession[] { original, optimized }) {
             s.virtualPreset.schema = 2;
             s.virtualPlacement = false;
-            for (int i = 0; i < 128; i++) s.virtualPreset.cells.get(i).itemNbt = inputs[i % 4];
+            for (int i = 0; i < 128; i++) {
+                s.virtualPreset.cells.get(i).block = "minecraft:stone";
+                s.virtualPreset.cells.get(i).itemNbt = inputs[i % 4];
+            }
         }
         HologramBlueprintValidationCache disabled = new HologramBlueprintValidationCache(original.virtualPreset, 0, 0);
         HologramBlueprintValidationCache cached = new HologramBlueprintValidationCache(optimized.virtualPreset);
@@ -351,11 +354,33 @@ public final class HologramResourcePlannerRegression {
         sealed.setTag(HologramRecovery.TAG, envelope);
         sealed.setString("unknownItemConfiguration", "retained item field");
         for (String encoded : new String[] { HologramBlueprintNbt.encodeCaptured(sealed), "invalid item encoding" }) {
-            HologramSession s = session(player, 4);
-            s.virtualPreset.schema = 2;
-            for (HologramPresets.Cell cell : s.virtualPreset.cells) cell.itemNbt = encoded;
+            HologramSession s = session(player, 4), baseline = session(player, 4);
+            for (HologramSession fixture : new HologramSession[] { s, baseline }) {
+                fixture.virtualPreset.schema = 2;
+                for (HologramPresets.Cell cell : fixture.virtualPreset.cells) {
+                    cell.block = "minecraft:stone";
+                    cell.itemNbt = encoded;
+                }
+            }
+            HologramBlueprintValidationCache originalCache = new HologramBlueprintValidationCache(
+                baseline.virtualPreset,
+                0,
+                0);
+            drainPopulation(baseline, originalCache);
             HologramBlueprintValidationCache cache = new HologramBlueprintValidationCache(s.virtualPreset);
             drainPopulation(s, cache);
+            SimpleAssert.eq(
+                originalCache.unsealedItemMisses,
+                cache.unsealedItemMisses,
+                "sealed and invalid inputs preserve the actual uncached decode count");
+            SimpleAssert.eq(
+                baseline.capture.incomplete,
+                s.capture.incomplete,
+                "sealed and invalid inputs preserve the original completion boundary");
+            SimpleAssert.eq(
+                baseline.capture.failure,
+                s.capture.failure,
+                "sealed and invalid inputs preserve the first original error");
             SimpleAssert
                 .eq(4L, cache.unsealedItemMisses, "sealed or invalid item payloads remain on the per-cell decode path");
             SimpleAssert.eq(0L, cache.unsealedItemHits, "a seal or decode failure never becomes a negative summary");
@@ -381,6 +406,22 @@ public final class HologramResourcePlannerRegression {
                     "sealed pins never share mutable NBT trees");
             }
         }
+        for (int budget : new int[] { 0, HologramBlueprintValidationCache.MAX_ENTRIES }) {
+            HologramSession missingBlock = session(player, 4);
+            missingBlock.virtualPreset.schema = 2;
+            for (HologramPresets.Cell cell : missingBlock.virtualPreset.cells) cell.itemNbt = "invalid item encoding";
+            HologramBlueprintValidationCache cache = new HologramBlueprintValidationCache(
+                missingBlock.virtualPreset,
+                budget,
+                HologramBlueprintValidationCache.MAX_STRING_CHARS);
+            drainPopulation(missingBlock, cache);
+            SimpleAssert
+                .eq(1L, cache.unsealedItemMisses, "a missing declared block retains the original first-cell rejection");
+            SimpleAssert.eq(
+                "INVALID_PREFAB_VARIANT",
+                missingBlock.capture.failure,
+                "the original variant failure still precedes later cells");
+        }
         HologramNativePlacement.Adapter nativeAdapter = new HologramNativePlacement.Adapter() {
 
             public boolean supports(net.minecraft.block.Block block) {
@@ -401,7 +442,10 @@ public final class HologramResourcePlannerRegression {
         try {
             HologramSession s = session(player, 4);
             s.virtualPreset.schema = 2;
-            for (HologramPresets.Cell cell : s.virtualPreset.cells) cell.tileNbt = inputs[0];
+            for (HologramPresets.Cell cell : s.virtualPreset.cells) {
+                cell.block = "minecraft:stone";
+                cell.tileNbt = inputs[0];
+            }
             HologramBlueprintValidationCache cache = new HologramBlueprintValidationCache(s.virtualPreset);
             drainPopulation(s, cache);
             SimpleAssert.that(
