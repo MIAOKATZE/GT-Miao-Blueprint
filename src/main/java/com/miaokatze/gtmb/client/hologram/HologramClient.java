@@ -2305,6 +2305,14 @@ public final class HologramClient {
         if ("blueprintPlacement".equals(nbt.getString("openPurpose"))) HologramScreen.rememberBlueprintPlacement(next);
         Minecraft mc = Minecraft.getMinecraft();
         snapshotWorld = mc.theWorld;
+        if (HologramLibraryClient.INSTANCE.advanceAuthorSave(next)) {
+            if (!HologramBackgroundTasks.detached()) {
+                if (mc.currentScreen instanceof HologramScreen screen && !screen.ui.session.isLocalAuthor())
+                    screen.updateState(next);
+                else mc.displayGuiScreen(new HologramScreen(next));
+            }
+            return;
+        }
         if (HologramBackgroundTasks.detached()) return;
         if (rootCloseFence
             .suppress(next.session, nbt.getLong("uiSequence"), nbt.getBoolean("open"), nbt.getBoolean("areaImporting")))

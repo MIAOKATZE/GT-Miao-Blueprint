@@ -43,6 +43,7 @@ final class HologramSnapshotPreparation {
 
     /** Cancelling a save never schedules another full traversal; the client decides if geometry is missing. */
     static void cancelSaveSource(net.minecraft.entity.player.EntityPlayerMP player, NBTTagCompound request) {
+        HologramLibraryWorkflow.cancelAuthorSaveHandoff(player, request);
         HologramSession session = HologramWorkspace.find(player.getUniqueID());
         Task task = session == null ? null : TASKS.get(session);
         if (task == null || task.clientTask <= 0

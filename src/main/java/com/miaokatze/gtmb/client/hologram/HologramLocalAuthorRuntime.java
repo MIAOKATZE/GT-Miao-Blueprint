@@ -34,6 +34,10 @@ final class HologramLocalAuthorRuntime {
     private final HologramProgress.Tracker localProgress = new HologramProgress.Tracker();
 
     private long savedRevision;
+    private HologramAuthorLibraryOrigin libraryOrigin;
+    private boolean formalSaving;
+    private String serverSourceSession = "";
+    private long serverSourceRevision = -1;
     private boolean saving, retired, hasDraftSaved;
     private String savedPath = "";
     private String activeStructure = "";
@@ -74,9 +78,14 @@ final class HologramLocalAuthorRuntime {
     };
 
     private HologramLocalAuthorRuntime(AuthorDocument source, boolean recovered) {
+        this(source, recovered, null);
+    }
+
+    HologramLocalAuthorRuntime(AuthorDocument source, boolean recovered, HologramAuthorLibraryOrigin origin) {
+        libraryOrigin = origin;
         editor = new AuthorEditor(source, 64);
         projection = new HologramAuthorProjection(source);
-        savedRevision = recovered ? source.revision() : -1;
+        savedRevision = recovered || origin != null ? source.revision() : -1;
         hasDraftSaved = recovered;
         refreshMetadata();
     }
@@ -109,6 +118,10 @@ final class HologramLocalAuthorRuntime {
 
     /** Candidate parsing has already completed: replacing the current owner cannot lose a failed read. */
     static void install(AuthorDocument source, boolean recovered) {
+        install(source, recovered, null);
+    }
+
+    static void install(AuthorDocument source, boolean recovered, HologramAuthorLibraryOrigin origin) {
         String migrationFailure = "";
         if (!source.editable() && !recovered) {
             try {
@@ -123,7 +136,7 @@ final class HologramLocalAuthorRuntime {
                 migrationFailure = "旧模板转换未完成；原文档只读保留，仍可保存恢复草稿：" + failure.getMessage();
             }
         }
-        HologramLocalAuthorRuntime candidate = new HologramLocalAuthorRuntime(source, recovered);
+        HologramLocalAuthorRuntime candidate = new HologramLocalAuthorRuntime(source, recovered, origin);
         HologramLocalAuthorRuntime previous = active;
         HologramScreen screen = new HologramScreen(candidate);
         active = candidate;
@@ -144,6 +157,21 @@ final class HologramLocalAuthorRuntime {
             previous.structureActions.close();
             previous.projection.close();
         }
+    }
+
+    static void installFromServer(AuthorDocument source, HologramState server) {
+        install(source, false);
+        active.acceptServerSource(server);
+    }
+
+    void acceptServerSource(HologramState server) {
+        serverSourceSession = server.session;
+        serverSourceRevision = server.data.getLong("planRevision");
+    }
+
+    boolean ownsServerSource(HologramState server) {
+        return server != null && serverSourceSession.equals(server.session)
+            && serverSourceRevision == server.data.getLong("planRevision");
     }
 
     AuthorDocument document() {
@@ -232,7 +260,7 @@ final class HologramLocalAuthorRuntime {
     }
 
     boolean editable() {
-        return document().editable() && !attachmentActions.busy() && !structureActions.busy();
+        return document().editable() && !formalSaving && !attachmentActions.busy() && !structureActions.busy();
     }
 
     boolean dirty() {
@@ -240,7 +268,50 @@ final class HologramLocalAuthorRuntime {
     }
 
     boolean saving() {
-        return saving;
+        return saving || formalSaving;
+    }
+
+    HologramAuthorLibraryOrigin libraryOrigin() {
+        return libraryOrigin;
+    }
+
+    enum SaveRoute { FINALIZED, PROCESS, SUBMIT }
+
+    SaveRoute saveRoute(boolean current) {
+        return finishedSourceCurrent() ? SaveRoute.FINALIZED
+            : processingCurrent() ? SaveRoute.SUBMIT : SaveRoute.PROCESS;
+    }
+
+    boolean finishedSourceCurrent() {
+        return libraryOrigin != null && libraryOrigin.current(document().revision());
+    }
+
+    void formalSaving(boolean value) {
+        formalSaving = value;
+    }
+
+    /** Reconcile the reviewed content as one undoable transaction; envelope/binding bytes remain artifact provenance. */
+    void librarySaved(AuthorDocument captured, String id, boolean integrated, NBTTagList catalog, byte[] source)
+        throws IOException {
+        formalSaving = false;
+        if (retired || document() != captured) return;
+        AuthorDocument reviewed = HologramLibraryClient.readAuthorSource(source);
+        JsonObject root = reviewed.sourceCopy();
+        JsonObject bare = root.has("blueprint") ? root.getAsJsonObject("blueprint") : root;
+        commitResolvedSource(captured.revision(), bare);
+        libraryOrigin = new HologramAuthorLibraryOrigin(id, integrated, document().revision(), catalog, source);
+        savedRevision = document().revision();
+        refreshMetadata();
+        publish();
+    }
+
+    void libraryReceiptChanged(AuthorDocument captured) {
+        formalSaving = false;
+        if (retired || document() != captured) return;
+        libraryOrigin = null;
+        savedRevision = -1;
+        refreshMetadata();
+        publish();
     }
 
     boolean canUndo() {
@@ -634,11 +705,18 @@ final class HologramLocalAuthorRuntime {
                 ? structureCapabilities.copy()
                 : new NBTTagList());
         metadata.setString("localDraftPath", savedPath);
-        metadata.setBoolean("blueprintSaved", hasDraftSaved);
-        metadata.setString("libraryLocalId", hasDraftSaved ? "draft_" + document().documentId() : "");
-        metadata.setString("selectedPresetId", hasDraftSaved ? "draft_" + document().documentId() : "");
+        boolean finished = finishedSourceCurrent();
+        String sourceId = libraryOrigin == null ? hasDraftSaved ? "draft_" + document().documentId() : ""
+            : libraryOrigin.id;
+        metadata.setBoolean("blueprintSaved", finished || hasDraftSaved);
+        metadata.setBoolean("draft", !finished);
+        metadata.setString("blueprintSource", libraryOrigin == null ? "" : "saved");
+        metadata.setString("openPurpose", "blueprintEdit");
+        metadata.setString("libraryLocalId", libraryOrigin != null && libraryOrigin.integrated ? "" : sourceId);
+        metadata.setString("selectedPresetId", sourceId);
+        if (libraryOrigin != null && libraryOrigin.integrated) metadata.setTag("presets", libraryOrigin.catalog.copy());
         boolean reportCurrent = processing != null && processingRevision == document().revision();
-        metadata.setBoolean("blueprintProcessingRequired", true);
+        metadata.setBoolean("blueprintProcessingRequired", !finished);
         metadata.setBoolean("blueprintProcessingComplete", reportCurrent && processingCompleted);
         metadata.setTag("processing", reportCurrent ? processing.copy() : new NBTTagCompound());
         metadata.setTag(

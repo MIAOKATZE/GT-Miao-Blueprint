@@ -189,7 +189,8 @@ final class HologramUiSession {
     static boolean needsAuthorSource(HologramState snapshot) {
         // Cut entry uses an already complete blueprint as a UI host, not permission to take over its workflow.
         // HologramClient has already matched the opening request/tool/world before installing this marker.
-        return !"cutWorkspace".equals(snapshot.data.getString("openPurpose"))
+        return !HologramLibraryClient.INSTANCE.authorSaveOwns(snapshot)
+            && !"cutWorkspace".equals(snapshot.data.getString("openPurpose"))
             && snapshot.data.getString("cutWorkspaceRequestId")
                 .isEmpty()
             && snapshot.data.getBoolean("virtual")

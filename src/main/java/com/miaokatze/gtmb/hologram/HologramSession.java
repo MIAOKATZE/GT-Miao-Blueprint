@@ -137,6 +137,8 @@ final class HologramSession {
     boolean libraryQuickPending, libraryUiActive;
     long libraryQuickBootstrapTick = Long.MIN_VALUE;
     long blueprintClientTaskToken;
+    // Temporary presentation routing for an explicit private edit -> formal Save; never admission authority.
+    long authorSaveHandoffTask;
     long libraryQuickClientTaskToken;
     boolean libraryInitialSnapshot;
     java.util.Set<String> virtualEdited = new java.util.HashSet<>();

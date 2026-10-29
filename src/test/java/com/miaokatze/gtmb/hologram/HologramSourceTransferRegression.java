@@ -15,6 +15,7 @@ import com.miaokatze.gtmb.testutil.SimpleAssert;
 final class HologramSourceTransferRegression {
 
     static void run(HologramSession owner) throws IOException, ReflectiveOperationException {
+        HologramAuthorSaveSnapshotRegression.run(owner);
         HologramSession s = fixture(owner);
         s.x = 100;
         s.y = 64;

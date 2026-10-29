@@ -81,7 +81,7 @@ final class HologramEditorLibraryPane {
         page.child(
             HologramEditorNativeTheme
                 .label(
-                    () -> ui.session.isLocalAuthor() ? "Ctrl+S 只保存完整恢复草稿，不等待审核或 PNG。导出与放置为独立步骤。"
+                    () -> ui.session.isLocalAuthor() ? "Ctrl+S 保存当前蓝图成品，沿用处理、服务器审核及写盘确认；恢复草稿另有独立入口。"
                         : "Ctrl+S 保存当前编辑蓝图；公库来源保存为本地副本。")
                 .widthRel(1f)
                 .height(30));
@@ -110,17 +110,16 @@ final class HologramEditorLibraryPane {
         page.child(
             action(
                 140,
-                () -> ui.session.isLocalAuthor() ? "保存恢复草稿" : ui.library.overwriteMode() ? "更新此蓝图" : "保存蓝图",
+                () -> ui.library.overwriteMode() ? "更新此蓝图" : "保存蓝图",
                 ui.library::nativeCanSave,
-                () -> ui.session.isLocalAuthor() ? "保存完整原始内容、未知字段及待处理义务，不授予施工或发布许可。"
-                    : "保存沿用原作者处理、结构封面与最终写盘回执；覆盖前核对真实目标。").widthRel(1f)
+                () -> "保存沿用原作者处理、结构封面与最终写盘回执；覆盖前核对真实目标。").widthRel(1f)
                         .height(20));
         page.child(
             action(
                 132,
-                () -> ui.session.isLocalAuthor() ? "另存恢复副本（当前稿不变）" : "另存为新蓝图",
+                () -> "另存为新蓝图",
                 ui.library::nativeCanSave,
-                () -> ui.session.isLocalAuthor() ? "新文档身份的完整恢复副本；不清除当前稿未保存状态。" : "保留当前原图，另存新的蓝图与结构封面。").widthRel(1f)
+                () -> "保留当前原图，另存新的蓝图与结构封面。").widthRel(1f)
                     .height(18));
         page.child(
             HologramEditorNativeTheme.label(ui.library::nativeStatus)
@@ -142,6 +141,10 @@ final class HologramEditorLibraryPane {
                 () -> idle() && !ui.library.nativeDedicated() && ui.library.selectedPresetExists(),
                 () -> "导出所选已保存蓝图及其原有 PNG 文件。").widthRel(1f)
                     .height(18));
+        page.child(
+            local(HologramEditorControlIds.LIBRARY + 22, () -> "保存恢复草稿（不替代成品）",
+                ui.library::nativeCanSave, ui.library::saveRecoveryDraft).widthRel(1f).height(20)
+                    .setEnabledIf(widget -> ui.session.isLocalAuthor()));
         page.child(
             local(
                 HologramEditorControlIds.LIBRARY + 20,

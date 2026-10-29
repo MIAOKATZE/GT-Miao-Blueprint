@@ -23,6 +23,7 @@ import com.miaokatze.gtmb.hologram.HologramExtensionExecution;
 final class HologramAuthorSubmission {
 
     private static final AtomicBoolean BUSY = new AtomicBoolean();
+    private static HologramLocalAuthorRuntime savingOwner;
     private static final ThreadPoolExecutor IO = new ThreadPoolExecutor(
         1,
         1,
@@ -40,6 +41,15 @@ final class HologramAuthorSubmission {
 
     static void submit(HologramLocalAuthorRuntime owner, NBTTagCompound confirmedPolicy, boolean place, double yaw,
         double pitch) {
+        submit(owner, confirmedPolicy, place, null, yaw, pitch);
+    }
+
+    static void save(HologramLocalAuthorRuntime owner, NBTTagCompound policy, String replace, double yaw, double pitch) {
+        submit(owner, policy, false, replace, yaw, pitch);
+    }
+
+    private static void submit(HologramLocalAuthorRuntime owner, NBTTagCompound confirmedPolicy, boolean place,
+        String saveTarget, double yaw, double pitch) {
         if (owner == null || !owner.editable()) {
             notice("当前作者文档不可提交");
             return;
@@ -49,19 +59,33 @@ final class HologramAuthorSubmission {
             return;
         }
         AuthorDocument frozen = owner.document();
+        if (saveTarget != null) {
+            savingOwner = owner;
+            owner.formalSaving(true);
+        }
         Minecraft minecraft = Minecraft.getMinecraft();
         Object originalWorld = minecraft.theWorld;
+        Object originalConnection = minecraft.getNetHandler();
         net.minecraft.item.ItemStack originalTool = minecraft.thePlayer == null ? null
             : minecraft.thePlayer.getHeldItem();
+        String originalToolId = toolId(originalTool);
         int originalSlot = minecraft.thePlayer == null ? -1 : minecraft.thePlayer.inventory.currentItem;
         BooleanSupplier current = () -> HologramLocalAuthorRuntime.active() == owner && owner.document() == frozen
-            && (!place || minecraft.theWorld == originalWorld && minecraft.thePlayer != null
-                && minecraft.thePlayer.getHeldItem() == originalTool
+            && (!(place || saveTarget != null) || minecraft.theWorld == originalWorld && minecraft.thePlayer != null
+                && minecraft.getNetHandler() == originalConnection
+                && sameTool(originalTool, originalToolId, minecraft.thePlayer.getHeldItem())
                 && minecraft.thePlayer.inventory.currentItem == originalSlot);
         try {
+            if (saveTarget != null) com.miaokatze.gtmb.hologram.HologramAuthorFormalSaveCompatibility.requireCompatible(frozen);
+            if (saveTarget != null && owner.finishedSourceCurrent()) {
+                byte[] original = owner.libraryOrigin().source();
+                if (original == null) throw new IOException("原成品来源未绑定，请重新打开蓝图后保存");
+                preview(owner, frozen, original, new NBTTagCompound(), current, place, saveTarget, yaw, pitch);
+                return;
+            }
             // Native registry/providers are owner-thread work. Never put this call in the IO executor.
             byte[] json = HologramAuthorPortableCompiler.compile(frozen, confirmedPolicy);
-            preview(frozen, json, current, place, yaw, pitch);
+            preview(owner, frozen, json, confirmedPolicy, current, place, saveTarget, yaw, pitch);
         } catch (HologramExtensionExecution.ReviewRequired serverOnly) {
             notice("此候选需要服务器扩展核对；上传精确源版本，仅分析，不施工、不扣除材料");
             HologramAuthorReviewClient.request(owner, "compile", confirmedPolicy, current, reply -> {
@@ -70,17 +94,18 @@ final class HologramAuthorSubmission {
                     fail(new IOException("服务器候选不再对应当前源版本，原稿保留"));
                     return;
                 }
-                preview(frozen, json, current, place, yaw, pitch);
+                preview(owner, frozen, json, confirmedPolicy, current, place, saveTarget, yaw, pitch);
             }, HologramAuthorSubmission::fail);
         } catch (Exception | LinkageError failure) {
             fail(failure);
         }
     }
 
-    private static void preview(AuthorDocument frozen, byte[] json, BooleanSupplier current, boolean place, double yaw,
-        double pitch) {
+    private static void preview(HologramLocalAuthorRuntime owner, AuthorDocument frozen, byte[] json,
+        NBTTagCompound policy, BooleanSupplier current, boolean place, String saveTarget, double yaw, double pitch) {
         notice("正在从当前源版本生成原生预览；此候选尚未取得施工许可");
         work(() -> {
+            if (saveTarget != null) com.miaokatze.gtmb.hologram.HologramAuthorFormalSaveCompatibility.requireCompatible(json);
             NBTTagCompound exact = HologramBlueprintPreview.snapshot(json);
             HologramBlueprintPreview.capture(exact, yaw, pitch, current, pixels -> work(() -> {
                 byte[] png = png(pixels, current);
@@ -92,7 +117,16 @@ final class HologramAuthorSubmission {
                             fail(new IOException("文档已变化，请重新提交"));
                             return;
                         }
-                        if (place) {
+                        if (saveTarget != null) {
+                            try {
+                                HologramLibraryClient.INSTANCE.beginAuthorSave(owner, frozen, pair, policy,
+                                    saveTarget, current, yaw, pitch);
+                                savingOwner = null;
+                                BUSY.set(false);
+                            } catch (Exception failure) {
+                                fail(failure);
+                            }
+                        } else if (place) {
                             try {
                                 HologramLibraryClient.INSTANCE.beginAuthorCandidatePlacement(
                                     pair,
@@ -111,6 +145,15 @@ final class HologramAuthorSubmission {
                     });
             }), HologramAuthorSubmission::fail);
         });
+    }
+
+    static String toolId(net.minecraft.item.ItemStack tool) {
+        return tool == null || !tool.hasTagCompound() ? "" : tool.getTagCompound().getString("gtitHologramToolId");
+    }
+
+    static boolean sameTool(net.minecraft.item.ItemStack original, String id, net.minecraft.item.ItemStack current) {
+        return original != null && current != null && original.getItem() == current.getItem()
+            && (id.isEmpty() ? original == current : id.equals(toolId(current)));
     }
 
     private interface Job {
@@ -160,6 +203,8 @@ final class HologramAuthorSubmission {
     }
 
     private static void fail(Throwable failure) {
+        if (savingOwner != null) savingOwner.formalSaving(false);
+        savingOwner = null;
         BUSY.set(false);
         notice(
             "候选提交失败，原草稿及未兑现义务保留：" + java.util.Objects.toString(

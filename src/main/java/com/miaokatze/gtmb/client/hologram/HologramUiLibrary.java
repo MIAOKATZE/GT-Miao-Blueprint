@@ -71,7 +71,10 @@ final class HologramUiLibrary {
     }
 
     private boolean dedicatedLibrary() {
-        return !ui.session.isTutorial() && (ui.session.isLocalAuthor() || HologramLibraryClient.dedicated());
+        if (ui.session.isTutorial()) return false;
+        if (ui.session.isLocalAuthor() && ui.session.author().libraryOrigin() != null)
+            return !ui.session.author().libraryOrigin().integrated;
+        return ui.session.isLocalAuthor() || HologramLibraryClient.dedicated();
     }
 
     private HologramMuiTextField presetNameField;
@@ -726,7 +729,7 @@ final class HologramUiLibrary {
             99,
             103,
             16,
-            ui.session.isLocalAuthor() ? "保存恢复草稿" : "保存蓝图",
+            "保存蓝图",
             ui.session.isLocalAuthor() ? nativeCanSave()
                 : !browsePreviewActive() && idle
                     && ui.processing.processingReady()
@@ -932,9 +935,9 @@ final class HologramUiLibrary {
 
     String blueprintSaveState() {
         if (ui.session.isLocalAuthor()) return ui.session.author()
-            .saving() ? "正在保存本地恢复草稿"
-                : ui.session.author()
-                    .dirty() ? "本地草稿有未保存修改" : "本地草稿已保存";
+            .saving() ? "正在保存蓝图"
+                : ui.session.author().finishedSourceCurrent() ? "库成品已保存"
+                : ui.session.author().dirty() ? "当前蓝图有未保存修改" : "恢复草稿已保存，尚未保存成品";
         if (ui.session.state().data.getBoolean("blueprintSavePending")) return HologramLibraryClient.INSTANCE.status()
             .isEmpty() ? HologramUiText.localized("gtmb.hologram.blueprint.saving", "正在传输保存，等待写盘确认")
                 : HologramLibraryClient.INSTANCE.status();
@@ -994,7 +997,7 @@ final class HologramUiLibrary {
             239,
             125,
             17,
-            ui.session.isLocalAuthor() ? "保存恢复草稿" : "保存蓝图",
+            "保存蓝图",
             ui.session.isLocalAuthor() ? nativeCanSave()
                 : ui.session.editable() && ui.processing.processingReady() && !ui.session.state().cells.isEmpty(),
             mx,
@@ -1268,6 +1271,11 @@ final class HologramUiLibrary {
         submitBlueprintSave(true);
     }
 
+    void saveRecoveryDraft() {
+        if (ui.session.isLocalAuthor() && !ui.session.author().saving())
+            ui.session.author().save(localAuthorSaveName());
+    }
+
     private String localAuthorSaveName() {
         String name = authorSaveName(
             presetNameField == null ? null : presetNameField.getText(),
@@ -1300,10 +1308,28 @@ final class HologramUiLibrary {
                 .select(
                     ui.preview.selection()
                         .indices());
-            if (current) ui.session.author()
-                .save(name);
-            else ui.session.author()
-                .saveCopy(name);
+            HologramLocalAuthorRuntime owner = ui.session.author();
+            owner.rename(name);
+            if (owner.saveRoute(current) == HologramLocalAuthorRuntime.SaveRoute.PROCESS) {
+                ui.session.notice("请先完成当前版本的蓝图处理，再保存成品；恢复草稿可独立保存");
+                ui.router.activate(220);
+                return;
+            }
+            HologramAuthorLibraryOrigin origin = owner.libraryOrigin();
+            String replace = current && origin != null && !origin.publicLibrary() ? origin.id : "";
+            HologramState server = HologramClient.state;
+            if (server != null && server.data.getBoolean("blueprintDirty") && !owner.ownsServerSource(server)) {
+                confirmLocalSourceSwitch(() -> {
+                    if (HologramClient.state != server) {
+                        ui.session.notice("服务器来源已变化，请重新保存并确认；当前原稿保留");
+                        return;
+                    }
+                    owner.acceptServerSource(server);
+                    submitBlueprintSave(current);
+                });
+                return;
+            }
+            dispatchAuthorSave(owner, replace, ui.preview.yaw(), ui.preview.pitch(), HologramAuthorSubmission::save);
             return;
         }
         if (!ui.session.editable() || browsePreviewActive() || ui.session.state().cells.isEmpty()) return;
@@ -1324,6 +1350,17 @@ final class HologramUiLibrary {
         }
     }
 
+    interface AuthorSaveSubmission {
+        void save(HologramLocalAuthorRuntime owner, NBTTagCompound policy, String replace, double yaw, double pitch);
+    }
+
+    /** The actual UI submission argument boundary: finalized sources need no new local policy certificate. */
+    static void dispatchAuthorSave(HologramLocalAuthorRuntime owner, String replace, double yaw, double pitch,
+        AuthorSaveSubmission submit) {
+        NBTTagCompound policy = owner.finishedSourceCurrent() ? null : owner.confirmedPolicy();
+        submit.save(owner, policy, replace, yaw, pitch);
+    }
+
     void drawDeleteReview(int mx, int my) {
         drawRect(50, 85, 428, 219, 0xff172f36);
         String storage = dedicatedLibrary() ? this.publicLibrary ? "服务器公库" : "客户端本地" : "本地蓝图库";
@@ -1336,6 +1373,12 @@ final class HologramUiLibrary {
     }
 
     boolean selectedPresetExists() {
+        if (ui.session.isLocalAuthor()) {
+            HologramLocalAuthorRuntime owner = ui.session.author();
+            // This action places the displayed source, never a stale singleton row behind an edited document.
+            if (!owner.finishedSourceCurrent()) return false;
+            return owner.libraryOrigin() != null;
+        }
         boolean dedicated = dedicatedLibrary();
         if (!dedicated && !browseServerPresetId.isEmpty()) {
             NBTTagList rows = ui.session.state().data.getTagList("presets", 10);
@@ -1421,13 +1464,18 @@ final class HologramUiLibrary {
             }
             if (ui.session.isLocalAuthor()) {
                 this.overwriteReview = false;
-                if (!this.overwriteTarget.startsWith("draft_")) {
-                    ui.session.notice("恢复草稿不能覆盖可分享成品；请选恢复草稿，或使用独立导出候选");
+                String name = localAuthorSaveName();
+                HologramLocalAuthorRuntime owner = ui.session.author();
+                if (this.overwriteTarget.startsWith("draft_")) {
+                    owner.saveOverwrite(this.overwriteTarget, name);
                     return true;
                 }
-                String name = localAuthorSaveName();
-                ui.session.author()
-                    .saveOverwrite(this.overwriteTarget, name);
+                HologramAuthorLibraryOrigin origin = owner.libraryOrigin();
+                if (origin == null || !origin.id.equals(this.overwriteTarget) || origin.publicLibrary()) {
+                    ui.session.notice("成品更新必须对应当前打开的原库条目；请先打开目标，或另存为新蓝图");
+                    return true;
+                }
+                submitBlueprintSave(true);
                 return true;
             }
             NBTTagCompound request = ui.library.blueprintSaveOptions();
@@ -1560,6 +1608,15 @@ final class HologramUiLibrary {
     }
 
     boolean prepareLibraryNavigation(int id) {
+        if (id == 141 && ui.session.isLocalAuthor()) {
+            HologramLocalAuthorRuntime owner = ui.session.author();
+            if (!owner.finishedSourceCurrent()) {
+                ui.session.notice("当前内容已修改或尚未保存成品；请先保存当前蓝图，不能放置旧库条目");
+                return true;
+            }
+            HologramLibraryClient.INSTANCE.placeAuthorSource(owner);
+            return true;
+        }
         if (!ui.session.isTutorial() && (id == 132 || id == 140 && !overwriteMode)) {
             if (nativeCanSave()) submitBlueprintSave(id == 140);
             return true;
@@ -2212,7 +2269,7 @@ final class HologramUiLibrary {
     private void refreshLibrary() {
         if (ui.session.isTutorial()) return;
         if (dedicatedLibrary()) HologramLibraryClient.INSTANCE.refreshLocal();
-        else ui.session.send("refreshPresetLibrary", null, false);
+        else if (!ui.session.isLocalAuthor()) ui.session.send("refreshPresetLibrary", null, false);
     }
 
     /** Modal controls are appended after the library rows; only the top modal may own this click. */
@@ -2298,6 +2355,8 @@ final class HologramUiLibrary {
     }
 
     void initializeBrowsing(HologramState snapshot) {
+        if (ui.session.isLocalAuthor() && ui.session.author().libraryOrigin() != null)
+            publicLibrary = ui.session.author().libraryOrigin().publicLibrary();
         libraryDrawer = snapshot.data.getBoolean("presetBrowseForPlacement")
             || snapshot.data.getBoolean("blueprintPreview");
     }

@@ -240,6 +240,26 @@ final class HologramLibraryWorkflow {
         next.libraryReplaceLocalId = previous.libraryReplaceLocalId;
     }
 
+    static void bindAuthorSaveHandoff(HologramSession candidate, NBTTagCompound request) {
+        candidate.authorSaveHandoffTask = "edit".equals(request.getString("action"))
+            && request.getBoolean("saveCurrent") && request.getLong("clientTaskToken") > 0
+                ? request.getLong("clientTaskToken") : 0;
+    }
+
+    static boolean cancelAuthorSaveHandoff(HologramSession session, NBTTagCompound request) {
+        if (session == null || request.getLong("clientTaskToken") <= 0
+            || session.authorSaveHandoffTask != request.getLong("clientTaskToken")
+            || !request.getString("session").isEmpty() && !session.id.equals(request.getString("session"))) return false;
+        session.authorSaveHandoffTask = 0;
+        return true;
+    }
+
+    static void cancelAuthorSaveHandoff(EntityPlayerMP player, NBTTagCompound request) {
+        HologramSession session = HologramWorkspace.find(player.getUniqueID());
+        if (session != null && session.player == player && cancelAuthorSaveHandoff(session, request))
+            HologramSnapshotPreparation.cancel(session);
+    }
+
     static void libraryActivate(EntityPlayerMP player, NBTTagCompound request, HologramPresets.Preset uploaded,
         HologramLibraryFacade.ActivationCompletion completion) throws java.io.IOException {
         if (!completion.current() || !HologramLibraryService.sessionCurrent(player, request))
@@ -319,6 +339,7 @@ final class HologramLibraryWorkflow {
         candidate.libraryPrivatePreset = integratedId.isEmpty() ? uploaded : null;
         candidate.libraryQuickToken = origin.libraryQuickToken;
         candidate.libraryQuickClientTaskToken = frozen.getLong("clientTaskToken");
+        bindAuthorSaveHandoff(candidate, frozen);
         boolean sourcePlacement = origin.virtualPlacement;
         HologramPresetPosePreparation posePreparation = new HologramPresetPosePreparation(
             pose,
@@ -554,6 +575,7 @@ final class HologramLibraryWorkflow {
                 HologramPresets.commitSaved(s.blueprintSavePrepared, s.blueprintSaveUpdate);
                 s.blueprintSavePrepared = null;
             } catch (java.io.IOException | RuntimeException failure) {
+                s.authorSaveHandoffTask = 0;
                 s.status = "蓝图库索引保存失败：" + failure.getMessage();
                 HologramLibraryFacade.savedResult(s.player, request, false, s.status);
                 s.blueprintSaveReceipt = "";
@@ -569,6 +591,7 @@ final class HologramLibraryWorkflow {
         s.blueprintSaveSelectedPresetId = "";
         s.blueprintSaveReceipt = "";
         s.blueprintDirty = false;
+        s.authorSaveHandoffTask = 0;
         s.blueprintSource = "saved";
         HologramBlueprintRotation.committed(s);
         s.blueprintOperationSuccess = true;
@@ -620,6 +643,7 @@ final class HologramLibraryWorkflow {
         s.blueprintSavePrepared = null;
         s.blueprintSaveSelectedPresetId = "";
         s.blueprintDirty = true;
+        s.authorSaveHandoffTask = 0;
         s.status = "蓝图保存已取消，未保存修改保留";
         HologramSnapshots.send(s);
     }
