@@ -1,6 +1,12 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.io.IOException;
+import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 import net.minecraft.nbt.NBTTagCompound;
 
@@ -150,28 +156,52 @@ public final class HologramSegmentValidationRegression {
 
     private static void workingSetOwnership() throws IOException {
         HologramPresets.Preset source = preset(2);
-        long bytes = HologramProcessGovernor.retainedBytes();
-        try (HologramSchemaPageCache.Stage stage = HologramSchemaPageCache.begin(source)) {
-            stage.validate(source.cells.get(0), true, new HologramBlueprintValidationCache(source));
-            SimpleAssert
-                .that(HologramProcessGovernor.retainedBytes() > bytes, "staging reserves before shape allocation");
+        List<HologramProcessGovernor.Lease> leases;
+        // Reserve may reap unrelated retired caches. A process-wide before/after equality can therefore
+        // fail on correct cleanup, or hide a leaked stage lease behind an unrelated release.
+        try (HologramProcessGovernor.Lease unrelated = HologramProcessGovernor.retain("fixture.retired.schema", 4096);
+            HologramRetainedCache.Owner retired = HologramRetainedCache.watch(source)) {
+            retired.add(unrelated);
+            SimpleAssert.that(!leaseClosed(unrelated), "unrelated retirement fixture starts charged");
+            boolean rejectedOpenLease = false;
+            try {
+                closedLeases(Collections.singletonList(unrelated), "negative control must reject an open lease");
+            } catch (AssertionError expected) {
+                rejectedOpenLease = true;
+            }
+            SimpleAssert.that(rejectedOpenLease, "exact closure oracle detects a genuinely open lease");
+            try (HologramSchemaPageCache.Stage stage = HologramSchemaPageCache.begin(source)) {
+                retainedLease(stage, "root", "schema.pages.staging", 128 * 1024);
+                stage.validate(source.cells.get(0), true, new HologramBlueprintValidationCache(source));
+                leases = stageLeases(stage, 0);
+                // Model unrelated retirement deterministically, without the reaper's deadline or GC timing.
+                retired.close();
+                closedLeases(Collections.singletonList(unrelated), "unrelated charge retires while staging is live");
+                for (HologramProcessGovernor.Lease lease : leases)
+                    SimpleAssert.that(!leaseClosed(lease), "unrelated retirement does not close a stage lease");
+            }
+            closedLeases(leases, "aborted staging releases both root and page");
         }
-        SimpleAssert.eq(bytes, HologramProcessGovernor.retainedBytes(), "aborted staging releases both root and page");
         try (HologramPreparedBlueprintValidation task = new HologramPreparedBlueprintValidation(source)) {
             for (int i = 0; i < 6; i++) task.advance();
+            leases = stageLeases((HologramSchemaPageCache.Stage) field(task, "schema"), 0);
         }
-        SimpleAssert
-            .eq(bytes, HologramProcessGovernor.retainedBytes(), "prepared cancellation releases staged proof leases");
+        closedLeases(leases, "prepared cancellation releases staged proof leases");
         SimpleAssert.that(source.schemaPageCache == null, "prepared cancellation publishes no partial proof");
         HologramPresets.Preset cancelled = preset(600);
         try (HologramSchemaPageCache.Stage stage = HologramSchemaPageCache.begin(cancelled)) {
             HologramBlueprintValidationCache validation = new HologramBlueprintValidationCache(cancelled);
-            for (int i = 0; i < 257; i++) stage.validate(cancelled.cells.get(i), true, validation);
+            stage.validate(cancelled.cells.get(0), true, validation);
+            HologramProcessGovernor.Lease firstScratch = retainedLease(
+                field(stage, "builder"),
+                "lease",
+                "schema.page",
+                128 * 1024);
+            for (int i = 1; i < 257; i++) stage.validate(cancelled.cells.get(i), true, validation);
+            SimpleAssert.that(leaseClosed(firstScratch), "freezing a page releases its original scratch lease");
+            leases = stageLeases(stage, 1);
         }
-        SimpleAssert.eq(
-            bytes,
-            HologramProcessGovernor.retainedBytes(),
-            "cancellation releases both an already frozen candidate page and the next scratch page");
+        closedLeases(leases, "cancellation releases root, frozen candidate page and next scratch page");
 
         HologramPresets.Preset alias = preset(1);
         alias.cells.get(0).block = null;
@@ -216,6 +246,52 @@ public final class HologramSegmentValidationRegression {
         expectIo(() -> runPrepared(heavy));
         SimpleAssert
             .that(heavy.schemaPageCache == previous, "prepared tail failure preserves previous proof working set");
+    }
+
+    private static List<HologramProcessGovernor.Lease> stageLeases(HologramSchemaPageCache.Stage stage,
+        int frozenPages) {
+        List<HologramProcessGovernor.Lease> leases = new ArrayList<>();
+        leases.add(retainedLease(stage, "root", "schema.pages.staging", 128 * 1024));
+        leases.add(retainedLease(field(stage, "builder"), "lease", "schema.page", 128 * 1024));
+        Map<?, ?> owned = (Map<?, ?>) field(stage, "owned");
+        SimpleAssert.eq(frozenPages, owned.size(), "fixture captures every unpublished resident page");
+        for (Object value : owned.values()) {
+            HologramSchemaPageCache.Page page = (HologramSchemaPageCache.Page) value;
+            leases.add(retainedLease(page, "unpublished", "schema.page.resident", page.weight));
+        }
+        return leases;
+    }
+
+    private static HologramProcessGovernor.Lease retainedLease(Object owner, String name, String label, long bytes) {
+        HologramProcessGovernor.Lease lease = (HologramProcessGovernor.Lease) field(owner, name);
+        SimpleAssert.that(lease != null, "fixture owns " + label);
+        SimpleAssert.eq(label, lease.owner(), "captured lease has the expected owner");
+        SimpleAssert.eq(bytes, lease.bytes(), "staging reserves exact bytes before shape allocation");
+        SimpleAssert.that(!leaseClosed(lease), "captured lease is open before owner cancellation: " + label);
+        return lease;
+    }
+
+    private static void closedLeases(List<HologramProcessGovernor.Lease> leases, String message) {
+        for (HologramProcessGovernor.Lease lease : leases)
+            SimpleAssert.that(leaseClosed(lease), message + ": " + lease.owner());
+    }
+
+    private static boolean leaseClosed(HologramProcessGovernor.Lease lease) {
+        // Core's bytes() is the immutable original charge even after close. Observe the exact lease's
+        // terminal state instead, even after the Stage clears its ownership fields on cancellation.
+        return ((AtomicBoolean) field(field(lease, "delegate"), "closed")).get();
+    }
+
+    private static Object field(Object owner, String name) {
+        SimpleAssert.that(owner != null, "ownership fixture exists for field " + name);
+        try {
+            Field field = owner.getClass()
+                .getDeclaredField(name);
+            field.setAccessible(true);
+            return field.get(owner);
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("Cannot inspect exact lease ownership: " + name, failure);
+        }
     }
 
     private static void stablePages() throws IOException {
