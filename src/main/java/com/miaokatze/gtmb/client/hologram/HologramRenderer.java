@@ -25,6 +25,8 @@ import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL14;
 
+import com.gtnewhorizon.gtnhlib.client.renderer.DirectTessellator;
+
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.common.blocks.ItemMachines;
 
@@ -83,13 +85,6 @@ final class HologramRenderer {
     private static boolean moving(HologramState.Cell cell) {
         return (moveOffset[0] != 0 || moveOffset[1] != 0 || moveOffset[2] != 0) && selection != null
             && selection.contains(cell.index);
-    }
-
-    private static double[] moveScreen(HologramState.Cell cell) {
-        if (!moving(cell)) return new double[] { 0, 0 };
-        double[] from = projectedFrame.projectScreen(0, 0, 0),
-            to = projectedFrame.projectScreen(moveOffset[0], moveOffset[1], moveOffset[2]);
-        return new double[] { to[0] - from[0], to[1] - from[1] };
     }
 
     static boolean showEmptyCells;
@@ -513,6 +508,17 @@ final class HologramRenderer {
             double depthScale = 128 / extent;
             HologramSourcePreviewReference.captureCamera(depthScale);
             Tessellator t = Tessellator.instance;
+            double moveX = 0, moveY = 0;
+            if ((moveOffset[0] != 0 || moveOffset[1] != 0 || moveOffset[2] != 0) && selection != null
+                && selection.size() > 0) {
+                double[] from = projectedFrame.projectScreen(0, 0, 0),
+                    to = projectedFrame.projectScreen(moveOffset[0], moveOffset[1], moveOffset[2]);
+                moveX = to[0] - from[0];
+                moveY = to[1] - from[1];
+            }
+            int quadVertices = 0, quadLimit = 0;
+            // These GUI batches use color/UV only, with no brightness or normal flag enabled.
+            // Restart at primitive boundaries before reapplying color/UV; translation stays unchanged.
             t.startDrawingQuads();
             for (Face face : faces) {
                 boolean inside = face.contains(mouseX, mouseY) && mouseX >= x
@@ -522,21 +528,29 @@ final class HologramRenderer {
                 if (inside) hovered = face.cell.index;
                 if (face.empty || face.nativeModel) continue;
                 float shade = face.side == 1 ? 1 : face.side < 2 ? .6f : .8f;
-                double[] shifted = moveScreen(face.cell);
+                boolean cellMoving = moving(face.cell);
+                double shiftX = cellMoving ? moveX : 0, shiftY = cellMoving ? moveY : 0;
                 int sampleIndex = 0;
                 for (HologramTextures.Sample sample : face.samples()) {
-                    setSampleColor(t, sample, shade, moving(face.cell) ? .38f : .96f);
+                    if (quadLimit > 0 && quadVertices + 4 > quadLimit) {
+                        t.draw();
+                        t.startDrawingQuads();
+                        quadVertices = 0;
+                    }
+                    setSampleColor(t, sample, shade, cellMoving ? .38f : .96f);
                     if (face.cell.sourceMissing && !face.cell.missingBlock) t.setColorRGBA_F(.55f, .55f, .55f, .78f);
                     for (int i = 0; i < 4; i++) {
                         int vertex = FACES[face.side][i];
                         double[] point = face.points[vertex];
                         t.addVertexWithUV(
-                            point[0] + shifted[0],
-                            point[1] + shifted[1],
+                            point[0] + shiftX,
+                            point[1] + shiftY,
                             point[2] * depthScale + sampleIndex * .015,
                             textureU(sample.icon, face.side, face.local(vertex)),
                             textureV(sample.icon, face.side, face.local(vertex)));
                     }
+                    if (quadLimit == 0) quadLimit = previewBatchLimit(t);
+                    quadVertices += 4;
                     sampleIndex++;
                 }
             }
@@ -579,6 +593,7 @@ final class HologramRenderer {
             GL11.glDepthMask(false);
             float outlineDensity = HologramBlueprintPreview.cleanCapture() || cachedOutlines.isEmpty() ? 1
                 : previewOutlineDensity();
+            int lineVertices = 0, lineLimit = 0;
             t.startDrawing(GL11.GL_LINES);
             java.util.Set<Integer> related = selection == null ? java.util.Collections.emptySet()
                 : selection.related(state);
@@ -588,6 +603,11 @@ final class HologramRenderer {
                 boolean relatedCasing = !chosen && related.contains(face.cell.index);
                 float alpha = previewOutlineAlpha(chosen, relatedCasing, face.empty, face.fadeDefault, outlineDensity);
                 if (alpha == 0) continue;
+                if (lineLimit > 0 && lineVertices + 24 > lineLimit) {
+                    t.draw();
+                    t.startDrawing(GL11.GL_LINES);
+                    lineVertices = 0;
+                }
                 t.setColorRGBA_F(
                     chosen ? 1 : relatedCasing ? .78f : .2f,
                     chosen ? .92f : relatedCasing ? .61f : .7f,
@@ -598,14 +618,22 @@ final class HologramRenderer {
                     t.addVertex(a[0], a[1], a[2] * depthScale + .15);
                     t.addVertex(b[0], b[1], b[2] * depthScale + .15);
                 }
+                if (lineLimit == 0) lineLimit = previewBatchLimit(t);
+                lineVertices += 24;
             }
             t.draw();
             GL11.glDisable(GL11.GL_DEPTH_TEST);
             GL11.glLineWidth(2.5f);
+            lineVertices = 0;
             t.startDrawing(GL11.GL_LINES);
             String hoveredStructure = pickStructure(mouseX, mouseY);
             if (!HologramBlueprintPreview.cleanCapture())
                 for (Map.Entry<String, double[][]> entry : structureBoxes.entrySet()) {
+                    if (lineLimit > 0 && lineVertices + 24 > lineLimit) {
+                        t.draw();
+                        t.startDrawing(GL11.GL_LINES);
+                        lineVertices = 0;
+                    }
                     if (entry.getKey()
                         .equals(hoveredStructure)) t.setColorRGBA_F(1, 1, .8f, 1);
                     else if (entry.getKey()
@@ -619,17 +647,28 @@ final class HologramRenderer {
                         t.addVertex(a[0], a[1], 1);
                         t.addVertex(b[0], b[1], 1);
                     }
+                    if (lineLimit == 0) lineLimit = previewBatchLimit(t);
+                    lineVertices += 24;
                 }
             t.draw();
             GL11.glLineWidth(1.5f);
+            lineVertices = 0;
             t.startDrawing(GL11.GL_LINES);
-            t.setColorRGBA_F(.95f, .77f, .39f, .48f);
-            if (!HologramBlueprintPreview.cleanCapture())
-                for (double[][] box : hintBoxes.values()) for (int[] edge : EDGES) {
+            if (!HologramBlueprintPreview.cleanCapture()) for (double[][] box : hintBoxes.values()) {
+                if (lineLimit > 0 && lineVertices + 24 > lineLimit) {
+                    t.draw();
+                    t.startDrawing(GL11.GL_LINES);
+                    lineVertices = 0;
+                }
+                t.setColorRGBA_F(.95f, .77f, .39f, .48f);
+                for (int[] edge : EDGES) {
                     double[] a = box[edge[0]], b = box[edge[1]];
                     t.addVertex(a[0], a[1], 1);
                     t.addVertex(b[0], b[1], 1);
                 }
+                if (lineLimit == 0) lineLimit = previewBatchLimit(t);
+                lineVertices += 24;
+            }
             t.draw();
             GL11.glEnable(GL11.GL_TEXTURE_2D);
             GL11.glColor4f(1, 1, 1, 1);
@@ -1434,6 +1473,15 @@ final class HologramRenderer {
             HologramTextures.material(cell, current).partial,
             HologramNativeTiles.supported(block),
             cell.iconOnly);
+    }
+
+    private static int previewBatchLimit(Tessellator tess) {
+        // Vanilla's 8-int vertices fit comfortably below its large-buffer shrink threshold.
+        // DirectTessellator exposes the active format; also reserve addVertex's 32-int headroom.
+        if (!(tess instanceof DirectTessellator)) return 4092;
+        int bytesPerVertex = ((DirectTessellator) tess).getVertexFormat()
+            .getVertexSize();
+        return Math.min(4092, ((0x20000 * 4 - 32 * 4) / bytesPerVertex) & ~3);
     }
 
     private static float previewOutlineDensity() {
