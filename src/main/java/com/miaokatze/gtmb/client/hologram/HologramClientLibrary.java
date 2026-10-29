@@ -229,26 +229,43 @@ final class HologramClientLibrary {
 
     private static JsonObject draftSourceMetadata(com.google.gson.stream.JsonReader reader, boolean envelope)
         throws IOException {
-        JsonObject metadata = new JsonObject();
+        JsonObject metadata = new JsonObject(), wrapped = null;
+        boolean invalidBare = false;
         reader.beginObject();
         while (reader.hasNext()) {
             String key = reader.nextName();
-            if (envelope && "blueprint".equals(key)) metadata = draftSourceMetadata(reader, false);
+            if (envelope && "blueprint".equals(key)) wrapped = draftSourceMetadata(reader, false);
+            else if (wrapped != null) reader.skipValue();
             else if ("name".equals(key) || "authorName".equals(key) || "authorUuid".equals(key)) {
-                if (reader.peek() == com.google.gson.stream.JsonToken.NULL) reader.nextNull();
-                else metadata.addProperty(key, reader.nextString());
+                if (reader.peek() == com.google.gson.stream.JsonToken.STRING)
+                    metadata.addProperty(key, reader.nextString());
+                else {
+                    // Author identity descriptions are opaque recovery data; name is typed only in a bare source.
+                    if ("name".equals(key) && reader.peek() != com.google.gson.stream.JsonToken.NULL)
+                        invalidBare = true;
+                    reader.skipValue();
+                }
             } else if ("cells".equals(key) || "structures".equals(key)) {
                 int count = 0;
-                reader.beginArray();
-                while (reader.hasNext()) {
+                if (reader.peek() == com.google.gson.stream.JsonToken.NULL) reader.nextNull();
+                else if (reader.peek() == com.google.gson.stream.JsonToken.BEGIN_ARRAY) {
+                    reader.beginArray();
+                    while (reader.hasNext()) {
+                        reader.skipValue();
+                        count++;
+                    }
+                    reader.endArray();
+                } else {
+                    // A later blueprint member may identify these as unknown outer envelope fields.
+                    invalidBare = true;
                     reader.skipValue();
-                    count++;
                 }
-                reader.endArray();
                 metadata.addProperty("cells".equals(key) ? "displayCells" : "displayStructures", count);
             } else reader.skipValue();
         }
         reader.endObject();
+        if (wrapped != null) return wrapped;
+        if (invalidBare) throw new IOException("Invalid recovery blueprint summary fields");
         return metadata;
     }
 
