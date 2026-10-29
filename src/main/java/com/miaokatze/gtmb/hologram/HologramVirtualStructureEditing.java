@@ -138,7 +138,8 @@ final class HologramVirtualStructureEditing {
         }
         ExtendedFacing facing = HologramVirtualTransform.controller(preset);
         if (front >= 0 && front <= 5) facing = facing.with(ForgeDirection.getOrientation(front));
-        MTEEnhancedMultiBlockBase<?> machine = HologramDetachedController.create(source.controllerId, facing, state);
+        MTEEnhancedMultiBlockBase<?> machine = HologramDetachedController
+            .create(source.controllerId, facing, state, preset.controllerFacing == null);
         if (!HologramStructureDiscovery.captureSupported(machine)) throw new IOException("来源控制器未提供可重建的原生声明");
         return machine;
     }

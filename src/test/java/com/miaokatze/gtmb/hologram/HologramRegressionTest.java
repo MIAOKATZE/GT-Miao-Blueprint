@@ -57,6 +57,7 @@ public final class HologramRegressionTest {
         cases.put("segment_validation_pages_and_global_constraints", HologramSegmentValidationRegression::run);
         cases.put("capture_continuation_preserves_queued_owner", HologramCaptureContinuationRegression::run);
         cases.put("server_synthetic_declaration_callback_boundary", HologramServerDeclarationRegression::run);
+        cases.put("structure_saved_orientation_preservation", HologramStructureOrientationRegression::run);
         cases.put("preset_copy_matches_old_serialized_contract", HologramPresetCopiesRegression::run);
         cases.put("stable_transport_page_layout", HologramTransportPageLayoutRegression::run);
         cases.put("snapshot_segment_reference_protocol", () -> {
