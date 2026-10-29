@@ -120,7 +120,10 @@ public final class HologramSnapshotDataContextRegression {
     }
 
     private static void frozenRegistryAndUnknownFields() throws Exception {
-        String lateName = "gtmb:snapshot_late_" + Long.toHexString(System.nanoTime());
+        cpw.mods.fml.common.ModContainer active = cpw.mods.fml.common.Loader.instance()
+            .activeModContainer();
+        String lateName = (active == null ? "minecraft" : active.getModId()) + ":gtmb_snapshot_late_"
+            + Long.toHexString(System.nanoTime());
         NBTTagCompound tag = new NBTTagCompound();
         tag.setString("unknown", "猫猫" + (char) 0);
         tag.setLong("unknown-long", Long.MIN_VALUE);
@@ -146,6 +149,13 @@ public final class HologramSnapshotDataContextRegression {
         tag.setTag("gt.covers", covers);
         String encoded = HologramBlueprintNbt.encodeCaptured(tag);
         NBTTagCompound expected = HologramBlueprintNbt.decode(encoded);
+        SimpleAssert.that(
+            expected.getCompoundTag("late-item")
+                .getBoolean(HologramBlueprintNbt.MISSING_ITEM)
+                && expected.getTagList("gt.covers", 10)
+                    .getCompoundTagAt(0)
+                    .getBoolean(HologramBlueprintNbt.MISSING_COVER),
+            "fixture item and cover are both missing before identity freezing");
         HologramSnapshotDataContext context = new HologramSnapshotDataContext();
         NBTTagCompound ownerView = context.freeze(encoded);
         SimpleAssert.eq(expected, ownerView, "first admission keeps the original decode semantics");
@@ -157,7 +167,12 @@ public final class HologramSnapshotDataContextRegression {
         int free = 31000;
         while (free > 0 && Item.getItemById(free) != null) free--;
         if (free == 0) throw new AssertionError("No free isolated item registry slot");
-        Item.itemRegistry.addObject(free, lateName, new Item());
+        Item lateItem = new Item();
+        Item.itemRegistry.addObject(free, lateName, lateItem);
+        SimpleAssert.that(
+            Item.itemRegistry.getObject(lateName) == lateItem
+                && Item.getItemById(Item.getIdFromItem(lateItem)) == lateItem,
+            "fixture registration resolves under the exact frozen name and a live numeric ID");
         SimpleAssert.that(
             !expected.equals(HologramBlueprintNbt.decode(encoded)),
             "fixture registry really changed after freezing");
