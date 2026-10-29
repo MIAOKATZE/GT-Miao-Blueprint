@@ -441,6 +441,10 @@ final class HologramLibraryServiceRegression {
             SimpleAssert.that(
                 browsing != editing && !browsing.blueprintEditing,
                 "explicit preview cannot inherit saved editing state");
+            NBTTagCompound browseSnapshot = HologramSnapshots.basicState(browsing);
+            SimpleAssert.that(
+                browsing.libraryUiActive && !browseSnapshot.getBoolean("blueprintEditing"),
+                "the published preview grants private-library UI access without author processing access");
             HologramSnapshotPreparation.cancel(browsing);
             editing = HologramPresetWorkflow.editPreset(browsing, source.id);
             SimpleAssert.that(

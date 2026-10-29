@@ -428,6 +428,7 @@ final class HologramSnapshots {
             "blueprintDirty",
             s.blueprintDirty || s.capture != null && !s.virtualPlacement && s.blueprintSource.isEmpty());
         state.setBoolean("blueprintSaved", "saved".equals(s.blueprintSource));
+        state.setBoolean("blueprintEditing", s.blueprintEditing && authoring);
         state.setBoolean("blueprintSavePending", !s.blueprintSaveReceipt.isEmpty());
         state.setString("blueprintSource", s.blueprintSource);
         state.setBoolean("blueprintProcessingComplete", s.processingReviewed);

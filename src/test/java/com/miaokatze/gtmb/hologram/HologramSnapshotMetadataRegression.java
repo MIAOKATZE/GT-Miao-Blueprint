@@ -119,6 +119,7 @@ final class HologramSnapshotMetadataRegression {
             HologramSnapshots.aeSnapshot(session, expected);
             SimpleAssert
                 .eq(expected, actual, "budgeted metadata preserves every existing snapshot field and NBT entry");
+            editingScalarContract(session);
             SimpleAssert.that(
                 session.nbtKeysCapture == session.capture && session.availableNbtKeys.contains("configuration"),
                 "completed metadata publishes the existing available-key cache generation");
@@ -136,6 +137,30 @@ final class HologramSnapshotMetadataRegression {
             }
         } catch (Exception failed) {
             throw new AssertionError("snapshot metadata", failed);
+        }
+    }
+
+    private static void editingScalarContract(HologramSession session) {
+        boolean placement = session.virtualPlacement, editing = session.blueprintEditing;
+        try {
+            session.blueprintEditing = true;
+            for (boolean placing : new boolean[] { false, true }) {
+                session.virtualPlacement = placing;
+                NBTTagCompound synchronous = new NBTTagCompound(), budgeted = new NBTTagCompound();
+                HologramSnapshots.writeBlueprintState(session, synchronous);
+                HologramSnapshots.writeBlueprintScalars(session, budgeted);
+                SimpleAssert.eq(
+                    !placing,
+                    synchronous.getBoolean("blueprintEditing"),
+                    "explicit editor identity is published only outside world placement");
+                SimpleAssert.eq(
+                    synchronous.getTag("blueprintEditing"),
+                    budgeted.getTag("blueprintEditing"),
+                    "synchronous and budgeted metadata publish the same editing identity and NBT type");
+            }
+        } finally {
+            session.virtualPlacement = placement;
+            session.blueprintEditing = editing;
         }
     }
 
