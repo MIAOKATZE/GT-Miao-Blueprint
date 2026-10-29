@@ -163,6 +163,15 @@ public final class HologramGuidanceRegression {
             HologramGuidance.authorWorkspace(state),
             "explicit editing retains the processing workspace for saved blueprints");
         state.setString("openPurpose", "");
+        state.setBoolean("blueprintEditing", true);
+        check(
+            HologramGuidance.authorWorkspace(state),
+            "an acknowledged saved edit remains processable after its opening intent is consumed");
+        state.setBoolean("virtualPlacement", true);
+        check(!HologramGuidance.authorWorkspace(state), "placement cannot inherit saved-edit processing access");
+        state.setBoolean("virtualPlacement", false);
+        state.setBoolean("blueprintEditing", false);
+        check(!HologramGuidance.authorWorkspace(state), "a clean saved preview does not acquire editing access");
         state.setBoolean("blueprintSaved", false);
         state.setBoolean("presetBrowseForPlacement", true);
         check(!HologramGuidance.authorWorkspace(state), "placement browsing is not a new author draft");

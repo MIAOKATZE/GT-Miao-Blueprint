@@ -344,8 +344,10 @@ final class HologramActionDispatcher {
             HologramSession previewSource = s;
             String previewId = action.getString("presetId");
             s = HologramPresetWorkflow.editPreset(s, previewId);
-            if (s != previewSource && s.virtualPreset != null && previewId.equals(s.virtualPreset.id))
+            if (s != previewSource && s.virtualPreset != null && previewId.equals(s.virtualPreset.id)) {
                 s.openPurpose = "blueprintBrowse";
+                s.blueprintEditing = false;
+            }
             s.blueprintPreview = true;
             s.open = true;
             HologramSnapshots.send(s);

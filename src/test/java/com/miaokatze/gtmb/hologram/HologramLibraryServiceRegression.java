@@ -204,6 +204,7 @@ final class HologramLibraryServiceRegression {
             preset.cells.add(HologramPresets.cell(new ItemStack(Blocks.stone), 0, 0, 0, -1, false));
             set(session, "libraryPrivatePreset", preset);
             currentSaveUsesWorkspaceIdentity((HologramSession) session, preset);
+            savedEditorReprocessing((HologramSession) session, preset);
             SimpleAssert
                 .that(HologramService.libraryPrivatePreset(owner, preset.id) != null, "owner reads private stage");
             SimpleAssert.that(
@@ -403,6 +404,94 @@ final class HologramLibraryServiceRegression {
         session.virtualPreset = previousPreset;
         session.libraryLocalId = previousLocal;
         session.workspaceTab = previousTab;
+    }
+
+    private static void savedEditorReprocessing(HologramSession previous, HologramPresets.Preset source)
+        throws java.io.IOException {
+        EntityPlayerMP player = previous.player;
+        double y = player.posY;
+        ItemStack inventory = player.inventory.mainInventory[1];
+        HologramPresets.Preset staged = previous.libraryPrivatePreset;
+        HologramSession editing = null;
+        try {
+            player.posY = previous.y;
+            HologramBlueprintProcessing.Policy policy = HologramBlueprintProcessing.defaults("self", 0);
+            policy.autoHints = "none";
+            policy.confirmedStages.addAll(HologramBlueprintProcessing.STAGES);
+            previous.libraryPrivatePreset = HologramBlueprintProcessing
+                .process(HologramPresets.copy(source), policy, previous.dimension, previous.x, previous.y, previous.z);
+            editing = HologramPresetWorkflow.editPreset(previous, source.id);
+            SimpleAssert.that(
+                editing != previous && editing.blueprintEditing,
+                "successful saved edit owns explicit editing state");
+            NBTTagCompound opened = HologramSnapshots.basicState(editing);
+            SimpleAssert
+                .eq("blueprintEdit", opened.getString("openPurpose"), "saved edit publishes its opening intent");
+            NBTTagCompound later = HologramSnapshots.basicState(editing);
+            SimpleAssert.eq("", later.getString("openPurpose"), "later snapshots consume no second opening intent");
+            SimpleAssert.that(
+                later.getBoolean("blueprintEditing"),
+                "saved edit remains processable after open intent consumption");
+            NBTTagCompound preview = new NBTTagCompound();
+            preview.setString("op", "previewPreset");
+            preview.setString("session", editing.id);
+            preview.setString("presetId", source.id);
+            HologramActionDispatcher.handle(player, preview);
+            HologramSession browsing = HologramWorkspace.find(player.getUniqueID());
+            SimpleAssert.that(
+                browsing != editing && !browsing.blueprintEditing,
+                "explicit preview cannot inherit saved editing state");
+            HologramSnapshotPreparation.cancel(browsing);
+            editing = HologramPresetWorkflow.editPreset(browsing, source.id);
+            SimpleAssert.that(
+                editing != browsing && editing.blueprintEditing,
+                "returning through Edit grants explicit author processing again");
+            player.inventory.mainInventory[1] = new ItemStack(Blocks.dirt, 32);
+            editing.materialSettings.containers = editing.materialSettings.me = false;
+            NBTTagCompound pin = new NBTTagCompound();
+            pin.setString("op", "customPin");
+            pin.setString("session", editing.id);
+            pin.setLong("planRevision", editing.planRevision);
+            pin.setInteger("selected", 0);
+            pin.setInteger("inventorySlot", 1);
+            HologramActionDispatcher.handle(player, pin);
+            SimpleAssert.eq(
+                32,
+                player.inventory.mainInventory[1].stackSize,
+                "inventory sampling never pays construction material");
+            SimpleAssert.eq(
+                Blocks.dirt,
+                editing.capture.cells.get(0).block,
+                "actual inventory action updates the editable target");
+            NBTTagCompound process = new NBTTagCompound();
+            process.setLong("planRevision", editing.planRevision);
+            HologramAuthoringWorkflow.processingAction(editing, process, "beginBlueprintReprocessing");
+            SimpleAssert.that(
+                editing.processingWorkflowStarted,
+                "saved edit can restart processing against its selected target");
+            process.setLong("planRevision", editing.planRevision);
+            process.setTag("policy", policy.write());
+            HologramAuthoringWorkflow.processingAction(editing, process, "processBlueprint");
+            SimpleAssert.that(editing.processingReviewed, "saved edit can complete processing again");
+            HologramAuthoringWorkflow.validateProcessedSaveOptions(editing, new NBTTagCompound());
+            HologramPresets.Preset save = HologramBlueprintProjection.blueprint(editing, "Reviewed inventory edit");
+            HologramPresets.validate(save);
+            SimpleAssert.eq(
+                "minecraft:dirt",
+                save.cells.get(0).block,
+                "the reviewed save carries the selected inventory material");
+            editing.virtualPlacement = true;
+            SimpleAssert.that(
+                !HologramSnapshots.basicState(editing)
+                    .getBoolean("blueprintEditing"),
+                "world placement masks processing access even when started from an editor");
+        } finally {
+            if (editing != null && editing != previous) HologramSnapshotPreparation.cancel(editing);
+            previous.libraryPrivatePreset = staged;
+            player.inventory.mainInventory[1] = inventory;
+            player.posY = y;
+            HologramWorkspace.activate(player.getUniqueID(), previous);
+        }
     }
 
     @SuppressWarnings("unchecked")

@@ -21,6 +21,7 @@ final class HologramGuidance {
 
     private static boolean authorWorkspace(NBTTagCompound state, boolean hasCells) {
         if (state.getBoolean("virtualPlacement")) return false;
+        if (state.getBoolean("blueprintEditing")) return true;
         if ("blueprintEdit".equals(state.getString("openPurpose")) || state.getBoolean("blueprintDirty")) return true;
         return !state.getBoolean("blueprintSaved") && !state.getBoolean("presetBrowseForPlacement")
             && !"blueprintBrowse".equals(state.getString("openPurpose"))

@@ -1650,13 +1650,7 @@ final class HologramUiLibrary {
                 return true;
             case 139:
                 if (!ui.session.editable() || !ui.library.selectedPresetExists()) return true;
-                browsePreview = false;
-                NBTTagCompound editPreset = new NBTTagCompound();
-                editPreset.setString("presetId", selectedServerPresetId());
-                this.blueprintTab = true;
-                this.libraryDrawer = true;
-                this.presetNameField.setFocused(false);
-                ui.session.send("editPreset", editPreset, true);
+                sendPresetSwitch("editPreset", selectedServerPresetId(), false);
                 return true;
             default:
                 return false;

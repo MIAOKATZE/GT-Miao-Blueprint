@@ -224,6 +224,7 @@ final class HologramSnapshots {
             "blueprintDirty",
             s.blueprintDirty || s.capture != null && !s.virtualPlacement && s.blueprintSource.isEmpty());
         state.setBoolean("blueprintSaved", "saved".equals(s.blueprintSource));
+        state.setBoolean("blueprintEditing", s.blueprintEditing && HologramSessionPolicy.authoring(s));
         state.setBoolean("blueprintSavePending", !s.blueprintSaveReceipt.isEmpty());
         state.setString("blueprintSource", s.blueprintSource);
         state.setBoolean("blueprintProcessingComplete", s.processingReviewed);
@@ -700,6 +701,7 @@ final class HologramSnapshots {
         state.setString("virtualPresetName", s.virtualPreset == null ? "" : s.virtualPreset.name);
         state.setBoolean("blueprintDirty", HologramAuthoringWorkflow.blueprintHasUnsavedChanges(s));
         state.setBoolean("blueprintSaved", "saved".equals(s.blueprintSource));
+        state.setBoolean("blueprintEditing", s.blueprintEditing && HologramSessionPolicy.authoring(s));
         state.setString("blueprintSource", s.blueprintSource);
         state.setBoolean("blueprintProcessingComplete", s.processingReviewed);
         state.setBoolean("blueprintProcessingRequired", !s.processingReviewed);
@@ -867,6 +869,7 @@ final class HologramSnapshots {
         state.setLong("quickClientTaskToken", s.libraryQuickClientTaskToken);
         state.setString("openPurpose", s.openPurpose);
         state.setString("cutWorkspaceRequestId", s.cutWorkspaceRequestId);
+        state.setBoolean("blueprintEditing", s.blueprintEditing && HologramSessionPolicy.authoring(s));
         s.cutWorkspaceRequestId = "";
         if ("controllerStructure".equals(s.openPurpose)) s.workspaceTab = "structure";
         else if ("blueprintEdit".equals(s.openPurpose) || "blueprintBrowse".equals(s.openPurpose)
