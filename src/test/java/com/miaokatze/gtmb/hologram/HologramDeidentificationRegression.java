@@ -30,6 +30,44 @@ public final class HologramDeidentificationRegression {
         monotonicMetadata();
         carpenterOwnerBoundary();
         orderedRegions();
+        repeatedProjection();
+    }
+
+    private static void repeatedProjection() throws Exception {
+        HologramPresets.Preset preset = new HologramPresets.Preset();
+        HologramBlueprintValidationCache cache = new HologramBlueprintValidationCache(preset);
+        HologramBlueprintValidationCache bounded = new HologramBlueprintValidationCache(preset, 1, 4096);
+        String[] encoded = new String[3];
+        for (int i = 0; i < encoded.length; i++) {
+            NBTTagCompound payload = new NBTTagCompound();
+            payload.setString("OwnerUUID", new UUID(1, i + 1).toString());
+            payload.setInteger("x", i);
+            payload.setString("opaqueRecipe", "unknown recipe " + i);
+            encoded[i] = HologramBlueprintNbt.encodeCaptured(payload);
+        }
+        for (int i = 0; i < 128; i++) {
+            int level = i % 2 + 1;
+            String input = encoded[i % 3];
+            String expected = HologramDeidentification.project(Blocks.stone, input, level);
+            String actual = cache.deidentify(Blocks.stone, input, level);
+            SimpleAssert
+                .eq(expected, actual, "compressed deidentification equals the uncached projection at each level");
+            SimpleAssert.eq(
+                expected,
+                bounded.deidentify(Blocks.stone, input, level),
+                "budget overflow keeps the exact uncached result");
+            HologramBlueprintNbt.decode(actual)
+                .setString("opaqueRecipe", "caller mutation");
+            SimpleAssert.eq(
+                actual,
+                cache.deidentify(Blocks.stone, input, level),
+                "a consumer's decoded tree cannot modify cached compressed output");
+        }
+        SimpleAssert.eq(6L, cache.deidentifyMisses, "deidentification expands six exact payload/level keys once");
+        SimpleAssert.that(
+            cache.deidentifyHits > 120 && bounded.entries() <= 1,
+            "bounded reuse saves repeated work without retaining trees");
+        System.out.println("GTMB_DEIDENTIFY_PROJECTION cells=128 uniquePayloadLevels=" + cache.deidentifyMisses);
     }
 
     private static void carpenterOwnerBoundary() throws Exception {

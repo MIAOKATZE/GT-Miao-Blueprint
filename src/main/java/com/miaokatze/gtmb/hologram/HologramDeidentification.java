@@ -70,24 +70,25 @@ final class HologramDeidentification {
         result.deidentificationLevel = level;
         result.deidentificationVersion = VERSION;
         if (level > 0) result.aeIssues.addAll(HologramNetworkBindings.sanitize(result, networks, progress));
+        HologramBlueprintValidationCache cache = new HologramBlueprintValidationCache(result);
         int completed = 0;
         for (HologramPresets.Cell cell : result.cells) {
             progress.update("deidentify", completed++, result.cells.size());
-            cell.tileNbt = project(cell, cell.tileNbt, level);
-            cell.itemNbt = project(cell, cell.itemNbt, level);
+            cell.tileNbt = cache.deidentify(cell.block(), cell.tileNbt, level);
+            cell.itemNbt = cache.deidentify(cell.block(), cell.itemNbt, level);
         }
         progress.update("deidentify", completed, result.cells.size());
         return result;
     }
 
-    private static String project(HologramPresets.Cell cell, String encoded, int level) throws IOException {
+    static String project(Block block, String encoded, int level) throws IOException {
         if (encoded == null || encoded.isEmpty()) return encoded;
-        if (level == 0) return HologramCarpentersCompatibility.normalize(cell.block(), encoded);
+        if (level == 0) return HologramCarpentersCompatibility.normalize(block, encoded);
         NBTTagCompound tag = HologramBlueprintNbt.decode(encoded);
-        HologramCarpentersCompatibility.stripOwner(cell.block(), tag);
-        boolean registered = cell.block() != null && cell.block() == GregTechAPI.sBlockMachines
-            || HologramAeBlueprint.supports(cell.block(), tag)
-            || HologramNetworkBindings.node(cell.block())
+        HologramCarpentersCompatibility.stripOwner(block, tag);
+        boolean registered = block != null && block == GregTechAPI.sBlockMachines
+            || HologramAeBlueprint.supports(block, tag)
+            || HologramNetworkBindings.node(block)
             || tag.getString("id")
                 .startsWith("gtswn.");
         project(tag, level, registered, false);

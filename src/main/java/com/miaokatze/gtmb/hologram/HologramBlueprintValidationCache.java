@@ -34,9 +34,13 @@ final class HologramBlueprintValidationCache {
     private final Map<Key, String> filtered = new HashMap<>();
     private final Map<Key, String> gtPayloads = new HashMap<>();
     private final Map<Key, Integer> vanillaDamage = new HashMap<>();
+    private final Map<Key, String> deidentified = new HashMap<>();
+    private final Map<String, Integer> networkGroups = new HashMap<>();
+    private final Map<Key, HologramNetworkBindings.Projection> networkProjections = new HashMap<>();
     private int entries, stringChars;
     long registryHits, registryMisses, filterHits, filterMisses, gtHits, gtMisses, damageHits, damageMisses;
     long syntaxHits, syntaxMisses;
+    long deidentifyHits, deidentifyMisses, networkGroupHits, networkGroupMisses, networkHits, networkMisses;
 
     HologramBlueprintValidationCache(HologramPresets.Preset preset) {
         this(preset, MAX_ENTRIES, MAX_STRING_CHARS);
@@ -179,6 +183,54 @@ final class HologramBlueprintValidationCache {
 
     int entries() {
         return entries;
+    }
+
+    String deidentify(Block block, String encoded, int level) throws IOException {
+        if (encoded == null || encoded.isEmpty()) return encoded;
+        Key key = new Key(block, level, encoded, null);
+        String cached = deidentified.get(key);
+        if (cached != null) {
+            deidentifyHits++;
+            return cached;
+        }
+        deidentifyMisses++;
+        String result = HologramDeidentification.project(block, encoded, level);
+        if (admit(encoded.length() + result.length())) deidentified.put(key, result);
+        return result;
+    }
+
+    int networkGroup(String encoded) throws IOException {
+        if (encoded == null || encoded.isEmpty()) return 0;
+        Integer cached = networkGroups.get(encoded);
+        if (cached != null) {
+            networkGroupHits++;
+            return cached;
+        }
+        networkGroupMisses++;
+        net.minecraft.nbt.NBTTagCompound tag = HologramBlueprintNbt.decode(encoded);
+        int result = tag != null && tag.hasKey(HologramNetworkBindings.GROUP) ? Integer.parseInt(
+            HologramNetworkBindings.group(tag)
+                .substring(1))
+            : 0;
+        if (admit(encoded.length())) networkGroups.put(encoded, result);
+        return result;
+    }
+
+    HologramNetworkBindings.Projection networkProjection(Block block, int damage, String tile, String item) {
+        HologramNetworkBindings.Projection result = networkProjections.get(new Key(block, damage, tile, item));
+        if (result == null) networkMisses++;
+        else networkHits++;
+        return result;
+    }
+
+    void networkProjection(Block block, int damage, String tile, String item,
+        HologramNetworkBindings.Projection result) {
+        int chars = length(tile) + length(item) + length(result.tile) + length(result.item);
+        if (admit(chars)) networkProjections.put(new Key(block, damage, tile, item), result);
+    }
+
+    private static int length(String value) {
+        return value == null ? 0 : value.length();
     }
 
     int stringChars() {

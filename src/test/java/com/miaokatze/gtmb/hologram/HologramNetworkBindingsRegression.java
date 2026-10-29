@@ -30,6 +30,82 @@ public final class HologramNetworkBindingsRegression {
         completeNamedClassification();
         privateOriginsAndShareProjection();
         nativeSynchronizationContractAndTypedAttribution();
+        repeatedProjection();
+    }
+
+    private static void repeatedProjection() throws Exception {
+        HologramPresets.Preset source = new HologramPresets.Preset();
+        String[] payloads = new String[4];
+        for (int i = 0; i < payloads.length; i++) {
+            NBTTagCompound payload = new NBTTagCompound();
+            payload.setInteger("unknownConfiguration", i);
+            if (i == 3) {
+                payload.setString(HologramNetworkBindings.GROUP, "q7");
+                payload.setString(HologramNetworkBindings.ROLE, "join");
+            }
+            payloads[i] = HologramBlueprintNbt.encodeCaptured(payload);
+        }
+        for (int i = 0; i < 128; i++) {
+            HologramPresets.Cell cell = HologramPresets
+                .cell(new ItemStack(i % 2 == 0 ? Blocks.stone : Blocks.dirt), i, 0, 0, -1, false);
+            cell.tileNbt = payloads[i % 4];
+            cell.damage = i % 3;
+            cell.itemNbt = payloads[0];
+            source.cells.add(cell);
+        }
+        source.cells.add(cell(128, 100));
+        source.cells.add(cell(129, 100));
+        HologramPresets.Preset expected = HologramBlueprintRotation.copyPreset(source);
+        HologramPresets.Preset actual = HologramBlueprintRotation.copyPreset(source);
+        HologramBlueprintValidationCache disabled = new HologramBlueprintValidationCache(expected, 0, 0);
+        HologramBlueprintValidationCache cached = new HologramBlueprintValidationCache(actual);
+        int[] progress = { 0, 0 };
+        java.util.List<HologramAePolicy.Issue> oldIssues = HologramNetworkBindings
+            .sanitize(expected, null, (phase, done, total) -> progress[0]++, disabled);
+        java.util.List<HologramAePolicy.Issue> newIssues = HologramNetworkBindings
+            .sanitize(actual, null, (phase, done, total) -> progress[1]++, cached);
+        com.google.gson.Gson gson = new com.google.gson.Gson();
+        SimpleAssert.eq(
+            gson.toJsonTree(expected),
+            gson.toJsonTree(actual),
+            "bounded reuse preserves complete network projections and unknown fields");
+        SimpleAssert.eq(
+            gson.toJsonTree(oldIssues),
+            gson.toJsonTree(newIssues),
+            "network issue locations and order remain per cell");
+        SimpleAssert.eq(progress[0], progress[1], "network reuse preserves per-cell progress callbacks");
+        SimpleAssert.eq(130L, disabled.networkMisses, "disabled reuse exercises the original per-cell path");
+        SimpleAssert.eq(
+            14L,
+            cached.networkMisses,
+            "only twelve block/damage/payload keys and both captured anchors need projection");
+        SimpleAssert.eq(5L, cached.networkGroupMisses, "group scanning decodes five exact compressed inputs once");
+        SimpleAssert.eq(
+            "q8",
+            tag(actual.cells.get(128)).getString(HologramNetworkBindings.GROUP),
+            "captured anchors still allocate after the highest explicit group");
+        SimpleAssert.eq(
+            "q8",
+            tag(actual.cells.get(129)).getString(HologramNetworkBindings.GROUP),
+            "repeated anchors retain their live grouping path");
+        actual.cells.get(0).tileNbt = "malformed encoded input";
+        try {
+            HologramNetworkBindings.sanitize(actual);
+            throw new AssertionError("new malformed input cannot reuse another cell's successful projection");
+        } catch (IOException expectedFailure) {
+            SimpleAssert.that(
+                !expectedFailure.getMessage()
+                    .isEmpty(),
+                "malformed input remains an explicit failure");
+        }
+        System.out.println(
+            "GTMB_NETWORK_PROJECTION cells=130 groupDecodes=" + disabled.networkGroupMisses
+                + "->"
+                + cached.networkGroupMisses
+                + " projectionMisses="
+                + disabled.networkMisses
+                + "->"
+                + cached.networkMisses);
     }
 
     private static void nativeSynchronizationContractAndTypedAttribution() throws Exception {

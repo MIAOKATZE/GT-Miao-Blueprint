@@ -250,6 +250,24 @@ final class HologramNetworkBindings {
 
     static List<HologramAePolicy.Issue> sanitize(HologramPresets.Preset preset, Map<String, String> networks,
         HologramAePolicy.PreparationProgress progress) throws IOException {
+        return sanitize(preset, networks, progress, new HologramBlueprintValidationCache(preset));
+    }
+
+    /** Only compressed deterministic results live for this pass; unclassified source anchors remain per cell. */
+    static final class Projection {
+
+        final String tile, item;
+        final boolean removedReferences;
+
+        Projection(String tile, String item, boolean removedReferences) {
+            this.tile = tile;
+            this.item = item;
+            this.removedReferences = removedReferences;
+        }
+    }
+
+    static List<HologramAePolicy.Issue> sanitize(HologramPresets.Preset preset, Map<String, String> networks,
+        HologramAePolicy.PreparationProgress progress, HologramBlueprintValidationCache cache) throws IOException {
         List<HologramAePolicy.Issue> changes = new ArrayList<>();
         Map<Object, String> groups = new LinkedHashMap<>();
         int next = 1;
@@ -257,33 +275,33 @@ final class HologramNetworkBindings {
         long total = 2L * preset.cells.size();
         for (HologramPresets.Cell cell : preset.cells) {
             progress.update("networks", completed++, total);
-            NBTTagCompound tag = HologramBlueprintNbt.decode(cell.tileNbt);
-            if (tag != null && tag.hasKey(GROUP)) {
-                String group = group(tag);
-                try {
-                    next = Math.max(next, Integer.parseInt(group.substring(1)) + 1);
-                } catch (NumberFormatException invalid) {
-                    throw new IOException("Invalid quantum group", invalid);
-                }
-            }
+            next = Math.max(next, cache.networkGroup(cell.tileNbt) + 1);
         }
         for (HologramPresets.Cell cell : preset.cells) {
             progress.update("networks", completed++, total);
+            String originalTile = cell.tileNbt, originalItem = cell.itemNbt;
+            Projection previous = cache.networkProjection(cell.block(), cell.damage, originalTile, originalItem);
+            if (previous != null) {
+                cell.tileNbt = previous.tile;
+                cell.itemNbt = previous.item;
+                if (previous.removedReferences) changes.add(externalLinksReset(cell));
+                continue;
+            }
             NBTTagCompound tag = HologramBlueprintNbt.decode(cell.tileNbt);
             NBTTagCompound item = HologramBlueprintNbt.decode(cell.itemNbt);
             boolean removedReferences = HologramNetworkSchemas.removeExternalReferences(cell.block(), cell.damage, tag);
             removedReferences |= HologramNetworkSchemas.removeExternalReferences(cell.block(), cell.damage, item);
-            if (removedReferences) changes.add(
-                new HologramAePolicy.Issue(
-                    "network.external_links_reset",
-                    "warning",
-                    "network",
-                    "Registered machine network identities and world-coordinate links are omitted; reconnect the new devices.",
-                    cell.x,
-                    cell.y,
-                    cell.z));
+            if (removedReferences) changes.add(externalLinksReset(cell));
             if (item != null) cell.itemNbt = HologramBlueprintNbt.encodeCaptured(item);
-            if (tag == null) continue;
+            if (tag == null) {
+                if (!node(cell.block())) cache.networkProjection(
+                    cell.block(),
+                    cell.damage,
+                    originalTile,
+                    originalItem,
+                    new Projection(cell.tileNbt, cell.itemNbt, removedReferences));
+                continue;
+            }
             boolean node = node(cell.block());
             NBTTagCompound anchor = node && tag.hasKey("anchorDim") ? tag
                 : tag.hasKey(CAPTURE_ANCHOR, 10) ? tag.getCompoundTag(CAPTURE_ANCHOR) : null;
@@ -343,9 +361,28 @@ final class HologramNetworkBindings {
             cell.tileNbt = HologramAeBlueprint.supports(cell.block(), tag)
                 ? HologramBlueprintNbt.encodeCanonical(cell.block(), tag)
                 : HologramBlueprintNbt.encodeCaptured(tag);
+            // A source anchor may inspect the live grid; an unclassified node consumes a new group for each cell.
+            // Keep both on the original path, even when their input bytes happen to be equal.
+            if (!node && anchor == null) cache.networkProjection(
+                cell.block(),
+                cell.damage,
+                originalTile,
+                originalItem,
+                new Projection(cell.tileNbt, cell.itemNbt, removedReferences));
         }
         progress.update("networks", completed, total);
         return changes;
+    }
+
+    private static HologramAePolicy.Issue externalLinksReset(HologramPresets.Cell cell) throws IOException {
+        return new HologramAePolicy.Issue(
+            "network.external_links_reset",
+            "warning",
+            "network",
+            "Registered machine network identities and world-coordinate links are omitted; reconnect the new devices.",
+            cell.x,
+            cell.y,
+            cell.z);
     }
 
     /** Server-thread snapshot of a captured anchor's grid identity, converted to an opaque local token. */

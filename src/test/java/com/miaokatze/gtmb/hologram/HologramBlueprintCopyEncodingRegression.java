@@ -62,6 +62,8 @@ public final class HologramBlueprintCopyEncodingRegression {
         fillScalars(hint);
         source.hintAreas.add(hint);
         source.modVersions.put("unknown-provider", "1.2.3");
+        source.modVersions.put("z-last-name", "2");
+        source.modVersions.put("a-first-name", "3");
         source.retainedNbtKeys = new ArrayList<>(Arrays.asList("unknown-key"));
         String original = GSON.toJson(source);
         HologramPresets.Preset copy = HologramBlueprintRotation.copyPreset(source);
@@ -96,11 +98,23 @@ public final class HologramBlueprintCopyEncodingRegression {
         samePersistentFields(source, HologramBlueprintRotation.copyPreset(source));
     }
 
-    private static void samePersistentFields(HologramPresets.Preset source, HologramPresets.Preset copy) {
+    private static void samePersistentFields(HologramPresets.Preset source, HologramPresets.Preset copy)
+        throws IOException {
+        HologramPresets.Preset gson = HologramPresets.copy(source);
         SimpleAssert.eq(
-            GSON.toJsonTree(HologramPresets.copy(source)),
+            GSON.toJsonTree(gson),
             GSON.toJsonTree(copy),
             "typed load copy matches every serialized field, default and admitted nullable value");
+        SimpleAssert.eq(GSON.toJson(gson), GSON.toJson(copy), "typed copying preserves serialized map and field order");
+        SimpleAssert.eq(
+            HologramBlueprintContentHash.of(gson),
+            HologramBlueprintContentHash.of(copy),
+            "typed copying preserves the old content identity");
+        SimpleAssert.that(
+            Arrays.equals(
+                HologramBlueprintCompactCodec.encode(gson, (done, total) -> {}),
+                HologramBlueprintCompactCodec.encode(copy, (done, total) -> {})),
+            "typed copying preserves exact compact dictionary JSON bytes");
     }
 
     private static void fillScalars(Object source) throws IllegalAccessException {
