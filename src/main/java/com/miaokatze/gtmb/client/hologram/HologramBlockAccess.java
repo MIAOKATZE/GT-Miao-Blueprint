@@ -25,6 +25,7 @@ final class HologramBlockAccess implements IBlockAccess {
     private boolean loadingTile;
     private HologramRenderWorld renderWorld;
     private HologramState.Cell modelReader;
+    private final java.util.Deque<TileReadScope> tileReaders = new java.util.ArrayDeque<>();
     private boolean modelIncomplete;
 
     HologramBlockAccess(HologramState state) {
@@ -42,25 +43,26 @@ final class HologramBlockAccess implements IBlockAccess {
     }
 
     public Block getBlock(int x, int y, int z) {
-        if (state.authorProjection != null) state.authorProjection.blockDependency(modelReader, x, y, z);
+        dependency(false, x, y, z);
         HologramState.Cell cell = cells.at(x, y, z);
         Block block = cell == null ? null : cell.block(actual(cell));
         return block == null ? Blocks.air : block;
     }
 
     public int getBlockMetadata(int x, int y, int z) {
-        if (state.authorProjection != null) state.authorProjection.blockDependency(modelReader, x, y, z);
+        dependency(false, x, y, z);
         HologramState.Cell cell = cells.at(x, y, z);
         return cell == null ? 0 : actual(cell) ? cell.meta : cell.wantMeta;
     }
 
     public TileEntity getTileEntity(int x, int y, int z) {
-        if (state.authorProjection != null) state.authorProjection.dependency(modelReader, x, y, z);
+        dependency(true, x, y, z);
         String key = key(x, y, z);
         HologramState.Cell input = cells.at(x, y, z);
         if (input != null
             && (input.modelPending(current) || HologramSnapshotModelsClient.resumableBudget(state, input))) {
             modelIncomplete = true;
+            for (TileReadScope scope : tileReaders) scope.incomplete = true;
             HologramSnapshotModelsClient.requestVisible(state, input, current);
             if (state.authorProjection == null) HologramSnapshotModelsClient.dependency(modelReader, input);
             if (modelReader != null) HologramBlockRender.defer(modelReader, current);
@@ -71,11 +73,16 @@ final class HologramBlockAccess implements IBlockAccess {
         // Only completed neighbors are visible during hydration; unvisited cells
         // remain eligible for their own later render request.
         if (loadingTile) return tiles.get(key);
+        // A's renderer may hydrate B before B's own renderer runs. Reads made while loading
+        // B or preparing its cached topology must belong to B too: a later cache hit cannot
+        // replay those reads. Keep root model/defer state independent from this tile scope.
+        TileReadScope scope = input == null ? null : new TileReadScope(input);
+        if (scope != null) tileReaders.addLast(scope);
         try {
             if (loaded.contains(key)) {
                 TileEntity tile = tiles.get(key);
                 if (tile != null) prepareTopology(key, tile);
-                return tile;
+                return completedTile(key, tile, scope);
             }
             loaded.add(key);
             HologramState.Cell cell = cells.at(x, y, z);
@@ -98,12 +105,16 @@ final class HologramBlockAccess implements IBlockAccess {
             } finally {
                 loadingTile = false;
             }
+            if (scope != null && scope.incomplete) return completedTile(key, null, scope);
             if (tile != null) {
                 tiles.put(key, tile);
                 prepareTopology(key, tile);
             }
-            return tile;
+            return completedTile(key, tile, scope);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+            // A native reader may dereference an unknown neighbor. This remains retryable
+            // incomplete input, not a terminal malformed-tile/factory failure.
+            if (scope != null && scope.incomplete) return completedTile(key, null, scope);
             tiles.remove(key);
             topologyPrepared.remove(key);
             if (Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke")) unavailable.printStackTrace();
@@ -115,7 +126,43 @@ final class HologramBlockAccess implements IBlockAccess {
                     .getSimpleName() + ": "
                     + cause.getMessage());
             return null;
+        } finally {
+            if (scope != null) tileReaders.removeLast();
         }
+    }
+
+    private TileEntity completedTile(String key, TileEntity tile, TileReadScope scope) {
+        if (scope == null || !scope.incomplete) return tile;
+        // Do not let a later model's cache hit turn an earlier unknown read into known
+        // visual state. Retrying must execute the reader and renew any dropped demand.
+        tiles.remove(key);
+        loaded.remove(key);
+        topologyPrepared.remove(key);
+        failures.remove(key);
+        return null;
+    }
+
+    private static final class TileReadScope {
+
+        final HologramState.Cell cell;
+        boolean incomplete;
+
+        TileReadScope(HologramState.Cell cell) {
+            this.cell = cell;
+        }
+    }
+
+    private void dependency(boolean tile, int x, int y, int z) {
+        if (state.authorProjection == null) return;
+        dependency(modelReader, tile, x, y, z);
+        // Existing loading/topology recursion guards bound this stack; graph edges still
+        // consume the original shared bound and retain its conservative overflow behavior.
+        for (TileReadScope scope : tileReaders) if (scope.cell != modelReader) dependency(scope.cell, tile, x, y, z);
+    }
+
+    private void dependency(HologramState.Cell reader, boolean tile, int x, int y, int z) {
+        if (tile) state.authorProjection.dependency(reader, x, y, z);
+        else state.authorProjection.blockDependency(reader, x, y, z);
     }
 
     void beginModel(HologramState.Cell cell) {
@@ -158,7 +205,7 @@ final class HologramBlockAccess implements IBlockAccess {
 
     boolean contains(int x, int y, int z) {
         // RenderWorld.blockExists is a source-topology read, including currently empty coordinates.
-        if (state.authorProjection != null) state.authorProjection.blockDependency(modelReader, x, y, z);
+        dependency(false, x, y, z);
         return cells.at(x, y, z) != null;
     }
 

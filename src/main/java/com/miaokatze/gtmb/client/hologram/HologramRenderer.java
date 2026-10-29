@@ -251,7 +251,16 @@ final class HologramRenderer {
             worldState = next;
         }
         // World lists must be retired before the native lists they reference.
-        HologramBlockRender.advance(previous, next, dirty);
+        Set<HologramRegionCache.Key> nativeDirty = dirty;
+        if (next.authorProjection != null && next.modelOnly) {
+            // Readiness/material changes still rebuild shell faces throughout the halo above.
+            // Native lists consume unchanged block/meta/presence facts, or tracked tile reads;
+            // halo-only native lists need not be deleted and compiled again. Tile overflow is
+            // already represented by the conservative whole-owner dependency set.
+            nativeDirty = HologramRegionCache.changedRegions(next);
+            nativeDirty.addAll(modelDependencies);
+        }
+        HologramBlockRender.advance(previous, next, nativeDirty);
         HologramTextures.advance(previous, next);
         HologramLinkNodePreview.advance(previous, next);
     }
