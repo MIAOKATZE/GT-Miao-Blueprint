@@ -293,7 +293,12 @@ final class HologramVirtualStructureEditing {
                 return false;
             }
             if (nativeCapture == null || nativeCapture.pending) {
-                nativeCapture = HologramCapture.collect(machine, trigger, machine.getExtendedFacing(), nativeCapture);
+                nativeCapture = HologramCapture.collectServerDeclaration(
+                    machine,
+                    trigger,
+                    machine.getExtendedFacing(),
+                    nativeCapture,
+                    HologramWorkBudget.deadline(HologramWorkBudget.SLICE_NANOS));
                 if (nativeCapture.pending) return false;
                 if (nativeCapture.incomplete) throw new IOException(nativeCapture.failure);
             }

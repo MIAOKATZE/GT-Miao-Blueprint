@@ -143,7 +143,7 @@ final class HologramAreaSignalInference {
         if (done) return true;
         if (!initialized) {
             if (best == null) fullCaptures++;
-            best = HologramCapture.collect(machine, trigger, machine.getExtendedFacing(), best);
+            best = collect(best, trigger, deadline);
             if (best.pending) return false;
             if (best.incomplete || !(machine instanceof IConstructable)
                 && !com.miaokatze.gtmb.api.StructureSources.hasSource(machine.getClass())) return done = true;
@@ -217,8 +217,7 @@ final class HologramAreaSignalInference {
                     alternatives.clear();
                     if (!next.baseline) fullCaptures++;
                 }
-                if (!next.baseline)
-                    candidate = HologramCapture.collect(machine, next.trigger, machine.getExtendedFacing(), candidate);
+                if (!next.baseline) candidate = collect(candidate, next.trigger, deadline);
                 if (candidate.pending) return false;
                 if (candidate.incomplete) {
                     nextCandidate();
@@ -282,10 +281,16 @@ final class HologramAreaSignalInference {
                 fullCaptures++;
             } else return done = true;
         }
-        candidate = HologramCapture.collect(machine, trigger, machine.getExtendedFacing(), candidate);
+        candidate = collect(candidate, trigger, deadline);
         if (candidate.pending) return false;
         if (!candidate.incomplete) best = candidate;
         return done = true;
+    }
+
+    private HologramCapture collect(HologramCapture previous, ItemStack signal, long deadline) {
+        return strict
+            ? HologramCapture.collectServerDeclaration(machine, signal, machine.getExtendedFacing(), previous, deadline)
+            : HologramCapture.collect(machine, signal, machine.getExtendedFacing(), previous);
     }
 
     private void nextCandidate() {

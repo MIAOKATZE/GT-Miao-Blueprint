@@ -138,6 +138,8 @@ final class HologramDynamicDefinitionRegression {
     }
 
     private static void virtualMemberRebuild(sun.misc.Unsafe unsafe) throws Exception {
+        HologramWorkBudget.startServerTick();
+        HologramWorkBudget.endServerTick();
         int id = 32760;
         IMetaTileEntity previous = gregtech.api.GregTechAPI.METATILEENTITIES[id];
         DynamicController prototype = new DynamicController();
@@ -242,9 +244,17 @@ final class HologramDynamicDefinitionRegression {
             session.main = 2;
             session.channels = channels;
             HologramBlueprintData.storeStructureConfiguration(session, selected);
-            int batches = 0;
-            while (!task.step() && ++batches < 512) {}
-            SimpleAssert.that(batches < 512, "selected member declaration finishes in bounded continuations");
+            AtomicInteger syntheticCaptures = new AtomicInteger();
+            try (GTMBExtensions.Registration observer = BlueprintSnapshots
+                .register("gtmb_test:virtual-not-capture", BlueprintSnapshots.Stage.CAPTURE_COMPLETE, snapshot -> {
+                    syntheticCaptures.incrementAndGet();
+                    return null;
+                })) {
+                int batches = 0;
+                while (!task.step() && ++batches < 512) {}
+                SimpleAssert.that(batches < 512, "selected member declaration finishes in bounded continuations");
+                SimpleAssert.eq(0, syntheticCaptures.get(), "legacy virtual regeneration is not a world capture");
+            }
             task.publish();
             SimpleAssert.eq(
                 6309,
