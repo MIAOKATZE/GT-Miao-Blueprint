@@ -90,6 +90,10 @@ public final class HologramLocalAuthorRegressionTest {
             com.miaokatze.gtmb.client.hologram.HologramVisibleDetailWorkRegression::run);
         add(
             cases,
+            "native_vertex_inspection_equivalence",
+            com.miaokatze.gtmb.client.hologram.HologramNativeGeometryInspectionRegression::run);
+        add(
+            cases,
             "conservative_cheap_draw_occlusion",
             com.miaokatze.gtmb.client.hologram.HologramCheapOcclusionRegression::run);
         add(cases, "atomic_native_attachments", HologramLocalAuthorAttachmentsRegression::run);

@@ -1,7 +1,6 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import java.lang.reflect.Field;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -254,11 +253,10 @@ final class HologramBlockRender {
         boolean invokedNative = false;
         HologramAeNativeRender.CableContext aeCableContext = null;
         HologramRenderWorld.CarpenterContext carpenterContext = null;
-        Set<String> positions = new HashSet<>();
-        List<double[]> points = new ArrayList<>();
-        List<double[]> textureCenters = new ArrayList<>();
-        List<double[]> attributes = new ArrayList<>();
-        boolean missing = false;
+        boolean extendedSmoke = Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke");
+        HologramNativeGeometryInspection inspection = new HologramNativeGeometryInspection(
+            extendedSmoke,
+            extendedSmoke || Boolean.getBoolean("gtmb.hologram.aeClientSmoke"));
         int previousPass = MinecraftForgeClient.getRenderPass();
         int previousWorldPass = ForgeHooksClient.getWorldRenderPass();
         double ox = 0, oy = 0, oz = 0;
@@ -330,44 +328,11 @@ final class HologramBlockRender {
                 count += emitted;
                 if (emitted > 0) {
                     int[] raw = HologramVertexData.read(tess, emitted);
-                    int stride = 8;
-                    if (stride >= 3) for (int v = 0; v < emitted; v++) {
-                        int quad = v / 4 * 4;
-                        if (quad + 3 < emitted && !usableQuad(raw, stride, quad)) continue;
-                        int start = v * stride;
-                        if (positions.add(raw[start] + ":" + raw[start + 1] + ":" + raw[start + 2])
-                            && Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke"))
-                            points.add(
-                                new double[] { Float.intBitsToFloat(raw[start]), Float.intBitsToFloat(raw[start + 1]),
-                                    Float.intBitsToFloat(raw[start + 2]) });
-                    }
                     IIcon absent = Minecraft.getMinecraft()
                         .getTextureMapBlocks()
                         .getAtlasSprite("missingno");
-                    if (stride >= 5) for (int v = 0; v + 3 < emitted; v += 4) {
-                        if (!usableQuad(raw, stride, v)) continue;
-                        double u = 0, w = 0;
-                        for (int corner = 0; corner < 4; corner++) {
-                            u += Float.intBitsToFloat(raw[(v + corner) * stride + 3]) / 4.0;
-                            w += Float.intBitsToFloat(raw[(v + corner) * stride + 4]) / 4.0;
-                        }
-                        if (Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke"))
-                            textureCenters.add(new double[] { u, w });
-                        if (u > absent.getMinU() + 1e-6 && u < absent.getMaxU() - 1e-6
-                            && w > absent.getMinV() + 1e-6
-                            && w < absent.getMaxV() - 1e-6) missing = true;
-                    }
-                    if (stride >= 6 && (Boolean.getBoolean("gtmb.hologram.aeClientSmoke")
-                        || Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke")))
-                        for (int v = 0; v < emitted; v++) {
-                            int quad = v / 4 * 4;
-                            if (quad + 3 >= emitted || !usableQuad(raw, stride, quad)) continue;
-                            int offset = v * stride;
-                            attributes.add(
-                                new double[] { Float.intBitsToFloat(raw[offset]), Float.intBitsToFloat(raw[offset + 1]),
-                                    Float.intBitsToFloat(raw[offset + 2]), Float.intBitsToFloat(raw[offset + 3]),
-                                    Float.intBitsToFloat(raw[offset + 4]), raw[offset + 5] });
-                        }
+                    inspection
+                        .inspect(raw, emitted, absent.getMinU(), absent.getMaxU(), absent.getMinV(), absent.getMaxV());
                 }
                 tess.draw();
             }
@@ -375,16 +340,30 @@ final class HologramBlockRender {
             opened = false;
             // EnderIO deliberately emits a zero-area quad in its empty alpha pass.
             // That sentinel alone is not a usable native preview model.
-            if (count == 0 || positions.size() < 3) {
+            if (count == 0 || inspection.uniquePositions() < 3) {
                 GL11.glDeleteLists(list, 1);
-                if (sourceReference) return new Model(0, 0, 0, points, textureCenters, missing, attributes);
+                if (sourceReference) return new Model(
+                    0,
+                    0,
+                    0,
+                    inspection.points,
+                    inspection.textureCenters,
+                    inspection.missingTexture,
+                    inspection.attributes);
                 return failed(cell, current, "native renderer produced no usable geometry");
             }
             if (!sourceReference) {
                 compiled++;
                 vertices += count;
             }
-            return new Model(list, count, positions.size(), points, textureCenters, missing, attributes);
+            return new Model(
+                list,
+                count,
+                inspection.uniquePositions(),
+                inspection.points,
+                inspection.textureCenters,
+                inspection.missingTexture,
+                inspection.attributes);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError failedNative) {
             if (list != 0) {
                 if (opened) {
@@ -487,21 +466,6 @@ final class HologramBlockRender {
         } catch (ReflectiveOperationException | RuntimeException | LinkageError absentOptionalContext) {
             // The GL/Tessellator scope below is unconditional even without an optional shader bridge.
         }
-    }
-
-    private static boolean usableQuad(int[] raw, int stride, int first) {
-        for (int triangle = 0; triangle < 2; triangle++) {
-            int a = first * stride, b = (first + triangle + 1) * stride, c = (first + triangle + 2) * stride;
-            double bx = Float.intBitsToFloat(raw[b]) - Float.intBitsToFloat(raw[a]);
-            double by = Float.intBitsToFloat(raw[b + 1]) - Float.intBitsToFloat(raw[a + 1]);
-            double bz = Float.intBitsToFloat(raw[b + 2]) - Float.intBitsToFloat(raw[a + 2]);
-            double cx = Float.intBitsToFloat(raw[c]) - Float.intBitsToFloat(raw[a]);
-            double cy = Float.intBitsToFloat(raw[c + 1]) - Float.intBitsToFloat(raw[a + 1]);
-            double cz = Float.intBitsToFloat(raw[c + 2]) - Float.intBitsToFloat(raw[a + 2]);
-            double nx = by * cz - bz * cy, ny = bz * cx - bx * cz, nz = bx * cy - by * cx;
-            if (nx * nx + ny * ny + nz * nz > 1e-18) return true;
-        }
-        return false;
     }
 
     private static void pushMatrices() {
