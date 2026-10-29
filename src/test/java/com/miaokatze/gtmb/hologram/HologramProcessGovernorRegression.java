@@ -380,9 +380,9 @@ public final class HologramProcessGovernorRegression {
         Thread second = waiter("second", order, failure, finished);
         try {
             first.start();
-            awaitQueued(1);
+            awaitQueued(first, 1);
             second.start();
-            awaitQueued(2);
+            awaitQueued(second, 2);
         } finally {
             blocker.close();
         }
@@ -408,10 +408,14 @@ public final class HologramProcessGovernorRegression {
         }, "governor-test-" + name);
     }
 
-    private static void awaitQueued(int count) {
+    private static void awaitQueued(Thread waiter, int count) {
+        // The queued counter increments before Semaphore.acquire; wait for the actual parked waiter.
         long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(2);
-        while (HologramProcessGovernor.queuedHeavyCpu() < count && System.nanoTime() < deadline) Thread.yield();
-        check(HologramProcessGovernor.queuedHeavyCpu() >= count, "worker enqueued without holding owner thread");
+        while ((HologramProcessGovernor.queuedHeavyCpu() < count || waiter.getState() != Thread.State.WAITING)
+            && System.nanoTime() < deadline) Thread.yield();
+        check(
+            HologramProcessGovernor.queuedHeavyCpu() >= count && waiter.getState() == Thread.State.WAITING,
+            "worker enqueued without holding owner thread");
     }
 
     private static void check(boolean value, String message) {
