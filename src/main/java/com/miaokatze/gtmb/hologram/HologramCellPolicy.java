@@ -430,6 +430,16 @@ final class HologramCellPolicy {
 
     static HologramBlueprintResources.Plan resourcePlan(HologramSession s, HologramCapture.Cell cell)
         throws java.io.IOException {
+        return resourcePlan(s, cell, null);
+    }
+
+    /**
+     * Return miss-only preparation in the caller's fresh slot. The caller still merges resources before preparing a
+     * hit,
+     * preserving its partial report if that later preparation fails. Expanded trees never live on the cell.
+     */
+    static HologramBlueprintResources.Plan resourcePlan(HologramSession s, HologramCapture.Cell cell,
+        HologramEnergyPayload.Prepared[] prepared) throws java.io.IOException {
         if (!s.virtual || s.virtualPreset == null || s.virtualPreset.schema < 2)
             return new HologramBlueprintResources.Plan();
         int index = HologramSessionPolicy.cellIndex(s, cell);
@@ -450,6 +460,7 @@ final class HologramCellPolicy {
                 // cachePlan performs the same placement selection and validation before preparing buffers.
                 // The former two projections were immediately overwritten, including two AE analyses per cell.
                 HologramEnergyPayload.Prepared cache = cachePlan(s, cell, index);
+                if (prepared != null) prepared[0] = cache;
                 NBTTagCompound tile = cache.tileEmpty;
                 NBTTagCompound item = cache.itemEmpty;
                 Block finalBlock = targetPreviewBlock(s, cell, finalTarget);

@@ -168,20 +168,21 @@ final class HologramBuildPreparation {
             }
             for (HologramCapture.Cell cell : s.capture.cells) {
                 if (HologramSessionPolicy.ignoredPlacementAir(s, cell, cell.stableIndex)) continue;
+                NBTTagCompound tile;
                 if (!cell.excluded && HologramSessionPolicy.membershipEnabled(s, cell)) {
                     try {
-                        HologramNetworkBindings
-                            .validate(HologramBlueprintNbt.decode(cell.tileNbt), s.player, s.networkBindings);
+                        tile = HologramBlueprintNbt.decode(cell.tileNbt);
+                        HologramNetworkBindings.validate(tile, s.player, s.networkBindings);
                     } catch (java.io.IOException missingBinding) {
                         s.networkBindingRequested = true;
                         s.status = HologramAePolicy.fallback(missingBinding.getMessage());
                         return false;
                     }
-                }
-                if (!HologramAePolicy.handles(cell.block, cell.tileNbt) || cell.excluded
+                } else tile = HologramBlueprintNbt.decode(cell.tileNbt);
+                // These readers leave tile unchanged; analyze works on its own copy.
+                if (!HologramAeBlueprint.supports(cell.block, tile) || cell.excluded
                     || !HologramSessionPolicy.membershipEnabled(s, cell)) continue;
-                if (HologramAeBlueprint
-                    .analyze(cell.block, cell.meta, HologramBlueprintNbt.decode(cell.tileNbt)).blocking) {
+                if (HologramAeBlueprint.analyze(cell.block, cell.meta, tile).blocking) {
                     s.status = "AE 蓝图仍有阻止施工的问题，请打开相关方块预览并删除或替换不安全标记";
                     return false;
                 }

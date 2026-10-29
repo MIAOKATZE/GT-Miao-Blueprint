@@ -77,6 +77,13 @@ public final class HologramRegressionTest {
         cases.put(
             "area_resource_planning_is_resumable_and_matches_sync_results",
             HologramResourcePlannerRegression::run);
+        cases.put("blueprint_load_copy_and_capture_encoding_preserve_complete_data", () -> {
+            try {
+                HologramBlueprintCopyEncodingRegression.run();
+            } catch (Exception failure) {
+                throw new RuntimeException(failure);
+            }
+        });
         cases.put(
             "snapshot_publication_preserves_fifo_and_cancels_stale_generations",
             HologramSnapshotPublishRegression::run);

@@ -299,6 +299,130 @@ public final class HologramResourcePlannerRegression {
         deferredLifecycle(player);
         classifierReuse(player, world);
         authoringPlan(player, unsafe);
+        currentCellPreparation(player);
+        aeReadyReaders(player);
+    }
+
+    private static void currentCellPreparation(EntityPlayerMP player) throws Exception {
+        HologramSession s = payloadSession(player, false);
+        HologramCapture.Cell cell = s.capture.cells.get(0);
+        NBTTagCompound payload = HologramBlueprintNbt.decode(cell.tileNbt);
+        payload.setLong("mStoredEnergy", 17);
+        cell.tileNbt = HologramBlueprintNbt.encodeCaptured(payload);
+        HologramEnergyPayload.Prepared[] prepared = new HologramEnergyPayload.Prepared[1];
+        HologramBlueprintResources.Plan resources = HologramCellPolicy.resourcePlan(s, cell, prepared);
+        SimpleAssert.that(prepared[0] != null, "a resource miss returns its current-cell preparation");
+        HologramEnergyPayload.Prepared independent = HologramCellPolicy.cachePlan(s, cell, 0);
+        SimpleAssert.eq(independent.tilePaid, prepared[0].tilePaid, "reused paid tile preserves complete payload");
+        SimpleAssert.eq(independent.tileEmpty, prepared[0].tileEmpty, "resource parsing preserves the empty tile");
+        SimpleAssert.eq(independent.itemPaid, prepared[0].itemPaid, "reused paid item preserves complete payload");
+        SimpleAssert.eq(independent.itemEmpty, prepared[0].itemEmpty, "reused empty item preserves complete payload");
+        SimpleAssert
+            .eq(java.math.BigInteger.valueOf(17), prepared[0].demand.eu, "reuse retains the paid energy demand");
+        HologramEnergyPayload.Prepared[] hit = new HologramEnergyPayload.Prepared[1];
+        SimpleAssert.that(
+            HologramCellPolicy.resourcePlan(s, cell, hit) == resources && hit[0] == null,
+            "a resource hit retains the original plan without retaining an expanded tree");
+        cell.itemNbt = HologramBlueprintNbt.encodeCaptured(new NBTTagCompound());
+        HologramEnergyPayload.Prepared[] changed = new HologramEnergyPayload.Prepared[1];
+        HologramCellPolicy.resourcePlan(s, cell, changed);
+        SimpleAssert.that(changed[0] != null, "changed item payload invalidates the resource key");
+
+        cell.tileNbt = "invalid compressed NBT";
+        String error;
+        try {
+            HologramCellPolicy.resourcePlan(s, cell, new HologramEnergyPayload.Prepared[1]);
+            throw new AssertionError("invalid resource input must fail");
+        } catch (java.io.IOException invalid) {
+            error = invalid.getMessage();
+        }
+        HologramCellPolicy.ResourcePlanKey failedKey = cell.resourcePlanKey;
+        HologramEnergyPayload.Prepared[] failedHit = new HologramEnergyPayload.Prepared[1];
+        try {
+            HologramCellPolicy.resourcePlan(s, cell, failedHit);
+            throw new AssertionError("a cached resource failure must still fail");
+        } catch (java.io.IOException invalid) {
+            SimpleAssert.eq(error, invalid.getMessage(), "cached resource failure keeps its original message");
+            SimpleAssert.that(
+                cell.resourcePlanKey == failedKey && failedHit[0] == null,
+                "a failed-key hit does not retry preparation");
+        }
+
+        boolean creative = player.capabilities.isCreativeMode;
+        player.capabilities.isCreativeMode = true;
+        try {
+            for (boolean staged : new boolean[] { false, true }) {
+                HologramSession failing = session(player, 1);
+                failing.virtualPreset.schema = 2;
+                failing.mode = 0;
+                failing.materialSettings.containers = failing.materialSettings.me = false;
+                failing.materialContext = new HologramMaterials.Context(player, failing.materialSettings);
+                HologramCapture.Cell invalid = failing.capture.cells.get(0);
+                invalid.tileNbt = "invalid compressed NBT";
+                ItemStack target = HologramCellPolicy.targetFor(failing, invalid, 0);
+                // Seed an exact hit to isolate a later preparation failure from resource parsing.
+                invalid.resourcePlanKey = new HologramCellPolicy.ResourcePlanKey(
+                    failing,
+                    invalid,
+                    target,
+                    HologramNativePlacement.adapter(invalid.block));
+                invalid.resourcePlan = new HologramBlueprintResources.Plan()
+                    .addNativeItems(java.util.Collections.singletonList(new ItemStack(Items.diamond, 3)));
+                if (staged) {
+                    HologramResourceTask task = new HologramResourceTask(failing, new HologramPlanClassifier(failing));
+                    for (int steps = 0; !task.done() && steps < 100; steps++) task.advance();
+                    SimpleAssert.that(task.done(), "a failed prepared hit cannot stall the staged resource report");
+                } else HologramResourcePlanner.refreshResources(failing);
+                SimpleAssert.that(
+                    !failing.planRecoveryFits && !failing.blueprintResourceMissing.isEmpty(),
+                    "a later preparation failure remains visible in either resource report");
+                SimpleAssert.eq(1, failing.blueprintResources.items.size(), "failure keeps the already merged bill");
+                SimpleAssert
+                    .eq(3, failing.blueprintResources.items.get(0).stackSize, "partial resource count is exact");
+            }
+        } finally {
+            player.capabilities.isCreativeMode = creative;
+        }
+    }
+
+    private static void aeReadyReaders(EntityPlayerMP player) throws Exception {
+        HologramSession s = session(player, 1);
+        s.virtualPreset.schema = 2;
+        s.virtualPreset.deidentificationLevel = 1;
+        HologramBlueprintProcessing.Policy policy = HologramBlueprintProcessing.defaults("self", 1);
+        policy.quantum = "clear";
+        policy.confirmedStages.addAll(HologramBlueprintProcessing.STAGES);
+        NBTTagCompound receipt = new NBTTagCompound();
+        receipt.setBoolean("complete", true);
+        receipt.setTag("policy", policy.write());
+        s.virtualPreset.processingNbt = HologramBlueprintNbt.encodeCanonical(receipt);
+        HologramCapture.Cell cell = s.capture.cells.get(0);
+        SimpleAssert.that(HologramBuildPreparation.aeReady(s), "ordinary valid payload remains ready");
+        NBTTagCompound binding = new NBTTagCompound();
+        binding.setString(HologramNetworkBindings.GROUP, "q1");
+        binding.setString(HologramNetworkBindings.ROLE, "join");
+        cell.tileNbt = HologramBlueprintNbt.encodeCanonical(binding);
+        SimpleAssert.that(!HologramBuildPreparation.aeReady(s), "an active missing network binding still blocks");
+        SimpleAssert.that(s.networkBindingRequested && s.status.contains("q1"), "binding failure retains its feedback");
+        cell.excluded = true;
+        SimpleAssert.that(HologramBuildPreparation.aeReady(s), "excluded cells do not demand a network binding");
+        cell.excluded = false;
+        HologramPresets.Structure disabled = new HologramPresets.Structure();
+        disabled.id = cell.structureId = "disabled";
+        disabled.enabled = false;
+        s.virtualPreset.structures.add(disabled);
+        SimpleAssert.that(HologramBuildPreparation.aeReady(s), "disabled memberships do not demand a binding");
+        cell.tileNbt = "invalid compressed NBT";
+        SimpleAssert.that(!HologramBuildPreparation.aeReady(s), "disabled malformed payload is still decoded");
+        SimpleAssert.eq("AE 蓝图净化报告无效，保持蓝图；请重新审查后施工", s.status, "disabled decode keeps generic failure");
+        cell.excluded = true;
+        SimpleAssert.that(!HologramBuildPreparation.aeReady(s), "excluded malformed payload is still decoded");
+        SimpleAssert.eq("AE 蓝图净化报告无效，保持蓝图；请重新审查后施工", s.status, "excluded decode keeps generic failure");
+        cell.excluded = false;
+        disabled.enabled = true;
+        s.networkBindingRequested = false;
+        SimpleAssert.that(!HologramBuildPreparation.aeReady(s), "active malformed payload remains blocked");
+        SimpleAssert.that(s.networkBindingRequested, "active decode failure retains the binding-request branch");
     }
 
     private static void authoringPlan(EntityPlayerMP player, sun.misc.Unsafe unsafe) throws Exception {
