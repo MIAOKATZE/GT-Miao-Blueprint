@@ -212,9 +212,20 @@ final class HologramPlanPolicy {
             return false;
         }
         int blocked = 0;
-        if (s.mode == 0 && !s.player.capabilities.isCreativeMode) for (int i = 0; i < s.capture.cells.size(); i++) {
-            HologramCapture.Cell cell = s.capture.cells.get(i);
-            if (HologramSessionPolicy.inScope(s, cell, i) && "blocked".equals(classify(s, cell, i))) blocked++;
+        if (s.mode == 0 && !s.player.capabilities.isCreativeMode) {
+            HologramPlanClassifier classifier = new HologramPlanClassifier(s);
+            World world = s.player.worldObj;
+            for (int i = 0; i < s.capture.cells.size(); i++) {
+                HologramCapture.Cell cell = s.capture.cells.get(i);
+                if (!HologramSessionPolicy.inScope(s, cell, i) || HologramSessionPolicy.ignoredPlacementAir(s, cell, i))
+                    continue;
+                // Match classify's primary observation order; fallback consumes this same state without a second read.
+                boolean loaded = world.blockExists(cell.x, cell.y, cell.z);
+                Block actual = loaded ? world.getBlock(cell.x, cell.y, cell.z) : Blocks.air;
+                int meta = loaded ? world.getBlockMetadata(cell.x, cell.y, cell.z) : 0;
+                TileEntity tile = loaded ? world.getTileEntity(cell.x, cell.y, cell.z) : null;
+                if ("blocked".equals(classifier.classify(s, cell, i, loaded, actual, meta, tile))) blocked++;
+            }
         }
         if (blocked == 0) return true;
         s.status = "选定范围有 " + blocked + " 格结构占位被遮挡，已整体拒绝补建，请清空后重试";

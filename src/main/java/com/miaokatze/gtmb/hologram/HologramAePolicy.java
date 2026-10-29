@@ -113,24 +113,45 @@ final class HologramAePolicy {
     /** Frozen fallback identities keep registered native factories/resource callbacks on their documented thread. */
     static Draft sanitizeOwned(HologramPresets.Preset result, Map<String, String> networks,
         Map<String, HologramPresets.Target> nativeShells, PreparationProgress progress) throws IOException {
+        return sanitizeOwned(result, networks, nativeShells, progress, new HologramBlueprintValidationCache(result));
+    }
+
+    static Draft sanitizeOwned(HologramPresets.Preset result, Map<String, String> networks,
+        Map<String, HologramPresets.Target> nativeShells, PreparationProgress progress,
+        HologramBlueprintValidationCache cache) throws IOException {
         result.deidentificationLevel = HologramDeidentification.level(result);
         // Native AE canonicalization and verified quantum binding necessarily rebuild identity.
         int completed = 0;
         for (HologramPresets.Cell cell : result.cells) {
             progress.update("identity", completed++, result.cells.size());
             Block block = cell.block();
+            String originalTile = cell.tileNbt, originalItem = cell.itemNbt;
+            // Root normalization and registry-class recognition have no world, position, issue or provider callback.
+            Identity known = cache.identity(block, cell.damage, originalTile, originalItem);
+            if (known != null) {
+                cell.tileNbt = known.tile;
+                cell.itemNbt = known.item;
+                if (known.levelOne) result.deidentificationLevel = Math.max(1, result.deidentificationLevel);
+                continue;
+            }
             NBTTagCompound payload = HologramBlueprintNbt.decode(cell.tileNbt);
             if (HologramCarpentersCompatibility.stripOwner(block, payload))
                 cell.tileNbt = HologramBlueprintNbt.encodeCanonical(payload);
             cell.itemNbt = HologramCarpentersCompatibility.normalize(block, cell.itemNbt);
-            if (HologramAeBlueprint.supports(block, payload) || HologramNetworkBindings.node(block)
+            boolean levelOne = HologramAeBlueprint.supports(block, payload) || HologramNetworkBindings.node(block)
                 || HologramNetworkSchemas.removeExternalReferences(
                     block,
                     cell.damage,
                     payload == null ? null : (NBTTagCompound) payload.copy())
                 || payload != null && (payload.hasKey(HologramNetworkBindings.CAPTURE_ANCHOR)
-                    || payload.hasKey(HologramNetworkBindings.GROUP)))
-                result.deidentificationLevel = Math.max(1, result.deidentificationLevel);
+                    || payload.hasKey(HologramNetworkBindings.GROUP));
+            if (levelOne) result.deidentificationLevel = Math.max(1, result.deidentificationLevel);
+            cache.identity(
+                block,
+                cell.damage,
+                originalTile,
+                originalItem,
+                new Identity(cell.tileNbt, cell.itemNbt, levelOne));
         }
         progress.update("identity", completed, result.cells.size());
         result = HologramDeidentification.applyOwned(result, result.deidentificationLevel, networks, progress);
@@ -164,19 +185,28 @@ final class HologramAePolicy {
         for (HologramPresets.Cell cell : result.cells) {
             progress.update("ae", completed++, result.cells.size());
             Block block = cell.block();
-            NBTTagCompound payload = HologramBlueprintNbt.decode(cell.tileNbt);
-            if (payload != null && payload.hasKey(HologramNetworkBindings.GROUP)) add(
+            boolean ordinary = !HologramAeBlueprint.supports(block)
+                && !HologramAeBlueprint.payloadCanEnableSupport(block);
+            NBTTagCompound payload = ordinary ? null : HologramBlueprintNbt.decode(cell.tileNbt);
+            String group = null;
+            if (ordinary) {
+                // These hosts cannot become AE from payload contents; retain only their exact group descriptor.
+                int number = cache.networkGroup(cell.tileNbt);
+                if (number != 0) group = "q" + number;
+            } else if (payload != null && payload.hasKey(HologramNetworkBindings.GROUP))
+                group = HologramNetworkBindings.group(payload);
+            if (group != null) add(
                 issues,
                 new Issue(
                     "network.quantum_group",
                     "info",
                     "specialHint",
-                    "Quantum network group " + HologramNetworkBindings.group(payload)
+                    "Quantum network group " + group
                         + " requires a real coordinate-bearing node or terminal before placement.",
                     cell.x,
                     cell.y,
                     cell.z));
-            if (!HologramAeBlueprint.supports(block, payload)) continue;
+            if (ordinary || !HologramAeBlueprint.supports(block, payload)) continue;
             ae = true;
             HologramAeBlueprint.Analysis analysis = HologramAeBlueprint.analyze(block, cell.metadata, payload);
             boolean omittedHost = !analysis.supported && analysis.issues.stream()
@@ -222,7 +252,10 @@ final class HologramAePolicy {
                     cell.damage = shell.getItemDamage();
                 }
             }
-            cell.tileNbt = HologramBlueprintNbt.encodeCanonical(block, analysis.payload());
+            // Static hosts take analyze's pure shell branch; native tile factories and FMP keep fresh encoding.
+            cell.tileNbt = HologramAeBlueprint.staticBlockShell(block, cell.metadata)
+                ? cache.aeShell(block, cell.metadata, cell.tileNbt, analysis)
+                : HologramBlueprintNbt.encodeCanonical(block, analysis.payload());
             // AE shell tags are not a second copy of the host inventory/configuration. Canonical tile is authoritative.
             if (cell.itemNbt != null && !cell.itemNbt.isEmpty()) {
                 add(
@@ -300,6 +333,18 @@ final class HologramAePolicy {
         Draft draft = new Draft(result, result.aeIssues);
         progress.update("report", 1, 1);
         return draft;
+    }
+
+    static final class Identity {
+
+        final String tile, item;
+        final boolean levelOne;
+
+        Identity(String tile, String item, boolean levelOne) {
+            this.tile = tile;
+            this.item = item;
+            this.levelOne = levelOne;
+        }
     }
 
     /** Server-thread preflight only for the rare mixed-multipart downgrade that needs native material callbacks. */

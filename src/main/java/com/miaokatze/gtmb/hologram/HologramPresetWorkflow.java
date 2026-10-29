@@ -162,6 +162,7 @@ final class HologramPresetWorkflow {
             s.processingWorkflowStarted = false;
             s.decorLedger = new HologramDecorMaterials.Ledger();
             s.blueprintDirty = false;
+            s.blueprintEditing = false;
             s.blueprintSource = "saved";
             HologramAuthoringWorkflow.clearSourceSwitch(s);
             s.libraryInitialSnapshot = HologramLibraryFacade.enabled() && id.startsWith("public_");
@@ -235,6 +236,7 @@ final class HologramPresetWorkflow {
         }
         editing.open = true;
         editing.openPurpose = "blueprintEdit";
+        editing.blueprintEditing = true;
         editing.settingsOnly = false;
         editing.status = "已打开自定义预设编辑；保存回原预设或另存为，仅保存规划，不施工";
         if (!HologramWorkspace.activatePresentation(transition)) return previous;

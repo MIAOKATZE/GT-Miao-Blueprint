@@ -298,9 +298,396 @@ public final class HologramResourcePlannerRegression {
         }
         deferredLifecycle(player);
         classifierReuse(player, world);
+        constructionPreflight(player, world);
+        populationItemSummaries(player);
         authoringPlan(player, unsafe);
         currentCellPreparation(player);
         aeReadyReaders(player);
+    }
+
+    private static void populationItemSummaries(EntityPlayerMP player) throws Exception {
+        HologramCapture.Cell ordinary = new HologramCapture.Cell(null, 0, 64, 0);
+        ordinary.block = Blocks.stone;
+        ordinary.tileNbt = "invalid data never needed to recognize an ordinary host";
+        SimpleAssert.that(
+            !HologramBlueprintData.editableAeSample(ordinary, new ItemStack(Blocks.stone)),
+            "ordinary sample rejection needs no payload parse");
+        ItemStack tagged = new ItemStack(Blocks.stone);
+        tagged.setTagCompound(new NBTTagCompound());
+        SimpleAssert.that(
+            !HologramBlueprintData.editableAeSample(ordinary, tagged),
+            "tagged targets retain the ordinary-host result without acquiring an AE identity");
+        SimpleAssert.that(!HologramBlueprintData.editableAeSample(ordinary, null), "null sample behavior is unchanged");
+        ItemStack empty = new ItemStack(Blocks.stone);
+        empty.stackSize = 0;
+        SimpleAssert
+            .that(!HologramBlueprintData.editableAeSample(ordinary, empty), "empty sample behavior is unchanged");
+        String[] inputs = new String[4];
+        for (int i = 0; i < inputs.length; i++) {
+            NBTTagCompound tag = new NBTTagCompound();
+            tag.setInteger("unknownItemConfiguration", i);
+            inputs[i] = HologramBlueprintNbt.encodeCaptured(tag);
+        }
+        HologramSession original = session(player, 128), optimized = session(player, 128);
+        for (HologramSession s : new HologramSession[] { original, optimized }) {
+            s.virtualPreset.schema = 2;
+            s.virtualPlacement = false;
+            for (int i = 0; i < 128; i++) {
+                s.virtualPreset.cells.get(i).block = "minecraft:stone";
+                s.virtualPreset.cells.get(i).itemNbt = inputs[i % 4];
+            }
+        }
+        HologramBlueprintValidationCache disabled = new HologramBlueprintValidationCache(original.virtualPreset, 0, 0);
+        HologramBlueprintValidationCache cached = new HologramBlueprintValidationCache(optimized.virtualPreset);
+        drainPopulation(original, disabled);
+        drainPopulation(optimized, cached);
+        SimpleAssert
+            .eq(128L, disabled.unsealedItemMisses, "zero-budget population executes every original item decode");
+        SimpleAssert.eq(4L, cached.unsealedItemMisses, "ordinary item summaries decode four complete inputs once");
+        SimpleAssert
+            .eq(124L, cached.unsealedItemHits, "ordinary duplicate item payloads use bounded root-key summaries");
+        for (int i = 0; i < 128; i++) {
+            SimpleAssert.eq(
+                original.pins.get(i)
+                    .writeToNBT(new NBTTagCompound()),
+                optimized.pins.get(i)
+                    .writeToNBT(new NBTTagCompound()),
+                "optimized population preserves the actual material identity for each position");
+            SimpleAssert.eq(
+                inputs[i % 4],
+                optimized.capture.cells.get(i).itemNbt,
+                "ignored item configuration remains complete in the captured blueprint");
+        }
+        optimized.pins.get(0).stackSize = 7;
+        SimpleAssert.eq(1, optimized.pins.get(1).stackSize, "material pins remain independently mutable per cell");
+        SimpleAssert.eq(
+            1,
+            optimized.coordinatePins.get(HologramValues.position(optimized.capture.cells.get(0))).stackSize,
+            "coordinate pins retain their independent copies");
+
+        NBTTagCompound sealed = new NBTTagCompound(), envelope = new NBTTagCompound();
+        envelope.setString("opaque", "retained seal field");
+        sealed.setTag(HologramRecovery.TAG, envelope);
+        sealed.setString("unknownItemConfiguration", "retained item field");
+        for (String encoded : new String[] { HologramBlueprintNbt.encodeCaptured(sealed), "invalid item encoding" }) {
+            HologramSession s = session(player, 4), baseline = session(player, 4);
+            for (HologramSession fixture : new HologramSession[] { s, baseline }) {
+                fixture.virtualPreset.schema = 2;
+                for (HologramPresets.Cell cell : fixture.virtualPreset.cells) {
+                    cell.block = "minecraft:stone";
+                    cell.itemNbt = encoded;
+                }
+            }
+            HologramBlueprintValidationCache originalCache = new HologramBlueprintValidationCache(
+                baseline.virtualPreset,
+                0,
+                0);
+            drainPopulation(baseline, originalCache);
+            HologramBlueprintValidationCache cache = new HologramBlueprintValidationCache(s.virtualPreset);
+            drainPopulation(s, cache);
+            SimpleAssert.eq(
+                originalCache.unsealedItemMisses,
+                cache.unsealedItemMisses,
+                "sealed and invalid inputs preserve the actual uncached decode count");
+            SimpleAssert.eq(
+                baseline.capture.incomplete,
+                s.capture.incomplete,
+                "sealed and invalid inputs preserve the original completion boundary");
+            SimpleAssert.eq(
+                baseline.capture.failure,
+                s.capture.failure,
+                "sealed and invalid inputs preserve the first original error");
+            SimpleAssert
+                .eq(4L, cache.unsealedItemMisses, "sealed or invalid item payloads remain on the per-cell decode path");
+            SimpleAssert.eq(0L, cache.unsealedItemHits, "a seal or decode failure never becomes a negative summary");
+            if (encoded.equals("invalid item encoding")) {
+                for (HologramCapture.Cell cell : s.capture.cells) SimpleAssert
+                    .that(cell.unknown, "each malformed source retains its original unsupported target result");
+            } else {
+                SimpleAssert.eq(
+                    sealed,
+                    s.pins.get(0)
+                        .getTagCompound(),
+                    "sealed item fields and unknown data remain exact");
+                s.pins.get(0)
+                    .getTagCompound()
+                    .getCompoundTag(HologramRecovery.TAG)
+                    .setString("opaque", "changed");
+                SimpleAssert.eq(
+                    "retained seal field",
+                    s.pins.get(1)
+                        .getTagCompound()
+                        .getCompoundTag(HologramRecovery.TAG)
+                        .getString("opaque"),
+                    "sealed pins never share mutable NBT trees");
+            }
+        }
+        for (int budget : new int[] { 0, HologramBlueprintValidationCache.MAX_ENTRIES }) {
+            HologramSession missingBlock = session(player, 4);
+            missingBlock.virtualPreset.schema = 2;
+            for (HologramPresets.Cell cell : missingBlock.virtualPreset.cells) cell.itemNbt = "invalid item encoding";
+            HologramBlueprintValidationCache cache = new HologramBlueprintValidationCache(
+                missingBlock.virtualPreset,
+                budget,
+                HologramBlueprintValidationCache.MAX_STRING_CHARS);
+            drainPopulation(missingBlock, cache);
+            SimpleAssert
+                .eq(1L, cache.unsealedItemMisses, "a missing declared block retains the original first-cell rejection");
+            SimpleAssert.eq(
+                "INVALID_PREFAB_VARIANT",
+                missingBlock.capture.failure,
+                "the original variant failure still precedes later cells");
+        }
+        HologramNativePlacement.Adapter nativeAdapter = new HologramNativePlacement.Adapter() {
+
+            public boolean supports(net.minecraft.block.Block block) {
+                return block == Blocks.stone;
+            }
+
+            public net.minecraft.tileentity.TileEntity create(net.minecraft.block.Block block, int meta,
+                NBTTagCompound tag, net.minecraft.world.World world) {
+                return new net.minecraft.tileentity.TileEntity();
+            }
+
+            public List<ItemStack> materials(net.minecraft.block.Block block, int meta,
+                net.minecraft.tileentity.TileEntity tile) {
+                return java.util.Collections.singletonList(new ItemStack(Blocks.stone));
+            }
+        };
+        HologramNativePlacement.register("test:population-item-summary", nativeAdapter);
+        try {
+            HologramSession s = session(player, 4);
+            s.virtualPreset.schema = 2;
+            for (HologramPresets.Cell cell : s.virtualPreset.cells) {
+                cell.block = "minecraft:stone";
+                cell.tileNbt = inputs[0];
+            }
+            HologramBlueprintValidationCache cache = new HologramBlueprintValidationCache(s.virtualPreset);
+            drainPopulation(s, cache);
+            SimpleAssert.that(
+                !s.capture.incomplete && s.pins.size() == 4,
+                "native null item payloads keep their ordinary target installation");
+            SimpleAssert.eq(
+                0L,
+                cache.unsealedItemHits + cache.unsealedItemMisses,
+                "native hosts never consult ordinary negative summaries");
+            for (ItemStack pin : s.pins.values())
+                SimpleAssert.that(!pin.hasTagCompound(), "native null payload projection still clears the target tag");
+            cache.rememberUnsealedItem(inputs[0]);
+            s.virtualPreset.cells.get(0).itemNbt = inputs[0];
+            drainPopulation(s, cache);
+            SimpleAssert.that(
+                s.capture.incomplete && "INVALID_PREFAB_ITEM".equals(s.capture.failure),
+                "a known ordinary negative summary cannot hide native tagged-material mismatch");
+            SimpleAssert.eq(
+                0L,
+                cache.unsealedItemHits + cache.unsealedItemMisses,
+                "native input bypasses even an already-present negative summary");
+        } finally {
+            HologramNativePlacement.unregister("test:population-item-summary", nativeAdapter);
+        }
+        System.out.println(
+            "GTMB_POPULATION_ITEM_SUMMARY cells=128 decodes=" + disabled.unsealedItemMisses
+                + "->"
+                + cached.unsealedItemMisses);
+    }
+
+    private static void drainPopulation(HologramSession s, HologramBlueprintValidationCache cache) {
+        HologramBlueprintProjection.Population task = new HologramBlueprintProjection.Population(s, cache);
+        while (!task.step(32, Long.MAX_VALUE)) {}
+    }
+
+    private static void constructionPreflight(EntityPlayerMP player, HologramServiceEditRegression.ReadOnlyWorld world)
+        throws Exception {
+        boolean creative = player.capabilities.isCreativeMode;
+        player.capabilities.isCreativeMode = false;
+        try {
+            HologramSession original = preflightSession(player, 65), optimized = preflightSession(player, 65);
+            world.occupied = Blocks.dirt;
+            world.occupiedX = 0;
+            resetWorldReads(world);
+            int blocked = originalBlocked(original);
+            List<Long> originalReads = worldReads(world);
+            resetWorldReads(world);
+            SimpleAssert
+                .that(!HologramPlanPolicy.constructionAllowed(optimized), "preflight still rejects the whole build");
+            SimpleAssert.eq(2, blocked, "the reference pass finds both separated obstructions");
+            SimpleAssert.eq(
+                "选定范围有 2 格结构占位被遮挡，已整体拒绝补建，请清空后重试",
+                optimized.status,
+                "optimized preflight preserves the complete blocked count and feedback");
+            int oldPlans = 0, newPlans = 0;
+            for (HologramCapture.Cell cell : original.capture.cells) if (cell.resourcePlanKey != null) oldPlans++;
+            for (HologramCapture.Cell cell : optimized.capture.cells) if (cell.resourcePlanKey != null) newPlans++;
+            SimpleAssert.eq(65, oldPlans, "the reference path actually prepares every uncached ordinary resource plan");
+            SimpleAssert.eq(0, newPlans, "the ordinary proof avoids all 65 redundant resource preparations");
+            SimpleAssert
+                .eq(originalReads.get(0), worldReads(world).get(0), "one live load observation remains per cell");
+            System.out.println(
+                "GTMB_CONSTRUCTION_PREFLIGHT cells=65 blocked=" + blocked
+                    + " resourcePrepares="
+                    + oldPlans
+                    + "->"
+                    + newPlans
+                    + " worldReads="
+                    + originalReads
+                    + "->"
+                    + worldReads(world));
+
+            for (int scenario = 0; scenario < 14; scenario++) {
+                original = preflightSession(player, 1);
+                optimized = preflightSession(player, 1);
+                world.occupied = null;
+                world.occupant = null;
+                world.unloaded = world.denyMine = false;
+                for (HologramSession s : new HologramSession[] { original, optimized }) {
+                    HologramCapture.Cell cell = s.capture.cells.get(0);
+                    NBTTagCompound payload = new NBTTagCompound();
+                    if (scenario == 0) {
+                        NBTTagList inventory = new NBTTagList();
+                        inventory.appendTag(new ItemStack(Items.diamond, 2).writeToNBT(new NBTTagCompound()));
+                        payload.setTag("Inventory", inventory);
+                        cell.tileNbt = HologramBlueprintNbt.encodeCaptured(payload);
+                    } else if (scenario == 1) {
+                        world.occupied = Blocks.stone;
+                        world.occupant = new net.minecraft.tileentity.TileEntity();
+                    } else if (scenario == 2) {
+                        cell.unknown = cell.userPosition = true;
+                        s.pins.clear();
+                    } else if (scenario == 3) world.unloaded = true;
+                    else if (scenario == 4) cell.anchor = true;
+                    else if (scenario == 5 || scenario == 13) {
+                        payload.setTag("customAsset", new ItemStack(Items.diamond).writeToNBT(new NBTTagCompound()));
+                        cell.tileNbt = HologramBlueprintNbt.encodeCaptured(payload);
+                        s.virtualPreset.retainCovers = false;
+                        world.occupied = Blocks.dirt;
+                        if (scenario == 13) {
+                            SimpleAssert.that(
+                                !HologramCellPolicy.resourcePlanValid(s, cell),
+                                "history contains a real resource error");
+                            cell.tileNbt = "";
+                        }
+                    } else if (scenario == 6) {
+                        world.occupied = Blocks.dirt;
+                        world.denyMine = true;
+                    } else if (scenario == 7) world.denyMine = true;
+                    else if (scenario == 8) cell.itemNbt = HologramBlueprintNbt.encodeCaptured(payload);
+                    else if (scenario == 9) {
+                        cell.block = Blocks.chest;
+                        s.pins.put(0, new ItemStack(Blocks.chest));
+                    } else if (scenario == 10) {
+                        s.virtual = false;
+                        s.virtualPreset = null;
+                    } else if (scenario == 11) cell.excluded = true;
+                    else if (scenario == 12) {
+                        cell.block = Blocks.air;
+                        cell.blueprintBlock = "minecraft:air";
+                        cell.userPosition = true;
+                        s.pins.clear();
+                    }
+                }
+                resetWorldReads(world);
+                blocked = originalBlocked(original);
+                originalReads = worldReads(world);
+                resetWorldReads(world);
+                SimpleAssert.eq(
+                    blocked == 0,
+                    HologramPlanPolicy.constructionAllowed(optimized),
+                    "original/optimized preflight admission agrees in scenario " + scenario);
+                // Ordinary cases may save additional identity reads. Every fallback keeps the original observation
+                // cost.
+                if (scenario != 6 && scenario != 7) SimpleAssert.eq(
+                    originalReads,
+                    worldReads(world),
+                    "fallback never adds a preliminary world read in scenario " + scenario);
+                SimpleAssert.eq(
+                    original.capture.cells.get(0).resourceError,
+                    optimized.capture.cells.get(0).resourceError,
+                    "resource errors retain their original priority and refresh in scenario " + scenario);
+                if (scenario == 5) SimpleAssert.that(
+                    optimized.capture.cells.get(0).resourceError.contains("customAsset") && blocked == 0,
+                    "resource rejection precedes obstruction counting");
+                if (scenario == 13) SimpleAssert.that(
+                    optimized.capture.cells.get(0).resourceError.isEmpty()
+                        && optimized.capture.cells.get(0).resourcePlanKey.tile.isEmpty(),
+                    "historical errors force fallback and refresh the changed exact key");
+                if (scenario == 7) SimpleAssert.eq(
+                    originalReads.get(4),
+                    worldReads(world).get(4),
+                    "the ordinary proof retains the live mine-permission callback");
+            }
+            resourceGenerationPreflight(player);
+        } finally {
+            world.occupied = null;
+            world.occupant = null;
+            world.unloaded = world.denyMine = false;
+            player.capabilities.isCreativeMode = creative;
+        }
+    }
+
+    private static HologramSession preflightSession(EntityPlayerMP player, int size) {
+        HologramSession s = session(player, size);
+        s.virtualPreset.schema = 2;
+        s.virtualLocked = true;
+        s.mode = 0;
+        for (int i = 0; i < size; i++) s.pins.put(i, new ItemStack(Blocks.stone));
+        return s;
+    }
+
+    /** The exact loop replaced in constructionAllowed, retained here as the reference path. */
+    private static int originalBlocked(HologramSession s) {
+        int blocked = 0;
+        for (int i = 0; i < s.capture.cells.size(); i++) {
+            HologramCapture.Cell cell = s.capture.cells.get(i);
+            if (HologramSessionPolicy.inScope(s, cell, i) && "blocked".equals(HologramPlanPolicy.classify(s, cell, i)))
+                blocked++;
+        }
+        return blocked;
+    }
+
+    private static void resetWorldReads(HologramServiceEditRegression.ReadOnlyWorld world) {
+        world.loadReads = world.blockReads = world.metaReads = world.tileReads = world.permissionReads = 0;
+    }
+
+    private static List<Long> worldReads(HologramServiceEditRegression.ReadOnlyWorld world) {
+        return java.util.Arrays
+            .asList(world.loadReads, world.blockReads, world.metaReads, world.tileReads, world.permissionReads);
+    }
+
+    private static void resourceGenerationPreflight(EntityPlayerMP player) throws Exception {
+        HologramSession s = preflightSession(player, 1);
+        HologramCapture.Cell cell = s.capture.cells.get(0);
+        s.virtualPreset.retainCovers = false;
+        NBTTagCompound payload = new NBTTagCompound(), container = new NBTTagCompound();
+        container.setTag("nativeSlots", new NBTTagCompound());
+        payload.setTag("CustomFluidState", container);
+        cell.tileNbt = HologramBlueprintNbt.encodeCaptured(payload);
+        SimpleAssert.that(
+            !HologramCellPolicy.resourcePlanValid(s, cell),
+            "the unregistered container starts with a real error");
+        try (com.miaokatze.gtmb.api.GTMBExtensions.Registration registration = com.miaokatze.gtmb.api.ResourceContainers
+            .register(
+                "test:preflight-fluid-generation",
+                context -> context.path.equals("CustomFluidState") ? java.util.Collections.emptyList() : null)) {
+            SimpleAssert.that(registration.active(), "the test resource provider is active");
+            HologramPlanPolicy.constructionAllowed(s);
+            SimpleAssert.that(
+                cell.resourceError.isEmpty(),
+                "a provider generation change refreshes historical resource errors");
+            SimpleAssert.eq(
+                com.miaokatze.gtmb.api.ResourceContainers.generation(),
+                cell.resourcePlanKey.generation,
+                "fallback refreshes the resource key to the registered provider generation");
+        }
+        HologramCellPolicy.ResourcePlanKey registeredKey = cell.resourcePlanKey;
+        HologramPlanPolicy.constructionAllowed(s);
+        SimpleAssert.that(
+            !cell.resourceError.isEmpty() && cell.resourcePlanKey != registeredKey,
+            "removing a provider cannot reuse its previously accepted nonempty payload");
+        SimpleAssert.eq(
+            com.miaokatze.gtmb.api.ResourceContainers.generation(),
+            cell.resourcePlanKey.generation,
+            "the rejected resource key records the current provider generation");
     }
 
     private static void currentCellPreparation(EntityPlayerMP player) throws Exception {

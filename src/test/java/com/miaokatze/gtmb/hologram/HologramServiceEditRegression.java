@@ -701,6 +701,8 @@ final class HologramServiceEditRegression {
         Block occupied;
         int occupiedX;
         TileEntity occupant;
+        boolean unloaded, denyMine;
+        long loadReads, blockReads, metaReads, tileReads, permissionReads;
 
         private ReadOnlyWorld() {
             super(null, null, "fixture", 0, null, null);
@@ -708,27 +710,32 @@ final class HologramServiceEditRegression {
 
         @Override
         public boolean blockExists(int x, int y, int z) {
-            return true;
+            loadReads++;
+            return !unloaded;
         }
 
         @Override
         public Block getBlock(int x, int y, int z) {
+            blockReads++;
             return occupied != null && x == occupiedX ? occupied : Blocks.air;
         }
 
         @Override
         public int getBlockMetadata(int x, int y, int z) {
+            metaReads++;
             return 0;
         }
 
         @Override
         public TileEntity getTileEntity(int x, int y, int z) {
+            tileReads++;
             return x == occupiedX ? occupant : null;
         }
 
         @Override
         public boolean canMineBlock(EntityPlayer player, int x, int y, int z) {
-            return true;
+            permissionReads++;
+            return !denyMine;
         }
 
         @Override

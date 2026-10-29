@@ -103,7 +103,8 @@ final class HologramSession {
     int pendingSourceSlot;
     long blueprintSaveRevision;
     boolean processingPresetOperationSuccess;
-    boolean blueprintDirty, discardConfirmationRequired, processingReviewed, processingWorkflowStarted;
+    boolean blueprintDirty, blueprintEditing, discardConfirmationRequired, processingReviewed,
+        processingWorkflowStarted;
     HologramPresets.Preset processingSource;
     HologramBlueprintRotation.Proof rotationProof;
     long rotationProofEpoch;

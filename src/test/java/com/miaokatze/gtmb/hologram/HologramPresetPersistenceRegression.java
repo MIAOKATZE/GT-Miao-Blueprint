@@ -38,11 +38,66 @@ final class HologramPresetPersistenceRegression {
             Path file = directory.resolve("presets.json");
             List<HologramPresets.Preset> initial = new ArrayList<>();
             for (int i = 0; i < 32; i++) initial.add(preset("preset_" + i, "Original " + i));
+            NBTTagCompound opaque = new NBTTagCompound();
+            opaque.setString("unknownConfiguration", "original value");
+            initial.get(5).cells.get(0).tileNbt = HologramBlueprintNbt.encodeCaptured(opaque);
+            initial.get(5).cells.get(0).allowedTargets = new ArrayList<>();
+            initial.get(5).cells.get(0).allowedTargets
+                .add(new HologramPresets.Target(new net.minecraft.item.ItemStack(net.minecraft.init.Blocks.stone)));
             write.invoke(null, file, initial);
             byte[] originalBytes = Files.readAllBytes(file);
             String initialHash = HologramPresets.contentHash("preset_5");
             Object initialSource = contentSource("preset_5");
             Object initialBase = field(initialSource, "base");
+            HologramPresets.Preset canonical = (HologramPresets.Preset) initialBase;
+            HologramPresets.Preset stored = (HologramPresets.Preset) field(initialSource, "stored");
+            com.google.gson.Gson gson = new com.google.gson.Gson();
+            String storedBefore = gson.toJson(stored), canonicalBefore = gson.toJson(canonical);
+            HologramPresets.Preset oldCanonical = HologramBlueprintProcessing.enforcePolicy(
+                HologramAePolicy.sanitizeOwned(
+                    HologramPresets.copy(stored),
+                    null,
+                    HologramAePolicy.PreparationProgress.NONE).preset);
+            SimpleAssert.eq(
+                gson.toJson(oldCanonical),
+                canonicalBefore,
+                "canonical typed input copy preserves the old ordered result");
+            SimpleAssert.eq(
+                HologramBlueprintContentHash.of(oldCanonical),
+                HologramBlueprintContentHash.of(canonical),
+                "canonical typed input copy preserves content identity");
+            SimpleAssert.that(
+                java.util.Arrays.equals(
+                    HologramBlueprintCompactCodec.encode(oldCanonical, (done, total) -> {}),
+                    HologramBlueprintCompactCodec.encode(canonical, (done, total) -> {})),
+                "canonical typed input copy preserves exact compact JSON identity");
+            HologramPresets.Preset admitted = HologramPresets.get("preset_5");
+            HologramPresets.Preset oldCopy = HologramPresets.copy(canonical);
+            SimpleAssert
+                .eq(gson.toJson(oldCopy), gson.toJson(admitted), "admitted typed copy preserves old ordered JSON");
+            SimpleAssert.eq(
+                HologramBlueprintContentHash.of(oldCopy),
+                HologramBlueprintContentHash.of(admitted),
+                "admitted typed copy preserves content hash");
+            SimpleAssert.that(
+                java.util.Arrays.equals(
+                    HologramBlueprintCompactCodec.encode(oldCopy, (done, total) -> {}),
+                    HologramBlueprintCompactCodec.encode(admitted, (done, total) -> {})),
+                "admitted typed copy preserves exact compact JSON identity");
+            SimpleAssert.that(
+                admitted.cells.get(0).tileNbt == canonical.cells.get(0).tileNbt,
+                "admission retains immutable compressed string identity");
+            admitted.cells.get(0).prompt = "reader mutation";
+            admitted.cells.get(0).allowedTargets.get(0).damage++;
+            admitted.cells.clear();
+            SimpleAssert.eq(
+                canonicalBefore,
+                gson.toJson(canonical),
+                "returned cells and nested target lists never modify the private canonical");
+            SimpleAssert.eq(
+                storedBefore,
+                gson.toJson(stored),
+                "returned edits and canonical admission leave the stored original unchanged");
             HologramPresets.labels();
             HologramPresets.get("preset_5");
             Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");

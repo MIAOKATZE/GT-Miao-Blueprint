@@ -195,6 +195,8 @@ final class HologramBlueprintData {
     /** Import admission checks the stored AE shell only; unresolved contents remain visible for explicit repair. */
     static boolean editableAeSample(HologramCapture.Cell cell, ItemStack target) {
         if (target == null || target.getItem() == null || target.stackSize < 1) return false;
+        if (!HologramAeBlueprint.supports(cell.block) && !HologramAeBlueprint.payloadCanEnableSupport(cell.block))
+            return false;
         try {
             NBTTagCompound payload = HologramBlueprintNbt.decode(cell.tileNbt);
             return HologramAeBlueprint.supports(cell.block, payload) && HologramValues

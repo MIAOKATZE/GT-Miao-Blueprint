@@ -412,7 +412,7 @@ final class HologramPresets {
         if (source == null) return null;
         if (!expectedHash.isEmpty() && !matchesContent(id, expectedHash))
             throw new IOException("Saved blueprint changed; prepare its current content again");
-        return copy(source.canonical());
+        return HologramBlueprintRotation.copyPreset(source.canonical());
     }
 
     static synchronized Preset matching(String id, String expectedHash) throws IOException {
@@ -479,7 +479,10 @@ final class HologramPresets {
 
         Preset canonical() throws IOException {
             if (base == null) base = HologramBlueprintProcessing.enforcePolicy(
-                HologramAePolicy.sanitizeOwned(copy(stored), null, HologramAePolicy.PreparationProgress.NONE).preset);
+                HologramAePolicy.sanitizeOwned(
+                    HologramBlueprintRotation.copyPreset(stored),
+                    null,
+                    HologramAePolicy.PreparationProgress.NONE).preset);
             return base;
         }
     }
