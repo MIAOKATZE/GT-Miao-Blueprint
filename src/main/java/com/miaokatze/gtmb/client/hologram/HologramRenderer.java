@@ -1,5 +1,7 @@
 package com.miaokatze.gtmb.client.hologram;
 
+import java.nio.FloatBuffer;
+import java.nio.IntBuffer;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -19,6 +21,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.util.AxisAlignedBB;
 import net.minecraft.util.IIcon;
 
+import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL14;
 
@@ -48,6 +51,8 @@ final class HologramRenderer {
     private static String previewKey = "";
     private static List<Face> cachedFaces = new ArrayList<>();
     private static List<Face> cachedOutlines = new ArrayList<>();
+    private static final FloatBuffer OUTLINE_MATRIX = BufferUtils.createFloatBuffer(16);
+    private static final IntBuffer OUTLINE_VIEWPORT = BufferUtils.createIntBuffer(16);
     private static final List<HologramState.Cell> nativePreviewCells = new ArrayList<>();
     private static HologramState visibleState;
     private static int visibleLayer, visibleView, visibleMode;
@@ -417,7 +422,13 @@ final class HologramRenderer {
                     if (!HologramBlueprintPreview.cleanCapture() && !role.isEmpty()
                         && (c.anchor || markers.size() - firstMarker < 64))
                         markers.add(new RoleMarker(c, projected, role));
-                    outlines.add(new Face(c, projected, 0, currentView));
+                    Face outline = new Face(c, projected, 0, currentView);
+                    boolean renderedCurrent = currentView || c.anchor
+                        || c.status.equals("protected") && c.actualStack != null;
+                    outline.fadeDefault = role.isEmpty() && !c.sourceMissing
+                        && (outline.nativeModel ? !HologramBlockRender.missingTexture(c, renderedCurrent)
+                            : completePreviewMaterial(outline.material));
+                    outlines.add(outline);
                     if (HologramBlockRender.ready(c, currentView)) {
                         nativePreviewCells.add(c);
                         // Cell picking keeps the established voxel contract while the drawing uses
@@ -564,8 +575,10 @@ final class HologramRenderer {
             }
             GL11.glDisable(GL11.GL_TEXTURE_2D);
             // Read face depth without writing line depth. The small z bias avoids coplanar
-            // flicker while keeping back edges hidden; all cells retain clear wireframes.
+            // flicker while keeping back edges hidden. Dense ordinary grids yield to their materials.
             GL11.glDepthMask(false);
+            float outlineDensity = HologramBlueprintPreview.cleanCapture() || cachedOutlines.isEmpty() ? 1
+                : previewOutlineDensity();
             t.startDrawing(GL11.GL_LINES);
             java.util.Set<Integer> related = selection == null ? java.util.Collections.emptySet()
                 : selection.related(state);
@@ -573,11 +586,13 @@ final class HologramRenderer {
                 boolean chosen = face.cell.index == selected
                     || selection != null && selection.contains(face.cell.index);
                 boolean relatedCasing = !chosen && related.contains(face.cell.index);
+                float alpha = previewOutlineAlpha(chosen, relatedCasing, face.empty, face.fadeDefault, outlineDensity);
+                if (alpha == 0) continue;
                 t.setColorRGBA_F(
                     chosen ? 1 : relatedCasing ? .78f : .2f,
                     chosen ? .92f : relatedCasing ? .61f : .7f,
                     chosen ? .5f : relatedCasing ? 1 : .8f,
-                    chosen || relatedCasing ? 1 : face.empty ? .18f : .45f);
+                    alpha);
                 for (int[] edge : EDGES) {
                     double[] a = face.points[edge[0]], b = face.points[edge[1]];
                     t.addVertex(a[0], a[1], a[2] * depthScale + .15);
@@ -1421,6 +1436,51 @@ final class HologramRenderer {
             cell.iconOnly);
     }
 
+    private static float previewOutlineDensity() {
+        // GUI drawing is orthographic with translation/axis scale. Include the active MUI transform and
+        // framebuffer viewport, so thresholds do not change meaning with GUI scale or a resized scene widget.
+        GL11.glGetFloat(GL11.GL_MODELVIEW_MATRIX, OUTLINE_MATRIX);
+        double scaleX = OUTLINE_MATRIX.get(0), scaleY = OUTLINE_MATRIX.get(5);
+        GL11.glGetFloat(GL11.GL_PROJECTION_MATRIX, OUTLINE_MATRIX);
+        GL11.glGetInteger(GL11.GL_VIEWPORT, OUTLINE_VIEWPORT);
+        scaleX = Math.abs(scaleX * OUTLINE_MATRIX.get(0)) * OUTLINE_VIEWPORT.get(2) / 2 * projectedFrame.scale;
+        scaleY = Math.abs(scaleY * OUTLINE_MATRIX.get(5)) * OUTLINE_VIEWPORT.get(3) / 2 * projectedFrame.scale;
+        return previewOutlineDensity(
+            Math.hypot(projectedFrame.basis.rightX() * scaleX, projectedFrame.basis.upX() * scaleY),
+            Math.abs(projectedFrame.basis.upY() * scaleY),
+            Math.hypot(projectedFrame.basis.rightZ() * scaleX, projectedFrame.basis.upZ() * scaleY));
+    }
+
+    /** Physical framebuffer pixels between adjacent voxel corners; a head-on collapsed axis is ignored. */
+    static float previewOutlineDensity(double xPixels, double yPixels, double zPixels) {
+        double spacing = Double.POSITIVE_INFINITY;
+        if (xPixels > 1e-6) spacing = Math.min(spacing, xPixels);
+        if (yPixels > 1e-6) spacing = Math.min(spacing, yPixels);
+        if (zPixels > 1e-6) spacing = Math.min(spacing, zPixels);
+        return spacing == Double.POSITIVE_INFINITY ? 0 : (float) Math.max(0, Math.min(1, (spacing - 2) / 4));
+    }
+
+    static float previewOutlineAlpha(boolean chosen, boolean related, boolean empty, boolean fadeDefault,
+        float density) {
+        return chosen || related ? 1 : empty ? .18f : .45f * (fadeDefault ? density : 1);
+    }
+
+    /** Only already-resolved, complete material samples permit hiding a default wireframe. */
+    static boolean completePreviewMaterial(HologramTextures.Material material) {
+        if (material == null || material.fallback || material.geometry.isEmpty()) return false;
+        for (HologramGeometry.Surface surface : material.geometry) {
+            List<HologramTextures.Sample> samples = material.samples(surface);
+            if (samples.isEmpty()) return false;
+            for (HologramTextures.Sample sample : samples) {
+                if (sample.icon == null) return false;
+                String name = sample.icon.getIconName();
+                if (name == null || name.isEmpty() || name.equals("missingno") || name.endsWith(":missingno"))
+                    return false;
+            }
+        }
+        return true;
+    }
+
     private static double textureU(IIcon icon, int side, double[] point) {
         double u = side == 4 ? point[2] + .5 : side == 5 ? .5 - point[2] : side == 2 ? .5 - point[0] : point[0] + .5;
         return icon.getMinU() + (icon.getMaxU() - icon.getMinU()) * u;
@@ -1440,6 +1500,7 @@ final class HologramRenderer {
         final HologramTextures.Material material;
         final boolean empty, nativeModel;
         final HologramGeometry.Surface surface;
+        boolean fadeDefault;
 
         Face(HologramState.Cell cell, double[][] points, int side, boolean current) {
             this(cell, points, side, current, null);
