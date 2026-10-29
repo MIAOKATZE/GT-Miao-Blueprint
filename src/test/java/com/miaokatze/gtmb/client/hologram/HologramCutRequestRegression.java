@@ -63,6 +63,20 @@ public final class HologramCutRequestRegression {
                     .isEmpty(),
                 "late ACK removes uncertainty without replay");
         }
+        requests.clear();
+        requests.begin("staged-paste", "paste", "entry", 0);
+        requests.expire(HologramCutRequests.WRITE_TIMEOUT_NS);
+        requests.begin("pending-check", "list", "staged-paste", HologramCutRequests.WRITE_TIMEOUT_NS);
+        // A correlated success=false/request_pending list only acknowledges the read in CutClient.receive.
+        requests.acknowledge("pending-check");
+        SimpleAssert.that(requests.writing() && requests.busy(), "nonterminal reconciliation preserves the paste lock");
+        SimpleAssert
+            .eq("staged-paste", requests.unresolvedWrite(), "nonterminal result preserves original correlation");
+        SimpleAssert.eq(
+            "paste",
+            requests.acknowledge("staged-paste").action,
+            "eventual original paste ACK remains accepted after a pending directory response");
+        SimpleAssert.that(!requests.writing(), "genuine terminal paste ACK finally releases ownership");
         requests.begin("preview", "preview", "entry", 0);
         SimpleAssert.that(requests.busy(), "an explicit preview has a bounded busy state");
         requests.expire(HologramCutRequests.READ_TIMEOUT_NS);

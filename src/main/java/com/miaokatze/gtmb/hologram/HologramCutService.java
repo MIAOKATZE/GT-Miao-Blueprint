@@ -17,7 +17,7 @@ import com.miaokatze.gtmb.util.ServerTaskScheduler;
 /** Move-only server clipboard. The durable redo journal remains authoritative until world bytes are verified. */
 public final class HologramCutService {
 
-    private static final HologramRequestGate queued = new HologramRequestGate(8, 128);
+    private static final Ingress queued = new Ingress(8, 128);
     private static final int MAX_PREPARATIONS = 4;
     private static final java.util.ArrayDeque<Preparation> preparing = new java.util.ArrayDeque<>();
     private static MinecraftServer recoveredServer;
@@ -58,56 +58,84 @@ public final class HologramCutService {
     }
 
     public static void receive(EntityPlayerMP player, NBTTagCompound request) {
+        receive(player, request, ServerTaskScheduler::scheduleServerTask);
+    }
+
+    /** The injected enqueue boundary is also used by isolated ownership/failure regressions. */
+    static void receive(EntityPlayerMP player, NBTTagCompound request, java.util.function.Consumer<Runnable> enqueue) {
         if (player == null || request == null) return;
-        HologramRequestGate.Lease lease = queued.acquire(player);
+        Object connection = player.playerNetServerHandler == null ? null : player.playerNetServerHandler.netManager;
+        if (!currentPlayer(player, connection)) return;
+        Ingress.Lease lease;
+        synchronized (queued) {
+            // A duplicate has no independent outcome: even a busy rejection could retire the original client's lock.
+            if (queued.pending(player, connection, request.getString("requestId"))) return;
+            lease = queued
+                .acquire(player, connection, request.getString("requestId"), writesWorld(request.getString("action")));
+        }
         if (lease == null) {
             HologramBusyReplies.reject(player, request, HologramBusyReplies.Kind.CUT);
             return;
         }
         net.minecraft.world.World identity = player.worldObj;
-        NBTTagCompound copy = (NBTTagCompound) request.copy();
-        ServerTaskScheduler.scheduleServerTask(() -> {
-            boolean transferred = false;
-            try {
-                if (!lease.active()) return;
-                if (HologramAeCraftingOrders.active(player) && !"list".equals(copy.getString("action"))) {
-                    NBTTagCompound busy = new NBTTagCompound();
-                    busy.setString("action", "state");
-                    busy.setString("requestId", copy.getString("requestId"));
-                    busy.setBoolean("success", false);
-                    busy.setString("code", "material_order_busy");
-                    busy.setString("message", "AE 缺料订单正在后台处理；请先等待完成或取消订单");
-                    HologramNetwork.sendCutState(player, busy);
-                    return;
+        boolean enqueued = false;
+        try {
+            NBTTagCompound copy = (NBTTagCompound) request.copy();
+            enqueue.accept(() -> {
+                boolean transferred = false;
+                try {
+                    if (!lease.active() || !currentPlayer(player, lease.connection)) return;
+                    if (HologramAeCraftingOrders.active(player) && !"list".equals(copy.getString("action"))) {
+                        NBTTagCompound busy = new NBTTagCompound();
+                        busy.setString("action", "state");
+                        busy.setString("requestId", copy.getString("requestId"));
+                        busy.setBoolean("success", false);
+                        busy.setString("code", "material_order_busy");
+                        busy.setString("message", "AE 缺料订单正在后台处理；请先等待完成或取消订单");
+                        HologramNetwork.sendCutState(player, busy);
+                        return;
+                    }
+                    if (!acceptsContext(
+                        copy.getString("action"),
+                        player.worldObj == identity,
+                        ItemNekoHologramProjector.isProjector(player.getHeldItem()))) {
+                        NBTTagCompound rejected = new NBTTagCompound();
+                        rejected.setString("action", "state");
+                        rejected.setString("requestId", copy.getString("requestId"));
+                        rejected.setBoolean("success", false);
+                        rejected.setString("code", "context_changed");
+                        rejected.setString("message", "操作未执行：请在原维度持有投影仪后重试");
+                        HologramNetwork.sendCutState(player, rejected);
+                        return;
+                    }
+                    if (preparable(copy) && preparing.size() >= MAX_PREPARATIONS) {
+                        HologramBusyReplies.reject(player, copy, HologramBusyReplies.Kind.CUT);
+                        return;
+                    }
+                    Preparation preparation = prepare(player, copy, identity, lease);
+                    if (preparation != null) {
+                        preparing.addLast(preparation);
+                        transferred = true;
+                    } else HologramNetwork.sendCutState(player, execute(player, copy));
+                } finally {
+                    if (!transferred) lease.close();
                 }
-                if (player.playerNetServerHandler == null || player.playerNetServerHandler.netManager == null
-                    || !player.playerNetServerHandler.netManager.isChannelOpen()) return;
-                if (!acceptsContext(
-                    copy.getString("action"),
-                    player.worldObj == identity,
-                    ItemNekoHologramProjector.isProjector(player.getHeldItem()))) {
-                    NBTTagCompound rejected = new NBTTagCompound();
-                    rejected.setString("action", "state");
-                    rejected.setString("requestId", copy.getString("requestId"));
-                    rejected.setBoolean("success", false);
-                    rejected.setString("code", "context_changed");
-                    rejected.setString("message", "操作未执行：请在原维度持有投影仪后重试");
-                    HologramNetwork.sendCutState(player, rejected);
-                    return;
-                }
-                if (preparable(copy) && preparing.size() >= MAX_PREPARATIONS) {
-                    HologramBusyReplies.reject(player, copy, HologramBusyReplies.Kind.CUT);
-                    return;
-                }
-                Preparation preparation = prepare(player, copy, identity, lease);
-                if (preparation != null) {
-                    preparing.addLast(preparation);
-                    transferred = true;
-                } else HologramNetwork.sendCutState(player, execute(player, copy));
-            } finally {
-                if (!transferred) lease.close();
-            }
-        });
+            });
+            enqueued = true;
+        } finally {
+            // If copy/enqueue fails, an accidentally retained runnable is inert because its lease is retired.
+            if (!enqueued) lease.close();
+        }
+    }
+
+    /** Respawn can reuse a live handler/connection while replacing its player object. */
+    static boolean currentPlayer(EntityPlayerMP player, Object connection) {
+        return player != null && !player.isDead
+            && player.playerNetServerHandler != null
+            && player.playerNetServerHandler.playerEntity == player
+            && connection != null
+            && player.playerNetServerHandler.netManager == connection
+            && player.playerNetServerHandler.netManager.isChannelOpen();
     }
 
     /** Pure raw-cell work only; durable world mutation and native callbacks retain their synchronous barrier. */
@@ -118,9 +146,7 @@ public final class HologramCutService {
             Preparation work = preparing.removeFirst();
             boolean retained = false;
             try {
-                if (!work.lease.active() || work.player.playerNetServerHandler == null
-                    || work.player.playerNetServerHandler.netManager == null
-                    || !work.player.playerNetServerHandler.netManager.isChannelOpen()) continue;
+                if (!work.lease.active() || !currentPlayer(work.player, work.lease.connection)) continue;
                 if (work.player.worldObj != work.world
                     || !ItemNekoHologramProjector.isProjector(work.player.getHeldItem())) {
                     NBTTagCompound rejected = new NBTTagCompound();
@@ -161,7 +187,7 @@ public final class HologramCutService {
     }
 
     private static Preparation prepare(EntityPlayerMP player, NBTTagCompound request, net.minecraft.world.World world,
-        HologramRequestGate.Lease lease) {
+        Ingress.Lease lease) {
         String action = request.getString("action"), purpose = request.getString("previewPurpose");
         if (!preparable(request)) return null;
         try {
@@ -203,16 +229,15 @@ public final class HologramCutService {
         final EntityPlayerMP player;
         final NBTTagCompound request, original;
         final net.minecraft.world.World world;
-        final HologramRequestGate.Lease lease;
+        final Ingress.Lease lease;
         final HologramCutEntry.Validation validation;
         final com.miaokatze.gtmb.api.CutTransforms.Transform pose;
         final int x, y, z, dimension;
         HologramCutTransforms.Task task;
 
-        Preparation(EntityPlayerMP player, NBTTagCompound request, net.minecraft.world.World world,
-            HologramRequestGate.Lease lease, NBTTagCompound original,
-            com.miaokatze.gtmb.api.CutTransforms.Transform pose, int x, int y, int z, int dimension)
-            throws IOException {
+        Preparation(EntityPlayerMP player, NBTTagCompound request, net.minecraft.world.World world, Ingress.Lease lease,
+            NBTTagCompound original, com.miaokatze.gtmb.api.CutTransforms.Transform pose, int x, int y, int z,
+            int dimension) throws IOException {
             this.player = player;
             this.request = request;
             this.world = world;
@@ -327,7 +352,17 @@ public final class HologramCutService {
             if ("list".equals(action)) {
                 response.setString("message", "剪切暂存已同步");
                 String reconcile = request.getString("id");
-                if (!reconcile.isEmpty()) reportRequestResult(response, state, reconcile);
+                if (!reconcile.isEmpty() && !reportRequestResult(
+                    response,
+                    state,
+                    reconcile,
+                    queued.pending(
+                        player,
+                        player.playerNetServerHandler == null ? null : player.playerNetServerHandler.netManager,
+                        reconcile))) {
+                    directory(response, state);
+                    return response;
+                }
             } else if ("preview".equals(action)) {
                 NBTTagCompound entry = find(state, request.getString("id"));
                 if (entry == null) throw new IOException("剪切暂存不存在");
@@ -490,11 +525,87 @@ public final class HologramCutService {
     }
 
     static void reportRequestResult(NBTTagCompound response, NBTTagCompound state, String id) throws IOException {
+        reportRequestResult(response, state, id, false);
+    }
+
+    /** False is explicitly nonterminal, including for old clients that only understand success/requestCompleted. */
+    static boolean reportRequestResult(NBTTagCompound response, NBTTagCompound state, String id, boolean pending)
+        throws IOException {
         if (!UUID.fromString(id)
             .toString()
             .equals(id)) throw new IOException("无效剪切请求编号");
         response.setString("reconciledRequestId", id);
-        response.setBoolean("requestCompleted", seen(state, id));
+        boolean completed = seen(state, id);
+        if (!completed && pending) {
+            response.removeTag("requestCompleted");
+            response.setBoolean("success", false);
+            response.setString("code", "request_pending");
+            response.setString("message", "原剪切操作仍在准备或排队，尚不能确定结果；请等待原操作回执或稍后同步");
+            return false;
+        }
+        response.setBoolean("requestCompleted", completed);
+        return true;
+    }
+
+    static boolean writesWorld(String action) {
+        return "cut".equals(action) || "paste".equals(action) || "undo".equals(action);
+    }
+
+    /** Ingress ownership includes queued work, not only preparations. Counts remain bounded by the existing gate. */
+    static final class Ingress {
+
+        private final HologramRequestGate gate;
+        private final java.util.Set<Lease> writes = new java.util.HashSet<>();
+
+        Ingress(int perOwner, int maximum) {
+            gate = new HologramRequestGate(perOwner, maximum);
+        }
+
+        synchronized Lease acquire(Object owner, Object connection, String requestId, boolean write) {
+            HologramRequestGate.Lease accepted = gate.acquire(owner);
+            if (accepted == null) return null;
+            Lease lease = new Lease(owner, connection, requestId, accepted);
+            if (write) writes.add(lease);
+            return lease;
+        }
+
+        synchronized boolean pending(Object owner, Object connection, String requestId) {
+            for (Lease lease : writes) if (lease.owner == owner && lease.connection == connection
+                && lease.requestId.equals(requestId)
+                && lease.active()) return true;
+            return false;
+        }
+
+        synchronized void clear() {
+            gate.clear();
+            writes.clear();
+        }
+
+        final class Lease implements AutoCloseable {
+
+            private final Object owner;
+            final Object connection;
+            private final String requestId;
+            private final HologramRequestGate.Lease accepted;
+
+            private Lease(Object owner, Object connection, String requestId, HologramRequestGate.Lease accepted) {
+                this.owner = owner;
+                this.connection = connection;
+                this.requestId = requestId;
+                this.accepted = accepted;
+            }
+
+            boolean active() {
+                return accepted.active();
+            }
+
+            public void close() {
+                synchronized (Ingress.this) {
+                    writes.remove(this);
+                    accepted.close();
+                }
+            }
+        }
     }
 
     private static NBTTagCompound find(NBTTagCompound state, String id) {
