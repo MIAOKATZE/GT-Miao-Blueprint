@@ -16,8 +16,53 @@ public final class HologramCutTransformRegression {
 
     private HologramCutTransformRegression() {}
 
+    private static void identitySkipsLittleTilesGraph() {
+        NBTTagCompound entry = new NBTTagCompound(), tile = new NBTTagCompound();
+        entry.setInteger("sizeX", 1);
+        entry.setInteger("sizeY", 1);
+        entry.setInteger("sizeZ", 1);
+        CountedRawCell cell = new CountedRawCell();
+        cell.setString("block", "minecraft:stone");
+        tile.setString("id", "LittleTilesTileEntity");
+        tile.setByteArray("privateVoxels", new byte[65536]);
+        cell.setTag("tile", tile);
+        NBTTagList cells = new NBTTagList();
+        cells.appendTag(cell);
+        entry.setTag("cells", cells);
+        HologramCutTransforms.Task task = new HologramCutTransforms.Task(
+            entry,
+            new CutTransforms.Transform(0, 0, 0, 0),
+            13,
+            64,
+            -9,
+            0);
+        SimpleAssert.eq(0, cell.copies, "identity preparation does not copy an unused LittleTiles graph");
+        SimpleAssert.that(task.step(1, Long.MAX_VALUE), "identity raw row is still prepared normally");
+        SimpleAssert.eq(1, cell.copies, "identity output retains exactly its required detached row copy");
+        NBTTagCompound output = task.result()
+            .getTagList("cells", 10)
+            .getCompoundTagAt(0);
+        SimpleAssert
+            .that(output.equals(cell) && output != cell, "identity preserves complete raw voxel data independently");
+        output.getCompoundTag("tile")
+            .setString("changed", "output-only");
+        SimpleAssert.that(!tile.hasKey("changed"), "output edits cannot mutate the durable original payload");
+    }
+
+    private static final class CountedRawCell extends NBTTagCompound {
+
+        int copies;
+
+        @Override
+        public net.minecraft.nbt.NBTBase copy() {
+            copies++;
+            return super.copy();
+        }
+    }
+
     public static void run() {
         HologramModOrientationRegression.run();
+        identitySkipsLittleTilesGraph();
         for (int x = 0; x < 4; x++)
             for (int y = 0; y < 4; y++) for (int z = 0; z < 4; z++) for (int mirror = 0; mirror < 8; mirror++) {
                 CutTransforms.Transform pose = new CutTransforms.Transform(y, x, z, mirror);

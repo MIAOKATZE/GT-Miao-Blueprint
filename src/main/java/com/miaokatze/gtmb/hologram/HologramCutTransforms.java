@@ -97,7 +97,8 @@ public final class HologramCutTransforms {
             }
             blockTransformGeneration = HologramBlockTransforms.generation();
             relations = HologramCutRelations.context(original, transform, ox, oy, oz, targetDimension);
-            littleTiles = HologramCutLittleTiles.rotate(original, transform);
+            // Identity translation still relocates relationships, but never consumes the voxel rotation graph.
+            littleTiles = transform.identity() ? null : HologramCutLittleTiles.rotate(original, transform);
             targetDependent = !adapters.isEmpty() || relations.targetDependent();
             copyOnly = transform.identity() && adapters.isEmpty()
                 && !relations.targetDependent()
