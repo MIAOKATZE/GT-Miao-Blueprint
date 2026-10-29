@@ -22,8 +22,11 @@ final class HologramAuthorFormalSaveCompatibilityRegression {
             + "\"structures\":[{\"id\":\"s\",\"channels\":{\"future_channel\":2}}],"
             + "\"hintAreas\":[{\"x1\":0,\"prompt\":\"known\"}],\"palette\":[],\"prompt\":null}";
         accepts(known);
-        accepts("{\"schema\":2,\"owner\":\"descriptive\",\"uploadedBy\":\"descriptive\","
-            + "\"previewBinding\":{\"version\":1,\"pngSha256\":\"presentation\"},\"blueprint\":" + known + "}");
+        accepts(
+            "{\"schema\":2,\"owner\":\"descriptive\",\"uploadedBy\":\"descriptive\","
+                + "\"previewBinding\":{\"version\":1,\"pngSha256\":\"presentation\"},\"blueprint\":"
+                + known
+                + "}");
         for (String unknown : new String[] {
             known.replace("\"name\":\"known\"", "\"name\":\"known\",\"vendorHeader\":null"),
             known.replace("\"x\":0", "\"x\":0,\"vendorCell\":{\"keep\":true}"),
@@ -39,7 +42,10 @@ final class HologramAuthorFormalSaveCompatibilityRegression {
                 HologramAuthorFormalSaveCompatibility.requireCompatible(source);
                 throw new AssertionError("destructive typed save accepted an unknown extension");
             } catch (IOException expected) {
-                SimpleAssert.that(expected.getMessage().contains("未覆盖原成品"), "refusal explains preserved original");
+                SimpleAssert.that(
+                    expected.getMessage()
+                        .contains("未覆盖原成品"),
+                    "refusal explains preserved original");
             }
             SimpleAssert.eq(before, source.sourceCopy(), "guard refusal never mutates source history");
             AuthorDocument recovered = AuthorDocumentIO.read(
@@ -53,9 +59,10 @@ final class HologramAuthorFormalSaveCompatibilityRegression {
         byte[] bytes = bytes(json);
         HologramAuthorFormalSaveCompatibility.requireCompatible(bytes);
         SimpleAssert.eq(json, new String(bytes, StandardCharsets.UTF_8), "preflight keeps exact input bytes");
-        JsonObject source = new JsonParser().parse(json).getAsJsonObject();
-        HologramAuthorFormalSaveCompatibility.requireCompatible(
-            AuthorDocumentIO.readExpanded(source, AuthorDocumentIO.Limits.defaults()));
+        JsonObject source = new JsonParser().parse(json)
+            .getAsJsonObject();
+        HologramAuthorFormalSaveCompatibility
+            .requireCompatible(AuthorDocumentIO.readExpanded(source, AuthorDocumentIO.Limits.defaults()));
     }
 
     private static byte[] bytes(String json) {

@@ -242,14 +242,16 @@ final class HologramLibraryWorkflow {
 
     static void bindAuthorSaveHandoff(HologramSession candidate, NBTTagCompound request) {
         candidate.authorSaveHandoffTask = "edit".equals(request.getString("action"))
-            && request.getBoolean("saveCurrent") && request.getLong("clientTaskToken") > 0
-                ? request.getLong("clientTaskToken") : 0;
+            && request.getBoolean("saveCurrent")
+            && request.getLong("clientTaskToken") > 0 ? request.getLong("clientTaskToken") : 0;
     }
 
     static boolean cancelAuthorSaveHandoff(HologramSession session, NBTTagCompound request) {
         if (session == null || request.getLong("clientTaskToken") <= 0
             || session.authorSaveHandoffTask != request.getLong("clientTaskToken")
-            || !request.getString("session").isEmpty() && !session.id.equals(request.getString("session"))) return false;
+            || !request.getString("session")
+                .isEmpty() && !session.id.equals(request.getString("session")))
+            return false;
         session.authorSaveHandoffTask = 0;
         return true;
     }

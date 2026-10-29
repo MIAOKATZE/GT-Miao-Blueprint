@@ -832,9 +832,12 @@ public final class HologramBlueprintPreview {
                     }
                 }
                 expanded.put(encoded, size);
-                decoded.put(encoded, HologramSnapshotCodec.decodeBounded(bytes,
-                    HologramSnapshotCodec.BLUEPRINT_NBT_MAX_EXPANDED,
-                    HologramSnapshotCodec.BLUEPRINT_NBT_MAX_TRACKED_BYTES));
+                decoded.put(
+                    encoded,
+                    HologramSnapshotCodec.decodeBounded(
+                        bytes,
+                        HologramSnapshotCodec.BLUEPRINT_NBT_MAX_EXPANDED,
+                        HologramSnapshotCodec.BLUEPRINT_NBT_MAX_TRACKED_BYTES));
             }
             total += expanded.get(encoded);
             if (total > 64L * 1024 * 1024) throw new IOException("Blueprint preview total NBT byte budget");

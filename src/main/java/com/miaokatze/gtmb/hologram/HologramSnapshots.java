@@ -841,7 +841,8 @@ final class HologramSnapshots {
     }
 
     static boolean localAuthorSourceReady(HologramSession s) {
-        return s.authorSaveHandoffTask == 0 && !s.cancelled && HologramNetwork.localAuthorPeer(s.player)
+        return s.authorSaveHandoffTask == 0 && !s.cancelled
+            && HologramNetwork.localAuthorPeer(s.player)
             && !"cutWorkspace".equals(s.openPurpose)
             && s.cutWorkspaceRequestId.isEmpty()
             && !HologramEditorWorkspaceRegistry.physicalProjection(s)

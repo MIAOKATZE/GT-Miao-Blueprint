@@ -11,10 +11,10 @@ import com.google.gson.JsonObject;
 import com.miaokatze.gtmb.blueprint.editor.AuthorDocument;
 import com.miaokatze.gtmb.blueprint.editor.AuthorDocumentIO;
 import com.miaokatze.gtmb.blueprint.editor.AuthorEditor;
-import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
 import com.miaokatze.gtmb.hologram.HologramProcessGovernor;
-import com.miaokatze.gtmb.testutil.SimpleAssert;
+import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
 import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
+import com.miaokatze.gtmb.testutil.SimpleAssert;
 
 /** Real decoded-row admission and bounded retry contracts; does not claim GL or gameplay performance. */
 public final class HologramAuthorNativeBudgetRegression {
@@ -50,7 +50,10 @@ public final class HologramAuthorNativeBudgetRegression {
         SimpleAssert.eq(64L * MIB, HologramAuthorNativeBudget.bytes(2L << 30, "0"), "smaller heap scales down");
         SimpleAssert.eq(256L * MIB, HologramAuthorNativeBudget.bytes(32L << 30, null), "auto remains bounded");
         SimpleAssert.eq(320L * MIB, HologramAuthorNativeBudget.bytes(5L << 30, "320"), "explicit client tuning");
-        SimpleAssert.eq(512L * MIB, HologramAuthorNativeBudget.bytes(5L << 30, "9223372036854775807"), "no multiplication overflow");
+        SimpleAssert.eq(
+            512L * MIB,
+            HologramAuthorNativeBudget.bytes(5L << 30, "9223372036854775807"),
+            "no multiplication overflow");
         SimpleAssert.eq(128L * MIB, HologramAuthorNativeBudget.bytes(1L << 30, "512"), "heap safety cap wins");
         SimpleAssert.eq(8L * MIB, HologramAuthorNativeBudget.bytes(5L << 30, "1"), "explicit minimum");
         SimpleAssert.eq(160L * MIB, HologramAuthorNativeBudget.bytes(5L << 30, "invalid"), "invalid is automatic");
@@ -77,13 +80,15 @@ public final class HologramAuthorNativeBudgetRegression {
             HologramState initial = projection.view();
             for (int i = 0; i < 64; i++) projection.request(initial, initial.cells.get(i));
             projection.advance(() -> 0);
-            SimpleAssert.eq(capacity, diagnostics(projection).getLong("nativeResidentBytes"), "exact row ledger fills quota");
+            SimpleAssert
+                .eq(capacity, diagnostics(projection).getLong("nativeResidentBytes"), "exact row ledger fills quota");
             for (int i = 0; i < 8; i++) {
                 requestAll(projection);
                 projection.advance(() -> 0);
             }
             HologramState blocked = projection.view();
-            SimpleAssert.eq("localBudget", blocked.cells.get(64).renderKind, "over-cap demand is explicit budget state");
+            SimpleAssert
+                .eq("localBudget", blocked.cells.get(64).renderKind, "over-cap demand is explicit budget state");
             long checks = diagnostics(projection).getLong("nativeBudgetAdmissionChecks");
             SimpleAssert.that(checks >= 64, "bounded eviction traversal reaches beyond first 32 residents");
             for (int i = 0; i < 100; i++) {
@@ -91,8 +96,14 @@ public final class HologramAuthorNativeBudgetRegression {
                 SimpleAssert.eq(false, projection.advance(() -> 0), "fixed pressure does not republish");
             }
             SimpleAssert.that(projection.view() == blocked, "no phantom readiness publication");
-            SimpleAssert.eq(checks, diagnostics(projection).getLong("nativeBudgetAdmissionChecks"), "no repeated eviction scans after positive pin proof");
-            SimpleAssert.eq(0, diagnostics(projection).getInteger("nativeQueued"), "unchanged impossible demand stays out of queue");
+            SimpleAssert.eq(
+                checks,
+                diagnostics(projection).getLong("nativeBudgetAdmissionChecks"),
+                "no repeated eviction scans after positive pin proof");
+            SimpleAssert.eq(
+                0,
+                diagnostics(projection).getInteger("nativeQueued"),
+                "unchanged impossible demand stays out of queue");
             long waiting = projection.cellId(64);
             editor.select(Collections.singleton(projection.cellId(0)));
             projection.update(editor.delete());
@@ -102,7 +113,8 @@ public final class HologramAuthorNativeBudgetRegression {
             HologramState.Cell recovered = projection.view().cells.get(projection.index(waiting));
             SimpleAssert.eq("", recovered.renderKind, "capacity release resumes real native row");
             SimpleAssert.eq(false, recovered.modelPending(false), "resumed demand completes");
-            SimpleAssert.that(diagnostics(projection).getLong("nativeResidentBytes") <= capacity, "resume never overcommits");
+            SimpleAssert
+                .that(diagnostics(projection).getLong("nativeResidentBytes") <= capacity, "resume never overcommits");
         }
     }
 
@@ -117,24 +129,30 @@ public final class HologramAuthorNativeBudgetRegression {
         new java.util.Random(8).nextBytes(data);
         NBTTagCompound payload = new NBTTagCompound();
         payload.setByteArray("data", data);
-        String encoded = Base64.getEncoder().encodeToString(HologramSnapshotCodec.compress(payload));
-        SimpleAssert.that(encoded.length() > ((1024 * 1024 + 2) / 3) * 4, "capture fixture exceeds former compressed cap");
+        String encoded = Base64.getEncoder()
+            .encodeToString(HologramSnapshotCodec.compress(payload));
+        SimpleAssert
+            .that(encoded.length() > ((1024 * 1024 + 2) / 3) * 4, "capture fixture exceeds former compressed cap");
         HologramBlueprintPreview.Payloads cache = new HologramBlueprintPreview.Payloads();
         NBTTagCompound first = cache.decode(encoded);
         SimpleAssert.eq(payload, first, "capture accepts canonical payload beyond former expanded cap");
-        for (int i = 1; i < 12; i++) SimpleAssert.that(first == cache.decode(encoded), "decoded blob is still deduplicated");
+        for (int i = 1; i < 12; i++)
+            SimpleAssert.that(first == cache.decode(encoded), "decoded blob is still deduplicated");
         boolean aggregateRejected = false;
         try {
             cache.decode(encoded);
         } catch (java.io.IOException expected) {
-            aggregateRejected = expected.getMessage().contains("total NBT");
+            aggregateRejected = expected.getMessage()
+                .contains("total NBT");
         }
         SimpleAssert.eq(true, aggregateRejected, "repeated uses still count toward unchanged64MiB aggregate");
         NBTTagCompound oversized = new NBTTagCompound();
         oversized.setByteArray("data", new byte[HologramSnapshotCodec.BLUEPRINT_NBT_MAX_EXPANDED + 1]);
         boolean rejected = false;
         try {
-            new HologramBlueprintPreview.Payloads().decode(Base64.getEncoder().encodeToString(HologramSnapshotCodec.compress(oversized)));
+            new HologramBlueprintPreview.Payloads().decode(
+                Base64.getEncoder()
+                    .encodeToString(HologramSnapshotCodec.compress(oversized)));
         } catch (java.io.IOException expected) {
             rejected = true;
         }
@@ -150,8 +168,11 @@ public final class HologramAuthorNativeBudgetRegression {
         SimpleAssert.that(compressed.length > 500 * 1024, "fixture includes a real large incompressible payload");
         long[] estimate = { 0 };
         try {
-            HologramSnapshotCodec.decodeBounded(compressed, HologramSnapshotCodec.BLUEPRINT_NBT_MAX_EXPANDED,
-                HologramSnapshotCodec.BLUEPRINT_NBT_MAX_TRACKED_BYTES, charge -> {
+            HologramSnapshotCodec.decodeBounded(
+                compressed,
+                HologramSnapshotCodec.BLUEPRINT_NBT_MAX_EXPANDED,
+                HologramSnapshotCodec.BLUEPRINT_NBT_MAX_TRACKED_BYTES,
+                charge -> {
                     estimate[0] = charge;
                     return false;
                 });
@@ -160,7 +181,8 @@ public final class HologramAuthorNativeBudgetRegression {
             SimpleAssert.eq(estimate[0], expected.requestedBytes, "refusal reports measured working requirement");
         }
         SimpleAssert.that(estimate[0] > bytes.length, "working charge includes tree ownership, not just array bytes");
-        String encoded = Base64.getEncoder().encodeToString(compressed);
+        String encoded = Base64.getEncoder()
+            .encodeToString(compressed);
         JsonObject cell = new JsonObject();
         cell.addProperty("x", 0);
         cell.addProperty("y", 0);
@@ -179,13 +201,23 @@ public final class HologramAuthorNativeBudgetRegression {
         long pressure = HologramProcessGovernor.retainedByteLimit() - baseline - estimate[0] * 3 / 2;
         SimpleAssert.that(pressure > 0, "test leaves capacity for one input tree but not both");
         try (HologramAuthorProjection projection = new HologramAuthorProjection(document, 32L * MIB)) {
-            try (HologramProcessGovernor.Lease held = HologramProcessGovernor.retain("test.nativeDecodePressure", pressure)) {
+            try (HologramProcessGovernor.Lease held = HologramProcessGovernor
+                .retain("test.nativeDecodePressure", pressure)) {
                 requestAll(projection);
                 projection.advance(() -> 0);
                 HologramState blocked = projection.view();
-                SimpleAssert.eq("localBudget", blocked.cells.get(0).renderKind, "second input Core denial is resumable, not malformed");
-                SimpleAssert.eq(0L, diagnostics(projection).getLong("nativeResidentBytes"), "transient requirement is not owned-row charge");
-                SimpleAssert.eq(1, diagnostics(projection).getInteger("nativeDecodeBudgetDeferred"), "transient denial has separate provenance");
+                SimpleAssert.eq(
+                    "localBudget",
+                    blocked.cells.get(0).renderKind,
+                    "second input Core denial is resumable, not malformed");
+                SimpleAssert.eq(
+                    0L,
+                    diagnostics(projection).getLong("nativeResidentBytes"),
+                    "transient requirement is not owned-row charge");
+                SimpleAssert.eq(
+                    1,
+                    diagnostics(projection).getInteger("nativeDecodeBudgetDeferred"),
+                    "transient denial has separate provenance");
                 long passes = diagnostics(projection).getLong("nativeDecodePasses");
                 SimpleAssert.eq(2L, passes, "first attempt measures tile and item cumulatively");
                 for (int i = 0; i < 12; i++) {
@@ -193,8 +225,14 @@ public final class HologramAuthorNativeBudgetRegression {
                     SimpleAssert.eq(false, projection.advance(() -> 0), "unchanged Core pressure has no publication");
                 }
                 SimpleAssert.that(projection.view() == blocked, "Core pressure preserves exact blocked view");
-                SimpleAssert.eq(passes, diagnostics(projection).getLong("nativeDecodePasses"), "known transient denial precedes decompression");
-                SimpleAssert.eq(baseline + pressure, HologramProcessGovernor.retainedBytes(), "first tree reservation released after second input denial");
+                SimpleAssert.eq(
+                    passes,
+                    diagnostics(projection).getLong("nativeDecodePasses"),
+                    "known transient denial precedes decompression");
+                SimpleAssert.eq(
+                    baseline + pressure,
+                    HologramProcessGovernor.retainedBytes(),
+                    "first tree reservation released after second input denial");
             }
             requestAll(projection);
             SimpleAssert.eq(true, projection.advance(() -> 0), "free Core capacity resumes existing demand");
@@ -202,8 +240,14 @@ public final class HologramAuthorNativeBudgetRegression {
             SimpleAssert.eq("", ready.renderKind, "canonical payload over former256KiB limit is supported");
             SimpleAssert.eq(payload, ready.targetDisplay.getCompoundTag("nativeTile"), "large tile payload preserved");
             SimpleAssert.eq(payload, ready.targetStack.getTagCompound(), "large independent item payload preserved");
-            SimpleAssert.eq(0, diagnostics(projection).getInteger("nativeDecodeBudgetDeferred"), "success retires transient wait");
-            SimpleAssert.eq(baseline, HologramProcessGovernor.retainedBytes(), "both transient leases released after owned-row construction");
+            SimpleAssert.eq(
+                0,
+                diagnostics(projection).getInteger("nativeDecodeBudgetDeferred"),
+                "success retires transient wait");
+            SimpleAssert.eq(
+                baseline,
+                HologramProcessGovernor.retainedBytes(),
+                "both transient leases released after owned-row construction");
         }
     }
 
@@ -216,7 +260,8 @@ public final class HologramAuthorNativeBudgetRegression {
         NBTTagCompound payload = new NBTTagCompound();
         payload.setString("marker", "native-budget-regression");
         payload.setByteArray("data", new byte[1024]);
-        String encoded = Base64.getEncoder().encodeToString(HologramSnapshotCodec.compress(payload));
+        String encoded = Base64.getEncoder()
+            .encodeToString(HologramSnapshotCodec.compress(payload));
         JsonArray cells = new JsonArray();
         for (int i = 0; i < count; i++) {
             JsonObject cell = new JsonObject();

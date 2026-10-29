@@ -1,7 +1,6 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -18,7 +17,7 @@ import com.miaokatze.gtmb.blueprint.editor.AuthorDocumentIO;
 import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
-/** N01: the real name field/save command must not silently rename a complete local source. */
+/** N01: the real name field/explicit recovery command must preserve the complete local source. */
 public final class HologramAuthorSaveNameRegression {
 
     private HologramAuthorSaveNameRegression() {}
@@ -68,9 +67,10 @@ public final class HologramAuthorSaveNameRegression {
                 "actual save field initializes from source");
             assertTitles(runtime, title);
 
-            submit(ui);
-            SimpleAssert
-                .that(runtime.saving(), "save command dispatched one persistence task to the controlled worker");
+            submitRecovery(ui);
+            SimpleAssert.that(
+                runtime.saving(),
+                "explicit recovery command dispatched one persistence task to the controlled worker");
             SimpleAssert
                 .that(runtime.document() == original, "untouched save creates no rename revision or source root");
             SimpleAssert.eq(1, worker.submissions, "one persistence operation");
@@ -89,7 +89,7 @@ public final class HologramAuthorSaveNameRegression {
 
             ui.library.presetNameField()
                 .setText("");
-            submit(ui);
+            submitRecovery(ui);
             SimpleAssert.that(runtime.document() == original, "cleared field cannot rename the source to unnamed");
             runtime.saved(original, "", "simulated disk failure");
             SimpleAssert.that(!runtime.saving() && !runtime.dirty(), "failed retry does not discard prior saved state");
@@ -103,7 +103,7 @@ public final class HologramAuthorSaveNameRegression {
             HologramDraftNameMemory memory = new HologramDraftNameMemory(runtime.view().data, "typed draft name");
             ui.library.presetNameField()
                 .setText("  explicit rename  ");
-            submit(ui);
+            submitRecovery(ui);
             AuthorDocument renamed = runtime.document();
             SimpleAssert.eq("explicit rename", renamed.title(), "actual save honors explicit rename");
             SimpleAssert.eq(
@@ -136,7 +136,7 @@ public final class HologramAuthorSaveNameRegression {
             long undoneRevision = runtime.document()
                 .revision();
             worker.reject = true;
-            submit(ui);
+            submitRecovery(ui);
             SimpleAssert.eq(
                 title,
                 runtime.document()
@@ -195,7 +195,7 @@ public final class HologramAuthorSaveNameRegression {
                     .getText(),
                 "initial field retains full long canonical title");
             AuthorDocument longNamed = runtime.document();
-            submit(ui);
+            submitRecovery(ui);
             SimpleAssert
                 .that(longNamed == runtime.document(), "saving long existing title creates no truncated rename");
             assertTitles(runtime, longTitle);
@@ -203,7 +203,7 @@ public final class HologramAuthorSaveNameRegression {
             ui.library.presetNameField()
                 .setText("short saved name");
             worker.reject = false;
-            submit(ui);
+            submitRecovery(ui);
             AuthorDocument shortNamed = runtime.document();
             Path shortFile = store.saveAuthorDraft(
                 shortNamed.documentId(),
@@ -246,7 +246,7 @@ public final class HologramAuthorSaveNameRegression {
                     .getText(),
                 "screen reinitialization restores long typed input without truncation");
             worker.reject = false;
-            submit(ui);
+            submitRecovery(ui);
             AuthorDocument restoredInput = runtime.document();
             SimpleAssert.eq(longInput, restoredInput.title(), "save after reopening uses exact restored input");
             Path restoredFile = store.saveAuthorDraft(
@@ -281,10 +281,10 @@ public final class HologramAuthorSaveNameRegression {
             SimpleAssert.eq(title, runtime.view().data.getString(key), "canonical title metadata: " + key);
     }
 
-    private static void submit(HologramUiModules ui) throws Exception {
-        Method submit = HologramUiLibrary.class.getDeclaredMethod("submitBlueprintSave", boolean.class);
-        submit.setAccessible(true);
-        submit.invoke(ui.library, true);
+    private static void submitRecovery(HologramUiModules ui) {
+        // Same callback as the explicit recovery-draft button. Ordinary Save now performs formal
+        // owner review and pair acknowledgement; it must not silently stand in for recovery IO.
+        ui.library.saveRecoveryDraft();
     }
 
     private static HologramLocalAuthorRuntime runtime() throws Exception {

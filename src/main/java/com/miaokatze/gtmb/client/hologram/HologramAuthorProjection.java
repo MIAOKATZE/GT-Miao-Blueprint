@@ -24,8 +24,8 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.miaokatze.gtmb.blueprint.editor.AuthorDocument;
 import com.miaokatze.gtmb.blueprint.editor.AuthorEditor;
-import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
 import com.miaokatze.gtmb.hologram.HologramProcessGovernor;
+import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
 
 /**
  * Disposable, one-way document render owner. Source records are never reconstructed from this view.
@@ -148,8 +148,8 @@ final class HologramAuthorProjection implements AutoCloseable {
             "mainExplicit", "channels", "noHatches", "facing", "blueprintProcessingRequired",
             "blueprintProcessingComplete", "materialChoices", "materialCataloguePending", "materialCatalogueStatus",
             "materialMain", "materialContainers", "materialMe", "materialPriority", "networkBindings", "mode", "scope",
-            "layer", "hatchFacings", "candidateRoles", "candidateTiers", "presets", "blueprintSource", "openPurpose",
-            "processingReady" }) {
+            "layer", "hatchFacings", "candidateRoles", "candidateTiers", "presets", "blueprintSource",
+            "openPurpose" }) {
             if (changes.hasKey(key) && !java.util.Objects.equals(view.data.getTag(key), changes.getTag(key))) {
                 data.setTag(
                     key,
@@ -170,7 +170,8 @@ final class HologramAuthorProjection implements AutoCloseable {
             // A visible reader can need a hidden-layer neighbor even when the bounded dependency graph
             // overflowed. Renew demand in the existing queue; advance must admit its known cost before decoding.
             Long need = budgetDeferred.get(cell.nativeModelId);
-            if (need != null && !capacityBlocked(need) && !decodeOversize(cell.nativeModelId)
+            if (need != null && !capacityBlocked(need)
+                && !decodeOversize(cell.nativeModelId)
                 && queued.size() < MAX_QUEUED) queued.add(cell.nativeModelId);
             return;
         }
@@ -202,9 +203,10 @@ final class HologramAuthorProjection implements AutoCloseable {
             waiting.remove();
             int slot = index(id);
             if (slot < 0) continue;
-            if (!capacityBlocked(need) && !decodeOversize(id) && retainedVisible(view.cells.get(slot)) && queued.size() < MAX_QUEUED
-                && makeRoom(need, replacements))
-                queued.add(id);
+            if (!capacityBlocked(need) && !decodeOversize(id)
+                && retainedVisible(view.cells.get(slot))
+                && queued.size() < MAX_QUEUED
+                && makeRoom(need, replacements)) queued.add(id);
             // Keep the cost until queued execution: earlier items may consume the capacity just checked.
             budgetDeferred.put(id, need);
         }
@@ -263,8 +265,11 @@ final class HologramAuthorProjection implements AutoCloseable {
                     // An unsupported native preview is explicit terminal shell, never a source/document error.
                     row = cold.tag();
                     row.setString("sourceWarning", "Native preview unavailable: " + failure.getMessage());
-                    row.setString("renderKind", failure instanceof NativeBudget
-                        || failure instanceof HologramSnapshotCodec.BusyException ? "localBudget" : "localFallback");
+                    row.setString(
+                        "renderKind",
+                        failure instanceof NativeBudget || failure instanceof HologramSnapshotCodec.BusyException
+                            ? "localBudget"
+                            : "localFallback");
                     row.setString("status", "unsupported");
                     charge = 0;
                     row.setInteger("nativeModelPending", 0);
@@ -397,7 +402,8 @@ final class HologramAuthorProjection implements AutoCloseable {
         boolean reserve(long bytes) {
             if (bytes > maxResident) return false;
             if (bytes <= reserved) return true;
-            HologramProcessGovernor.Lease lease = HologramProcessGovernor.tryRetain("author.nativeDecode", bytes - reserved);
+            HologramProcessGovernor.Lease lease = HologramProcessGovernor
+                .tryRetain("author.nativeDecode", bytes - reserved);
             if (lease == null) return false;
             leases.add(lease);
             reserved = bytes;
@@ -447,7 +453,10 @@ final class HologramAuthorProjection implements AutoCloseable {
         frontier.add(new HologramRegionCache.Key(cell.x, cell.y, cell.z));
         for (int at = 0; at < frontier.size(); at++) {
             HologramRegionCache.Key position = frontier.get(at);
-            HologramRegionCache.Key region = new HologramRegionCache.Key(position.x >> 4, position.y >> 4, position.z >> 4);
+            HologramRegionCache.Key region = new HologramRegionCache.Key(
+                position.x >> 4,
+                position.y >> 4,
+                position.z >> 4);
             if (coarseDependencyInputs.contains(region) && retainedRegionVisible(region, checked)) return true;
             for (long reader : exactReaders.getOrDefault(position, Collections.emptySet())) {
                 // Query exhaustion is conservative retention, not loss of sound provenance or a new content epoch.
@@ -495,7 +504,8 @@ final class HologramAuthorProjection implements AutoCloseable {
         if (reader == null || dependencyOverflow) return;
         HologramRegionCache.Key input = new HologramRegionCache.Key(x >> 4, y >> 4, z >> 4);
         HologramRegionCache.Key output = HologramRegionCache.key(reader);
-        boolean regionAdded = readers.computeIfAbsent(input, ignored -> new HashSet<>()).add(output);
+        boolean regionAdded = readers.computeIfAbsent(input, ignored -> new HashSet<>())
+            .add(output);
         if (regionAdded && ++dependencyCount + blockDependencyCount > MAX_DEPENDENCIES) {
             readers.clear();
             exactReaders.clear();
@@ -585,13 +595,15 @@ final class HologramAuthorProjection implements AutoCloseable {
                     HologramState.Cell input = view.cells.get(frontier.get(at));
                     HologramRegionCache.Key inputRegion = HologramRegionCache.key(input);
                     if (coarseDependencyInputs.contains(inputRegion) && expandedCoarse.add(inputRegion)) {
-                        for (HologramRegionCache.Key region : readers.getOrDefault(inputRegion, Collections.emptySet())) {
-                            for (HologramState.Cell reader : view.regions.regions.getOrDefault(region, Collections.emptyList()))
+                        for (HologramRegionCache.Key region : readers
+                            .getOrDefault(inputRegion, Collections.emptySet())) {
+                            for (HologramState.Cell reader : view.regions.regions
+                                .getOrDefault(region, Collections.emptyList()))
                                 if (exactDirty.add(reader.index)) frontier.add(reader.index);
                         }
                     }
-                    for (long reader : exactReaders.getOrDefault(
-                        new HologramRegionCache.Key(input.x, input.y, input.z), Collections.emptySet())) {
+                    for (long reader : exactReaders
+                        .getOrDefault(new HologramRegionCache.Key(input.x, input.y, input.z), Collections.emptySet())) {
                         int slot = index(reader);
                         if (slot >= 0 && exactDirty.add(slot)) frontier.add(slot);
                     }
@@ -764,8 +776,11 @@ final class HologramAuthorProjection implements AutoCloseable {
             throw new IOException("Native preview compressed budget");
         // The codec enforces expanded bytes, structural depth, and pre-allocation NBT accounting.
         nativeDecodePasses++;
-        return HologramSnapshotCodec.decodeBounded(bytes, HologramSnapshotCodec.BLUEPRINT_NBT_MAX_EXPANDED,
-            HologramSnapshotCodec.BLUEPRINT_NBT_MAX_TRACKED_BYTES, budget::admit);
+        return HologramSnapshotCodec.decodeBounded(
+            bytes,
+            HologramSnapshotCodec.BLUEPRINT_NBT_MAX_EXPANDED,
+            HologramSnapshotCodec.BLUEPRINT_NBT_MAX_TRACKED_BYTES,
+            budget::admit);
     }
 
     private static String string(JsonObject source, String key) {

@@ -454,9 +454,11 @@ public final class HologramAuthorPortableCompilerRegression {
             industrial.addProperty("item", machineName);
             AuthorEditor editor = new AuthorEditor(saved, 8);
             editor.replaceCells(Collections.singletonMap(1L, industrial));
-            JsonObject edited = editor.current().sourceCopy();
+            JsonObject edited = editor.current()
+                .sourceCopy();
             SimpleAssert.that(
-                edited.get("fullyVoucherCovered").getAsBoolean(),
+                edited.get("fullyVoucherCovered")
+                    .getAsBoolean(),
                 "editing preserves raw source history rather than silently rewriting it");
             JsonObject changed = HologramBlueprintCompactCodec
                 .parse(HologramAuthorPortableCompiler.compile(editor.current(), policy().write(), 0, 0, 0, 0))
@@ -466,7 +468,11 @@ public final class HologramAuthorPortableCompilerRegression {
                 HologramLocalAuthorSemantics.preset(changed));
             while (!rejected.step()) {}
             SimpleAssert.that(!rejected.result(), "reviewed-save builder rejects actual industrial material");
-            SimpleAssert.eq(edited, editor.current().sourceCopy(), "coverage review leaves edited source intact");
+            SimpleAssert.eq(
+                edited,
+                editor.current()
+                    .sourceCopy(),
+                "coverage review leaves edited source intact");
 
             raw.remove("fullyVoucherCovered");
             JsonObject fresh = HologramBlueprintCompactCodec

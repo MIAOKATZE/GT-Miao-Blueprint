@@ -231,10 +231,12 @@ final class HologramRenderer {
                 Set<Integer> repair = new HashSet<>();
                 Set<HologramRegionCache.Key> nativeRegions = HologramRegionCache.changedRegions(next);
                 nativeRegions.addAll(modelDependencies);
-                // Author payload replies carry exact changed/reader slots; source and unknown callers stay conservative.
+                // Author payload replies carry exact changed/reader slots; source and unknown callers stay
+                // conservative.
                 if (modelCells != null) repair.addAll(modelCells);
-                else for (HologramRegionCache.Key key : nativeRegions) for (HologramState.Cell cell : next.regions.regions
-                    .getOrDefault(key, java.util.Collections.emptyList())) repair.add(cell.index);
+                else for (HologramRegionCache.Key key : nativeRegions)
+                    for (HologramState.Cell cell : next.regions.regions
+                        .getOrDefault(key, java.util.Collections.emptyList())) repair.add(cell.index);
                 for (int index : next.changedIndices) {
                     HologramState.Cell cell = next.cells.get(index);
                     for (int[] n : NORMALS) {
@@ -1463,7 +1465,8 @@ final class HologramRenderer {
         List<ResolvedPreviewCell> additions = new ArrayList<>();
         while (!region.projectionTodo.isEmpty()
             && (!budgeted || work < maxCells && (work == 0 || clock.getAsLong() < deadline))) {
-            java.util.Iterator<PreviewCell> pending = region.projectionTodo.values().iterator();
+            java.util.Iterator<PreviewCell> pending = region.projectionTodo.values()
+                .iterator();
             PreviewCell previewCell = pending.next();
             pending.remove();
             HologramState.Cell cell = previewCell.cell;
@@ -1497,8 +1500,8 @@ final class HologramRenderer {
         String role = previewCell.role;
         if (exposed == 0 && role.isEmpty()) return;
         double[][] projected = new double[8][];
-        for (int v = 0; v < 8; v++) projected[v] = projectedFrame
-            .project(c.dx + VERTICES[v][0], c.dy + VERTICES[v][1], c.dz + VERTICES[v][2]);
+        for (int v = 0; v < 8; v++)
+            projected[v] = projectedFrame.project(c.dx + VERTICES[v][0], c.dy + VERTICES[v][1], c.dz + VERTICES[v][2]);
         if (!HologramBlueprintPreview.cleanCapture() && !role.isEmpty() && (c.anchor || region.markers.size() < 64))
             region.markers.add(new RoleMarker(c, projected, role));
         PreviewAppearance appearance = resolved.appearance;
@@ -1526,8 +1529,14 @@ final class HologramRenderer {
                 }
             }
             region.faces.add(
-                new Face(c, points, surface.side, surface, previewCell.detailed,
-                    (previewCell.cheapFaces & 1 << surface.side) == 0, appearance).cheapHull(region, previewCell));
+                new Face(
+                    c,
+                    points,
+                    surface.side,
+                    surface,
+                    previewCell.detailed,
+                    (previewCell.cheapFaces & 1 << surface.side) == 0,
+                    appearance).cheapHull(region, previewCell));
         }
     }
 
@@ -1841,7 +1850,8 @@ final class HologramRenderer {
             projectionTodo.keySet()
                 .removeAll(changed);
             projected.removeAll(changed);
-            resolved.keySet().removeAll(changed);
+            resolved.keySet()
+                .removeAll(changed);
             projectedCells = projected.size();
             removeScreenCells(changed);
             projectedKey = "";

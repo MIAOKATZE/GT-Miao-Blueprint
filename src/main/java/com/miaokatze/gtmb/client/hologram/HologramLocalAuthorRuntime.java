@@ -275,7 +275,11 @@ final class HologramLocalAuthorRuntime {
         return libraryOrigin;
     }
 
-    enum SaveRoute { FINALIZED, PROCESS, SUBMIT }
+    enum SaveRoute {
+        FINALIZED,
+        PROCESS,
+        SUBMIT
+    }
 
     SaveRoute saveRoute(boolean current) {
         return finishedSourceCurrent() ? SaveRoute.FINALIZED
@@ -290,7 +294,9 @@ final class HologramLocalAuthorRuntime {
         formalSaving = value;
     }
 
-    /** Reconcile the reviewed content as one undoable transaction; envelope/binding bytes remain artifact provenance. */
+    /**
+     * Reconcile the reviewed content as one undoable transaction; envelope/binding bytes remain artifact provenance.
+     */
     void librarySaved(AuthorDocument captured, String id, boolean integrated, NBTTagList catalog, byte[] source)
         throws IOException {
         formalSaving = false;

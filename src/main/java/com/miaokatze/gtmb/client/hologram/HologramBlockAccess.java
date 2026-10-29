@@ -279,9 +279,8 @@ final class HologramBlockAccess implements IBlockAccess {
     boolean advance(HologramState previous, HologramState next, java.util.Set<HologramRegionCache.Key> dirty) {
         if (closed || state != previous) return false;
         java.util.Set<Integer> indices = new java.util.HashSet<>();
-        for (HologramRegionCache.Key region : dirty)
-            for (HologramState.Cell cell : previous.regions.regions.getOrDefault(region, java.util.Collections.emptyList()))
-                indices.add(cell.index);
+        for (HologramRegionCache.Key region : dirty) for (HologramState.Cell cell : previous.regions.regions
+            .getOrDefault(region, java.util.Collections.emptyList())) indices.add(cell.index);
         return advanceCells(previous, next, indices);
     }
 

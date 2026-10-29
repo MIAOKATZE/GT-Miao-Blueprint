@@ -73,7 +73,9 @@ public final class HologramPreviewCameraLifecycleRegression {
                 if (frame >= 7 && field(HologramRenderer.class, "projectionPending").getBoolean(null))
                     observedPendingDetailProjection = true;
             }
-            SimpleAssert.that(observedPendingDetailProjection, "retained cheap coverage does not fabricate detailed projection completion");
+            SimpleAssert.that(
+                observedPendingDetailProjection,
+                "retained cheap coverage does not fabricate detailed projection completion");
             f.assertAllPresented();
         }
     }
@@ -93,11 +95,13 @@ public final class HologramPreviewCameraLifecycleRegression {
                 for (int candidate = 1; candidate < 3; candidate++)
                     if (Math.abs(forward[candidate]) > Math.abs(forward[axis])) axis = candidate;
                 double second = 0;
-                for (int candidate = 0; candidate < 3; candidate++) if (candidate != axis)
-                    second = Math.max(second, Math.abs(forward[candidate]));
+                for (int candidate = 0; candidate < 3; candidate++)
+                    if (candidate != axis) second = Math.max(second, Math.abs(forward[candidate]));
                 // Avoid the integer mouse pixel's ambiguity exactly at a cube edge.
-                if (Math.abs(forward[axis]) - second > .08) for (int coordinate = 0; coordinate < 3; coordinate++)
-                    SimpleAssert.eq(coordinate == axis ? forward[axis] > 0 ? -1 : 1 : 0, adjacent[coordinate],
+                if (Math.abs(forward[axis]) - second > .08)
+                    for (int coordinate = 0; coordinate < 3; coordinate++) SimpleAssert.eq(
+                        coordinate == axis ? forward[axis] > 0 ? -1 : 1 : 0,
+                        adjacent[coordinate],
                         "adjacent voxel follows the current ray's front face, not a previously facing side");
             }
         }
@@ -111,23 +115,28 @@ public final class HologramPreviewCameraLifecycleRegression {
             SimpleAssert.that(f.nativePresented(0), "target view has a resolved positive native record");
             for (int frame = 0; frame < 8; frame++) f.frame(.3, .4, 1, 0, 40, true, 1);
             SimpleAssert.that(!f.nativePresented(0), "real target-to-actual view change retires old native membership");
-            for (Object face : (List<?>) field(HologramRenderer.class, "cachedFaces").get(null))
-                SimpleAssert.that(field(face.getClass(), "material").get(face) == f.actualMaterial,
-                    "actual view re-resolves actual-side material rather than retaining target appearance");
+            for (Object face : (List<?>) field(HologramRenderer.class, "cachedFaces").get(null)) SimpleAssert.that(
+                field(face.getClass(), "material").get(face) == f.actualMaterial,
+                "actual view re-resolves actual-side material rather than retaining target appearance");
             for (int frame = 0; frame < 8; frame++) f.frame(.3, .4, 1, 0, 40, true);
             HologramState.Cell oldCell = f.state.cells.get(0);
-            SimpleAssert.that(f.nativePresented(0), "target native appearance is prepared again before source replacement");
+            SimpleAssert
+                .that(f.nativePresented(0), "target native appearance is prepared again before source replacement");
             f.editor.select(Collections.singleton(f.owner.cellId(0)));
             f.state = f.owner.update(f.editor.move(24, 0, 0));
             f.nativeSlots.clear();
             f.seedMaterials();
             for (int frame = 0; frame < 16; frame++) f.frame(.3 + frame * .02, .4, 1, 12, 48, true);
-            SimpleAssert.that(!f.nativePresented(0), "real source publication cannot resurrect retired native appearance");
+            SimpleAssert
+                .that(!f.nativePresented(0), "real source publication cannot resurrect retired native appearance");
             f.assertAllPresented();
             for (Object outline : (List<?>) field(HologramRenderer.class, "cachedOutlines").get(null)) {
                 HologramState.Cell current = (HologramState.Cell) field(outline.getClass(), "cell").get(outline);
-                SimpleAssert.that(current != oldCell && current == f.state.cells.get(0), "source move presents only new immutable cell ownership");
-                SimpleAssert.eq(24, current.dx, "old source coordinate is not retained as a cheap presentation fallback");
+                SimpleAssert.that(
+                    current != oldCell && current == f.state.cells.get(0),
+                    "source move presents only new immutable cell ownership");
+                SimpleAssert
+                    .eq(24, current.dx, "old source coordinate is not retained as a cheap presentation fallback");
             }
         }
     }
@@ -140,7 +149,8 @@ public final class HologramPreviewCameraLifecycleRegression {
             f.nativeSlots.remove(0);
             f.nativeSlots.add(1);
             HologramRenderer.nativePreparationCellsChanged(f.state, new HashSet<>(f.state.cells.subList(0, 2)));
-            SimpleAssert.that(!f.nativePresented(0), "exact retirement removes old native playback before another draw");
+            SimpleAssert
+                .that(!f.nativePresented(0), "exact retirement removes old native playback before another draw");
             int calls = f.appearanceCalls;
             for (int frame = 0; frame < 16; frame++) f.frame(.5 + frame * .04, .3, 1, 4, 24, true);
             SimpleAssert.that(!f.nativePresented(0), "old positive readiness cannot survive a same-identity wake");
@@ -161,8 +171,7 @@ public final class HologramPreviewCameraLifecycleRegression {
             SimpleAssert.eq(8L, cheap, "initial cheap work covers the source exactly once");
             long resets = f.work("cursorResets");
             // The real frame reveal hook must enqueue only the skipped slot. No manual region remove/update.
-            for (int frame = 0; frame < 40; frame++)
-                f.frame(frame * .08, .3, 1, frame % 2 == 0 ? 4 : 1000, 24, true);
+            for (int frame = 0; frame < 40; frame++) f.frame(frame * .08, .3, 1, frame % 2 == 0 ? 4 : 1000, 24, true);
             for (int frame = 0; frame < 16; frame++) f.frame(.4, .3, 1, 4, 24, true);
             SimpleAssert.eq(cheap, f.work("cheapVisitCalls"), "repeated crossings do not rerun cheap preparation");
             SimpleAssert.eq(resets, f.work("cursorResets"), "reveal is not a whole-region cursor reset");
@@ -216,35 +225,66 @@ public final class HologramPreviewCameraLifecycleRegression {
             HologramTextures.begin(state);
             List<HologramTextures.Sample>[] sides = new List[6], covers = new List[6];
             for (int side = 0; side < 6; side++) sides[side] = covers[side] = Collections.emptyList();
-            material = new HologramTextures.Material(sides, covers, HologramGeometry.cube(), false, false, false, false);
-            actualMaterial = new HologramTextures.Material(sides, covers, HologramGeometry.cube(), false, false, false, false);
+            material = new HologramTextures.Material(
+                sides,
+                covers,
+                HologramGeometry.cube(),
+                false,
+                false,
+                false,
+                false);
+            actualMaterial = new HologramTextures.Material(
+                sides,
+                covers,
+                HologramGeometry.cube(),
+                false,
+                false,
+                false,
+                false);
             seedMaterials();
             Map<Block, Map<Integer, HologramTextures.Material>> light = (Map<Block, Map<Integer, HologramTextures.Material>>) field(
-                HologramLightPreview.class, "MATERIALS").get(null);
+                HologramLightPreview.class,
+                "MATERIALS").get(null);
             Map<Integer, HologramTextures.Material> variants = new HashMap<>();
             variants.put(0, material);
             light.put(Blocks.stone, variants);
-            project = HologramRenderer.class.getDeclaredMethod("projectPreviewRegions", List.class, HologramState.class,
-                String.class, int.class, boolean.class, boolean.class, long.class, LongSupplier.class,
+            project = HologramRenderer.class.getDeclaredMethod(
+                "projectPreviewRegions",
+                List.class,
+                HologramState.class,
+                String.class,
+                int.class,
+                boolean.class,
+                boolean.class,
+                long.class,
+                LongSupplier.class,
                 HologramRenderer.PreviewAppearanceResolver.class);
             project.setAccessible(true);
-            publish = HologramRenderer.class.getDeclaredMethod("publishPreviewProjection", HologramState.class,
-                String.class, List.class, boolean.class);
+            publish = HologramRenderer.class.getDeclaredMethod(
+                "publishPreviewProjection",
+                HologramState.class,
+                String.class,
+                List.class,
+                boolean.class);
             publish.setAccessible(true);
         }
 
         @SuppressWarnings("unchecked")
         void seedMaterials() throws Exception {
             Map<HologramState.Cell, HologramTextures.Material[]> resolved = (Map<HologramState.Cell, HologramTextures.Material[]>) field(
-                HologramTextures.class, "RESOLVED").get(null);
-            for (HologramState.Cell cell : state.cells) resolved.put(cell, new HologramTextures.Material[] { material, actualMaterial });
+                HologramTextures.class,
+                "RESOLVED").get(null);
+            for (HologramState.Cell cell : state.cells)
+                resolved.put(cell, new HologramTextures.Material[] { material, actualMaterial });
         }
 
-        void frame(double yaw, double pitch, double zoom, double anchor, double extent, boolean advance) throws Exception {
+        void frame(double yaw, double pitch, double zoom, double anchor, double extent, boolean advance)
+            throws Exception {
             frame(yaw, pitch, zoom, anchor, extent, advance, 0);
         }
 
-        void frame(double yaw, double pitch, double zoom, double anchor, double extent, boolean advance, int view) throws Exception {
+        void frame(double yaw, double pitch, double zoom, double anchor, double extent, boolean advance, int view)
+            throws Exception {
             camera = new HologramEditorCameraFrame(0, 0, 800, 600, yaw, pitch, zoom, anchor, 0, 0, extent);
             key = yaw + ":" + pitch + ":" + zoom + ":" + anchor + ":" + extent;
             field(HologramRenderer.class, "projectedFrame").set(null, camera);
@@ -255,8 +295,8 @@ public final class HologramPreviewCameraLifecycleRegression {
             int[][] normals = { { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 }, { -1, 0, 0 }, { 1, 0, 0 } };
             for (int side = 0; side < 6; side++) {
                 int[] n = normals[side];
-                if (-(n[0] * camera.basis.forwardX() + n[1] * camera.basis.forwardY() + n[2] * camera.basis.forwardZ()) > 1e-8)
-                    facing |= 1 << side;
+                if (-(n[0] * camera.basis.forwardX() + n[1] * camera.basis.forwardY() + n[2] * camera.basis.forwardZ())
+                    > 1e-8) facing |= 1 << side;
             }
             List<?> ordered = new ArrayList<>(regions().values());
             project.invoke(null, ordered, state, key, facing, view == 1, true, 0L, (LongSupplier) () -> 0, this);
@@ -279,7 +319,8 @@ public final class HologramPreviewCameraLifecycleRegression {
         }
 
         long work(String name) {
-            return HologramRenderer.previewWorkInspection().getLong(name);
+            return HologramRenderer.previewWorkInspection()
+                .getLong(name);
         }
 
         @SuppressWarnings("unchecked")
@@ -307,12 +348,23 @@ public final class HologramPreviewCameraLifecycleRegression {
         void assertAllPresented() throws Exception {
             int slots = 0;
             for (Object region : regions().values()) {
-                SimpleAssert.eq(key, field(region.getClass(), "projectionWorkKey").get(region), "every visible region uses current camera");
-                SimpleAssert.eq(key, field(region.getClass(), "projectedKey").get(region), "completed content stays fully projected through motion");
+                SimpleAssert.eq(
+                    key,
+                    field(region.getClass(), "projectionWorkKey").get(region),
+                    "every visible region uses current camera");
+                SimpleAssert.eq(
+                    key,
+                    field(region.getClass(), "projectedKey").get(region),
+                    "completed content stays fully projected through motion");
                 slots += values(region, "outlines").size();
             }
-            SimpleAssert.eq(state.cells.size(), slots, "all isolated source cells remain presented, not merely a cached subset");
-            SimpleAssert.eq(slots, ((List<?>) field(HologramRenderer.class, "cachedOutlines").get(null)).size(),
+            SimpleAssert.eq(
+                state.cells.size(),
+                slots,
+                "all isolated source cells remain presented, not merely a cached subset");
+            SimpleAssert.eq(
+                slots,
+                ((List<?>) field(HologramRenderer.class, "cachedOutlines").get(null)).size(),
                 "actual scene publication contains every visible resolved source slot");
         }
 
@@ -325,10 +377,12 @@ public final class HologramPreviewCameraLifecycleRegression {
                 seenSides.add(side);
                 double[][] points = (double[][]) field(face.getClass(), "points").get(face);
                 double[] expected = camera.project(cell.dx - .5, cell.dy - .5, cell.dz - .5);
-                for (int axis = 0; axis < 3; axis++) SimpleAssert.that(Math.abs(points[0][axis] - expected[axis]) < 1e-8,
+                for (int axis = 0; axis < 3; axis++) SimpleAssert.that(
+                    Math.abs(points[0][axis] - expected[axis]) < 1e-8,
                     "presented/picking vertices use the current camera, not stale screen coordinates");
             }
-            SimpleAssert.eq(Integer.bitCount(facing), seenSides.size(), "newly facing sides are retained without callbacks");
+            SimpleAssert
+                .eq(Integer.bitCount(facing), seenSides.size(), "newly facing sides are retained without callbacks");
         }
 
         public void close() throws Exception {

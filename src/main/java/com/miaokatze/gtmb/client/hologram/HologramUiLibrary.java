@@ -72,8 +72,10 @@ final class HologramUiLibrary {
 
     private boolean dedicatedLibrary() {
         if (ui.session.isTutorial()) return false;
-        if (ui.session.isLocalAuthor() && ui.session.author().libraryOrigin() != null)
-            return !ui.session.author().libraryOrigin().integrated;
+        if (ui.session.isLocalAuthor() && ui.session.author()
+            .libraryOrigin() != null)
+            return !ui.session.author()
+                .libraryOrigin().integrated;
         return ui.session.isLocalAuthor() || HologramLibraryClient.dedicated();
     }
 
@@ -936,8 +938,10 @@ final class HologramUiLibrary {
     String blueprintSaveState() {
         if (ui.session.isLocalAuthor()) return ui.session.author()
             .saving() ? "正在保存蓝图"
-                : ui.session.author().finishedSourceCurrent() ? "库成品已保存"
-                : ui.session.author().dirty() ? "当前蓝图有未保存修改" : "恢复草稿已保存，尚未保存成品";
+                : ui.session.author()
+                    .finishedSourceCurrent() ? "库成品已保存"
+                        : ui.session.author()
+                            .dirty() ? "当前蓝图有未保存修改" : "恢复草稿已保存，尚未保存成品";
         if (ui.session.state().data.getBoolean("blueprintSavePending")) return HologramLibraryClient.INSTANCE.status()
             .isEmpty() ? HologramUiText.localized("gtmb.hologram.blueprint.saving", "正在传输保存，等待写盘确认")
                 : HologramLibraryClient.INSTANCE.status();
@@ -1272,8 +1276,9 @@ final class HologramUiLibrary {
     }
 
     void saveRecoveryDraft() {
-        if (ui.session.isLocalAuthor() && !ui.session.author().saving())
-            ui.session.author().save(localAuthorSaveName());
+        if (ui.session.isLocalAuthor() && !ui.session.author()
+            .saving()) ui.session.author()
+                .save(localAuthorSaveName());
     }
 
     private String localAuthorSaveName() {
@@ -1351,6 +1356,7 @@ final class HologramUiLibrary {
     }
 
     interface AuthorSaveSubmission {
+
         void save(HologramLocalAuthorRuntime owner, NBTTagCompound policy, String replace, double yaw, double pitch);
     }
 
@@ -2355,8 +2361,11 @@ final class HologramUiLibrary {
     }
 
     void initializeBrowsing(HologramState snapshot) {
-        if (ui.session.isLocalAuthor() && ui.session.author().libraryOrigin() != null)
-            publicLibrary = ui.session.author().libraryOrigin().publicLibrary();
+        if (ui.session.isLocalAuthor() && ui.session.author()
+            .libraryOrigin() != null)
+            publicLibrary = ui.session.author()
+                .libraryOrigin()
+                .publicLibrary();
         libraryDrawer = snapshot.data.getBoolean("presetBrowseForPlacement")
             || snapshot.data.getBoolean("blueprintPreview");
     }

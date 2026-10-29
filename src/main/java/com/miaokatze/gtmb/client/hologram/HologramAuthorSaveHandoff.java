@@ -23,7 +23,8 @@ final class HologramAuthorSaveHandoff {
     boolean saving, imported;
 
     HologramAuthorSaveHandoff(HologramLocalAuthorRuntime owner, AuthorDocument document, NBTTagCompound policy,
-        String localId, String replace, String integratedId, long task, BooleanSupplier current, double yaw, double pitch) {
+        String localId, String replace, String integratedId, long task, BooleanSupplier current, double yaw,
+        double pitch) {
         this.owner = owner;
         this.document = document;
         this.policy = policy == null ? new NBTTagCompound() : (NBTTagCompound) policy.copy();
@@ -39,7 +40,8 @@ final class HologramAuthorSaveHandoff {
     }
 
     void requireReconciliable(byte[] json) throws java.io.IOException {
-        com.google.gson.JsonObject reviewed = HologramLibraryClient.readAuthorSource(json).sourceCopy();
+        com.google.gson.JsonObject reviewed = HologramLibraryClient.readAuthorSource(json)
+            .sourceCopy();
         com.google.gson.JsonObject bare = reviewed.has("blueprint") ? reviewed.getAsJsonObject("blueprint") : reviewed;
         com.google.gson.JsonObject source = document.sourceCopy();
         if (source.has("blueprint")) source.add("blueprint", bare);
@@ -57,7 +59,8 @@ final class HologramAuthorSaveHandoff {
             && (integratedId.isEmpty() ? localId.equals(state.getString("libraryLocalId"))
                 : integratedId.equals(state.getString("selectedPresetId")))
             && "blueprintEdit".equals(state.getString("openPurpose"))
-            && !state.getBoolean("snapshotPending") && !state.getBoolean("capturePending");
+            && !state.getBoolean("snapshotPending")
+            && !state.getBoolean("capturePending");
     }
 
     boolean owns(NBTTagCompound state) {
@@ -69,7 +72,8 @@ final class HologramAuthorSaveHandoff {
     }
 
     boolean processed(NBTTagCompound state) {
-        return owns(state) && !saving && processSequence >= 0
+        return owns(state) && !saving
+            && processSequence >= 0
             && processSequence == state.getLong("uiSequence")
             && "processBlueprint".equals(state.getString("processingPresetOperation"));
     }

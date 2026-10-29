@@ -44,7 +44,8 @@ final class HologramAuthorSubmission {
         submit(owner, confirmedPolicy, place, null, yaw, pitch);
     }
 
-    static void save(HologramLocalAuthorRuntime owner, NBTTagCompound policy, String replace, double yaw, double pitch) {
+    static void save(HologramLocalAuthorRuntime owner, NBTTagCompound policy, String replace, double yaw,
+        double pitch) {
         submit(owner, policy, false, replace, yaw, pitch);
     }
 
@@ -76,9 +77,11 @@ final class HologramAuthorSubmission {
                 && sameTool(originalTool, originalToolId, minecraft.thePlayer.getHeldItem())
                 && minecraft.thePlayer.inventory.currentItem == originalSlot);
         try {
-            if (saveTarget != null) com.miaokatze.gtmb.hologram.HologramAuthorFormalSaveCompatibility.requireCompatible(frozen);
+            if (saveTarget != null)
+                com.miaokatze.gtmb.hologram.HologramAuthorFormalSaveCompatibility.requireCompatible(frozen);
             if (saveTarget != null && owner.finishedSourceCurrent()) {
-                byte[] original = owner.libraryOrigin().source();
+                byte[] original = owner.libraryOrigin()
+                    .source();
                 if (original == null) throw new IOException("原成品来源未绑定，请重新打开蓝图后保存");
                 preview(owner, frozen, original, new NBTTagCompound(), current, place, saveTarget, yaw, pitch);
                 return;
@@ -105,7 +108,8 @@ final class HologramAuthorSubmission {
         NBTTagCompound policy, BooleanSupplier current, boolean place, String saveTarget, double yaw, double pitch) {
         notice("正在从当前源版本生成原生预览；此候选尚未取得施工许可");
         work(() -> {
-            if (saveTarget != null) com.miaokatze.gtmb.hologram.HologramAuthorFormalSaveCompatibility.requireCompatible(json);
+            if (saveTarget != null)
+                com.miaokatze.gtmb.hologram.HologramAuthorFormalSaveCompatibility.requireCompatible(json);
             NBTTagCompound exact = HologramBlueprintPreview.snapshot(json);
             HologramBlueprintPreview.capture(exact, yaw, pitch, current, pixels -> work(() -> {
                 byte[] png = png(pixels, current);
@@ -119,8 +123,8 @@ final class HologramAuthorSubmission {
                         }
                         if (saveTarget != null) {
                             try {
-                                HologramLibraryClient.INSTANCE.beginAuthorSave(owner, frozen, pair, policy,
-                                    saveTarget, current, yaw, pitch);
+                                HologramLibraryClient.INSTANCE
+                                    .beginAuthorSave(owner, frozen, pair, policy, saveTarget, current, yaw, pitch);
                                 savingOwner = null;
                                 BUSY.set(false);
                             } catch (Exception failure) {
@@ -148,11 +152,14 @@ final class HologramAuthorSubmission {
     }
 
     static String toolId(net.minecraft.item.ItemStack tool) {
-        return tool == null || !tool.hasTagCompound() ? "" : tool.getTagCompound().getString("gtitHologramToolId");
+        return tool == null || !tool.hasTagCompound() ? ""
+            : tool.getTagCompound()
+                .getString("gtitHologramToolId");
     }
 
     static boolean sameTool(net.minecraft.item.ItemStack original, String id, net.minecraft.item.ItemStack current) {
-        return original != null && current != null && original.getItem() == current.getItem()
+        return original != null && current != null
+            && original.getItem() == current.getItem()
             && (id.isEmpty() ? original == current : id.equals(toolId(current)));
     }
 

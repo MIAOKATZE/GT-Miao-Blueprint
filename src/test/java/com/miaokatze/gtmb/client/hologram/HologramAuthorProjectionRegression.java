@@ -248,7 +248,8 @@ public final class HologramAuthorProjectionRegression {
         }
         source.add("cells", cells);
         HologramAuthorProjection projection = new HologramAuthorProjection(
-            AuthorDocumentIO.readExpanded(source, AuthorDocumentIO.Limits.defaults()), 32L << 20);
+            AuthorDocumentIO.readExpanded(source, AuthorDocumentIO.Limits.defaults()),
+            32L << 20);
         Field visible = field(HologramRenderer.class, "visibleState"),
             frame = field(HologramRenderer.class, "projectedFrame"),
             layer = field(HologramRenderer.class, "visibleLayer"), mode = field(HologramRenderer.class, "visibleMode"),

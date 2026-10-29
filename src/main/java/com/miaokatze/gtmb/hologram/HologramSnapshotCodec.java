@@ -88,7 +88,8 @@ public final class HologramSnapshotCodec {
     /** Admission observes the existing safety-pass tree estimate before any NBT tree is allocated. */
     public static NBTTagCompound decodeBounded(byte[] bytes, int rawLimit, long nbtLimit,
         java.util.function.LongPredicate admission) throws IOException {
-        if (rawLimit < 1 || nbtLimit < 1 || admission == null) throw new IllegalArgumentException("NBT consumer budget");
+        if (rawLimit < 1 || nbtLimit < 1 || admission == null)
+            throw new IllegalArgumentException("NBT consumer budget");
         return decodeMeasured(bytes, rawLimit, nbtLimit, () -> true, false, admission).tag;
     }
 

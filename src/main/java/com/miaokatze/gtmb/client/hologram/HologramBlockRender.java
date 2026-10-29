@@ -82,9 +82,8 @@ final class HologramBlockRender {
     static void advance(HologramState previous, HologramState next, Set<HologramRegionCache.Key> dirty) {
         if (snapshot != previous) return;
         Set<Integer> indices = new HashSet<>();
-        for (HologramRegionCache.Key key : dirty)
-            for (HologramState.Cell cell : previous.regions.regions.getOrDefault(key, java.util.Collections.emptyList()))
-                indices.add(cell.index);
+        for (HologramRegionCache.Key key : dirty) for (HologramState.Cell cell : previous.regions.regions
+            .getOrDefault(key, java.util.Collections.emptyList())) indices.add(cell.index);
         advanceCells(previous, next, indices);
     }
 

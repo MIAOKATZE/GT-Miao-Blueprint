@@ -113,14 +113,10 @@ final class HologramEditorLibraryPane {
                 () -> ui.library.overwriteMode() ? "更新此蓝图" : "保存蓝图",
                 ui.library::nativeCanSave,
                 () -> "保存沿用原作者处理、结构封面与最终写盘回执；覆盖前核对真实目标。").widthRel(1f)
-                        .height(20));
+                    .height(20));
         page.child(
-            action(
-                132,
-                () -> "另存为新蓝图",
-                ui.library::nativeCanSave,
-                () -> "保留当前原图，另存新的蓝图与结构封面。").widthRel(1f)
-                    .height(18));
+            action(132, () -> "另存为新蓝图", ui.library::nativeCanSave, () -> "保留当前原图，另存新的蓝图与结构封面。").widthRel(1f)
+                .height(18));
         page.child(
             HologramEditorNativeTheme.label(ui.library::nativeStatus)
                 .widthRel(1f)
@@ -142,8 +138,12 @@ final class HologramEditorLibraryPane {
                 () -> "导出所选已保存蓝图及其原有 PNG 文件。").widthRel(1f)
                     .height(18));
         page.child(
-            local(HologramEditorControlIds.LIBRARY + 22, () -> "保存恢复草稿（不替代成品）",
-                ui.library::nativeCanSave, ui.library::saveRecoveryDraft).widthRel(1f).height(20)
+            local(
+                HologramEditorControlIds.LIBRARY + 22,
+                () -> "保存恢复草稿（不替代成品）",
+                ui.library::nativeCanSave,
+                ui.library::saveRecoveryDraft).widthRel(1f)
+                    .height(20)
                     .setEnabledIf(widget -> ui.session.isLocalAuthor()));
         page.child(
             local(

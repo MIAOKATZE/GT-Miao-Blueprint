@@ -1049,7 +1049,8 @@ final class HologramLibraryClient {
     }
 
     boolean busy() {
-        return authorSave != null || outgoing != null || incoming != null
+        return authorSave != null || outgoing != null
+            || incoming != null
             || loading
             || preparing
             || pendingDiskSave != null
@@ -1296,10 +1297,12 @@ final class HologramLibraryClient {
         Minecraft mc = Minecraft.getMinecraft();
         if (completed != null && mc != null && mc.currentScreen instanceof HologramScreen screen)
             screen.ui.session.libraryTaskFinished(completed.session, completed.sequence, token, detail);
-        if (finishedAuthor != null && finishedAuthor.task == token && mc != null
+        if (finishedAuthor != null && finishedAuthor.task == token
+            && mc != null
             && HologramLocalAuthorRuntime.active() == finishedAuthor.owner
             && mc.currentScreen instanceof HologramScreen screen
-            && (screen.ui.session.author() == finishedAuthor.owner || finishedAuthor.owns(screen.ui.session.state().data))) {
+            && (screen.ui.session.author() == finishedAuthor.owner
+                || finishedAuthor.owns(screen.ui.session.state().data))) {
             mc.displayGuiScreen(new HologramScreen(finishedAuthor.owner));
             authorNotice(detail);
         }
@@ -1525,24 +1528,32 @@ final class HologramLibraryClient {
         net.minecraft.client.gui.GuiScreen origin = Minecraft.getMinecraft().currentScreen;
         status = "正在读取本地作者文档";
         HologramAuthorOpen.begin(
-            () -> integrated ? readIntegratedAuthorSource(id) : store.authorSource(id), worker, HologramLibraryClient::main,
+            () -> integrated ? readIntegratedAuthorSource(id) : store.authorSource(id),
+            worker,
+            HologramLibraryClient::main,
             () -> token == authorOpenGeneration && Minecraft.getMinecraft().currentScreen == origin
                 && HologramLocalAuthorRuntime.active() == previous
-                && (previous == null || previous.document().revision() == previousRevision),
+                && (previous == null || previous.document()
+                    .revision() == previousRevision),
             (document, bytes) -> {
                 installAuthorSource(document, id, integrated, bytes);
                 status = "本地作者文档已打开";
-            }, failure -> authorNotice("打开失败，原文档已保留：" + failure.getMessage()));
+            },
+            failure -> authorNotice("打开失败，原文档已保留：" + failure.getMessage()));
     }
 
     /** The async read commits source and navigation together; failures never select an unopened row. */
-    void installAuthorSource(com.miaokatze.gtmb.blueprint.editor.AuthorDocument document, String id,
-        boolean integrated, byte[] bytes) {
+    void installAuthorSource(com.miaokatze.gtmb.blueprint.editor.AuthorDocument document, String id, boolean integrated,
+        byte[] bytes) {
         NBTTagList catalog = integrated && HologramClient.state != null
-            ? HologramClient.state.data.getTagList("presets", 10) : new NBTTagList();
+            ? HologramClient.state.data.getTagList("presets", 10)
+            : new NBTTagList();
         HologramAuthorLibraryOrigin origin = id.startsWith("draft_") ? null
             : new HologramAuthorLibraryOrigin(id, integrated, document.revision(), catalog, bytes);
-        completeAuthorOpen(document, id, origin,
+        completeAuthorOpen(
+            document,
+            id,
+            origin,
             (source, provenance) -> HologramLocalAuthorRuntime.install(source, id.startsWith("draft_"), provenance));
     }
 
@@ -1610,25 +1621,33 @@ final class HologramLibraryClient {
     }
 
     /** Ordinary Save reuses owner-reviewed processing and the existing two-phase artifact acknowledgement. */
-    void beginAuthorSave(HologramLocalAuthorRuntime owner,
-        com.miaokatze.gtmb.blueprint.editor.AuthorDocument frozen, HologramBlueprintArtifact.Artifact artifact,
-        NBTTagCompound policy, String replace, java.util.function.BooleanSupplier current, double yaw, double pitch)
-        throws java.io.IOException {
+    void beginAuthorSave(HologramLocalAuthorRuntime owner, com.miaokatze.gtmb.blueprint.editor.AuthorDocument frozen,
+        HologramBlueprintArtifact.Artifact artifact, NBTTagCompound policy, String replace,
+        java.util.function.BooleanSupplier current, double yaw, double pitch) throws java.io.IOException {
         HologramState serverState = HologramClient.state;
         Minecraft mc = Minecraft.getMinecraft();
-        if (!current.getAsBoolean() || serverState == null || mc.thePlayer == null
+        if (!current.getAsBoolean() || serverState == null
+            || mc.thePlayer == null
             || !com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector
                 .isProjector(mc.thePlayer.getHeldItem()))
             throw new java.io.IOException("请保持原世界、手持投影仪并先打开蓝图库；当前原稿保留");
-        if (busy() || !beginBackgroundTask("保存当前作者蓝图"))
-            throw new java.io.IOException("请等待当前蓝图库任务完成再保存");
+        if (busy() || !beginBackgroundTask("保存当前作者蓝图")) throw new java.io.IOException("请等待当前蓝图库任务完成再保存");
         ensureStore();
         captureActor();
         HologramAuthorLibraryOrigin origin = owner.libraryOrigin();
         String integratedId = !replace.isEmpty() && origin != null && origin.integrated ? origin.id : "";
         String localId = replace.startsWith("local_") ? replace : "local_" + UUID.randomUUID();
-        authorSave = new HologramAuthorSaveHandoff(owner, frozen, policy, localId, replace, integratedId,
-            backgroundTaskToken, current, yaw, pitch);
+        authorSave = new HologramAuthorSaveHandoff(
+            owner,
+            frozen,
+            policy,
+            localId,
+            replace,
+            integratedId,
+            backgroundTaskToken,
+            current,
+            yaw,
+            pitch);
         preparing = true;
         lastActivity = System.nanoTime();
         long token = generation;
@@ -1637,6 +1656,7 @@ final class HologramLibraryClient {
             com.miaokatze.gtmb.hologram.HologramAuthorFormalSaveCompatibility.requireCompatible(artifact.json);
             requireAuthorTargetCurrent(handoff);
             byte[] bytes = HologramBlueprintArtifact.encode(artifact.json, artifact.png);
+            String digest = hash(bytes);
             main(() -> {
                 if (token != generation || authorSave != handoff) return;
                 if (!handoff.current.getAsBoolean()) {
@@ -1644,7 +1664,8 @@ final class HologramLibraryClient {
                     return;
                 }
                 setOutgoing(bytes, null);
-                outgoingId = UUID.randomUUID().toString();
+                outgoingId = UUID.randomUUID()
+                    .toString();
                 outgoingOp = "private";
                 outgoingLocal = localId;
                 outgoingQuick = false;
@@ -1653,7 +1674,7 @@ final class HologramLibraryClient {
                 NBTTagCompound request = request("privateBegin");
                 request.setString("transfer", outgoingId);
                 request.setInteger("total", bytes.length);
-                request.setString("hash", hash(bytes));
+                request.setString("hash", digest);
                 request.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
                 request.setString("session", serverState.session);
                 request.setLong("planRevision", serverState.data.getLong("planRevision"));
@@ -1707,8 +1728,8 @@ final class HologramLibraryClient {
             action.setString("op", "processBlueprint");
             action.setString("session", state.session);
             action.setLong("planRevision", state.data.getLong("planRevision"));
-            handoff.processSequence = Math.max(state.data.getLong("uiSequence"),
-                HologramClient.editorWorkspaceSequence()) + 1;
+            handoff.processSequence = Math
+                .max(state.data.getLong("uiSequence"), HologramClient.editorWorkspaceSequence()) + 1;
             action.setLong("uiSequence", handoff.processSequence);
             action.setLong("editorWorkspaceEpoch", state.data.getLong("editorWorkspaceEpoch"));
             preparing = true;
@@ -1721,13 +1742,17 @@ final class HologramLibraryClient {
                 failTask("author.save.processing", state.data.getString("status"));
                 return false;
             }
-            handoff.processSequence = Math.max(state.data.getLong("uiSequence"),
-                HologramClient.editorWorkspaceSequence());
+            handoff.processSequence = Math
+                .max(state.data.getLong("uiSequence"), HologramClient.editorWorkspaceSequence());
             handoff.saving = true;
             preparing = draftPending = downloadExpected = true;
             saveProgress.clear();
-            savePreviewPose = new HologramSavePreviewPose(backgroundTaskToken, generation, state,
-                handoff.yaw, handoff.pitch);
+            savePreviewPose = new HologramSavePreviewPose(
+                backgroundTaskToken,
+                generation,
+                state,
+                handoff.yaw,
+                handoff.pitch);
             NBTTagCompound action = new NBTTagCompound();
             String op = handoff.replace.isEmpty() ? "saveBlueprintAs" : "saveBlueprint";
             action.setString("op", op);
@@ -2205,7 +2230,8 @@ final class HologramLibraryClient {
                 else if (origin.contentHash.isEmpty() || !origin.contentHash.equals(source.hash))
                     throw new java.io.IOException("服务器库来源已变化，请重新打开后放置");
                 source.authorCurrent = () -> HologramLocalAuthorRuntime.active() == owner
-                    && owner.libraryOrigin() == origin && owner.finishedSourceCurrent();
+                    && owner.libraryOrigin() == origin
+                    && owner.finishedSourceCurrent();
                 authorPlacementOrigin = null;
                 authorPlacementOwner = null;
             } catch (java.io.IOException failure) {
@@ -3374,16 +3400,20 @@ final class HologramLibraryClient {
                         if (!adoptionFailure.isEmpty()) authorSave.owner.libraryReceiptChanged(authorSave.document);
                         HologramState savedState = HologramClient.state;
                         String id = !authorSave.integratedId.isEmpty() ? authorSave.integratedId : selectedLocal;
-                        if (savedAuthor == authorSave && savedAuthor.current.getAsBoolean() && committedDocument != null) {
+                        if (savedAuthor == authorSave && savedAuthor.current.getAsBoolean()
+                            && committedDocument != null) {
                             NBTTagList catalog = savedState == null ? new NBTTagList()
                                 : savedState.data.getTagList("presets", 10);
                             try {
-                                authorSave.owner.librarySaved(authorSave.document, id, !authorSave.integratedId.isEmpty(),
-                                    catalog, committedBytes);
+                                authorSave.owner.librarySaved(
+                                    authorSave.document,
+                                    id,
+                                    !authorSave.integratedId.isEmpty(),
+                                    catalog,
+                                    committedBytes);
                             } catch (java.io.IOException | RuntimeException incompatible) {
                                 authorSave.owner.libraryReceiptChanged(authorSave.document);
-                                completionFailure = "保存提交已确认，但当前编辑稿未合并；原稿保留，请显式重新打开成品："
-                                    + incompatible.getMessage();
+                                completionFailure = "保存提交已确认，但当前编辑稿未合并；原稿保留，请显式重新打开成品：" + incompatible.getMessage();
                             }
                         }
                     }
@@ -3404,8 +3434,10 @@ final class HologramLibraryClient {
 
     static void requireReceiptPair(NBTTagCompound acknowledgement, String jsonHash, String pngHash)
         throws java.io.IOException {
-        if (!acknowledgement.getString("jsonSha256").equals(jsonHash)
-            || !acknowledgement.getString("previewSha256").equals(pngHash))
+        if (!acknowledgement.getString("jsonSha256")
+            .equals(jsonHash)
+            || !acknowledgement.getString("previewSha256")
+                .equals(pngHash))
             throw new java.io.IOException("成品确认后 JSON 或 PNG 又发生变化；未替换当前编辑稿，请重新打开核对");
     }
 
@@ -3444,7 +3476,8 @@ final class HologramLibraryClient {
     /** The network-published state is volatile; an IO commit never waits for the next client tick to see edits. */
     private boolean saveBytesCurrent(long token, String session, long revision) {
         HologramState current = HologramClient.state;
-        return token == generation && (authorSave == null || authorSave.current.getAsBoolean()) && current != null
+        return token == generation && (authorSave == null || authorSave.current.getAsBoolean())
+            && current != null
             && session.equals(current.session)
             && current.data.getLong("planRevision") == revision;
     }

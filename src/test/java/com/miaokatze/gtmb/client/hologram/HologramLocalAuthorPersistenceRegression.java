@@ -112,14 +112,18 @@ public final class HologramLocalAuthorPersistenceRegression {
         JsonObject original = document.sourceCopy();
         JsonObject envelope = new JsonObject();
         envelope.add("blueprint", original);
-        byte[] formalJson = envelope.toString().getBytes(StandardCharsets.UTF_8);
+        byte[] formalJson = envelope.toString()
+            .getBytes(StandardCharsets.UTF_8);
         java.io.ByteArrayOutputStream pixels = new java.io.ByteArrayOutputStream();
         javax.imageio.ImageIO.write(
-            new java.awt.image.BufferedImage(640, 640, java.awt.image.BufferedImage.TYPE_INT_RGB), "png", pixels);
-        com.miaokatze.gtmb.hologram.HologramBlueprintArtifact.Artifact pair =
-            com.miaokatze.gtmb.hologram.HologramBlueprintArtifact.prepareSave(formalJson, pixels.toByteArray());
+            new java.awt.image.BufferedImage(640, 640, java.awt.image.BufferedImage.TYPE_INT_RGB),
+            "png",
+            pixels);
+        com.miaokatze.gtmb.hologram.HologramBlueprintArtifact.Artifact pair = com.miaokatze.gtmb.hologram.HologramBlueprintArtifact
+            .prepareSave(formalJson, pixels.toByteArray());
         String formalId = "local_" + java.util.UUID.randomUUID();
-        Path formalFile = game.resolve("MiaoBlueprints").resolve(formalId + ".json");
+        Path formalFile = game.resolve("MiaoBlueprints")
+            .resolve(formalId + ".json");
         com.miaokatze.gtmb.hologram.HologramBlueprintArtifact.writePair(formalFile, pair.json, pair.png);
         boolean originalListed = false;
         for (HologramClientLibrary.Entry entry : library.list()) if (formalId.equals(entry.id)) {
@@ -129,7 +133,8 @@ public final class HologramLocalAuthorPersistenceRegression {
         check(originalListed, "real original JSON+PNG pair is listed separately from recovery drafts");
         check(Arrays.equals(pair.json, Files.readAllBytes(formalFile)), "viewing original preserves exact JSON bytes");
         AuthorEditor editor = new AuthorEditor(document, 8);
-        JsonObject changed = document.cell(1).sourceCopy();
+        JsonObject changed = document.cell(1)
+            .sourceCopy();
         changed.addProperty("block", "gregtech:industrial");
         editor.replaceCells(java.util.Collections.singletonMap(1L, changed));
         AuthorDocument edited = editor.current();
@@ -144,16 +149,21 @@ public final class HologramLocalAuthorPersistenceRegression {
         check(found, "edited coverage recovery is listed");
         AuthorDocument reopened = AuthorDocumentIO.read(library.authorSource(id), AuthorDocumentIO.Limits.defaults());
         check(
-            reopened.headerValue("fullyVoucherCovered").getAsBoolean(),
+            reopened.headerValue("fullyVoucherCovered")
+                .getAsBoolean(),
             "recovery source still preserves history; only its current catalogue claim is suppressed");
-        check(edited.sourceCopy().equals(reopened.sourceCopy()), "coverage listing does not rewrite opaque source");
+        check(
+            edited.sourceCopy()
+                .equals(reopened.sourceCopy()),
+            "coverage listing does not rewrite opaque source");
         check(original.equals(document.sourceCopy()), "editing/recovery leaves original formal source unchanged");
         for (HologramClientLibrary.Entry entry : library.list()) if (formalId.equals(entry.id))
             check(entry.fullyVoucherCovered, "original formal item remains marked beside an edited recovery document");
         check(Arrays.equals(pair.json, Files.readAllBytes(formalFile)), "recovery save never overwrites formal source");
         check(
-            Arrays.equals(pair.png, Files.readAllBytes(
-                com.miaokatze.gtmb.hologram.HologramBlueprintArtifact.previewPath(formalFile))),
+            Arrays.equals(
+                pair.png,
+                Files.readAllBytes(com.miaokatze.gtmb.hologram.HologramBlueprintArtifact.previewPath(formalFile))),
             "recovery/catalogue never rewrites original preview binding");
         library.delete(id);
         library.delete(formalId);

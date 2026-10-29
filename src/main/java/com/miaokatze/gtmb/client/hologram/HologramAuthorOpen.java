@@ -10,6 +10,7 @@ import com.miaokatze.gtmb.blueprint.editor.AuthorDocument;
 final class HologramAuthorOpen {
 
     interface Source {
+
         byte[] read() throws Exception;
     }
 

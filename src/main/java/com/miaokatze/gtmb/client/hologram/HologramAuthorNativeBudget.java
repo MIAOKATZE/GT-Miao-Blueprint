@@ -15,7 +15,10 @@ final class HologramAuthorNativeBudget {
         } catch (SecurityException unavailable) {
             value = null;
         }
-        return bytes(Runtime.getRuntime().maxMemory(), value);
+        return bytes(
+            Runtime.getRuntime()
+                .maxMemory(),
+            value);
     }
 
     /** Zero/invalid selects automatic. The heap fraction cap wins even on an unusually small test JVM. */

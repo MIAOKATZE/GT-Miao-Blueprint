@@ -160,7 +160,9 @@ public final class HologramAuthorOwnershipBudgetRegression {
 
     @SuppressWarnings("unchecked")
     private static void knownCostPrecedesDecode() throws IOException, ReflectiveOperationException {
-        try (HologramAuthorProjection projection = new HologramAuthorProjection(document(1, "not-base64!", ""), 32L << 20)) {
+        try (HologramAuthorProjection projection = new HologramAuthorProjection(
+            document(1, "not-base64!", ""),
+            32L << 20)) {
             Map<Long, Long> deferred = (Map<Long, Long>) field(HologramAuthorProjection.class, "budgetDeferred")
                 .get(projection);
             long id = projection.cellId(0);
