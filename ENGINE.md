@@ -345,3 +345,39 @@ Values
 另有一个已确认的既存边界未在本轮扩大重构：外部 adapter 的 `loadTile` 若读取“payload 已就绪、但本 access 尚未 hydrate”的另一个 native tile，`loadingTile` 的非递归保护仍可能返回缓存空值；仅补依赖边不能追溯这次读取。它不同于本轮修复的 pending/budget 输入，也尚未证实是 S3 的触发原因。彻底处理需要有界 detached-tile 准备顺序、循环依赖和终结失败策略，不能通过递归展开、无限重试或擅自收紧公共扩展契约解决。本轮不声称所有外部 hydration 组合兼容。
 
 新候选继续由本地按 S3 的完整 source 与独立 viewport 分母在 3/4/15/30 秒验收，30 秒失败即停，再决定 S4/S5 与真实点击、形状、UV 测试。代码检查通过不覆盖这些实机阶段。
+
+## 蓝图、结构与剪切联合续审（2026-10-29）
+
+本节是对前述 PR67 阶段记录的续篇。此前记录的 ready-but-unhydrated 邻居缺口已在本候选引入显式准备生命周期；历史失败与历史未执行状态不改写为新候选通过。
+
+### 数据、任务与服务器权限
+
+- AuthorEditor 使用有界源树的精确 JSON 值比较，避免 Gson 把不同的大整数/小数折叠为一次无操作；对象无序、数组有序，普通等值数字仍可无操作。无法精确表示的极端数字不退回 double/long 相等。原 payload origin、稳定 ID、COW、撤销和义务保持。
+- 恢复目录的流式摘要区分 bare/wrapped 源，不将外层未知同名字段误作蓝图字段；可恢复的 null 数组和描述性元数据不被目录额外拒绝。严格重开与服务端准入仍独立执行。
+- 原始 JSON 候选编码单独保留显式 null；typed DTO/delta 的既有 Gson 约定不改。离线导出、服务端处理返回和选中上下文不能静默抹掉未改动的未知 null 字段。
+- 真正的 Capture 完成回调、仅生成结构声明的 server-owner 路径和 client-safe 声明路径彼此独立。继续同一采集不能取消它自己的 DTO 完成 Future；显式取消/替换仍退休旧任务。公开区域选择取消入口复用完整 import owner 清理，不只改 importing 标记。
+- 未指定显式全局姿态覆盖时，重建成员保留原生加载的 roll/flip；所选 front 及原 fallback 仍决定方向，既有 DetachedController 调用默认语义不变。共享成员重建收窄建议候选及两份持久源的 allowedTargets，不覆盖选中源/NBT或外部成员；空交集保持显式不完整，既有 exact-source replay 语义不作为非源候选兜底。
+- Cut 的 world-write request 从排队、分步准备到最终结果始终拥有精确 player/connection/request 身份。仍可执行的任务只能返回非终结 request_pending，不能凭尚无 durable tombstone 宣称未执行。重复 live ID 合并；旧死亡/重生 actor、连接替换、拷贝/入队异常都退休旧能力。原 durable world transaction、磁盘回读、资源及重放屏障不变。
+- identity Cut 仍做必要关系搬移和输出隔离，但不预先深拷贝永远不会使用的 LittleTiles 旋转图。
+
+### 入站与内存所有权
+
+库/display 帧在组装前、异步解码和消费发布时均保留原连接及 epoch 约束。库分片空闲超时主动退还占用与 credit；新 origin receiver 与 legacy owned receiver 均协商两帧背压。延迟结果仅保留不含 payload 的 context supplier，不能在退还 credit 后通过闭包继续持有 Complete.bytes。
+
+附件的原 ticket/压缩预算持有到解码及 owner 回调结束，展开 NBT 使用既有 owned bounded decode；取消的在途 worker 在退出前保留必要所有权，已排队回调仅持 ticket。限额、严格解码和最终会话/权限检查未放宽。这些账本不是整个 JVM、长期文档或所有原生 tile 的堆上限。
+
+### 有界原生准备及捕获
+
+每个 detached access 只有一条迭代准备 lane；不递归运行 native callbacks，也没有第二个无界根请求队列。状态明确区分已知缺席、等待、数据可用、完整就绪和终结失败。最多 512 个依赖 frame、每 frame 512 次尝试；每个调用者已有时间片共享最多 32 次准备回调/阶段尝试。新限额描述的是准备工作元数据/次数，不提高原 appearance queue、依赖图或 decoded-row 配额，也不承诺能抢占单个卡住的外部回调。
+
+待输入/预算不等于空 tile，半成品不缓存；终结依赖失败优先于同时出现的未知读取，普通 callback 在未知输入后的异常仍可重试。AE 的已审查拓扑读取有私有 DATA 视图，不能把该权限带进外部 loadTile。真实 LOAD 循环和超限明确失败，不能无限等待或制造默认空邻居。**这是可观察的兼容边界变化：任意循环 LOAD 回调，包括读取后忽略未知值的回调，不再保证旧的“空邻居即成功”行为。**已审查的 AE DATA/拓扑循环与这种 LOAD 循环不同，实机兼容仍须验证。
+
+同一 access 的准备进展会精确唤醒受影响区域/世界分组，不依赖额外 source publication，不清空无关游标。world list 开始前冻结实际所用材质，list/tessellator 活跃期间只查询缓存，不能触发 tile、adapter 或纹理准备。defer/ready/诊断查询统一 effective actual/target 选择，原始逐侧重试位仍独立。
+
+截图 Request 留在容量四的队头直到终结；状态准备与 native 预准备共用既有 END 时间片。请求私有 access 跨帧保持，最后在正常旧 list 退休后交接完整同一 owner；取消/重载仅在拥有线程回调退出后清理，真正有工作推进才刷新进度。最终 one-shot GL 渲染仍沿用原行为，并未被这些 CPU 准备限额变成硬实时。渲染的 mode2/anchor/protected 有效侧和保留的 target 验证政策都检查真实 native 模型/缺失纹理，不能接受诊断立方体 PNG。
+
+### 验证与未证明事项
+
+两轮分块调查、交叉审查和纠正后的独立复核覆盖数据、结构、Cut、通信和 native/capture。无游戏的整合回归覆盖 183 个主套件项、35 个本地作者项；精确提交的完整 clean/字节码/产物回执由交付记录单列，不能从本节文字推断任意后续提交通过。
+
+真实 AE 注册、复杂原生模型/UV、世界 list 渲染、截图/重载交互、大蓝图 3–4 秒及峰值内存由外部实机验收。保留持续传输与固定总超时的策略问题、重复 DTO/NBT miss 路径及可见网格批处理等优化方向；未在缺乏实测成本分解时一并改写。MatterManipulator 的 descriptor/job 分离和 mutable stack copy-on-output 值得复用，但其提示立方体、浅 clone 或新旧版本的世界通知策略不替代本项目的真实 native 和 durable Cut 契约。

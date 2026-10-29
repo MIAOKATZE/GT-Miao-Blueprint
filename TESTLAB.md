@@ -271,3 +271,11 @@ packet attribution or TPS. Full server tick-stall observations and matching clie
 belong to the separate native probe receipts. Fair version comparison requires the same fixture inputs,
 input digest, assertions, heap limits, mod environment and actor mode. Each absent runtime receipt remains
 **PENDING**. Source implementation and this document do not certify that a new composite run passed.
+
+## Backend architecture continuation gates (2026-10-29)
+
+New main-suite entries cover capture continuation ownership, synthetic server declaration scope, saved member orientation and shared declaration candidate reconciliation. Local-author entries cover bounded native preparation and capture-request ownership; existing author, persistence, transport, attachment, Cut and area suites contain additional exact-value/nullable-source, stale-origin, credit/ownership, respawn and cancellation regressions.
+
+Native preparation CPU fixtures prove iteration, finite cycles/limits, exact owner cleanup, waiting/failure distinction and pure material-selection seams. They do not prove actual GL output. The existing registered-AE preview fixture now includes connected cable DATA/topology preparation, but requires genuine AE registration and remains an external/native gate when the headless harness lacks it. The old 2048 cyclic neighbor-loading fixture retains boundedness/isolation assertions and now explicitly expects a terminal cyclic LOAD diagnostic, not a silently accepted empty-neighbor model.
+
+External acceptance must bind exact commit/tree, normal JAR hash and runtime configuration. Begin S3 with full source plus independently computed viewport denominators at 3/4/15/30 seconds; 30 seconds is a fail-stop ceiling, not relaxation of the 3–4 second objective. Only continue S4/S5 after the chosen S3 gate. Separately exercise mode2/anchor/protected capture validation, source replacement/cancel/reload, actual connected AE/FMP, complex shapes/UV, structure/member regeneration and large Cut timeout/respawn reconciliation in isolated test saves. Do not use production saves or conflate pure JVM, static GUI ABI and native gameplay results.
