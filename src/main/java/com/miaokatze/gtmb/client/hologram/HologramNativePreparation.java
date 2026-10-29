@@ -174,6 +174,18 @@ final class HologramNativePreparation<T> {
         while (!frames.isEmpty()) backend.fail(frames.removeLast().value, reason);
     }
 
+    /** Publication invalidates the whole dependent lane, but leaves this owner open for later roots. */
+    boolean cancelIf(java.util.function.Predicate<T> invalid) {
+        if (closed || callback) return false;
+        boolean cancel = false;
+        for (Frame<T> frame : frames) if (invalid.test(frame.value)) {
+            cancel = true;
+            break;
+        }
+        if (cancel) while (!frames.isEmpty()) backend.discard(frames.removeLast().value);
+        return cancel;
+    }
+
     void close() {
         closed = true;
         while (!frames.isEmpty()) backend.discard(frames.removeLast().value);

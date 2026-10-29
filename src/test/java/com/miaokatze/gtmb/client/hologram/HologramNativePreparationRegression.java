@@ -27,6 +27,7 @@ public final class HologramNativePreparationRegression {
     public static void run() {
         try {
             scheduler();
+            authorAccessContinuation();
             nativeReads();
             pendingAndFailure();
             authorBudgetRecovery();
@@ -133,6 +134,321 @@ public final class HologramNativePreparationRegression {
         lane.advance(budget(32));
         SimpleAssert.eq(attempts, graph.attempts, "closed generation executes no stale continuation");
         SimpleAssert.eq(0, lane.depth(), "close drops pending frames");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void authorAccessContinuation() throws ReflectiveOperationException {
+        com.google.gson.JsonObject source = new com.google.gson.JsonObject();
+        source.addProperty("schema", 2);
+        com.google.gson.JsonArray rows = new com.google.gson.JsonArray();
+        int[] positions = { 0, 16, 48, 64, 80, 96 };
+        for (int x : positions) {
+            com.google.gson.JsonObject row = new com.google.gson.JsonObject();
+            row.addProperty("x", x);
+            row.addProperty("y", 0);
+            row.addProperty("z", 0);
+            row.addProperty("block", "minecraft:stone");
+            rows.add(row);
+        }
+        source.add("cells", rows);
+        com.miaokatze.gtmb.blueprint.editor.AuthorDocument document;
+        try {
+            document = com.miaokatze.gtmb.blueprint.editor.AuthorDocumentIO
+                .readExpanded(source, com.miaokatze.gtmb.blueprint.editor.AuthorDocumentIO.Limits.defaults());
+        } catch (java.io.IOException failure) {
+            throw new AssertionError(failure);
+        }
+        try (Fixture fixture = new Fixture();
+            HologramAuthorProjection projection = new HologramAuthorProjection(document)) {
+            java.lang.reflect.Method publish = HologramAuthorProjection.class
+                .getDeclaredMethod("publish", NBTTagCompound.class, Map.class, boolean.class);
+            publish.setAccessible(true);
+            Map<Integer, HologramState.Cell> replacements = new java.util.LinkedHashMap<>();
+            for (int i = 0; i < positions.length; i++) replacements.put(
+                i,
+                appearance(
+                    projection.view().cells.get(i),
+                    i == 0 ? 31 : 47,
+                    i == 1 ? 0 : i == 2 ? 16 : i == 3 ? 80 : -1));
+            publish.invoke(projection, projection.view().data, replacements, true);
+            HologramState first = projection.view();
+            HologramBlockAccess access = isolated(first);
+            HologramBlockAccess actualAccess = isolated(first, true);
+            SimpleAssert
+                .eq(31, ((Probe) access.getTileEntity(48, 0, 0)).value, "transitive reader starts with original C");
+            Probe stable = (Probe) access.getTileEntity(96, 0, 0);
+            actualAccess.prepare(first.cells.get(5), budget(1));
+            Probe stableActual = (Probe) ((Map<?, ?>) field(HologramBlockAccess.class, "tiles").get(actualAccess))
+                .get("96:0:0");
+            SimpleAssert.that(stableActual != null, "actual DATA tile exists before READY stage can run");
+            SimpleAssert.eq(
+                HologramNativePreparation.Outcome.WAITING,
+                actualAccess.outcome(first.cells.get(5)),
+                "actual DATA-only preparation remains pending topology stage");
+            SimpleAssert.that(stableActual != stable, "actual and target own independent detached tiles");
+            Map<HologramRegionCache.Key, Set<HologramRegionCache.Key>> readers = (Map<HologramRegionCache.Key, Set<HologramRegionCache.Key>>) field(
+                HologramAuthorProjection.class,
+                "readers").get(projection);
+            SimpleAssert.that(
+                readers.get(HologramRegionCache.key(first.cells.get(0)))
+                    .contains(HologramRegionCache.key(first.cells.get(1))),
+                "tile callback records B reading C");
+            SimpleAssert.that(
+                readers.get(HologramRegionCache.key(first.cells.get(1)))
+                    .contains(HologramRegionCache.key(first.cells.get(2))),
+                "root records A reading B");
+            access.prepare(first.cells.get(3), budget(1));
+            HologramNativePreparation<HologramState.Cell> lane = (HologramNativePreparation<HologramState.Cell>) field(
+                HologramBlockAccess.class,
+                "preparation").get(access);
+            int depth = lane.depth();
+            SimpleAssert.that(depth > 0, "unrelated native lane is suspended");
+
+            publish.invoke(
+                projection,
+                first.data,
+                Collections.singletonMap(0, appearance(first.cells.get(0), 53, -1)),
+                true);
+            HologramState next = projection.view();
+            Set<HologramRegionCache.Key> dirty = new java.util.HashSet<>();
+            for (int index : new int[] { 0, 1, 2 }) dirty.add(HologramRegionCache.key(first.cells.get(index)));
+            SimpleAssert
+                .that(!access.advance(first, next, Collections.emptySet()), "replaced cell cannot escape invalidation");
+            access.beginModel(first.cells.get(5));
+            SimpleAssert.that(!access.advance(first, next, dirty), "active model scope cannot rebind midway");
+            access.endModel();
+            SimpleAssert.that(access.advance(first, next, dirty), "author appearance retains access owner");
+            SimpleAssert.that(!access.advance(first, next, dirty), "old immutable owner cannot be rebound twice");
+            SimpleAssert.that(
+                actualAccess.advance(first, next, dirty) && actualAccess.owns(next, true),
+                "actual owner independently follows same publication");
+            SimpleAssert.eq(
+                HologramNativePreparation.Outcome.WAITING,
+                actualAccess.outcome(next.cells.get(5)),
+                "retaining DATA does not falsely promote it to READY");
+            SimpleAssert.that(
+                ((Map<?, ?>) field(HologramBlockAccess.class, "tiles").get(actualAccess)).get("96:0:0") == stableActual,
+                "unrelated already-created DATA survives publication");
+            SimpleAssert.that(
+                actualAccess.getTileEntity(96, 0, 0) == stableActual,
+                "actual side retains its own unrelated tile identity");
+            actualAccess.close();
+            SimpleAssert.that(
+                access.owns(next, false) && !access.owns(first, false),
+                "owner rebind rejects old state and wrong side");
+            SimpleAssert.that(!access.owns(next, true), "target access never becomes actual access");
+            SimpleAssert.eq(depth, lane.depth(), "unrelated suspended lane keeps exact frames");
+            SimpleAssert.that(access.getTileEntity(96, 0, 0) == stable, "unrelated READY tile retains identity");
+            SimpleAssert.that(
+                stable.getWorldObj() == field(HologramBlockAccess.class, "renderWorld").get(access),
+                "retained tile keeps detached world referring to rebound access");
+            access.prepare(next.cells.get(3), budget(32));
+            SimpleAssert
+                .eq(53, ((Probe) access.getTileEntity(48, 0, 0)).value, "transitive dirty reader rebuilds with new C");
+
+            // Recreate an active lane, then invalidate its dependency. Cancellation must not close the owner.
+            java.lang.reflect.Method discard = HologramBlockAccess.class
+                .getDeclaredMethod("discard", HologramState.Cell.class);
+            discard.setAccessible(true);
+            discard.invoke(access, next.cells.get(3));
+            discard.invoke(access, next.cells.get(4));
+            access.prepare(next.cells.get(3), budget(1));
+            SimpleAssert.that(lane.active(), "second lane waits on child");
+            publish.invoke(
+                projection,
+                next.data,
+                Collections.singletonMap(4, appearance(next.cells.get(4), 67, -1)),
+                true);
+            HologramState childChanged = projection.view();
+            dirty.clear();
+            dirty.add(HologramRegionCache.key(next.cells.get(3)));
+            dirty.add(HologramRegionCache.key(next.cells.get(4)));
+            SimpleAssert.that(access.advance(next, childChanged, dirty), "dirty lane publication rebinds");
+            SimpleAssert.eq(0, lane.depth(), "dirty child cancels every old lane frame");
+            SimpleAssert.eq(67, ((Probe) access.getTileEntity(64, 0, 0)).value, "cancelled lane can admit fresh root");
+
+            fixture.failureAt = 0;
+            discard.invoke(access, childChanged.cells.get(0));
+            access.prepare(childChanged.cells.get(0), budget(32));
+            SimpleAssert.that(
+                !access.failure(0, 0, 0)
+                    .isEmpty(),
+                "terminal failure is cached before publication");
+            fixture.failureAt = Integer.MIN_VALUE;
+            publish.invoke(
+                projection,
+                childChanged.data,
+                Collections.singletonMap(0, appearance(childChanged.cells.get(0), 71, -1)),
+                true);
+            HologramState recovered = projection.view();
+            dirty.clear();
+            for (int index : new int[] { 0, 1, 2 }) dirty.add(HologramRegionCache.key(childChanged.cells.get(index)));
+            SimpleAssert.that(access.advance(childChanged, recovered, dirty), "failure publication rebinds");
+            SimpleAssert.eq("", access.failure(0, 0, 0), "dirty failure marker is retired");
+            SimpleAssert.eq(71, ((Probe) access.getTileEntity(0, 0, 0)).value, "formerly failed tile is rebuilt");
+
+            publish.invoke(projection, recovered.data, Collections.emptyMap(), true);
+            HologramState empty = projection.view();
+            SimpleAssert.that(
+                access.advance(recovered, empty, Collections.emptySet()),
+                "empty model-only delta retains access");
+            SimpleAssert.that(access.getTileEntity(96, 0, 0) == stable, "empty delta does not flush READY cache");
+            publish.invoke(projection, empty.data, Collections.emptyMap(), false);
+            HologramState metadata = projection.view();
+            SimpleAssert.that(
+                !access.advance(empty, metadata, Collections.emptySet()),
+                "non-model metadata keeps conservative boundary");
+            SimpleAssert.that(access.owns(empty, false), "rejected rebind does not mutate owner");
+            HologramState closedNext = new HologramState(
+                projection,
+                empty.data,
+                empty,
+                empty.cells.size(),
+                Collections.emptyMap());
+            closedNext.modelOnly = true;
+            access.close();
+            SimpleAssert.that(
+                !access.advance(empty, closedNext, Collections.emptySet()),
+                "closed owner rejects otherwise-valid same-owner model-only successor");
+            authorPublicationBridge(projection, publish, fixture);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void authorPublicationBridge(HologramAuthorProjection projection, java.lang.reflect.Method publish,
+        Fixture fixture) throws ReflectiveOperationException {
+        Map<Field, Object> saved = new java.util.LinkedHashMap<>();
+        for (String name : new String[] { "snapshot", "target", "actual", "preparationBudget" }) {
+            Field value = field(HologramBlockRender.class, name);
+            saved.put(value, value.get(null));
+        }
+        for (String name : new String[] { "visibleState", "previewState", "previewPreparation", "worldState",
+            "boundsState", "structureBoundsState", "lastSnapshotDirtyRegions" }) {
+            Field value = field(HologramRenderer.class, name);
+            saved.put(value, value.get(null));
+            if (!value.getType()
+                .isPrimitive()) value.set(null, null);
+        }
+        Map<Object, Object> models = (Map<Object, Object>) field(HologramBlockRender.class, "MODELS").get(null);
+        Map<Object, Object> savedModels = new IdentityHashMap<>(models);
+        Map<HologramState.Cell, Integer> deferred = (Map<HologramState.Cell, Integer>) field(
+            HologramBlockRender.class,
+            "DEFERRED").get(null);
+        Map<HologramState.Cell, Integer> savedDeferred = new IdentityHashMap<>(deferred);
+        Map<Object, Object> regions = (Map<Object, Object>) field(HologramRenderer.class, "previewRegions").get(null);
+        Map<Object, Object> savedRegions = new java.util.LinkedHashMap<>(regions);
+        Map<Object, Object> failures = (Map<Object, Object>) field(HologramBlockRender.class, "FAILURES").get(null);
+        Map<Object, Object> savedFailures = new java.util.HashMap<>(failures);
+        Set<String> warnings = (Set<String>) field(HologramBlockRender.class, "WARNED_FAILURES").get(null);
+        Set<String> savedWarnings = new java.util.HashSet<>(warnings);
+        try {
+            models.clear();
+            deferred.clear();
+            regions.clear();
+            HologramState before = projection.view();
+            HologramBlockAccess target = isolated(before), actual = isolated(before, true);
+            field(HologramBlockRender.class, "snapshot").set(null, before);
+            field(HologramBlockRender.class, "target").set(null, target);
+            field(HologramBlockRender.class, "actual").set(null, actual);
+            field(HologramRenderer.class, "visibleState").set(null, before);
+            Probe original = (Probe) target.getTileEntity(48, 0, 0);
+            Probe retained = (Probe) target.getTileEntity(96, 0, 0);
+            publish.invoke(
+                projection,
+                before.data,
+                Collections.singletonMap(0, appearance(before.cells.get(0), 83, -1)),
+                true);
+            HologramState after = projection.view();
+            SimpleAssert.that(
+                field(HologramBlockRender.class, "target").get(null) == target
+                    && field(HologramBlockRender.class, "actual").get(null) == actual,
+                "real active publication bridge retains both access objects");
+            SimpleAssert
+                .that(target.owns(after, false) && actual.owns(after, true), "bridge advances exact side owners");
+            Probe rebuilt = (Probe) target.getTileEntity(48, 0, 0);
+            SimpleAssert.that(
+                rebuilt != original && rebuilt.value == 83,
+                "production dependency closure retires distant A through B to changed C");
+            SimpleAssert.that(target.getTileEntity(96, 0, 0) == retained, "bridge preserves unrelated READY tile");
+
+            // Renderer-discovered work has a root outside its lane frames. Root-only dirtiness must cancel it.
+            java.lang.reflect.Method discard = HologramBlockAccess.class
+                .getDeclaredMethod("discard", HologramState.Cell.class);
+            discard.setAccessible(true);
+            discard.invoke(target, after.cells.get(3));
+            discard.invoke(target, after.cells.get(4));
+            target.beginModel(after.cells.get(5), true);
+            target.getTileEntity(64, 0, 0);
+            target.endModel();
+            HologramNativePreparation<HologramState.Cell> lane = (HologramNativePreparation<HologramState.Cell>) field(
+                HologramBlockAccess.class,
+                "preparation").get(target);
+            SimpleAssert.that(lane.active(), "renderer-discovered child owns active lane");
+            publish.invoke(
+                projection,
+                after.data,
+                Collections.singletonMap(5, appearance(after.cells.get(5), 89, -1)),
+                true);
+            HologramState rootChanged = projection.view();
+            SimpleAssert.eq(0, lane.depth(), "dirty model root cancels lane even when all frames are outside dirty");
+            SimpleAssert.that(target.owns(rootChanged, false), "root-only cancellation keeps native owner open");
+
+            // Drive exact retry transition through terminal preparation without allocating a GL list.
+            deferred.clear();
+            fixture.failureAt = 0;
+            discard.invoke(target, rootChanged.cells.get(0));
+            HologramBlockRender.defer(rootChanged.cells.get(0), false);
+            field(HologramBlockRender.class, "preparationBudget").set(null, budget(32));
+            Set<HologramState.Cell> resolved = HologramBlockRender.retryDeferredCells(rootChanged);
+            SimpleAssert.that(
+                resolved.size() == 1 && resolved.contains(rootChanged.cells.get(0)),
+                "retry bridge returns only exact resolved consumer, including terminal failure");
+            SimpleAssert.that(
+                !HologramBlockRender.deferred(rootChanged.cells.get(0), false),
+                "terminal preparation clears only its stored wait");
+            fixture.failureAt = Integer.MIN_VALUE;
+
+            publish.invoke(projection, rootChanged.data, Collections.emptyMap(), false);
+            HologramState metadata = projection.view();
+            SimpleAssert.that(
+                field(HologramBlockRender.class, "target").get(null) != target
+                    && field(HologramBlockRender.class, "actual").get(null) != actual,
+                "non-model metadata bridge takes conservative full-access fallback");
+            SimpleAssert.eq(
+                HologramNativePreparation.Outcome.FAILED,
+                target.outcome(rootChanged.cells.get(5)),
+                "fallback closes old access instead of leaving live stale owner");
+            SimpleAssert.that(
+                ((HologramBlockAccess) field(HologramBlockRender.class, "target").get(null)).owns(metadata, false),
+                "fallback installs correct new owner");
+        } finally {
+            fixture.failureAt = Integer.MIN_VALUE;
+            for (String name : new String[] { "target", "actual" }) {
+                Field value = field(HologramBlockRender.class, name);
+                HologramBlockAccess access = (HologramBlockAccess) value.get(null);
+                if (access != null && access != saved.get(value)) access.close();
+            }
+            models.clear();
+            models.putAll(savedModels);
+            deferred.clear();
+            deferred.putAll(savedDeferred);
+            regions.clear();
+            regions.putAll(savedRegions);
+            failures.clear();
+            failures.putAll(savedFailures);
+            warnings.clear();
+            warnings.addAll(savedWarnings);
+            for (Map.Entry<Field, Object> entry : saved.entrySet()) entry.getKey()
+                .set(null, entry.getValue());
+        }
+    }
+
+    private static HologramState.Cell appearance(HologramState.Cell cell, int value, int dependency) {
+        NBTTagCompound tag = cell.tag(), appearance = row(cell.x, value, dependency, false);
+        tag.setTag("targetDisplay", appearance.getTag("targetDisplay"));
+        tag.setTag("actualDisplay", appearance.getTag("actualDisplay"));
+        tag.setInteger("nativeModelPending", 0);
+        return HologramState.Cell.takeOwnedLocalRow(cell.index, tag);
     }
 
     private static Node[] nodes(int count) {
@@ -808,7 +1124,12 @@ public final class HologramNativePreparationRegression {
     }
 
     private static HologramBlockAccess isolated(HologramState state) throws ReflectiveOperationException {
-        HologramBlockAccess access = new HologramBlockAccess(state);
+        return isolated(state, false);
+    }
+
+    private static HologramBlockAccess isolated(HologramState state, boolean current)
+        throws ReflectiveOperationException {
+        HologramBlockAccess access = new HologramBlockAccess(state, current);
         sun.misc.Unsafe unsafe = (sun.misc.Unsafe) field(sun.misc.Unsafe.class, "theUnsafe").get(null);
         HologramRenderWorld world;
         try {

@@ -92,11 +92,16 @@ final class HologramBlockRender {
             }
         }
         snapshot = next;
-        // The spatial index is shared; constructing these views does not walk all cells.
-        if (target != null) target.close();
-        if (actual != null) actual.close();
-        target = new HologramBlockAccess(next, false);
-        actual = new HologramBlockAccess(next, true);
+        // Author appearance publications keep unrelated DATA/READY objects and dependency continuations.
+        // Source/network/topology changes retain the original whole-access retirement boundary.
+        if (target == null || !target.advance(previous, next, dirty)) {
+            if (target != null) target.close();
+            target = new HologramBlockAccess(next, false);
+        }
+        if (actual == null || !actual.advance(previous, next, dirty)) {
+            if (actual != null) actual.close();
+            actual = new HologramBlockAccess(next, true);
+        }
     }
 
     static String failure(HologramState.Cell cell, boolean current) {
@@ -126,6 +131,13 @@ final class HologramBlockRender {
     /** The existing deferred map is also the fair retry order; this is not a second preparation queue. */
     static Set<HologramRegionCache.Key> retryDeferred(HologramState state) {
         Set<HologramRegionCache.Key> changed = new HashSet<>();
+        for (HologramState.Cell cell : retryDeferredCells(state)) changed.add(HologramRegionCache.key(cell));
+        return changed;
+    }
+
+    /** Return the consumers that actually resolved, not every neighbor sharing their region. */
+    static Set<HologramState.Cell> retryDeferredCells(HologramState state) {
+        Set<HologramState.Cell> changed = java.util.Collections.newSetFromMap(new IdentityHashMap<>());
         if (snapshot != state || preparationBudget == null || !callbacksSafe()) return changed;
         int remaining = Math.min(32, DEFERRED.size());
         while (remaining-- > 0 && preparationBudget.available() && !DEFERRED.isEmpty()) {
@@ -136,7 +148,7 @@ final class HologramBlockRender {
                 if ((mask & bit) == 0 || !preparationBudget.available()) continue;
                 ready(cell, current);
                 // Iterate stored sides explicitly; public queries normalize requested sides for display consumers.
-                if (!deferredSide(cell, current)) changed.add(HologramRegionCache.key(cell));
+                if (!deferredSide(cell, current)) changed.add(cell);
             }
         }
         return changed;

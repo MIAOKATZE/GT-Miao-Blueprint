@@ -14,8 +14,8 @@ import net.minecraftforge.common.util.ForgeDirection;
 /** Isolated, bounded render snapshot. Never exposes a live world or a live tile entity to renderers. */
 final class HologramBlockAccess implements IBlockAccess {
 
-    private final HologramRegionCache cells;
-    private final HologramState state;
+    private HologramRegionCache cells;
+    private HologramState state;
     private final boolean current;
     private final Map<String, TileEntity> tiles = new HashMap<>();
     private final Map<String, String> failures = new HashMap<>();
@@ -269,6 +269,36 @@ final class HologramBlockAccess implements IBlockAccess {
 
     boolean owns(HologramState candidate, boolean side) {
         return !closed && state == candidate && current == side;
+    }
+
+    boolean publicationSafe() {
+        return !preparation.inCallback() && modelReader == null && !renderingModel && tileReaders.isEmpty();
+    }
+
+    /** Retain only an author's unchanged native objects; the caller supplies the conservative tile-reader closure. */
+    boolean advance(HologramState previous, HologramState next, java.util.Set<HologramRegionCache.Key> dirty) {
+        if (closed || state != previous
+            || previous.authorProjection == null
+            || previous.authorProjection != next.authorProjection
+            || !next.follows(previous)
+            || !next.modelOnly
+            || next.topologyChanged
+            || next.cells.size() != previous.cells.size()
+            || !publicationSafe()) return false;
+        // Author model-only publication preserves all unchanged Cell identities and spatial coordinates.
+        // Refuse an incomplete invalidation set rather than retaining a replaced payload at its old coordinate.
+        for (int index : next.changedIndices) if (!dirty.contains(HologramRegionCache.key(previous.cells.get(index)))
+            || !dirty.contains(HologramRegionCache.key(next.cells.get(index)))) return false;
+        boolean rootDirty = laneReader != null && dirty.contains(HologramRegionCache.key(laneReader));
+        if (preparation.cancelIf(cell -> rootDirty || dirty.contains(HologramRegionCache.key(cell)))) laneReader = null;
+        for (HologramRegionCache.Key region : dirty) {
+            java.util.List<HologramState.Cell> old = previous.regions.regions.get(region);
+            if (old != null) for (HologramState.Cell cell : old) discard(cell);
+        }
+        // RenderWorld retains this access, not the old immutable state. Retained tiles keep the same detached world.
+        state = next;
+        cells = next.regions;
+        return true;
     }
 
     void close() {
