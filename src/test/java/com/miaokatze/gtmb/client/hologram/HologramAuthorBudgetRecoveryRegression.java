@@ -45,7 +45,7 @@ public final class HologramAuthorBudgetRecoveryRegression {
     private static void hiddenDependencyRecovers(boolean shellBeforeReader, boolean overflow)
         throws IOException, ReflectiveOperationException {
         AuthorEditor editor = editor(3, false);
-        try (HologramAuthorProjection projection = new HologramAuthorProjection(editor.current())) {
+        try (HologramAuthorProjection projection = new HologramAuthorProjection(editor.current(), 32L << 20)) {
             HologramState original = projection.view();
             String[] fields = { "visibleState", "projectedFrame", "visibleLayer", "visibleView", "visibleMode" };
             Object[] saved = new Object[fields.length];
@@ -203,7 +203,7 @@ public final class HologramAuthorBudgetRecoveryRegression {
     @SuppressWarnings("unchecked")
     private static void deniedAdmissionsHonorDeadline() throws IOException, ReflectiveOperationException {
         AuthorEditor editor = editor(600, true);
-        try (HologramAuthorProjection projection = new HologramAuthorProjection(editor.current())) {
+        try (HologramAuthorProjection projection = new HologramAuthorProjection(editor.current(), 32L << 20)) {
             HologramState before = projection.view();
             Map<Long, Long> deferred = (Map<Long, Long>) field(HologramAuthorProjection.class, "budgetDeferred")
                 .get(projection);

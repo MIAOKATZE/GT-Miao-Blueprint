@@ -570,7 +570,7 @@ public final class HologramAuthorRegionFairnessRegression {
             SimpleAssert.eq(8, projectedSlots.size(), "all repaired projection slots remain represented");
             project.invoke(null, ordered, state, "new-camera", 63, false, true, 0L, (LongSupplier) () -> 0);
             SimpleAssert
-                .eq(1, integer(region, "projectedCells"), "a different camera still restarts projection honestly");
+                .eq(8, integer(region, "projectedCells"), "a different camera retains all resolved projection content");
             SimpleAssert.that(
                 !((Collection<?>) field(region.getClass(), "outlines").get(region)).contains(firstOutline),
                 "changed-camera output cannot reuse old projected coordinates");

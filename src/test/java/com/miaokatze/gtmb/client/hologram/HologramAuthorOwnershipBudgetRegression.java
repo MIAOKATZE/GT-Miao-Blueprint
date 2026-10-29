@@ -107,7 +107,7 @@ public final class HologramAuthorOwnershipBudgetRegression {
         item.setString("marker", "original");
         AuthorEditor editor = new AuthorEditor(document(2, payload(tile), payload(item)), 8);
         byte[] original = AuthorDocumentIO.writeDraft(editor.current(), AuthorDocumentIO.Limits.defaults());
-        try (HologramAuthorProjection projection = new HologramAuthorProjection(editor.current())) {
+        try (HologramAuthorProjection projection = new HologramAuthorProjection(editor.current(), 32L << 20)) {
             for (HologramState.Cell cell : projection.view().cells) projection.request(projection.view(), cell);
             projection.advance(() -> 0);
             long sum = 0;
@@ -160,7 +160,7 @@ public final class HologramAuthorOwnershipBudgetRegression {
 
     @SuppressWarnings("unchecked")
     private static void knownCostPrecedesDecode() throws IOException, ReflectiveOperationException {
-        try (HologramAuthorProjection projection = new HologramAuthorProjection(document(1, "not-base64!", ""))) {
+        try (HologramAuthorProjection projection = new HologramAuthorProjection(document(1, "not-base64!", ""), 32L << 20)) {
             Map<Long, Long> deferred = (Map<Long, Long>) field(HologramAuthorProjection.class, "budgetDeferred")
                 .get(projection);
             long id = projection.cellId(0);
@@ -174,7 +174,7 @@ public final class HologramAuthorOwnershipBudgetRegression {
     }
 
     private static void oversizeDoesNotEvictAndRetirementDebitsOnce() throws IOException, ReflectiveOperationException {
-        try (HologramAuthorProjection projection = new HologramAuthorProjection(document(1, "", ""))) {
+        try (HologramAuthorProjection projection = new HologramAuthorProjection(document(1, "", ""), 32L << 20)) {
             loaded(projection).put(999999L, LIMIT / 2);
             loaded(projection).put(999998L, LIMIT / 2);
             Field resident = field(HologramAuthorProjection.class, "resident");
@@ -199,13 +199,13 @@ public final class HologramAuthorOwnershipBudgetRegression {
 
     private static void codecFailurePreservesSource() throws IOException, ReflectiveOperationException {
         NBTTagCompound excessive = new NBTTagCompound();
-        excessive.setByteArray("expanded", new byte[256 * 1024 + 1]);
+        excessive.setByteArray("expanded", new byte[HologramSnapshotCodec.BLUEPRINT_NBT_MAX_EXPANDED + 1]);
         AuthorDocument document = document(1, payload(excessive), "");
         String encoded = document.cells()
             .iterator()
             .next()
             .tileNbt();
-        try (HologramAuthorProjection projection = new HologramAuthorProjection(document)) {
+        try (HologramAuthorProjection projection = new HologramAuthorProjection(document, 32L << 20)) {
             projection.request(projection.view(), projection.view().cells.get(0));
             projection.advance(() -> 0);
             SimpleAssert.eq(
@@ -246,7 +246,7 @@ public final class HologramAuthorOwnershipBudgetRegression {
                     2L * 1024 * 1024),
                 "source depth is accepted by the unchanged codec: " + depth);
             AuthorDocument source = document(1, encoded, encoded);
-            try (HologramAuthorProjection projection = new HologramAuthorProjection(source)) {
+            try (HologramAuthorProjection projection = new HologramAuthorProjection(source, 32L << 20)) {
                 projection.request(projection.view(), projection.view().cells.get(0));
                 projection.advance(() -> 0);
                 HologramState.Cell cell = projection.view().cells.get(0);

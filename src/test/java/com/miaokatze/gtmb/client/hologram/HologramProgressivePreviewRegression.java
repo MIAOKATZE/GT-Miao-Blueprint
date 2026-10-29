@@ -239,9 +239,11 @@ public final class HologramProgressivePreviewRegression {
         SimpleAssert
             .eq("camera", field(regionType, "projectedKey").get(region), "complete projection binds its camera key");
         SimpleAssert.eq(
-            1,
+            0,
             project.invoke(null, region, "new-camera", 0, false, true, Long.MAX_VALUE, 1, available),
-            "camera changes invalidate projected data without losing its source region");
+            "camera changes transform retained content without consuming another appearance unit");
+        SimpleAssert.eq(300, field(regionType, "projectedCells").getInt(region),
+            "camera changes preserve every resolved source slot");
     }
 
     private static void hintBudget() throws ReflectiveOperationException {

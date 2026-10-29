@@ -81,24 +81,30 @@ final class HologramBlockRender {
 
     static void advance(HologramState previous, HologramState next, Set<HologramRegionCache.Key> dirty) {
         if (snapshot != previous) return;
-        for (HologramRegionCache.Key key : dirty) {
-            List<HologramState.Cell> cells = previous.regions.regions.get(key);
-            if (cells == null) continue;
-            for (HologramState.Cell cell : cells) {
-                DEFERRED.remove(cell);
-                Model[] pair = MODELS.remove(cell);
-                if (pair == null) continue;
-                for (Model model : pair) if (model != null && model.list != 0) GL11.glDeleteLists(model.list, 1);
-            }
+        Set<Integer> indices = new HashSet<>();
+        for (HologramRegionCache.Key key : dirty)
+            for (HologramState.Cell cell : previous.regions.regions.getOrDefault(key, java.util.Collections.emptyList()))
+                indices.add(cell.index);
+        advanceCells(previous, next, indices);
+    }
+
+    static void advanceCells(HologramState previous, HologramState next, Set<Integer> dirty) {
+        if (snapshot != previous) return;
+        for (int index : dirty) {
+            if (index < 0 || index >= previous.cells.size()) continue;
+            HologramState.Cell cell = previous.cells.get(index);
+            DEFERRED.remove(cell);
+            Model[] pair = MODELS.remove(cell);
+            if (pair == null) continue;
+            for (Model model : pair) if (model != null && model.list != 0) GL11.glDeleteLists(model.list, 1);
         }
         snapshot = next;
-        // Author appearance publications keep unrelated DATA/READY objects and dependency continuations.
-        // Source/network/topology changes retain the original whole-access retirement boundary.
-        if (target == null || !target.advance(previous, next, dirty)) {
+        // Source/topology publications still fail the access continuation guard and replace the owner.
+        if (target == null || !target.advanceCells(previous, next, dirty)) {
             if (target != null) target.close();
             target = new HologramBlockAccess(next, false);
         }
-        if (actual == null || !actual.advance(previous, next, dirty)) {
+        if (actual == null || !actual.advanceCells(previous, next, dirty)) {
             if (actual != null) actual.close();
             actual = new HologramBlockAccess(next, true);
         }

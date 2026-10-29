@@ -42,7 +42,7 @@ public final class HologramAuthorProjectionSchedulerRegression {
         nativeData.setString("marker", "prepared");
         String payload = java.util.Base64.getEncoder()
             .encodeToString(HologramSnapshotCodec.compress(nativeData));
-        try (HologramAuthorProjection projection = new HologramAuthorProjection(document(13, payload))) {
+        try (HologramAuthorProjection projection = new HologramAuthorProjection(document(13, payload), 32L << 20)) {
             request(projection, 12);
             projection.advance(() -> 0);
             SimpleAssert.eq(12, resolved(projection.view()), "successful preparations also exceed four per tick");
@@ -59,7 +59,7 @@ public final class HologramAuthorProjectionSchedulerRegression {
     }
 
     private static void cheapBatchUsesAvailableTime() throws IOException {
-        try (HologramAuthorProjection projection = new HologramAuthorProjection(document(13))) {
+        try (HologramAuthorProjection projection = new HologramAuthorProjection(document(13), 32L << 20)) {
             HologramState before = projection.view();
             request(projection, 12);
             SimpleAssert.eq(true, projection.advance(() -> 0), "cheap demand publishes in one bounded batch");
@@ -72,7 +72,7 @@ public final class HologramAuthorProjectionSchedulerRegression {
     }
 
     private static void deadlineYieldsWithoutDroppingDemand() throws IOException {
-        try (HologramAuthorProjection projection = new HologramAuthorProjection(document(6))) {
+        try (HologramAuthorProjection projection = new HologramAuthorProjection(document(6), 32L << 20)) {
             request(projection, 6);
             LongSupplier clock = new LongSupplier() {
 
@@ -90,7 +90,7 @@ public final class HologramAuthorProjectionSchedulerRegression {
             projection.advance(() -> 0);
             SimpleAssert.eq(6, resolved(projection.view()), "yielded demand remains available for the next tick");
         }
-        try (HologramAuthorProjection projection = new HologramAuthorProjection(document(2))) {
+        try (HologramAuthorProjection projection = new HologramAuthorProjection(document(2), 32L << 20)) {
             request(projection, 2);
             final long[] reads = { 0 };
             projection.advance(() -> reads[0]++ == 0 ? 0 : 2_000_000L);
@@ -99,7 +99,7 @@ public final class HologramAuthorProjectionSchedulerRegression {
     }
 
     private static void queueRemainsBoundedAndDeduplicated() throws IOException, ReflectiveOperationException {
-        try (HologramAuthorProjection projection = new HologramAuthorProjection(document(600))) {
+        try (HologramAuthorProjection projection = new HologramAuthorProjection(document(600), 32L << 20)) {
             request(projection, 600);
             request(projection, 600);
             SimpleAssert.eq(512, ((Set<?>) field("queued").get(projection)).size(), "existing demand cap is unchanged");
@@ -114,7 +114,7 @@ public final class HologramAuthorProjectionSchedulerRegression {
 
     @SuppressWarnings("unchecked")
     private static void deferredRetriesStayBounded() throws IOException, ReflectiveOperationException {
-        try (HologramAuthorProjection projection = new HologramAuthorProjection(document(9))) {
+        try (HologramAuthorProjection projection = new HologramAuthorProjection(document(9), 32L << 20)) {
             LinkedHashMap<Long, Long> waiting = (LinkedHashMap<Long, Long>) field("budgetDeferred").get(projection);
             for (int i = 0; i < 9; i++) waiting.put(projection.cellId(i), 32L * 1024 * 1024 + 1);
             SimpleAssert.eq(false, projection.advance(() -> 0), "oversized demands do not decode or publish again");
@@ -131,7 +131,7 @@ public final class HologramAuthorProjectionSchedulerRegression {
 
     private static void editsRetireDemandAndOldViewsUseCurrentSource() throws IOException {
         AuthorEditor editor = new AuthorEditor(document(2), 16);
-        try (HologramAuthorProjection projection = new HologramAuthorProjection(editor.current())) {
+        try (HologramAuthorProjection projection = new HologramAuthorProjection(editor.current(), 32L << 20)) {
             HologramState before = projection.view();
             request(projection, 2);
             editor.select(Collections.singleton(projection.cellId(0)));
@@ -159,7 +159,7 @@ public final class HologramAuthorProjectionSchedulerRegression {
     }
 
     private static void ownerAndCloseRemainEnforced() throws IOException, InterruptedException {
-        HologramAuthorProjection projection = new HologramAuthorProjection(document(1));
+        HologramAuthorProjection projection = new HologramAuthorProjection(document(1), 32L << 20);
         AtomicReference<Throwable> result = new AtomicReference<>();
         Thread other = new Thread(() -> {
             try {

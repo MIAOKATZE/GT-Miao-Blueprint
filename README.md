@@ -243,6 +243,7 @@ JSON 与 PNG 使用同一文件名主体，包含蓝图名与完整内容哈希�
 
 - [完整使用指南 / Player guide](https://miaokatze.com/wiki?mod=gtmb)
 - [文字转蓝图 / Text guide](README/text-blueprints.md) · [图片与像素画 / Picture guide](README/picture-blueprints.md)
+- [客户端原生预览内存预算 / Native preview memory budget](README/preview-memory.md)
 - [社区扩展接口 / Public API](API.md) · [默认关闭的开发测试区 / Optional developer test lab](TESTLAB.md)
 - 管理员可用 **`/gtmb restart`** 重置运行任务、会话与传输；已放置方块、回收暂存和剪切记录保留。 / Administrators can reset runtime tasks, sessions and transfers with /gtmb restart; placed blocks, recovery storage and persistent cuts remain.
 

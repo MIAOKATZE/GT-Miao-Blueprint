@@ -36,8 +36,8 @@ import cpw.mods.fml.relauncher.ReflectionHelper;
 /** Bounded binary NBT transport and detached ownership rewriting for shared blueprints. */
 final class HologramBlueprintNbt {
 
-    static final int MAX_COMPRESSED = 8 * 1024 * 1024;
-    static final int MAX_EXPANDED = 8 * 1024 * 1024;
+    static final int MAX_COMPRESSED = HologramSnapshotCodec.BLUEPRINT_NBT_MAX_COMPRESSED;
+    static final int MAX_EXPANDED = HologramSnapshotCodec.BLUEPRINT_NBT_MAX_EXPANDED;
     private static final int MAX_DEPTH = 512;
     static final String ITEM_REGISTRY = "gtitBlueprintItemRegistry";
     static final String MISSING_ITEM = "gtitBlueprintMissingItem";
@@ -530,7 +530,8 @@ final class HologramBlueprintNbt {
             byte[] bytes = Base64.getDecoder()
                 .decode(value);
             if (bytes.length > MAX_COMPRESSED) throw new IOException("蓝图压缩NBT超出上限");
-            NBTTagCompound tag = HologramSnapshotCodec.decode(bytes, MAX_EXPANDED, 16L * 1024 * 1024);
+            NBTTagCompound tag = HologramSnapshotCodec
+                .decode(bytes, MAX_EXPANDED, HologramSnapshotCodec.BLUEPRINT_NBT_MAX_TRACKED_BYTES);
             return tag;
         } catch (RuntimeException invalid) {
             throw new IOException("蓝图NBT编码无效", invalid);

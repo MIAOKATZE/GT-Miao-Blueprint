@@ -277,6 +277,16 @@ final class HologramBlockAccess implements IBlockAccess {
 
     /** Retain only an author's unchanged native objects; the caller supplies the conservative tile-reader closure. */
     boolean advance(HologramState previous, HologramState next, java.util.Set<HologramRegionCache.Key> dirty) {
+        if (closed || state != previous) return false;
+        java.util.Set<Integer> indices = new java.util.HashSet<>();
+        for (HologramRegionCache.Key region : dirty)
+            for (HologramState.Cell cell : previous.regions.regions.getOrDefault(region, java.util.Collections.emptyList()))
+                indices.add(cell.index);
+        return advanceCells(previous, next, indices);
+    }
+
+    /** Exact payload/reader closure; unrelated READY objects and suspended lanes in the same region survive. */
+    boolean advanceCells(HologramState previous, HologramState next, java.util.Set<Integer> dirty) {
         if (closed || state != previous
             || previous.authorProjection == null
             || previous.authorProjection != next.authorProjection
@@ -285,16 +295,10 @@ final class HologramBlockAccess implements IBlockAccess {
             || next.topologyChanged
             || next.cells.size() != previous.cells.size()
             || !publicationSafe()) return false;
-        // Author model-only publication preserves all unchanged Cell identities and spatial coordinates.
-        // Refuse an incomplete invalidation set rather than retaining a replaced payload at its old coordinate.
-        for (int index : next.changedIndices) if (!dirty.contains(HologramRegionCache.key(previous.cells.get(index)))
-            || !dirty.contains(HologramRegionCache.key(next.cells.get(index)))) return false;
-        boolean rootDirty = laneReader != null && dirty.contains(HologramRegionCache.key(laneReader));
-        if (preparation.cancelIf(cell -> rootDirty || dirty.contains(HologramRegionCache.key(cell)))) laneReader = null;
-        for (HologramRegionCache.Key region : dirty) {
-            java.util.List<HologramState.Cell> old = previous.regions.regions.get(region);
-            if (old != null) for (HologramState.Cell cell : old) discard(cell);
-        }
+        for (int index : next.changedIndices) if (!dirty.contains(index)) return false;
+        boolean rootDirty = laneReader != null && dirty.contains(laneReader.index);
+        if (preparation.cancelIf(cell -> rootDirty || dirty.contains(cell.index))) laneReader = null;
+        for (int index : dirty) if (index >= 0 && index < previous.cells.size()) discard(previous.cells.get(index));
         // RenderWorld retains this access, not the old immutable state. Retained tiles keep the same detached world.
         state = next;
         cells = next.regions;

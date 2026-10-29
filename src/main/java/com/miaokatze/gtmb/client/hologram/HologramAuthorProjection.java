@@ -25,6 +25,7 @@ import com.google.gson.JsonObject;
 import com.miaokatze.gtmb.blueprint.editor.AuthorDocument;
 import com.miaokatze.gtmb.blueprint.editor.AuthorEditor;
 import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
+import com.miaokatze.gtmb.hologram.HologramProcessGovernor;
 
 /**
  * Disposable, one-way document render owner. Source records are never reconstructed from this view.
@@ -34,7 +35,7 @@ import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
 final class HologramAuthorProjection implements AutoCloseable {
 
     private static final int MAX_QUEUED = 512, MAX_DEPENDENCIES = 65536;
-    private static final long MAX_RESIDENT = 32L * 1024 * 1024;
+    private final long maxResident;
     private final Thread owner = Thread.currentThread();
     private AuthorDocument document, metadataDocument;
     private HologramState view;
@@ -43,13 +44,29 @@ final class HologramAuthorProjection implements AutoCloseable {
     private final Set<Long> queued = new LinkedHashSet<>();
     private final LinkedHashMap<Long, Long> loaded = new LinkedHashMap<>(16, .75f, true);
     private final LinkedHashMap<Long, Long> budgetDeferred = new LinkedHashMap<>();
+    // Transient source-tree working requirements are not final owned-row resident charges.
+    private final Map<Long, Long> decodeDeferred = new HashMap<>();
+    // Conservative retention decisions, bounded by resident IDs; invalidated by camera/source/dependency changes.
+    private final Map<Long, Long> budgetPins = new HashMap<>();
+    private long pinnedResident, budgetAdmissionChecks, budgetCapacityDenials, nativeDecodePasses;
     private final Map<HologramRegionCache.Key, Set<HologramRegionCache.Key>> readers = new HashMap<>();
+    // Absolute input coordinates -> stable author cell IDs; region edges remain the source-edit fallback.
+    private final Map<HologramRegionCache.Key, Set<Long>> exactReaders = new HashMap<>();
+    private final Set<HologramRegionCache.Key> coarseDependencyInputs = new HashSet<>();
+    private int exactDependencyCount;
     private final Map<HologramRegionCache.Key, Set<HologramRegionCache.Key>> blockReaders = new HashMap<>();
     private long resident;
     private int dependencyCount, blockDependencyCount;
     private boolean dependencyOverflow, blockDependencyOverflow, closed;
 
     HologramAuthorProjection(AuthorDocument document) {
+        this(document, HologramAuthorNativeBudget.configuredBytes());
+    }
+
+    /** Exact policy seam for deterministic admission tests, independent of the test JVM's heap size. */
+    HologramAuthorProjection(AuthorDocument document, long residentLimit) {
+        if (residentLimit <= 0) throw new IllegalArgumentException("positive native resident limit required");
+        maxResident = residentLimit;
         this.document = document;
         Map<Integer, HologramState.Cell> initial = new LinkedHashMap<>();
         for (AuthorDocument.Cell cell : document.cells()) {
@@ -131,7 +148,8 @@ final class HologramAuthorProjection implements AutoCloseable {
             "mainExplicit", "channels", "noHatches", "facing", "blueprintProcessingRequired",
             "blueprintProcessingComplete", "materialChoices", "materialCataloguePending", "materialCatalogueStatus",
             "materialMain", "materialContainers", "materialMe", "materialPriority", "networkBindings", "mode", "scope",
-            "layer", "hatchFacings", "candidateRoles", "candidateTiers" }) {
+            "layer", "hatchFacings", "candidateRoles", "candidateTiers", "presets", "blueprintSource", "openPurpose",
+            "processingReady" }) {
             if (changes.hasKey(key) && !java.util.Objects.equals(view.data.getTag(key), changes.getTag(key))) {
                 data.setTag(
                     key,
@@ -152,7 +170,8 @@ final class HologramAuthorProjection implements AutoCloseable {
             // A visible reader can need a hidden-layer neighbor even when the bounded dependency graph
             // overflowed. Renew demand in the existing queue; advance must admit its known cost before decoding.
             Long need = budgetDeferred.get(cell.nativeModelId);
-            if (need != null && need <= MAX_RESIDENT && queued.size() < MAX_QUEUED) queued.add(cell.nativeModelId);
+            if (need != null && !capacityBlocked(need) && !decodeOversize(cell.nativeModelId)
+                && queued.size() < MAX_QUEUED) queued.add(cell.nativeModelId);
             return;
         }
         if (!latest.modelPending(false) && !latest.modelPending(true)) {
@@ -183,7 +202,8 @@ final class HologramAuthorProjection implements AutoCloseable {
             waiting.remove();
             int slot = index(id);
             if (slot < 0) continue;
-            if (retainedVisible(view.cells.get(slot)) && queued.size() < MAX_QUEUED && makeRoom(need, replacements))
+            if (!capacityBlocked(need) && !decodeOversize(id) && retainedVisible(view.cells.get(slot)) && queued.size() < MAX_QUEUED
+                && makeRoom(need, replacements))
                 queued.add(id);
             // Keep the cost until queued execution: earlier items may consume the capacity just checked.
             budgetDeferred.put(id, need);
@@ -199,51 +219,65 @@ final class HologramAuthorProjection implements AutoCloseable {
             work++; // Failed known-cost admissions consume the deadline too; they must not spin with work == 0.
             int index = index(id);
             if (index < 0) continue;
-            Long knownNeed = budgetDeferred.get(id);
-            if (knownNeed != null) {
-                if (!makeRoom(knownNeed, replacements)) continue;
-                budgetDeferred.remove(id);
-            }
-            AuthorDocument.Cell source = document.cell(id);
-            HologramState.Cell cold = new HologramState.Cell(index, source);
-            NBTTagCompound row = cold.tag();
-            long charge;
-            HologramState.Cell prepared;
-            try {
-                row.setInteger("targetFacing", source.facing());
-                row.setString("prompt", source.prompt() == null ? "" : source.prompt());
-                row.setString("previewItem", source.item() == null ? "" : source.item());
-                row.setInteger("previewDamage", source.damage());
-                NBTTagCompound tile = decode(source.tileNbt()), item = decode(source.itemNbt());
-                if (tile != null) row.setTag("previewTile", tile);
-                if (item != null) row.setTag("previewItemTag", item);
-                HologramBlueprintPreview.completeCell(row);
-                row.setTag("actualDisplay", row.getCompoundTag("targetDisplay"));
-                if (row.hasKey("targetStack")) row.setTag("actualStack", row.getTag("targetStack"));
-                charge = residentCharge(row);
-                if (!makeRoom(charge, replacements)) {
-                    budgetDeferred.put(id, charge);
-                    throw new NativeBudget();
+            try (DecodeBudget decoding = new DecodeBudget()) {
+                Long knownDecode = decodeDeferred.get(id);
+                if (knownDecode != null && !decoding.reserve(knownDecode)) {
+                    continue; // Retry shared transient admission without decompressing or publishing again.
                 }
-                row.setInteger("nativeModelPending", 0);
-                prepared = HologramState.Cell.takeOwnedLocalRow(index, row);
-            } catch (IOException | RuntimeException failure) {
-                // An unsupported native preview is explicit terminal shell, never a source/document error.
-                row = cold.tag();
-                row.setString("sourceWarning", "Native preview unavailable: " + failure.getMessage());
-                row.setString("renderKind", failure instanceof NativeBudget ? "localBudget" : "localFallback");
-                row.setString("status", "unsupported");
-                charge = 0;
-                row.setInteger("nativeModelPending", 0);
-                prepared = HologramState.Cell.takeOwnedLocalRow(index, row);
+                Long knownNeed = budgetDeferred.get(id);
+                if (knownNeed != null) {
+                    if (!makeRoom(knownNeed, replacements)) {
+                        continue;
+                    }
+                    budgetDeferred.remove(id);
+                }
+                AuthorDocument.Cell source = document.cell(id);
+                HologramState.Cell cold = new HologramState.Cell(index, source);
+                NBTTagCompound row = cold.tag();
+                long charge;
+                HologramState.Cell prepared;
+                try {
+                    row.setInteger("targetFacing", source.facing());
+                    row.setString("prompt", source.prompt() == null ? "" : source.prompt());
+                    row.setString("previewItem", source.item() == null ? "" : source.item());
+                    row.setInteger("previewDamage", source.damage());
+                    NBTTagCompound tile = decode(source.tileNbt(), decoding), item = decode(source.itemNbt(), decoding);
+                    if (tile != null) row.setTag("previewTile", tile);
+                    if (item != null) row.setTag("previewItemTag", item);
+                    HologramBlueprintPreview.completeCell(row);
+                    row.setTag("actualDisplay", row.getCompoundTag("targetDisplay"));
+                    if (row.hasKey("targetStack")) row.setTag("actualStack", row.getTag("targetStack"));
+                    charge = residentCharge(row);
+                    decodeDeferred.remove(id);
+                    if (!makeRoom(charge, replacements)) {
+                        budgetDeferred.put(id, charge);
+                        throw new NativeBudget();
+                    }
+                    row.setInteger("nativeModelPending", 0);
+                    prepared = HologramState.Cell.takeOwnedLocalRow(index, row);
+                } catch (IOException | RuntimeException failure) {
+                    if (failure instanceof HologramSnapshotCodec.BusyException) {
+                        decodeDeferred.put(id, decoding.required);
+                        budgetDeferred.put(id, 0L); // Resident charge remains unknown; do not confuse the two ledgers.
+                    } else if (!(failure instanceof NativeBudget)) decodeDeferred.remove(id);
+                    // An unsupported native preview is explicit terminal shell, never a source/document error.
+                    row = cold.tag();
+                    row.setString("sourceWarning", "Native preview unavailable: " + failure.getMessage());
+                    row.setString("renderKind", failure instanceof NativeBudget
+                        || failure instanceof HologramSnapshotCodec.BusyException ? "localBudget" : "localFallback");
+                    row.setString("status", "unsupported");
+                    charge = 0;
+                    row.setInteger("nativeModelPending", 0);
+                    prepared = HologramState.Cell.takeOwnedLocalRow(index, row);
+                }
+                // Unsupported data is terminal for this revision; resident pressure remains a resumable budget shell.
+                if (!"localFallback".equals(row.getString("renderKind"))
+                    && !"localBudget".equals(row.getString("renderKind"))) {
+                    Long old = loaded.put(id, charge);
+                    resident += charge - (old == null ? 0 : old);
+                }
+                replacements.put(index, prepared);
             }
-            // Unsupported data is terminal for this revision; resident pressure remains a resumable budget shell.
-            if (!"localFallback".equals(row.getString("renderKind"))
-                && !"localBudget".equals(row.getString("renderKind"))) {
-                Long old = loaded.put(id, charge);
-                resident += charge - (old == null ? 0 : old);
-            }
-            replacements.put(index, prepared);
         }
         if (replacements.isEmpty()) return false;
         publish(view.data, replacements, true);
@@ -321,15 +355,20 @@ final class HologramAuthorProjection implements AutoCloseable {
 
     /** Evict only offscreen native data, with bounded traversal; visible details never thrash each other. */
     private boolean makeRoom(long need, Map<Integer, HologramState.Cell> replacements) {
-        if (need < 0 || need > MAX_RESIDENT) return false;
+        if (capacityBlocked(need)) {
+            budgetCapacityDenials++;
+            return false;
+        }
         int checks = Math.min(32, loaded.size());
-        for (int check = 0; resident + need > MAX_RESIDENT && check < checks; check++) {
+        for (int check = 0; resident + need > maxResident && check < checks; check++) {
             Iterator<Map.Entry<Long, Long>> entries = loaded.entrySet()
                 .iterator();
             Map.Entry<Long, Long> entry = entries.next();
             long id = entry.getKey(), charge = entry.getValue();
             int slot = index(id);
-            if (slot >= 0 && retainedVisible(view.cells.get(slot))) {
+            budgetAdmissionChecks++;
+            if (budgetPins.containsKey(id) || slot >= 0 && retainedVisible(view.cells.get(slot))) {
+                if (budgetPins.putIfAbsent(id, charge) == null) pinnedResident += charge;
                 loaded.get(id); // Advance the bounded eviction cursor without invalidating a visible native model.
             } else {
                 entries.remove();
@@ -337,7 +376,64 @@ final class HologramAuthorProjection implements AutoCloseable {
                 if (slot >= 0) replacements.put(slot, new HologramState.Cell(slot, document.cell(id)));
             }
         }
-        return resident + need <= MAX_RESIDENT;
+        return resident + need <= maxResident;
+    }
+
+    private boolean capacityBlocked(long need) {
+        return need < 0 || need > maxResident || pinnedResident > maxResident - need;
+    }
+
+    private boolean decodeOversize(long id) {
+        Long need = decodeDeferred.get(id);
+        return need != null && need > maxResident;
+    }
+
+    /** Short-lived Core reservations cover both decoded input trees until row ownership has been constructed. */
+    private final class DecodeBudget implements AutoCloseable {
+
+        private final List<HologramProcessGovernor.Lease> leases = new ArrayList<>(2);
+        private long reserved, required;
+
+        boolean reserve(long bytes) {
+            if (bytes > maxResident) return false;
+            if (bytes <= reserved) return true;
+            HologramProcessGovernor.Lease lease = HologramProcessGovernor.tryRetain("author.nativeDecode", bytes - reserved);
+            if (lease == null) return false;
+            leases.add(lease);
+            reserved = bytes;
+            return true;
+        }
+
+        boolean admit(long bytes) {
+            required += bytes;
+            return reserve(required);
+        }
+
+        public void close() {
+            for (HologramProcessGovernor.Lease lease : leases) lease.close();
+            leases.clear();
+        }
+    }
+
+    /** A real eligibility change wakes known-cost demand; model-only publications alone do not. */
+    void budgetVisibilityChanged() {
+        check();
+        budgetPins.clear();
+        pinnedResident = 0;
+    }
+
+    /** Constant-size diagnostics: source payloads and per-cell identities are never exported. */
+    void budgetDiagnostics(NBTTagCompound result) {
+        check();
+        result.setLong("nativeResidentLimit", maxResident);
+        result.setLong("nativeResidentBytes", resident);
+        result.setLong("nativePinnedBytes", pinnedResident);
+        result.setInteger("nativeBudgetDeferred", budgetDeferred.size());
+        result.setInteger("nativeDecodeBudgetDeferred", decodeDeferred.size());
+        result.setInteger("nativeQueued", queued.size());
+        result.setLong("nativeBudgetAdmissionChecks", budgetAdmissionChecks);
+        result.setLong("nativeBudgetCapacityDenials", budgetCapacityDenials);
+        result.setLong("nativeDecodePasses", nativeDecodePasses);
     }
 
     private boolean retainedVisible(HologramState.Cell cell) {
@@ -345,18 +441,46 @@ final class HologramAuthorProjection implements AutoCloseable {
         // Unknown dependencies must invalidate native output, not permanently pin every decoded payload.
         // Any eviction while overflowed is published with whole-owner invalidation before another draw.
         if (dependencyOverflow) return false;
-        int checked = 0;
-        for (HologramRegionCache.Key reader : readers
-            .getOrDefault(HologramRegionCache.key(cell), Collections.emptySet())) {
-            if (++checked > 64) {
-                readers.clear();
-                dependencyCount = 0;
-                dependencyOverflow = true;
-                return false; // Same conservative retirement rule when this bounded query cannot prove eviction safe.
+        int[] checked = { 0 };
+        Set<Long> visited = new HashSet<>();
+        List<HologramRegionCache.Key> frontier = new ArrayList<>();
+        frontier.add(new HologramRegionCache.Key(cell.x, cell.y, cell.z));
+        for (int at = 0; at < frontier.size(); at++) {
+            HologramRegionCache.Key position = frontier.get(at);
+            HologramRegionCache.Key region = new HologramRegionCache.Key(position.x >> 4, position.y >> 4, position.z >> 4);
+            if (coarseDependencyInputs.contains(region) && retainedRegionVisible(region, checked)) return true;
+            for (long reader : exactReaders.getOrDefault(position, Collections.emptySet())) {
+                // Query exhaustion is conservative retention, not loss of sound provenance or a new content epoch.
+                if (++checked[0] > 64) return true;
+                if (!visited.add(reader)) continue;
+                int slot = index(reader);
+                if (slot < 0) continue;
+                HologramState.Cell dependent = view.cells.get(slot);
+                if (HologramRenderer.authorCellVisible(view, dependent)) return true;
+                frontier.add(new HologramRegionCache.Key(dependent.x, dependent.y, dependent.z));
             }
-            if (HologramRenderer.authorRegionVisible(view, reader)) return true;
         }
         return false;
+    }
+
+    private boolean retainedRegionVisible(HologramRegionCache.Key input, int[] checked) {
+        Set<HologramRegionCache.Key> visited = new HashSet<>();
+        List<HologramRegionCache.Key> frontier = new ArrayList<>();
+        frontier.add(input);
+        for (int at = 0; at < frontier.size(); at++) {
+            for (HologramRegionCache.Key reader : readers.getOrDefault(frontier.get(at), Collections.emptySet())) {
+                if (++checked[0] > 64) return true;
+                if (!visited.add(reader)) continue;
+                if (HologramRenderer.authorRegionVisible(view, reader)) return true;
+                frontier.add(reader);
+            }
+        }
+        return false;
+    }
+
+    /** Bounded auxiliary metadata count, not a byte-precise charge against decoded native payload ownership. */
+    private int exactDependencyLimit() {
+        return (int) Math.max(65536L, Math.min(1048576L, maxResident / 128L));
     }
 
     private static final class NativeBudget extends IOException {
@@ -371,12 +495,32 @@ final class HologramAuthorProjection implements AutoCloseable {
         if (reader == null || dependencyOverflow) return;
         HologramRegionCache.Key input = new HologramRegionCache.Key(x >> 4, y >> 4, z >> 4);
         HologramRegionCache.Key output = HologramRegionCache.key(reader);
-        Set<HologramRegionCache.Key> set = readers.computeIfAbsent(input, ignored -> new HashSet<>());
-        if (set.add(output) && ++dependencyCount + blockDependencyCount > MAX_DEPENDENCIES) {
+        boolean regionAdded = readers.computeIfAbsent(input, ignored -> new HashSet<>()).add(output);
+        if (regionAdded && ++dependencyCount + blockDependencyCount > MAX_DEPENDENCIES) {
             readers.clear();
+            exactReaders.clear();
+            coarseDependencyInputs.clear();
+            exactDependencyCount = 0;
             dependencyCount = 0;
             dependencyOverflow = true;
+            budgetVisibilityChanged();
+            return;
         }
+        if (regionAdded) budgetVisibilityChanged();
+        if (coarseDependencyInputs.contains(input)) return;
+        HologramRegionCache.Key coordinate = new HologramRegionCache.Key(x, y, z);
+        Set<Long> exact = exactReaders.get(coordinate);
+        if (exact != null && exact.contains(reader.nativeModelId)) return;
+        if (exactDependencyCount >= exactDependencyLimit()) {
+            // Keep the already-sound coarse graph. Only this input region degrades; no repeated owner resets.
+            coarseDependencyInputs.add(input);
+            budgetVisibilityChanged();
+            return;
+        }
+        if (exact == null) exactReaders.put(coordinate, exact = new HashSet<>());
+        exact.add(reader.nativeModelId);
+        exactDependencyCount++;
+        budgetVisibilityChanged();
     }
 
     /** Known block/meta reads only depend on source facts, not a neighbor's later opaque NBT publication. */
@@ -418,7 +562,7 @@ final class HologramAuthorProjection implements AutoCloseable {
         if (retireUnknownDependencies) {
             dependencies.addAll(previous.regions.regions.keySet());
             dependencies.addAll(view.regions.regions.keySet());
-        } else {
+        } else if (!view.modelOnly) {
             List<HologramRegionCache.Key> frontier = new ArrayList<>(dirty);
             for (int i = 0; i < frontier.size(); i++) {
                 for (HologramRegionCache.Key reader : readers.getOrDefault(frontier.get(i), Collections.emptySet()))
@@ -428,16 +572,48 @@ final class HologramAuthorProjection implements AutoCloseable {
                     if (dependencies.add(reader)) frontier.add(reader);
             }
         }
-        HologramRenderer.authorSnapshotChanged(previous, view, dependencies);
+        Set<Integer> exactDirty = null;
+        if (view.modelOnly) {
+            exactDirty = new HashSet<>();
+            for (int changed : view.changedIndices) exactDirty.add(changed);
+            if (retireUnknownDependencies) {
+                for (int slot = 0; slot < view.cells.size(); slot++) exactDirty.add(slot);
+            } else {
+                List<Integer> frontier = new ArrayList<>(exactDirty);
+                Set<HologramRegionCache.Key> expandedCoarse = new HashSet<>();
+                for (int at = 0; at < frontier.size(); at++) {
+                    HologramState.Cell input = view.cells.get(frontier.get(at));
+                    HologramRegionCache.Key inputRegion = HologramRegionCache.key(input);
+                    if (coarseDependencyInputs.contains(inputRegion) && expandedCoarse.add(inputRegion)) {
+                        for (HologramRegionCache.Key region : readers.getOrDefault(inputRegion, Collections.emptySet())) {
+                            for (HologramState.Cell reader : view.regions.regions.getOrDefault(region, Collections.emptyList()))
+                                if (exactDirty.add(reader.index)) frontier.add(reader.index);
+                        }
+                    }
+                    for (long reader : exactReaders.getOrDefault(
+                        new HologramRegionCache.Key(input.x, input.y, input.z), Collections.emptySet())) {
+                        int slot = index(reader);
+                        if (slot >= 0 && exactDirty.add(slot)) frontier.add(slot);
+                    }
+                }
+            }
+            // Group/list consumers still retire by region, but only regions of the exact reader closure.
+            for (int slot : exactDirty) dependencies.add(HologramRegionCache.key(view.cells.get(slot)));
+        }
+        HologramRenderer.authorSnapshotChanged(previous, view, dependencies, exactDirty);
         if (retireUnknownDependencies) {
             // All old native readers were retired (or this document is inactive). Rebuild the bounded graph
             // from subsequent native draws; resetting before renderer retirement would allow stale meshes.
             readers.clear();
+            exactReaders.clear();
+            coarseDependencyInputs.clear();
+            exactDependencyCount = 0;
             dependencyCount = 0;
             dependencyOverflow = false;
             blockReaders.clear();
             blockDependencyCount = 0;
             blockDependencyOverflow = false;
+            budgetVisibilityChanged();
         }
     }
 
@@ -542,8 +718,10 @@ final class HologramAuthorProjection implements AutoCloseable {
     }
 
     private void retire(long id) {
+        budgetVisibilityChanged();
         queued.remove(id);
         budgetDeferred.remove(id);
+        decodeDeferred.remove(id);
         Long charge = loaded.remove(id);
         if (charge != null) resident -= charge;
     }
@@ -560,7 +738,13 @@ final class HologramAuthorProjection implements AutoCloseable {
         queued.clear();
         loaded.clear();
         budgetDeferred.clear();
+        decodeDeferred.clear();
+        budgetPins.clear();
+        pinnedResident = 0;
         readers.clear();
+        exactReaders.clear();
+        coarseDependencyInputs.clear();
+        exactDependencyCount = 0;
         blockReaders.clear();
         slots.clear();
         ids.clear();
@@ -570,14 +754,18 @@ final class HologramAuthorProjection implements AutoCloseable {
         document = metadataDocument = null;
     }
 
-    private static NBTTagCompound decode(String encoded) throws IOException {
+    private NBTTagCompound decode(String encoded, DecodeBudget budget) throws IOException {
         if (encoded == null || encoded.isEmpty()) return null;
-        if (encoded.length() > ((1024 * 1024 + 2) / 3) * 4) throw new IOException("Native preview encoded budget");
+        if (encoded.length() > ((HologramSnapshotCodec.BLUEPRINT_NBT_MAX_COMPRESSED + 2) / 3) * 4)
+            throw new IOException("Native preview encoded budget");
         byte[] bytes = Base64.getDecoder()
             .decode(encoded);
-        if (bytes.length > 1024 * 1024) throw new IOException("Native preview compressed budget");
+        if (bytes.length > HologramSnapshotCodec.BLUEPRINT_NBT_MAX_COMPRESSED)
+            throw new IOException("Native preview compressed budget");
         // The codec enforces expanded bytes, structural depth, and pre-allocation NBT accounting.
-        return HologramSnapshotCodec.decodeBounded(bytes, 256 * 1024, 2L * 1024 * 1024);
+        nativeDecodePasses++;
+        return HologramSnapshotCodec.decodeBounded(bytes, HologramSnapshotCodec.BLUEPRINT_NBT_MAX_EXPANDED,
+            HologramSnapshotCodec.BLUEPRINT_NBT_MAX_TRACKED_BYTES, budget::admit);
     }
 
     private static String string(JsonObject source, String key) {

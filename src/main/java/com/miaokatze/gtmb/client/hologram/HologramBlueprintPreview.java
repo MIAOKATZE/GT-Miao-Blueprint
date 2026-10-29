@@ -807,7 +807,7 @@ public final class HologramBlueprintPreview {
         return value == null || value.isJsonNull() ? "" : value.getAsString();
     }
 
-    private static final class Payloads {
+    static final class Payloads {
 
         private final Map<String, NBTTagCompound> decoded = new HashMap<>();
         private final Map<String, Integer> expanded = new HashMap<>();
@@ -815,22 +815,26 @@ public final class HologramBlueprintPreview {
 
         NBTTagCompound decode(String encoded) throws IOException {
             if (encoded.isEmpty()) return null;
-            if (encoded.length() > ((1024 * 1024 + 2) / 3) * 4)
+            if (encoded.length() > ((HologramSnapshotCodec.BLUEPRINT_NBT_MAX_COMPRESSED + 2) / 3) * 4)
                 throw new IOException("Blueprint preview NBT byte budget");
             if (!decoded.containsKey(encoded)) {
                 byte[] bytes = Base64.getDecoder()
                     .decode(encoded);
-                if (bytes.length > 1024 * 1024) throw new IOException("Blueprint preview NBT byte budget");
+                if (bytes.length > HologramSnapshotCodec.BLUEPRINT_NBT_MAX_COMPRESSED)
+                    throw new IOException("Blueprint preview NBT byte budget");
                 int size = 0;
                 try (GZIPInputStream input = new GZIPInputStream(new ByteArrayInputStream(bytes))) {
                     byte[] chunk = new byte[8192];
                     for (int count; (count = input.read(chunk)) != -1;) {
                         size += count;
-                        if (size > 4 * 1024 * 1024) throw new IOException("Blueprint preview expanded NBT byte budget");
+                        if (size > HologramSnapshotCodec.BLUEPRINT_NBT_MAX_EXPANDED)
+                            throw new IOException("Blueprint preview expanded NBT byte budget");
                     }
                 }
                 expanded.put(encoded, size);
-                decoded.put(encoded, HologramSnapshotCodec.decode(bytes));
+                decoded.put(encoded, HologramSnapshotCodec.decodeBounded(bytes,
+                    HologramSnapshotCodec.BLUEPRINT_NBT_MAX_EXPANDED,
+                    HologramSnapshotCodec.BLUEPRINT_NBT_MAX_TRACKED_BYTES));
             }
             total += expanded.get(encoded);
             if (total > 64L * 1024 * 1024) throw new IOException("Blueprint preview total NBT byte budget");

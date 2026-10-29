@@ -37,7 +37,7 @@ public final class HologramAuthorProjectionRegression {
     private static void coldAndIncremental() throws IOException {
         AuthorDocument document = document(3);
         AuthorEditor editor = new AuthorEditor(document, 16);
-        try (HologramAuthorProjection projection = new HologramAuthorProjection(document)) {
+        try (HologramAuthorProjection projection = new HologramAuthorProjection(document, 32L << 20)) {
             HologramState before = projection.view();
             SimpleAssert.eq(3, before.cells.size(), "cold projection retains all source cells");
             SimpleAssert.eq(
@@ -92,7 +92,7 @@ public final class HologramAuthorProjectionRegression {
         Object saved = active.get(null);
         Map<Object, Object> regions = (Map<Object, Object>) field(HologramRenderer.class, "previewRegions").get(null);
         Map<Object, Object> savedRegions = new java.util.LinkedHashMap<>(regions);
-        try (HologramAuthorProjection projection = new HologramAuthorProjection(editor.current())) {
+        try (HologramAuthorProjection projection = new HologramAuthorProjection(editor.current(), 32L << 20)) {
             regions.clear();
             Class<?> type = Class.forName(HologramRenderer.class.getName() + "$PreviewPreparation");
             java.lang.reflect.Constructor<?> constructor = type.getDeclaredConstructor(HologramState.class);
@@ -150,7 +150,7 @@ public final class HologramAuthorProjectionRegression {
 
     private static void deleteTailAndUndo() throws IOException {
         AuthorEditor editor = new AuthorEditor(document(5), 16);
-        try (HologramAuthorProjection projection = new HologramAuthorProjection(editor.current())) {
+        try (HologramAuthorProjection projection = new HologramAuthorProjection(editor.current(), 32L << 20)) {
             long retained = projection.cellId(2), first = projection.cellId(0), tail = projection.cellId(4);
             HologramState.Cell untouched = projection.view().cells.get(2);
             editor.select(Arrays.asList(first, tail));
@@ -170,7 +170,7 @@ public final class HologramAuthorProjectionRegression {
     }
 
     private static void failedPayloadIsExplicitShell() throws IOException, ReflectiveOperationException {
-        try (HologramAuthorProjection projection = new HologramAuthorProjection(document(3))) {
+        try (HologramAuthorProjection projection = new HologramAuthorProjection(document(3), 32L << 20)) {
             HologramState before = projection.view();
             HologramSnapshotModelsClient.requestVisible(before, before.cells.get(0), false);
             Field queue = HologramAuthorProjection.class.getDeclaredField("queued");
@@ -190,7 +190,7 @@ public final class HologramAuthorProjectionRegression {
     }
 
     private static void metadataCannotImportServerAuthority() throws IOException {
-        try (HologramAuthorProjection projection = new HologramAuthorProjection(document(1))) {
+        try (HologramAuthorProjection projection = new HologramAuthorProjection(document(1), 32L << 20)) {
             NBTTagCompound metadata = new NBTTagCompound();
             metadata.setString("session", "server-session");
             metadata.setLong("planRevision", 9999);
@@ -207,7 +207,7 @@ public final class HologramAuthorProjectionRegression {
 
     @SuppressWarnings("unchecked")
     private static void residentBudgetUsesBytes() throws IOException, ReflectiveOperationException {
-        try (HologramAuthorProjection projection = new HologramAuthorProjection(document(1300))) {
+        try (HologramAuthorProjection projection = new HologramAuthorProjection(document(1300), 32L << 20)) {
             Map<Long, Long> loaded = (Map<Long, Long>) field(HologramAuthorProjection.class, "loaded").get(projection);
             Field resident = field(HologramAuthorProjection.class, "resident");
             for (int i = 0; i < 1254; i++) loaded.put(projection.cellId(i), 8192L);
@@ -248,7 +248,7 @@ public final class HologramAuthorProjectionRegression {
         }
         source.add("cells", cells);
         HologramAuthorProjection projection = new HologramAuthorProjection(
-            AuthorDocumentIO.readExpanded(source, AuthorDocumentIO.Limits.defaults()));
+            AuthorDocumentIO.readExpanded(source, AuthorDocumentIO.Limits.defaults()), 32L << 20);
         Field visible = field(HologramRenderer.class, "visibleState"),
             frame = field(HologramRenderer.class, "projectedFrame"),
             layer = field(HologramRenderer.class, "visibleLayer"), mode = field(HologramRenderer.class, "visibleMode"),

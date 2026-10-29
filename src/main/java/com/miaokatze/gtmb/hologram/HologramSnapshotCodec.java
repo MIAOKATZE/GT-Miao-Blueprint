@@ -20,6 +20,10 @@ import net.minecraft.nbt.NBTTagCompound;
 public final class HologramSnapshotCodec {
 
     private static final int RAW_BYTES = 128 * 1024 * 1024;
+    // Existing blueprint payload envelope, shared by disk/native and disposable client consumers.
+    public static final int BLUEPRINT_NBT_MAX_COMPRESSED = 8 * 1024 * 1024;
+    public static final int BLUEPRINT_NBT_MAX_EXPANDED = 8 * 1024 * 1024;
+    public static final long BLUEPRINT_NBT_MAX_TRACKED_BYTES = 16L * 1024 * 1024;
 
     private HologramSnapshotCodec() {}
 
@@ -79,6 +83,13 @@ public final class HologramSnapshotCodec {
     public static NBTTagCompound decodeBounded(byte[] bytes, int rawLimit, long nbtLimit) throws IOException {
         if (rawLimit < 1 || nbtLimit < 1) throw new IllegalArgumentException("NBT consumer budget");
         return decodeMeasured(bytes, rawLimit, nbtLimit).tag;
+    }
+
+    /** Admission observes the existing safety-pass tree estimate before any NBT tree is allocated. */
+    public static NBTTagCompound decodeBounded(byte[] bytes, int rawLimit, long nbtLimit,
+        java.util.function.LongPredicate admission) throws IOException {
+        if (rawLimit < 1 || nbtLimit < 1 || admission == null) throw new IllegalArgumentException("NBT consumer budget");
+        return decodeMeasured(bytes, rawLimit, nbtLimit, () -> true, false, admission).tag;
     }
 
     static NBTTagCompound decode(byte[] bytes, int rawLimit, long nbtLimit) throws IOException {
@@ -163,9 +174,17 @@ public final class HologramSnapshotCodec {
 
     static Decoded decodeMeasured(byte[] bytes, int rawLimit, long nbtLimit, java.util.function.BooleanSupplier current,
         boolean retained) throws IOException {
+        return decodeMeasured(bytes, rawLimit, nbtLimit, current, retained, null);
+    }
+
+    private static Decoded decodeMeasured(byte[] bytes, int rawLimit, long nbtLimit,
+        java.util.function.BooleanSupplier current, boolean retained, java.util.function.LongPredicate admission)
+        throws IOException {
         Decoded measured = measure(bytes, 0, bytes.length, rawLimit, current);
         int expanded = measured.rawBytes;
         long estimate = measured.retainedEstimate;
+        if (admission != null && !admission.test(estimate))
+            throw new BusyException("Native payload working-memory quota busy", estimate);
         HologramProcessGovernor.Lease lease = retained
             ? HologramProcessGovernor.tryRetain("snapshot.expanded", estimate)
             : null;
