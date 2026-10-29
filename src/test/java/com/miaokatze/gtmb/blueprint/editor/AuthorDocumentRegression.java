@@ -38,6 +38,121 @@ public final class AuthorDocumentRegression {
         largeOpaqueAttachment();
         treeIndex();
         sourceWorldFrame();
+        exactSourceValueComparison();
+    }
+
+    private static void exactSourceValueComparison() throws Exception {
+        AuthorEditor editor = new AuthorEditor(
+            read(
+                "{\"schema\":2,\"nativeBlueprint\":{\"future\":9007199254740992},"
+                    + "\"cells\":[{\"x\":0,\"future\":9007199254740992}]}"),
+            8);
+        JsonObject patch = new JsonParser().parse("{\"nativeBlueprint\":{\"future\":9007199254740993}}")
+            .getAsJsonObject();
+        editor.patchHeader(patch);
+        check(
+            editor.current()
+                .revision() == 1,
+            "adjacent large integer header edit is not a no-op");
+        check(
+            "9007199254740993".equals(
+                editor.current()
+                    .headerCopy()
+                    .getAsJsonObject("nativeBlueprint")
+                    .get("future")
+                    .getAsString()),
+            "large integer header edit is exact");
+        JsonObject row = editor.current()
+            .cell(1)
+            .sourceCopy();
+        row.add("future", new JsonParser().parse("9007199254740993"));
+        editor.replaceCells(Collections.singletonMap(1L, row));
+        check(
+            editor.current()
+                .revision() == 2 && "9007199254740993".equals(
+                    editor.current()
+                        .cell(1)
+                        .sourceCopy()
+                        .get("future")
+                        .getAsString()),
+            "exact selected cell replacement");
+        JsonObject whole = editor.current()
+            .sourceCopy();
+        whole.getAsJsonArray("cells")
+            .get(0)
+            .getAsJsonObject()
+            .add("future", new JsonParser().parse("9007199254740994"));
+        editor.replaceSource(whole);
+        check(
+            editor.current()
+                .revision() == 3,
+            "exact full source replacement");
+        editor.undo();
+        check(
+            "9007199254740993".equals(
+                editor.current()
+                    .cell(1)
+                    .sourceCopy()
+                    .get("future")
+                    .getAsString()),
+            "history retains exact numeric value");
+        editor.redo();
+        AuthorDocument reopened = AuthorDocumentIO.read(
+            AuthorDocumentIO.writeDraft(editor.current(), AuthorDocumentIO.Limits.defaults()),
+            AuthorDocumentIO.Limits.defaults());
+        check(
+            "9007199254740994".equals(
+                reopened.cell(1)
+                    .sourceCopy()
+                    .get("future")
+                    .getAsString()),
+            "saved exact numeric edit reopens");
+
+        AuthorEditor equivalent = new AuthorEditor(read("{\"schema\":2,\"nativeBlueprint\":{\"a\":1,\"b\":[0,2]}}"), 8);
+        equivalent.patchHeader(
+            new JsonParser().parse("{\"nativeBlueprint\":{\"b\":[-0.0,2e0],\"a\":1.00}}")
+                .getAsJsonObject());
+        check(
+            equivalent.current()
+                .revision() == 0,
+            "object order and equivalent decimal notation remain no-ops");
+        equivalent.patchHeader(
+            new JsonParser().parse("{\"nativeBlueprint\":{\"a\":1,\"b\":[2,0]}}")
+                .getAsJsonObject());
+        check(
+            equivalent.current()
+                .revision() == 1,
+            "array order remains significant");
+        for (String[] numbers : new String[][] {
+            { "0.1000000000000000000000000000001", "0.1000000000000000000000000000002" },
+            { "1e2147483647", "2e2147483647" }, { "1e-2147483647", "2e-2147483647" } }) {
+            check(
+                !AuthorJsonValues.equal(new JsonParser().parse(numbers[0]), new JsonParser().parse(numbers[1])),
+                "distinct decimal and extreme exponent values");
+        }
+        check(
+            AuthorJsonValues.equal(
+                new com.google.gson.JsonPrimitive(new java.math.BigInteger("18446744073709551616")),
+                new JsonParser().parse("18446744073709551616")),
+            "numeric representation does not affect equality");
+        check(
+            !AuthorJsonValues.equal(
+                new com.google.gson.JsonPrimitive(new java.math.BigInteger("18446744073709551616")),
+                new com.google.gson.JsonPrimitive(java.math.BigInteger.ZERO)),
+            "large integers never compare by truncated long");
+        check(
+            !AuthorJsonValues.equal(new JsonParser().parse("1e2147483648"), new JsonParser().parse("2e2147483648")),
+            "out-of-domain tokens never collapse to infinity");
+        AuthorEditor wrapped = new AuthorEditor(read("{\"future\":9007199254740992,\"blueprint\":{\"schema\":2}}"), 8);
+        JsonObject changedEnvelope = wrapped.current()
+            .sourceCopy();
+        changedEnvelope.add("future", new JsonParser().parse("9007199254740993"));
+        reject(() -> wrapped.replaceSource(changedEnvelope), "exact immutable envelope guard");
+        reject(() -> wrapped.replaceTransformedSource(0, changedEnvelope), "exact native envelope guard");
+        check(
+            wrapped.current()
+                .revision() == 0,
+            "rejected envelope edits stay atomic");
     }
 
     private static void strictLexicalAdmission() throws Exception {
