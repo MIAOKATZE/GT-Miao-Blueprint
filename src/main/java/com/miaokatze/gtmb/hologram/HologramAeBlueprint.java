@@ -388,14 +388,17 @@ public final class HologramAeBlueprint {
 
     public static boolean supports(Block block, NBTTagCompound payload) {
         if (supports(block)) return true;
-        if (block == null || payload == null
-            || !block.getClass()
-                .getName()
-                .equals("codechicken.multipart.BlockMultipart"))
-            return false;
+        if (payload == null || !payloadCanEnableSupport(block)) return false;
         NBTTagList parts = payload.getTagList("parts", 10);
         for (int i = 0; i < parts.tagCount(); i++) if (isAeMultipartPart(parts.getCompoundTagAt(i))) return true;
         return false;
+    }
+
+    /** The only host whose AE recognition depends on serialized parts rather than its own block identity. */
+    static boolean payloadCanEnableSupport(Block block) {
+        return block != null && block.getClass()
+            .getName()
+            .equals("codechicken.multipart.BlockMultipart");
     }
 
     /** Exact FMP serialized part discriminator; callers must establish the BlockMultipart host first. */

@@ -216,6 +216,7 @@ final class HologramBlueprintProjection {
     static final class Population {
 
         private final HologramSession s;
+        private final HologramBlueprintValidationCache validation;
         private final Map<String, String> sourceClasses = new HashMap<>(), sourceWarnings = new HashMap<>();
         private final Map<String, Integer> controllerIds = new HashMap<>();
         private String fallbackSourceClass, fallbackSourceWarning;
@@ -223,7 +224,12 @@ final class HologramBlueprintProjection {
         private boolean initialized;
 
         Population(HologramSession s) {
+            this(s, new HologramBlueprintValidationCache(s.virtualPreset));
+        }
+
+        Population(HologramSession s, HologramBlueprintValidationCache validation) {
             this.s = s;
+            this.validation = validation;
         }
 
         long completed() {
@@ -299,13 +305,16 @@ final class HologramBlueprintProjection {
             boolean controllerMatches = controllerMatches(saved, savedWarning);
             ItemStack target = saved.missing() || !controllerMatches ? null
                 : HologramEssentia.shellMaterial(saved.stack());
-            if (target != null && (HologramNativePlacement.supported(saved.block())
-                || saved.itemNbt != null && !saved.itemNbt.isEmpty())) {
+            boolean nativeTarget = target != null && HologramNativePlacement.supported(saved.block());
+            if (target != null && (nativeTarget || saved.itemNbt != null && !saved.itemNbt.isEmpty())) {
                 try {
-                    NBTTagCompound payload = HologramBlueprintNbt.decode(saved.itemNbt);
-                    if (HologramNativePlacement.supported(saved.block())
-                        || payload != null && payload.hasKey(HologramRecovery.TAG))
-                        target.setTagCompound(HologramBlueprintNbt.nativePayload(payload));
+                    if (nativeTarget || !validation.knownUnsealedItem(saved.itemNbt)) {
+                        NBTTagCompound payload = HologramBlueprintNbt.decode(saved.itemNbt);
+                        boolean sealed = payload != null && payload.hasKey(HologramRecovery.TAG);
+                        if (HologramNativePlacement.supported(saved.block()) || sealed)
+                            target.setTagCompound(HologramBlueprintNbt.nativePayload(payload));
+                        else if (!nativeTarget) validation.rememberUnsealedItem(saved.itemNbt);
+                    }
                 } catch (java.io.IOException invalid) {
                     target = null;
                 }

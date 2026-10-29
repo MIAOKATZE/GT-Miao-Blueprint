@@ -113,6 +113,12 @@ final class HologramAePolicy {
     /** Frozen fallback identities keep registered native factories/resource callbacks on their documented thread. */
     static Draft sanitizeOwned(HologramPresets.Preset result, Map<String, String> networks,
         Map<String, HologramPresets.Target> nativeShells, PreparationProgress progress) throws IOException {
+        return sanitizeOwned(result, networks, nativeShells, progress, new HologramBlueprintValidationCache(result));
+    }
+
+    static Draft sanitizeOwned(HologramPresets.Preset result, Map<String, String> networks,
+        Map<String, HologramPresets.Target> nativeShells, PreparationProgress progress,
+        HologramBlueprintValidationCache cache) throws IOException {
         result.deidentificationLevel = HologramDeidentification.level(result);
         // Native AE canonicalization and verified quantum binding necessarily rebuild identity.
         int completed = 0;
@@ -164,19 +170,28 @@ final class HologramAePolicy {
         for (HologramPresets.Cell cell : result.cells) {
             progress.update("ae", completed++, result.cells.size());
             Block block = cell.block();
-            NBTTagCompound payload = HologramBlueprintNbt.decode(cell.tileNbt);
-            if (payload != null && payload.hasKey(HologramNetworkBindings.GROUP)) add(
+            boolean ordinary = !HologramAeBlueprint.supports(block)
+                && !HologramAeBlueprint.payloadCanEnableSupport(block);
+            NBTTagCompound payload = ordinary ? null : HologramBlueprintNbt.decode(cell.tileNbt);
+            String group = null;
+            if (ordinary) {
+                // These hosts cannot become AE from payload contents; retain only their exact group descriptor.
+                int number = cache.networkGroup(cell.tileNbt);
+                if (number != 0) group = "q" + number;
+            } else if (payload != null && payload.hasKey(HologramNetworkBindings.GROUP))
+                group = HologramNetworkBindings.group(payload);
+            if (group != null) add(
                 issues,
                 new Issue(
                     "network.quantum_group",
                     "info",
                     "specialHint",
-                    "Quantum network group " + HologramNetworkBindings.group(payload)
+                    "Quantum network group " + group
                         + " requires a real coordinate-bearing node or terminal before placement.",
                     cell.x,
                     cell.y,
                     cell.z));
-            if (!HologramAeBlueprint.supports(block, payload)) continue;
+            if (ordinary || !HologramAeBlueprint.supports(block, payload)) continue;
             ae = true;
             HologramAeBlueprint.Analysis analysis = HologramAeBlueprint.analyze(block, cell.metadata, payload);
             boolean omittedHost = !analysis.supported && analysis.issues.stream()

@@ -49,6 +49,7 @@ public final class HologramAeBlueprintCoreRegression {
             .maybeBlock()
             .get();
         emptyNativeShellCapability(drive);
+        payloadRecognitionBoundary(drive);
         cableBusTargetHost();
         exportBusRuntimeSchema();
         reportingPartVisualSchema();
@@ -83,6 +84,26 @@ public final class HologramAeBlueprintCoreRegression {
         patternRotation();
         physicalSlotDto();
         System.out.println(PREFIX + "PASS " + checks + " assertions; actual native registration/proxy/transport APIs");
+    }
+
+    private static void payloadRecognitionBoundary(Block drive) {
+        Block multipart = registeredBlock("codechicken.multipart.BlockMultipart");
+        NBTTagCompound payload = new NBTTagCompound(), part = new NBTTagCompound();
+        part.setString("id", "ae2_cablebus");
+        NBTTagList parts = new NBTTagList();
+        parts.appendTag(part);
+        payload.setTag("parts", parts);
+        check(
+            HologramAeBlueprint.payloadCanEnableSupport(multipart),
+            "the genuine multipart host retains payload-dependent AE recognition");
+        check(
+            HologramAeBlueprint.supports(multipart, payload),
+            "an AE serialized part still enables the genuine multipart analyzer");
+        check(
+            !HologramAeBlueprint.payloadCanEnableSupport(net.minecraft.init.Blocks.stone)
+                && !HologramAeBlueprint.supports(net.minecraft.init.Blocks.stone, payload),
+            "the same serialized parts do not turn an ordinary host into AE");
+        check(HologramAeBlueprint.supports(drive), "registered AE blocks retain identity-based full analysis");
     }
 
     private static void nativeTileWriterCompatibility() throws Exception {

@@ -299,9 +299,142 @@ public final class HologramResourcePlannerRegression {
         deferredLifecycle(player);
         classifierReuse(player, world);
         constructionPreflight(player, world);
+        populationItemSummaries(player);
         authoringPlan(player, unsafe);
         currentCellPreparation(player);
         aeReadyReaders(player);
+    }
+
+    private static void populationItemSummaries(EntityPlayerMP player) throws Exception {
+        String[] inputs = new String[4];
+        for (int i = 0; i < inputs.length; i++) {
+            NBTTagCompound tag = new NBTTagCompound();
+            tag.setInteger("unknownItemConfiguration", i);
+            inputs[i] = HologramBlueprintNbt.encodeCaptured(tag);
+        }
+        HologramSession original = session(player, 128), optimized = session(player, 128);
+        for (HologramSession s : new HologramSession[] { original, optimized }) {
+            s.virtualPreset.schema = 2;
+            s.virtualPlacement = false;
+            for (int i = 0; i < 128; i++) s.virtualPreset.cells.get(i).itemNbt = inputs[i % 4];
+        }
+        HologramBlueprintValidationCache disabled = new HologramBlueprintValidationCache(original.virtualPreset, 0, 0);
+        HologramBlueprintValidationCache cached = new HologramBlueprintValidationCache(optimized.virtualPreset);
+        drainPopulation(original, disabled);
+        drainPopulation(optimized, cached);
+        SimpleAssert
+            .eq(128L, disabled.unsealedItemMisses, "zero-budget population executes every original item decode");
+        SimpleAssert.eq(4L, cached.unsealedItemMisses, "ordinary item summaries decode four complete inputs once");
+        SimpleAssert
+            .eq(124L, cached.unsealedItemHits, "ordinary duplicate item payloads use bounded root-key summaries");
+        for (int i = 0; i < 128; i++) {
+            SimpleAssert.eq(
+                original.pins.get(i)
+                    .writeToNBT(new NBTTagCompound()),
+                optimized.pins.get(i)
+                    .writeToNBT(new NBTTagCompound()),
+                "optimized population preserves the actual material identity for each position");
+            SimpleAssert.eq(
+                inputs[i % 4],
+                optimized.capture.cells.get(i).itemNbt,
+                "ignored item configuration remains complete in the captured blueprint");
+        }
+        optimized.pins.get(0).stackSize = 7;
+        SimpleAssert.eq(1, optimized.pins.get(1).stackSize, "material pins remain independently mutable per cell");
+        SimpleAssert.eq(
+            1,
+            optimized.coordinatePins.get(HologramValues.position(optimized.capture.cells.get(0))).stackSize,
+            "coordinate pins retain their independent copies");
+
+        NBTTagCompound sealed = new NBTTagCompound(), envelope = new NBTTagCompound();
+        envelope.setString("opaque", "retained seal field");
+        sealed.setTag(HologramRecovery.TAG, envelope);
+        sealed.setString("unknownItemConfiguration", "retained item field");
+        for (String encoded : new String[] { HologramBlueprintNbt.encodeCaptured(sealed), "invalid item encoding" }) {
+            HologramSession s = session(player, 4);
+            s.virtualPreset.schema = 2;
+            for (HologramPresets.Cell cell : s.virtualPreset.cells) cell.itemNbt = encoded;
+            HologramBlueprintValidationCache cache = new HologramBlueprintValidationCache(s.virtualPreset);
+            drainPopulation(s, cache);
+            SimpleAssert
+                .eq(4L, cache.unsealedItemMisses, "sealed or invalid item payloads remain on the per-cell decode path");
+            SimpleAssert.eq(0L, cache.unsealedItemHits, "a seal or decode failure never becomes a negative summary");
+            if (encoded.equals("invalid item encoding")) {
+                for (HologramCapture.Cell cell : s.capture.cells) SimpleAssert
+                    .that(cell.unknown, "each malformed source retains its original unsupported target result");
+            } else {
+                SimpleAssert.eq(
+                    sealed,
+                    s.pins.get(0)
+                        .getTagCompound(),
+                    "sealed item fields and unknown data remain exact");
+                s.pins.get(0)
+                    .getTagCompound()
+                    .getCompoundTag(HologramRecovery.TAG)
+                    .setString("opaque", "changed");
+                SimpleAssert.eq(
+                    "retained seal field",
+                    s.pins.get(1)
+                        .getTagCompound()
+                        .getCompoundTag(HologramRecovery.TAG)
+                        .getString("opaque"),
+                    "sealed pins never share mutable NBT trees");
+            }
+        }
+        HologramNativePlacement.Adapter nativeAdapter = new HologramNativePlacement.Adapter() {
+
+            public boolean supports(net.minecraft.block.Block block) {
+                return block == Blocks.stone;
+            }
+
+            public net.minecraft.tileentity.TileEntity create(net.minecraft.block.Block block, int meta,
+                NBTTagCompound tag, net.minecraft.world.World world) {
+                return new net.minecraft.tileentity.TileEntity();
+            }
+
+            public List<ItemStack> materials(net.minecraft.block.Block block, int meta,
+                net.minecraft.tileentity.TileEntity tile) {
+                return java.util.Collections.singletonList(new ItemStack(Blocks.stone));
+            }
+        };
+        HologramNativePlacement.register("test:population-item-summary", nativeAdapter);
+        try {
+            HologramSession s = session(player, 4);
+            s.virtualPreset.schema = 2;
+            for (HologramPresets.Cell cell : s.virtualPreset.cells) cell.tileNbt = inputs[0];
+            HologramBlueprintValidationCache cache = new HologramBlueprintValidationCache(s.virtualPreset);
+            drainPopulation(s, cache);
+            SimpleAssert.that(
+                !s.capture.incomplete && s.pins.size() == 4,
+                "native null item payloads keep their ordinary target installation");
+            SimpleAssert.eq(
+                0L,
+                cache.unsealedItemHits + cache.unsealedItemMisses,
+                "native hosts never consult ordinary negative summaries");
+            for (ItemStack pin : s.pins.values())
+                SimpleAssert.that(!pin.hasTagCompound(), "native null payload projection still clears the target tag");
+            cache.rememberUnsealedItem(inputs[0]);
+            s.virtualPreset.cells.get(0).itemNbt = inputs[0];
+            drainPopulation(s, cache);
+            SimpleAssert.that(
+                s.capture.incomplete && "INVALID_PREFAB_ITEM".equals(s.capture.failure),
+                "a known ordinary negative summary cannot hide native tagged-material mismatch");
+            SimpleAssert.eq(
+                0L,
+                cache.unsealedItemHits + cache.unsealedItemMisses,
+                "native input bypasses even an already-present negative summary");
+        } finally {
+            HologramNativePlacement.unregister("test:population-item-summary", nativeAdapter);
+        }
+        System.out.println(
+            "GTMB_POPULATION_ITEM_SUMMARY cells=128 decodes=" + disabled.unsealedItemMisses
+                + "->"
+                + cached.unsealedItemMisses);
+    }
+
+    private static void drainPopulation(HologramSession s, HologramBlueprintValidationCache cache) {
+        HologramBlueprintProjection.Population task = new HologramBlueprintProjection.Population(s, cache);
+        while (!task.step(32, Long.MAX_VALUE)) {}
     }
 
     private static void constructionPreflight(EntityPlayerMP player, HologramServiceEditRegression.ReadOnlyWorld world)

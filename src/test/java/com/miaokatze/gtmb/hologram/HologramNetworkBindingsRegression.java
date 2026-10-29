@@ -31,6 +31,73 @@ public final class HologramNetworkBindingsRegression {
         privateOriginsAndShareProjection();
         nativeSynchronizationContractAndTypedAttribution();
         repeatedProjection();
+        ordinaryAeScan();
+    }
+
+    private static void ordinaryAeScan() throws Exception {
+        HologramPresets.Preset source = new HologramPresets.Preset();
+        String[] encoded = new String[4];
+        for (int i = 0; i < encoded.length; i++) {
+            NBTTagCompound payload = new NBTTagCompound();
+            payload.setInteger("unknownConfiguration", i);
+            if (i == 2) {
+                NBTTagList parts = new NBTTagList();
+                NBTTagCompound part = new NBTTagCompound();
+                part.setString("id", "ae2_cablebus");
+                parts.appendTag(part);
+                payload.setTag("parts", parts);
+                SimpleAssert.that(
+                    !HologramAeBlueprint.supports(Blocks.stone, payload),
+                    "AE-looking parts do not enable support on an ordinary host");
+            }
+            if (i == 3) {
+                payload.setString(HologramNetworkBindings.GROUP, "q7");
+                payload.setString(HologramNetworkBindings.ROLE, "join");
+            }
+            encoded[i] = HologramBlueprintNbt.encodeCaptured(payload);
+        }
+        for (int i = 0; i < 96; i++) {
+            HologramPresets.Cell cell = HologramPresets.cell(new ItemStack(Blocks.stone), i, 0, 0, -1, false);
+            cell.tileNbt = encoded[i % 4];
+            source.cells.add(cell);
+        }
+        net.minecraft.block.Block recognized = DecorationVoucherRegression
+            .registeredFixture("gtmb:ae_scan_summary_fixture", new appeng.block.GtmbAeStaticFixture());
+        HologramPresets.Cell aeCell = HologramPresets.cell(new ItemStack(recognized), 96, 0, 0, -1, false);
+        aeCell.tileNbt = encoded[0];
+        source.cells.add(aeCell);
+        HologramPresets.Preset reference = HologramBlueprintRotation.copyPreset(source),
+            optimized = HologramBlueprintRotation.copyPreset(source);
+        HologramBlueprintValidationCache disabled = new HologramBlueprintValidationCache(reference, 0, 0);
+        HologramBlueprintValidationCache cache = new HologramBlueprintValidationCache(optimized);
+        HologramAePolicy.Draft expected = HologramAePolicy
+            .sanitizeOwned(reference, null, null, HologramAePolicy.PreparationProgress.NONE, disabled);
+        HologramAePolicy.Draft actual = HologramAePolicy
+            .sanitizeOwned(optimized, null, null, HologramAePolicy.PreparationProgress.NONE, cache);
+        com.google.gson.Gson gson = new com.google.gson.Gson();
+        SimpleAssert.eq(
+            gson.toJson(expected.preset),
+            gson.toJson(actual.preset),
+            "ordinary AE summaries retain ordered output, exact unknown fields and per-position issues");
+        SimpleAssert.eq(expected.blocking, actual.blocking, "actual AE analysis retains its original blocker result");
+        SimpleAssert.that(
+            actual.issues.stream()
+                .anyMatch(issue -> issue.code.equals("static_block_data")),
+            "recognized AE hosts still execute their full analyzer");
+        SimpleAssert
+            .eq(96L, disabled.networkGroupMisses, "zero-budget ordinary AE scanning parses every original input");
+        SimpleAssert.eq(4L, cache.networkGroupMisses, "ordinary AE scanning parses four exact inputs once");
+        SimpleAssert.eq(92L, cache.networkGroupHits, "the recognized AE host never enters the ordinary summary path");
+        long groups = actual.issues.stream()
+            .filter(issue -> issue.code.equals("network.quantum_group"))
+            .count();
+        SimpleAssert.eq(24L, groups, "each ordinary quantum descriptor keeps its own coordinate-bearing issue");
+        for (HologramAePolicy.Issue issue : actual.issues)
+            if (issue.code.equals("network.quantum_group")) SimpleAssert.that(
+                issue.x % 4 == 3 && issue.message.contains("q7"),
+                "cached group summaries preserve exact issue position and group text");
+        System.out.println(
+            "GTMB_ORDINARY_AE_SCAN cells=96 decodes=" + disabled.networkGroupMisses + "->" + cache.networkGroupMisses);
     }
 
     private static void repeatedProjection() throws Exception {

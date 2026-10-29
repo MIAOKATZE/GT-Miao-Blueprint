@@ -37,10 +37,12 @@ final class HologramBlueprintValidationCache {
     private final Map<Key, String> deidentified = new HashMap<>();
     private final Map<String, Integer> networkGroups = new HashMap<>();
     private final Map<Key, HologramNetworkBindings.Projection> networkProjections = new HashMap<>();
+    private final Map<String, Boolean> unsealedItems = new HashMap<>();
     private int entries, stringChars;
     long registryHits, registryMisses, filterHits, filterMisses, gtHits, gtMisses, damageHits, damageMisses;
     long syntaxHits, syntaxMisses;
     long deidentifyHits, deidentifyMisses, networkGroupHits, networkGroupMisses, networkHits, networkMisses;
+    long unsealedItemHits, unsealedItemMisses;
 
     HologramBlueprintValidationCache(HologramPresets.Preset preset) {
         this(preset, MAX_ENTRIES, MAX_STRING_CHARS);
@@ -231,6 +233,20 @@ final class HologramBlueprintValidationCache {
 
     private static int length(String value) {
         return value == null ? 0 : value.length();
+    }
+
+    /** A pass-local root-key absence summary, never a decoded item tree or a placement authorization. */
+    boolean knownUnsealedItem(String encoded) {
+        if (unsealedItems.containsKey(encoded)) {
+            unsealedItemHits++;
+            return true;
+        }
+        unsealedItemMisses++;
+        return false;
+    }
+
+    void rememberUnsealedItem(String encoded) {
+        if (admit(encoded.length())) unsealedItems.put(encoded, Boolean.TRUE);
     }
 
     int stringChars() {
