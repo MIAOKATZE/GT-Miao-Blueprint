@@ -20,6 +20,7 @@ final class HologramSnapshotMetadataRegression {
 
     static void run() {
         try {
+            HologramSnapshotDataContextRegression.run();
             typedScalarCopyOracle();
             frozenWorkerContext();
             repeatedPayloadSlices();
@@ -89,7 +90,21 @@ final class HologramSnapshotMetadataRegression {
             SimpleAssert.that(session.processingSource == null, "metadata constructor does no source projection");
             long deadline = System.nanoTime() + 10_000_000_000L;
             int batches = 0;
+            Field contextField = HologramSnapshotMetadataTask.class.getDeclaredField("dataContext");
+            contextField.setAccessible(true);
+            HologramSnapshotDataContext context = (HologramSnapshotDataContext) contextField.get(task);
+            Long captureOwnerDecodes = null;
+            boolean captureChecked = false;
             while (!task.step(7, Long.MAX_VALUE) && System.nanoTime() < deadline) {
+                if ("metadata.capture".equals(task.phase()) && captureOwnerDecodes == null)
+                    captureOwnerDecodes = HologramSnapshotDataContextRegression.counter(context, "ownerDecodes");
+                if ("metadata.processing".equals(task.phase()) && captureOwnerDecodes != null) {
+                    SimpleAssert.eq(
+                        captureOwnerDecodes,
+                        HologramSnapshotDataContextRegression.counter(context, "ownerDecodes"),
+                        "real source-to-capture root keys do not repeat the owner payload decode pass");
+                    captureChecked = true;
+                }
                 SimpleAssert.that(
                     task.done() >= 0 && task.done() <= task.total(),
                     "real metadata phase counts remain coherent");
@@ -97,7 +112,7 @@ final class HologramSnapshotMetadataRegression {
                 Thread.yield();
             }
             SimpleAssert.that(
-                "metadata.complete".equals(task.phase()) && batches > 100,
+                "metadata.complete".equals(task.phase()) && batches > 100 && captureChecked,
                 "full metadata finishes through many bounded main-thread continuations");
             NBTTagCompound expected = new NBTTagCompound();
             HologramSnapshots.writeBlueprintState(session, expected);

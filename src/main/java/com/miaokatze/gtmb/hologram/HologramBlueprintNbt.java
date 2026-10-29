@@ -263,6 +263,18 @@ final class HologramBlueprintNbt {
         }
     }
 
+    /** First admission resolves identities on the owner; later reads use only that task's frozen numeric IDs. */
+    static NBTTagCompound decodeSnapshot(String value, Map<String, Integer> itemIds, boolean freeze)
+        throws IOException {
+        NBTTagCompound tag = decodeData(value);
+        try {
+            stableItems(tag, false, itemIds, freeze);
+            return tag;
+        } catch (RuntimeException invalid) {
+            throw new IOException("蓝图NBT编码无效", invalid);
+        }
+    }
+
     /** In-memory equivalent of canonical transport's item/cover identity normalization. */
     static void normalizeTransportItems(NBTTagCompound payload) throws IOException {
         if (payload == null) return;
@@ -568,12 +580,17 @@ final class HologramBlueprintNbt {
     }
 
     private static void stableItems(NBTBase tag, boolean capture) {
+        stableItems(tag, capture, null, false);
+    }
+
+    private static void stableItems(NBTBase tag, boolean capture, Map<String, Integer> itemIds, boolean freeze) {
         if (tag instanceof NBTTagCompound) {
             NBTTagCompound compound = (NBTTagCompound) tag;
             if (compound.hasKey("gt.covers", 9)) {
                 NBTTagList covers = (NBTTagList) compound.getTag("gt.covers");
                 if (covers.func_150303_d() == 10) {
-                    for (int i = 0; i < covers.tagCount(); i++) stableCover(covers.getCompoundTagAt(i), capture);
+                    for (int i = 0; i < covers.tagCount(); i++)
+                        stableCover(covers.getCompoundTagAt(i), capture, itemIds, freeze);
                 }
             }
             if (itemCompound(compound)) {
@@ -584,21 +601,21 @@ final class HologramBlueprintNbt {
                     compound.setString(ITEM_REGISTRY, registry);
                 }
                 if (compound.hasKey(ITEM_REGISTRY, 8)) {
-                    Item item = stableItem(compound);
-                    compound.setShort("id", (short) (item == null ? -1 : Item.getIdFromItem(item)));
-                    if (item == null) compound.setBoolean(MISSING_ITEM, true);
+                    Integer id = stableItemId(compound.getString(ITEM_REGISTRY), itemIds, freeze);
+                    compound.setShort("id", (short) (id == null ? -1 : id));
+                    if (id == null) compound.setBoolean(MISSING_ITEM, true);
                     else compound.removeTag(MISSING_ITEM);
                 }
             }
             for (Object raw : new ArrayList<>(compound.func_150296_c()))
-                stableItems(compound.getTag((String) raw), capture);
+                stableItems(compound.getTag((String) raw), capture, itemIds, freeze);
         } else if (tag instanceof NBTTagList) {
             NBTTagList list = (NBTTagList) tag;
-            for (NBTBase entry : listEntries(list)) stableItems(entry, capture);
+            for (NBTBase entry : listEntries(list)) stableItems(entry, capture, itemIds, freeze);
         }
     }
 
-    private static void stableCover(NBTTagCompound row, boolean capture) {
+    private static void stableCover(NBTTagCompound row, boolean capture, Map<String, Integer> itemIds, boolean freeze) {
         if (!row.hasKey("id", 3) || row.getInteger("id") == 0 && !row.hasKey(COVER_REGISTRY, 8)) return;
         // GT CoverRegistry NBT_ID uses GTUtility.stackToInt: low 16 bits item ID, upper 16 bits damage.
         if (capture && !row.hasKey(COVER_REGISTRY, 8)) {
@@ -611,15 +628,24 @@ final class HologramBlueprintNbt {
             row.setInteger(COVER_DAMAGE, packed >>> 16);
         }
         if (row.hasKey(COVER_REGISTRY, 8)) {
-            Object found = Item.itemRegistry.getObject(row.getString(COVER_REGISTRY));
-            if (!(found instanceof Item)) {
+            Integer id = stableItemId(row.getString(COVER_REGISTRY), itemIds, freeze);
+            if (id == null) {
                 row.setInteger("id", 0);
                 row.setBoolean(MISSING_COVER, true);
             } else {
-                row.setInteger("id", Item.getIdFromItem((Item) found) | row.getInteger(COVER_DAMAGE) << 16);
+                row.setInteger("id", id | row.getInteger(COVER_DAMAGE) << 16);
                 row.removeTag(MISSING_COVER);
             }
         }
+    }
+
+    private static Integer stableItemId(String name, Map<String, Integer> itemIds, boolean freeze) {
+        if (itemIds != null && itemIds.containsKey(name)) return itemIds.get(name);
+        if (itemIds != null && !freeze) throw new IllegalStateException("Snapshot item identity was not frozen");
+        Object found = Item.itemRegistry.getObject(name);
+        Integer id = found instanceof Item ? Item.getIdFromItem((Item) found) : null;
+        if (itemIds != null) itemIds.put(name, id);
+        return id;
     }
 
     static Set<String> itemRegistries(NBTBase tag) {

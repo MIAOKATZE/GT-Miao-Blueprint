@@ -221,10 +221,7 @@ final class HologramSnapshotMetadataTask {
             HologramCapture.Cell cell = capture.cells.get(cursor);
             if (s.virtualPreset != null) collectNetwork(cell.tileNbt, cell.excluded);
             if (!keysCached && s.virtual) try {
-                NBTTagCompound tile = dataContext.freeze(cell.tileNbt);
-                NBTTagCompound item = dataContext.freeze(cell.itemNbt);
-                rootKeys(tile, availableKeys);
-                rootKeys(item, availableKeys);
+                dataContext.rootKeys(cell.tileNbt, cell.itemNbt, availableKeys);
             } catch (IOException ignored) { /* Invalid cell payload remains unsupported in the detached report. */ }
             HologramPresets.Cell frozen = source == null ? null
                 : source.cellWithPayloadAt(cell.x - s.x, cell.y - s.y, cell.z - s.z);
@@ -308,7 +305,7 @@ final class HologramSnapshotMetadataTask {
     private void collectNetwork(String payload, boolean excluded) {
         if (authoring || networks == null || excluded) return;
         try {
-            networks.add(dataContext.freeze(payload));
+            if (dataContext.hasNetwork(payload)) networks.add(dataContext.freeze(payload));
         } catch (IOException invalid) {
             state.setString("networkBindingError", HologramAePolicy.fallback(invalid.getMessage()));
             networks = null;
