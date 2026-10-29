@@ -1,3 +1,18 @@
+# 2026-10-29 静态实体材质与已呈现外壳
+
+此轮针对精确395e6af6外部S3失败继续修复；旧本机30秒未完成结论保留，不用组件PASS覆盖。0.1.48之后的粗预览提前返回会保留内部格线框且只取普通getIcon，因此先恢复可证明的静态材质，再减少已呈现实体内部绘制。未取消分帧预算或原生/服务端校验。
+
+- LightPreview只对既有精确vanilla普通立方体和审计过的GT BlockCasings5（coil）取完整静态材质。复用GT纹理层与tint遍历；任何未知层、缺失材质、pending/NBT/外部adapter均不能借用完整材质或新的GT遮挡证明。不能将它推广为所有IBlockWithTextures、机器或Chisel的完整静态替代；Chisel CTM原生路径保留。GT旧/新coil配置按既有场景/资源释放边界重新取样，不能宣称动态配置无条件即时刷新。
+- 保留完整source/pick/outline记录和原细化/原生就绪计数，只改变实际提交的粗预览面与边。自身区域及跨边界邻区必须已经在当前相机完成提示投影，才采用已审计的不透明外壳mask；无关区域补算不再全局取消这个证明。未知/透明/部分形状保持保守，移动恢复完整表示，选中/关联项保留完整轮廓。边界缺失、切层、相机与补算后重新验证，不拿未呈现邻居遮挡本格。
+- 区域批量移除由逐项ArrayList搬移改为稳定一次压缩；保留原顺序、unresolved/budget及deferred计数。
+- 未新增GL缓存或扩大预算；修复不以减少逻辑源数据、伪造完成率或绕过点击就绪为代价。绘制负担降低的生产路径组件计数不等于真实FPS、完整UV/CTM或3–4秒达标。
+
+诊断沿用releaseEpoch窗口，新增六个粗阶段：drawDemands、drawFacesAndHit、drawNativePlayback、drawLinked、drawOutlines、drawOverlay各自Nanos/Calls。它们是渲染线程墙钟，包含可能的驱动等待，不是GPU时间。drawFacesVisited、drawQuads、drawNativeCalls、drawLinkedDrawCalls为工作调用计数；drawOutlineLineVertices只统计体素线框，排除结构/提示框。drawLinkedCalls是阶段次数，不能与drawLinkedDrawCalls混用。drawSmokeActive/drawSmokeFrames记录实际光栅探针启用情况。读诊断只生成固定大小标量，不遍历蓝图。
+
+新测试覆盖真实GT纹理容器的层/色、metadata及actual/target/protected/anchor边界、相机/视口/跨区已呈现证明、真实native repair接线、30³实体外壳计数、稳定压缩与计时窗口。测试纹理/相机存在控制夹具，未在云端启动真实游戏；实际截图与小图/大图加载对照由本机执行。最终精确commit/tree、命令、退出码与产物SHA以本轮PR回执为准。
+
+---
+
 # 2026年10月29日 S3 持续推进回归
 
 本轮在真实生产调度/发布与 CPU 投影路径上覆盖持续 model-only 回复、同区域不同消费者逐次就绪、深度排序变化、同相机输出保留、补算去重、源移动/删除/跨区尾槽交换，以及呈现未完成时的文字组件放置。外部回调夹具不等于真实 AE/FMP/GL，控制材质不等于纹理图集验收。
