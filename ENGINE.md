@@ -320,3 +320,28 @@ Values
 ### 显式兼容审核的有界时限
 
 `HologramAuthorReviewDeadline` 集中管理双方协商的速率/大小预算：上传和结果下载分别采用两倍最多两个审核槽位的公平份额传输时间，加 30 秒固定余量；本地准备/握手各有两分钟上限，上传完成后的服务端解码、原生处理与结果编码共用两分钟窗口。30 分钟硬保留上限独立于实际进度；轮询、等待回复、重复阶段通知不能续期。实际结果大小仅在编码后已知，因此先检查剩余硬上限才发布结果。无法满足该保守预算的上传在 Ready/上传前拒绝，结果在首个结果字节前拒绝，并报告大小、速率与阶段。共享库的其他未来流量仍可能触发真实进度超时；该策略不声称所有持续推进的原生任务或任意竞争都能完成。配置在处理中变化会明确中止并要求按新预算重试，不会静默沿用不可能满足的旧预算。
+
+## PR67 细化发布与原生缓存续审（2026-10-29）
+
+`36980a62fa2694da3d97ffed8b9289126d251e8a` 的本地 S3 实测不是验收通过：48,003 格 cheap 已覆盖 41 个源区域，但 30.221 秒仍有 35 个区域未完成细化、detail visited=5,144。该事实与旧 `3e3e0e2` 的报告分别保留；visited、cheap、native faces 与完整几何不得混为一个完成率。
+
+后续实现维持以下边界：
+
+- 完成一个 detail 区域即产生可合并的发布事件，不等待 cheap+detail 的几何倍增阈值。cheap 的倍增发布与最后一批强制发布仍保留。
+- 区域可见性在每个时间片内复用，下一时间片重新计算。只有当前 owner/相机 key 完全追平、没有投影待办时，细化才使用原 2 ms 共享预算中暂不需要的投影一半；其他情况仍为原一半。原生回调和至少一个投影单元可越过合作式截止线，这不是硬实时保证或增加资源限额。
+- model-only 的 shell/面遮挡仍失效紧邻 halo；native list 仅退休真实变更区域和 tile 依赖闭包。来源变化仍遍历静态与 tile 两类依赖，溢出仍保守退休整个 owner。世界 list 先于它引用的 native list 退休，不共享或移植 detached TileEntity 缓存。
+- 缓存 tile 在其他模型的调用中完成 hydration/topology 时，嵌套读取同时属于 active model 与各 tile owner。pending/budget 读取污染所有 active tile scope；未完整构造的 tile 连同 loaded/topology/failure 标记被清退，后续重试重新发起需求，不能因缓存命中把未知邻居变成已知空值。scope 在正常、早退和异常路径均归还。
+- 本地空间索引按触及 region 做一次 identity 过滤，保留 survivor 与 changed 的原顺序、未触及 region 共享、旧快照、重复坐标拒绝及边界。不是全量重建，也不扩大缓存。
+- 原生顶点检查每完整 quad 只算一次退化判定，以原始 xyz 整数位去重，保持负零/NaN、UV 缺失判断和 smoke 有序证据；不改变原注册 renderer、真实顶点、render pass 或 GL 状态恢复。
+- cheap 隐藏面仅在精确静态不透明证明及当前完整投影后少发绘制顶点。所有 pick Face、outline、source/visible 计数仍保留；未知/native/带 payload/外部 adapter 不自动套用该证明，任何 moveOffset 都禁用该裁剪。不能把 cheap 图形当作最终几何。
+- 无显式完整 hintTint 的 iconOnly 材质键包含实际语义颜色，避免状态不同的占位共用错误颜色。普通材质与明确 tint 的既有共享规则不变。
+
+`previewWorkInspection()` 是 render-thread 标量观察入口，返回 release 以来的 frames、preparationNanos、projectionNanos、drawNanos 副本。应同窗口取差并另外测探针开销；draw 包含需求重试和 GUI 绘制。这些 elapsed 值不包含前置 view/bounds/camera setup、其他 tick 的作者发布，也不是 GPU 时间或总帧时间。关闭/释放后重开观察窗口，不能跨 owner 切换拼接。
+
+新增组件回归覆盖区域发布、实际可见普通 cube 的 detail/CPU 投影、相机时间片、缓存 tile 真实扩展读取与重试、批量索引、顶点旧算法差分、cheap 绘制证书和材质颜色键。预置材质、伪时钟和无 GL list fixture 不代表真实纹理、UV、复杂 native shape 或 S3 的 3–4 秒目标通过。
+
+### 保留的兼容缺口
+
+另有一个已确认的既存边界未在本轮扩大重构：外部 adapter 的 `loadTile` 若读取“payload 已就绪、但本 access 尚未 hydrate”的另一个 native tile，`loadingTile` 的非递归保护仍可能返回缓存空值；仅补依赖边不能追溯这次读取。它不同于本轮修复的 pending/budget 输入，也尚未证实是 S3 的触发原因。彻底处理需要有界 detached-tile 准备顺序、循环依赖和终结失败策略，不能通过递归展开、无限重试或擅自收紧公共扩展契约解决。本轮不声称所有外部 hydration 组合兼容。
+
+新候选继续由本地按 S3 的完整 source 与独立 viewport 分母在 3/4/15/30 秒验收，30 秒失败即停，再决定 S4/S5 与真实点击、形状、UV 测试。代码检查通过不覆盖这些实机阶段。
