@@ -38,11 +38,14 @@ final class HologramBlueprintValidationCache {
     private final Map<String, Integer> networkGroups = new HashMap<>();
     private final Map<Key, HologramNetworkBindings.Projection> networkProjections = new HashMap<>();
     private final Map<String, Boolean> unsealedItems = new HashMap<>();
+    private final Map<Key, HologramAePolicy.Identity> identities = new HashMap<>();
+    private final Map<Key, String> aeShells = new HashMap<>();
     private int entries, stringChars;
     long registryHits, registryMisses, filterHits, filterMisses, gtHits, gtMisses, damageHits, damageMisses;
     long syntaxHits, syntaxMisses;
     long deidentifyHits, deidentifyMisses, networkGroupHits, networkGroupMisses, networkHits, networkMisses;
     long unsealedItemHits, unsealedItemMisses;
+    long identityHits, identityMisses, aeShellHits, aeShellMisses;
 
     HologramBlueprintValidationCache(HologramPresets.Preset preset) {
         this(preset, MAX_ENTRIES, MAX_STRING_CHARS);
@@ -247,6 +250,31 @@ final class HologramBlueprintValidationCache {
 
     void rememberUnsealedItem(String encoded) {
         if (admit(encoded.length())) unsealedItems.put(encoded, Boolean.TRUE);
+    }
+
+    HologramAePolicy.Identity identity(Block block, int damage, String tile, String item) {
+        HologramAePolicy.Identity result = identities.get(new Key(block, damage, tile, item));
+        if (result == null) identityMisses++;
+        else identityHits++;
+        return result;
+    }
+
+    void identity(Block block, int damage, String tile, String item, HologramAePolicy.Identity result) {
+        if (admit(length(tile) + length(item) + length(result.tile) + length(result.item)))
+            identities.put(new Key(block, damage, tile, item), result);
+    }
+
+    String aeShell(Block block, int metadata, String input, HologramAeBlueprint.Analysis analysis) throws IOException {
+        Key key = new Key(block, metadata, input, null);
+        String result = aeShells.get(key);
+        if (result != null) {
+            aeShellHits++;
+            return result;
+        }
+        aeShellMisses++;
+        result = HologramBlueprintNbt.encodeCanonical(block, analysis.payload());
+        if (admit(length(input) + length(result))) aeShells.put(key, result);
+        return result;
     }
 
     int stringChars() {

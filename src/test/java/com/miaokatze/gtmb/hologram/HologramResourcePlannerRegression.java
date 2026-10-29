@@ -306,6 +306,22 @@ public final class HologramResourcePlannerRegression {
     }
 
     private static void populationItemSummaries(EntityPlayerMP player) throws Exception {
+        HologramCapture.Cell ordinary = new HologramCapture.Cell(null, 0, 64, 0);
+        ordinary.block = Blocks.stone;
+        ordinary.tileNbt = "invalid data never needed to recognize an ordinary host";
+        SimpleAssert.that(
+            !HologramBlueprintData.editableAeSample(ordinary, new ItemStack(Blocks.stone)),
+            "ordinary sample rejection needs no payload parse");
+        ItemStack tagged = new ItemStack(Blocks.stone);
+        tagged.setTagCompound(new NBTTagCompound());
+        SimpleAssert.that(
+            !HologramBlueprintData.editableAeSample(ordinary, tagged),
+            "tagged targets retain the ordinary-host result without acquiring an AE identity");
+        SimpleAssert.that(!HologramBlueprintData.editableAeSample(ordinary, null), "null sample behavior is unchanged");
+        ItemStack empty = new ItemStack(Blocks.stone);
+        empty.stackSize = 0;
+        SimpleAssert
+            .that(!HologramBlueprintData.editableAeSample(ordinary, empty), "empty sample behavior is unchanged");
         String[] inputs = new String[4];
         for (int i = 0; i < inputs.length; i++) {
             NBTTagCompound tag = new NBTTagCompound();

@@ -40,6 +40,7 @@ public final class HologramNetworkBindingsRegression {
         for (int i = 0; i < encoded.length; i++) {
             NBTTagCompound payload = new NBTTagCompound();
             payload.setInteger("unknownConfiguration", i);
+            payload.setString("OwnerUUID", new java.util.UUID(1, i + 1).toString());
             if (i == 2) {
                 NBTTagList parts = new NBTTagList();
                 NBTTagCompound part = new NBTTagCompound();
@@ -69,8 +70,12 @@ public final class HologramNetworkBindingsRegression {
         SimpleAssert.that(
             aeCell.block() == recognized && HologramAeBlueprint.supports(aeCell.block()),
             "the actual registered fixture resolves to its AE block identity before scanning");
-        aeCell.tileNbt = encoded[0];
-        source.cells.add(aeCell);
+        for (int i = 96; i < 104; i++) {
+            HologramPresets.Cell repeated = HologramSnapshotMetadataSource.copyCell(aeCell);
+            repeated.x = i;
+            repeated.tileNbt = encoded[0];
+            source.cells.add(repeated);
+        }
         HologramPresets.Preset reference = HologramBlueprintRotation.copyPreset(source),
             optimized = HologramBlueprintRotation.copyPreset(source);
         HologramBlueprintValidationCache disabled = new HologramBlueprintValidationCache(reference, 0, 0);
@@ -84,6 +89,26 @@ public final class HologramNetworkBindingsRegression {
             gson.toJson(expected.preset),
             gson.toJson(actual.preset),
             "ordinary AE summaries retain ordered output, exact unknown fields and per-position issues");
+        SimpleAssert.eq(
+            HologramBlueprintContentHash.of(expected.preset),
+            HologramBlueprintContentHash.of(actual.preset),
+            "identity and static-shell reuse preserve content identity");
+        SimpleAssert.that(
+            java.util.Arrays.equals(
+                HologramBlueprintCompactCodec.encode(expected.preset, (done, total) -> {}),
+                HologramBlueprintCompactCodec.encode(actual.preset, (done, total) -> {})),
+            "identity and static-shell reuse preserve exact compact bytes");
+        SimpleAssert
+            .eq(104L, disabled.identityMisses, "zero-budget identity pass executes all original payload projections");
+        SimpleAssert.eq(
+            5L,
+            cache.identityMisses,
+            "identity normalization inspects five complete block/damage/payload inputs once");
+        SimpleAssert
+            .eq(99L, cache.identityHits, "repeated owner and quantum descriptors reuse immutable identity summaries");
+        SimpleAssert.eq(8L, disabled.aeShellMisses, "zero-budget static AE analysis still encodes every result");
+        SimpleAssert.eq(1L, cache.aeShellMisses, "static AE output is compressed once for the exact input");
+        SimpleAssert.eq(7L, cache.aeShellHits, "repeated static AE analyses reuse only their encoded strings");
         SimpleAssert.eq(expected.blocking, actual.blocking, "actual AE analysis retains its original blocker result");
         SimpleAssert.that(
             actual.issues.stream()

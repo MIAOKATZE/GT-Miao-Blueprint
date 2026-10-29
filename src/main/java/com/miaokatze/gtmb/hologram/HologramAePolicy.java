@@ -125,18 +125,33 @@ final class HologramAePolicy {
         for (HologramPresets.Cell cell : result.cells) {
             progress.update("identity", completed++, result.cells.size());
             Block block = cell.block();
+            String originalTile = cell.tileNbt, originalItem = cell.itemNbt;
+            // Root normalization and registry-class recognition have no world, position, issue or provider callback.
+            Identity known = cache.identity(block, cell.damage, originalTile, originalItem);
+            if (known != null) {
+                cell.tileNbt = known.tile;
+                cell.itemNbt = known.item;
+                if (known.levelOne) result.deidentificationLevel = Math.max(1, result.deidentificationLevel);
+                continue;
+            }
             NBTTagCompound payload = HologramBlueprintNbt.decode(cell.tileNbt);
             if (HologramCarpentersCompatibility.stripOwner(block, payload))
                 cell.tileNbt = HologramBlueprintNbt.encodeCanonical(payload);
             cell.itemNbt = HologramCarpentersCompatibility.normalize(block, cell.itemNbt);
-            if (HologramAeBlueprint.supports(block, payload) || HologramNetworkBindings.node(block)
+            boolean levelOne = HologramAeBlueprint.supports(block, payload) || HologramNetworkBindings.node(block)
                 || HologramNetworkSchemas.removeExternalReferences(
                     block,
                     cell.damage,
                     payload == null ? null : (NBTTagCompound) payload.copy())
                 || payload != null && (payload.hasKey(HologramNetworkBindings.CAPTURE_ANCHOR)
-                    || payload.hasKey(HologramNetworkBindings.GROUP)))
-                result.deidentificationLevel = Math.max(1, result.deidentificationLevel);
+                    || payload.hasKey(HologramNetworkBindings.GROUP));
+            if (levelOne) result.deidentificationLevel = Math.max(1, result.deidentificationLevel);
+            cache.identity(
+                block,
+                cell.damage,
+                originalTile,
+                originalItem,
+                new Identity(cell.tileNbt, cell.itemNbt, levelOne));
         }
         progress.update("identity", completed, result.cells.size());
         result = HologramDeidentification.applyOwned(result, result.deidentificationLevel, networks, progress);
@@ -237,7 +252,10 @@ final class HologramAePolicy {
                     cell.damage = shell.getItemDamage();
                 }
             }
-            cell.tileNbt = HologramBlueprintNbt.encodeCanonical(block, analysis.payload());
+            // Static hosts take analyze's pure shell branch; native tile factories and FMP keep fresh encoding.
+            cell.tileNbt = HologramAeBlueprint.staticBlockShell(block, cell.metadata)
+                ? cache.aeShell(block, cell.metadata, cell.tileNbt, analysis)
+                : HologramBlueprintNbt.encodeCanonical(block, analysis.payload());
             // AE shell tags are not a second copy of the host inventory/configuration. Canonical tile is authoritative.
             if (cell.itemNbt != null && !cell.itemNbt.isEmpty()) {
                 add(
@@ -315,6 +333,18 @@ final class HologramAePolicy {
         Draft draft = new Draft(result, result.aeIssues);
         progress.update("report", 1, 1);
         return draft;
+    }
+
+    static final class Identity {
+
+        final String tile, item;
+        final boolean levelOne;
+
+        Identity(String tile, String item, boolean levelOne) {
+            this.tile = tile;
+            this.item = item;
+            this.levelOne = levelOne;
+        }
     }
 
     /** Server-thread preflight only for the rare mixed-multipart downgrade that needs native material callbacks. */
