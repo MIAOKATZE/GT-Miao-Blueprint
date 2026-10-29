@@ -58,6 +58,10 @@ public final class HologramLocalAuthorRegressionTest {
             com.miaokatze.gtmb.client.hologram.HologramProjectionAppearanceRegression::run);
         add(
             cases,
+            "text_placement_picking_readiness",
+            com.miaokatze.gtmb.client.hologram.HologramTextPlacementPickingRegression::run);
+        add(
+            cases,
             "author_typed_dependency_invalidation",
             com.miaokatze.gtmb.client.hologram.HologramTypedDependencyInvalidationRegression::run);
         add(

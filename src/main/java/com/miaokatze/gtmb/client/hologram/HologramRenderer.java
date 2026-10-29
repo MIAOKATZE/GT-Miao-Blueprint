@@ -955,11 +955,22 @@ final class HologramRenderer {
 
     /** Use the same visible faces as selection, including the camera-facing placement side. */
     static int[] pickAdjacentVoxel(int x, int y) {
+        if (!placementPickingReady(presentedState, x, y)) return null;
         Face hit = null;
-        for (Face face : cachedFaces) if (!face.empty && face.contains(x, y)) hit = face;
+        for (Face face : cachedFaces)
+            if (!face.empty && (hit == null || face.depth >= hit.depth) && face.contains(x, y)) hit = face;
         if (hit == null) return null;
         int[] normal = NORMALS[hit.side];
         return new int[] { hit.cell.x + normal[0], hit.cell.y + normal[1], hit.cell.z + normal[2] };
+    }
+
+    /** Gate the entire placement click, including its empty-plane fallback, against the presented scene. */
+    static boolean placementPickingReady(HologramState state, int x, int y) {
+        return state != null && state == presentedState
+            && presentedFrame != null
+            && presentedFrame == projectedFrame
+            && presentedFrame.coordinates.contains(x, y)
+            && previewPickingReady(state, x, y);
     }
 
     /** Intersect the orthographic view ray with a horizontal plane at an absolute world Y. */
