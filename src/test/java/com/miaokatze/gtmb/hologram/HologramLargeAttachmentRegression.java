@@ -25,12 +25,131 @@ public final class HologramLargeAttachmentRegression {
     public static void run() {
         try {
             fragmentedPicture();
+            retainedPipeline();
             largeGeometry();
             savedPictureDefinitions();
             authoringOccupancy();
             presets();
         } catch (Exception failure) {
             throw new RuntimeException(failure);
+        }
+    }
+
+    private static void retainedPipeline() throws Exception {
+        long before = HologramProcessGovernor.retainedBytes();
+        java.lang.reflect.Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        unsafeField.setAccessible(true);
+        sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
+        AttachmentActor actor = (AttachmentActor) unsafe.allocateInstance(AttachmentActor.class);
+        NBTTagCompound action = new NBTTagCompound();
+        action.setString("op", "placeTextBox");
+        action.setString("session", "owner");
+        action.setLong("uiSequence", 4);
+        NBTTagCompound text = new NBTTagCompound();
+        text.setByteArray("retained", new byte[4096]);
+        action.setTag("textBox", text);
+        byte[] bytes = CompressedStreamTools.compress(action);
+        byte[] digest = MessageDigest.getInstance("SHA-256")
+            .digest(bytes);
+        for (int terminal = 0; terminal < 3; terminal++) {
+            HologramAttachmentUpload.Fragment first = new HologramAttachmentUpload.Fragment(
+                "owner",
+                4,
+                7 + terminal,
+                bytes.length,
+                0,
+                digest,
+                bytes);
+            HologramAttachmentUpload.Incoming ticket = new HologramAttachmentUpload.Incoming(actor, null, first);
+            java.util.List<Runnable> callbacks = new java.util.ArrayList<>();
+            try {
+                ticket.bytes = ticket.assembly.accept(first.sequence, bytes.length, 0, digest, bytes);
+                ticket.complete = true;
+                SimpleAssert.eq(
+                    before + bytes.length,
+                    HologramProcessGovernor.retainedBytes(),
+                    "completed assembly remains charged while waiting for decode");
+                ticket.decode(callbacks::add);
+                SimpleAssert.eq(1, callbacks.size(), "decoded data retains a single owner callback");
+                SimpleAssert.that(
+                    HologramProcessGovernor.retainedBytes() > before + bytes.length,
+                    "callback-pending compressed and expanded data both retain governor ownership");
+                if (terminal == 0) ticket.cancel();
+                else if (terminal == 1) HologramAttachmentUpload.clearServer();
+                callbacks.get(0)
+                    .run(); // disconnected fixture is rejected by the actual owner boundary
+                SimpleAssert.eq(
+                    before,
+                    HologramProcessGovernor.retainedBytes(),
+                    "cancel/reset/stale owner callback releases every stage exactly once");
+            } finally {
+                ticket.cancel();
+            }
+        }
+        for (int terminal = 0; terminal < 3; terminal++) {
+            byte[] proof = digest.clone();
+            if (terminal == 2) proof[0]++;
+            HologramAttachmentUpload.Fragment first = new HologramAttachmentUpload.Fragment(
+                "owner",
+                4,
+                20 + terminal,
+                bytes.length,
+                0,
+                proof,
+                bytes);
+            HologramAttachmentUpload.Incoming ticket = new HologramAttachmentUpload.Incoming(actor, null, first);
+            java.util.List<Runnable> callbacks = new java.util.ArrayList<>();
+            try {
+                ticket.bytes = ticket.assembly.accept(first.sequence, bytes.length, 0, proof, bytes);
+                ticket.complete = true;
+                if (terminal == 0) ticket.cancel();
+                try {
+                    if (terminal == 1) ticket.decode(
+                        callback -> {
+                            throw new java.util.concurrent.RejectedExecutionException("fixture owner callback full");
+                        });
+                    else ticket.decode(callbacks::add);
+                    SimpleAssert.that(terminal != 1, "callback rejection reaches the admission caller");
+                } catch (java.util.concurrent.RejectedExecutionException expected) {
+                    SimpleAssert.eq(1, terminal, "only callback rejection fixture throws");
+                }
+                SimpleAssert.eq(
+                    before,
+                    HologramProcessGovernor.retainedBytes(),
+                    "queued cancellation, callback rejection and digest error release all byte leases");
+                ticket.cancel();
+                for (Runnable callback : callbacks) callback.run();
+            } finally {
+                ticket.cancel();
+            }
+        }
+        java.util.List<HologramAttachmentUpload.Retention> permits = new java.util.ArrayList<>();
+        try {
+            for (int i = 0; i < 4; i++)
+                permits.add(HologramAttachmentUpload.Retention.acquire(HologramAttachmentUpload.MAX_BYTES));
+            try {
+                HologramAttachmentUpload.Retention.acquire(1);
+                throw new AssertionError("completed/queued upload memory must still enforce the original 32 MiB limit");
+            } catch (IOException expected) {}
+        } finally {
+            for (HologramAttachmentUpload.Retention permit : permits) {
+                permit.close();
+                permit.close();
+            }
+        }
+        SimpleAssert
+            .eq(before, HologramProcessGovernor.retainedBytes(), "rejection and duplicate close preserve ledger");
+    }
+
+    private static final class AttachmentActor extends net.minecraft.entity.player.EntityPlayerMP {
+
+        AttachmentActor() {
+            super(null, null, null, null);
+        }
+
+        @Override
+        public java.util.UUID getUniqueID() {
+            return new java.util.UUID(71, 93);
         }
     }
 

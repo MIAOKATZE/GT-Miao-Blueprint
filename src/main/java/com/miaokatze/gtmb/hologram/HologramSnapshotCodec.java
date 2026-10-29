@@ -140,7 +140,12 @@ public final class HologramSnapshotCodec {
 
     public static OwnedSnapshot decodeOwned(byte[] bytes, java.util.function.BooleanSupplier current)
         throws IOException {
-        Decoded decoded = decodeMeasured(bytes, RAW_BYTES, 512L * 1024 * 1024, current, true);
+        return decodeOwned(bytes, RAW_BYTES, 512L * 1024 * 1024, current);
+    }
+
+    static OwnedSnapshot decodeOwned(byte[] bytes, int rawLimit, long nbtLimit,
+        java.util.function.BooleanSupplier current) throws IOException {
+        Decoded decoded = decodeMeasured(bytes, rawLimit, nbtLimit, current, true);
         OwnedSnapshot owner = new OwnedSnapshot(decoded.tag);
         owner.add(decoded.lease, decoded.retainedEstimate);
         return owner;
