@@ -73,6 +73,8 @@ final class HologramTextures {
 
     private static final Map<String, Material> CACHE = new HashMap<>();
     private static final Map<HologramState.Cell, Material[]> RESOLVED = new IdentityHashMap<>();
+    // Exact snapshot descriptors only. Neighbor-dependent native models remain owned by their individual cells.
+    private static final Map<Object, Material[]> DESCRIPTORS = new IdentityHashMap<>();
     private static HologramState snapshot;
     private static final Field MULTI = texturesField(GTMultiTextureRender.class);
     private static final Field SIDED = texturesField(GTSidedTextureRender.class);
@@ -83,6 +85,7 @@ final class HologramTextures {
     static void clear() {
         CACHE.clear();
         RESOLVED.clear();
+        DESCRIPTORS.clear();
         snapshot = null;
     }
 
@@ -91,13 +94,17 @@ final class HologramTextures {
         if (snapshot != state) {
             CACHE.clear();
             RESOLVED.clear();
+            DESCRIPTORS.clear();
             snapshot = state;
         }
     }
 
     static void advance(HologramState previous, HologramState next) {
         if (snapshot != previous) return;
-        for (HologramState.Cell cell : next.changedPreviousCells) RESOLVED.remove(cell);
+        for (HologramState.Cell cell : next.changedPreviousCells) {
+            RESOLVED.remove(cell);
+            DESCRIPTORS.remove(cell.descriptorIdentity());
+        }
         snapshot = next;
     }
 
@@ -121,6 +128,9 @@ final class HologramTextures {
         }
         int index = current ? 1 : 0;
         if (pair[index] != null) return pair[index];
+        Object descriptor = cell.descriptorIdentity();
+        Material[] shared = descriptor == cell ? null : DESCRIPTORS.get(descriptor);
+        if (shared != null && shared[index] != null) return pair[index] = shared[index];
         ItemStack stack = current ? cell.actualStack : cell.targetStack;
         String key = (current ? cell.id : cell.wantId) + ":"
             + (current ? cell.meta : cell.wantMeta)
@@ -140,6 +150,13 @@ final class HologramTextures {
             CACHE.put(key, material);
         }
         pair[index] = material;
+        if (descriptor != cell) {
+            if (shared == null) {
+                shared = new Material[2];
+                DESCRIPTORS.put(descriptor, shared);
+            }
+            shared[index] = material;
+        }
         return material;
     }
 

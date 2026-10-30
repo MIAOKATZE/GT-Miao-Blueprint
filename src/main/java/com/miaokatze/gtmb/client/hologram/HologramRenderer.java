@@ -14,6 +14,7 @@ import net.minecraft.block.Block;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.Tessellator;
 import net.minecraft.client.renderer.culling.Frustrum;
+import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.client.renderer.texture.TextureMap;
 import net.minecraft.entity.Entity;
 import net.minecraft.init.Blocks;
@@ -26,6 +27,7 @@ import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL14;
 
 import com.gtnewhorizon.gtnhlib.client.renderer.DirectTessellator;
+import com.miaokatze.miaokatzecore.client.render.TessellatorSlice;
 
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.common.blocks.ItemMachines;
@@ -52,6 +54,36 @@ final class HologramRenderer {
     private static HologramState previewState, worldState;
     private static String previewKey = "";
     private static List<Face> cachedFaces = new ArrayList<>();
+    private static PreviewSubmission previewSubmission;
+    private static List<Face> hoverFaces;
+    private static int hoverX, hoverY, hoveredCell = -1;
+    static long previewSliceCaptures, previewSliceHits, previewSliceUnsupported, previewSliceFallbackFrames;
+    static long previewHoverScans;
+
+    private static void invalidatePreviewDrawCache() {
+        previewSubmission = null;
+        hoverFaces = null;
+    }
+
+    private static int previewHovered(List<Face> faces, int mouseX, int mouseY, boolean picking) {
+        if (!picking) {
+            hoverFaces = null;
+            return -1;
+        }
+        if (hoverFaces == faces && hoverX == mouseX && hoverY == mouseY) return hoveredCell;
+        int hovered = -1;
+        for (int at = 0; at < faces.size(); at++) {
+            Face face = faces.get(at);
+            if (face.contains(mouseX, mouseY)) hovered = face.cell.index;
+        }
+        hoverFaces = faces;
+        hoverX = mouseX;
+        hoverY = mouseY;
+        hoveredCell = hovered;
+        if (com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.isEnabled()) previewHoverScans++;
+        return hovered;
+    }
+
     private static List<Face> cachedOutlines = new ArrayList<>();
     private static final FloatBuffer OUTLINE_MATRIX = BufferUtils.createFloatBuffer(16);
     private static final IntBuffer OUTLINE_VIEWPORT = BufferUtils.createIntBuffer(16);
@@ -117,6 +149,7 @@ final class HologramRenderer {
         HologramBlockRender.clear();
         nativePreviewCells.clear();
         cachedFaces.clear();
+        invalidatePreviewDrawCache();
         cachedMarkers.clear();
         cachedOutlines.clear();
         visibleState = null;
@@ -139,6 +172,7 @@ final class HologramRenderer {
             return;
         }
         Set<HologramRegionCache.Key> dirty = HologramRegionCache.affected(next);
+        invalidatePreviewDrawCache();
         lastSnapshotDirtyRegions = dirty.size();
         for (HologramRegionCache.Key key : dirty) previewRegions.remove(key);
         if (visibleState == previous) visibleState = next;
@@ -248,6 +282,7 @@ final class HologramRenderer {
     }
 
     static void sceneClosed() {
+        invalidatePreviewDrawCache();
         displayedState = null;
         presentedState = null;
         presentedFrame = null;
@@ -489,6 +524,7 @@ final class HologramRenderer {
             previewState = state;
             previewKey = key;
             cachedFaces = faces;
+            invalidatePreviewDrawCache();
             cachedMarkers = markers;
             cachedOutlines = outlines;
             cachedExtent = extent;
@@ -537,45 +573,26 @@ final class HologramRenderer {
                 moveX = to[0] - from[0];
                 moveY = to[1] - from[1];
             }
-            int quadVertices = 0, quadLimit = 0;
             boolean materialDrawn = false;
             boolean picking = (!budgeted || previewPreparation.projection.published == state.cells.size())
                 && projectedFrame.coordinates.contains(mouseX, mouseY);
             // These GUI batches use color/UV only, with no brightness or normal flag enabled.
             // Restart at primitive boundaries before reapplying color/UV; translation stays unchanged.
-            t.startDrawingQuads();
-            for (Face face : faces) {
-                if (picking && face.contains(mouseX, mouseY)) hovered = face.cell.index;
-                if (face.empty || face.nativeModel) continue;
-                float shade = face.side == 1 ? 1 : face.side < 2 ? .6f : .8f;
-                boolean cellMoving = moving(face.cell);
-                double shiftX = cellMoving ? moveX : 0, shiftY = cellMoving ? moveY : 0;
-                int sampleIndex = 0;
-                for (HologramTextures.Sample sample : face.samples()) {
-                    if (quadLimit > 0 && quadVertices + 4 > quadLimit) {
-                        t.draw();
-                        t.startDrawingQuads();
-                        quadVertices = 0;
-                    }
-                    setSampleColor(t, sample, shade, cellMoving ? .38f : .96f);
-                    if (face.cell.sourceMissing && !face.cell.missingBlock) t.setColorRGBA_F(.55f, .55f, .55f, .78f);
-                    for (int i = 0; i < 4; i++) {
-                        int vertex = FACES[face.side][i];
-                        double[] point = face.points[vertex];
-                        t.addVertexWithUV(
-                            point[0] + shiftX,
-                            point[1] + shiftY,
-                            point[2] * depthScale + sampleIndex * .015,
-                            textureU(sample.icon, face.side, face.local(vertex)),
-                            textureV(sample.icon, face.side, face.local(vertex)));
-                    }
-                    if (quadLimit == 0) quadLimit = previewBatchLimit(t);
-                    quadVertices += 4;
-                    materialDrawn = true;
-                    sampleIndex++;
-                }
+            hovered = previewHovered(faces, mouseX, mouseY, picking);
+            boolean displaced = (moveOffset[0] != 0 || moveOffset[1] != 0 || moveOffset[2] != 0) && selection != null
+                && selection.size() > 0;
+            // Angelica 2.2.28 also uses this vanilla GUI layout; its append-side extra state belongs to terrain
+            // meshing.
+            // DirectTessellator and drag transforms retain their original commands and active-format batch limit.
+            if (!displaced && t.getClass() == Tessellator.class) {
+                if (previewSubmission == null || previewSubmission.faces != faces
+                    || previewSubmission.depthScale != depthScale)
+                    previewSubmission = new PreviewSubmission(faces, depthScale);
+                materialDrawn = previewSubmission.draw(t);
+            } else {
+                if (com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.isEnabled()) previewSliceFallbackFrames++;
+                materialDrawn = drawPreviewQuads(t, faces, depthScale, moveX, moveY);
             }
-            t.draw();
             HologramNativeRasterSmoke.Frame raster = HologramNativeRasterSmoke
                 .begin(state, view == 1 || state.data.getInteger("mode") == 2);
             for (HologramState.Cell cell : nativePreviewCells) {
@@ -631,12 +648,12 @@ final class HologramRenderer {
                 : previewOutlineDensity();
             int lineVertices = 0, lineLimit = 0;
             t.startDrawing(GL11.GL_LINES);
-            java.util.Set<Integer> related = selection == null ? java.util.Collections.emptySet()
-                : selection.related(state);
+            if (selection != null) selection.related(state);
             if (!HologramBlueprintPreview.cleanCapture()) for (Face face : cachedOutlines) {
                 boolean chosen = face.cell.index == selected
                     || selection != null && selection.contains(face.cell.index);
-                boolean relatedCasing = !chosen && related.contains(face.cell.index);
+                boolean relatedCasing = !chosen && selection != null
+                    && selection.relatedContains(state, face.cell.index);
                 float alpha = previewOutlineAlpha(chosen, relatedCasing, face.empty, face.fadeDefault, outlineDensity);
                 if (alpha == 0) continue;
                 if (lineLimit > 0 && lineVertices + 24 > lineLimit) {
@@ -864,6 +881,7 @@ final class HologramRenderer {
         previewKey = key;
         previewState = state;
         cachedFaces = new ArrayList<>();
+        invalidatePreviewDrawCache();
         cachedOutlines = new ArrayList<>();
         cachedMarkers = new ArrayList<>();
         nativePreviewCells.clear();
@@ -1324,6 +1342,7 @@ final class HologramRenderer {
             while (old < cachedFaces.size()) merged.add(cachedFaces.get(old++));
             while (added < faces.size()) merged.add(faces.get(added++));
             cachedFaces = merged;
+            invalidatePreviewDrawCache();
             cachedOutlines.addAll(outlines);
             nativePreviewCells.addAll(nativeCells);
             linkedPreviewCells.addAll(linked);
@@ -2004,6 +2023,162 @@ final class HologramRenderer {
     private static double textureV(IIcon icon, int side, double[] point) {
         double v = side == 0 ? point[2] + .5 : side == 1 ? .5 - point[2] : .5 - point[1];
         return icon.getMinV() + (icon.getMaxV() - icon.getMinV()) * v;
+    }
+
+    private static void emitPreviewQuad(Tessellator tess, Face face, HologramTextures.Sample sample, int sampleIndex,
+        double depthScale, double shiftX, double shiftY, boolean displaced) {
+        float shade = face.side == 1 ? 1 : face.side < 2 ? .6f : .8f;
+        setSampleColor(tess, sample, shade, displaced ? .38f : .96f);
+        if (face.cell.sourceMissing && !face.cell.missingBlock) tess.setColorRGBA_F(.55f, .55f, .55f, .78f);
+        for (int i = 0; i < 4; i++) {
+            int vertex = FACES[face.side][i];
+            double[] point = face.points[vertex];
+            tess.addVertexWithUV(
+                point[0] + shiftX,
+                point[1] + shiftY,
+                point[2] * depthScale + sampleIndex * .015,
+                textureU(sample.icon, face.side, face.local(vertex)),
+                textureV(sample.icon, face.side, face.local(vertex)));
+        }
+    }
+
+    /** Dynamic icons, drag transforms and extended tessellators keep the same once-only vertex commands. */
+    private static boolean drawPreviewQuads(Tessellator tess, List<Face> faces, double depthScale, double moveX,
+        double moveY) {
+        int vertices = 0, limit = 0;
+        boolean drawn = false;
+        tess.startDrawingQuads();
+        for (int at = 0; at < faces.size(); at++) {
+            Face face = faces.get(at);
+            if (face.empty || face.nativeModel) continue;
+            boolean displaced = moving(face.cell);
+            List<HologramTextures.Sample> samples = face.samples();
+            for (int sample = 0; sample < samples.size(); sample++) {
+                if (limit > 0 && vertices + 4 > limit) {
+                    tess.draw();
+                    tess.startDrawingQuads();
+                    vertices = 0;
+                }
+                emitPreviewQuad(
+                    tess,
+                    face,
+                    samples.get(sample),
+                    sample,
+                    depthScale,
+                    displaced ? moveX : 0,
+                    displaced ? moveY : 0,
+                    displaced);
+                if (limit == 0) limit = previewBatchLimit(tess);
+                vertices += 4;
+                drawn = true;
+            }
+        }
+        tess.draw();
+        return drawn;
+    }
+
+    /** Custom/subclass UV access and animated sprites remain live; resource reload releases every cached slice. */
+    static boolean stablePreviewIcon(IIcon icon) {
+        return icon != null && icon.getClass() == TextureAtlasSprite.class
+            && ((TextureAtlasSprite) icon).getFrameCount() <= 1;
+    }
+
+    /** Original sorted face/layer order, partitioned only at complete quad boundaries. No GL resource is retained. */
+    private static final class PreviewSubmission {
+
+        // 64 MiB of copied raw ints; masks, scalar states and range objects are additional retained memory.
+        private static final int MAX_RETAINED_INTS = 16 * 1024 * 1024;
+        final List<Face> faces;
+        final double depthScale;
+        final List<PreviewBatch> batches = new ArrayList<>();
+        boolean unsupported;
+        int retainedInts;
+
+        PreviewSubmission(List<Face> faces, double depthScale) {
+            this.faces = faces;
+            this.depthScale = depthScale;
+            int firstFace = -1, firstSample = 0, lastFace = 0, lastSample = 0, quads = 0;
+            boolean stable = true;
+            for (int at = 0; at < faces.size(); at++) {
+                Face face = faces.get(at);
+                if (face.empty || face.nativeModel) continue;
+                List<HologramTextures.Sample> samples = face.samples();
+                for (int sample = 0; sample < samples.size(); sample++) {
+                    if (firstFace < 0) {
+                        firstFace = at;
+                        firstSample = sample;
+                    }
+                    stable &= stablePreviewIcon(samples.get(sample).icon);
+                    lastFace = at;
+                    lastSample = sample + 1;
+                    if (++quads == 1023) {
+                        batches.add(new PreviewBatch(firstFace, firstSample, lastFace, lastSample, quads, stable));
+                        firstFace = -1;
+                        quads = 0;
+                        stable = true;
+                    }
+                }
+            }
+            if (quads != 0) batches.add(new PreviewBatch(firstFace, firstSample, lastFace, lastSample, quads, stable));
+        }
+
+        boolean draw(Tessellator tess) {
+            for (int at = 0; at < batches.size(); at++) {
+                PreviewBatch batch = batches.get(at);
+                tess.startDrawingQuads();
+                if (batch.stable && !unsupported) {
+                    if (batch.slice != null && batch.slice.replay(tess)) {
+                        if (com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.isEnabled()) previewSliceHits++;
+                    } else if (retainedInts - (batch.slice == null ? 0 : batch.slice.retainedInts()) + batch.quads * 32
+                        <= MAX_RETAINED_INTS) {
+                            // Capture executes the append-only callback once, including on unsupported layouts.
+                            int previousInts = batch.slice == null ? 0 : batch.slice.retainedInts();
+                            TessellatorSlice captured = TessellatorSlice.capture(tess, () -> emit(tess, batch));
+                            batch.slice = captured;
+                            retainedInts -= previousInts;
+                            if (batch.slice == null) {
+                                unsupported = true;
+                                if (com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.isEnabled())
+                                    previewSliceUnsupported++;
+                            } else {
+                                retainedInts += batch.slice.retainedInts();
+                                if (com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.isEnabled())
+                                    previewSliceCaptures++;
+                            }
+                        } else emit(tess, batch);
+                } else emit(tess, batch);
+                tess.draw();
+            }
+            return !batches.isEmpty();
+        }
+
+        private void emit(Tessellator tess, PreviewBatch batch) {
+            for (int at = batch.firstFace; at <= batch.lastFace; at++) {
+                Face face = faces.get(at);
+                if (face.empty || face.nativeModel) continue;
+                List<HologramTextures.Sample> samples = face.samples();
+                int first = at == batch.firstFace ? batch.firstSample : 0;
+                int last = at == batch.lastFace ? batch.lastSample : samples.size();
+                for (int sample = first; sample < last; sample++)
+                    emitPreviewQuad(tess, face, samples.get(sample), sample, depthScale, 0, 0, false);
+            }
+        }
+    }
+
+    private static final class PreviewBatch {
+
+        final int firstFace, firstSample, lastFace, lastSample, quads;
+        final boolean stable;
+        TessellatorSlice slice;
+
+        PreviewBatch(int firstFace, int firstSample, int lastFace, int lastSample, int quads, boolean stable) {
+            this.firstFace = firstFace;
+            this.firstSample = firstSample;
+            this.lastFace = lastFace;
+            this.lastSample = lastSample;
+            this.quads = quads;
+            this.stable = stable;
+        }
     }
 
     private static final class Face {

@@ -10,6 +10,7 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
 import com.miaokatze.gtmb.hologram.HologramBlueprintLimits;
+import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 import com.miaokatze.gtmb.hologram.HologramSnapshotPalette;
 
 /** Immutable client snapshot; all amounts and construction outcomes come from the server. */
@@ -176,6 +177,7 @@ final class HologramState {
         private final boolean displayRows;
         private final NBTTagCompound source;
         private final boolean packed;
+        private final java.util.IdentityHashMap<NBTTagCompound, DescriptorTemplate> descriptors;
         private final boolean fullBaseline;
         int lastStepWork;
 
@@ -187,6 +189,7 @@ final class HologramState {
         Preparation(NBTTagCompound source, boolean displayRows) {
             this.source = source;
             packed = HologramSnapshotPalette.isPacked(source);
+            descriptors = packed ? new java.util.IdentityHashMap<>() : null;
             this.displayRows = displayRows;
             fullBaseline = fullBaseline(source);
             data = metadata(source, false);
@@ -217,8 +220,7 @@ final class HologramState {
                     } catch (java.io.IOException invalid) {
                         throw new IllegalArgumentException(invalid.getMessage(), invalid);
                     }
-                    Cell cell = packed
-                        ? new Cell(cellPosition, HologramSnapshotPalette.descriptor(source, row), row, true)
+                    Cell cell = packed ? new Cell(cellPosition, descriptor(row), row)
                         : new Cell(cellPosition, row, true);
                     if ((cellPosition & 255) == 0) pages.add(new Cell[Math.min(256, rows.tagCount() - cellPosition)]);
                     pages.get(cellPosition >> 8)[cellPosition & 255] = cell;
@@ -262,6 +264,16 @@ final class HologramState {
             return stage == 4;
         }
 
+        private DescriptorTemplate descriptor(NBTTagCompound row) {
+            NBTTagCompound raw = HologramSnapshotPalette.descriptor(source, row);
+            DescriptorTemplate template = descriptors.get(raw);
+            if (template == null) {
+                template = new DescriptorTemplate(raw);
+                descriptors.put(raw, template);
+            }
+            return template;
+        }
+
         String phase() {
             return stage == 0 ? "snapshot.cells"
                 : stage == 1 ? "snapshot.regions" : stage == 2 ? "snapshot.materials" : "snapshot.memberships";
@@ -283,7 +295,10 @@ final class HologramState {
 
         HologramState result() {
             if (stage != 4) throw new IllegalStateException("Client snapshot is incomplete");
-            if (result == null) result = new HologramState(this);
+            if (result == null) {
+                result = new HologramState(this);
+                if (packed) HologramRuntimeMetrics.clientDescriptorsPrepared(descriptors.size(), rows.tagCount());
+            }
             return result;
         }
 
@@ -653,10 +668,24 @@ final class HologramState {
         return dx * dx + dy * dy + dz * dz;
     }
 
+    /** The unpublished prototype is sealed by ownership: no caller receives its stacks, arrays or raw NBT. */
+    private static final class DescriptorTemplate {
+
+        private final Cell values;
+        private final ItemStack actualStack, targetStack;
+
+        DescriptorTemplate(NBTTagCompound raw) {
+            values = new Cell(-1, raw, true);
+            actualStack = values.actualStack;
+            targetStack = values.targetStack;
+        }
+    }
+
     static final class Cell {
 
         private final NBTTagCompound raw;
         private final NBTTagCompound coordinates;
+        private final DescriptorTemplate descriptorTemplate;
 
         final int index, x, y, z, dx, dy, dz, meta, wantMeta, chosenChoice, hatchFacing, actualFacing, targetFacing;
         final String id, wantId, status, pinScope, role, family, renderKind, operation, exactIdentity;
@@ -687,6 +716,7 @@ final class HologramState {
         private Cell(int index, NBTTagCompound n, NBTTagCompound positions, boolean owned) {
             raw = owned ? n : (NBTTagCompound) n.copy();
             coordinates = positions;
+            descriptorTemplate = null;
             this.index = index;
             NBTTagCompound location = positions == null ? n : positions;
             x = location.getInteger("x");
@@ -737,8 +767,8 @@ final class HologramState {
                 || !wantId.isEmpty() && !"minecraft:air".equals(wantId) && Block.getBlockFromName(wantId) == null;
             anchor = n.getBoolean("anchor");
             iconOnly = n.getBoolean("iconOnly");
-            actualStack = readStack(n.getCompoundTag("actualStack"));
-            targetStack = readStack(n.getCompoundTag("targetStack"));
+            actualStack = n.hasKey("actualStack", 10) ? readStack(n.getCompoundTag("actualStack")) : null;
+            targetStack = n.hasKey("targetStack", 10) ? readStack(n.getCompoundTag("targetStack")) : null;
             actualDisplay = owned ? n.getCompoundTag("actualDisplay")
                 : (NBTTagCompound) n.getCompoundTag("actualDisplay")
                     .copy();
@@ -755,6 +785,66 @@ final class HologramState {
                 ItemStack stack = readStack(list.getCompoundTagAt(i));
                 if (stack != null) candidates.add(stack);
             }
+        }
+
+        /** Only a negotiated packed preparation shares parsing; mutable per-cell values remain detached. */
+        private Cell(int index, DescriptorTemplate template, NBTTagCompound positions) {
+            Cell value = template.values;
+            raw = value.raw;
+            coordinates = positions;
+            descriptorTemplate = template;
+            this.index = index;
+            x = positions.getInteger("x");
+            y = positions.getInteger("y");
+            z = positions.getInteger("z");
+            dx = positions.getInteger("dx");
+            dy = positions.getInteger("dy");
+            dz = positions.getInteger("dz");
+            meta = value.meta;
+            wantMeta = value.wantMeta;
+            chosenChoice = value.chosenChoice;
+            hatchFacing = value.hatchFacing;
+            actualFacing = value.actualFacing;
+            targetFacing = value.targetFacing;
+            id = value.id;
+            wantId = value.wantId;
+            status = value.status;
+            pinScope = value.pinScope;
+            role = value.role;
+            family = value.family;
+            renderKind = value.renderKind;
+            operation = value.operation;
+            exactIdentity = value.exactIdentity;
+            prompt = value.prompt;
+            structureId = value.structureId;
+            sourceMod = value.sourceMod;
+            sourceVersion = value.sourceVersion;
+            sourceClass = value.sourceClass;
+            sourceWarning = value.sourceWarning;
+            networkGroup = value.networkGroup;
+            specialHint = value.specialHint;
+            structureIds = value.structureIds;
+            anchor = value.anchor;
+            iconOnly = value.iconOnly;
+            excluded = value.excluded;
+            missingBlock = value.missingBlock;
+            sourceMissing = value.sourceMissing;
+            inScope = value.inScope;
+            candidateComplete = value.candidateComplete;
+            candidateBoundary = value.candidateBoundary;
+            actualStack = template.actualStack == null ? null : template.actualStack.copy();
+            targetStack = template.targetStack == null ? null : template.targetStack.copy();
+            actualDisplay = value.actualDisplay;
+            targetDisplay = value.targetDisplay;
+            hintIndex = value.hintIndex;
+            hintTint = value.hintTint.clone();
+            System.arraycopy(value.hintIcons, 0, hintIcons, 0, hintIcons.length);
+            for (ItemStack candidate : value.candidates) candidates.add(candidate.copy());
+        }
+
+        /** Exact within this preparation only; the token exposes neither the descriptor nor its private prototype. */
+        Object descriptorIdentity() {
+            return descriptorTemplate == null ? this : descriptorTemplate;
         }
 
         private static ItemStack readStack(NBTTagCompound source) {

@@ -3,6 +3,7 @@ package com.miaokatze.gtmb.client.hologram;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
+import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
 import com.miaokatze.gtmb.hologram.HologramSnapshotPalette;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
@@ -524,6 +525,12 @@ public final class HologramLargeStateRegression {
             descriptor.setLong("unknownLong", Long.MIN_VALUE);
             descriptor.setByteArray("unknownBytes", new byte[4096]);
             descriptor.setIntArray("hintTint", new int[] { 4, 5, 6 });
+            NBTTagList icons = new NBTTagList();
+            icons.appendTag(new net.minecraft.nbt.NBTTagString("kept-icon"));
+            descriptor.setTag("hintIcons", icons);
+            NBTTagList memberships = new NBTTagList();
+            memberships.appendTag(new net.minecraft.nbt.NBTTagString("kept-structure"));
+            descriptor.setTag("structureIds", memberships);
             display.setString("unknownDisplay", "kept");
             NBTTagCompound nativeTile = new NBTTagCompound();
             nativeTile.setLong("unknownNativeLong", Long.MAX_VALUE);
@@ -537,6 +544,9 @@ public final class HologramLargeStateRegression {
             itemTag.setString("unknownItemField", "kept");
             stack.setTagCompound(itemTag);
             descriptor.setTag("targetStack", stack.writeToNBT(new NBTTagCompound()));
+            NBTTagList candidates = new NBTTagList();
+            candidates.appendTag(stack.writeToNBT(new NBTTagCompound()));
+            descriptor.setTag("candidates", candidates);
             NBTTagList rows = new NBTTagList();
             for (int i = 0; i < 4; i++) {
                 NBTTagCompound row = (NBTTagCompound) descriptor.copy();
@@ -567,6 +577,7 @@ public final class HologramLargeStateRegression {
                 .that(HologramSnapshotPalette.isPacked(decoded), "real repeated snapshot uses packed transport");
             decoded = (NBTTagCompound) decoded.copy();
             SimpleAssert.that(HologramSnapshotPalette.isPacked(decoded), "opaque NBT copy retains packed provenance");
+            descriptorTemplates(source, decoded);
             HologramState publicState = new HologramState(decoded);
             NBTTagCompound external = (NBTTagCompound) decoded.copy();
             HologramState isolated = new HologramState(external);
@@ -669,6 +680,181 @@ public final class HologramLargeStateRegression {
                 "legacy metadata with reserved-looking names is not removed or reinterpreted");
         } catch (java.io.IOException | ReflectiveOperationException failure) {
             throw new AssertionError(failure);
+        }
+    }
+
+    /** Counts the real field/ItemStack read path, rather than estimating savings from the resulting values. */
+    private static void descriptorTemplates(NBTTagCompound source, NBTTagCompound decoded)
+        throws java.io.IOException, ReflectiveOperationException {
+        java.util.concurrent.atomic.AtomicInteger reads = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger loads = new java.util.concurrent.atomic.AtomicInteger();
+        java.util.concurrent.atomic.AtomicInteger absentStacks = new java.util.concurrent.atomic.AtomicInteger();
+        NBTTagCompound legacySource = (NBTTagCompound) source.copy();
+        NBTTagList rows = legacySource.getTagList("cells", 10);
+        for (int i = 0; i < rows.tagCount(); i++)
+            rows.func_150304_a(i, new CountingDescriptor(rows.getCompoundTagAt(i), reads, loads, absentStacks, true));
+        HologramState legacy = new HologramState(legacySource);
+        SimpleAssert.eq(rows.tagCount(), reads.get(), "legacy reads descriptor fields once per cell");
+        SimpleAssert.eq(2 * rows.tagCount(), loads.get(), "legacy loads target and candidate stacks per cell");
+        SimpleAssert.eq(0, absentStacks.get(), "absent actual stacks need no empty compound or load");
+        reads.set(0);
+        loads.set(0);
+        NBTTagCompound compact = (NBTTagCompound) decoded.copy();
+        NBTTagList palette = compact.getTagList(HologramSnapshotPalette.PALETTE_KEY, 10);
+        for (int i = 0; i < palette.tagCount(); i++) palette
+            .func_150304_a(i, new CountingDescriptor(palette.getCompoundTagAt(i), reads, loads, absentStacks, true));
+        boolean metrics = HologramRuntimeMetrics.isEnabled();
+        HologramRuntimeMetrics.setEnabled(true);
+        try {
+            NBTTagCompound before = HologramRuntimeMetrics.snapshot()
+                .getCompoundTag("queues");
+            HologramState.Preparation task = new HologramState.Preparation(compact);
+            while (!task.step(1, Long.MAX_VALUE)) {}
+            HologramState prepared = task.result();
+            task.result();
+            NBTTagCompound after = HologramRuntimeMetrics.snapshot()
+                .getCompoundTag("queues");
+            SimpleAssert.eq(
+                (long) palette.tagCount(),
+                after.getLong("clientDescriptorTemplates") - before.getLong("clientDescriptorTemplates"),
+                "completed preparation reports U templates once");
+            SimpleAssert.eq(
+                (long) rows.tagCount(),
+                after.getLong("clientDescriptorCells") - before.getLong("clientDescriptorCells"),
+                "completed preparation reports N cells once");
+            SimpleAssert.eq(palette.tagCount(), reads.get(), "packed descriptor fields are read U times instead of N");
+            SimpleAssert
+                .eq(2 * palette.tagCount(), loads.get(), "packed stack NBT parses U times; each cell copies privately");
+            SimpleAssert.eq(
+                legacy.fullData(),
+                prepared.fullData(),
+                "templates retain exact legacy export and coordinate types");
+            for (int i = 0; i < prepared.cells.size(); i++)
+                parsedCellEquals(legacy.cells.get(i), prepared.cells.get(i));
+            HologramState.Cell first = prepared.cells.get(0), second = prepared.cells.get(1);
+            SimpleAssert.that(
+                first.descriptorIdentity() == second.descriptorIdentity() && first.descriptorIdentity() != first,
+                "packed cells expose only the shared private template token");
+            SimpleAssert.that(first.structureIds == second.structureIds, "immutable memberships share one parsed list");
+            first.candidates.get(0)
+                .getTagCompound()
+                .setString("unknownItemField", "changed");
+            first.hintIcons[0] = "changed";
+            SimpleAssert.eq(
+                "kept",
+                second.candidates.get(0)
+                    .getTagCompound()
+                    .getString("unknownItemField"),
+                "candidate stack NBT remains independent between templated cells");
+            SimpleAssert.eq("kept-icon", second.hintIcons[0], "hint icon arrays remain per-cell mutable copies");
+            SimpleAssert.eq(source, prepared.fullData(), "mutable candidates and arrays cannot alter template export");
+            HologramState.Preparation another = new HologramState.Preparation((NBTTagCompound) decoded.copy());
+            while (!another.step(1, Long.MAX_VALUE)) {}
+            SimpleAssert.that(
+                another.result().cells.get(0)
+                    .descriptorIdentity() != second.descriptorIdentity(),
+                "a fresh preparation never inherits an earlier snapshot template");
+            HologramState publicState = new HologramState(decoded);
+            SimpleAssert.that(
+                publicState.cells.get(0)
+                    .descriptorIdentity() == publicState.cells.get(0),
+                "public packed construction retains the original independent parsing contract");
+            SimpleAssert.that(
+                legacy.cells.get(0)
+                    .descriptorIdentity() == legacy.cells.get(0),
+                "legacy cells use no shared descriptor token");
+            java.lang.reflect.Field cache = HologramState.Preparation.class.getDeclaredField("descriptors");
+            cache.setAccessible(true);
+            SimpleAssert.eq(
+                null,
+                cache.get(new HologramState.Preparation(source)),
+                "legacy preparation allocates no template map");
+            NBTTagCompound distinct = (NBTTagCompound) source.copy();
+            distinct.getTagList("cells", 10)
+                .getCompoundTagAt(0)
+                .setString("futureUnknown", "different");
+            HologramState.Preparation changed = new HologramState.Preparation(
+                HologramSnapshotCodec.decode(HologramSnapshotCodec.compressPacked(distinct)));
+            while (!changed.step(1, Long.MAX_VALUE)) {}
+            HologramState changedState = changed.result();
+            SimpleAssert.that(
+                changedState.cells.get(0)
+                    .descriptorIdentity()
+                    != changedState.cells.get(1)
+                        .descriptorIdentity(),
+                "different unknown descriptor data cannot share a template token");
+            SimpleAssert.eq(distinct, changedState.fullData(), "unknown descriptor differences remain lossless");
+        } finally {
+            HologramRuntimeMetrics.setEnabled(metrics);
+        }
+    }
+
+    private static void parsedCellEquals(HologramState.Cell expected, HologramState.Cell actual)
+        throws IllegalAccessException {
+        for (java.lang.reflect.Field field : HologramState.Cell.class.getDeclaredFields()) {
+            if (java.lang.reflect.Modifier.isPrivate(field.getModifiers())) continue;
+            field.setAccessible(true);
+            Object a = field.get(expected), b = field.get(actual);
+            if (field.getType() == net.minecraft.item.ItemStack.class) SimpleAssert.that(
+                net.minecraft.item.ItemStack
+                    .areItemStacksEqual((net.minecraft.item.ItemStack) a, (net.minecraft.item.ItemStack) b),
+                "templated stack matches legacy: " + field.getName());
+            else if (a instanceof int[]) SimpleAssert.that(
+                java.util.Arrays.equals((int[]) a, (int[]) b),
+                "templated array matches legacy: " + field.getName());
+            else if (a instanceof String[])
+                SimpleAssert.that(java.util.Arrays.equals((String[]) a, (String[]) b), "templated icons match legacy");
+            else if ("candidates".equals(field.getName())) {
+                SimpleAssert.eq(expected.candidates.size(), actual.candidates.size(), "candidate counts match legacy");
+                for (int i = 0; i < expected.candidates.size(); i++) SimpleAssert.that(
+                    net.minecraft.item.ItemStack
+                        .areItemStacksEqual(expected.candidates.get(i), actual.candidates.get(i)),
+                    "templated candidate matches legacy");
+            } else SimpleAssert.eq(a, b, "templated field matches legacy: " + field.getName());
+        }
+    }
+
+    private static final class CountingDescriptor extends NBTTagCompound {
+
+        private final java.util.concurrent.atomic.AtomicInteger reads, loads, absentStacks;
+
+        CountingDescriptor(NBTTagCompound source, java.util.concurrent.atomic.AtomicInteger reads,
+            java.util.concurrent.atomic.AtomicInteger loads, java.util.concurrent.atomic.AtomicInteger absentStacks,
+            boolean descriptor) {
+            this.reads = reads;
+            this.loads = loads;
+            this.absentStacks = absentStacks;
+            for (Object name : source.func_150296_c()) {
+                String key = (String) name;
+                setTag(key, source.getTag(key));
+            }
+            if (!descriptor) return;
+            for (String key : new String[] { "actualStack", "targetStack" }) if (source.hasKey(key, 10))
+                setTag(key, new CountingDescriptor(source.getCompoundTag(key), reads, loads, absentStacks, false));
+            if (source.hasKey("candidates", 9)) {
+                NBTTagList previous = source.getTagList("candidates", 10), candidates = new NBTTagList();
+                for (int i = 0; i < previous.tagCount(); i++) candidates
+                    .appendTag(new CountingDescriptor(previous.getCompoundTagAt(i), reads, loads, absentStacks, false));
+                setTag("candidates", candidates);
+            }
+        }
+
+        @Override
+        public String getString(String key) {
+            if ("wantId".equals(key)) reads.incrementAndGet();
+            return super.getString(key);
+        }
+
+        @Override
+        public short getShort(String key) {
+            if ("id".equals(key)) loads.incrementAndGet();
+            return super.getShort(key);
+        }
+
+        @Override
+        public NBTTagCompound getCompoundTag(String key) {
+            if ("actualStack".equals(key) && !hasKey(key, 10)) absentStacks.incrementAndGet();
+            return super.getCompoundTag(key);
         }
     }
 
