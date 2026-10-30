@@ -18,6 +18,16 @@ public final class HologramSelectionRegression {
         SimpleAssert.eq(2, selection.size(), "control click extends selection");
         selection.click(1, true);
         SimpleAssert.that(!selection.contains(1) && selection.contains(2), "control click toggles only its cell");
+        selection.click(900000, true);
+        SimpleAssert.that(selection.contains(900000), "primitive membership retains remote valid cell indices");
+        selection.retain(3);
+        SimpleAssert
+            .that(!selection.contains(900000) && selection.contains(2), "shrink invalidates primitive membership");
+        selection.click(Integer.MAX_VALUE, true);
+        SimpleAssert
+            .that(selection.contains(Integer.MAX_VALUE), "legacy public clicks preserve out-of-range membership");
+        selection.clear();
+        SimpleAssert.that(!selection.contains(2) && !selection.contains(-1), "clear invalidates primitive membership");
         HologramState state = volume();
         selection.previewClick(state, 0, "", false, false);
         SimpleAssert.eq(1, selection.size(), "ordinary interior click selects one cell even inside a structure");
@@ -278,6 +288,25 @@ public final class HologramSelectionRegression {
                     && !selection.related(state)
                         .contains(2),
                 "related outlines stay in the structure and exclude current hatch targets");
+            SimpleAssert.that(
+                selection.relatedContains(state, 4) && !selection.relatedContains(state, 8)
+                    && !selection.relatedContains(state, 2),
+                "primitive related membership matches the public read-only set");
+            boolean readOnly = false;
+            try {
+                selection.related(state)
+                    .add(8);
+            } catch (UnsupportedOperationException expected) {
+                readOnly = true;
+            }
+            SimpleAssert.that(readOnly, "callers cannot invalidate primitive related membership through a set alias");
+            NBTTagCompound changed = state.fullData();
+            changed.getTagList("cells", 10)
+                .getCompoundTagAt(4)
+                .setString("family", "other");
+            SimpleAssert.that(
+                !selection.relatedContains(new HologramState(changed), 4) && selection.relatedContains(state, 4),
+                "snapshot identity invalidates primitive related membership");
             selection.selectRelated(state, false);
             SimpleAssert.that(
                 selection.size() == 2 && selection.contains(0) && selection.contains(4),
@@ -285,6 +314,7 @@ public final class HologramSelectionRegression {
             SimpleAssert.that(!selection.canSelectRelated(state), "fully selected grade group clears the hint");
             selection.previewClick(state, 2, "", false, false);
             SimpleAssert.eq(1, selection.size(), "current hatch with casing provenance remains independently editable");
+            SimpleAssert.that(!selection.relatedContains(state, 4), "primary change invalidates related membership");
             SimpleAssert.that(!selection.canSelectRelated(state), "current hatch never offers casing grade expansion");
             selection.previewClick(state, 2, "", true, false);
             SimpleAssert.eq(1, selection.size(), "T on the current hatch uses its exact device identity");

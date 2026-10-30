@@ -186,7 +186,9 @@ public final class HologramRuntimeMetrics {
         PALETTE_ROWS_ENCODED("paletteRowsEncoded"),
         PALETTE_DESCRIPTORS_ENCODED("paletteDescriptorsEncoded"),
         PALETTE_BYTES_ENCODED("paletteBytesEncoded"),
-        PALETTE_SNAPSHOTS_DECODED("paletteSnapshotsDecoded");
+        PALETTE_SNAPSHOTS_DECODED("paletteSnapshotsDecoded"),
+        CLIENT_DESCRIPTOR_TEMPLATES("clientDescriptorTemplates"),
+        CLIENT_DESCRIPTOR_CELLS("clientDescriptorCells");
 
         final String key;
 
@@ -213,6 +215,13 @@ public final class HologramRuntimeMetrics {
 
     public static boolean isEnabled() {
         return enabled;
+    }
+
+    /** One aggregate per completed packed preparation, never one atomic update per cell. */
+    public static void clientDescriptorsPrepared(int templates, int cells) {
+        if (!enabled) return;
+        add(Counter.CLIENT_DESCRIPTOR_TEMPLATES, templates);
+        add(Counter.CLIENT_DESCRIPTOR_CELLS, cells);
     }
 
     /** Scheduler instrumentation only; no queue contents or mutable world/session objects leave this boundary. */

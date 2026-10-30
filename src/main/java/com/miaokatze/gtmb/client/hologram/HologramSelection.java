@@ -9,6 +9,8 @@ import java.util.Set;
 public final class HologramSelection {
 
     private final Set<Integer> indices = new LinkedHashSet<>();
+    private final java.util.BitSet selectedBits = new java.util.BitSet();
+    private int selectedBitsVersion = -1;
     private int corner = -1;
     private String clickedStructureId = "";
     private int version, mobilityVersion = -1;
@@ -17,6 +19,7 @@ public final class HologramSelection {
     private HologramState relatedState;
     private int relatedVersion = -1;
     private Set<Integer> related = java.util.Collections.emptySet();
+    private final java.util.BitSet relatedBits = new java.util.BitSet();
     private boolean relatedAvailable;
 
     public void clear() {
@@ -140,7 +143,9 @@ public final class HologramSelection {
         if (relatedState == state && relatedVersion == version) return related;
         relatedState = state;
         relatedVersion = version;
-        related = new LinkedHashSet<>();
+        Set<Integer> matches = new LinkedHashSet<>();
+        related = java.util.Collections.unmodifiableSet(matches);
+        relatedBits.clear();
         relatedAvailable = false;
         int primary = first();
         if (primary < 0 || primary >= state.cells.size()) return related;
@@ -150,10 +155,18 @@ public final class HologramSelection {
         String scope = source.belongsToStructure(active) ? active : source.structureId;
         for (int member : state.structureMembers.getOrDefault(scope, java.util.Collections.emptyList())) {
             HologramState.Cell cell = state.cells.get(member);
-            if (relatedGrade(source, cell)) related.add(member);
+            if (relatedGrade(source, cell)) {
+                matches.add(member);
+                relatedBits.set(member);
+            }
         }
         relatedAvailable = !indices.containsAll(related);
         return related;
+    }
+
+    boolean relatedContains(HologramState state, int index) {
+        related(state);
+        return index >= 0 && relatedBits.get(index);
     }
 
     boolean canSelectRelated(HologramState state) {
@@ -246,7 +259,14 @@ public final class HologramSelection {
     }
 
     public boolean contains(int index) {
-        return indices.contains(index);
+        if (index >= com.miaokatze.gtmb.hologram.HologramBlueprintLimits.MAX_CELLS) return indices.contains(index);
+        if (selectedBitsVersion != version) {
+            selectedBits.clear();
+            for (int selected : indices) if (selected < com.miaokatze.gtmb.hologram.HologramBlueprintLimits.MAX_CELLS)
+                selectedBits.set(selected);
+            selectedBitsVersion = version;
+        }
+        return index >= 0 && selectedBits.get(index);
     }
 
     public int size() {
