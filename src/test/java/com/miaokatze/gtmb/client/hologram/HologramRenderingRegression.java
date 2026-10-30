@@ -261,13 +261,14 @@ public final class HologramRenderingRegression {
         // A real host boundary with a detached inactive client. held("air") observes currentScreen != parent before
         // physical Display/Keyboard polling; no global Minecraft singleton or native renderer is installed.
         return (HologramUiHost) java.lang.reflect.Proxy.newProxyInstance(
-            HologramUiHost.class.getClassLoader(), new Class<?>[] { HologramUiHost.class },
+            HologramUiHost.class.getClassLoader(),
+            new Class<?>[] { HologramUiHost.class },
             (proxy, method, arguments) -> switch (method.getName()) {
-                case "minecraft" -> client;
-                case "parent" -> parent;
-                case "screenWidth" -> HologramScreenLayout.WIDTH;
-                case "screenHeight" -> HologramScreenLayout.HEIGHT;
-                default -> throw new AssertionError("headless rendering admission requested " + method.getName());
+            case "minecraft" -> client;
+            case "parent" -> parent;
+            case "screenWidth" -> HologramScreenLayout.WIDTH;
+            case "screenHeight" -> HologramScreenLayout.HEIGHT;
+            default -> throw new AssertionError("headless rendering admission requested " + method.getName());
             });
     }
 
