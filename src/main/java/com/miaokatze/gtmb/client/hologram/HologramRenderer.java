@@ -27,6 +27,7 @@ import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL14;
 
 import com.gtnewhorizon.gtnhlib.client.renderer.DirectTessellator;
+import com.miaokatze.miaokatzecore.client.render.ScreenLineStream;
 import com.miaokatze.miaokatzecore.client.render.TessellatorSlice;
 
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
@@ -55,6 +56,7 @@ final class HologramRenderer {
     private static String previewKey = "";
     private static List<Face> cachedFaces = new ArrayList<>();
     private static PreviewSubmission previewSubmission;
+    private static ScreenLineStream previewLineStream;
     private static List<Face> hoverFaces;
     private static int hoverX, hoverY, hoveredCell = -1;
     static long previewSliceCaptures, previewSliceHits, previewSliceUnsupported, previewSliceFallbackFrames;
@@ -145,6 +147,7 @@ final class HologramRenderer {
         displayedState = null;
         previewSubmitted = false;
         publishedPreviewCells.clear();
+        closePreviewLineStream();
         worldRenderWitness = null;
         clearWorldGroups();
         worldState = previewState = null;
@@ -311,11 +314,19 @@ final class HologramRenderer {
 
     static void sceneClosed() {
         invalidatePreviewDrawCache();
+        closePreviewLineStream();
         displayedState = null;
         presentedState = null;
         presentedFrame = null;
         presentedRequest = null;
         previewSubmitted = false;
+    }
+
+    private static void closePreviewLineStream() {
+        if (previewLineStream != null) {
+            previewLineStream.close();
+            previewLineStream = null;
+        }
     }
 
     static boolean previewMeshVisible(HologramState state) {
@@ -745,34 +756,57 @@ final class HologramRenderer {
             float outlineDensity = HologramBlueprintPreview.cleanCapture() || cachedOutlines.isEmpty() ? 1
                 : previewOutlineDensity();
             int lineVertices = 0, lineLimit = 0;
-            t.startDrawing(GL11.GL_LINES);
-            if (selection != null) selection.related(state);
-            if (!HologramBlueprintPreview.cleanCapture()) for (Face face : cachedOutlines) {
-                boolean chosen = face.cell.index == selected
-                    || selection != null && selection.contains(face.cell.index);
-                boolean relatedCasing = !chosen && selection != null
-                    && selection.relatedContains(state, face.cell.index);
-                float alpha = previewOutlineAlpha(chosen, relatedCasing, face.empty, face.fadeDefault, outlineDensity);
-                if (alpha == 0) continue;
-                if (lineLimit > 0 && lineVertices + 24 > lineLimit) {
-                    t.draw();
-                    t.startDrawing(GL11.GL_LINES);
-                    lineVertices = 0;
-                }
-                t.setColorRGBA_F(
-                    chosen ? 1 : relatedCasing ? .78f : .2f,
-                    chosen ? .92f : relatedCasing ? .61f : .7f,
-                    chosen ? .5f : relatedCasing ? 1 : .8f,
-                    alpha);
-                for (int[] edge : EDGES) {
-                    double[] a = face.points[edge[0]], b = face.points[edge[1]];
-                    t.addVertex(a[0], a[1], a[2] * depthScale + .15);
-                    t.addVertex(b[0], b[1], b[2] * depthScale + .15);
-                }
-                if (lineLimit == 0) lineLimit = previewLineBatchLimit(t);
-                lineVertices += 24;
+            boolean streamedLines = false;
+            if (!HologramBlueprintPreview.cleanCapture()
+                && state != HologramLibraryClient.INSTANCE.browsePreviewState()) {
+                if (previewLineStream == null) previewLineStream = new ScreenLineStream();
+                streamedLines = previewLineStream.begin(t);
             }
-            t.draw();
+            try {
+                if (!streamedLines) t.startDrawing(GL11.GL_LINES);
+                if (selection != null) selection.related(state);
+                if (!HologramBlueprintPreview.cleanCapture()) for (Face face : cachedOutlines) {
+                    boolean chosen = face.cell.index == selected
+                        || selection != null && selection.contains(face.cell.index);
+                    boolean relatedCasing = !chosen && selection != null
+                        && selection.relatedContains(state, face.cell.index);
+                    float alpha = previewOutlineAlpha(
+                        chosen,
+                        relatedCasing,
+                        face.empty,
+                        face.fadeDefault,
+                        outlineDensity);
+                    if (alpha == 0) continue;
+                    if (lineLimit > 0 && lineVertices + 24 > lineLimit) {
+                        if (streamedLines) previewLineStream.flush();
+                        else {
+                            t.draw();
+                            t.startDrawing(GL11.GL_LINES);
+                        }
+                        lineVertices = 0;
+                    }
+                    float red = chosen ? 1 : relatedCasing ? .78f : .2f,
+                        green = chosen ? .92f : relatedCasing ? .61f : .7f,
+                        blue = chosen ? .5f : relatedCasing ? 1 : .8f;
+                    if (streamedLines) previewLineStream.color(red, green, blue, alpha);
+                    else t.setColorRGBA_F(red, green, blue, alpha);
+                    for (int[] edge : EDGES) {
+                        double[] a = face.points[edge[0]], b = face.points[edge[1]];
+                        if (streamedLines) previewLineStream
+                            .line(a[0], a[1], a[2] * depthScale + .15, b[0], b[1], b[2] * depthScale + .15);
+                        else {
+                            t.addVertex(a[0], a[1], a[2] * depthScale + .15);
+                            t.addVertex(b[0], b[1], b[2] * depthScale + .15);
+                        }
+                    }
+                    if (lineLimit == 0)
+                        lineLimit = streamedLines ? ScreenLineStream.MAX_VERTICES : previewLineBatchLimit(t);
+                    lineVertices += 24;
+                }
+                if (!streamedLines) t.draw();
+            } finally {
+                if (streamedLines) previewLineStream.end();
+            }
             GL11.glDisable(GL11.GL_DEPTH_TEST);
             GL11.glLineWidth(2.5f);
             lineVertices = 0;

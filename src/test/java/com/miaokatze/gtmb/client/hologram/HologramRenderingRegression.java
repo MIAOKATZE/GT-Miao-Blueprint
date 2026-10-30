@@ -854,6 +854,25 @@ public final class HologramRenderingRegression {
                 used + 32 <= capacity && capacity <= 0x20000,
                 "a real full line batch fits addVertex headroom without crossing the shrinking-buffer threshold");
             SimpleAssert.that(limit % 24 == 0, "the line cap preserves complete boxes and edge pairs");
+            Tessellator successor = new Tessellator();
+            successor.setTextureUV(.3, .6);
+            successor.setBrightness(0xf000f0);
+            successor.setNormal(1, 0, 0);
+            successor.setColorRGBA_F(1, 0, 0, .1f);
+            successor.disableColor();
+            successor.startDrawing(org.lwjgl.opengl.GL11.GL_LINES);
+            for (String flag : new String[] { "hasTexture", "hasBrightness", "hasNormals", "hasColor",
+                "isColorDisabled" })
+                SimpleAssert.that(
+                    !field(Tessellator.class, flag).getBoolean(successor),
+                    "the following legacy pass startDrawing resets its own prior attribute flag: " + flag);
+            successor.setColorRGBA_F(.45f, .85f, 1, .72f);
+            successor.addVertex(1, 2, 3);
+            int[] raw = (int[]) field(Tessellator.class, "rawBuffer").get(successor);
+            SimpleAssert.eq(
+                field(Tessellator.class, "color").getInt(successor),
+                raw[5],
+                "the following structure-line pass uses its explicit color, never a previous stream's Tess state");
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("standard line batch boundary", failure);
         }
