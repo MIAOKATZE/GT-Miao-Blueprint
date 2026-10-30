@@ -178,15 +178,7 @@ public final class HologramRenderingRegression {
             cells.appendTag(boundaryCell(0, 0, 0, "minecraft:stone"));
             source.setTag("cells", cells);
             HologramState state = new HologramState(source);
-            HologramUiModules ui = new HologramUiModules(null);
-            // This hostless fixture never polls physical keys; the hosted UI fixture below covers held("air")
-            // admission.
-            ui.tools.commands()
-                .bind(
-                    ui.tools.commands()
-                        .index("air"),
-                    org.lwjgl.input.Keyboard.KEY_NONE,
-                    0);
+            HologramUiModules ui = new HologramUiModules(headlessRenderingHost());
             java.lang.reflect.Field session = HologramUiSession.class.getDeclaredField("state"),
                 teaching = HologramUiSession.class.getDeclaredField("tutorialSink"),
                 displayed = HologramRenderer.class.getDeclaredField("displayedState"),
@@ -257,6 +249,26 @@ public final class HologramRenderingRegression {
         java.lang.reflect.Field field = type.getDeclaredField(name);
         field.setAccessible(true);
         return field;
+    }
+
+    private static HologramUiHost headlessRenderingHost() throws ReflectiveOperationException {
+        java.lang.reflect.Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        unsafeField.setAccessible(true);
+        sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
+        net.minecraft.client.Minecraft client = (net.minecraft.client.Minecraft) unsafe
+            .allocateInstance(net.minecraft.client.Minecraft.class);
+        HologramScreen parent = (HologramScreen) unsafe.allocateInstance(HologramScreen.class);
+        // A real host boundary with a detached inactive client. held("air") observes currentScreen != parent before
+        // physical Display/Keyboard polling; no global Minecraft singleton or native renderer is installed.
+        return (HologramUiHost) java.lang.reflect.Proxy.newProxyInstance(
+            HologramUiHost.class.getClassLoader(), new Class<?>[] { HologramUiHost.class },
+            (proxy, method, arguments) -> switch (method.getName()) {
+                case "minecraft" -> client;
+                case "parent" -> parent;
+                case "screenWidth" -> HologramScreenLayout.WIDTH;
+                case "screenHeight" -> HologramScreenLayout.HEIGHT;
+                default -> throw new AssertionError("headless rendering admission requested " + method.getName());
+            });
     }
 
     /**
