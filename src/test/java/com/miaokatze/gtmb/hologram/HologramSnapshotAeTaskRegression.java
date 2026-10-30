@@ -204,12 +204,12 @@ public final class HologramSnapshotAeTaskRegression {
             "GTMB_P0A " + label + " old=" + Arrays.toString(observed[0]) + " new=" + Arrays.toString(observed[1]));
     }
 
-    private static void legacy(HologramCapture.Cell cell) throws IOException {
+    static void legacy(HologramCapture.Cell cell) throws IOException {
         if (HologramAePolicy.handles(cell.block, cell.tileNbt))
             HologramAeBlueprint.analyze(cell.block, cell.meta, HologramBlueprintNbt.decode(cell.tileNbt));
     }
 
-    private static void analyze(HologramSnapshotAeTask task, HologramCapture.Cell cell) throws Exception {
+    static void analyze(HologramSnapshotAeTask task, HologramCapture.Cell cell) throws Exception {
         Method method = HologramSnapshotAeTask.class.getDeclaredMethod("analyze", HologramCapture.Cell.class);
         method.setAccessible(true);
         try {
@@ -220,12 +220,12 @@ public final class HologramSnapshotAeTaskRegression {
         }
     }
 
-    private static void complete(HologramSnapshotAeTask task, int batch) {
+    static void complete(HologramSnapshotAeTask task, int batch) {
         for (int step = 0; step < 1000; step++) if (task.step(batch, Long.MAX_VALUE)) return;
         throw new AssertionError("AE owner task did not complete");
     }
 
-    private static HologramSession session() throws Exception {
+    static HologramSession session() throws Exception {
         sun.misc.Unsafe unsafe = unsafe();
         EntityPlayerMP actor = (EntityPlayerMP) unsafe.allocateInstance(EntityPlayerMP.class);
         actor.worldObj = (HologramServiceEditRegression.ReadOnlyWorld) unsafe
@@ -242,15 +242,15 @@ public final class HologramSnapshotAeTaskRegression {
         return session;
     }
 
-    private static HologramCapture.Cell add(HologramSession session, Block block, NBTTagCompound payload, int x, int y,
-        int z) throws IOException {
+    static HologramCapture.Cell add(HologramSession session, Block block, NBTTagCompound payload, int x, int y, int z)
+        throws IOException {
         HologramCapture.Cell cell = cell(block, encoded(payload), session.x + x, session.y + y, session.z + z);
         session.capture.cells.add(cell);
         session.capture.positions.put(HologramValues.position(cell), cell);
         return cell;
     }
 
-    private static HologramCapture.Cell cell(Block block, String encoded, int x, int y, int z) {
+    static HologramCapture.Cell cell(Block block, String encoded, int x, int y, int z) {
         HologramCapture.Cell cell = new HologramCapture.Cell(null, x, y, z);
         cell.block = block;
         cell.tileNbt = encoded;
@@ -258,12 +258,12 @@ public final class HologramSnapshotAeTaskRegression {
         return cell;
     }
 
-    private static String encoded(NBTTagCompound payload) throws IOException {
+    static String encoded(NBTTagCompound payload) throws IOException {
         return Base64.getEncoder()
             .encodeToString(HologramSnapshotCodec.compress(payload));
     }
 
-    private static Block host(String type) throws Exception {
+    static Block host(String type) throws Exception {
         return (Block) unsafe().allocateInstance(Class.forName(type));
     }
 
@@ -273,7 +273,7 @@ public final class HologramSnapshotAeTaskRegression {
         return (sun.misc.Unsafe) field.get(null);
     }
 
-    private static NBTTagCompound payload() {
+    static NBTTagCompound payload() {
         NBTTagCompound payload = new NBTTagCompound();
         payload.setBoolean("hasRedstone", true);
         payload.setLong("unknownTyped", Long.MAX_VALUE);
@@ -316,7 +316,7 @@ public final class HologramSnapshotAeTaskRegression {
         throw new AssertionError("malformed AE input accepted");
     }
 
-    private static String error(Throwable failure) {
+    static String error(Throwable failure) {
         String result = "";
         for (Throwable cause = failure; cause != null; cause = cause.getCause()) result += cause.getClass()
             .getName() + ":"

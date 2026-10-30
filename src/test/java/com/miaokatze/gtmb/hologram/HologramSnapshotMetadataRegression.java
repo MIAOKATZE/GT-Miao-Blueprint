@@ -65,6 +65,8 @@ final class HologramSnapshotMetadataRegression {
                     nested.setString("text", "kept value " + i);
                     payload.setTag("nested", nested);
                     cell.tileNbt = HologramBlueprintNbt.encodeCaptured(payload);
+                } else if (i % 17 == 1) {
+                    cell.tileNbt = HologramSnapshotAeTaskRegression.encoded(new NBTTagCompound());
                 }
                 session.virtualPreset.cells.add(cell);
             }

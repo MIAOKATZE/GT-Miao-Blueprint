@@ -3,9 +3,11 @@ package com.miaokatze.gtmb.hologram;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockColored;
@@ -19,6 +21,7 @@ import net.minecraft.block.BlockStone;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
+import net.minecraft.nbt.NBTTagCompound;
 
 /** One synchronous validation pass. Only immutable identities/results are retained; never player/world state. */
 final class HologramBlueprintValidationCache {
@@ -40,6 +43,7 @@ final class HologramBlueprintValidationCache {
     private final Map<String, Boolean> unsealedItems = new HashMap<>();
     private final Map<Key, HologramAePolicy.Identity> identities = new HashMap<>();
     private final Map<Key, String> aeShells = new HashMap<>();
+    private final Set<String> emptyPayloads = new HashSet<>();
     private int entries, stringChars;
     long registryHits, registryMisses, filterHits, filterMisses, gtHits, gtMisses, damageHits, damageMisses;
     long syntaxHits, syntaxMisses;
@@ -57,6 +61,16 @@ final class HologramBlueprintValidationCache {
         keys = !preset.retainNbt ? java.util.Collections.emptyList()
             : preset.retainedNbtKeys == null ? null : new ArrayList<>(preset.retainedNbtKeys);
         retainCovers = preset.retainCovers;
+    }
+
+    /** Only a successful empty-root fact is retained, never a mutable decoded tree. */
+    NBTTagCompound decodePayload(String encoded) throws IOException {
+        if (encoded == null || encoded.isEmpty() || HologramSnapshotDataContext.active())
+            return HologramBlueprintNbt.decode(encoded);
+        if (emptyPayloads.contains(encoded)) return new NBTTagCompound();
+        NBTTagCompound payload = HologramBlueprintNbt.decode(encoded);
+        if (payload.hasNoTags() && admit(encoded.length())) emptyPayloads.add(encoded);
+        return payload;
     }
 
     ItemStack stack(String id, int damage) {

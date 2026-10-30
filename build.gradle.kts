@@ -55,6 +55,19 @@ tasks.register<JavaExec>("runSnapshotAeTaskRegression") {
 
 tasks.named("check") { dependsOn("runSnapshotAeTaskRegression") }
 
+tasks.register<JavaExec>("runEmptyPayloadRegression") {
+    group = "verification"
+    description = "Checks task-local empty payload facts, shared budgets and actual strict decoder counts."
+    dependsOn("compileTestJava")
+    mainClass = "com.miaokatze.gtmb.hologram.HologramEmptyPayloadRegression"
+    classpath = tasks.named<JavaExec>("runHologramTest").get().classpath
+    val scratchDir = layout.buildDirectory.dir("hologram-empty-payload-test")
+    workingDir(scratchDir)
+    doFirst { scratchDir.get().asFile.mkdirs() }
+}
+
+tasks.named("check") { dependsOn("runEmptyPayloadRegression") }
+
 tasks.register<JavaExec>("runBlueprintValidationBenchmark") {
     group = "verification"
     description = "Measures production validation reuse at 50k, 100k and 1m streamed cells; not a live-world benchmark."
