@@ -5,6 +5,7 @@ import java.util.List;
 
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagList;
 
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
@@ -16,6 +17,8 @@ public final class HologramRenderingRegression {
     public static void run() {
         previewOutlineDensity();
         completePreviewMaterial();
+        occupancyBoundary();
+        sourceSwitchFence();
         for (int front = 0; front < 6; front++) {
             boolean[] seen = new boolean[6];
             for (int side = 0; side < 6; side++) {
@@ -91,6 +94,99 @@ public final class HologramRenderingRegression {
             .45f,
             HologramRenderer.previewOutlineAlpha(false, false, false, false, 0),
             "unknown or diagnostic models retain their original wireframe");
+    }
+
+    private static void occupancyBoundary() {
+        HologramSelectionOutline.Occupancy one = (x, y, z) -> x == 0 && y == 0 && z == 0;
+        SimpleAssert
+            .eq(4095, HologramRenderer.boundaryEdges(0, 0, 0, one), "a lone occupied voxel has its twelve real edges");
+        HologramSelectionOutline.Occupancy pair = (x, y, z) -> (x == 0 || x == 1) && y == 0 && z == 0;
+        SimpleAssert.that(
+            (HologramRenderer.boundaryEdges(0, 0, 0, pair) & 1 << 1) == 0,
+            "coplanar neighboring voxels do not add the shared vertical seam");
+        HologramSelectionOutline.Occupancy ring = (x, y,
+            z) -> y == 0 && x >= 0 && x <= 2 && z >= 0 && z <= 2 && (x != 1 || z != 1);
+        SimpleAssert.that(
+            (HologramRenderer.boundaryEdges(0, 0, 0, ring) & 1 << 5) != 0,
+            "an inner concave corner around a hole survives instead of becoming a bounding box");
+        int original = 0, rotated = 0;
+        for (int x = 0; x < 3; x++) for (int z = 0; z < 3; z++) if (ring.contains(x, 0, z)) {
+            original += Integer.bitCount(HologramRenderer.boundaryEdges(x, 0, z, ring));
+            rotated += Integer
+                .bitCount(HologramRenderer.boundaryEdges(-z, 0, x, (rx, ry, rz) -> ring.contains(rz, ry, -rx)));
+        }
+        SimpleAssert.eq(original, rotated, "quarter turns preserve all hole and outer boundary segments");
+        NBTTagCompound source = boundarySource("boundary");
+        NBTTagList cells = new NBTTagList();
+        cells.appendTag(boundaryCell(15, 0, 0, "minecraft:glass"));
+        cells.appendTag(boundaryCell(16, 0, 0, "minecraft:stone"));
+        source.setTag("cells", cells);
+        HologramRenderer.PreviewBoundary boundary = new HologramRenderer.PreviewBoundary(new HologramState(source));
+        int steps = 0;
+        while (!boundary.complete() && steps++ < 20) boundary.advance(Integer.MAX_VALUE, 0, false, 1, Long.MAX_VALUE);
+        SimpleAssert
+            .that(boundary.complete() && steps > 2, "the real occupancy cursor completes through bounded steps");
+        SimpleAssert.eq(
+            2,
+            boundary.cells.size(),
+            "both transparent and solid occupied cells survive across a 16-cube boundary");
+        SimpleAssert.eq(2, boundary.occupancy.size(), "the boundary uses the existing spatial region identities");
+        SimpleAssert
+            .eq(0, boundary.projected, "building real occupancy never needs projection, textures or a native model");
+    }
+
+    private static void sourceSwitchFence() {
+        HologramState state = new HologramState(boundarySource("old"));
+        Object world = new Object();
+        HologramUiLibrary.LibraryNavigation navigation = new HologramUiLibrary.LibraryNavigation(
+            state,
+            world,
+            "new",
+            false,
+            true,
+            "blueprintEdit",
+            0);
+        SimpleAssert.that(
+            HologramUiPreview.sourceSwitchWaiting(navigation, state, world, true, true, -1),
+            "an actual library source transfer pauses its old scene");
+        SimpleAssert.that(
+            !HologramUiPreview.sourceSwitchWaiting(null, state, world, true, true, 9),
+            "an unrelated pending edit does not pause or flash the current scene");
+        SimpleAssert.that(
+            !HologramUiPreview.sourceSwitchWaiting(navigation, state, world, true, false, -1),
+            "a failed or completed wait immediately restores the same source");
+        SimpleAssert.that(
+            !HologramUiPreview.sourceSwitchWaiting(navigation, state, new Object(), true, true, 9),
+            "a stale world cannot retain a scene wait");
+        SimpleAssert.that(
+            !HologramUiPreview
+                .sourceSwitchWaiting(navigation, new HologramState(boundarySource("new")), world, true, true, 9),
+            "a new installed session cannot inherit the old wait");
+        navigation.cancel();
+        SimpleAssert.that(
+            !HologramUiPreview.sourceSwitchWaiting(navigation, state, world, true, true, 9),
+            "cancelled source navigation cannot freeze a later scene");
+    }
+
+    private static NBTTagCompound boundarySource(String session) {
+        NBTTagCompound source = new NBTTagCompound();
+        source.setString("session", session);
+        source.setString("generation", session);
+        source.setBoolean("virtual", true);
+        source.setLong("planRevision", 1);
+        return source;
+    }
+
+    private static NBTTagCompound boundaryCell(int x, int y, int z, String block) {
+        NBTTagCompound cell = new NBTTagCompound();
+        cell.setInteger("x", x);
+        cell.setInteger("dx", x);
+        cell.setInteger("y", y);
+        cell.setInteger("dy", y);
+        cell.setInteger("z", z);
+        cell.setInteger("dz", z);
+        cell.setString("wantId", block);
+        return cell;
     }
 
     @SuppressWarnings("unchecked")

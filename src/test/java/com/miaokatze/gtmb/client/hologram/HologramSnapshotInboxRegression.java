@@ -5,6 +5,10 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 
+import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagList;
+
+import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
 /** Actual worker scheduling with controlled gates; no client world, registries or graphics context. */
@@ -17,6 +21,50 @@ public final class HologramSnapshotInboxRegression {
         epochCancellation();
         failedDecodeRetainsOrder();
         explicitRootCloseFence();
+        loadTiming();
+    }
+
+    private static void loadTiming() {
+        boolean enabled = HologramRuntimeMetrics.isEnabled();
+        HologramRuntimeMetrics.setEnabled(true);
+        HologramRuntimeMetrics.reset();
+        try (HologramSnapshotInbox<NBTTagCompound> inbox = new HologramSnapshotInbox<>(1, 4, bytes -> {
+            NBTTagCompound value = new NBTTagCompound();
+            value.setString("session", "decoded-session");
+            value.setLong("planRevision", 4);
+            value.setLong("uiSequence", 5);
+            return value;
+        })) {
+            inbox.offer(new byte[] { 1 }, 42);
+            SimpleAssert.eq(
+                "decoded-session",
+                inbox.awaitNext().value.getString("session"),
+                "timing does not alter FIFO decode publication");
+            NBTTagList rows = HologramRuntimeMetrics.snapshot()
+                .getTagList("loadStages", 10);
+            SimpleAssert.eq(3, rows.tagCount(), "one decode records queue, begin and completion once");
+            SimpleAssert.eq(
+                "CLIENT_DECODE_QUEUED",
+                rows.getCompoundTagAt(0)
+                    .getString("stage"),
+                "client queue wait has an independent marker");
+            SimpleAssert.eq(
+                "CLIENT_DECODE_BEGIN",
+                rows.getCompoundTagAt(1)
+                    .getString("stage"),
+                "client execution begins on the real worker");
+            NBTTagCompound end = rows.getCompoundTagAt(2);
+            SimpleAssert.eq("CLIENT_DECODE_END", end.getString("stage"), "worker marks completion before publication");
+            SimpleAssert.eq(42L, end.getLong("transportSequence"), "decoded identity binds to its incoming transport");
+            SimpleAssert.eq(
+                "decoded-session",
+                end.getString("session"),
+                "session identity is resolved from the decoded metadata only");
+        } finally {
+            HologramRuntimeMetrics.setEnabled(false);
+            HologramRuntimeMetrics.reset();
+            HologramRuntimeMetrics.setEnabled(enabled);
+        }
     }
 
     private static void fifoAndBackpressure() {

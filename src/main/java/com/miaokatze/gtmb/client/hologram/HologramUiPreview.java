@@ -154,6 +154,24 @@ final class HologramUiPreview {
     }
 
     /** Only model/ghost/selection geometry. Native controls are siblings of this bounded scene widget. */
+    boolean sourcePreparing() {
+        if (ui.session.isTutorial() || ui.library.browsePreviewActive()) return false;
+        return HologramClient.snapshotPreparing() || sourceSwitchWaiting(
+            ui.library.libraryNavigation(),
+            ui.session.state(),
+            ui.host.minecraft().theWorld,
+            ui.library.publicLibrary(),
+            HologramLibraryClient.INSTANCE.busy(),
+            ui.session.pendingSequence());
+    }
+
+    static boolean sourceSwitchWaiting(HologramUiLibrary.LibraryNavigation navigation, HologramState state,
+        Object world, boolean publicView, boolean busy, long pendingSequence) {
+        return navigation != null && "blueprintEdit".equals(navigation.purpose)
+            && navigation.source(state, world, publicView)
+            && (busy || pendingSequence >= 0 || state.data.getBoolean("snapshotPending"));
+    }
+
     void drawNativeScene(int mx, int my) {
         if (ui.library.browsePreviewActive()) {
             drawBrowsePreview(mx, my);
@@ -169,6 +187,12 @@ final class HologramUiPreview {
         GL11.glEnable(GL11.GL_SCISSOR_TEST);
         applyViewportScissor();
         try {
+            if (sourcePreparing()) {
+                hovered = -1;
+                HologramRenderer.waitingPreview(ui.session.state());
+                ui.canvas.sceneText("正在准备蓝图", viewportX() + 8, viewportY() + 12, 160, 0xb9d5d4);
+                return;
+            }
             hovered = HologramRenderer.preview(
                 ui.session.state(),
                 0,
@@ -244,6 +268,12 @@ final class HologramUiPreview {
         GL11.glEnable(GL11.GL_SCISSOR_TEST);
         applyViewportScissor();
         try {
+            if (sourcePreparing()) {
+                hovered = -1;
+                HologramRenderer.waitingPreview(ui.session.state());
+                ui.canvas.sceneText("正在准备蓝图", viewportX() + 8, viewportY() + 12, 160, 0xb9d5d4);
+                return;
+            }
             this.hovered = HologramRenderer.preview(
                 ui.session.state(),
                 viewportX(),
@@ -732,7 +762,9 @@ final class HologramUiPreview {
     }
 
     boolean previewInteractive() {
-        return !ui.session.areaImporting() && ui.ae.aeReviewNavigation() == null
+        return !sourcePreparing() && !HologramRenderer.previewPreparing(ui.session.state())
+            && !ui.session.areaImporting()
+            && ui.ae.aeReviewNavigation() == null
             && ui.ae.aeReview() == null
             && !ui.config.drawer()
             && !ui.position.positionDrawer()

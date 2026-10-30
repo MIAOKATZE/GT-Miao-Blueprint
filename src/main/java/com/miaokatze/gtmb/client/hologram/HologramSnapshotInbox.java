@@ -3,6 +3,10 @@ package com.miaokatze.gtmb.client.hologram;
 import java.util.ArrayDeque;
 import java.util.Deque;
 
+import net.minecraft.nbt.NBTTagCompound;
+
+import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
+
 /** One pure decoder, bounded reservations, and FIFO publication on the calling client thread. */
 final class HologramSnapshotInbox<T> implements AutoCloseable {
 
@@ -66,6 +70,13 @@ final class HologramSnapshotInbox<T> implements AutoCloseable {
         if (bytes == null || bytes.length == 0 || bytes.length > byteBudget)
             throw new IllegalArgumentException("snapshot byte budget");
         if (!room(bytes.length)) return false;
+        HologramRuntimeMetrics.loadStage(
+            HologramRuntimeMetrics.LoadStage.CLIENT_DECODE_QUEUED,
+            "",
+            -1,
+            -1,
+            transportSequence,
+            bytes.length);
         entries.addLast(new Entry<>(epoch, bytes, null, transportSequence));
         reservedBytes += bytes.length;
         if (worker == null) {
@@ -156,11 +167,31 @@ final class HologramSnapshotInbox<T> implements AutoCloseable {
                 active = entry;
             }
             Result<T> result;
+            HologramRuntimeMetrics.loadStage(
+                HologramRuntimeMetrics.LoadStage.CLIENT_DECODE_BEGIN,
+                "",
+                -1,
+                -1,
+                entry.transportSequence,
+                entry.cost);
             try {
                 result = new Result<>(decoder.decode(entry.bytes), null, entry.transportSequence);
             } catch (Exception e) {
                 result = new Result<>(null, e, entry.transportSequence);
             }
+            if (result.value instanceof NBTTagCompound state) HologramRuntimeMetrics.loadStage(
+                HologramRuntimeMetrics.LoadStage.CLIENT_DECODE_END,
+                state,
+                entry.transportSequence,
+                entry.cost);
+            else HologramRuntimeMetrics.loadStage(
+                result.failure == null ? HologramRuntimeMetrics.LoadStage.CLIENT_DECODE_END
+                    : HologramRuntimeMetrics.LoadStage.CLIENT_DECODE_FAILED,
+                "",
+                -1,
+                -1,
+                entry.transportSequence,
+                entry.cost);
             synchronized (this) {
                 entry.bytes = null;
                 if (entry.epoch == epoch) entry.result = result;

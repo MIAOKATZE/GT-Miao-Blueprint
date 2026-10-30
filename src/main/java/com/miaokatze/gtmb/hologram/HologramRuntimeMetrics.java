@@ -1,11 +1,122 @@
 package com.miaokatze.gtmb.hologram;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
 import java.util.concurrent.atomic.AtomicLongArray;
 
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagList;
 
 /** Opt-in local diagnostics. Codec bytes exclude Forge/TCP framing; elapsed work time is not server TPS. */
 public final class HologramRuntimeMetrics {
+
+    /** Local clock markers only. Correlate endpoints by identity; never subtract clocks from different JVMs. */
+    public enum LoadStage {
+        SERVER_CANONICAL_BEGIN,
+        SERVER_CANONICAL_END,
+        SERVER_SOURCE_COPY_BEGIN,
+        SERVER_SOURCE_COPY_END,
+        SERVER_POPULATION_BEGIN,
+        SERVER_POPULATION_END,
+        SERVER_METADATA_BEGIN,
+        SERVER_METADATA_END,
+        SERVER_METADATA_WORKER_QUEUED,
+        SERVER_METADATA_WORKER_BEGIN,
+        SERVER_METADATA_WORKER_END,
+        SERVER_METADATA_WORKER_REJECTED,
+        SERVER_ROWS_BEGIN,
+        SERVER_ROWS_END,
+        SERVER_ENCODER_QUEUED,
+        SERVER_ENCODER_BEGIN,
+        SERVER_ENCODER_END,
+        SERVER_ENCODER_FAILED,
+        SERVER_ENCODER_CANCELLED,
+        SERVER_ENCODER_REJECTED,
+        SERVER_FRAGMENT_FIRST,
+        SERVER_FRAGMENT_LAST,
+        CLIENT_FRAGMENT_FIRST,
+        CLIENT_FRAGMENT_LAST,
+        CLIENT_DECODE_QUEUED,
+        CLIENT_DECODE_BEGIN,
+        CLIENT_DECODE_END,
+        CLIENT_DECODE_FAILED,
+        CLIENT_PREPARE_BEGIN,
+        CLIENT_PREPARE_END,
+        CLIENT_INSTALL,
+        CLIENT_DISPLAY_STATE,
+        CLIENT_OUTLINE_READY,
+        CLIENT_FIRST_MATERIAL,
+        CLIENT_RENDER_READY;
+    }
+
+    private static final int LOAD_TRACE_LIMIT = 256;
+    private static volatile String loadClock = "";
+    private static final Deque<LoadMark> LOAD_TRACE = new ArrayDeque<>();
+    private static long loadTraceDropped;
+
+    private static final class LoadMark {
+
+        final LoadStage stage;
+        final String session, previousSession;
+        final long nanos, revision, request, transport, count, previousRevision;
+
+        LoadMark(LoadStage stage, String session, long revision, long request, long transport, long count,
+            String previousSession, long previousRevision) {
+            this.stage = stage;
+            this.session = session;
+            this.revision = revision;
+            this.request = request;
+            this.transport = transport;
+            this.count = count;
+            this.previousSession = previousSession;
+            this.previousRevision = previousRevision;
+            nanos = System.nanoTime();
+        }
+    }
+
+    public static void loadStage(LoadStage stage, String session, long revision, long requestSequence,
+        long transportSequence, long count) {
+        if (!enabled) return;
+        loadStage(stage, session, revision, requestSequence, transportSequence, count, "", -1);
+    }
+
+    /** previous identity is the previously installed or actually displayed state, never its content/name. */
+    public static void loadStage(LoadStage stage, String session, long revision, long requestSequence,
+        long transportSequence, long count, String previousSession, long previousRevision) {
+        if (!enabled) return;
+        synchronized (LOAD_TRACE) {
+            if (LOAD_TRACE.size() == LOAD_TRACE_LIMIT) {
+                LOAD_TRACE.removeFirst();
+                loadTraceDropped++;
+            }
+            LOAD_TRACE.addLast(
+                new LoadMark(
+                    stage,
+                    session,
+                    revision,
+                    requestSequence,
+                    transportSequence,
+                    count,
+                    previousSession,
+                    previousRevision));
+        }
+    }
+
+    public static void loadStage(LoadStage stage, NBTTagCompound state, long transportSequence, long count) {
+        if (!enabled) return;
+        loadStage(
+            stage,
+            state.getString("session"),
+            state.getLong("planRevision"),
+            state.getLong("uiSequence"),
+            transportSequence,
+            count);
+    }
+
+    static void loadStage(LoadStage stage, HologramSession session, long transportSequence, long count) {
+        if (!enabled) return;
+        loadStage(stage, session.id, session.planRevision, session.uiSequence, transportSequence, count);
+    }
 
     enum Packet {
 
@@ -88,6 +199,10 @@ public final class HologramRuntimeMetrics {
 
     /** Configuration owners explicitly enable collection. This does not register events or authorize any operation. */
     public static void setEnabled(boolean value) {
+        if (value && loadClock.isEmpty()) synchronized (LOAD_TRACE) {
+            if (loadClock.isEmpty()) loadClock = java.util.UUID.randomUUID()
+                .toString();
+        }
         enabled = value;
     }
 
@@ -113,6 +228,10 @@ public final class HologramRuntimeMetrics {
         for (int i = 0; i < NETWORK.length(); i++) NETWORK.set(i, 0);
         for (int i = 0; i < ACTIVITIES.length(); i++) ACTIVITIES.set(i, 0);
         for (int i = 0; i < COUNTERS.length(); i++) COUNTERS.set(i, 0);
+        synchronized (LOAD_TRACE) {
+            LOAD_TRACE.clear();
+            loadTraceDropped = 0;
+        }
     }
 
     /**
@@ -144,6 +263,34 @@ public final class HologramRuntimeMetrics {
         NBTTagCompound queues = new NBTTagCompound();
         for (Counter counter : Counter.values()) queues.setLong(counter.key, COUNTERS.get(counter.ordinal()));
         result.setTag("queues", queues);
+        NBTTagList loadStages = new NBTTagList();
+        LoadMark[] marks;
+        long dropped;
+        synchronized (LOAD_TRACE) {
+            marks = LOAD_TRACE.toArray(new LoadMark[0]);
+            dropped = loadTraceDropped;
+        }
+        for (LoadMark mark : marks) {
+            NBTTagCompound row = new NBTTagCompound();
+            row.setString("stage", mark.stage.name());
+            row.setString(
+                "endpoint",
+                mark.stage.name()
+                    .startsWith("SERVER_") ? "server" : "client");
+            row.setString("session", mark.session);
+            row.setLong("revision", mark.revision);
+            row.setLong("requestSequence", mark.request);
+            row.setLong("transportSequence", mark.transport);
+            row.setLong("atNanos", mark.nanos);
+            row.setLong("count", mark.count);
+            row.setString("previousSession", mark.previousSession);
+            row.setLong("previousRevision", mark.previousRevision);
+            loadStages.appendTag(row);
+        }
+        result.setLong("loadTraceDropped", dropped);
+        result.setString("loadClockId", loadClock);
+        result.setInteger("loadTraceCapacity", LOAD_TRACE_LIMIT);
+        result.setTag("loadStages", loadStages);
         return result;
     }
 

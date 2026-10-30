@@ -286,7 +286,9 @@ final class HologramSnapshotPreparation {
                     return;
                 }
                 state = HologramSnapshots.basicState(s);
-                metadata = new HologramSnapshotMetadataTask(s, state);
+                HologramRuntimeMetrics
+                    .loadStage(HologramRuntimeMetrics.LoadStage.SERVER_METADATA_BEGIN, s, ticket.sequence(), size);
+                metadata = new HologramSnapshotMetadataTask(s, state, ticket.sequence());
                 stage = 1;
                 if (clock.getAsLong() >= deadline) return;
             }
@@ -297,6 +299,10 @@ final class HologramSnapshotPreparation {
                     return;
                 }
                 metadata = null;
+                HologramRuntimeMetrics
+                    .loadStage(HologramRuntimeMetrics.LoadStage.SERVER_METADATA_END, s, ticket.sequence(), size);
+                HologramRuntimeMetrics
+                    .loadStage(HologramRuntimeMetrics.LoadStage.SERVER_ROWS_BEGIN, s, ticket.sequence(), size);
                 HologramLocalPlanRefresh.snapshotBegin(s);
                 stage = 2;
                 if (clock.getAsLong() >= deadline) return;
@@ -612,6 +618,8 @@ final class HologramSnapshotPreparation {
 
             if (s.job == 1) HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.RUNNING_JOB_FULL_BUILDS, 1);
             encoding = true;
+            HologramRuntimeMetrics
+                .loadStage(HologramRuntimeMetrics.LoadStage.SERVER_ROWS_END, s, ticket.sequence(), cells.tagCount());
             progress("snapshot.prepare", "cells", cells.tagCount(), size, true);
             progress("snapshot.encode", "gzip", 0, 0, true);
             HologramNetwork.completeOwnedState(ticket, state, this::valid, () -> {
