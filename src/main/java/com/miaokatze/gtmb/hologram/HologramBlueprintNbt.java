@@ -738,7 +738,7 @@ final class HologramBlueprintNbt {
     }
 
     @SuppressWarnings("unchecked")
-    private static List<NBTBase> listEntries(NBTTagList list) {
+    static List<NBTBase> listEntries(NBTTagList list) {
         try {
             return (List<NBTBase>) LIST_ENTRIES.get(list);
         } catch (IllegalAccessException failure) {

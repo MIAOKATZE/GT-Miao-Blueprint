@@ -32,7 +32,11 @@ final class HologramSnapshotEncoding {
     }
 
     static Job submit(NBTTagCompound owned, long transportSequence) {
-        return submit(owned, executor, written -> {}, transportSequence);
+        return submit(owned, transportSequence, false);
+    }
+
+    static Job submit(NBTTagCompound owned, long transportSequence, boolean palette) {
+        return submit(owned, executor, written -> {}, transportSequence, palette);
     }
 
     static Job submit(NBTTagCompound owned, Executor executor) {
@@ -46,7 +50,12 @@ final class HologramSnapshotEncoding {
 
     private static Job submit(NBTTagCompound owned, Executor executor, java.util.function.LongConsumer checkpoint,
         long transportSequence) {
-        Job job = new Job(owned, executor, checkpoint, transportSequence);
+        return submit(owned, executor, checkpoint, transportSequence, false);
+    }
+
+    private static Job submit(NBTTagCompound owned, Executor executor, java.util.function.LongConsumer checkpoint,
+        long transportSequence, boolean palette) {
+        Job job = new Job(owned, executor, checkpoint, transportSequence, palette);
         try {
             job.mark(HologramRuntimeMetrics.LoadStage.SERVER_ENCODER_QUEUED, 0);
             executor.execute(job);
@@ -74,12 +83,14 @@ final class HologramSnapshotEncoding {
         private final java.util.function.LongConsumer checkpoint;
         private final String traceSession;
         private final long traceRevision, traceRequest, traceTransport;
+        private final boolean palette;
 
-        Job(NBTTagCompound owned, Executor executor, java.util.function.LongConsumer checkpoint,
-            long transportSequence) {
+        Job(NBTTagCompound owned, Executor executor, java.util.function.LongConsumer checkpoint, long transportSequence,
+            boolean palette) {
             this.owned = owned;
             this.executor = executor;
             this.checkpoint = checkpoint;
+            this.palette = palette;
             boolean tracing = HologramRuntimeMetrics.isEnabled() && owned != null;
             traceSession = tracing ? owned.getString("session") : null;
             traceRevision = tracing ? owned.getLong("planRevision") : -1;
@@ -118,7 +129,8 @@ final class HologramSnapshotEncoding {
                             rawBytes = written;
                             advancedAt[0] = System.nanoTime();
                             checkpoint.accept(written);
-                        });
+                        },
+                        palette);
                     byte[] digest = HologramLibraryProtocol.digest()
                         .digest(encoded);
                     synchronized (this) {

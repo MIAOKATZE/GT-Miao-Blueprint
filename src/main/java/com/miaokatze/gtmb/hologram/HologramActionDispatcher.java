@@ -21,6 +21,8 @@ final class HologramActionDispatcher {
         // Each action gets fresh material connections only if it actually queries or changes materials.
         s.materialContext = null;
         if (action.getInteger("clientSnapshotProtocol") == 1) s.cellDeltaProtocol = true;
+        if (action.hasKey("clientSnapshotPalette", 3) && action.getInteger("clientSnapshotPalette") == 1)
+            s.snapshotPaletteProtocol = true;
         if ("requestFullSnapshot".equals(action.getString("op"))) {
             long tick = player.worldObj.getTotalWorldTime();
             if (s.snapshotResyncTick == Long.MIN_VALUE || tick - s.snapshotResyncTick >= 20) {

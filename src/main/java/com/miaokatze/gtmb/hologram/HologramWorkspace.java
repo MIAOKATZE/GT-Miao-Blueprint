@@ -48,6 +48,7 @@ final class HologramWorkspace {
         PresentationTransition(HologramSession origin, HologramSession target) {
             this.origin = origin;
             this.target = target;
+            target.snapshotPaletteProtocol = origin.snapshotPaletteProtocol;
             originId = origin.id;
             targetId = target.id;
             sequence = origin.uiSequence;

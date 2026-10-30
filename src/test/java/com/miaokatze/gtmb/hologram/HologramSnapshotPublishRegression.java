@@ -291,6 +291,7 @@ public final class HologramSnapshotPublishRegression {
             SimpleAssert.that(!stopped.current() && WIRE.isEmpty(), "server stop discards an in-flight worker result");
             SimpleAssert.eq(1, accepted.get(), "server stop cannot publish a late ready callback");
 
+            paletteNegotiation(player, work);
             cancelledSaveSourceDoesNotRebuild(player, work);
             retiredPreparations(player, work, accepted);
             failedPlanReopen(player, work);
@@ -312,6 +313,67 @@ public final class HologramSnapshotPublishRegression {
             HologramNetwork.clearServerQueues();
             channel.set(null, previousChannel);
             executor.set(null, previousExecutor);
+            WIRE.clear();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void paletteNegotiation(EntityPlayerMP player, Queue<Runnable> work)
+        throws ReflectiveOperationException, java.io.IOException {
+        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
+        sessionsField.setAccessible(true);
+        java.util.Map<UUID, HologramSession> sessions = (java.util.Map<UUID, HologramSession>) sessionsField.get(null);
+        HologramSession previous = sessions.get(player.getUniqueID());
+        try {
+            HologramSession session = new HologramSession(player, 0, 64, 0, false, 2);
+            HologramWorkspace.activate(player.getUniqueID(), session);
+            NBTTagCompound action = new NBTTagCompound();
+            action.setString("op", "ackBlueprintSaved");
+            action.setString("session", "stale");
+            NBTTagCompound advertised = new HologramNetwork.Action(action).tag;
+            SimpleAssert
+                .eq(1, advertised.getInteger("clientSnapshotProtocol"), "new client retains old delta advertisement");
+            SimpleAssert
+                .eq(1, advertised.getInteger("clientSnapshotPalette"), "new client explicitly advertises palette v1");
+            HologramActionDispatcher.handle(player, advertised);
+            SimpleAssert.that(!session.snapshotPaletteProtocol, "stale session cannot negotiate another owner");
+            action.setString("session", session.id);
+            action.setLong("clientSnapshotPalette", 1);
+            HologramActionDispatcher.handle(player, action);
+            SimpleAssert
+                .that(!session.snapshotPaletteProtocol, "capability type is exact rather than numeric coercion");
+            action.removeTag("clientSnapshotPalette");
+            for (boolean capable : new boolean[] { false, true }) {
+                HologramActionDispatcher.handle(player, capable ? new HologramNetwork.Action(action).tag : action);
+                SimpleAssert.that(
+                    session.snapshotPaletteProtocol == capable,
+                    "legacy absence and explicit v1 negotiate independently");
+                NBTTagCompound full = HologramSnapshotCodecRegression.paletteFixture();
+                full.setString("session", session.id);
+                full.setString("generation", session.id);
+                HologramNetwork.SnapshotTicket ticket = HologramNetwork.reserveOwnedState(session);
+                HologramNetwork.completeOwnedState(ticket, full, () -> true, () -> {});
+                tick();
+                work.remove()
+                    .run();
+                tick();
+                SimpleAssert.eq(1, WIRE.size(), "real outbox publishes the negotiated small fixture once");
+                SimpleAssert.that(
+                    HologramSnapshotPalette.isPacked(decode(WIRE.get(0))) == capable,
+                    "only an advertised owner receives the new wire format through the actual encoder");
+                WIRE.clear();
+            }
+            HologramSession replacement = new HologramSession(player, 0, 64, 0, false, 2);
+            new HologramWorkspace.PresentationTransition(session, replacement);
+            SimpleAssert
+                .that(replacement.snapshotPaletteProtocol, "same-owner presentation replacement retains negotiation");
+            HologramSession fresh = new HologramSession(player, 0, 64, 0, false, 2);
+            SimpleAssert
+                .that(!fresh.snapshotPaletteProtocol, "a fresh session or reconnected player starts legacy again");
+        } finally {
+            HologramNetwork.clearServerQueues();
+            if (previous == null) sessions.remove(player.getUniqueID());
+            else sessions.put(player.getUniqueID(), previous);
             WIRE.clear();
         }
     }
