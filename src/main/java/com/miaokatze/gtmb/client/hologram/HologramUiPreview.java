@@ -211,7 +211,8 @@ final class HologramUiPreview {
                 selected,
                 mx,
                 my,
-                -1);
+                -1,
+                !cameraGestureActive());
             ui.textBoxes.draw();
             drawEmptyVoxelPreview(mx, my);
             if (moveHandles && canMoveSelection() && previewInteractive()) drawGizmo(mx, my);
@@ -292,7 +293,8 @@ final class HologramUiPreview {
                 this.selected,
                 mx,
                 my,
-                -1);
+                -1,
+                !cameraGestureActive());
             ui.textBoxes.draw();
         } finally {
             GL11.glPopAttrib();
@@ -1231,6 +1233,11 @@ final class HologramUiPreview {
 
     boolean blueprintCameraControls() {
         return !ui.library.browsePreviewActive() && ui.session.state().data.getBoolean("virtual");
+    }
+
+    /** Integer pointer poses may pause between moves; avoid new screen captures for the whole owned camera gesture. */
+    boolean cameraGestureActive() {
+        return navigationButton >= 0 || dragging && !blueprintCameraControls();
     }
 
     /** Blueprint camera presses precede context-menu presses; a short right release opens the existing menu. */
