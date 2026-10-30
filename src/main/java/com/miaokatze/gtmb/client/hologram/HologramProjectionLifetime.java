@@ -4,8 +4,15 @@ package com.miaokatze.gtmb.client.hologram;
 final class HologramProjectionLifetime {
 
     static final long RETENTION_NANOS = 15_000_000_000L;
+    static final long SNAPSHOT_TTL_NANOS = 300_000_000_000L;
     private String session = "";
     private long deadline;
+
+    /** An open workstation owns its session; the idle world-preview TTL is not an editor lease. */
+    static boolean retireSnapshot(String session, String workspaceSession, boolean contextValid, long age,
+        boolean backgroundBusy) {
+        return !contextValid || age > SNAPSHOT_TTL_NANOS && !backgroundBusy && !session.equals(workspaceSession);
+    }
 
     void observe(HologramState state) {
         if (state != null) visible(state.session, state.data.getInteger("job"), System.nanoTime());

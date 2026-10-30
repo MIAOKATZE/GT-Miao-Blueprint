@@ -107,7 +107,6 @@ public final class HologramClient {
     private static final HologramProjectionLifetime projectionLifetime = new HologramProjectionLifetime();
     private static long acceptedBatch = -1;
     private static final Set<String> retiredSessions = new LinkedHashSet<>();
-    private static final long SNAPSHOT_TTL_NS = 300000000000L;
     private static HologramSnapshotAssembly assembly = new HologramSnapshotAssembly();
     private static net.minecraft.world.World assemblyWorld;
     private static final HologramSnapshotInbox<NBTTagCompound> snapshotInbox = new HologramSnapshotInbox<>(
@@ -2194,10 +2193,17 @@ public final class HologramClient {
             System.nanoTime(),
             localArea != null && localAreaContext())) return;
         if (state == null) return;
-        if (mc.theWorld == null || mc.theWorld != snapshotWorld
-            || mc.thePlayer == null
-            || mc.thePlayer.dimension != state.data.getInteger("dimension")
-            || System.nanoTime() - receivedAt > SNAPSHOT_TTL_NS && !HologramBackgroundTasks.busy()) {
+        String workspaceSession = mc.currentScreen instanceof HologramScreen screen && !screen.ui.session.isTutorial()
+            ? screen.ui.session.state().session
+            : null;
+        if (HologramProjectionLifetime.retireSnapshot(
+            state.session,
+            workspaceSession,
+            mc.theWorld != null && mc.theWorld == snapshotWorld
+                && mc.thePlayer != null
+                && mc.thePlayer.dimension == state.data.getInteger("dimension"),
+            System.nanoTime() - receivedAt,
+            HologramBackgroundTasks.busy())) {
             clearProjection();
             return;
         }
