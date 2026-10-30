@@ -27,6 +27,7 @@ import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL14;
 
 import com.gtnewhorizon.gtnhlib.client.renderer.DirectTessellator;
+import com.miaokatze.miaokatzecore.client.render.ScreenLineStream;
 import com.miaokatze.miaokatzecore.client.render.TessellatorSlice;
 
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
@@ -55,9 +56,11 @@ final class HologramRenderer {
     private static String previewKey = "";
     private static List<Face> cachedFaces = new ArrayList<>();
     private static PreviewSubmission previewSubmission;
+    private static ScreenLineStream previewLineStream;
     private static List<Face> hoverFaces;
     private static int hoverX, hoverY, hoveredCell = -1;
     static long previewSliceCaptures, previewSliceHits, previewSliceUnsupported, previewSliceFallbackFrames;
+    static long previewSliceCapturedInts;
     static long previewHoverScans;
 
     private static void invalidatePreviewDrawCache() {
@@ -123,6 +126,8 @@ final class HologramRenderer {
     static HologramSelection selection;
     static String selectedStructureId = "";
     private static HologramEditorCameraFrame projectedFrame, presentedFrame;
+    private static PreviewRequest projectedRequest, presentedRequest;
+    private static boolean cameraOnlyProjection, previewCameraMoving;
     private static HologramState presentedState;
     private static HologramState displayedState;
     private static boolean previewSubmitted;
@@ -136,10 +141,13 @@ final class HologramRenderer {
 
     static void release() {
         projectedFrame = presentedFrame = null;
+        projectedRequest = presentedRequest = null;
+        cameraOnlyProjection = previewCameraMoving = false;
         presentedState = null;
         displayedState = null;
         previewSubmitted = false;
         publishedPreviewCells.clear();
+        closePreviewLineStream();
         worldRenderWitness = null;
         clearWorldGroups();
         worldState = previewState = null;
@@ -281,12 +289,44 @@ final class HologramRenderer {
         return previewPreparation != null && previewPreparation.state == state && !previewMeshReady(state);
     }
 
+    /** Edit admission compares the live UI request with the complete frame actually drawn, without allocating a key. */
+    static boolean previewPresented(HologramState state, int x, int y, int width, int height, double yaw, double pitch,
+        double zoom, double panX, double panY, double panZ, int layer, int view, boolean empty) {
+        return previewMeshReady(state) && presentedState == state
+            && presentedRequest != null
+            && presentedRequest.matches(
+                state,
+                x,
+                y,
+                width,
+                height,
+                yaw,
+                pitch,
+                zoom,
+                panX,
+                panY,
+                panZ,
+                layer,
+                view,
+                empty,
+                HologramBlueprintPreview.cleanCapture());
+    }
+
     static void sceneClosed() {
         invalidatePreviewDrawCache();
+        closePreviewLineStream();
         displayedState = null;
         presentedState = null;
         presentedFrame = null;
+        presentedRequest = null;
         previewSubmitted = false;
+    }
+
+    private static void closePreviewLineStream() {
+        if (previewLineStream != null) {
+            previewLineStream.close();
+            previewLineStream = null;
+        }
     }
 
     static boolean previewMeshVisible(HologramState state) {
@@ -346,9 +386,34 @@ final class HologramRenderer {
     static int preview(HologramState state, int x, int y, int width, int height, double yaw, double pitch, double zoom,
         double panX, double panY, double panZ, int layer, int view, int selected, int mouseX, int mouseY,
         double rehearsal) {
+        return preview(
+            state,
+            x,
+            y,
+            width,
+            height,
+            yaw,
+            pitch,
+            zoom,
+            panX,
+            panY,
+            panZ,
+            layer,
+            view,
+            selected,
+            mouseX,
+            mouseY,
+            rehearsal,
+            true);
+    }
+
+    static int preview(HologramState state, int x, int y, int width, int height, double yaw, double pitch, double zoom,
+        double panX, double panY, double panZ, int layer, int view, int selected, int mouseX, int mouseY,
+        double rehearsal, boolean allowCapture) {
         if (width <= 0 || height <= 0 || !Double.isFinite(zoom) || zoom <= 0) {
             presentedFrame = null;
             presentedState = null;
+            presentedRequest = null;
             return -1;
         }
         HologramTextures.begin(state);
@@ -395,11 +460,55 @@ final class HologramRenderer {
             previewPreparation = budgeted ? new PreviewPreparation(state, true) : null;
         }
         lastPreviewBuiltRegions = 0;
+        // The stamp belongs to this preparation, not merely to its cell count: a cold/dirty final slice may also be N.
+        cameraOnlyProjection = budgeted && preparedCameraOnly(state, key, layer, view, showEmptyCells);
+        previewCameraMoving = state != HologramLibraryClient.INSTANCE.browsePreviewState() && projectedRequest != null
+            && projectedRequest.state == state
+            && !projectedRequest.sameCamera(x, y, width, height, yaw, pitch, zoom, panX, panY, panZ);
+        if (projectedRequest == null || !projectedRequest.matches(
+            state,
+            x,
+            y,
+            width,
+            height,
+            yaw,
+            pitch,
+            zoom,
+            panX,
+            panY,
+            panZ,
+            layer,
+            view,
+            showEmptyCells,
+            !budgeted))
+            projectedRequest = new PreviewRequest(
+                state,
+                x,
+                y,
+                width,
+                height,
+                yaw,
+                pitch,
+                zoom,
+                panX,
+                panY,
+                panZ,
+                layer,
+                view,
+                showEmptyCells,
+                !budgeted);
         if (budgeted) {
             if (previewPreparation == null || previewPreparation.state != state)
                 previewPreparation = new PreviewPreparation(state, true);
             prepareProgressiveFrame(state, key, x, y, width, height, yaw, pitch, zoom, panX, panY, panZ);
-            previewPreparation.advance(layer, view, currentView, key);
+            if (cameraOnlyProjection) {
+                // All input regions/materials/native models are already prepared. Publish only the complete current
+                // camera, before any draw, without spending another budget on an occupancy prefix we will not show.
+                previewPreparation.projection.advance(currentView, Integer.MAX_VALUE, Long.MAX_VALUE);
+                previewPreparation.projection.publish();
+            } else if (previewPreparation.completed != state.cells.size()
+                || previewPreparation.projection.published != state.cells.size())
+                previewPreparation.advance(layer, view, currentView, key);
         }
         if (!budgeted && (previewState != state || !key.equals(previewKey))) {
             List<Face> faces = new ArrayList<>();
@@ -584,11 +693,11 @@ final class HologramRenderer {
             // Angelica 2.2.28 also uses this vanilla GUI layout; its append-side extra state belongs to terrain
             // meshing.
             // DirectTessellator and drag transforms retain their original commands and active-format batch limit.
-            if (!displaced && t.getClass() == Tessellator.class) {
+            if (!displaced && !previewCameraMoving && t.getClass() == Tessellator.class) {
                 if (previewSubmission == null || previewSubmission.faces != faces
                     || previewSubmission.depthScale != depthScale)
                     previewSubmission = new PreviewSubmission(faces, depthScale);
-                materialDrawn = previewSubmission.draw(t);
+                materialDrawn = previewSubmission.draw(t, allowCapture);
             } else {
                 if (com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.isEnabled()) previewSliceFallbackFrames++;
                 materialDrawn = drawPreviewQuads(t, faces, depthScale, moveX, moveY);
@@ -647,34 +756,57 @@ final class HologramRenderer {
             float outlineDensity = HologramBlueprintPreview.cleanCapture() || cachedOutlines.isEmpty() ? 1
                 : previewOutlineDensity();
             int lineVertices = 0, lineLimit = 0;
-            t.startDrawing(GL11.GL_LINES);
-            if (selection != null) selection.related(state);
-            if (!HologramBlueprintPreview.cleanCapture()) for (Face face : cachedOutlines) {
-                boolean chosen = face.cell.index == selected
-                    || selection != null && selection.contains(face.cell.index);
-                boolean relatedCasing = !chosen && selection != null
-                    && selection.relatedContains(state, face.cell.index);
-                float alpha = previewOutlineAlpha(chosen, relatedCasing, face.empty, face.fadeDefault, outlineDensity);
-                if (alpha == 0) continue;
-                if (lineLimit > 0 && lineVertices + 24 > lineLimit) {
-                    t.draw();
-                    t.startDrawing(GL11.GL_LINES);
-                    lineVertices = 0;
-                }
-                t.setColorRGBA_F(
-                    chosen ? 1 : relatedCasing ? .78f : .2f,
-                    chosen ? .92f : relatedCasing ? .61f : .7f,
-                    chosen ? .5f : relatedCasing ? 1 : .8f,
-                    alpha);
-                for (int[] edge : EDGES) {
-                    double[] a = face.points[edge[0]], b = face.points[edge[1]];
-                    t.addVertex(a[0], a[1], a[2] * depthScale + .15);
-                    t.addVertex(b[0], b[1], b[2] * depthScale + .15);
-                }
-                if (lineLimit == 0) lineLimit = previewBatchLimit(t);
-                lineVertices += 24;
+            boolean streamedLines = false;
+            if (!HologramBlueprintPreview.cleanCapture()
+                && state != HologramLibraryClient.INSTANCE.browsePreviewState()) {
+                if (previewLineStream == null) previewLineStream = new ScreenLineStream();
+                streamedLines = previewLineStream.begin(t);
             }
-            t.draw();
+            try {
+                if (!streamedLines) t.startDrawing(GL11.GL_LINES);
+                if (selection != null) selection.related(state);
+                if (!HologramBlueprintPreview.cleanCapture()) for (Face face : cachedOutlines) {
+                    boolean chosen = face.cell.index == selected
+                        || selection != null && selection.contains(face.cell.index);
+                    boolean relatedCasing = !chosen && selection != null
+                        && selection.relatedContains(state, face.cell.index);
+                    float alpha = previewOutlineAlpha(
+                        chosen,
+                        relatedCasing,
+                        face.empty,
+                        face.fadeDefault,
+                        outlineDensity);
+                    if (alpha == 0) continue;
+                    if (lineLimit > 0 && lineVertices + 24 > lineLimit) {
+                        if (streamedLines) previewLineStream.flush();
+                        else {
+                            t.draw();
+                            t.startDrawing(GL11.GL_LINES);
+                        }
+                        lineVertices = 0;
+                    }
+                    float red = chosen ? 1 : relatedCasing ? .78f : .2f,
+                        green = chosen ? .92f : relatedCasing ? .61f : .7f,
+                        blue = chosen ? .5f : relatedCasing ? 1 : .8f;
+                    if (streamedLines) previewLineStream.color(red, green, blue, alpha);
+                    else t.setColorRGBA_F(red, green, blue, alpha);
+                    for (int[] edge : EDGES) {
+                        double[] a = face.points[edge[0]], b = face.points[edge[1]];
+                        if (streamedLines) previewLineStream
+                            .line(a[0], a[1], a[2] * depthScale + .15, b[0], b[1], b[2] * depthScale + .15);
+                        else {
+                            t.addVertex(a[0], a[1], a[2] * depthScale + .15);
+                            t.addVertex(b[0], b[1], b[2] * depthScale + .15);
+                        }
+                    }
+                    if (lineLimit == 0)
+                        lineLimit = streamedLines ? ScreenLineStream.MAX_VERTICES : previewLineBatchLimit(t);
+                    lineVertices += 24;
+                }
+                if (!streamedLines) t.draw();
+            } finally {
+                if (streamedLines) previewLineStream.end();
+            }
             GL11.glDisable(GL11.GL_DEPTH_TEST);
             GL11.glLineWidth(2.5f);
             lineVertices = 0;
@@ -700,7 +832,7 @@ final class HologramRenderer {
                         t.addVertex(a[0], a[1], 1);
                         t.addVertex(b[0], b[1], 1);
                     }
-                    if (lineLimit == 0) lineLimit = previewBatchLimit(t);
+                    if (lineLimit == 0) lineLimit = previewLineBatchLimit(t);
                     lineVertices += 24;
                 }
             t.draw();
@@ -719,7 +851,7 @@ final class HologramRenderer {
                     t.addVertex(a[0], a[1], 1);
                     t.addVertex(b[0], b[1], 1);
                 }
-                if (lineLimit == 0) lineLimit = previewBatchLimit(t);
+                if (lineLimit == 0) lineLimit = previewLineBatchLimit(t);
                 lineVertices += 24;
             }
             t.draw();
@@ -770,11 +902,13 @@ final class HologramRenderer {
         }
         presentedFrame = projectedFrame;
         presentedState = state;
+        presentedRequest = projectedRequest;
         displayedState = !cachedFaces.isEmpty() || !cachedOutlines.isEmpty()
             || !structureBoxes.isEmpty()
             || previewPreparation != null && previewPreparation.boundary != null
                 && previewPreparation.boundary.presented ? state : null;
         previewSubmitted = !budgeted || previewPreparation.projection.published == state.cells.size();
+        if (budgeted && previewSubmitted) previewPreparation.completeGeometryPresented = true;
         if (budgeted && previewSubmitted && !previewPreparation.readyObserved) {
             previewPreparation.readyObserved = true;
             com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.loadStage(
@@ -790,6 +924,7 @@ final class HologramRenderer {
     static void waitingPreview(HologramState state) {
         presentedState = null;
         presentedFrame = null;
+        presentedRequest = null;
         GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
         try {
             GL11.glDisable(GL11.GL_TEXTURE_2D);
@@ -807,6 +942,8 @@ final class HologramRenderer {
         if (previewPreparation == null || previewPreparation.state != state || previewPreparation.boundary == null)
             return 0;
         PreviewBoundary boundary = previewPreparation.boundary;
+        // A completed camera-only projection may deliberately leave the unused light outline at an older pose.
+        if (!boundary.projectedKey.equals(previewKey)) return 0;
         Tessellator tess = Tessellator.instance;
         int vertices = 0, total = 0, limit = 0;
         tess.startDrawing(GL11.GL_LINES);
@@ -825,7 +962,7 @@ final class HologramRenderer {
                 double[] a = cell.points[EDGES[edge][0]], b = cell.points[EDGES[edge][1]];
                 tess.addVertex(a[0], a[1], a[2] * depthScale + .15);
                 tess.addVertex(b[0], b[1], b[2] * depthScale + .15);
-                if (limit == 0) limit = previewBatchLimit(tess);
+                if (limit == 0) limit = previewLineBatchLimit(tess);
                 vertices += 2;
                 total += 2;
             }
@@ -848,6 +985,7 @@ final class HologramRenderer {
     private static void prepareProgressiveFrame(HologramState state, String key, int x, int y, int width, int height,
         double yaw, double pitch, double zoom, double panX, double panY, double panZ) {
         if (previewPreparation.projection != null && key.equals(previewPreparation.projection.key)) return;
+        PreviewProjection previous = previewPreparation.projection;
         if (boundsState != state) {
             boundsState = state;
             boundsX = boundsY = boundsZ = 0;
@@ -880,59 +1018,77 @@ final class HologramRenderer {
         cachedExtent = boundsExtent;
         previewKey = key;
         previewState = state;
-        cachedFaces = new ArrayList<>();
+        previewSubmitted = false;
+        presentedState = null;
+        presentedFrame = null;
+        presentedRequest = null;
         invalidatePreviewDrawCache();
+        cachedFaces = new ArrayList<>();
         cachedOutlines = new ArrayList<>();
         cachedMarkers = new ArrayList<>();
         nativePreviewCells.clear();
         linkedPreviewCells.clear();
         visibleCells.clear();
         publishedPreviewCells.clear();
-        previewSubmitted = false;
-        presentedState = null;
-        presentedFrame = null;
         buildStructureBoxes(state);
-        previewPreparation.projection = new PreviewProjection(state, key);
+        // The old presentation, hover and slices have been retired before any owned vertex/Face can be overwritten.
+        previewPreparation.projection = new PreviewProjection(state, key, previous);
     }
 
-    private static void projectPreviewCell(PreviewCell previewCell, PreviewRegion region, boolean current) {
-        HologramState.Cell c = previewCell.cell;
-        int exposed = previewCell.exposed;
+    private static int previewFacing(HologramEditorCameraFrame frame) {
+        int facing = 0;
         for (int side = 0; side < 6; side++) {
             int[] normal = NORMALS[side];
-            if (-(normal[0] * projectedFrame.basis.forwardX() + normal[1] * projectedFrame.basis.forwardY()
-                + normal[2] * projectedFrame.basis.forwardZ()) <= 1e-8) exposed &= ~(1 << side);
+            if (-(normal[0] * frame.basis.forwardX() + normal[1] * frame.basis.forwardY()
+                + normal[2] * frame.basis.forwardZ()) > 1e-8) facing |= 1 << side;
         }
+        return facing;
+    }
+
+    private static void projectPreviewCell(PreviewCell previewCell, PreviewRegion region, boolean current, int facing) {
+        HologramState.Cell c = previewCell.cell;
+        int exposed = previewCell.exposed & facing;
         String role = previewCell.role;
         if (exposed == 0 && role.isEmpty()) return;
-        double[][] projected = new double[8][];
+        if (previewCell.outline == null) {
+            previewCell.outline = new Face(previewCell, new double[8][3], 0, null);
+            previewCell.faces = new Face[previewCell.nativeModel || previewCell.empty ? 6
+                : previewCell.material.geometry.size()];
+        }
+        double[][] projected = previewCell.outline.points;
         for (int v = 0; v < 8; v++)
-            projected[v] = projectedFrame.project(c.dx + VERTICES[v][0], c.dy + VERTICES[v][1], c.dz + VERTICES[v][2]);
+            projectedFrame.project(c.dx + VERTICES[v][0], c.dy + VERTICES[v][1], c.dz + VERTICES[v][2], projected[v]);
         if (!role.isEmpty() && (c.anchor || region.markers.size() < 64))
             region.markers.add(new RoleMarker(c, projected, role));
-        Face outline = new Face(c, projected, 0, current);
+        Face outline = previewCell.outline;
+        outline.updateDepth();
         boolean renderedCurrent = current || c.anchor || c.status.equals("protected") && c.actualStack != null;
         outline.fadeDefault = role.isEmpty() && !c.sourceMissing
             && (outline.nativeModel ? !HologramBlockRender.missingTexture(c, renderedCurrent)
                 : completePreviewMaterial(outline.material));
         region.outlines.add(outline);
-        if (outline.nativeModel) {
-            region.nativeCells.add(c);
-            for (int side = 0; side < 6; side++)
-                if ((exposed & 1 << side) != 0) region.faces.add(new Face(c, projected, side, current));
+        if (outline.nativeModel || outline.empty) {
+            if (outline.nativeModel) region.nativeCells.add(c);
+            for (int side = 0; side < 6; side++) if ((exposed & 1 << side) != 0) {
+                Face face = previewCell.faces[side];
+                if (face == null) previewCell.faces[side] = face = new Face(previewCell, projected, side, null);
+                face.updateDepth();
+                region.faces.add(face);
+            }
             return;
         }
         HologramTextures.Material material = outline.material;
-        if (outline.empty) {
-            for (int side = 0; side < 6; side++)
-                if ((exposed & 1 << side) != 0) region.faces.add(new Face(c, projected, side, current));
-            return;
-        }
-        for (HologramGeometry.Surface surface : material.geometry) {
+        for (int at = 0; at < material.geometry.size(); at++) {
+            HologramGeometry.Surface surface = material.geometry.get(at);
             if ((exposed & 1 << surface.side) == 0) continue;
-            double[][] points = projected;
+            Face face = previewCell.faces[at];
+            if (face == null) previewCell.faces[at] = face = new Face(
+                previewCell,
+                material.partial ? new double[8][3] : projected,
+                surface.side,
+                surface);
+            double[][] points = face.points;
             if (material.partial) {
-                points = new double[8][3];
                 for (int v = 0; v < 8; v++) {
                     double[] local = surface.vertices[v];
                     for (int axis = 0; axis < 3; axis++) points[v][axis] = projected[0][axis]
@@ -941,7 +1097,8 @@ final class HologramRenderer {
                         + (local[2] + .5) * (projected[4][axis] - projected[0][axis]);
                 }
             }
-            region.faces.add(new Face(c, points, surface.side, current, surface));
+            face.updateDepth();
+            region.faces.add(face);
         }
     }
 
@@ -1183,7 +1340,76 @@ final class HologramRenderer {
         if (!nativeModel && !empty && HologramNativeTiles.supported(c.block(current || c.anchor))) role = "模型缺失";
         if (!empty && role.isEmpty() && c.iconOnly) role = "占位";
         if (!c.prompt.isEmpty()) role = role.isEmpty() ? "提示" : role + " · 提示";
-        if (exposed != 0 || !role.isEmpty()) result.cells.add(new PreviewCell(c, exposed, role, result.prepared + 1));
+        if (exposed != 0 || !role.isEmpty())
+            result.cells.add(new PreviewCell(c, exposed, role, result.prepared + 1, material, empty, nativeModel));
+    }
+
+    private static boolean preparedCameraOnly(HologramState state, String key, int layer, int view, boolean empty) {
+        return state != HologramLibraryClient.INSTANCE.browsePreviewState() && previewPreparation != null
+            && previewPreparation.state == state
+            && previewPreparation.completeGeometryPresented
+            && previewPreparation.completed == state.cells.size()
+            && previewPreparation.projection != null
+            && previewPreparation.projection.published == state.cells.size()
+            && projectedRequest != null
+            && projectedRequest.sameGeometry(state, layer, view, empty, false)
+            && !key.equals(previewKey);
+    }
+
+    /**
+     * Immutable input of one projected/presented frame. UI admission reads scalars, never builds another string key.
+     */
+    private static final class PreviewRequest {
+
+        final HologramState state;
+        final int x, y, width, height, layer, view;
+        final double yaw, pitch, zoom, panX, panY, panZ;
+        final boolean empty, clean;
+
+        PreviewRequest(HologramState state, int x, int y, int width, int height, double yaw, double pitch, double zoom,
+            double panX, double panY, double panZ, int layer, int view, boolean empty, boolean clean) {
+            this.state = state;
+            this.x = x;
+            this.y = y;
+            this.width = width;
+            this.height = height;
+            this.yaw = yaw;
+            this.pitch = pitch;
+            this.zoom = zoom;
+            this.panX = panX;
+            this.panY = panY;
+            this.panZ = panZ;
+            this.layer = layer;
+            this.view = view;
+            this.empty = empty;
+            this.clean = clean;
+        }
+
+        boolean sameGeometry(HologramState state, int layer, int view, boolean empty, boolean clean) {
+            return this.state == state && this.layer == layer
+                && this.view == view
+                && this.empty == empty
+                && this.clean == clean;
+        }
+
+        boolean sameCamera(int x, int y, int width, int height, double yaw, double pitch, double zoom, double panX,
+            double panY, double panZ) {
+            return this.x == x && this.y == y
+                && this.width == width
+                && this.height == height
+                && this.yaw == yaw
+                && this.pitch == pitch
+                && this.zoom == zoom
+                && this.panX == panX
+                && this.panY == panY
+                && this.panZ == panZ;
+        }
+
+        boolean matches(HologramState state, int x, int y, int width, int height, double yaw, double pitch, double zoom,
+            double panX, double panY, double panZ, int layer, int view, boolean empty, boolean clean) {
+            return sameGeometry(state, layer, view, empty, clean)
+                && sameCamera(x, y, width, height, yaw, pitch, zoom, panX, panY, panZ);
+        }
     }
 
     /** Client render-thread cursor: each cell invokes the existing native/texture path exactly once. */
@@ -1196,7 +1422,7 @@ final class HologramRenderer {
         int cell, completed;
         final PreviewBoundary boundary;
         PreviewProjection projection;
-        boolean outlineObserved, materialObserved, readyObserved;
+        boolean outlineObserved, materialObserved, readyObserved, completeGeometryPresented;
 
         PreviewPreparation(HologramState state, boolean outline) {
             this.state = state;
@@ -1261,22 +1487,39 @@ final class HologramRenderer {
         Map.Entry<HologramRegionCache.Key, List<HologramState.Cell>> entry;
         PreviewRegion region;
         int counted, completed, published;
-        final List<Face> faces = new ArrayList<>(), outlines = new ArrayList<>();
-        final List<RoleMarker> markers = new ArrayList<>();
-        final List<HologramState.Cell> nativeCells = new ArrayList<>(), linked = new ArrayList<>(),
-            visible = new ArrayList<>();
-        final java.util.BitSet cells = new java.util.BitSet();
+        final List<Face> faces, outlines;
+        final List<RoleMarker> markers;
+        final List<HologramState.Cell> nativeCells, linked, visible;
+        final java.util.BitSet cells;
 
         PreviewProjection(HologramState state, String key) {
+            this(state, key, null);
+        }
+
+        PreviewProjection(HologramState state, String key, PreviewProjection previous) {
             this.state = state;
             this.key = key;
             regions = state.regions.regions.entrySet()
                 .iterator();
+            faces = previous == null ? new ArrayList<>() : previous.faces;
+            outlines = previous == null ? new ArrayList<>() : previous.outlines;
+            markers = previous == null ? new ArrayList<>() : previous.markers;
+            nativeCells = previous == null ? new ArrayList<>() : previous.nativeCells;
+            linked = previous == null ? new ArrayList<>() : previous.linked;
+            visible = previous == null ? new ArrayList<>() : previous.visible;
+            cells = previous == null ? new java.util.BitSet() : previous.cells;
+            faces.clear();
+            outlines.clear();
+            markers.clear();
+            nativeCells.clear();
+            linked.clear();
+            visible.clear();
+            cells.clear();
         }
 
         void advance(boolean current, int maximum, long deadline) {
-            int work = 0;
-            while (work < maximum && (work == 0 || System.nanoTime() < deadline)) {
+            int work = 0, facing = previewFacing(projectedFrame);
+            while (work < maximum && (deadline == Long.MAX_VALUE || work == 0 || System.nanoTime() < deadline)) {
                 if (entry == null) {
                     if (!regions.hasNext()) return;
                     entry = regions.next();
@@ -1304,7 +1547,7 @@ final class HologramRenderer {
                     PreviewCell input = region.cells.get(region.projectedCells++);
                     int firstFace = region.faces.size(), firstOutline = region.outlines.size(),
                         firstMarker = region.markers.size(), firstNative = region.nativeCells.size();
-                    projectPreviewCell(input, region, current);
+                    projectPreviewCell(input, region, current, facing);
                     for (int i = firstFace; i < region.faces.size(); i++) faces.add(region.faces.get(i));
                     for (int i = firstOutline; i < region.outlines.size(); i++) outlines.add(region.outlines.get(i));
                     for (int i = firstMarker; i < region.markers.size(); i++) markers.add(region.markers.get(i));
@@ -1318,8 +1561,8 @@ final class HologramRenderer {
                     completed += region.prepared - counted;
                     counted = region.prepared;
                     if (!region.complete) return;
-                    visible.addAll(region.visible);
-                    linked.addAll(region.linked);
+                    for (int i = 0; i < region.visible.size(); i++) visible.add(region.visible.get(i));
+                    for (int i = 0; i < region.linked.size(); i++) linked.add(region.linked.get(i));
                     if (previewPreparation.boundary != null)
                         for (HologramState.Cell cell : entry.getValue()) cells.set(cell.index);
                     entry = null;
@@ -1333,20 +1576,28 @@ final class HologramRenderer {
                 || published != 0 && completed < 2L * published && completed != state.cells.size()) return;
             // Geometric milestones bound total merge/copy work; old projected geometry is never recreated here.
             faces.sort(Comparator.comparingDouble(face -> face.depth));
-            List<Face> merged = new ArrayList<>(cachedFaces.size() + faces.size());
-            int old = 0, added = 0;
-            while (old < cachedFaces.size() && added < faces.size()) {
-                if (cachedFaces.get(old).depth <= faces.get(added).depth) merged.add(cachedFaces.get(old++));
-                else merged.add(faces.get(added++));
+            boolean complete = published == 0 && completed == state.cells.size();
+            if (complete) {
+                // This cursor cannot append again. Transfer its complete ordered output, retaining capacity for the
+                // next camera only after prepareProgressiveFrame has invalidated the old actual presentation.
+                cachedFaces = faces;
+                cachedOutlines = outlines;
+            } else {
+                List<Face> merged = new ArrayList<>(cachedFaces.size() + faces.size());
+                int old = 0, added = 0;
+                while (old < cachedFaces.size() && added < faces.size()) {
+                    if (cachedFaces.get(old).depth <= faces.get(added).depth) merged.add(cachedFaces.get(old++));
+                    else merged.add(faces.get(added++));
+                }
+                while (old < cachedFaces.size()) merged.add(cachedFaces.get(old++));
+                while (added < faces.size()) merged.add(faces.get(added++));
+                cachedFaces = merged;
+                for (int i = 0; i < outlines.size(); i++) cachedOutlines.add(outlines.get(i));
             }
-            while (old < cachedFaces.size()) merged.add(cachedFaces.get(old++));
-            while (added < faces.size()) merged.add(faces.get(added++));
-            cachedFaces = merged;
             invalidatePreviewDrawCache();
-            cachedOutlines.addAll(outlines);
-            nativePreviewCells.addAll(nativeCells);
-            linkedPreviewCells.addAll(linked);
-            visibleCells.addAll(visible);
+            for (int i = 0; i < nativeCells.size(); i++) nativePreviewCells.add(nativeCells.get(i));
+            for (int i = 0; i < linked.size(); i++) linkedPreviewCells.add(linked.get(i));
+            for (int i = 0; i < visible.size(); i++) visibleCells.add(visible.get(i));
             int shownMarkers = cachedMarkers.size();
             for (RoleMarker marker : markers) if (marker.cell.anchor || shownMarkers < 64) {
                 cachedMarkers.add(marker);
@@ -1354,8 +1605,10 @@ final class HologramRenderer {
             }
             cachedMarkers.sort(Comparator.comparingInt(marker -> marker.cell.anchor ? 1 : 0));
             publishedPreviewCells.or(cells);
-            faces.clear();
-            outlines.clear();
+            if (!complete) {
+                faces.clear();
+                outlines.clear();
+            }
             nativeCells.clear();
             markers.clear();
             linked.clear();
@@ -1498,12 +1751,20 @@ final class HologramRenderer {
         final int exposed;
         final String role;
         final int sourceOrdinal;
+        final HologramTextures.Material material;
+        final boolean empty, nativeModel;
+        Face outline;
+        Face[] faces;
 
-        PreviewCell(HologramState.Cell cell, int exposed, String role, int sourceOrdinal) {
+        PreviewCell(HologramState.Cell cell, int exposed, String role, int sourceOrdinal,
+            HologramTextures.Material material, boolean empty, boolean nativeModel) {
             this.cell = cell;
             this.exposed = exposed;
             this.role = role;
             this.sourceOrdinal = sourceOrdinal;
+            this.material = material;
+            this.empty = empty;
+            this.nativeModel = nativeModel;
         }
     }
 
@@ -1970,6 +2231,12 @@ final class HologramRenderer {
         return Math.min(4092, ((0x20000 * 4 - 32 * 4) / bytesPerVertex) & ~3);
     }
 
+    static int previewLineBatchLimit(Tessellator tess) {
+        // The exact vanilla/Angelica raw layout is eight ints per vertex. 16368 vertices leave 128 ints of headroom
+        // below the large-buffer shrink threshold, including addVertex's 32-int reservation. Full boxes still fit.
+        return tess.getClass() == Tessellator.class ? 16368 : previewBatchLimit(tess);
+    }
+
     private static float previewOutlineDensity() {
         // GUI drawing is orthographic with translation/axis scale. Include the active MUI transform and
         // framebuffer viewport, so thresholds do not change meaning with GUI scale or a resized scene widget.
@@ -2123,29 +2390,37 @@ final class HologramRenderer {
         }
 
         boolean draw(Tessellator tess) {
+            return draw(tess, true);
+        }
+
+        boolean draw(Tessellator tess, boolean allowCapture) {
             for (int at = 0; at < batches.size(); at++) {
                 PreviewBatch batch = batches.get(at);
                 tess.startDrawingQuads();
                 if (batch.stable && !unsupported) {
                     if (batch.slice != null && batch.slice.replay(tess)) {
                         if (com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.isEnabled()) previewSliceHits++;
-                    } else if (retainedInts - (batch.slice == null ? 0 : batch.slice.retainedInts()) + batch.quads * 32
-                        <= MAX_RETAINED_INTS) {
-                            // Capture executes the append-only callback once, including on unsupported layouts.
-                            int previousInts = batch.slice == null ? 0 : batch.slice.retainedInts();
-                            TessellatorSlice captured = TessellatorSlice.capture(tess, () -> emit(tess, batch));
-                            batch.slice = captured;
-                            retainedInts -= previousInts;
-                            if (batch.slice == null) {
-                                unsupported = true;
-                                if (com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.isEnabled())
-                                    previewSliceUnsupported++;
-                            } else {
-                                retainedInts += batch.slice.retainedInts();
-                                if (com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.isEnabled())
-                                    previewSliceCaptures++;
-                            }
-                        } else emit(tess, batch);
+                    } else if (allowCapture
+                        && retainedInts - (batch.slice == null ? 0 : batch.slice.retainedInts()) + batch.quads * 32
+                            <= MAX_RETAINED_INTS) {
+                                // Capture executes the append-only callback once, including on unsupported layouts.
+                                int previousInts = batch.slice == null ? 0 : batch.slice.retainedInts();
+                                TessellatorSlice captured = TessellatorSlice.capture(tess, () -> emit(tess, batch));
+                                batch.slice = captured;
+                                retainedInts -= previousInts;
+                                if (batch.slice == null) {
+                                    unsupported = true;
+                                    if (com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.isEnabled())
+                                        previewSliceUnsupported++;
+                                } else {
+                                    retainedInts += batch.slice.retainedInts();
+                                    if (com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.isEnabled()) {
+                                        previewSliceCaptures++;
+                                        previewSliceCapturedInts += batch.slice.retainedInts();
+                                    }
+                                }
+                            } else
+                        emit(tess, batch);
                 } else emit(tess, batch);
                 tess.draw();
             }
@@ -2186,7 +2461,7 @@ final class HologramRenderer {
         final HologramState.Cell cell;
         final double[][] points;
         final int side;
-        final double depth;
+        double depth;
         final HologramTextures.Material material;
         final boolean empty, nativeModel;
         final HologramGeometry.Surface surface;
@@ -2204,6 +2479,20 @@ final class HologramRenderer {
             empty = !cell.anchor && !cell.iconOnly && (current ? cell.id : cell.wantId).equals("minecraft:air");
             nativeModel = !empty && HologramBlockRender.ready(cell, current);
             material = empty ? null : HologramTextures.material(cell, current);
+            updateDepth();
+        }
+
+        Face(PreviewCell input, double[][] points, int side, HologramGeometry.Surface surface) {
+            cell = input.cell;
+            this.points = points;
+            this.side = side;
+            this.surface = surface;
+            empty = input.empty;
+            nativeModel = input.nativeModel;
+            material = input.material;
+        }
+
+        void updateDepth() {
             double d = 0;
             for (int index : FACES[side]) d += points[index][2];
             depth = d / 4;

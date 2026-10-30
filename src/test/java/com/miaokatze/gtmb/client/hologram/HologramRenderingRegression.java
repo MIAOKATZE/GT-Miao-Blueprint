@@ -22,6 +22,7 @@ public final class HologramRenderingRegression {
         sourceSwitchFence();
         cameraNavigationWhilePreparing();
         orderedPreviewBatches();
+        standardLineBatchBoundary();
         for (int front = 0; front < 6; front++) {
             boolean[] seen = new boolean[6];
             for (int side = 0; side < 6; side++) {
@@ -178,7 +179,7 @@ public final class HologramRenderingRegression {
             cells.appendTag(boundaryCell(0, 0, 0, "minecraft:stone"));
             source.setTag("cells", cells);
             HologramState state = new HologramState(source);
-            HologramUiModules ui = new HologramUiModules(null);
+            HologramUiModules ui = new HologramUiModules(headlessRenderingHost());
             java.lang.reflect.Field session = HologramUiSession.class.getDeclaredField("state"),
                 teaching = HologramUiSession.class.getDeclaredField("tutorialSink"),
                 displayed = HologramRenderer.class.getDeclaredField("displayedState"),
@@ -217,6 +218,7 @@ public final class HologramRenderingRegression {
                     !ui.tools.commands()
                         .commandContextAvailable(),
                     "allowing navigation does not reopen edit commands");
+                completedPresentationAdmission(ui, state, constructor);
                 ui.review.confirmation(true);
                 zoom = ui.preview.zoom();
                 ui.preview.scrollNativeScene(1);
@@ -242,6 +244,202 @@ public final class HologramRenderingRegression {
         source.setBoolean("virtual", true);
         source.setLong("planRevision", 1);
         return source;
+    }
+
+    private static java.lang.reflect.Field field(Class<?> type, String name) throws ReflectiveOperationException {
+        java.lang.reflect.Field field = type.getDeclaredField(name);
+        field.setAccessible(true);
+        return field;
+    }
+
+    private static HologramUiHost headlessRenderingHost() throws ReflectiveOperationException {
+        java.lang.reflect.Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        unsafeField.setAccessible(true);
+        sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
+        net.minecraft.client.Minecraft client = (net.minecraft.client.Minecraft) unsafe
+            .allocateInstance(net.minecraft.client.Minecraft.class);
+        HologramScreen parent = (HologramScreen) unsafe.allocateInstance(HologramScreen.class);
+        // A real host boundary with a detached inactive client. held("air") observes currentScreen != parent before
+        // physical Display/Keyboard polling; no global Minecraft singleton or native renderer is installed.
+        return (HologramUiHost) java.lang.reflect.Proxy.newProxyInstance(
+            HologramUiHost.class.getClassLoader(),
+            new Class<?>[] { HologramUiHost.class },
+            (proxy, method, arguments) -> switch (method.getName()) {
+            case "minecraft" -> client;
+            case "parent" -> parent;
+            case "screenWidth" -> HologramScreenLayout.WIDTH;
+            case "screenHeight" -> HologramScreenLayout.HEIGHT;
+            default -> throw new AssertionError("headless rendering admission requested " + method.getName());
+            });
+    }
+
+    /**
+     * Headless control fixtures explicitly supply the new actual-presentation precondition; no GL success is claimed.
+     */
+    static Runnable completePresentation(HologramUiModules ui) throws ReflectiveOperationException {
+        String[] names = { "previewPreparation", "previewState", "presentedState", "presentedRequest",
+            "projectedRequest", "previewSubmitted", "displayedState" };
+        Object[] saved = new Object[names.length];
+        for (int i = 0; i < names.length; i++) saved[i] = field(HologramRenderer.class, names[i]).get(null);
+        HologramState state = ui.session.state();
+        Class<?> preparationType = Class.forName(HologramRenderer.class.getName() + "$PreviewPreparation"),
+            projectionType = Class.forName(HologramRenderer.class.getName() + "$PreviewProjection"),
+            requestType = Class.forName(HologramRenderer.class.getName() + "$PreviewRequest");
+        java.lang.reflect.Constructor<?> preparationConstructor = preparationType
+            .getDeclaredConstructor(HologramState.class, boolean.class),
+            projectionConstructor = projectionType.getDeclaredConstructor(HologramState.class, String.class),
+            requestConstructor = requestType.getDeclaredConstructors()[0];
+        preparationConstructor.setAccessible(true);
+        projectionConstructor.setAccessible(true);
+        requestConstructor.setAccessible(true);
+        Object preparation = preparationConstructor.newInstance(state, false),
+            projection = projectionConstructor.newInstance(state, "headless-presented");
+        field(preparationType, "completed").setInt(preparation, state.cells.size());
+        field(preparationType, "completeGeometryPresented").setBoolean(preparation, true);
+        field(projectionType, "published").setInt(projection, state.cells.size());
+        field(preparationType, "projection").set(preparation, projection);
+        com.miaokatze.miaokatzecore.api.camera.ViewportCoordinates area = ui.canvas.viewport();
+        Object request = requestConstructor.newInstance(
+            state,
+            (int) area.x(),
+            (int) area.y(),
+            (int) area.width(),
+            (int) area.height(),
+            ui.preview.yaw(),
+            ui.preview.pitch(),
+            ui.preview.zoom(),
+            0d,
+            0d,
+            0d,
+            Integer.MAX_VALUE,
+            0,
+            false,
+            false);
+        field(HologramRenderer.class, "previewPreparation").set(null, preparation);
+        for (String name : new String[] { "previewState", "presentedState", "displayedState" })
+            field(HologramRenderer.class, name).set(null, state);
+        for (String name : new String[] { "projectedRequest", "presentedRequest" })
+            field(HologramRenderer.class, name).set(null, request);
+        field(HologramRenderer.class, "previewSubmitted").setBoolean(null, true);
+        return () -> {
+            try {
+                for (int i = 0; i < names.length; i++) field(HologramRenderer.class, names[i]).set(null, saved[i]);
+            } catch (ReflectiveOperationException failure) {
+                throw new AssertionError("restore headless presentation", failure);
+            }
+        };
+    }
+
+    private static void completedPresentationAdmission(HologramUiModules ui, HologramState state,
+        java.lang.reflect.Constructor<?> preparationConstructor) throws ReflectiveOperationException {
+        String[] fields = { "previewState", "presentedState", "presentedRequest", "projectedRequest", "previewKey",
+            "previewSubmitted", "previewPreparation" };
+        Object[] saved = new Object[fields.length];
+        for (int i = 0; i < fields.length; i++) saved[i] = field(HologramRenderer.class, fields[i]).get(null);
+        try {
+            Object preparation = preparationConstructor.newInstance(state, false);
+            Class<?> type = preparation.getClass();
+            Class<?> projectionType = Class.forName(HologramRenderer.class.getName() + "$PreviewProjection");
+            java.lang.reflect.Constructor<?> projectionConstructor = projectionType
+                .getDeclaredConstructor(HologramState.class, String.class);
+            projectionConstructor.setAccessible(true);
+            Object projection = projectionConstructor.newInstance(state, "previous-pose");
+            field(type, "completed").setInt(preparation, state.cells.size());
+            field(projectionType, "published").setInt(projection, state.cells.size());
+            field(type, "projection").set(preparation, projection);
+            field(HologramRenderer.class, "previewPreparation").set(null, preparation);
+            field(HologramRenderer.class, "previewState").set(null, state);
+            field(HologramRenderer.class, "presentedState").set(null, state);
+            field(HologramRenderer.class, "previewKey").set(null, "previous-pose");
+            field(HologramRenderer.class, "previewSubmitted").setBoolean(null, true);
+            Class<?> requestType = Class.forName(HologramRenderer.class.getName() + "$PreviewRequest");
+            java.lang.reflect.Constructor<?> requestConstructor = requestType.getDeclaredConstructors()[0];
+            requestConstructor.setAccessible(true);
+            com.miaokatze.miaokatzecore.api.camera.ViewportCoordinates area = ui.canvas.viewport();
+            Object request = requestConstructor.newInstance(
+                state,
+                (int) area.x(),
+                (int) area.y(),
+                (int) area.width(),
+                (int) area.height(),
+                ui.preview.yaw(),
+                ui.preview.pitch(),
+                ui.preview.zoom(),
+                0d,
+                0d,
+                0d,
+                Integer.MAX_VALUE,
+                0,
+                false,
+                false);
+            field(HologramRenderer.class, "presentedRequest").set(null, request);
+            field(HologramRenderer.class, "projectedRequest").set(null, request);
+            java.lang.reflect.Method cameraOnly = HologramRenderer.class.getDeclaredMethod(
+                "preparedCameraOnly",
+                HologramState.class,
+                String.class,
+                int.class,
+                int.class,
+                boolean.class);
+            cameraOnly.setAccessible(true);
+            SimpleAssert.that(
+                !(boolean) cameraOnly.invoke(null, state, "next-pose", Integer.MAX_VALUE, 0, false),
+                "merely reaching N in a cold/dirty cursor cannot select synchronous camera presentation");
+            field(type, "completeGeometryPresented").setBoolean(preparation, true);
+            SimpleAssert.that(
+                (boolean) cameraOnly.invoke(null, state, "next-pose", Integer.MAX_VALUE, 0, false),
+                "a previously completely drawn preparation admits the next camera before it is presented");
+            SimpleAssert.that(
+                !(boolean) cameraOnly.invoke(null, state, "next-pose", 0, 0, false),
+                "a new layer is preparation invalidation, not a camera-only change");
+            SimpleAssert.that(
+                !(boolean) cameraOnly.invoke(null, state, "next-pose", Integer.MAX_VALUE, 1, false),
+                "a new view is not a camera-only change");
+            SimpleAssert.that(
+                !(boolean) cameraOnly.invoke(null, state, "next-pose", Integer.MAX_VALUE, 0, true),
+                "a visibility change is not a camera-only change");
+            SimpleAssert.that(
+                !(boolean) cameraOnly
+                    .invoke(null, new HologramState(state.fullData()), "next-pose", Integer.MAX_VALUE, 0, false),
+                "another snapshot cannot borrow the old complete geometry stamp");
+            SimpleAssert.that(ui.preview.previewInteractive(), "the exact complete presentation admits editing");
+            ui.preview.scrollNativeScene(1);
+            SimpleAssert.that(
+                !ui.preview.previewInteractive() && ui.preview.previewNavigable(),
+                "wheel changes desired immediately: editing closes before the next draw but navigation stays open");
+            ui.preview.scrollNativeScene(1);
+            SimpleAssert.that(
+                ui.preview.zoom() > (double) field(requestType, "zoom").get(request),
+                "a second wheel is accepted without waiting for a replacement presentation");
+            int startX = (int) area.x() + 40, startY = (int) area.y() + 40;
+            SimpleAssert.that(
+                ui.preview.consumeViewportRightMouse(startX, startY, 1),
+                "right navigation starts while the newly desired zoom is still unpresented");
+            SimpleAssert.that(
+                ui.preview.cameraGestureActive(),
+                "an owned navigation gesture suppresses cold captures even before its next integer pointer move");
+            ui.preview.mouseClickMove(startX + 8, startY, 1, 10);
+            double firstYaw = ui.preview.yaw();
+            ui.preview.mouseClickMove(startX + 16, startY, 1, 20);
+            SimpleAssert.that(
+                ui.preview.yaw() < firstYaw,
+                "successive navigation moves are not blocked by the strict edit stamp");
+            ui.preview.mouseMovedOrUp(startX + 16, startY, 1);
+            SimpleAssert.that(
+                !ui.preview.cameraGestureActive(),
+                "releasing navigation immediately restores capture admission without a timer or pose delay");
+            HologramGizmo gizmo = (HologramGizmo) field(HologramUiPreview.class, "gizmo").get(ui.preview);
+            HologramGizmo textGizmo = (HologramGizmo) field(HologramUiTextBoxes.class, "gizmo").get(ui.textBoxes);
+            gizmo.begin(0, 1, 1);
+            textGizmo.begin(0, 1, 1);
+            ui.preview.mouseMovedOrUp(40, 40, 0);
+            SimpleAssert.eq(-1, gizmo.axis(), "stale release cancels the block gizmo without committing a move");
+            SimpleAssert.eq(-1, textGizmo.axis(), "stale release also cancels the independent text capture");
+            field(HologramRenderer.class, "presentedRequest").set(null, null);
+            SimpleAssert.that(!ui.preview.previewInteractive(), "a closed/unsubmitted scene cannot admit edits");
+        } finally {
+            for (int i = 0; i < fields.length; i++) field(HologramRenderer.class, fields[i]).set(null, saved[i]);
+        }
     }
 
     private static NBTTagCompound boundaryCell(int x, int y, int z, String block) {
@@ -302,6 +500,7 @@ public final class HologramRenderingRegression {
             nativeSnapshot.set(null, null);
             materials.put(cell, new HologramTextures.Material[] { material, material });
             try {
+                completeCameraProjection(material, materials);
                 Class<?> faceClass = Class.forName(HologramRenderer.class.getName() + "$Face");
                 java.lang.reflect.Constructor<?> faceConstructor = faceClass.getDeclaredConstructor(
                     HologramState.Cell.class,
@@ -323,6 +522,32 @@ public final class HologramRenderingRegression {
                 java.lang.reflect.Method draw = submissionClass.getDeclaredMethod("draw", Tessellator.class);
                 submissionConstructor.setAccessible(true);
                 draw.setAccessible(true);
+                java.lang.reflect.Method drawWithoutCapture = submissionClass
+                    .getDeclaredMethod("draw", Tessellator.class, boolean.class);
+                drawWithoutCapture.setAccessible(true);
+                Object deferred = submissionConstructor.newInstance(faces, 2);
+                RecordingTessellator deferredTess = new RecordingTessellator();
+                drawWithoutCapture.invoke(deferred, deferredTess, false);
+                drawWithoutCapture.invoke(deferred, deferredTess, false);
+                SimpleAssert.eq(
+                    16400,
+                    deferredTess.vertices.size(),
+                    "stationary poses within a gesture still emit all ordered layered commands exactly once");
+                SimpleAssert.that(
+                    !field(submissionClass, "unsupported").getBoolean(deferred),
+                    "gesture admission skips capture itself rather than causing permanent unsupported fallback");
+                SimpleAssert.eq(
+                    0,
+                    field(submissionClass, "retainedInts").getInt(deferred),
+                    "deferred cold capture retains no raw slice ints");
+                drawWithoutCapture.invoke(deferred, deferredTess, true);
+                SimpleAssert.that(
+                    field(submissionClass, "unsupported").getBoolean(deferred),
+                    "ending the gesture reopens actual capture, whose existing foreign-tessellator fallback is retained");
+                SimpleAssert.eq(
+                    24600,
+                    deferredTess.vertices.size(),
+                    "reopened unsupported capture still executes each original command once");
                 Object submission = submissionConstructor.newInstance(faces, 2);
                 RecordingTessellator tess = new RecordingTessellator();
                 draw.invoke(submission, tess);
@@ -415,6 +640,241 @@ public final class HologramRenderingRegression {
             }
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("ordered preview submission", failure);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void completeCameraProjection(HologramTextures.Material material,
+        java.util.Map<HologramState.Cell, HologramTextures.Material[]> materials) throws ReflectiveOperationException {
+        // The same prepared region inputs drive both a bounded cursor and the camera-only complete cursor. No GL draw
+        // or copied projection algorithm is involved; the native candidate checks the actual screen submission.
+        NBTTagCompound source = boundarySource("prepared-camera");
+        NBTTagList rows = new NBTTagList();
+        // Interleaved input indices deliberately differ from region/cell generation order.
+        for (int[] point : new int[][] { { 16, 0 }, { 14, 1 }, { 16, 1 }, { 15, 0 }, { 16, 2 }, { 14, 0 }, { 14, 2 },
+            { 15, 2 } }) rows.appendTag(boundaryCell(point[0], 0, point[1], "minecraft:glass"));
+        source.setTag("cells", rows);
+        HologramState state = new HologramState(source);
+        boolean[] missingIcon = { false };
+        TextureAtlasSprite diagnosticIcon = new TextureAtlasSprite("fixture:diagnostic") {
+
+            @Override
+            public String getIconName() {
+                return missingIcon[0] ? "missingno" : "fixture:diagnostic";
+            }
+        };
+        List<HologramTextures.Sample>[] diagnosticSides = new List[6];
+        for (int side = 0; side < 6; side++)
+            diagnosticSides[side] = Collections.singletonList(new HologramTextures.Sample(diagnosticIcon, 0xffffff));
+        HologramTextures.Material diagnosticMaterial = new HologramTextures.Material(
+            diagnosticSides,
+            diagnosticSides,
+            material.geometry,
+            false,
+            false,
+            false,
+            false);
+        HologramTextures.Material partialMaterial = new HologramTextures.Material(
+            diagnosticSides,
+            diagnosticSides,
+            HologramGeometry.pipe(.5f, (1 << 2) | (1 << 5), 1),
+            false,
+            false,
+            true,
+            true);
+        for (HologramState.Cell cell : state.cells) materials.put(
+            cell,
+            new HologramTextures.Material[] { cell.index == 7 ? partialMaterial : diagnosticMaterial,
+                cell.index == 7 ? partialMaterial : diagnosticMaterial });
+        String[] names = { "previewPreparation", "previewState", "cachedFaces", "cachedOutlines", "cachedMarkers",
+            "projectedFrame", "previewSubmission", "hoverFaces" };
+        Object[] saved = new Object[names.length];
+        for (int i = 0; i < names.length; i++) saved[i] = field(HologramRenderer.class, names[i]).get(null);
+        java.util.Map<Object, Object> regions = (java.util.Map<Object, Object>) field(
+            HologramRenderer.class,
+            "previewRegions").get(null);
+        java.util.Map<Object, Object> savedRegions = new java.util.LinkedHashMap<>(regions);
+        String[] listNames = { "nativePreviewCells", "linkedPreviewCells", "visibleCells" };
+        List<?>[] lists = new List<?>[listNames.length];
+        for (int i = 0; i < lists.length; i++)
+            lists[i] = new java.util.ArrayList<>((List<?>) field(HologramRenderer.class, listNames[i]).get(null));
+        java.util.BitSet published = (java.util.BitSet) field(HologramRenderer.class, "publishedPreviewCells")
+            .get(null), savedPublished = (java.util.BitSet) published.clone();
+        try {
+            java.lang.reflect.Method prepareRegion = HologramRenderer.class.getDeclaredMethod(
+                "previewRegion",
+                HologramState.class,
+                List.class,
+                int.class,
+                int.class,
+                boolean.class);
+            prepareRegion.setAccessible(true);
+            Class<?> preparationType = Class.forName(HologramRenderer.class.getName() + "$PreviewPreparation"),
+                projectionType = Class.forName(HologramRenderer.class.getName() + "$PreviewProjection");
+            java.lang.reflect.Constructor<?> preparationConstructor = preparationType
+                .getDeclaredConstructor(HologramState.class, boolean.class);
+            java.lang.reflect.Constructor<?> reusedProjectionConstructor = projectionType
+                .getDeclaredConstructor(HologramState.class, String.class, projectionType);
+            preparationConstructor.setAccessible(true);
+            reusedProjectionConstructor.setAccessible(true);
+            java.lang.reflect.Method advance = projectionType
+                .getDeclaredMethod("advance", boolean.class, int.class, long.class),
+                publish = projectionType.getDeclaredMethod("publish");
+            advance.setAccessible(true);
+            publish.setAccessible(true);
+            regions.clear();
+            for (java.util.Map.Entry<HologramRegionCache.Key, List<HologramState.Cell>> entry : state.regions.regions
+                .entrySet())
+                regions.put(
+                    entry.getKey(),
+                    prepareRegion.invoke(null, state, entry.getValue(), Integer.MAX_VALUE, 0, false));
+            Object preparation = preparationConstructor.newInstance(state, false);
+            field(preparationType, "completed").setInt(preparation, state.cells.size());
+            field(HologramRenderer.class, "previewPreparation").set(null, preparation);
+            Object previousProjection = null;
+            for (double yaw : new double[] { 0, .4, -.8, 2.1 }) {
+                List<double[]> reference = null;
+                java.util.Set<Object> ownedFaces = Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+                for (int path = 0; path < 3; path++) {
+                    // Revisit the reference pose after a genuinely different pose mutated every owned output.
+                    double currentYaw = path == 1 ? yaw + .13 : yaw;
+                    missingIcon[0] = path == 1;
+                    String key = yaw + ":" + path;
+                    field(HologramRenderer.class, "projectedFrame")
+                        .set(null, new HologramEditorCameraFrame(0, 0, 380, 321, currentYaw, .4, 1, 15, 0, 1, 6));
+                    for (String name : new String[] { "cachedFaces", "cachedOutlines", "cachedMarkers" })
+                        field(HologramRenderer.class, name).set(null, new java.util.ArrayList<>());
+                    for (String name : listNames) ((List<?>) field(HologramRenderer.class, name).get(null)).clear();
+                    published.clear();
+                    Object projection = reusedProjectionConstructor.newInstance(state, key, previousProjection);
+                    if (previousProjection != null) SimpleAssert.that(
+                        field(projectionType, "faces").get(projection)
+                            == field(projectionType, "faces").get(previousProjection),
+                        "retired cursor output capacity is reused without a new aggregate backing array");
+                    field(preparationType, "projection").set(preparation, projection);
+                    if (path == 0) {
+                        int steps = 0;
+                        while (field(projectionType, "published").getInt(projection) < state.cells.size()
+                            && steps++ < 100) {
+                            advance.invoke(projection, false, 1, Long.MAX_VALUE);
+                            publish.invoke(projection);
+                        }
+                    } else {
+                        advance.invoke(projection, false, Integer.MAX_VALUE, Long.MAX_VALUE);
+                        publish.invoke(projection);
+                    }
+                    SimpleAssert.eq(
+                        state.cells.size(),
+                        field(projectionType, "published").getInt(projection),
+                        "the prepared camera path publishes every source cell in its single advance/publish");
+                    List<?> faces = (List<?>) field(HologramRenderer.class, "cachedFaces").get(null);
+                    SimpleAssert.that(!faces.isEmpty(), "concave transparent multi-region fixture has real faces");
+                    if (path == 0) {
+                        reference = new java.util.ArrayList<>();
+                        for (Object face : faces) reference.add(faceSnapshot(face));
+                        ownedFaces.addAll(faces);
+                        if (yaw == 0) {
+                            boolean groupedTie = false;
+                            for (int at = 1; at < reference.size(); at++)
+                                if (reference.get(at - 1)[2] == reference.get(at)[2]
+                                    && reference.get(at - 1)[0] > reference.get(at)[0]) groupedTie = true;
+                            SimpleAssert.that(
+                                groupedTie,
+                                "equal-depth fixture distinguishes canonical region order from global cell-index sorting");
+                        }
+                    } else {
+                        SimpleAssert.that(
+                            faces == field(projectionType, "faces").get(projection),
+                            "complete publication transfers the sorted cursor output without a second copy");
+                    }
+                    if (path == 2) {
+                        SimpleAssert.eq(reference.size(), faces.size(), "complete projection keeps the same coverage");
+                        for (int at = 0; at < faces.size(); at++) {
+                            Object actual = faces.get(at);
+                            SimpleAssert.that(
+                                java.util.Arrays.equals(reference.get(at), faceSnapshot(actual)),
+                                "deep numeric oracle preserves cell/side/depth/order/vertices after another camera");
+                            SimpleAssert.that(
+                                ownedFaces.contains(actual),
+                                "revisiting a prepared camera reuses its actual Face outputs");
+                        }
+                    }
+                    for (Object outline : (List<?>) field(HologramRenderer.class, "cachedOutlines").get(null))
+                        SimpleAssert.eq(
+                            !missingIcon[0],
+                            field(outline.getClass(), "fadeDefault").get(outline),
+                            "mutable IIcon diagnostics are reevaluated even when owned Faces are reused");
+                    previousProjection = projection;
+                }
+            }
+        } finally {
+            for (HologramState.Cell cell : state.cells) materials.remove(cell);
+            regions.clear();
+            regions.putAll(savedRegions);
+            for (int i = 0; i < names.length; i++) field(HologramRenderer.class, names[i]).set(null, saved[i]);
+            for (int i = 0; i < listNames.length; i++) {
+                List<Object> list = (List<Object>) field(HologramRenderer.class, listNames[i]).get(null);
+                list.clear();
+                list.addAll(lists[i]);
+            }
+            published.clear();
+            published.or(savedPublished);
+        }
+    }
+
+    /** Values only: retaining Face references here would turn the camera round trip into a false self-comparison. */
+    private static double[] faceSnapshot(Object face) throws ReflectiveOperationException {
+        Class<?> type = face.getClass();
+        double[] result = new double[27];
+        result[0] = ((HologramState.Cell) field(type, "cell").get(face)).index;
+        result[1] = field(type, "side").getInt(face);
+        result[2] = field(type, "depth").getDouble(face);
+        double[][] points = (double[][]) field(type, "points").get(face);
+        for (int vertex = 0; vertex < points.length; vertex++)
+            for (int axis = 0; axis < 3; axis++) result[3 + vertex * 3 + axis] = points[vertex][axis];
+        return result;
+    }
+
+    private static void standardLineBatchBoundary() {
+        Tessellator standard = new Tessellator();
+        int limit = HologramRenderer.previewLineBatchLimit(standard);
+        SimpleAssert.eq(16368, limit, "only the exact eight-int vanilla layout uses the larger line batch");
+        SimpleAssert.eq(
+            4092,
+            HologramRenderer.previewLineBatchLimit(new RecordingTessellator()),
+            "foreign tessellators retain their existing conservative cap");
+        standard.startDrawing(org.lwjgl.opengl.GL11.GL_LINES);
+        standard.setColorRGBA_F(.2f, .7f, .8f, .45f);
+        for (int vertex = 0; vertex < limit; vertex++) standard.addVertex(vertex, 0, .15);
+        try {
+            int used = field(Tessellator.class, "rawBufferIndex").getInt(standard),
+                capacity = ((int[]) field(Tessellator.class, "rawBuffer").get(standard)).length;
+            SimpleAssert.eq(limit * 8, used, "real vanilla line vertices retain their eight-int layout");
+            SimpleAssert.that(
+                used + 32 <= capacity && capacity <= 0x20000,
+                "a real full line batch fits addVertex headroom without crossing the shrinking-buffer threshold");
+            SimpleAssert.that(limit % 24 == 0, "the line cap preserves complete boxes and edge pairs");
+            Tessellator successor = new Tessellator();
+            successor.setTextureUV(.3, .6);
+            successor.setBrightness(0xf000f0);
+            successor.setNormal(1, 0, 0);
+            successor.setColorRGBA_F(1, 0, 0, .1f);
+            successor.disableColor();
+            successor.startDrawing(org.lwjgl.opengl.GL11.GL_LINES);
+            for (String flag : new String[] { "hasTexture", "hasBrightness", "hasNormals", "hasColor",
+                "isColorDisabled" })
+                SimpleAssert.that(
+                    !field(Tessellator.class, flag).getBoolean(successor),
+                    "the following legacy pass startDrawing resets its own prior attribute flag: " + flag);
+            successor.setColorRGBA_F(.45f, .85f, 1, .72f);
+            successor.addVertex(1, 2, 3);
+            int[] raw = (int[]) field(Tessellator.class, "rawBuffer").get(successor);
+            SimpleAssert.eq(
+                field(Tessellator.class, "color").getInt(successor),
+                raw[5],
+                "the following structure-line pass uses its explicit color, never a previous stream's Tess state");
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("standard line batch boundary", failure);
         }
     }
 

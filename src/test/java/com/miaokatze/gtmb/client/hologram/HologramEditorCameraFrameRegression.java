@@ -44,6 +44,11 @@ public final class HologramEditorCameraFrameRegression {
             for (double[] offset : points) {
                 double x = anchor[0] + offset[0], y = anchor[1] + offset[1], z = anchor[2] + offset[2];
                 double[] actual = frame.project(x, y, z);
+                double[] owned = { Double.NaN, Double.NaN, Double.NaN };
+                frame.project(x, y, z, owned);
+                SimpleAssert.that(
+                    java.util.Arrays.equals(actual, owned),
+                    "owned vertex writes preserve every projection bit while reusing the caller's array");
                 // Independent old GUI equations catch sign, anchor and root-rect regressions.
                 double rx = offset[0] * Math.cos(yaw) - offset[2] * Math.sin(yaw);
                 double rz = offset[0] * Math.sin(yaw) + offset[2] * Math.cos(yaw);

@@ -158,6 +158,12 @@ public final class HologramGeometryDeltaRegression {
                 SimpleAssert.that(state.get(cursor) == next, "a patch cursor owns the exact new snapshot identity");
                 SimpleAssert
                     .eq(null, boundary.get(cursor), "a local patch does not rescan the entire occupancy boundary");
+                java.lang.reflect.Field completePresentation = cursor.getClass()
+                    .getDeclaredField("completeGeometryPresented");
+                completePresentation.setAccessible(true);
+                SimpleAssert.that(
+                    !completePresentation.getBoolean(cursor),
+                    "a dirty patch cannot inherit the prior revision's camera-only complete presentation stamp");
             } finally {
                 cache.clear();
                 cache.putAll(saved);

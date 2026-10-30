@@ -32,12 +32,19 @@ final class HologramEditorCameraFrame {
 
     /** Existing face arrays are the only per-vertex allocation; Core's orthonormal basis is reused. */
     double[] project(double x, double y, double z) {
+        double[] result = new double[3];
+        project(x, y, z, result);
+        return result;
+    }
+
+    /** Writes the same projection into a render-thread-owned vertex; no Core object or temporary array is needed. */
+    void project(double x, double y, double z, double[] result) {
         x -= pose.anchorX();
         y -= pose.anchorY();
         z -= pose.anchorZ();
-        return new double[] { centerX + (basis.rightX() * x + basis.rightZ() * z) * scale,
-            centerY - (basis.upX() * x + basis.upY() * y + basis.upZ() * z) * scale,
-            -(basis.forwardX() * x + basis.forwardY() * y + basis.forwardZ() * z) };
+        result[0] = centerX + (basis.rightX() * x + basis.rightZ() * z) * scale;
+        result[1] = centerY - (basis.upX() * x + basis.upY() * y + basis.upZ() * z) * scale;
+        result[2] = -(basis.forwardX() * x + basis.forwardY() * y + basis.forwardZ() * z);
     }
 
     double[] projectScreen(double x, double y, double z) {

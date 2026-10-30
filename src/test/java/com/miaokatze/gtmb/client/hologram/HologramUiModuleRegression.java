@@ -700,6 +700,9 @@ public final class HologramUiModuleRegression {
         // no Minecraft constructor, display, GL context, world, or network is used.
         java.lang.reflect.Field singleton = null;
         Object previous = null;
+        Runnable restorePresentation = null;
+        net.minecraft.client.gui.GuiScreen previousScreen = null;
+        net.minecraft.client.Minecraft client = null;
         try {
             for (java.lang.reflect.Field field : net.minecraft.client.Minecraft.class.getDeclaredFields())
                 if (field.getType() == net.minecraft.client.Minecraft.class
@@ -734,6 +737,12 @@ public final class HologramUiModuleRegression {
             data.setTag("cells", cells);
             HologramState state = new HologramState(data);
             setUiField(ui.session, "state", state);
+            restorePresentation = HologramRenderingRegression.completePresentation(ui);
+            client = (net.minecraft.client.Minecraft) singleton.get(null);
+            previousScreen = client.currentScreen;
+            SimpleAssert.that(
+                ui.preview.previewInteractive(),
+                "an explicitly presented frame supplies the headless control's edit precondition");
             ui.preview.selection()
                 .structure(state, "machine", false);
             ui.preview.drawMoveHandleControl(-1, -1);
@@ -782,6 +791,13 @@ public final class HologramUiModuleRegression {
                         throw new AssertionError("headless modal visibility test attempted " + method.getName());
                     });
             setUiField(nativeTools, "shortcuts", openShortcuts);
+            // Force the real held-key scene check, then stop at its existing modal guard before touching Display/GL.
+            // If air calls strict edit admission again this recurses before that guard, even with no native display.
+            client.currentScreen = ui.host.parent();
+            SimpleAssert.that(
+                !ui.preview.airSelectionHeld(),
+                "air visibility sampling uses navigation admission without recursively querying the strict edit gate");
+            client.currentScreen = previousScreen;
             SimpleAssert.that(
                 !ui.shortcuts.idleHintsVisible(HologramIdleHints.DELAY_NANOS),
                 "an open shortcut editor suppresses idle guidance instead of overlaying the modal");
@@ -842,6 +858,8 @@ public final class HologramUiModuleRegression {
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("cannot exercise the actual movement control", failure);
         } finally {
+            if (client != null) client.currentScreen = previousScreen;
+            if (restorePresentation != null) restorePresentation.run();
             if (singleton != null) try {
                 singleton.set(null, previous);
             } catch (IllegalAccessException failure) {

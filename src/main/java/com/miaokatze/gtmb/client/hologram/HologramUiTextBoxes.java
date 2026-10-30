@@ -451,6 +451,10 @@ final class HologramUiTextBoxes {
         return true;
     }
 
+    void cancelDrag() {
+        gizmo.cancel();
+    }
+
     void uploadFailed() {
         com.miaokatze.gtmb.hologram.HologramNetwork.clearAttachmentClientTransport();
         pending = false;
