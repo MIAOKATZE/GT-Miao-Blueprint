@@ -539,15 +539,13 @@ final class HologramRenderer {
             }
             int quadVertices = 0, quadLimit = 0;
             boolean materialDrawn = false;
+            boolean picking = (!budgeted || previewPreparation.projection.published == state.cells.size())
+                && projectedFrame.coordinates.contains(mouseX, mouseY);
             // These GUI batches use color/UV only, with no brightness or normal flag enabled.
             // Restart at primitive boundaries before reapplying color/UV; translation stays unchanged.
             t.startDrawingQuads();
             for (Face face : faces) {
-                boolean inside = face.contains(mouseX, mouseY) && mouseX >= x
-                    && mouseX < x + width
-                    && mouseY >= y
-                    && mouseY < y + height;
-                if (inside) hovered = face.cell.index;
+                if (picking && face.contains(mouseX, mouseY)) hovered = face.cell.index;
                 if (face.empty || face.nativeModel) continue;
                 float shade = face.side == 1 ? 1 : face.side < 2 ? .6f : .8f;
                 boolean cellMoving = moving(face.cell);
@@ -740,7 +738,8 @@ final class HologramRenderer {
                 marker.top = ly - 1;
                 marker.right = lx + labelWidth + 2;
                 marker.bottom = ly + Math.round(9 * labelScale) + 1;
-                if (mouseX >= lx - 2 && mouseX < lx + labelWidth + 2
+                if (picking && mouseX >= lx - 2
+                    && mouseX < lx + labelWidth + 2
                     && mouseY >= ly - 1
                     && mouseY < ly + Math.round(9 * labelScale) + 1) hovered = marker.cell.index;
                 lastPreviewRoleMarkers++;

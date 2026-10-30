@@ -19,6 +19,7 @@ public final class HologramRenderingRegression {
         completePreviewMaterial();
         occupancyBoundary();
         sourceSwitchFence();
+        cameraNavigationWhilePreparing();
         for (int front = 0; front < 6; front++) {
             boolean[] seen = new boolean[6];
             for (int side = 0; side < 6; side++) {
@@ -166,6 +167,70 @@ public final class HologramRenderingRegression {
         SimpleAssert.that(
             !HologramUiPreview.sourceSwitchWaiting(navigation, state, world, true, true, 9),
             "cancelled source navigation cannot freeze a later scene");
+    }
+
+    private static void cameraNavigationWhilePreparing() {
+        try {
+            NBTTagCompound source = boundarySource("camera-navigation");
+            NBTTagList cells = new NBTTagList();
+            cells.appendTag(boundaryCell(0, 0, 0, "minecraft:stone"));
+            source.setTag("cells", cells);
+            HologramState state = new HologramState(source);
+            HologramUiModules ui = new HologramUiModules(null);
+            java.lang.reflect.Field session = HologramUiSession.class.getDeclaredField("state"),
+                teaching = HologramUiSession.class.getDeclaredField("tutorialSink"),
+                displayed = HologramRenderer.class.getDeclaredField("displayedState"),
+                preparing = HologramRenderer.class.getDeclaredField("previewPreparation");
+            session.setAccessible(true);
+            teaching.setAccessible(true);
+            displayed.setAccessible(true);
+            preparing.setAccessible(true);
+            session.set(ui.session, state);
+            teaching
+                .set(ui.session, (java.util.function.BiConsumer<String, NBTTagCompound>) (operation, request) -> {});
+            Class<?> cursor = Class.forName(HologramRenderer.class.getName() + "$PreviewPreparation");
+            java.lang.reflect.Constructor<?> constructor = cursor
+                .getDeclaredConstructor(HologramState.class, boolean.class);
+            constructor.setAccessible(true);
+            Object previousDisplay = displayed.get(null), previousPreparation = preparing.get(null);
+            try {
+                // The scene has submitted this identity's light outline while its actual model cursor is incomplete.
+                displayed.set(null, state);
+                preparing.set(null, constructor.newInstance(state, true));
+                SimpleAssert.that(
+                    !ui.preview.previewInteractive() && !ui.shell.sceneActive(),
+                    "model reprojection keeps picking and geometry command context unavailable");
+                SimpleAssert.that(
+                    ui.preview.previewNavigable() && ui.shell.sceneNavigable(),
+                    "a submitted outline remains available for camera navigation while preparing");
+                double zoom = ui.preview.zoom();
+                ui.preview.scrollNativeScene(1);
+                SimpleAssert
+                    .that(ui.preview.zoom() > zoom, "the actual scene-wheel workflow zooms during reprojection");
+                SimpleAssert.that(
+                    ui.tools.commands()
+                        .available("cameraForward"),
+                    "camera key commands share the navigation admission instead of edit readiness");
+                SimpleAssert.that(
+                    !ui.tools.commands()
+                        .commandContextAvailable(),
+                    "allowing navigation does not reopen edit commands");
+                ui.review.confirmation(true);
+                zoom = ui.preview.zoom();
+                ui.preview.scrollNativeScene(1);
+                SimpleAssert.eq(zoom, ui.preview.zoom(), "a modal review still blocks camera wheel input");
+                ui.review.confirmation(false);
+                displayed.set(null, new HologramState(boundarySource("other-source")));
+                ui.preview.scrollNativeScene(1);
+                SimpleAssert
+                    .eq(zoom, ui.preview.zoom(), "another submitted source cannot authorize the current scene camera");
+            } finally {
+                displayed.set(null, previousDisplay);
+                preparing.set(null, previousPreparation);
+            }
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("progressive scene camera navigation", failure);
+        }
     }
 
     private static NBTTagCompound boundarySource(String session) {

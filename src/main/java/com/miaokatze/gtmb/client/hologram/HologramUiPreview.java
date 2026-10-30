@@ -221,7 +221,7 @@ final class HologramUiPreview {
 
     void scrollNativeScene(int wheel) {
         if (ui.library.browsePreviewActive()) zoom(browseZoom * (wheel > 0 ? 1.1 : 1 / 1.1));
-        else if (ui.shell.sceneActive()) zoom(zoom * (wheel > 0 ? 1.1 : 1 / 1.1));
+        else if (ui.shell.sceneNavigable()) zoom(zoom * (wheel > 0 ? 1.1 : 1 / 1.1));
     }
 
     boolean viewControlEnabled(int id) {
@@ -762,8 +762,16 @@ final class HologramUiPreview {
     }
 
     boolean previewInteractive() {
-        return !sourcePreparing() && !HologramRenderer.previewPreparing(ui.session.state())
-            && !ui.session.areaImporting()
+        return previewInputOpen() && !HologramRenderer.previewPreparing(ui.session.state());
+    }
+
+    boolean previewNavigable() {
+        HologramState displayed = HologramRenderer.previewDisplayState();
+        return previewInputOpen() && displayed != null && displayed.identity == ui.session.state().identity;
+    }
+
+    private boolean previewInputOpen() {
+        return !sourcePreparing() && !ui.session.areaImporting()
             && ui.ae.aeReviewNavigation() == null
             && ui.ae.aeReview() == null
             && !ui.config.drawer()
@@ -882,6 +890,11 @@ final class HologramUiPreview {
         return ui.canvas.inPanel(x, y);
     }
 
+    private boolean previewNavigationBlockedAt(int x, int y) {
+        return ui.canvas.nativeScene() ? !ui.shell.sceneNavigable() && !ui.library.browsePreviewActive()
+            : previewBlockedAt(x, y);
+    }
+
     void editAction(String action) {
         if (ui.library.browsePreviewActive()) return;
         boolean history = "editUndo".equals(action) || "editRedo".equals(action);
@@ -989,7 +1002,7 @@ final class HologramUiPreview {
         if (ui.library.browsePreviewActive() || HologramBackgroundTasks.busy()
             || previous == 0
             || !org.lwjgl.opengl.Display.isActive()
-            || !ui.preview.previewInteractive()
+            || !ui.preview.previewNavigable()
             || ui.router.textFieldFocused()
             || ui.library.libraryAdminDrawer()
             || ui.bindings.networkDrawer()
@@ -1173,13 +1186,16 @@ final class HologramUiPreview {
     boolean consumeViewportRightMouse(int mx, int my, int button) {
         if (ui.library.browsePreviewActive())
             return button == 1 && ui.canvas.inViewport(mx, my) && !previewBlockedAt(mx, my);
+        if (button == 1 && blueprintCameraControls()
+            && previewNavigable()
+            && ui.canvas.inViewport(mx, my)
+            && !previewNavigationBlockedAt(mx, my)) {
+            beginNavigation(mx, my, button);
+            return true;
+        }
         if (button == 1 && ui.preview.previewInteractive()
             && ui.canvas.inViewport(mx, my)
             && !ui.preview.previewBlockedAt(mx, my)) {
-            if (blueprintCameraControls()) {
-                beginNavigation(mx, my, button);
-                return true;
-            }
             if (this.inventoryDragging || this.inventorySlot >= 0 || this.sourceChoice >= 0) {
                 this.inventoryDragging = false;
                 this.inventorySlot = this.sourceChoice = -1;
@@ -1202,9 +1218,9 @@ final class HologramUiPreview {
     }
 
     boolean consumeViewportMiddleMouse(int mx, int my, int button) {
-        if (button != 2 || !ui.preview.previewInteractive()
+        if (button != 2 || !ui.preview.previewNavigable()
             || !ui.canvas.inViewport(mx, my)
-            || ui.preview.previewBlockedAt(mx, my)) return false;
+            || ui.preview.previewNavigationBlockedAt(mx, my)) return false;
         if (blueprintCameraControls()) beginNavigation(mx, my, button);
         else if (!inventory) resetCamera();
         return true;
@@ -1337,7 +1353,7 @@ final class HologramUiPreview {
     }
 
     boolean consumeCameraKey(char c, int key) {
-        if (!ui.router.textFieldFocused() && ui.preview.previewInteractive()
+        if (!ui.router.textFieldFocused() && ui.preview.previewNavigable()
             && HologramKeyBindings.modifiers() == 0
             && (ui.tools.commands()
                 .matches("cameraForward", key, HologramKeyBindings.modifiers())
@@ -1440,7 +1456,8 @@ final class HologramUiPreview {
             boolean contextClick = button == 1 && !navigationDragged;
             navigationButton = -1;
             // NativeTools retains its normal deferred panel lifecycle and inventory-cancellation behavior.
-            if (contextClick) ui.tools.consumeMouse(ui.canvas.localX(x), ui.canvas.localY(y), button);
+            if (contextClick && previewInteractive())
+                ui.tools.consumeMouse(ui.canvas.localX(x), ui.canvas.localY(y), button);
             return;
         }
         if (button == 0 && ui.textBoxes.drag(ui.canvas.localX(x), ui.canvas.localY(y), true)) return;
