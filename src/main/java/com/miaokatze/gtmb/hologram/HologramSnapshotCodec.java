@@ -20,6 +20,7 @@ import net.minecraft.nbt.NBTTagCompound;
 public final class HologramSnapshotCodec {
 
     private static final int RAW_BYTES = 128 * 1024 * 1024;
+    private static final int PALETTE_MAGIC = 0x47545350; // GTSP, outside the legacy GZIP stream.
 
     private HologramSnapshotCodec() {}
 
@@ -27,20 +28,52 @@ public final class HologramSnapshotCodec {
         return compress(tag, () -> true, written -> {});
     }
 
+    /** Negotiated peers only; unprofitable dictionaries retain the original GZIP format. */
+    public static byte[] compressPacked(NBTTagCompound tag) throws IOException {
+        return compress(tag, () -> true, written -> {}, true);
+    }
+
     /** Checkpoints share the serialization pass; large NBT arrays cannot monopolize an obsolete worker. */
     static byte[] compress(NBTTagCompound tag, java.util.function.BooleanSupplier current,
         java.util.function.LongConsumer progress) throws IOException {
+        return compress(tag, current, progress, false);
+    }
+
+    static byte[] compress(NBTTagCompound tag, java.util.function.BooleanSupplier current,
+        java.util.function.LongConsumer progress, boolean palette) throws IOException {
+        if (palette) tag = HologramSnapshotPalette.pack(tag, current);
+        boolean packed = HologramSnapshotPalette.isPacked(tag);
+        if (packed && !palette) throw new IOException("packed snapshot requires negotiated encoding");
         ByteArrayOutputStream bytes = new ByteArrayOutputStream();
+        if (packed) {
+            DataOutputStream header = new DataOutputStream(bytes);
+            header.writeInt(PALETTE_MAGIC);
+            header.writeInt(HologramSnapshotPalette.VERSION);
+        }
         try (DataOutputStream output = new DataOutputStream(
             new LimitedOutput(
                 new BufferedOutputStream(
-                    new GZIPOutputStream(new LimitedOutput(bytes, HologramSnapshotAssembly.MAX_BYTES))),
+                    new GZIPOutputStream(
+                        new LimitedOutput(bytes, HologramSnapshotAssembly.MAX_BYTES - (packed ? 8 : 0)))),
                 RAW_BYTES,
                 current,
                 progress))) {
             CompressedStreamTools.write(tag, output);
         }
-        return bytes.toByteArray();
+        byte[] encoded = bytes.toByteArray();
+        if (packed && HologramRuntimeMetrics.isEnabled()) {
+            HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.PALETTE_SNAPSHOTS_ENCODED, 1);
+            HologramRuntimeMetrics.add(
+                HologramRuntimeMetrics.Counter.PALETTE_ROWS_ENCODED,
+                tag.getTagList("cells", 10)
+                    .tagCount());
+            HologramRuntimeMetrics.add(
+                HologramRuntimeMetrics.Counter.PALETTE_DESCRIPTORS_ENCODED,
+                tag.getTagList(HologramSnapshotPalette.PALETTE_KEY, 10)
+                    .tagCount());
+            HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.PALETTE_BYTES_ENCODED, encoded.length);
+        }
+        return encoded;
     }
 
     public static NBTTagCompound decode(byte[] bytes) throws IOException {
@@ -48,16 +81,33 @@ public final class HologramSnapshotCodec {
     }
 
     static NBTTagCompound decode(byte[] bytes, int rawLimit, long nbtLimit) throws IOException {
+        int offset = 0;
+        if (bytes.length > 0 && bytes[0] == 0x47) {
+            try (DataInputStream header = new DataInputStream(new ByteArrayInputStream(bytes))) {
+                if (header.readInt() != PALETTE_MAGIC || header.readInt() != HologramSnapshotPalette.VERSION)
+                    throw new IOException("snapshot palette wire version");
+            }
+            offset = 8;
+        }
         // Vanilla 1.7 array-size accounting multiplies ints before casting to long. Validate lengths first.
         try (DataInputStream input = new DataInputStream(
-            new BufferedInputStream(new GZIPInputStream(new ByteArrayInputStream(bytes))))) {
+            new BufferedInputStream(
+                new GZIPInputStream(new ByteArrayInputStream(bytes, offset, bytes.length - offset))))) {
             Validator validator = new Validator(input, rawLimit);
             if (validator.byteValue() != 10) throw new IOException("snapshot root is not a compound");
             validator.string();
             validator.payload(10, 0);
             if (input.read() != -1) throw new IOException("snapshot trailing bytes");
         }
-        return CompressedStreamTools.func_152457_a(bytes, new NBTSizeTracker(nbtLimit));
+        try (DataInputStream input = new DataInputStream(
+            new BufferedInputStream(
+                new GZIPInputStream(new ByteArrayInputStream(bytes, offset, bytes.length - offset))))) {
+            NBTTagCompound root = CompressedStreamTools.func_152456_a(input, new NBTSizeTracker(nbtLimit));
+            if (offset == 0) return root;
+            NBTTagCompound packed = HologramSnapshotPalette.admit(root, rawLimit, nbtLimit);
+            HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.PALETTE_SNAPSHOTS_DECODED, 1);
+            return packed;
+        }
     }
 
     private static final class LimitedOutput extends FilterOutputStream {

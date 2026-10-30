@@ -181,7 +181,12 @@ public final class HologramRuntimeMetrics {
         JOB_DELTA_ENCODED_BYTES("jobDeltaEncodedBytes"),
         LIBRARY_CALLBACK_DEPTH("libraryCallbackDepth"),
         LIBRARY_CALLBACK_HIGH_WATER("libraryCallbackHighWater"),
-        LIBRARY_CALLBACK_REJECTED("libraryCallbackRejected");
+        LIBRARY_CALLBACK_REJECTED("libraryCallbackRejected"),
+        PALETTE_SNAPSHOTS_ENCODED("paletteSnapshotsEncoded"),
+        PALETTE_ROWS_ENCODED("paletteRowsEncoded"),
+        PALETTE_DESCRIPTORS_ENCODED("paletteDescriptorsEncoded"),
+        PALETTE_BYTES_ENCODED("paletteBytesEncoded"),
+        PALETTE_SNAPSHOTS_DECODED("paletteSnapshotsDecoded");
 
         final String key;
 

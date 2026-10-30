@@ -10,6 +10,7 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
 import com.miaokatze.gtmb.hologram.HologramBlueprintLimits;
+import com.miaokatze.gtmb.hologram.HologramSnapshotPalette;
 
 /** Immutable client snapshot; all amounts and construction outcomes come from the server. */
 final class HologramState {
@@ -41,11 +42,26 @@ final class HologramState {
         minWorldZ = maxWorldZ = data.getInteger("z");
         List<Cell> parsed = new ArrayList<>();
         NBTTagList list = source.getTagList("cells", 10);
+        boolean packed = HologramSnapshotPalette.isPacked(source);
+        if (packed) try {
+            HologramSnapshotPalette.validate(source);
+        } catch (java.io.IOException invalid) {
+            throw new IllegalArgumentException(invalid.getMessage(), invalid);
+        }
+        NBTTagList palette = packed ? (NBTTagList) source.getTagList(HologramSnapshotPalette.PALETTE_KEY, 10)
+            .copy() : null;
         if (!HologramBlueprintLimits.accepts(list.tagCount()))
             throw new IllegalArgumentException("Blueprint cell count exceeds limit");
         parsedCells = list.tagCount();
         for (int i = 0; i < list.tagCount(); i++) {
-            Cell cell = new Cell(i, list.getCompoundTagAt(i));
+            NBTTagCompound row = list.getCompoundTagAt(i);
+            Cell cell = packed
+                ? new Cell(
+                    i,
+                    palette.getCompoundTagAt(row.getInteger(HologramSnapshotPalette.REFERENCE_KEY)),
+                    (NBTTagCompound) row.copy(),
+                    true)
+                : new Cell(i, row);
             parsed.add(cell);
             minWorldX = Math.min(minWorldX, cell.x);
             maxWorldX = Math.max(maxWorldX, cell.x);
@@ -158,6 +174,8 @@ final class HologramState {
         private int minY, maxY, minWorldX, maxWorldX, minWorldY, maxWorldY, minWorldZ, maxWorldZ;
         private HologramState result;
         private final boolean displayRows;
+        private final NBTTagCompound source;
+        private final boolean packed;
         private final boolean fullBaseline;
         int lastStepWork;
 
@@ -167,6 +185,8 @@ final class HologramState {
         }
 
         Preparation(NBTTagCompound source, boolean displayRows) {
+            this.source = source;
+            packed = HologramSnapshotPalette.isPacked(source);
             this.displayRows = displayRows;
             fullBaseline = fullBaseline(source);
             data = metadata(source, false);
@@ -197,7 +217,9 @@ final class HologramState {
                     } catch (java.io.IOException invalid) {
                         throw new IllegalArgumentException(invalid.getMessage(), invalid);
                     }
-                    Cell cell = new Cell(cellPosition, row, displayRows);
+                    Cell cell = packed
+                        ? new Cell(cellPosition, HologramSnapshotPalette.descriptor(source, row), row, true)
+                        : new Cell(cellPosition, row, true);
                     if ((cellPosition & 255) == 0) pages.add(new Cell[Math.min(256, rows.tagCount() - cellPosition)]);
                     pages.get(cellPosition >> 8)[cellPosition & 255] = cell;
                     regions.add(cell);
@@ -500,13 +522,15 @@ final class HologramState {
 
     private static NBTTagCompound metadata(NBTTagCompound source, boolean copy) {
         NBTTagCompound result = new NBTTagCompound();
+        boolean packed = HologramSnapshotPalette.isPacked(source);
         for (Object name : source.func_150296_c()) {
             String key = (String) name;
             if (!key.equals("cells") && !key.equals("partial")
                 && !key.equals("areaSelectionOnly")
                 && !key.equals("baseRevision")
                 && !key.equals("processingPatch")
-                && !key.equals("processingConfirmedStages"))
+                && !key.equals("processingConfirmedStages")
+                && !(packed && HologramSnapshotPalette.metadataKey(key)))
                 result.setTag(
                     key,
                     copy ? source.getTag(key)
@@ -632,6 +656,7 @@ final class HologramState {
     static final class Cell {
 
         private final NBTTagCompound raw;
+        private final NBTTagCompound coordinates;
 
         final int index, x, y, z, dx, dy, dz, meta, wantMeta, chosenChoice, hatchFacing, actualFacing, targetFacing;
         final String id, wantId, status, pinScope, role, family, renderKind, operation, exactIdentity;
@@ -653,16 +678,23 @@ final class HologramState {
             this(index, n, false);
         }
 
-        /** Display preparation owns its row tree, so publishing it needs no second NBT tree. */
+        /** Preparation owns its row tree; display compounds are read-only until native hydration copies them. */
         private Cell(int index, NBTTagCompound n, boolean owned) {
+            this(index, n, null, owned);
+        }
+
+        /** Packed snapshots retain one read-only descriptor and a small coordinate row, never a merged row. */
+        private Cell(int index, NBTTagCompound n, NBTTagCompound positions, boolean owned) {
             raw = owned ? n : (NBTTagCompound) n.copy();
+            coordinates = positions;
             this.index = index;
-            x = n.getInteger("x");
-            y = n.getInteger("y");
-            z = n.getInteger("z");
-            dx = n.getInteger("dx");
-            dy = n.getInteger("dy");
-            dz = n.getInteger("dz");
+            NBTTagCompound location = positions == null ? n : positions;
+            x = location.getInteger("x");
+            y = location.getInteger("y");
+            z = location.getInteger("z");
+            dx = location.getInteger("dx");
+            dy = location.getInteger("dy");
+            dz = location.getInteger("dz");
             meta = n.getInteger("meta");
             wantMeta = n.getInteger("wantMeta");
             id = n.getString("id");
@@ -683,8 +715,9 @@ final class HologramState {
             inScope = n.getBoolean("inScope");
             prompt = n.getString("prompt");
             networkGroup = n.getString("networkGroup");
-            specialHint = (NBTTagCompound) n.getCompoundTag("specialHint")
-                .copy();
+            specialHint = owned ? n.getCompoundTag("specialHint")
+                : (NBTTagCompound) n.getCompoundTag("specialHint")
+                    .copy();
             structureId = n.getString("structureId");
             List<String> memberships = new ArrayList<>();
             NBTTagList membershipTags = n.getTagList("structureIds", 8);
@@ -704,8 +737,8 @@ final class HologramState {
                 || !wantId.isEmpty() && !"minecraft:air".equals(wantId) && Block.getBlockFromName(wantId) == null;
             anchor = n.getBoolean("anchor");
             iconOnly = n.getBoolean("iconOnly");
-            actualStack = ItemStack.loadItemStackFromNBT(n.getCompoundTag("actualStack"));
-            targetStack = ItemStack.loadItemStackFromNBT(n.getCompoundTag("targetStack"));
+            actualStack = readStack(n.getCompoundTag("actualStack"));
+            targetStack = readStack(n.getCompoundTag("targetStack"));
             actualDisplay = owned ? n.getCompoundTag("actualDisplay")
                 : (NBTTagCompound) n.getCompoundTag("actualDisplay")
                     .copy();
@@ -713,14 +746,24 @@ final class HologramState {
                 : (NBTTagCompound) n.getCompoundTag("targetDisplay")
                     .copy();
             hintIndex = n.hasKey("hintIndex") ? n.getInteger("hintIndex") : -1;
-            hintTint = n.getIntArray("hintTint");
+            int[] tint = n.getIntArray("hintTint");
+            hintTint = tint.length == 0 ? tint : tint.clone();
             NBTTagList icons = n.getTagList("hintIcons", 8);
             for (int i = 0; i < 6; i++) hintIcons[i] = i < icons.tagCount() ? icons.getStringTagAt(i) : "";
             NBTTagList list = n.getTagList("candidates", 10);
             for (int i = 0; i < list.tagCount(); i++) {
-                ItemStack stack = ItemStack.loadItemStackFromNBT(list.getCompoundTagAt(i));
+                ItemStack stack = readStack(list.getCompoundTagAt(i));
                 if (stack != null) candidates.add(stack);
             }
+        }
+
+        private static ItemStack readStack(NBTTagCompound source) {
+            // Vanilla borrows the nested "tag" compound. Mutable inventory/render stacks must not own snapshot NBT.
+            ItemStack stack = ItemStack.loadItemStackFromNBT(source);
+            if (stack != null && stack.hasTagCompound()) stack.setTagCompound(
+                (NBTTagCompound) stack.getTagCompound()
+                    .copy());
+            return stack;
         }
 
         Block block(boolean current) {
@@ -728,7 +771,15 @@ final class HologramState {
         }
 
         NBTTagCompound tag() {
-            return (NBTTagCompound) raw.copy();
+            NBTTagCompound result = (NBTTagCompound) raw.copy();
+            if (coordinates != null) for (Object name : coordinates.func_150296_c()) {
+                String key = (String) name;
+                if (HologramSnapshotPalette.coordinateKey(key)) result.setTag(
+                    key,
+                    coordinates.getTag(key)
+                        .copy());
+            }
+            return result;
         }
 
         boolean belongsToStructure(String id) {

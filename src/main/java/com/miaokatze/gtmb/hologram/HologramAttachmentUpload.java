@@ -80,6 +80,7 @@ public final class HologramAttachmentUpload {
         long generation = GENERATION.incrementAndGet();
         NBTTagCompound frozen = (NBTTagCompound) action.copy();
         frozen.setInteger("clientSnapshotProtocol", 1);
+        frozen.setInteger("clientSnapshotPalette", HologramSnapshotPalette.VERSION);
         outgoing = null;
         clientProgress = "准备图片/文字数据…";
         try {

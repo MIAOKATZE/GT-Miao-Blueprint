@@ -757,7 +757,8 @@ public final class HologramNetwork {
                 continue;
             }
             if (snapshot.encoding == null) {
-                snapshot.encoding = HologramSnapshotEncoding.submit(snapshot.owned, snapshot.sequence);
+                snapshot.encoding = HologramSnapshotEncoding
+                    .submit(snapshot.owned, snapshot.sequence, box.owner != null && box.owner.snapshotPaletteProtocol);
                 continue;
             }
             HologramSnapshotEncoding.Job encoding = snapshot.encoding;
@@ -1240,6 +1241,7 @@ public final class HologramNetwork {
         Action(NBTTagCompound tag) {
             super(tag);
             this.tag.setInteger("clientSnapshotProtocol", 1);
+            this.tag.setInteger("clientSnapshotPalette", HologramSnapshotPalette.VERSION);
         }
     }
 

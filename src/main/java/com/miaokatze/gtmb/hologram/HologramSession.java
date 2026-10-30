@@ -149,6 +149,7 @@ final class HologramSession {
     HologramDeferredPlanRefresh.Work localPlanTask;
     final HologramLocalPlanRefresh localEdits = new HologramLocalPlanRefresh();
     boolean cellDeltaProtocol;
+    boolean snapshotPaletteProtocol;
     long snapshotResyncTick = Long.MIN_VALUE;
     long areaSelectionSequence;
     boolean replacementReady, replacementAuthorized;
