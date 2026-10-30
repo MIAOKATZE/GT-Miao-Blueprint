@@ -87,6 +87,7 @@ public final class HologramRegressionTest {
         cases.put(
             "snapshot_publication_preserves_fifo_and_cancels_stale_generations",
             HologramSnapshotPublishRegression::run);
+        cases.put("snapshot_ae_single_decode_preserves_complete_reports", HologramSnapshotAeTaskRegression::run);
         cases.put(
             "client_progress_is_factual_session_bound_and_render_only",
             com.miaokatze.gtmb.client.hologram.HologramProgressRegression::run);

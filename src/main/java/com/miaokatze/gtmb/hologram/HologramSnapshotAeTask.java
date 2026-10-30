@@ -116,9 +116,9 @@ final class HologramSnapshotAeTask {
     }
 
     private void analyze(HologramCapture.Cell cell) throws IOException {
-        if (!HologramAePolicy.handles(cell.block, cell.tileNbt)) return;
-        HologramAeBlueprint.Analysis analysis = HologramAeBlueprint
-            .analyze(cell.block, cell.meta, HologramBlueprintNbt.decode(cell.tileNbt));
+        NBTTagCompound payload = HologramBlueprintNbt.decode(cell.tileNbt);
+        if (!HologramAeBlueprint.supports(cell.block, payload)) return;
+        HologramAeBlueprint.Analysis analysis = HologramAeBlueprint.analyze(cell.block, cell.meta, payload);
         if (!analysis.issues.isEmpty() || historicalPositions.contains(HologramValues.position(cell)))
             analyses.put(HologramValues.position(cell), analysis);
         for (HologramAeBlueprint.Issue source : analysis.issues) {
