@@ -19,6 +19,7 @@ final class HologramEditorSceneWidget extends Widget<HologramEditorSceneWidget> 
 
     HologramEditorSceneWidget(HologramUiModules ui) {
         this.ui = ui;
+        ui.preview.scene = this;
         tooltipBuilder(tooltip -> {
             HologramEditorAnnotationOverlay annotations = ui.shell.annotations();
             if (annotations != null) for (String line : annotations.tooltipLines()) tooltip.addLine(line);
@@ -61,6 +62,7 @@ final class HologramEditorSceneWidget extends Widget<HologramEditorSceneWidget> 
     @Override
     public void dispose() {
         invalidatePresentation();
+        if (ui.preview.scene == this) ui.preview.scene = null;
         super.dispose();
     }
 
@@ -80,10 +82,14 @@ final class HologramEditorSceneWidget extends Widget<HologramEditorSceneWidget> 
             && current.height() == presentedArea.height();
     }
 
+    /** Geometry commands use the current widget area and live UI pose; navigation keeps its separate frame gate. */
+    boolean editFrameReady() {
+        return frameValid() && ui.preview.previewFrameReady(0, 0, getArea().width, getArea().height);
+    }
+
     boolean canDropInventorySample(int screenX, int screenY) {
         int[] point = ui.shell.sceneLocalPoint(screenX, screenY);
-        if (point == null || !frameValid()
-            || !HologramRenderer.previewMeshReady(ui.session.state())
+        if (point == null || !editFrameReady()
             || !ui.preview.inventory()
             || !ui.session.editable()
             || ui.preview.pickedTarget() == null) return false;

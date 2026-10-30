@@ -58,6 +58,7 @@ final class HologramRenderer {
     private static List<Face> hoverFaces;
     private static int hoverX, hoverY, hoveredCell = -1;
     static long previewSliceCaptures, previewSliceHits, previewSliceUnsupported, previewSliceFallbackFrames;
+    static long previewSliceCapturedInts;
     static long previewHoverScans;
 
     private static void invalidatePreviewDrawCache() {
@@ -123,6 +124,8 @@ final class HologramRenderer {
     static HologramSelection selection;
     static String selectedStructureId = "";
     private static HologramEditorCameraFrame projectedFrame, presentedFrame;
+    private static PreviewRequest projectedRequest, presentedRequest;
+    private static boolean cameraOnlyProjection, previewCameraMoving;
     private static HologramState presentedState;
     private static HologramState displayedState;
     private static boolean previewSubmitted;
@@ -136,6 +139,8 @@ final class HologramRenderer {
 
     static void release() {
         projectedFrame = presentedFrame = null;
+        projectedRequest = presentedRequest = null;
+        cameraOnlyProjection = previewCameraMoving = false;
         presentedState = null;
         displayedState = null;
         previewSubmitted = false;
@@ -281,11 +286,35 @@ final class HologramRenderer {
         return previewPreparation != null && previewPreparation.state == state && !previewMeshReady(state);
     }
 
+    /** Edit admission compares the live UI request with the complete frame actually drawn, without allocating a key. */
+    static boolean previewPresented(HologramState state, int x, int y, int width, int height, double yaw, double pitch,
+        double zoom, double panX, double panY, double panZ, int layer, int view, boolean empty) {
+        return previewMeshReady(state) && presentedState == state
+            && presentedRequest != null
+            && presentedRequest.matches(
+                state,
+                x,
+                y,
+                width,
+                height,
+                yaw,
+                pitch,
+                zoom,
+                panX,
+                panY,
+                panZ,
+                layer,
+                view,
+                empty,
+                HologramBlueprintPreview.cleanCapture());
+    }
+
     static void sceneClosed() {
         invalidatePreviewDrawCache();
         displayedState = null;
         presentedState = null;
         presentedFrame = null;
+        presentedRequest = null;
         previewSubmitted = false;
     }
 
@@ -349,6 +378,7 @@ final class HologramRenderer {
         if (width <= 0 || height <= 0 || !Double.isFinite(zoom) || zoom <= 0) {
             presentedFrame = null;
             presentedState = null;
+            presentedRequest = null;
             return -1;
         }
         HologramTextures.begin(state);
@@ -395,11 +425,55 @@ final class HologramRenderer {
             previewPreparation = budgeted ? new PreviewPreparation(state, true) : null;
         }
         lastPreviewBuiltRegions = 0;
+        // The stamp belongs to this preparation, not merely to its cell count: a cold/dirty final slice may also be N.
+        cameraOnlyProjection = budgeted && preparedCameraOnly(state, key, layer, view, showEmptyCells);
+        previewCameraMoving = state != HologramLibraryClient.INSTANCE.browsePreviewState() && projectedRequest != null
+            && projectedRequest.state == state
+            && !projectedRequest.sameCamera(x, y, width, height, yaw, pitch, zoom, panX, panY, panZ);
+        if (projectedRequest == null || !projectedRequest.matches(
+            state,
+            x,
+            y,
+            width,
+            height,
+            yaw,
+            pitch,
+            zoom,
+            panX,
+            panY,
+            panZ,
+            layer,
+            view,
+            showEmptyCells,
+            !budgeted))
+            projectedRequest = new PreviewRequest(
+                state,
+                x,
+                y,
+                width,
+                height,
+                yaw,
+                pitch,
+                zoom,
+                panX,
+                panY,
+                panZ,
+                layer,
+                view,
+                showEmptyCells,
+                !budgeted);
         if (budgeted) {
             if (previewPreparation == null || previewPreparation.state != state)
                 previewPreparation = new PreviewPreparation(state, true);
             prepareProgressiveFrame(state, key, x, y, width, height, yaw, pitch, zoom, panX, panY, panZ);
-            previewPreparation.advance(layer, view, currentView, key);
+            if (cameraOnlyProjection) {
+                // All input regions/materials/native models are already prepared. Publish only the complete current
+                // camera, before any draw, without spending another budget on an occupancy prefix we will not show.
+                previewPreparation.projection.advance(currentView, Integer.MAX_VALUE, Long.MAX_VALUE);
+                previewPreparation.projection.publish();
+            } else if (previewPreparation.completed != state.cells.size()
+                || previewPreparation.projection.published != state.cells.size())
+                previewPreparation.advance(layer, view, currentView, key);
         }
         if (!budgeted && (previewState != state || !key.equals(previewKey))) {
             List<Face> faces = new ArrayList<>();
@@ -584,7 +658,7 @@ final class HologramRenderer {
             // Angelica 2.2.28 also uses this vanilla GUI layout; its append-side extra state belongs to terrain
             // meshing.
             // DirectTessellator and drag transforms retain their original commands and active-format batch limit.
-            if (!displaced && t.getClass() == Tessellator.class) {
+            if (!displaced && !previewCameraMoving && t.getClass() == Tessellator.class) {
                 if (previewSubmission == null || previewSubmission.faces != faces
                     || previewSubmission.depthScale != depthScale)
                     previewSubmission = new PreviewSubmission(faces, depthScale);
@@ -770,11 +844,13 @@ final class HologramRenderer {
         }
         presentedFrame = projectedFrame;
         presentedState = state;
+        presentedRequest = projectedRequest;
         displayedState = !cachedFaces.isEmpty() || !cachedOutlines.isEmpty()
             || !structureBoxes.isEmpty()
             || previewPreparation != null && previewPreparation.boundary != null
                 && previewPreparation.boundary.presented ? state : null;
         previewSubmitted = !budgeted || previewPreparation.projection.published == state.cells.size();
+        if (budgeted && previewSubmitted) previewPreparation.completeGeometryPresented = true;
         if (budgeted && previewSubmitted && !previewPreparation.readyObserved) {
             previewPreparation.readyObserved = true;
             com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.loadStage(
@@ -790,6 +866,7 @@ final class HologramRenderer {
     static void waitingPreview(HologramState state) {
         presentedState = null;
         presentedFrame = null;
+        presentedRequest = null;
         GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
         try {
             GL11.glDisable(GL11.GL_TEXTURE_2D);
@@ -807,6 +884,8 @@ final class HologramRenderer {
         if (previewPreparation == null || previewPreparation.state != state || previewPreparation.boundary == null)
             return 0;
         PreviewBoundary boundary = previewPreparation.boundary;
+        // A completed camera-only projection may deliberately leave the unused light outline at an older pose.
+        if (!boundary.projectedKey.equals(previewKey)) return 0;
         Tessellator tess = Tessellator.instance;
         int vertices = 0, total = 0, limit = 0;
         tess.startDrawing(GL11.GL_LINES);
@@ -1186,6 +1265,74 @@ final class HologramRenderer {
         if (exposed != 0 || !role.isEmpty()) result.cells.add(new PreviewCell(c, exposed, role, result.prepared + 1));
     }
 
+    private static boolean preparedCameraOnly(HologramState state, String key, int layer, int view, boolean empty) {
+        return state != HologramLibraryClient.INSTANCE.browsePreviewState() && previewPreparation != null
+            && previewPreparation.state == state
+            && previewPreparation.completeGeometryPresented
+            && previewPreparation.completed == state.cells.size()
+            && previewPreparation.projection != null
+            && previewPreparation.projection.published == state.cells.size()
+            && projectedRequest != null
+            && projectedRequest.sameGeometry(state, layer, view, empty, false)
+            && !key.equals(previewKey);
+    }
+
+    /**
+     * Immutable input of one projected/presented frame. UI admission reads scalars, never builds another string key.
+     */
+    private static final class PreviewRequest {
+
+        final HologramState state;
+        final int x, y, width, height, layer, view;
+        final double yaw, pitch, zoom, panX, panY, panZ;
+        final boolean empty, clean;
+
+        PreviewRequest(HologramState state, int x, int y, int width, int height, double yaw, double pitch, double zoom,
+            double panX, double panY, double panZ, int layer, int view, boolean empty, boolean clean) {
+            this.state = state;
+            this.x = x;
+            this.y = y;
+            this.width = width;
+            this.height = height;
+            this.yaw = yaw;
+            this.pitch = pitch;
+            this.zoom = zoom;
+            this.panX = panX;
+            this.panY = panY;
+            this.panZ = panZ;
+            this.layer = layer;
+            this.view = view;
+            this.empty = empty;
+            this.clean = clean;
+        }
+
+        boolean sameGeometry(HologramState state, int layer, int view, boolean empty, boolean clean) {
+            return this.state == state && this.layer == layer
+                && this.view == view
+                && this.empty == empty
+                && this.clean == clean;
+        }
+
+        boolean sameCamera(int x, int y, int width, int height, double yaw, double pitch, double zoom, double panX,
+            double panY, double panZ) {
+            return this.x == x && this.y == y
+                && this.width == width
+                && this.height == height
+                && this.yaw == yaw
+                && this.pitch == pitch
+                && this.zoom == zoom
+                && this.panX == panX
+                && this.panY == panY
+                && this.panZ == panZ;
+        }
+
+        boolean matches(HologramState state, int x, int y, int width, int height, double yaw, double pitch, double zoom,
+            double panX, double panY, double panZ, int layer, int view, boolean empty, boolean clean) {
+            return sameGeometry(state, layer, view, empty, clean)
+                && sameCamera(x, y, width, height, yaw, pitch, zoom, panX, panY, panZ);
+        }
+    }
+
     /** Client render-thread cursor: each cell invokes the existing native/texture path exactly once. */
     private static final class PreviewPreparation {
 
@@ -1196,7 +1343,7 @@ final class HologramRenderer {
         int cell, completed;
         final PreviewBoundary boundary;
         PreviewProjection projection;
-        boolean outlineObserved, materialObserved, readyObserved;
+        boolean outlineObserved, materialObserved, readyObserved, completeGeometryPresented;
 
         PreviewPreparation(HologramState state, boolean outline) {
             this.state = state;
@@ -2142,8 +2289,10 @@ final class HologramRenderer {
                                     previewSliceUnsupported++;
                             } else {
                                 retainedInts += batch.slice.retainedInts();
-                                if (com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.isEnabled())
+                                if (com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.isEnabled()) {
                                     previewSliceCaptures++;
+                                    previewSliceCapturedInts += batch.slice.retainedInts();
+                                }
                             }
                         } else emit(tess, batch);
                 } else emit(tess, batch);

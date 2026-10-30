@@ -27,6 +27,7 @@ import com.miaokatze.miaokatzecore.api.camera.ViewportCoordinates;
 final class HologramUiPreview {
 
     private final HologramUiModules ui;
+    HologramEditorSceneWidget scene;
 
     HologramUiPreview(HologramUiModules ui) {
         this.ui = ui;
@@ -762,7 +763,29 @@ final class HologramUiPreview {
     }
 
     boolean previewInteractive() {
-        return previewInputOpen() && !HologramRenderer.previewPreparing(ui.session.state());
+        if (!previewInputOpen()) return false;
+        if (ui.canvas.nativeScene()) return previewFrameReady(0, 0, viewportWidth(), previewHeight());
+        return scene != null ? scene.editFrameReady()
+            : previewFrameReady(viewportX(), viewportY(), viewportWidth(), previewHeight());
+    }
+
+    boolean previewFrameReady(int x, int y, int width, int height) {
+        boolean renderedEmpty = HologramRenderer.showEmptyCells;
+        return HologramRenderer.previewPresented(
+            ui.session.state(),
+            x,
+            y,
+            width,
+            height,
+            yaw,
+            pitch,
+            zoom,
+            camera.x,
+            camera.y,
+            camera.z,
+            allLayers ? Integer.MAX_VALUE : layer,
+            view,
+            renderedEmpty) && renderedEmpty == (inventory || ui.position.positionDrawer() || airSelectionHeld());
     }
 
     boolean previewNavigable() {
@@ -1247,7 +1270,7 @@ final class HologramUiPreview {
             return true;
         }
         if (button == 0) {
-            if (ui.textBoxes.mouse(mx, my, button)) return true;
+            if (previewInteractive() && ui.textBoxes.mouse(mx, my, button)) return true;
             if (ui.preview.previewInteractive() && ui.canvas.inViewport(mx, my)
                 && !ui.preview.previewBlockedAt(mx, my)
                 && ui.session.editable()) {
@@ -1414,7 +1437,6 @@ final class HologramUiPreview {
             dragY = my;
             return;
         }
-        if (ui.textBoxes.drag(ui.canvas.localX(x), ui.canvas.localY(y), false)) return;
         if (ui.library.browsePreviewActive()) {
             if (browseDragging && browseMeshInteractive()) {
                 int mx = ui.canvas.localX(x), my = ui.canvas.localY(y);
@@ -1425,6 +1447,21 @@ final class HologramUiPreview {
             }
             return;
         }
+        // The older left-drag camera is navigation too; successive input events need not wait for another draw.
+        if (dragging && !blueprintCameraControls() && previewNavigable()) {
+            int mx = ui.canvas.localX(x), my = ui.canvas.localY(y), dx = mx - dragX, dy = my - dragY;
+            if (Math.abs(dx) + Math.abs(dy) > 1) moved = true;
+            yaw -= dx * .012;
+            pitch = Math.max(-1.35, Math.min(1.35, pitch + dy * .012));
+            dragX = mx;
+            dragY = my;
+            return;
+        }
+        if (!previewInteractive()) {
+            cancelGeometryDrag();
+            return;
+        }
+        if (ui.textBoxes.drag(ui.canvas.localX(x), ui.canvas.localY(y), false)) return;
         if (ui.session.areaImporting() || ui.ae.aeReviewNavigation() != null || ui.identity.deidentificationDrawer())
             return;
         if (this.gizmo.axis() >= 0) {
@@ -1442,10 +1479,6 @@ final class HologramUiPreview {
         if (!this.dragging) return;
         int mx = ui.canvas.localX(x), my = ui.canvas.localY(y), dx = mx - this.dragX, dy = my - this.dragY;
         if (Math.abs(dx) + Math.abs(dy) > 1) this.moved = true;
-        if (!blueprintCameraControls()) {
-            this.yaw = this.yaw - (dx * .012);
-            this.pitch = Math.max(-1.35, Math.min(1.35, this.pitch + dy * .012));
-        }
         this.dragX = mx;
         this.dragY = my;
     }
@@ -1460,11 +1493,15 @@ final class HologramUiPreview {
                 ui.tools.consumeMouse(ui.canvas.localX(x), ui.canvas.localY(y), button);
             return;
         }
-        if (button == 0 && ui.textBoxes.drag(ui.canvas.localX(x), ui.canvas.localY(y), true)) return;
         if (ui.library.browsePreviewActive()) {
             if (button == 0) browseDragging = false;
             return;
         }
+        if (!previewInteractive()) {
+            cancelGeometryDrag();
+            return;
+        }
+        if (button == 0 && ui.textBoxes.drag(ui.canvas.localX(x), ui.canvas.localY(y), true)) return;
         if (ui.session.areaImporting() || ui.ae.aeReviewNavigation() != null || ui.identity.deidentificationDrawer())
             return;
         if (ui.ae.aeReview() != null) return;
@@ -1549,8 +1586,14 @@ final class HologramUiPreview {
 
     void releasePointerCapture() {
         navigationButton = -1;
-        dragging = browseDragging = boxSelecting = inventoryDragging = false;
+        browseDragging = false;
+        cancelGeometryDrag();
+    }
+
+    private void cancelGeometryDrag() {
+        dragging = boxSelecting = inventoryDragging = false;
         gizmo.cancel();
+        ui.textBoxes.cancelDrag();
     }
 
     void retainSelection(HologramState next) {

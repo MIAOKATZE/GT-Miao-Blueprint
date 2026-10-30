@@ -188,7 +188,7 @@ final class HologramEditorCommands {
             || ui.host.minecraft().currentScreen != ui.host.parent()
             || ui.shell.fieldFocused()
             || ui.shortcuts.captureBinding() >= 0
-            || !(cameraNavigation(name) ? ui.shell.sceneNavigable() : sceneAvailable())
+            || !(cameraNavigation(name) || "air".equals(name) ? ui.shell.sceneNavigable() : sceneAvailable())
             || ui.tools.modalOpen()
             || ui.tools.pointerCaptured()
             || ui.preview.inventory()
