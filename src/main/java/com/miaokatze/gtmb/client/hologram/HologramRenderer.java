@@ -5,6 +5,7 @@ import java.nio.IntBuffer;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +31,7 @@ import com.gtnewhorizon.gtnhlib.client.renderer.DirectTessellator;
 import com.miaokatze.miaokatzecore.client.render.ScreenLineStream;
 import com.miaokatze.miaokatzecore.client.render.TessellatorSlice;
 
+import appeng.client.texture.FlippableIcon;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.common.blocks.ItemMachines;
 
@@ -59,7 +61,8 @@ final class HologramRenderer {
     private static ScreenLineStream previewLineStream;
     private static List<Face> hoverFaces;
     private static int hoverX, hoverY, hoveredCell = -1;
-    static long previewSliceCaptures, previewSliceHits, previewSliceUnsupported, previewSliceFallbackFrames;
+    static long previewSliceCaptures, previewSliceHits, previewSliceReplayedQuads, previewSliceUnsupported,
+        previewSliceFallbackFrames;
     static long previewSliceCapturedInts;
     static long previewHoverScans;
 
@@ -694,9 +697,14 @@ final class HologramRenderer {
             // meshing.
             // DirectTessellator and drag transforms retain their original commands and active-format batch limit.
             if (!displaced && !previewCameraMoving && t.getClass() == Tessellator.class) {
+                boolean snapshotUvs = budgeted && state.data.getBoolean("blueprintEditing")
+                    && state != HologramLibraryClient.INSTANCE.browsePreviewState()
+                    && previewPreparation.completed == state.cells.size()
+                    && previewPreparation.projection.published == state.cells.size();
                 if (previewSubmission == null || previewSubmission.faces != faces
-                    || previewSubmission.depthScale != depthScale)
-                    previewSubmission = new PreviewSubmission(faces, depthScale);
+                    || previewSubmission.depthScale != depthScale
+                    || previewSubmission.snapshotUvs != snapshotUvs)
+                    previewSubmission = new PreviewSubmission(faces, depthScale, snapshotUvs);
                 materialDrawn = previewSubmission.draw(t, allowCapture);
             } else {
                 if (com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.isEnabled()) previewSliceFallbackFrames++;
@@ -2294,6 +2302,11 @@ final class HologramRenderer {
 
     private static void emitPreviewQuad(Tessellator tess, Face face, HologramTextures.Sample sample, int sampleIndex,
         double depthScale, double shiftX, double shiftY, boolean displaced) {
+        emitPreviewQuad(tess, face, sample, sampleIndex, depthScale, shiftX, shiftY, displaced, null);
+    }
+
+    private static void emitPreviewQuad(Tessellator tess, Face face, HologramTextures.Sample sample, int sampleIndex,
+        double depthScale, double shiftX, double shiftY, boolean displaced, PreviewIcon icon) {
         float shade = face.side == 1 ? 1 : face.side < 2 ? .6f : .8f;
         setSampleColor(tess, sample, shade, displaced ? .38f : .96f);
         if (face.cell.sourceMissing && !face.cell.missingBlock) tess.setColorRGBA_F(.55f, .55f, .55f, .78f);
@@ -2304,8 +2317,10 @@ final class HologramRenderer {
                 point[0] + shiftX,
                 point[1] + shiftY,
                 point[2] * depthScale + sampleIndex * .015,
-                textureU(sample.icon, face.side, face.local(vertex)),
-                textureV(sample.icon, face.side, face.local(vertex)));
+                icon != null && icon.valid ? icon.u(face.side, face.local(vertex))
+                    : textureU(sample.icon, face.side, face.local(vertex)),
+                icon != null && icon.valid ? icon.v(face.side, face.local(vertex))
+                    : textureV(sample.icon, face.side, face.local(vertex)));
         }
     }
 
@@ -2350,6 +2365,58 @@ final class HologramRenderer {
             && ((TextureAtlasSprite) icon).getFrameCount() <= 1;
     }
 
+    /** Reused only by one complete editor submission; neither a wrapper nor its atlas address is immutable. */
+    private static final class PreviewIcon {
+
+        final IIcon icon;
+        final boolean candidate;
+        IIcon original;
+        boolean valid;
+        float minU, maxU, minV, maxV;
+        long version;
+        int lastBatch = -1;
+
+        PreviewIcon(IIcon icon) {
+            this.icon = icon;
+            candidate = icon != null
+                && (icon.getClass() == TextureAtlasSprite.class || icon.getClass() == FlippableIcon.class);
+        }
+
+        void refresh() {
+            if (!candidate) return;
+            IIcon endpoint = icon.getClass() == FlippableIcon.class ? ((FlippableIcon) icon).getOriginal() : icon;
+            boolean nextValid = stablePreviewIcon(endpoint);
+            boolean changed = original != endpoint || valid != nextValid;
+            if (nextValid) {
+                // Both U endpoints together reach the base getMinU even when the wrapper is flipped. Its real
+                // Angelica hook marks usage, including enclosing SpriteCapture/display-list recording, on every draw.
+                float u0 = icon.getMinU(), u1 = icon.getMaxU(), v0 = icon.getMinV(), v1 = icon.getMaxV();
+                changed |= Float.floatToRawIntBits(minU) != Float.floatToRawIntBits(u0)
+                    || Float.floatToRawIntBits(maxU) != Float.floatToRawIntBits(u1)
+                    || Float.floatToRawIntBits(minV) != Float.floatToRawIntBits(v0)
+                    || Float.floatToRawIntBits(maxV) != Float.floatToRawIntBits(v1);
+                minU = u0;
+                maxU = u1;
+                minV = v0;
+                maxV = v1;
+            }
+            original = endpoint;
+            valid = nextValid;
+            if (changed) version++;
+        }
+
+        double u(int side, double[] point) {
+            double u = side == 4 ? point[2] + .5
+                : side == 5 ? .5 - point[2] : side == 2 ? .5 - point[0] : point[0] + .5;
+            return minU + (maxU - minU) * u;
+        }
+
+        double v(int side, double[] point) {
+            double v = side == 0 ? point[2] + .5 : side == 1 ? .5 - point[2] : .5 - point[1];
+            return minV + (maxV - minV) * v;
+        }
+    }
+
     /** Original sorted face/layer order, partitioned only at complete quad boundaries. No GL resource is retained. */
     private static final class PreviewSubmission {
 
@@ -2357,13 +2424,23 @@ final class HologramRenderer {
         private static final int MAX_RETAINED_INTS = 16 * 1024 * 1024;
         final List<Face> faces;
         final double depthScale;
+        final boolean snapshotUvs;
+        final Map<IIcon, PreviewIcon> icons;
+        final PreviewIcon[] iconRecords;
         final List<PreviewBatch> batches = new ArrayList<>();
         boolean unsupported;
         int retainedInts;
 
         PreviewSubmission(List<Face> faces, double depthScale) {
+            this(faces, depthScale, false);
+        }
+
+        PreviewSubmission(List<Face> faces, double depthScale, boolean snapshotUvs) {
             this.faces = faces;
             this.depthScale = depthScale;
+            this.snapshotUvs = snapshotUvs;
+            icons = snapshotUvs ? new IdentityHashMap<>() : null;
+            List<PreviewIcon> dependencies = snapshotUvs ? new ArrayList<>() : null;
             int firstFace = -1, firstSample = 0, lastFace = 0, lastSample = 0, quads = 0;
             boolean stable = true;
             for (int at = 0; at < faces.size(); at++) {
@@ -2375,18 +2452,42 @@ final class HologramRenderer {
                         firstFace = at;
                         firstSample = sample;
                     }
-                    stable &= stablePreviewIcon(samples.get(sample).icon);
+                    IIcon icon = samples.get(sample).icon;
+                    if (snapshotUvs) {
+                        PreviewIcon record = icons.get(icon);
+                        if (record == null) {
+                            record = new PreviewIcon(icon);
+                            icons.put(icon, record);
+                        }
+                        stable &= record.candidate;
+                        if (record.lastBatch != batches.size()) {
+                            record.lastBatch = batches.size();
+                            dependencies.add(record);
+                        }
+                    } else stable &= stablePreviewIcon(icon);
                     lastFace = at;
                     lastSample = sample + 1;
                     if (++quads == 1023) {
-                        batches.add(new PreviewBatch(firstFace, firstSample, lastFace, lastSample, quads, stable));
+                        batches.add(
+                            new PreviewBatch(
+                                firstFace,
+                                firstSample,
+                                lastFace,
+                                lastSample,
+                                quads,
+                                stable,
+                                dependencies));
+                        if (snapshotUvs) dependencies.clear();
                         firstFace = -1;
                         quads = 0;
                         stable = true;
                     }
                 }
             }
-            if (quads != 0) batches.add(new PreviewBatch(firstFace, firstSample, lastFace, lastSample, quads, stable));
+            if (quads != 0) batches
+                .add(new PreviewBatch(firstFace, firstSample, lastFace, lastSample, quads, stable, dependencies));
+            iconRecords = snapshotUvs ? icons.values()
+                .toArray(new PreviewIcon[0]) : null;
         }
 
         boolean draw(Tessellator tess) {
@@ -2394,12 +2495,16 @@ final class HologramRenderer {
         }
 
         boolean draw(Tessellator tess, boolean allowCapture) {
+            if (snapshotUvs) prepareIcons();
             for (int at = 0; at < batches.size(); at++) {
                 PreviewBatch batch = batches.get(at);
                 tess.startDrawingQuads();
-                if (batch.stable && !unsupported) {
+                if (batch.stable && batch.valid() && !unsupported) {
                     if (batch.slice != null && batch.slice.replay(tess)) {
-                        if (com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.isEnabled()) previewSliceHits++;
+                        if (com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.isEnabled()) {
+                            previewSliceHits++;
+                            previewSliceReplayedQuads += batch.quads;
+                        }
                     } else if (allowCapture
                         && retainedInts - (batch.slice == null ? 0 : batch.slice.retainedInts()) + batch.quads * 32
                             <= MAX_RETAINED_INTS) {
@@ -2414,6 +2519,7 @@ final class HologramRenderer {
                                         previewSliceUnsupported++;
                                 } else {
                                     retainedInts += batch.slice.retainedInts();
+                                    batch.captureVersions();
                                     if (com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.isEnabled()) {
                                         previewSliceCaptures++;
                                         previewSliceCapturedInts += batch.slice.retainedInts();
@@ -2427,6 +2533,17 @@ final class HologramRenderer {
             return !batches.isEmpty();
         }
 
+        private void prepareIcons() {
+            for (PreviewIcon icon : iconRecords) icon.refresh();
+            for (int at = 0; at < batches.size(); at++) {
+                PreviewBatch batch = batches.get(at);
+                if (batch.slice != null && !batch.current()) {
+                    retainedInts -= batch.slice.retainedInts();
+                    batch.slice = null;
+                }
+            }
+        }
+
         private void emit(Tessellator tess, PreviewBatch batch) {
             for (int at = batch.firstFace; at <= batch.lastFace; at++) {
                 Face face = faces.get(at);
@@ -2434,8 +2551,16 @@ final class HologramRenderer {
                 List<HologramTextures.Sample> samples = face.samples();
                 int first = at == batch.firstFace ? batch.firstSample : 0;
                 int last = at == batch.lastFace ? batch.lastSample : samples.size();
-                for (int sample = first; sample < last; sample++)
-                    emitPreviewQuad(tess, face, samples.get(sample), sample, depthScale, 0, 0, false);
+                for (int sample = first; sample < last; sample++) emitPreviewQuad(
+                    tess,
+                    face,
+                    samples.get(sample),
+                    sample,
+                    depthScale,
+                    0,
+                    0,
+                    false,
+                    snapshotUvs ? icons.get(samples.get(sample).icon) : null);
             }
         }
     }
@@ -2444,15 +2569,36 @@ final class HologramRenderer {
 
         final int firstFace, firstSample, lastFace, lastSample, quads;
         final boolean stable;
+        final PreviewIcon[] dependencies;
+        final long[] versions;
         TessellatorSlice slice;
 
-        PreviewBatch(int firstFace, int firstSample, int lastFace, int lastSample, int quads, boolean stable) {
+        PreviewBatch(int firstFace, int firstSample, int lastFace, int lastSample, int quads, boolean stable,
+            List<PreviewIcon> dependencies) {
             this.firstFace = firstFace;
             this.firstSample = firstSample;
             this.lastFace = lastFace;
             this.lastSample = lastSample;
             this.quads = quads;
             this.stable = stable;
+            this.dependencies = dependencies == null ? null : dependencies.toArray(new PreviewIcon[0]);
+            versions = dependencies == null ? null : new long[dependencies.size()];
+        }
+
+        boolean valid() {
+            if (dependencies != null) for (PreviewIcon icon : dependencies) if (!icon.valid) return false;
+            return true;
+        }
+
+        boolean current() {
+            if (dependencies != null) for (int at = 0; at < dependencies.length; at++)
+                if (!dependencies[at].valid || dependencies[at].version != versions[at]) return false;
+            return true;
+        }
+
+        void captureVersions() {
+            if (dependencies != null)
+                for (int at = 0; at < dependencies.length; at++) versions[at] = dependencies[at].version;
         }
     }
 

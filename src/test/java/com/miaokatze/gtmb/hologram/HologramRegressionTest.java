@@ -251,6 +251,9 @@ public final class HologramRegressionTest {
             "machine_fronts_follow_world_orientation_on_all_six_faces",
             com.miaokatze.gtmb.client.hologram.HologramRenderingRegression::run);
         cases.put(
+            "submission_uv_snapshots_preserve_live_getter_numerics_and_eligibility",
+            com.miaokatze.gtmb.client.hologram.HologramPreviewUvRegression::run);
+        cases.put(
             "machine_textures_support_optional_inventory_api_and_legacy_six_face_fallback",
             com.miaokatze.gtmb.client.hologram.HologramTextureCompatibilityRegression::run);
         cases.put(
