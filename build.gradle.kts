@@ -68,6 +68,19 @@ tasks.register<JavaExec>("runEmptyPayloadRegression") {
 
 tasks.named("check") { dependsOn("runEmptyPayloadRegression") }
 
+tasks.register<JavaExec>("runPreviewUvRegression") {
+    group = "verification"
+    description = "Checks live submission UV snapshots against original getters, including actual getter counts."
+    dependsOn("compileTestJava")
+    mainClass = "com.miaokatze.gtmb.client.hologram.HologramPreviewUvRegression"
+    classpath = tasks.named<JavaExec>("runHologramTest").get().classpath
+    val scratchDir = layout.buildDirectory.dir("hologram-preview-uv-test")
+    workingDir(scratchDir)
+    doFirst { scratchDir.get().asFile.mkdirs() }
+}
+
+tasks.named("check") { dependsOn("runPreviewUvRegression") }
+
 tasks.register<JavaExec>("runBlueprintValidationBenchmark") {
     group = "verification"
     description = "Measures production validation reuse at 50k, 100k and 1m streamed cells; not a live-world benchmark."
