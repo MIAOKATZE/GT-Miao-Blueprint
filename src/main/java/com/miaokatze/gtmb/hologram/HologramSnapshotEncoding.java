@@ -31,17 +31,28 @@ final class HologramSnapshotEncoding {
         return submit(owned, executor);
     }
 
+    static Job submit(NBTTagCompound owned, long transportSequence) {
+        return submit(owned, executor, written -> {}, transportSequence);
+    }
+
     static Job submit(NBTTagCompound owned, Executor executor) {
         return submit(owned, executor, written -> {});
     }
 
     /** A deterministic checkpoint observer keeps the regression on the real codec and executor. */
     static Job submit(NBTTagCompound owned, Executor executor, java.util.function.LongConsumer checkpoint) {
-        Job job = new Job(owned, executor, checkpoint);
+        return submit(owned, executor, checkpoint, -1);
+    }
+
+    private static Job submit(NBTTagCompound owned, Executor executor, java.util.function.LongConsumer checkpoint,
+        long transportSequence) {
+        Job job = new Job(owned, executor, checkpoint, transportSequence);
         try {
+            job.mark(HologramRuntimeMetrics.LoadStage.SERVER_ENCODER_QUEUED, 0);
             executor.execute(job);
             return job;
         } catch (RejectedExecutionException full) {
+            job.mark(HologramRuntimeMetrics.LoadStage.SERVER_ENCODER_REJECTED, 0);
             return null;
         }
     }
@@ -61,11 +72,24 @@ final class HologramSnapshotEncoding {
         volatile long rawBytes;
         private final Executor executor;
         private final java.util.function.LongConsumer checkpoint;
+        private final String traceSession;
+        private final long traceRevision, traceRequest, traceTransport;
 
-        Job(NBTTagCompound owned, Executor executor, java.util.function.LongConsumer checkpoint) {
+        Job(NBTTagCompound owned, Executor executor, java.util.function.LongConsumer checkpoint,
+            long transportSequence) {
             this.owned = owned;
             this.executor = executor;
             this.checkpoint = checkpoint;
+            boolean tracing = HologramRuntimeMetrics.isEnabled() && owned != null;
+            traceSession = tracing ? owned.getString("session") : null;
+            traceRevision = tracing ? owned.getLong("planRevision") : -1;
+            traceRequest = tracing ? owned.getLong("uiSequence") : -1;
+            traceTransport = transportSequence;
+        }
+
+        private void mark(HologramRuntimeMetrics.LoadStage phase, long count) {
+            if (traceSession != null) HologramRuntimeMetrics
+                .loadStage(phase, traceSession, traceRevision, traceRequest, traceTransport, count);
         }
 
         synchronized void cancel() {
@@ -77,6 +101,7 @@ final class HologramSnapshotEncoding {
         }
 
         public void run() {
+            mark(HologramRuntimeMetrics.LoadStage.SERVER_ENCODER_BEGIN, 0);
             NBTTagCompound frozen;
             synchronized (this) {
                 frozen = owned;
@@ -106,6 +131,11 @@ final class HologramSnapshotEncoding {
             } catch (Exception problem) {
                 failure = problem;
             } finally {
+                mark(
+                    cancelled ? HologramRuntimeMetrics.LoadStage.SERVER_ENCODER_CANCELLED
+                        : failure == null ? HologramRuntimeMetrics.LoadStage.SERVER_ENCODER_END
+                            : HologramRuntimeMetrics.LoadStage.SERVER_ENCODER_FAILED,
+                    bytes == null ? 0 : bytes.length);
                 HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.SNAPSHOT_COMPRESS, started);
                 done = true;
             }

@@ -27,6 +27,7 @@ import com.gtnewhorizon.structurelib.alignment.constructable.IConstructableProvi
 import com.gtnewhorizon.structurelib.alignment.constructable.IMultiblockInfoContainer;
 import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
+import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 import com.miaokatze.gtmb.hologram.HologramSnapshotAssembly;
 import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
 import com.miaokatze.gtmb.hologram.HologramWorldFlow;
@@ -122,6 +123,14 @@ public final class HologramClient {
     private static int deferredCellRows;
     private static final int DEFERRED_SNAPSHOT_LIMIT = 8, DEFERRED_CELL_LIMIT = 16384;
     private static final long SNAPSHOT_PREPARE_NANOS = 2_000_000L;
+    private static long firstTraceFragment = -1;
+
+    /** Only an accepted incoming baseline in the current world can temporarily hide the old display. */
+    static boolean snapshotPreparing() {
+        return preparingSnapshot != null && preparingResult != null
+            && Minecraft.getMinecraft().theWorld == assemblyWorld
+            && validSnapshotIdentity(preparingResult.value);
+    }
 
     /** Explicit root exit only: an already queued opening snapshot must not reopen the editor. */
     static void dismissRootView(String session, long sequence) {
@@ -1617,6 +1626,17 @@ public final class HologramClient {
         }
         installDecoded(snapshotInbox.poll());
         if (nbt.getBoolean("transportFragment")) {
+            if (HologramRuntimeMetrics.isEnabled() && nbt.getInteger("transportIndex") == 0
+                && nbt.getLong("transportSequence") > firstTraceFragment) {
+                firstTraceFragment = nbt.getLong("transportSequence");
+                HologramRuntimeMetrics.loadStage(
+                    HologramRuntimeMetrics.LoadStage.CLIENT_FRAGMENT_FIRST,
+                    "",
+                    -1,
+                    -1,
+                    firstTraceFragment,
+                    nbt.getInteger("transportTotal"));
+            }
             byte[] complete = assembly.accept(
                 nbt.getLong("transportSequence"),
                 nbt.getInteger("transportTotal"),
@@ -1625,6 +1645,13 @@ public final class HologramClient {
                 System.nanoTime());
             if (complete == null) return;
             long transportSequence = nbt.getLong("transportSequence");
+            HologramRuntimeMetrics.loadStage(
+                HologramRuntimeMetrics.LoadStage.CLIENT_FRAGMENT_LAST,
+                "",
+                -1,
+                -1,
+                transportSequence,
+                complete.length);
             HologramClientProgress.decoding(transportSequence);
             while (!snapshotInbox.offer(complete, transportSequence)) {
                 decodeNotice(
@@ -1656,6 +1683,7 @@ public final class HologramClient {
         previewDistance.sync(false, null, "");
         assembly = new HologramSnapshotAssembly();
         assemblyWorld = world;
+        firstTraceFragment = -1;
         if (localAreaWorld != world) {
             localArea = null;
             localAreaView = null;
@@ -1713,6 +1741,12 @@ public final class HologramClient {
             }
             clearSnapshotPreparation();
             preparingResult = result;
+            if (HologramRuntimeMetrics.isEnabled()) HologramRuntimeMetrics.loadStage(
+                HologramRuntimeMetrics.LoadStage.CLIENT_PREPARE_BEGIN,
+                nbt,
+                result.transportSequence,
+                nbt.getTagList("cells", 10)
+                    .tagCount());
             preparingSnapshot = new HologramState.Preparation(nbt);
             snapshotPreparationProgress();
         } else if (preparingSnapshot != null || !deferredSnapshots.isEmpty()) {
@@ -1761,9 +1795,14 @@ public final class HologramClient {
         }
         HologramSnapshotInbox.Result<NBTTagCompound> complete = preparingResult;
         HologramState prepared = preparingSnapshot.result();
+        HologramRuntimeMetrics.loadStage(
+            HologramRuntimeMetrics.LoadStage.CLIENT_PREPARE_END,
+            complete.value,
+            complete.transportSequence,
+            prepared.cells.size());
         preparingSnapshot = null;
         preparingResult = null;
-        installSnapshot(complete.value, prepared);
+        installSnapshot(complete.value, prepared, complete.transportSequence);
         HologramClientProgress.decoded(complete.transportSequence, true);
         // Edit ACKs remain ordered behind the complete baseline. One small delta is installed per tick.
         installDeferredSnapshot();
@@ -1861,6 +1900,10 @@ public final class HologramClient {
     }
 
     private static void installSnapshot(NBTTagCompound nbt, HologramState prepared) {
+        installSnapshot(nbt, prepared, -1);
+    }
+
+    private static void installSnapshot(NBTTagCompound nbt, HologramState prepared, long transportSequence) {
         boolean openingCutWorkspace = "cutWorkspace".equals(nbt.getString("openPurpose"));
         if (openingCutWorkspace && !acceptsCutWorkspaceOpening(nbt)) return;
         if (nbt.getBoolean("cancelled")) {
@@ -1922,11 +1965,34 @@ public final class HologramClient {
         acceptedBatch = nbt.getLong("batchSeq");
         pendingPositionLock.snapshot(nbt);
         HologramClientProgress.snapshot(nbt);
+        HologramState displayedBeforeInstall = HologramRuntimeMetrics.isEnabled()
+            ? HologramRenderer.previewDisplayState()
+            : null;
         HologramRenderer.snapshotChanged(state, next);
         if (state != null && state.data.getBoolean("areaImporting")
             && !nbt.getBoolean("areaImporting")
             && nbt.getBoolean("areaImported")
             && "area".equals(nbt.getString("blueprintSource"))) HologramLibraryClient.INSTANCE.clearSelection();
+        if (HologramRuntimeMetrics.isEnabled() && !nbt.getBoolean("partial")) {
+            HologramRuntimeMetrics.loadStage(
+                HologramRuntimeMetrics.LoadStage.CLIENT_INSTALL,
+                next.session,
+                next.data.getLong("planRevision"),
+                next.data.getLong("uiSequence"),
+                transportSequence,
+                next.cells.size(),
+                state == null ? "" : state.session,
+                state == null ? -1 : state.data.getLong("planRevision"));
+            HologramRuntimeMetrics.loadStage(
+                HologramRuntimeMetrics.LoadStage.CLIENT_DISPLAY_STATE,
+                next.session,
+                next.data.getLong("planRevision"),
+                next.data.getLong("uiSequence"),
+                transportSequence,
+                next.cells.size(),
+                displayedBeforeInstall == null ? "" : displayedBeforeInstall.session,
+                displayedBeforeInstall == null ? -1 : displayedBeforeInstall.data.getLong("planRevision"));
+        }
         state = next;
         if (next.completeBaseline()) retireSubmittedLocalArea(acceptedLocalAreaBaseline);
         HologramUiConfiguration.observePresetSnapshot(next);

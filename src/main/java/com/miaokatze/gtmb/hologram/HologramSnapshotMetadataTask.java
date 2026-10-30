@@ -25,6 +25,7 @@ final class HologramSnapshotMetadataTask {
     private final HologramSession s;
     private final NBTTagCompound state;
     private final long revision;
+    private final long transportSequence;
     private final HologramCapture capture;
     private final boolean authoring, draftOnly;
     private final HologramSnapshotDataContext dataContext = new HologramSnapshotDataContext();
@@ -50,9 +51,14 @@ final class HologramSnapshotMetadataTask {
     private final WorkerProgress workerProgress = new WorkerProgress();
 
     HologramSnapshotMetadataTask(HologramSession s, NBTTagCompound state) {
+        this(s, state, -1);
+    }
+
+    HologramSnapshotMetadataTask(HologramSession s, NBTTagCompound state, long transportSequence) {
         this.s = s;
         this.state = state;
         revision = s.planRevision;
+        this.transportSequence = transportSequence;
         capture = s.capture;
         authoring = HologramSessionPolicy.authoring(s);
         draftOnly = authoring || s.localPlanPending && !s.localPlanError.isEmpty();
@@ -248,7 +254,17 @@ final class HologramSnapshotMetadataTask {
             List<Position> frozenPositions = positions;
             HologramSnapshotDataContext frozenContext = dataContext;
             WorkerProgress progress = workerProgress;
+            String traceSession = HologramRuntimeMetrics.isEnabled() ? s.id : null;
+            long traceRequest = traceSession == null ? -1 : s.uiSequence;
+            long traceRevision = revision, traceTransport = transportSequence;
             FutureTask<Report> candidate = new FutureTask<>(() -> {
+                if (traceSession != null) HologramRuntimeMetrics.loadStage(
+                    HologramRuntimeMetrics.LoadStage.SERVER_METADATA_WORKER_BEGIN,
+                    traceSession,
+                    traceRevision,
+                    traceRequest,
+                    traceTransport,
+                    0);
                 HologramSnapshotMetadataSource.enterDetached(frozenContext);
                 try {
                     return derive(
@@ -265,9 +281,32 @@ final class HologramSnapshotMetadataTask {
                         progress);
                 } finally {
                     HologramSnapshotMetadataSource.exitDetached();
+                    if (traceSession != null) HologramRuntimeMetrics.loadStage(
+                        HologramRuntimeMetrics.LoadStage.SERVER_METADATA_WORKER_END,
+                        traceSession,
+                        traceRevision,
+                        traceRequest,
+                        traceTransport,
+                        0);
                 }
             });
-            if (!HologramAreaPreparation.execute(candidate)) return false;
+            if (traceSession != null) HologramRuntimeMetrics.loadStage(
+                HologramRuntimeMetrics.LoadStage.SERVER_METADATA_WORKER_QUEUED,
+                traceSession,
+                traceRevision,
+                traceRequest,
+                traceTransport,
+                0);
+            if (!HologramAreaPreparation.execute(candidate)) {
+                if (traceSession != null) HologramRuntimeMetrics.loadStage(
+                    HologramRuntimeMetrics.LoadStage.SERVER_METADATA_WORKER_REJECTED,
+                    traceSession,
+                    traceRevision,
+                    traceRequest,
+                    traceTransport,
+                    0);
+                return false;
+            }
             report = candidate;
         }
         if (!report.isDone()) return false;

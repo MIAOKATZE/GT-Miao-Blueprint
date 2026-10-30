@@ -989,11 +989,18 @@ final class HologramEditorShell {
     }
 
     boolean sceneActive() {
+        return sceneOpen() && ui.preview.previewInteractive();
+    }
+
+    boolean sceneNavigable() {
+        return sceneOpen() && ui.preview.previewNavigable();
+    }
+
+    private boolean sceneOpen() {
         return !paused && !ui.workspaces.isCut()
             && !ui.workspaces.switching()
             && !ui.library.browsePreviewActive()
             && !ui.preview.inventory()
-            && ui.preview.previewInteractive()
             && !ui.library.libraryAdminDrawer()
             && !ui.bindings.networkDrawer()
             && !HologramBackgroundTasks.busy();

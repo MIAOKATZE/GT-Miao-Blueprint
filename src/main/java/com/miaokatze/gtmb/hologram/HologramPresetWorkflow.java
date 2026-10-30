@@ -138,7 +138,13 @@ final class HologramPresetWorkflow {
 
     static void loadPreset(HologramSession s, String id, boolean selectOnly) {
         try {
+            HologramRuntimeMetrics.loadStage(HologramRuntimeMetrics.LoadStage.SERVER_CANONICAL_BEGIN, s, -1, 0);
             HologramPresets.Preset preset = HologramLibraryFacade.get(s.player, id);
+            HologramRuntimeMetrics.loadStage(
+                HologramRuntimeMetrics.LoadStage.SERVER_CANONICAL_END,
+                s,
+                -1,
+                preset == null ? 0 : preset.cells.size());
             if (preset == null) throw new java.io.IOException("预设不存在");
             if (preset.schema < 2
                 && (preset.controllerId < 0 || preset.controllerId >= GregTechAPI.METATILEENTITIES.length
@@ -155,7 +161,11 @@ final class HologramPresetWorkflow {
             HologramBlueprintData.detachAreaOverview(s);
             HologramBlueprintRotation.reset(s);
             s.virtualPreset = preset;
+            HologramRuntimeMetrics
+                .loadStage(HologramRuntimeMetrics.LoadStage.SERVER_SOURCE_COPY_BEGIN, s, -1, preset.cells.size());
             s.processingSource = HologramBlueprintRotation.copyPreset(preset);
+            HologramRuntimeMetrics
+                .loadStage(HologramRuntimeMetrics.LoadStage.SERVER_SOURCE_COPY_END, s, -1, preset.cells.size());
             s.blueprintSaveReceipt = "";
             s.processingPolicy = HologramBlueprintProcessing.policy(preset);
             s.processingReviewed = false;
@@ -185,7 +195,14 @@ final class HologramPresetWorkflow {
             HologramSessionPolicy.currentTool(s)
                 .getTagCompound()
                 .setString(HologramSessionKeys.SELECTED_PRESET, id);
+            HologramRuntimeMetrics
+                .loadStage(HologramRuntimeMetrics.LoadStage.SERVER_POPULATION_BEGIN, s, -1, preset.cells.size());
             HologramBlueprintProjection.populateVirtual(s);
+            HologramRuntimeMetrics.loadStage(
+                HologramRuntimeMetrics.LoadStage.SERVER_POPULATION_END,
+                s,
+                -1,
+                s.capture == null ? 0 : s.capture.cells.size());
             s.status = s.virtualPlacement ? "预设已加载；投影跟随鼠标，锁定位置后施工" : "预设已加载，仅编辑模板";
             if (s.virtualPlacement) presetGuidance(s, "位置预览跟随鼠标：R 水平旋转，Ctrl + R 垂直旋转；右键锁定，再次右键核对材料与 NBT，Esc 取消放置。");
         } catch (java.io.IOException invalid) {

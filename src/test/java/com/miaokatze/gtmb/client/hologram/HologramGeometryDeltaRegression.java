@@ -51,6 +51,7 @@ public final class HologramGeometryDeltaRegression {
                 && dirty.contains(new HologramRegionCache.Key(3, 1, 1)),
             "destination includes its diagonal halo");
         SimpleAssert.that(!dirty.contains(new HologramRegionCache.Key(8, 0, 0)), "distant mesh is not dirty");
+        rendererRegionReuse(base, next);
         HologramRenderer.lastSnapshotDirtyRegions = -1;
         HologramRenderer.snapshotChanged(base, next);
         SimpleAssert.eq(
@@ -107,6 +108,65 @@ public final class HologramGeometryDeltaRegression {
         SimpleAssert.eq(0, empty.regions.regions.size(), "empty regions are removed");
         SimpleAssert.eq(0, empty.minY, "empty draft has a finite layer range");
         SimpleAssert.eq(0, empty.maxY, "empty draft has a finite upper layer");
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void rendererRegionReuse(HologramState base, HologramState next) {
+        try {
+            java.lang.reflect.Field cacheField = HologramRenderer.class.getDeclaredField("previewRegions"),
+                visibleField = HologramRenderer.class.getDeclaredField("visibleState"),
+                preparationField = HologramRenderer.class.getDeclaredField("previewPreparation");
+            cacheField.setAccessible(true);
+            visibleField.setAccessible(true);
+            preparationField.setAccessible(true);
+            java.util.Map<HologramRegionCache.Key, Object> cache = (java.util.Map<HologramRegionCache.Key, Object>) cacheField
+                .get(null);
+            java.util.Map<HologramRegionCache.Key, Object> saved = new java.util.LinkedHashMap<>(cache);
+            Object visible = visibleField.get(null), preparation = preparationField.get(null);
+            Class<?> regionType = Class.forName(HologramRenderer.class.getName() + "$PreviewRegion");
+            java.lang.reflect.Constructor<?> constructor = regionType.getDeclaredConstructor();
+            constructor.setAccessible(true);
+            Object retained = constructor.newInstance(), changed = constructor.newInstance();
+            java.lang.reflect.Field complete = regionType.getDeclaredField("complete"),
+                prepared = regionType.getDeclaredField("prepared");
+            complete.setAccessible(true);
+            prepared.setAccessible(true);
+            complete.setBoolean(retained, true);
+            prepared.setInt(retained, 1);
+            HologramRegionCache.Key distant = new HologramRegionCache.Key(8, 0, 0);
+            try {
+                cache.clear();
+                cache.put(distant, retained);
+                cache.put(new HologramRegionCache.Key(0, 0, 0), changed);
+                visibleField.set(null, base);
+                HologramRenderer.snapshotChanged(base, next);
+                SimpleAssert.that(
+                    cache.get(distant) == retained,
+                    "actual renderer invalidation retains a completed distant region and its prepared geometry");
+                SimpleAssert
+                    .eq(1, prepared.getInt(retained), "a local patch does not restart the distant native preparation");
+                SimpleAssert.that(
+                    !cache.containsKey(new HologramRegionCache.Key(0, 0, 0)),
+                    "the changed endpoint is retired before the new render cursor runs");
+                Object cursor = preparationField.get(null);
+                java.lang.reflect.Field state = cursor.getClass()
+                    .getDeclaredField("state"),
+                    boundary = cursor.getClass()
+                        .getDeclaredField("boundary");
+                state.setAccessible(true);
+                boundary.setAccessible(true);
+                SimpleAssert.that(state.get(cursor) == next, "a patch cursor owns the exact new snapshot identity");
+                SimpleAssert
+                    .eq(null, boundary.get(cursor), "a local patch does not rescan the entire occupancy boundary");
+            } finally {
+                cache.clear();
+                cache.putAll(saved);
+                visibleField.set(null, visible);
+                preparationField.set(null, preparation);
+            }
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("progressive renderer delta ownership", failure);
+        }
     }
 
     private static void metadataPublication(HologramState base, HologramState publication,

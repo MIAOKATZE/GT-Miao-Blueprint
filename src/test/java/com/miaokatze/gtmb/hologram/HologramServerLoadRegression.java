@@ -8,6 +8,7 @@ import java.util.Queue;
 import java.util.concurrent.atomic.AtomicLong;
 
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagList;
 
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 import com.miaokatze.gtmb.util.ServerTaskScheduler;
@@ -25,6 +26,7 @@ public final class HologramServerLoadRegression {
     public static void run() {
         boolean previous = HologramRuntimeMetrics.isEnabled();
         try {
+            loadStageTrace();
             metricsAndCodecs();
             admission();
             publication();
@@ -40,6 +42,91 @@ public final class HologramServerLoadRegression {
             HologramRuntimeMetrics.reset();
             HologramRuntimeMetrics.setEnabled(previous);
         }
+    }
+
+    private static void loadStageTrace() {
+        HologramRuntimeMetrics.setEnabled(false);
+        HologramRuntimeMetrics.reset();
+        HologramRuntimeMetrics.loadStage(HologramRuntimeMetrics.LoadStage.CLIENT_INSTALL, (NBTTagCompound) null, 1, 1);
+        SimpleAssert.eq(
+            0,
+            HologramRuntimeMetrics.snapshot()
+                .getTagList("loadStages", 10)
+                .tagCount(),
+            "disabled tracing returns before accessing diagnostic input");
+        HologramRuntimeMetrics.setEnabled(true);
+        for (int i = 0; i < 270; i++) HologramRuntimeMetrics
+            .loadStage(HologramRuntimeMetrics.LoadStage.CLIENT_INSTALL, "new-session", 8, 9, i, i, "old-session", 7);
+        NBTTagCompound captured = HologramRuntimeMetrics.snapshot();
+        NBTTagList rows = captured.getTagList("loadStages", 10);
+        SimpleAssert.eq(256, rows.tagCount(), "load traces retain a fixed number of small records");
+        SimpleAssert.eq(14L, captured.getLong("loadTraceDropped"), "trace overflow retires only the oldest records");
+        SimpleAssert.eq(
+            14L,
+            rows.getCompoundTagAt(0)
+                .getLong("transportSequence"),
+            "trace order survives bounded eviction");
+        NBTTagCompound last = rows.getCompoundTagAt(255);
+        SimpleAssert.eq(
+            "old-session",
+            last.getString("previousSession"),
+            "installed/displayed predecessor identity stays separate");
+        SimpleAssert.eq(8L, last.getLong("revision"), "exact source revision is retained");
+        SimpleAssert.eq(9L, last.getLong("requestSequence"), "request identity is retained independently of transport");
+        SimpleAssert.that(
+            !captured.getString("loadClockId")
+                .isEmpty(),
+            "a clock domain accompanies local timestamps");
+        last.setString("session", "changed reader");
+        SimpleAssert.eq(
+            "new-session",
+            HologramRuntimeMetrics.snapshot()
+                .getTagList("loadStages", 10)
+                .getCompoundTagAt(255)
+                .getString("session"),
+            "trace readers own detached NBT records");
+        HologramRuntimeMetrics.reset();
+        NBTTagCompound source = new NBTTagCompound();
+        source.setString("session", "encoding-session");
+        source.setLong("planRevision", 12);
+        source.setLong("uiSequence", 13);
+        HologramSnapshotEncoding.Job job = HologramSnapshotEncoding.submit(source, Runnable::run);
+        SimpleAssert
+            .that(job != null && job.done && job.failure == null, "the real synchronous codec fixture completes");
+        rows = HologramRuntimeMetrics.snapshot()
+            .getTagList("loadStages", 10);
+        SimpleAssert.eq(
+            "SERVER_ENCODER_QUEUED",
+            rows.getCompoundTagAt(0)
+                .getString("stage"),
+            "queue timestamp precedes executor entry");
+        SimpleAssert.eq(
+            "SERVER_ENCODER_BEGIN",
+            rows.getCompoundTagAt(1)
+                .getString("stage"),
+            "encoder execution has its own boundary");
+        SimpleAssert.eq(
+            "SERVER_ENCODER_END",
+            rows.getCompoundTagAt(2)
+                .getString("stage"),
+            "encoder completion is not conflated with queue admission");
+        SimpleAssert.eq(
+            "encoding-session",
+            rows.getCompoundTagAt(2)
+                .getString("session"),
+            "worker timing uses frozen source identity");
+        SimpleAssert.eq(
+            12L,
+            rows.getCompoundTagAt(2)
+                .getLong("revision"),
+            "worker timing keeps the encoded revision");
+        SimpleAssert.eq(
+            (long) job.bytes.length,
+            rows.getCompoundTagAt(2)
+                .getLong("count"),
+            "codec timing reports actual compressed bytes");
+        HologramRuntimeMetrics.setEnabled(false);
+        HologramRuntimeMetrics.reset();
     }
 
     private static void metricsAndCodecs() {

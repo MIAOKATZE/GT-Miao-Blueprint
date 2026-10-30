@@ -645,6 +645,10 @@ public final class HologramNetwork {
             return snapshot.failed;
         }
 
+        long sequence() {
+            return snapshot.sequence;
+        }
+
         long encodingBytes() {
             return snapshot.encoding == null ? 0 : snapshot.encoding.rawBytes;
         }
@@ -753,7 +757,7 @@ public final class HologramNetwork {
                 continue;
             }
             if (snapshot.encoding == null) {
-                snapshot.encoding = HologramSnapshotEncoding.submit(snapshot.owned);
+                snapshot.encoding = HologramSnapshotEncoding.submit(snapshot.owned, snapshot.sequence);
                 continue;
             }
             HologramSnapshotEncoding.Job encoding = snapshot.encoding;
@@ -835,6 +839,8 @@ public final class HologramNetwork {
         HologramSnapshotEncoding.Job encoding;
         int offset, index;
         boolean queueNotified;
+        String traceSession;
+        long traceRevision, traceRequest;
 
         OutgoingSnapshot(long sequence) {
             this.sequence = sequence;
@@ -846,6 +852,11 @@ public final class HologramNetwork {
             this.valid = valid;
             this.ready = ready;
             libraryInitial = owned.getBoolean("libraryInitialSnapshot");
+            if (HologramRuntimeMetrics.isEnabled()) {
+                traceSession = owned.getString("session");
+                traceRevision = owned.getLong("planRevision");
+                traceRequest = owned.getLong("uiSequence");
+            }
         }
     }
 
@@ -964,6 +975,13 @@ public final class HologramNetwork {
                 }
                 if (snapshot.bytes == null || snapshot.libraryInitial) continue;
                 int end = Math.min(snapshot.bytes.length, snapshot.offset + HologramSnapshotAssembly.CHUNK_BYTES);
+                if (snapshot.offset == 0 && snapshot.traceSession != null) HologramRuntimeMetrics.loadStage(
+                    HologramRuntimeMetrics.LoadStage.SERVER_FRAGMENT_FIRST,
+                    snapshot.traceSession,
+                    snapshot.traceRevision,
+                    snapshot.traceRequest,
+                    snapshot.sequence,
+                    snapshot.bytes.length);
                 channel.sendTo(
                     new Fragment(
                         snapshot.sequence,
@@ -973,6 +991,13 @@ public final class HologramNetwork {
                     box.player);
                 snapshot.offset = end;
                 if (end == snapshot.bytes.length) {
+                    if (snapshot.traceSession != null) HologramRuntimeMetrics.loadStage(
+                        HologramRuntimeMetrics.LoadStage.SERVER_FRAGMENT_LAST,
+                        snapshot.traceSession,
+                        snapshot.traceRevision,
+                        snapshot.traceRequest,
+                        snapshot.sequence,
+                        snapshot.bytes.length);
                     box.pendingBytes -= snapshot.bytes.length;
                     box.snapshots.removeFirst();
                     if (box.snapshots.isEmpty()) iterator.remove();
