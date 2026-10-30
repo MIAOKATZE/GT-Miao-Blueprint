@@ -16,6 +16,7 @@ val hologramTestClasspath = sourceSets.getByName("test").runtimeClasspath +
     configurations.detachedConfiguration(
         dependencies.create("com.github.GTNewHorizons:NotEnoughItems:2.8.155-GTNH:dev"),
         dependencies.create("com.github.GTNewHorizons:CodeChickenCore:1.4.22:dev"),
+        dependencies.create("com.github.GTNewHorizons:ForgeMultipart:1.7.16:dev"),
         dependencies.create("org.lwjgl.lwjgl:lwjgl:2.9.4-nightly-20150209"),
         dependencies.create("org.lwjgl.lwjgl:lwjgl_util:2.9.4-nightly-20150209"),
         dependencies.create("it.unimi.dsi:fastutil:8.5.18"),
@@ -40,6 +41,32 @@ tasks.register<JavaExec>("runHologramTest") {
 }
 
 tasks.named("check") { dependsOn("runHologramTest") }
+
+tasks.register<JavaExec>("runSnapshotAeTaskRegression") {
+    group = "verification"
+    description = "Checks P0a complete AE reports and real test-instrumented decoder calls in an isolated JVM."
+    dependsOn("compileTestJava")
+    mainClass = "com.miaokatze.gtmb.hologram.HologramSnapshotAeTaskRegression"
+    classpath = tasks.named<JavaExec>("runHologramTest").get().classpath
+    val scratchDir = layout.buildDirectory.dir("hologram-ae-task-test")
+    workingDir(scratchDir)
+    doFirst { scratchDir.get().asFile.mkdirs() }
+}
+
+tasks.named("check") { dependsOn("runSnapshotAeTaskRegression") }
+
+tasks.register<JavaExec>("runEmptyPayloadRegression") {
+    group = "verification"
+    description = "Checks task-local empty payload facts, shared budgets and actual strict decoder counts."
+    dependsOn("compileTestJava")
+    mainClass = "com.miaokatze.gtmb.hologram.HologramEmptyPayloadRegression"
+    classpath = tasks.named<JavaExec>("runHologramTest").get().classpath
+    val scratchDir = layout.buildDirectory.dir("hologram-empty-payload-test")
+    workingDir(scratchDir)
+    doFirst { scratchDir.get().asFile.mkdirs() }
+}
+
+tasks.named("check") { dependsOn("runEmptyPayloadRegression") }
 
 tasks.register<JavaExec>("runBlueprintValidationBenchmark") {
     group = "verification"

@@ -1190,7 +1190,8 @@ final class HologramSnapshots {
         NBTTagCompound sourcePayload = null;
         java.io.IOException payloadFailure = null;
         try {
-            NBTTagCompound network = sourcePayload = HologramBlueprintNbt.decode(c.tileNbt);
+            NBTTagCompound network = sourcePayload = context.validation == null ? HologramBlueprintNbt.decode(c.tileNbt)
+                : context.validation.decodePayload(c.tileNbt);
             if (network != null && network.hasKey(HologramNetworkBindings.GROUP)) {
                 String group = HologramNetworkBindings.group(network);
                 row.setString("networkGroup", group);

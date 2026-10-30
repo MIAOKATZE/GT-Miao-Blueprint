@@ -14,6 +14,7 @@ final class HologramSnapshotAeTask {
     private final HologramSession s;
     private final NBTTagCompound state;
     private final boolean draftOnly;
+    private final HologramBlueprintValidationCache validation;
     private final Map<String, HologramAePolicy.Issue> issues = new LinkedHashMap<>();
     private final Map<String, HologramAeBlueprint.Analysis> analyses = new LinkedHashMap<>();
     private final java.util.Set<String> historicalPositions = new java.util.HashSet<>();
@@ -25,6 +26,7 @@ final class HologramSnapshotAeTask {
         this.s = s;
         this.state = state;
         draftOnly = s.localPlanPending && !s.localPlanError.isEmpty();
+        validation = s.virtualPreset == null ? null : new HologramBlueprintValidationCache(s.virtualPreset);
     }
 
     String phase() {
@@ -116,9 +118,10 @@ final class HologramSnapshotAeTask {
     }
 
     private void analyze(HologramCapture.Cell cell) throws IOException {
-        if (!HologramAePolicy.handles(cell.block, cell.tileNbt)) return;
-        HologramAeBlueprint.Analysis analysis = HologramAeBlueprint
-            .analyze(cell.block, cell.meta, HologramBlueprintNbt.decode(cell.tileNbt));
+        NBTTagCompound payload = validation == null ? HologramBlueprintNbt.decode(cell.tileNbt)
+            : validation.decodePayload(cell.tileNbt);
+        if (!HologramAeBlueprint.supports(cell.block, payload)) return;
+        HologramAeBlueprint.Analysis analysis = HologramAeBlueprint.analyze(cell.block, cell.meta, payload);
         if (!analysis.issues.isEmpty() || historicalPositions.contains(HologramValues.position(cell)))
             analyses.put(HologramValues.position(cell), analysis);
         for (HologramAeBlueprint.Issue source : analysis.issues) {
