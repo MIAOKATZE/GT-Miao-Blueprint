@@ -13,6 +13,8 @@ import gregtech.api.interfaces.metatileentity.IMetaTileEntityPipe;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.api.metatileentity.MetaPipeEntity;
 import gregtech.api.metatileentity.implementations.MTEHatch;
+import gregtech.api.render.TextureFactory;
+import gregtech.common.tileentities.machines.MTEHatchCraftingInputME;
 
 /** Read-only GT texture access across the inventory-model API introduced after beta2. */
 final class HologramMachineTextures {
@@ -93,6 +95,7 @@ final class HologramMachineTextures {
                     textures[side] = side == front
                         ? active ? hatch.getTexturesActive(background) : hatch.getTexturesInactive(background)
                         : new ITexture[] { background };
+                    if (side == front) textures[side] = capturedCraftingColor(machine, textures[side], color);
                 }
                 return textures;
             }
@@ -109,7 +112,7 @@ final class HologramMachineTextures {
                         active,
                         (redstone & (1 << side)) != 0);
                     if (!empty(world)) {
-                        textures[side] = world;
+                        textures[side] = side == front ? capturedCraftingColor(machine, world, color) : world;
                         textureSides[side] = side;
                     }
                 } catch (RuntimeException requiresWorldTile) {}
@@ -117,6 +120,16 @@ final class HologramMachineTextures {
             return textures;
         }
         return resolve(machine, front, textureSides);
+    }
+
+    private static ITexture[] capturedCraftingColor(IMetaTileEntity machine, ITexture[] textures, int color) {
+        // This native hatch reads its prototype base color instead of the getTexture color argument.
+        // Keep its buffer/bus overlay and replace only the color layer using the captured instance.
+        if (machine.getClass() == MTEHatchCraftingInputME.class) {
+            return new ITexture[] { textures[0], textures[1],
+                TextureFactory.of(Textures.BlockIcons.OVERLAY_ME_CRAFTING_INPUT_COLORS[color + 1]) };
+        }
+        return textures;
     }
 
     /** GT's single-ended pipes use the opposite end's texture but retain their original geometry mask. */

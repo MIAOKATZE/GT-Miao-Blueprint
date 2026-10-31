@@ -87,10 +87,7 @@ public final class HologramCapabilities {
             if (((MTEIndustrialCokeOven) context).getCoilTier() < HeatingCoilLevel.MAX.getTier() + 1) {
                 range(result, "length", "焦炉构造分段参数", 16, " 段");
             } else {
-                Row length = result.add("length", "长度（控制器实际线圈为 MAX，当前由主信号决定）", "inactive");
-                length.editable = true;
-                Row slices = result.add("main", "主信号（当前焦炉分段数量）", "master");
-                for (int raw = 1; raw <= 16; raw++) slices.option(raw, raw + " 段", null);
+                result.add("length", "焦炉构造分段参数（MAX 线圈，不受普通 16 段上限限制）", "size");
             }
         }
         return result;

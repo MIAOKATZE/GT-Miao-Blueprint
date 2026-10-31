@@ -14,9 +14,9 @@ tasks.test {
 
 val hologramTestClasspath = sourceSets.getByName("test").runtimeClasspath +
     configurations.detachedConfiguration(
-        dependencies.create("com.github.GTNewHorizons:NotEnoughItems:2.8.155-GTNH:dev"),
+        dependencies.create("com.github.GTNewHorizons:NotEnoughItems:2.8.171-GTNH:dev"),
         dependencies.create("com.github.GTNewHorizons:CodeChickenCore:1.4.22:dev"),
-        dependencies.create("com.github.GTNewHorizons:ForgeMultipart:1.7.16:dev"),
+        dependencies.create("com.github.GTNewHorizons:ForgeMultipart:1.7.18:dev"),
         dependencies.create("org.lwjgl.lwjgl:lwjgl:2.9.4-nightly-20150209"),
         dependencies.create("org.lwjgl.lwjgl:lwjgl_util:2.9.4-nightly-20150209"),
         dependencies.create("it.unimi.dsi:fastutil:8.5.18"),
@@ -24,8 +24,8 @@ val hologramTestClasspath = sourceSets.getByName("test").runtimeClasspath +
         dependencies.create("curse.maven:ic2-242638:2353971"),
         dependencies.create("org.joml:joml:1.10.8"),
         dependencies.create("xyz.wagyourtail.jvmdowngrader:jvmdowngrader-java-api:1.3.5:downgraded-8"),
-        dependencies.create("com.github.GTNewHorizons:ForestryMC:4.11.39:dev"),
-        dependencies.create("com.github.GTNewHorizons:Nuclear-Control:2.7.16:dev"),
+        dependencies.create("com.github.GTNewHorizons:ForestryMC:4.11.40:dev"),
+        dependencies.create("com.github.GTNewHorizons:Nuclear-Control:2.7.17:dev"),
         dependencies.create("curse.maven:minefactory-reloaded-66672:2366150")
     ).apply { isTransitive = false }
 
@@ -138,7 +138,7 @@ abstract class ReleaseGuiBridgeArguments : CommandLineArgumentProvider {
 
 val releaseGuiBridgeAsm = configurations.detachedConfiguration(dependencies.create("org.ow2.asm:asm:9.8"))
 val releaseGuiMuiRuntime = configurations.detachedConfiguration(
-    dependencies.create("com.github.GTNewHorizons:ModularUI2:2.3.92-1.7.10")
+    dependencies.create("com.github.GTNewHorizons:ModularUI2:2.3.94-1.7.10")
 ).apply { isTransitive = false }
 val releaseGuiNormalJar = tasks.named<com.gtnewhorizons.retrofuturagradle.mcp.ReobfuscatedJar>("reobfJar").flatMap { it.archiveFile }
 val releaseGuiSrgRuntime = layout.buildDirectory.file("rfg/srg_merged_minecraft.jar")

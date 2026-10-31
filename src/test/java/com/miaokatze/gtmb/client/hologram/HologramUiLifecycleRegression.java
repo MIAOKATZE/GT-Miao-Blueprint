@@ -28,7 +28,7 @@ public final class HologramUiLifecycleRegression {
             isolatedGraphsKeepSeparateHandlers();
             boundedWorkspaceGraphs();
         } catch (ReflectiveOperationException failure) {
-            throw new AssertionError("Cannot inspect MUI2 2.3.92 local dialog state", failure);
+            throw new AssertionError("Cannot inspect MUI2 2.3.94 local dialog state", failure);
         }
     }
 

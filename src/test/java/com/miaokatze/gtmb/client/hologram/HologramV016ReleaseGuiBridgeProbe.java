@@ -270,7 +270,7 @@ public final class HologramV016ReleaseGuiBridgeProbe implements Opcodes {
             return;
         }
         if (args.length != 3) throw new IllegalArgumentException(
-            "normal.jar srg_merged_minecraft.jar forge_patched_minecraft.jar [normal-mui2-2.3.92.jar]");
+            "normal.jar srg_merged_minecraft.jar forge_patched_minecraft.jar [normal-mui2-2.3.94.jar]");
         Isolated loader = new Isolated();
         List<String> contract = new ArrayList<String>();
         ZipFile target = new ZipFile(new File(args[0]));
@@ -430,8 +430,8 @@ public final class HologramV016ReleaseGuiBridgeProbe implements Opcodes {
                     } finally {
                         in.close();
                     }
-                    if (!new String(out.toByteArray(), "UTF-8").contains("2.3.92"))
-                        throw new AssertionError("Actual MUI2 2.3.92 normal library required");
+                    if (!new String(out.toByteArray(), "UTF-8").contains("2.3.94"))
+                        throw new AssertionError("Actual MUI2 2.3.94 normal library required");
                 }
             }
         }
@@ -491,10 +491,10 @@ public final class HologramV016ReleaseGuiBridgeProbe implements Opcodes {
         Collections.sort(screens);
         System.out.println(
             "{\"status\":" + quote(failures.isEmpty() ? "PASS" : "FAIL")
-                + ",\"scope\":\"actual unchanged normal GTMB and MUI2 2.3.92 bytes; static inheritance/member ABI witness; no class loading, FML, GL or native GUI claim\""
+                + ",\"scope\":\"actual unchanged normal GTMB and MUI2 2.3.94 bytes; static inheritance/member ABI witness; no class loading, FML, GL or native GUI claim\""
                 + ",\"passed\":"
                 + (failures.isEmpty() ? 9 : 0)
-                + ",\"hostPorts\":9,\"mui2Version\":\"2.3.92\""
+                + ",\"hostPorts\":9,\"mui2Version\":\"2.3.94\""
                 + ",\"referencesChecked\":"
                 + checked.size()
                 + ",\"screens\":"
