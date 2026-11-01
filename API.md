@@ -53,6 +53,8 @@ GTMBExtensions.Registration source = StructureSources.register(
 
 来源接口目前服务于 `MTEEnhancedMultiBlockBase` 控制器。原 `register(id, type, Source)` 和 `Source.describe(controller, detachedTrigger)` 保持兼容：返回 null 表示允许继续 native `construct(..., true)` 和 buildPiece 捕获；非空 Plan 不调用 native construct 或控制器的 definition 工厂。只匹配精确类，子类可能改变验收语义，不自动继承适配；同一精确类不能重复注册，也不能由新旧两种注册同时占用。
 
+native fallback 也捕获直接调用 StructureLib 默认 `IStructureDefinition.buildOrHints` 的入口，先取消原生遍历，再沿既有只读元素解析采集。它使用实际调用的 definition，支持同世界、与控制器等效的 `ExtendedFacing` 及可归一化的相对 XYZ 锚点；续批仍复用同一图并复核来源。当前无法表示跨世界、不同有效朝向、同次多 definition 或混用旧 `buildPiece` 与直接入口的声明，这些情况明确拒绝。只记录几何不授予未知元素回调或施工资格；自定义重写此默认方法且不委托原方法的入口不在该钩子覆盖内。
+
 需要区分用途、明确拒绝或跨批复核时，使用 `registerContextual(id, type, ContextualSource)`。回调接收 `CaptureIntent.NEW_TEMPLATE` 或 `CaptureIntent.LIVE_SNAPSHOT`，返回 `Resolution.ready(plan, readSet)` 或 `Resolution.unsupported(failureCode)`。新建模板是默认用途；区域采集显式使用现场快照。用途改变需要重新采集，不能只修改显示标题。
 
 | 解析结果 | 含义与行为 |

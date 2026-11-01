@@ -54,6 +54,7 @@ public final class HologramCapture {
     private final List<SourceBinding> inheritedSources = new ArrayList<>();
     private final List<StructureSources.ReadSet> observations = new ArrayList<>();
     private String sourceRejection = "";
+    private boolean buildPieceCalls, buildOrHintsCalls;
     final List<Piece> pieces = new ArrayList<>();
     final List<Cell> cells = new ArrayList<>();
     final Map<String, Cell> positions = new HashMap<>();
@@ -111,12 +112,56 @@ public final class HologramCapture {
     public static boolean piece(Object controller, String name, ItemStack trigger, boolean hints, int a, int b, int c) {
         HologramCapture capture = ACTIVE.get();
         if (capture == null || capture.context != controller || !hints) return false;
-        if (System.nanoTime() > capture.deadline) {
-            capture.fail("TIME_LIMIT");
+        if (capture.buildOrHintsCalls) throw capture.rejectedBuild("BUILD_OR_HINTS_MIXED: 一次采集混用了两种声明入口，无法确认同一份结构图");
+        capture.buildPieceCalls = true;
+        return capture.recordPiece(name, trigger, a, b, c);
+    }
+
+    /** Captures StructureLib's direct entry before its native element traversal, including relative world anchors. */
+    public static boolean piece(IStructureDefinition<?> definition, Object controller, ItemStack trigger, String name,
+        World world, ExtendedFacing facing, int x, int y, int z, int a, int b, int c, boolean hints) {
+        HologramCapture capture = ACTIVE.get();
+        if (capture == null) return false;
+        if (capture.context != controller || !(controller instanceof MTEEnhancedMultiBlockBase<?>))
+            throw capture.rejectedBuild("BUILD_OR_HINTS_CONTEXT: 结构声明切换了控制器上下文，当前采集无法表示");
+        if (!hints) throw capture.rejectedBuild("BUILD_OR_HINTS_MODE: 只读采集不能执行原生建造");
+        if (capture.buildPieceCalls) throw capture.rejectedBuild("BUILD_OR_HINTS_MIXED: 一次采集混用了两种声明入口，无法确认同一份结构图");
+        MTEEnhancedMultiBlockBase<?> machine = (MTEEnhancedMultiBlockBase<?>) controller;
+        IGregTechTileEntity tile = machine.getBaseMetaTileEntity();
+        if (world != tile.getWorld()) throw capture.rejectedBuild("BUILD_OR_HINTS_WORLD: 结构声明使用了不同世界，当前采集无法表示");
+        ExtendedFacing controllerFacing = machine.getExtendedFacing();
+        if (facing != controllerFacing && facing != controllerFacing.getDuplicate())
+            throw capture.rejectedBuild("BUILD_OR_HINTS_FACING: 结构声明使用了不同方向，当前采集无法表示");
+        if (capture.definition != null && capture.definition != definition)
+            throw capture.rejectedBuild("BUILD_OR_HINTS_DEFINITION: 一次采集使用了多份结构图，当前采集无法表示");
+        int[] delta = { Math.subtractExact(x, tile.getXCoord()), Math.subtractExact(y, tile.getYCoord()),
+            Math.subtractExact(z, tile.getZCoord()) };
+        int[] relative = new int[3];
+        controllerFacing.getOffsetABC(delta, relative);
+        // native: shiftedXYZ + facing(localABC - offsetABC)
+        // capture: controllerXYZ + facing(localABC - (offsetABC - shiftABC))
+        capture.definition = definition;
+        capture.buildOrHintsCalls = true;
+        return capture.recordPiece(
+            name,
+            trigger,
+            Math.subtractExact(a, relative[0]),
+            Math.subtractExact(b, relative[1]),
+            Math.subtractExact(c, relative[2]));
+    }
+
+    private boolean recordPiece(String name, ItemStack signal, int a, int b, int c) {
+        if (System.nanoTime() > deadline) {
+            fail("TIME_LIMIT");
             throw new CaptureLimitException();
         }
-        capture.pieces.add(new Piece(name, a, b, c, trigger == null ? capture.trigger.copy() : trigger.copy()));
+        pieces.add(new Piece(name, a, b, c, signal == null ? trigger.copy() : signal.copy()));
         return true;
+    }
+
+    private IllegalStateException rejectedBuild(String reason) {
+        invalidateSource(reason);
+        return new IllegalStateException(reason);
     }
 
     public static boolean hint(World world, int x, int y, int z, Block block, int meta) {

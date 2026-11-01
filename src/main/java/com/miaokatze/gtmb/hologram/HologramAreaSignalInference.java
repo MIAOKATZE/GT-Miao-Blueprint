@@ -161,7 +161,7 @@ final class HologramAreaSignalInference {
         while (signalIndex < signals.size() && System.nanoTime() < deadline) {
             String id = signals.get(signalIndex);
             if (ordered == null) {
-                // Probe buildPiece calls only. Equal piece layouts never repeat a full structure traversal.
+                // Read piece declarations only. Equal layouts never repeat a full structure traversal.
                 for (; value <= 64 && System.nanoTime() < deadline; value++) {
                     ItemStack proposed = signal(trigger, id, value);
                     declarationQueries++;
@@ -549,7 +549,7 @@ final class HologramAreaSignalInference {
             com.miaokatze.gtmb.api.StructureSources.Plan supplied = resolution.plan;
             if (supplied == null) {
                 result = HologramCapture.declarationPieces((IConstructable) machine, proposed);
-                result.definition = machine.getStructureDefinition();
+                if (result.definition == null) result.definition = machine.getStructureDefinition();
                 result.bindPreparedSource(machine, machine.getExtendedFacing(), resolution);
                 return result;
             }

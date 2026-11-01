@@ -85,7 +85,8 @@ final class HologramVirtualStructureEditing {
             IStructureDefinition<?> definition;
             if (supplied == null) {
                 declarations = HologramCapture.declarationPieces((IConstructable) machine, trigger);
-                definition = machine.getStructureDefinition();
+                definition = declarations.definition == null ? machine.getStructureDefinition()
+                    : declarations.definition;
             } else {
                 definition = supplied.definition;
                 for (com.miaokatze.gtmb.api.StructureSources.Piece piece : supplied.pieces) declarations.pieces

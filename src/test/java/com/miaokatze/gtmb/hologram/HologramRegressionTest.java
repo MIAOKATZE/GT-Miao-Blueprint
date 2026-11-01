@@ -112,6 +112,9 @@ public final class HologramRegressionTest {
         cases.put(
             "dynamic_structure_definitions_are_frozen_per_capture_and_resumed_across_pieces",
             HologramDynamicDefinitionRegression::run);
+        cases.put(
+            "structurelib_direct_build_or_hints_offsets_and_capture_boundaries",
+            HologramBuildOrHintsRegression::run);
         cases.put("community_extension_registrations_and_detached_snapshot_processing", () -> {
             try {
                 HologramCommunityApiRegression.run();
