@@ -615,7 +615,9 @@ final class HologramMaterialQuoteRegression {
         java.lang.reflect.Field provider = net.minecraft.world.World.class.getDeclaredField("provider");
         provider.setAccessible(true);
         provider.set(world, new net.minecraft.world.WorldProviderSurface());
-        EntityPlayerMP player = materialPlayer();
+        world.capturedBlockSnapshots = new java.util.ArrayList<>();
+        EntityPlayerMP player = (EntityPlayerMP) unsafe.allocateInstance(PlacementPlayer.class);
+        player.inventory = new net.minecraft.entity.player.InventoryPlayer(player);
         java.lang.reflect.Field watcherField = net.minecraft.entity.Entity.class.getDeclaredField("dataWatcher");
         watcherField.setAccessible(true);
         net.minecraft.entity.DataWatcher watcher = new net.minecraft.entity.DataWatcher(player);
@@ -658,39 +660,13 @@ final class HologramMaterialQuoteRegression {
             session.materialContext = mainSource(player);
             session.capture = new HologramCapture(null, new ItemStack(Items.feather));
             ItemStack stone = new ItemStack(net.minecraft.init.Blocks.stone);
-            int[] nativePlacements = { 0 };
-            com.gtnewhorizon.structurelib.structure.IStructureElement<Object> element = new com.gtnewhorizon.structurelib.structure.IStructureElement<Object>() {
-
-                public boolean check(Object ignored, net.minecraft.world.World target, int x, int y, int z) {
-                    return target.getBlock(x, y, z) == net.minecraft.init.Blocks.stone;
-                }
-
-                public boolean spawnHint(Object ignored, net.minecraft.world.World target, int x, int y, int z,
-                    ItemStack trigger) {
-                    return true;
-                }
-
-                public boolean placeBlock(Object ignored, net.minecraft.world.World target, int x, int y, int z,
-                    ItemStack trigger) {
-                    throw new AssertionError("placement must use the survival source callback");
-                }
-
-                public PlaceResult survivalPlaceBlock(Object ignored, net.minecraft.world.World target, int x, int y,
-                    int z, ItemStack trigger,
-                    com.gtnewhorizon.structurelib.structure.AutoPlaceEnvironment environment) {
-                    require(
-                        environment.getSource()
-                            .takeOne(stone, false),
-                        "creative transaction supplies the native shell");
-                    nativePlacements[0]++;
-                    return target.setBlock(x, y, z, net.minecraft.init.Blocks.stone, 0, 3) ? PlaceResult.ACCEPT
-                        : PlaceResult.REJECT;
-                }
-            };
-            HologramCapture.Cell cell = new HologramCapture.Cell(element, 0, 64, 0);
+            // Match physical saved-blueprint projection; exercise the actual ItemBlock payment path.
+            HologramCapture.Cell cell = new HologramCapture.Cell(null, 0, 64, 0);
             cell.block = net.minecraft.init.Blocks.stone;
             cell.blueprintBlock = cell.blueprintItem = "minecraft:stone";
+            cell.userPosition = true;
             session.capture.cells.add(cell);
+            session.pins.put(0, stone);
             session.planTargets.add(stone);
             require(
                 HologramDecorationVoucher.covered(cell.block, stone),
@@ -815,7 +791,7 @@ final class HologramMaterialQuoteRegression {
                 "creative voucher placement commits successfully");
             require(
                 "placed".equals(cell.status) && world.placed == net.minecraft.init.Blocks.stone
-                    && nativePlacements[0] == 1
+                    && world.writes == 1
                     && session.jobVoucherConsumed == !creative
                     && player.inventory.mainInventory[1] == voucher
                     && voucher.stackSize == (creative ? 2 : 1)
@@ -842,38 +818,15 @@ final class HologramMaterialQuoteRegression {
         s.materialSettings.containers = s.materialSettings.me = false;
         s.materialContext = mainSource(player);
         s.capture = new HologramCapture(null, new ItemStack(Items.feather));
-        com.gtnewhorizon.structurelib.structure.IStructureElement<Object> element = new com.gtnewhorizon.structurelib.structure.IStructureElement<Object>() {
-
-            public boolean check(Object ignored, net.minecraft.world.World target, int x, int y, int z) {
-                return target.getBlock(x, y, z) == decoration;
-            }
-
-            public boolean spawnHint(Object ignored, net.minecraft.world.World target, int x, int y, int z,
-                ItemStack trigger) {
-                return true;
-            }
-
-            public boolean placeBlock(Object ignored, net.minecraft.world.World target, int x, int y, int z,
-                ItemStack trigger) {
-                throw new AssertionError("Use normal survival callback even for creative decoration");
-            }
-
-            public PlaceResult survivalPlaceBlock(Object ignored, net.minecraft.world.World target, int x, int y, int z,
-                ItemStack trigger, com.gtnewhorizon.structurelib.structure.AutoPlaceEnvironment environment) {
-                require(
-                    environment.getSource()
-                        .takeOne(shell, false),
-                    "creative callback receives the exact decoration shell");
-                return target.setBlock(x, y, z, decoration, 0, 3) ? PlaceResult.ACCEPT : PlaceResult.REJECT;
-            }
-        };
-        HologramCapture.Cell cell = new HologramCapture.Cell(element, 0, 64, 0);
+        HologramCapture.Cell cell = new HologramCapture.Cell(null, 0, 64, 0);
         cell.block = decoration;
+        cell.userPosition = true;
         cell.blueprintBlock = cell.blueprintItem = String
             .valueOf(net.minecraft.block.Block.blockRegistry.getNameForObject(decoration));
         cell.tileNbt = HologramBlueprintNbt.encodeCanonical(decoration, new NBTTagCompound());
         require(!cell.tileNbt.isEmpty(), "fixture retains the canonical static-AE transport descriptor from old files");
         s.capture.cells.add(cell);
+        s.pins.put(0, shell);
         s.planTargets.add(shell);
         world.placed = null;
         require(
@@ -887,7 +840,7 @@ final class HologramMaterialQuoteRegression {
     private static final class CreativeVoucherWorld extends net.minecraft.world.WorldServer {
 
         net.minecraft.block.Block placed;
-        int reads;
+        int reads, writes;
 
         private CreativeVoucherWorld() {
             super(null, null, "creative-voucher", 0, null, null);
@@ -930,11 +883,35 @@ final class HologramMaterialQuoteRegression {
 
         public boolean setBlock(int x, int y, int z, net.minecraft.block.Block block, int meta, int flags) {
             placed = block;
+            writes++;
             return true;
+        }
+
+        public boolean canPlaceEntityOnSide(net.minecraft.block.Block block, int x, int y, int z, boolean replace,
+            int side, net.minecraft.entity.Entity entity, ItemStack stack) {
+            return true;
+        }
+
+        public void playSoundEffect(double x, double y, double z, String sound, float volume, float pitch) {}
+
+        public void removeTileEntity(int x, int y, int z) {
+            // This detached fixture has no tile entities.
         }
 
         public boolean setBlockMetadataWithNotify(int x, int y, int z, int meta, int flags) {
             return true;
+        }
+    }
+
+    private static final class PlacementPlayer extends EntityPlayerMP {
+
+        private PlacementPlayer() {
+            super(null, null, null, null);
+        }
+
+        @Override
+        public void addStat(net.minecraft.stats.StatBase statistic, int amount) {
+            // Actual ItemBlock placement has no server statistics store in this fixture.
         }
     }
 

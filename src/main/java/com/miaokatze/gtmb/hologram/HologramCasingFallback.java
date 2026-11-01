@@ -20,6 +20,15 @@ final class HologramCasingFallback {
 
     private HologramCasingFallback() {}
 
+    /** A structural casing alternative, independent of any controller's hidden minimum count. */
+    static boolean matches(HologramCapture.Cell cell, ItemStack material) {
+        if (material == null || !"hatch".equals(cell.role)) return false;
+        Target fallback = resolve(cell.element, cell.elementTrigger);
+        return fallback != null && Block.getBlockFromItem(material.getItem()) == fallback.block
+            && material.getItem()
+                .getMetadata(material.getItemDamage()) == fallback.meta;
+    }
+
     static Target resolve(IStructureElement<?> element) {
         return resolve(element, null);
     }

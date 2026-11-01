@@ -289,6 +289,7 @@ final class HologramVoucherScreen extends ModularScreen {
             request.setTag(KEYS[i], list);
         }
         pending = true;
+        HologramClient.stampSemanticRevision(request);
         HologramNetwork.sendAction(request);
     }
 

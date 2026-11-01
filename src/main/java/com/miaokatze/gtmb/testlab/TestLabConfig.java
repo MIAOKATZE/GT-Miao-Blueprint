@@ -191,7 +191,7 @@ final class TestLabConfig {
 
     String compositeLayout() {
         StringBuilder out = new StringBuilder("composite-v1;");
-        for (TestLabZone zone : zones.subList(5, zones.size())) out.append(zone.id)
+        for (TestLabZone zone : zones) if (zone.id.startsWith("composite-")) out.append(zone.id)
             .append(':')
             .append(zone.x)
             .append(',')

@@ -15,6 +15,8 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.tileentity.TileEntity;
 
+import com.miaokatze.gtmb.api.Declarations;
+
 import gregtech.api.GregTechAPI;
 import gregtech.api.interfaces.IHatchElement;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
@@ -31,6 +33,8 @@ final class HologramHatchProfiles {
 
     static String role(HologramSession s, HologramCapture.Cell cell, ItemStack stack) {
         if (stack == null || gregtech.common.blocks.ItemMachines.getMetaTileEntity(stack) == null) return "";
+        Declarations.PureElement<?> declaration = HologramElementCatalog.pure(cell.element);
+        if (declaration != null) return declaration.candidateRoleId(stack);
         for (com.gtnewhorizon.structurelib.structure.IStructureElement<?> part : HologramElementCatalog
             .parts(cell.element))
             for (IHatchElement<?> type : HologramHatchPolicy.declared(part)) if (HologramHatchPolicy
@@ -191,8 +195,8 @@ final class HologramHatchProfiles {
         int[] casingCosts = new int[positions.size()];
         for (int p = 0; p < positions.size(); p++) {
             HologramCapture.Cell cell = s.capture.cells.get(positions.get(p));
-            casingCosts[p] = HologramIndustrialConstraints
-                .casing(cell, HologramBlockIdentity.materialStack(cell.block, cell.meta)) ? 1 : 0;
+            casingCosts[p] = HologramCasingFallback
+                .matches(cell, HologramBlockIdentity.materialStack(cell.block, cell.meta)) ? 1 : 0;
         }
         int[] owners = assign(choices, positions.size(), casingCosts, budget);
         if (owners == null) throw new IOException("此结构没有足够的声明候选位置容纳该仓室搭配；规划未修改");
@@ -203,7 +207,6 @@ final class HologramHatchProfiles {
         for (HologramCapture.Cell cell : s.capture.cells)
             if (HologramSessionPolicy.editableStructureCell(s, cell)) HologramCellPolicy.hatchRequirements(s, cell)
                 .forEach((type, count) -> quotas.merge(type, count, Math::max));
-        int casings = 0;
         for (int i = 0; i < s.capture.cells.size(); i++) {
             HologramCapture.Cell cell = s.capture.cells.get(i);
             if (!HologramSessionPolicy.editableStructureCell(s, cell)) continue;
@@ -217,7 +220,6 @@ final class HologramHatchProfiles {
                     ((IGregTechTileEntity) actual).getMetaTileID());
                 else target = HologramBlockIdentity.materialStack(cell.block, cell.meta);
             }
-            if (HologramIndustrialConstraints.casing(cell, target)) casings++;
             if (cell.anchor || target == null) continue;
             gregtech.api.interfaces.metatileentity.IMetaTileEntity tile = gregtech.common.blocks.ItemMachines
                 .getMetaTileEntity(target);
@@ -226,8 +228,7 @@ final class HologramHatchProfiles {
         }
         if (quotas.values()
             .stream()
-            .anyMatch(count -> count > 0) || casings < HologramIndustrialConstraints.minimumCasings(s.context))
-            throw new IOException("此搭配未满足当前结构的仓室配额或最低壳体数量；规划未修改");
+            .anyMatch(count -> count > 0)) throw new IOException("此搭配未满足当前结构的声明仓室配额；规划未修改");
         return result;
     }
 

@@ -45,6 +45,7 @@ final class HologramPresetWorkflow {
         }
         HologramPresets.Preset preset = new HologramPresets.Preset();
         if (directSource != null) preset.processingNbt = directSource.processingNbt;
+        if (directSource != null) preset.semanticNbt = directSource.semanticNbt;
         preset.name = name == null ? "" : name.trim();
         preset.prompt = s.blueprintPrompt;
         preset.hintAreas.addAll(s.blueprintHintAreas);

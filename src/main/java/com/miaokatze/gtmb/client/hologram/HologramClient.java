@@ -54,6 +54,19 @@ public final class HologramClient {
     private static boolean localAreaAwaitingBegin, localAreaFinishing, localAreaCancelling;
 
     static volatile HologramState state;
+
+    /** Direct world gestures carry the same revision evidence as window commands. */
+    static void stampSemanticRevision(NBTTagCompound request) {
+        HologramState current = state;
+        if (current == null || !current.session.equals(request.getString("session"))
+            || !current.data.hasKey("sourceRevision", 4)) return;
+        if (!request.hasKey("sourceRevision", 4))
+            request.setLong("sourceRevision", current.data.getLong("sourceRevision"));
+        if (!request.hasKey("semanticPlanRevision", 4)) request.setLong(
+            "semanticPlanRevision",
+            request.hasKey("planRevision", 4) ? request.getLong("planRevision") : current.data.getLong("planRevision"));
+    }
+
     private static long editorWorkspaceEpoch;
     private static long editorSequence;
     private static String cutWorkspaceRequestId = "";
@@ -491,6 +504,7 @@ public final class HologramClient {
                 input.setString("action", air ? "useAir" : "useBlock");
             }
         try {
+            HologramClient.stampSemanticRevision(input);
             HologramNetwork.sendAction(input);
         } catch (RuntimeException failure) {
             if (pendingPositionLock.rejected(input)) {
@@ -1028,6 +1042,7 @@ public final class HologramClient {
         request.setBoolean(
             "vertical",
             Keyboard.isKeyDown(Keyboard.KEY_LCONTROL) || Keyboard.isKeyDown(Keyboard.KEY_RCONTROL));
+        HologramClient.stampSemanticRevision(request);
         HologramNetwork.sendAction(request);
     }
 
@@ -1088,6 +1103,7 @@ public final class HologramClient {
         request.setInteger("dx", offset[0]);
         request.setInteger("dy", offset[1]);
         request.setInteger("dz", offset[2]);
+        HologramClient.stampSemanticRevision(request);
         HologramNetwork.sendAction(request);
     }
 
@@ -1304,6 +1320,7 @@ public final class HologramClient {
             request.setLong("uiSequence", sequence);
             HologramBackgroundTasks.command(state.session, sequence, "importArea");
         }
+        HologramClient.stampSemanticRevision(request);
         HologramNetwork.sendAction(request);
     }
 
@@ -1480,6 +1497,7 @@ public final class HologramClient {
             localAreaCommandSequence = sequence;
             HologramBackgroundTasks.command(localAreaSession, sequence, "importArea");
         }
+        HologramClient.stampSemanticRevision(request);
         HologramNetwork.sendAction(request);
     }
 
@@ -1504,6 +1522,7 @@ public final class HologramClient {
         openCachedWorkspace();
         NBTTagCompound request = new NBTTagCompound();
         request.setString("action", "openSettings");
+        HologramClient.stampSemanticRevision(request);
         HologramNetwork.sendAction(request);
     }
 
@@ -1887,6 +1906,7 @@ public final class HologramClient {
         recovery.setString("op", "requestFullSnapshot");
         recovery.setString("session", session);
         recovery.setLong("planRevision", state == null ? -1 : state.data.getLong("planRevision"));
+        HologramClient.stampSemanticRevision(recovery);
         HologramNetwork.sendAction(recovery);
         return true;
     }
@@ -2082,6 +2102,7 @@ public final class HologramClient {
         request.setInteger("deidentificationLevel", level);
         request.setInteger("level", level);
         request.setBoolean("deidentificationChosen", true);
+        HologramClient.stampSemanticRevision(request);
         HologramNetwork.sendAction(request);
     }
 

@@ -28,6 +28,10 @@ final class HologramAreaDeclarations {
             if ((cell.element != null || cell.anchor) && !ids.contains(own.id)) ids.add(own.id);
             HologramBlueprintData.setMemberships(cell, ids);
             cell.candidates = null;
+            for (String id : ids) {
+                HologramArea.Structure member = area.structures.get(id);
+                if (member != null && member != own && member.capture != null) s.capture.inheritSources(member.capture);
+            }
         }
     }
 
@@ -48,6 +52,7 @@ final class HologramAreaDeclarations {
         HologramSession cached = sessions.get(id);
         if (cached != null && cached.capture == structure.capture) return cached;
         HologramSession source = new HologramSession(s.player, structure.x, structure.y, structure.z, true, s.side);
+        source.captureIntent = com.miaokatze.gtmb.api.StructureSources.CaptureIntent.LIVE_SNAPSHOT;
         source.areaStructureId = id;
         source.main = structure.capture.trigger.stackSize;
         source.mainExplicit = false;

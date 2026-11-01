@@ -21,6 +21,13 @@ public final class HologramRegressionTest {
     public static void main(String[] args) throws Exception {
         if (!MinecraftTestBootstrap.enter(HologramRegressionTest.class, args)) return;
         Map<String, Runnable> cases = new LinkedHashMap<>();
+        cases.put(
+            "direct_world_gestures_keep_source_and_plan_revisions",
+            com.miaokatze.gtmb.client.hologram.HologramSemanticRequestRegression::run);
+        cases.put("contextual_sources_intent_revision_read_set_and_purity", HologramSourceContractRegression::run);
+        cases.put("public_pure_elements_world_identity_and_reader_lifecycle", HologramPureElementsRegression::run);
+        cases.put("fixed_hatch_markers_do_not_execute_controller_callbacks", HologramHatchHintCaptureRegression::run);
+        cases.put("unknown_hatch_callbacks_and_semantic_metadata_boundary", HologramSemanticSafetyRegression::run);
         cases.put("blueprint_actual_cell_limits_and_sparse_area_scanning", HologramBlueprintLimitsRegression::run);
         cases.put(
             "blueprint_client_cell_admission_is_strict_and_atomic",
@@ -88,6 +95,7 @@ public final class HologramRegressionTest {
             "snapshot_publication_preserves_fifo_and_cancels_stale_generations",
             HologramSnapshotPublishRegression::run);
         cases.put("snapshot_ae_single_decode_preserves_complete_reports", HologramSnapshotAeTaskRegression::run);
+        cases.put("snapshot_metadata_keeps_unloaded_world_unknown", HologramLoadedMetadataRegression::run);
         cases.put("empty_payload_facts_keep_task_scope_and_complete_rows", HologramEmptyPayloadRegression::run);
         cases.put(
             "client_progress_is_factual_session_bound_and_render_only",
@@ -104,6 +112,9 @@ public final class HologramRegressionTest {
         cases.put(
             "dynamic_structure_definitions_are_frozen_per_capture_and_resumed_across_pieces",
             HologramDynamicDefinitionRegression::run);
+        cases.put(
+            "structurelib_direct_build_or_hints_offsets_and_capture_boundaries",
+            HologramBuildOrHintsRegression::run);
         cases.put("community_extension_registrations_and_detached_snapshot_processing", () -> {
             try {
                 HologramCommunityApiRegression.run();
@@ -284,6 +295,7 @@ public final class HologramRegressionTest {
         cases.put(
             "multiblock_candidates_and_configuration_are_structure_scoped",
             HologramStructureIsolationRegression::run);
+        cases.put("native_factories_partial_candidates_and_protected_unknowns", HologramNativeAdmissionRegression::run);
         cases.put(
             "blueprint_inventory_fluid_and_wireless_resource_transactions",
             HologramBlueprintResourcesRegression::run);
