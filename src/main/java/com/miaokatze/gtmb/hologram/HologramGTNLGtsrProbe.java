@@ -3,6 +3,8 @@ package com.miaokatze.gtmb.hologram;
 import java.io.File;
 import java.io.FileInputStream;
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -12,12 +14,14 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
+import net.minecraft.block.Block;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.nbt.NBTTagString;
 import net.minecraft.tileentity.TileEntity;
+import net.minecraft.world.ChunkPosition;
 import net.minecraft.world.World;
 import net.minecraft.world.WorldServer;
 import net.minecraft.world.chunk.Chunk;
@@ -26,6 +30,9 @@ import net.minecraftforge.common.util.FakePlayer;
 import net.minecraftforge.common.util.ForgeDirection;
 import net.minecraftforge.fluids.FluidRegistry;
 import net.minecraftforge.fluids.FluidStack;
+
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 
 import com.gtnewhorizon.structurelib.alignment.constructable.IConstructable;
 import com.gtnewhorizon.structurelib.structure.IStructureDefinition;
@@ -58,13 +65,14 @@ public final class HologramGTNLGtsrProbe {
     private static final String PRESSURE = "com.miaokatze.gtsr.common.machine.base.MTEPressureSteamCoolingHatch";
     private static final String OUTPUT = "gregtech.api.metatileentity.implementations.MTEHatchOutput";
     private static final String GTSR_SHA = "f53f1fe4d2118622f8a86a79d8b4db26dea4d8f3f60934fe332b7ac8509f5d9a";
+    private static final Logger LOG = LogManager.getLogger(HologramGTNLGtsrProbe.class);
 
     private HologramGTNLGtsrProbe() {}
 
     public static Run begin(WorldServer world, FakePlayer actor, int x, int y, int z) throws Exception {
         requireOwned(world, actor, x, y, z);
         for (int dx = 0; dx < 7; dx++) for (int dy = 0; dy < 7; dy++) for (int dz = 0; dz < 7; dz++) require(
-            world.blockExists(x + dx, y + dy, z + dz) && world.isAirBlock(x + dx, y + dy, z + dz)
+            world.blockExists(x + dx, y + dy, z + dz) && world.getBlock(x + dx, y + dy, z + dz) == Blocks.air
                 && world.getTileEntity(x + dx, y + dy, z + dz) == null,
             "GTSR integration requires one original empty, loaded 7x7x7 owned volume");
         return new Run(world, actor, x, y, z);
@@ -81,6 +89,8 @@ public final class HologramGTNLGtsrProbe {
         private final int originalSlot;
         private final NBTTagCompound report = new NBTTagCompound();
         private final NBTTagList rows = new NBTTagList();
+        private final NBTTagList restorationAttempts = new NBTTagList();
+        private final Field pendingTiles;
         private final boolean enhancement, pipeless;
         private int index, failures;
         private boolean finished, closed;
@@ -97,6 +107,13 @@ public final class HologramGTNLGtsrProbe {
             cz = z;
             inventory = actor.inventory.writeToNBT(new NBTTagList());
             originalSlot = actor.inventory.currentItem;
+            Field pending;
+            try {
+                pending = field(World.class, "field_147484_a");
+            } catch (NoSuchFieldException mapped) {
+                pending = field(World.class, "addedTileEntityList");
+            }
+            pendingTiles = pending;
             runId = TestLab.status()
                 .getString("runId");
             Map<String, ModContainer> mods = Loader.instance()
@@ -130,7 +147,7 @@ public final class HologramGTNLGtsrProbe {
                 "Actual placed controller checkMachine and onRunningTick; synthetic lEUt/progress only");
             report.setString(
                 "networkIsolation",
-                "No automatic tile tick between setup and cleanup; wireless owner UUID is null");
+                "Owned native tile ticks suppressed; GT base ownership retained; wireless network ownerUUID is null");
             report.setString(
                 "gtsrVersion",
                 mods.get("gtsr")
@@ -147,6 +164,9 @@ public final class HologramGTNLGtsrProbe {
             report.setIntArray("ownedVolumeMin", new int[] { x, y, z });
             report.setIntArray("ownedVolumeSize", new int[] { 7, 7, 7 });
             report.setTag("cases", rows);
+            report.setTag("restorationAttempts", restorationAttempts);
+            report.setTag("expectedActorInventory", inventory.copy());
+            report.setInteger("expectedActorSlot", originalSlot);
         }
 
         /** Each case completes setup, native calls and restoration in one server task step. */
@@ -163,20 +183,21 @@ public final class HologramGTNLGtsrProbe {
             row.setString("name", spec.name);
             row.setString("status", "RUNNING");
             row.setString("controllerClass", spec.air ? AIR : MIXER);
+            row.setTag("restorationAttempts", new NBTTagList());
             rows.appendTag(row);
             try {
                 execute(spec);
                 row.setString("status", "PASS");
             } catch (Exception | LinkageError failed) {
                 fail(failed.toString());
+                row.setTag("executionFailure", failureDetails(failed));
+                LOG.error("GTSR probe execution failed for " + spec.name, failed);
             } finally {
                 try {
-                    cleanupVolume();
-                    restoreInventory();
-                    row.setBoolean("ownedVolumeRestored", true);
-                    row.setBoolean("actorInventoryRestored", true);
+                    restoreFixtures("case-finally");
                 } catch (Exception | LinkageError cleanupFailed) {
                     fail("Cleanup failed: " + cleanupFailed);
+                    row.setTag("cleanupFailure", failureDetails(cleanupFailed));
                     throw new IOException("GTSR probe could not restore its owned volume", cleanupFailed);
                 }
             }
@@ -194,6 +215,12 @@ public final class HologramGTNLGtsrProbe {
             MTEEnhancedMultiBlockBase<?> machine = (MTEEnhancedMultiBlockBase<?>) controller.getMetaTileEntity();
             row.setInteger("controllerId", controllerId);
             row.setIntArray("controllerPosition", new int[] { cx, cy, cz });
+            row.setString("controllerOwnerName", controller.getOwnerName());
+            row.setString("controllerOwnerUuid", String.valueOf(controller.getOwnerUuid()));
+            row.setBoolean(
+                "controllerOwnerMatchesActor",
+                actor.getUniqueID()
+                    .equals(controller.getOwnerUuid()));
             row.setBoolean(
                 "selfManagedMarker",
                 interfaceNamed(machine.getClass(), "com.miaokatze.gtsr.api.compat.ISelfManagedSteamMachine"));
@@ -538,16 +565,26 @@ public final class HologramGTNLGtsrProbe {
             BaseMetaTileEntity tile = (BaseMetaTileEntity) world.getTileEntity(px, py, pz);
             tile.setFrontFacing(ForgeDirection.NORTH);
             tile.disableWorking();
-            tile.setOwnerName("");
-            tile.setOwnerUuid(null);
+            // GT .265 onRemoval resolves the base owner through TeamManager; null is not a valid fixture owner.
+            tile.setOwnerName(actor.getCommandSenderName());
+            tile.setOwnerUuid(actor.getUniqueID());
             if (tile.getMetaTileEntity()
                 .getClass()
                 .getName()
-                .equals(WIRELESS))
-                field(
+                .equals(WIRELESS)) {
+                Field networkOwner = field(
                     tile.getMetaTileEntity()
                         .getClass(),
-                    "ownerUUID").set(tile.getMetaTileEntity(), null);
+                    "ownerUUID");
+                networkOwner.set(tile.getMetaTileEntity(), null);
+                require(networkOwner.get(tile.getMetaTileEntity()) == null, "Wireless network owner was not isolated");
+                if (row != null) row.setBoolean("wirelessNetworkOwnerUnset", true);
+            }
+            HologramGTNLNativeProbe.suppressNativeTick(world, tile);
+            require(
+                actor.getUniqueID()
+                    .equals(tile.getOwnerUuid()),
+                "Placed fixture lost its native actor ownership");
             require(tile.getMetaTileID() == id && tile.getWorld() == world, "Placed machine identity differs");
             return tile;
         }
@@ -578,18 +615,143 @@ public final class HologramGTNLGtsrProbe {
 
         private void clear(int px, int py, int pz) throws IOException {
             require(inside(px, py, pz), "Cleanup leaves owned volume");
-            Chunk chunk = world.getChunkFromChunkCoords(px >> 4, pz >> 4);
-            TileEntity old = world.getTileEntity(px, py, pz);
-            // These are owned synthetic fixtures. Do not invoke wireless break/refund callbacks on cleanup.
-            chunk.removeTileEntity(px & 15, py, pz & 15);
-            if (old != null) world.loadedTileEntityList.remove(old);
-            ExtendedBlockStorage section = chunk.getBlockStorageArray()[py >> 4];
-            if (section != null) {
-                section.func_150818_a(px & 15, py & 15, pz & 15, Blocks.air);
-                section.setExtBlockMetadata(px & 15, py & 15, pz & 15, 0);
+            NBTTagCompound context = new NBTTagCompound();
+            context.setInteger("dimension", world.provider.dimensionId);
+            context.setIntArray("position", new int[] { px, py, pz });
+            String stage = "observe-cell";
+            try {
+                Chunk chunk = world.getChunkFromChunkCoords(px >> 4, pz >> 4);
+                // Direct map reads do not instantiate a replacement TE after a failed invalidation.
+                TileEntity old = chunk.chunkTileEntityMap.get(new ChunkPosition(px & 15, py, pz & 15));
+                context.setString(
+                    "block",
+                    String.valueOf(Block.blockRegistry.getNameForObject(world.getBlock(px, py, pz))));
+                context.setInteger("metadata", world.getBlockMetadata(px, py, pz));
+                context.setString(
+                    "tileClass",
+                    old == null ? ""
+                        : old.getClass()
+                            .getName());
+                if (old instanceof IGregTechTileEntity) {
+                    IGregTechTileEntity gt = (IGregTechTileEntity) old;
+                    context.setInteger("metaTileId", gt.getMetaTileID());
+                    context.setString("ownerName", gt.getOwnerName());
+                    context.setString("ownerUuid", String.valueOf(gt.getOwnerUuid()));
+                }
+                stage = "suppress-native-tick";
+                if (old != null) HologramGTNLNativeProbe.suppressNativeTick(world, old);
+                // Native invalidate/onRemoval still runs, with valid GT ownership. Block destruction/refund does not.
+                stage = "chunk-remove-tile-invalidate";
+                chunk.removeTileEntity(px & 15, py, pz & 15);
+                stage = "restore-air-block";
+                ExtendedBlockStorage section = chunk.getBlockStorageArray()[py >> 4];
+                if (section != null) {
+                    section.func_150818_a(px & 15, py & 15, pz & 15, Blocks.air);
+                    section.setExtBlockMetadata(px & 15, py & 15, pz & 15, 0);
+                }
+                stage = "publish-block-update";
+                chunk.setChunkModified();
+                world.markBlockForUpdate(px, py, pz);
+            } catch (Exception | LinkageError failure) {
+                context.setString("stage", stage);
+                context.setTag("exception", failureDetails(failure));
+                report.setTag("lastCellClearFailure", context);
+                if (row != null) row.setTag("cellClearFailure", context.copy());
+                throw new IOException(
+                    "Owned fixture clear failed at " + px + "," + py + "," + pz + " during " + stage,
+                    failure);
             }
-            chunk.setChunkModified();
-            world.markBlockForUpdate(px, py, pz);
+        }
+
+        private NBTTagCompound volumeState() throws Exception {
+            requireOwned(world, actor, x, y, z);
+            require(
+                runId.equals(
+                    TestLab.status()
+                        .getString("runId")),
+                "Restoration observation lost its original run");
+            NBTTagCompound state = new NBTTagCompound();
+            int blocks = 0, tiles = 0;
+            for (int dx = 0; dx < 7; dx++) for (int dy = 0; dy < 7; dy++) for (int dz = 0; dz < 7; dz++) {
+                int px = x + dx, py = y + dy, pz = z + dz;
+                require(world.blockExists(px, py, pz), "Restoration observation reached an unloaded owned cell");
+                if (world.getBlock(px, py, pz) != Blocks.air) blocks++;
+                Chunk chunk = world.getChunkFromChunkCoords(px >> 4, pz >> 4);
+                if (chunk.chunkTileEntityMap.containsKey(new ChunkPosition(px & 15, py, pz & 15))) tiles++;
+            }
+            Object pending = pendingTiles.get(world);
+            require(pending instanceof List, "Native pending tile list changed shape");
+            state.setInteger("cellsObserved", 343);
+            state.setInteger("nonAirBlocks", blocks);
+            state.setInteger("chunkTiles", tiles);
+            state.setInteger("loadedTickReferences", ownedTileReferences(world.loadedTileEntityList));
+            state.setInteger("pendingTickReferences", ownedTileReferences((List<?>) pending));
+            return state;
+        }
+
+        private int ownedTileReferences(List<?> tiles) {
+            int count = 0;
+            for (Object value : tiles) if (value instanceof TileEntity) {
+                TileEntity tile = (TileEntity) value;
+                if (tile.getWorldObj() == world && inside(tile.xCoord, tile.yCoord, tile.zCoord)) count++;
+            }
+            return count;
+        }
+
+        private void restoreFixtures(String phase) throws IOException {
+            NBTTagCompound evidence = new NBTTagCompound();
+            evidence.setString("phase", phase);
+            evidence.setString("case", row == null ? "" : row.getString("name"));
+            restorationAttempts.appendTag(evidence);
+            if (row != null) row.getTagList("restorationAttempts", 10)
+                .appendTag(evidence);
+            IOException failure = null;
+            try {
+                evidence.setTag("volumeBefore", volumeState());
+                cleanupVolume();
+            } catch (Exception | LinkageError volumeFailure) {
+                evidence.setTag("volumeFailure", failureDetails(volumeFailure));
+                failure = new IOException("Owned volume restoration failed during " + phase, volumeFailure);
+            }
+            try {
+                NBTTagCompound after = volumeState();
+                evidence.setTag("volumeAfter", after);
+                require(
+                    after.getInteger("nonAirBlocks") == 0 && after.getInteger("chunkTiles") == 0
+                        && after.getInteger("loadedTickReferences") == 0
+                        && after.getInteger("pendingTickReferences") == 0,
+                    "Owned volume or native tick references remain after cleanup");
+                evidence.setBoolean("volumeRestored", true);
+                if (row != null) row.setBoolean("ownedVolumeRestored", true);
+            } catch (Exception | LinkageError observationFailure) {
+                evidence.setTag("volumeObservationFailure", failureDetails(observationFailure));
+                if (failure == null)
+                    failure = new IOException("Owned volume verification failed during " + phase, observationFailure);
+                else failure.addSuppressed(observationFailure);
+            }
+            // Inventory restoration is independent of a volume failure; no earlier exception is discarded.
+            try {
+                evidence.setBoolean(
+                    "inventoryMatchedBefore",
+                    inventory.equals(actor.inventory.writeToNBT(new NBTTagList())));
+                evidence.setInteger("slotBefore", actor.inventory.currentItem);
+                restoreInventory();
+                evidence.setTag("inventoryAfter", actor.inventory.writeToNBT(new NBTTagList()));
+                evidence.setInteger("slotAfter", actor.inventory.currentItem);
+                evidence.setBoolean("inventoryRestored", true);
+                if (row != null) row.setBoolean("actorInventoryRestored", true);
+            } catch (Exception | LinkageError inventoryFailure) {
+                evidence.setTag("inventoryFailure", failureDetails(inventoryFailure));
+                if (failure == null)
+                    failure = new IOException("Actor inventory restoration failed during " + phase, inventoryFailure);
+                else failure.addSuppressed(inventoryFailure);
+            }
+            if (failure != null) {
+                LOG.error(
+                    "GTSR probe restoration failed during " + phase + " for " + evidence.getString("case"),
+                    failure);
+                throw failure;
+            }
         }
 
         private void cleanupVolume() throws IOException {
@@ -608,6 +770,11 @@ public final class HologramGTNLGtsrProbe {
 
         private void restoreInventory() throws IOException {
             requireOwned(world, actor, x, y, z);
+            require(
+                runId.equals(
+                    TestLab.status()
+                        .getString("runId")),
+                "Inventory restoration lost its original run");
             if (!inventory.equals(actor.inventory.writeToNBT(new NBTTagList()))
                 || actor.inventory.currentItem != originalSlot) {
                 actor.inventory.readFromNBT((NBTTagList) inventory.copy());
@@ -615,7 +782,8 @@ public final class HologramGTNLGtsrProbe {
                 actor.inventory.markDirty();
             }
             require(
-                inventory.equals(actor.inventory.writeToNBT(new NBTTagList())),
+                inventory.equals(actor.inventory.writeToNBT(new NBTTagList()))
+                    && actor.inventory.currentItem == originalSlot,
                 "Actor inventory could not be restored");
         }
 
@@ -628,14 +796,28 @@ public final class HologramGTNLGtsrProbe {
             if (closed) return;
             if (row != null && "RUNNING".equals(row.getString("status")))
                 fail("Stopped before the native case completed");
-            cleanupVolume();
-            restoreInventory();
+            restoreFixtures("close");
             report.setBoolean("ownedVolumeRestored", true);
             report.setBoolean("actorInventoryRestored", true);
             report.setInteger("failedCases", failures);
             report.setBoolean("success", finished && failures == 0);
             closed = true;
         }
+    }
+
+    private static NBTTagCompound failureDetails(Throwable failure) {
+        NBTTagCompound detail = new NBTTagCompound();
+        detail.setString(
+            "type",
+            failure.getClass()
+                .getName());
+        detail.setString("message", String.valueOf(failure.getMessage()));
+        StringWriter text = new StringWriter();
+        failure.printStackTrace(new PrintWriter(text));
+        String trace = text.toString();
+        detail.setString("stackTrace", trace.length() > 16384 ? trace.substring(0, 16384) : trace);
+        detail.setBoolean("stackTraceTruncated", trace.length() > 16384);
+        return detail;
     }
 
     private static int registered(String type, int tier) throws IOException {

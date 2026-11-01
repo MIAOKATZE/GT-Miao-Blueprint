@@ -288,6 +288,7 @@ public final class HologramGTNLWorkflowProbe {
                     source.selectedIndices.clear();
                     HologramResourcePlanner.refreshPlan(source);
                     stage("candidate_material_and_hatch_direction_edits");
+                    require(recordSelections("source_edited", source) == 0, "Production edits differ before save");
                     exportReload(spec);
                     phase = 4;
                     return;
@@ -300,6 +301,9 @@ public final class HologramGTNLWorkflowProbe {
                     HologramPresets.Structure member = loaded.structures.get(0);
                     placement.blueprintActiveStructure = member.id;
                     HologramBlueprintData.applyStructureConfiguration(placement, member);
+                    require(
+                        recordSelections("reloaded_before_rescan", placement) == 0,
+                        "Saved material or facing differs after production disk reload");
                     require(
                         HologramVirtualStructureEditing.prepare(placement, placement.main, placement.channels, false),
                         "Saved GTNL source re-admission refused: " + placement.status);
@@ -318,6 +322,11 @@ public final class HologramGTNLWorkflowProbe {
                     HologramResourcePlanner.refreshPlan(placement);
                     require(!placement.localPlanPending, "Reloaded material plan remains incomplete");
                     stage("reloaded_blueprint_semantic_readmission");
+                    int selectionMismatches = recordSelections("redeclared_before_admission", placement);
+                    row.setInteger("reloadedSelectionMismatches", selectionMismatches);
+                    require(
+                        selectionMismatches == 0,
+                        "Pure semantic re-admission replaced saved material or hatch-facing choices");
                     prepareDemandAndNegatives();
                     phase = 6;
                     return;
@@ -586,6 +595,124 @@ public final class HologramGTNLWorkflowProbe {
             population = new HologramBlueprintProjection.Population(placement);
         }
 
+        private int recordSelections(String stage, HologramSession session) {
+            NBTTagCompound checkpoint = new NBTTagCompound();
+            checkpoint.setString("stage", stage);
+            checkpoint.setTag("sessionState", sessionState(session));
+            NBTTagList selections = new NBTTagList();
+            int mismatches = 0;
+            for (Edit edit : edits) {
+                HologramCapture.Cell original = source.capture.cells.get(edit.index);
+                int px = session.x + original.x - source.x;
+                int py = session.y + original.y - source.y;
+                int pz = session.z + original.z - source.z;
+                HologramCapture.Cell current = session.capture.positions.get(px + "," + py + "," + pz);
+                NBTTagCompound entry = new NBTTagCompound();
+                entry.setIntArray(
+                    "relativePosition",
+                    new int[] { original.x - source.x, original.y - source.y, original.z - source.z });
+                entry.setTag("selectedMaterial", edit.target.writeToNBT(new NBTTagCompound()));
+                entry.setInteger("selectedFacing", edit.facing);
+                boolean retained = false;
+                if (current != null) {
+                    int cellIndex = HologramSessionPolicy.cellIndex(session, current);
+                    entry.setTag("current", cellIdentity(session, current, cellIndex));
+                    retained = HologramValues
+                        .sameMaterial(edit.target, HologramCellPolicy.targetFor(session, current, cellIndex))
+                        && (edit.facing < 0
+                            || session.facingPins.getOrDefault(HologramValues.position(current), -1) == edit.facing);
+                }
+                entry.setBoolean("retained", retained);
+                if (!retained) mismatches++;
+                selections.appendTag(entry);
+            }
+            checkpoint.setTag("cells", selections);
+            checkpoint.setInteger("mismatches", mismatches);
+            NBTTagList checkpoints = row.getTagList("selectionCheckpoints", 10);
+            checkpoints.appendTag(checkpoint);
+            row.setTag("selectionCheckpoints", checkpoints);
+            return mismatches;
+        }
+
+        private NBTTagCompound cellIdentity(HologramSession session, HologramCapture.Cell cell, int cellIndex) {
+            NBTTagCompound entry = new NBTTagCompound();
+            entry.setInteger("index", cellIndex);
+            entry.setInteger("stableIndex", cell.stableIndex);
+            entry.setIntArray("position", new int[] { cell.x, cell.y, cell.z });
+            entry.setString("role", cell.role);
+            entry.setString("cellStatus", cell.status);
+            entry.setString("declaredBlock", String.valueOf(Block.blockRegistry.getNameForObject(cell.block)));
+            entry.setInteger("declaredMetadata", cell.meta);
+            entry.setString("savedItem", cell.blueprintItem);
+            entry.setInteger("savedFullDamage", cell.blueprintDamage);
+            entry.setInteger("facingPin", session.facingPins.getOrDefault(HologramValues.position(cell), -1));
+            entry.setInteger("plannedFacing", session.planFacings.getOrDefault(cellIndex, -1));
+            entry.setBoolean("savedTilePayloadPresent", !cell.tileNbt.isEmpty());
+            entry.setBoolean("savedItemPayloadPresent", !cell.itemNbt.isEmpty());
+            entry.setString(
+                "elementClass",
+                cell.element == null ? ""
+                    : cell.element.getClass()
+                        .getName());
+            HologramGTNLElement reviewed = HologramGTNLSemantics.reviewedElement(cell.element);
+            if (reviewed != null) entry.setString("elementId", reviewed.id);
+            ItemStack expected = HologramCellPolicy.targetFor(session, cell, cellIndex);
+            if (expected != null) {
+                entry.setTag("expectedMaterial", expected.writeToNBT(new NBTTagCompound()));
+                entry.setString("expectedItem", String.valueOf(Item.itemRegistry.getNameForObject(expected.getItem())));
+                entry.setInteger("expectedFullDamage", expected.getItemDamage());
+                entry.setString(
+                    "expectedBlock",
+                    String.valueOf(Block.blockRegistry.getNameForObject(Block.getBlockFromItem(expected.getItem()))));
+                entry.setInteger(
+                    "expectedNativeMetadata",
+                    expected.getItem()
+                        .getMetadata(expected.getItemDamage()));
+                if (reviewed != null) entry.setBoolean("reviewedElementAccepts", reviewed.accepts(expected));
+            }
+            Block actual = world.getBlock(cell.x, cell.y, cell.z);
+            entry.setString("actualBlock", String.valueOf(Block.blockRegistry.getNameForObject(actual)));
+            entry.setInteger("actualMetadata", world.getBlockMetadata(cell.x, cell.y, cell.z));
+            TileEntity tile = world.getTileEntity(cell.x, cell.y, cell.z);
+            entry.setString(
+                "actualTileClass",
+                tile == null ? ""
+                    : tile.getClass()
+                        .getName());
+            if (tile instanceof IGregTechTileEntity) {
+                IGregTechTileEntity gt = (IGregTechTileEntity) tile;
+                entry.setInteger("actualMetaTileId", gt.getMetaTileID());
+                entry.setString(
+                    "actualMetaTileClass",
+                    gt.getMetaTileEntity() == null ? ""
+                        : gt.getMetaTileEntity()
+                            .getClass()
+                            .getName());
+                entry.setInteger(
+                    "actualFacing",
+                    gt.getFrontFacing()
+                        .ordinal());
+            }
+            if (tile instanceof bartworks.system.material.TileEntityMetaGeneratedBlock) entry.setInteger(
+                "actualFullMaterialDamage",
+                ((bartworks.system.material.TileEntityMetaGeneratedBlock) tile).mMetaData);
+            return entry;
+        }
+
+        private static NBTTagCompound sessionState(HologramSession session) {
+            NBTTagCompound state = new NBTTagCompound();
+            state.setInteger("job", session.job);
+            state.setString("status", session.status);
+            state.setString("phase", session.phase);
+            state.setInteger("completed", session.completed);
+            state.setInteger("cursor", session.cursor);
+            state.setInteger("workCells", session.work.size());
+            state.setInteger("missing", session.planMissing);
+            state.setLong("planRevision", session.planRevision);
+            state.setBoolean("sourceCurrent", session.capture.sourceCurrent());
+            return state;
+        }
+
         private void prepareDemandAndNegatives() throws Exception {
             require(
                 HologramPlanPolicy.constructionAllowed(placement),
@@ -680,17 +807,25 @@ public final class HologramGTNLWorkflowProbe {
                     && scene.equals(worldIdentity(placement)),
                 "Paid request replay placed or charged again");
             row.setBoolean("paidReplayZeroSideEffects", true);
-            for (HologramCapture.Cell cell : placement.capture.cells) {
-                if (HologramSessionPolicy.ignoredPlacementAir(placement, cell, cell.stableIndex)) continue;
-                require(
-                    HologramCellPolicy.targetSatisfied(
-                        placement,
-                        cell,
-                        cell.stableIndex,
-                        world.getBlock(cell.x, cell.y, cell.z),
-                        world.getBlockMetadata(cell.x, cell.y, cell.z)),
-                    "Paid production cell differs from its exact material/TE identity");
+            NBTTagList mismatches = new NBTTagList();
+            int mismatchCount = 0;
+            for (int i = 0; i < placement.capture.cells.size(); i++) {
+                HologramCapture.Cell cell = placement.capture.cells.get(i);
+                if (HologramSessionPolicy.ignoredPlacementAir(placement, cell, i)) continue;
+                if (!HologramCellPolicy.targetSatisfied(
+                    placement,
+                    cell,
+                    i,
+                    world.getBlock(cell.x, cell.y, cell.z),
+                    world.getBlockMetadata(cell.x, cell.y, cell.z))) {
+                    mismatchCount++;
+                    if (mismatches.tagCount() < 16) mismatches.appendTag(cellIdentity(placement, cell, i));
+                }
             }
+            row.setInteger("paidIdentityMismatches", mismatchCount);
+            row.setTag("paidMismatchCells", mismatches);
+            row.setTag("paidVerificationState", sessionState(placement));
+            require(mismatchCount == 0, "Paid production cell differs from its exact material/TE identity");
         }
 
         private void nativeCheck(Spec spec) throws Exception {

@@ -11,14 +11,27 @@ import java.util.Map;
 
 import net.minecraft.block.Block;
 import net.minecraft.block.material.Material;
+import net.minecraft.entity.player.EntityPlayerMP;
+import net.minecraft.entity.player.InventoryPlayer;
+import net.minecraft.entity.player.PlayerCapabilities;
 import net.minecraft.init.Blocks;
 import net.minecraft.init.Items;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemBlock;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraftforge.common.util.ForgeDirection;
+
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
 
 import com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor;
+import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
+import com.gtnewhorizon.structurelib.structure.IStructureDefinition;
+import com.gtnewhorizon.structurelib.structure.StructureDefinition;
+import com.miaokatze.gtmb.api.GTMBExtensions;
+import com.miaokatze.gtmb.api.StructureSources;
 import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 import com.miaokatze.gtmb.testutil.TestRunner;
@@ -26,7 +39,14 @@ import com.miaokatze.gtmb.testutil.TestRunner;
 import bartworks.system.material.BWItemMetaGeneratedBlock;
 import bartworks.system.material.BWMetaGeneratedBlocksCasing;
 import bartworks.system.material.BWTileEntityMetaGeneratedBlocksCasing;
+import gregtech.api.GregTechAPI;
 import gregtech.api.enums.OrePrefixes;
+import gregtech.api.interfaces.ITexture;
+import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
+import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
+import gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase;
+import gregtech.api.util.MultiblockTooltipBuilder;
+import gregtech.common.blocks.ItemMachines;
 
 /** Geometry and declaration contracts run without loading GTNL or invoking any upstream callback. */
 public final class HologramGTNLRegression {
@@ -40,6 +60,7 @@ public final class HologramGTNLRegression {
         tests.put("independent-channels", HologramGTNLRegression::channels);
         tests.put("fixed-leaf-purity-and-damage", HologramGTNLRegression::fixedLeaf);
         tests.put("bartworks-planned-and-actual-material-identity", HologramGTNLRegression::bartWorksMaterial);
+        tests.put("saved-template-reread-preserves-physical-choices", HologramGTNLRegression::savedTemplateReread);
         tests.put("bounded-mbs-decoder", HologramGTNLRegression::codec);
         tests.put("real-sphere-resource", HologramGTNLRegression::sphere);
         TestRunner.run(HologramGTNLRegression.class, tests);
@@ -50,6 +71,7 @@ public final class HologramGTNLRegression {
         channels();
         fixedLeaf();
         bartWorksMaterial();
+        savedTemplateReread();
         codec();
         sphere();
     }
@@ -281,6 +303,322 @@ public final class HologramGTNLRegression {
                     .validateMaterialVariant(unknownItem, 31895, new ItemStack(unknownItem, 1, 31895)));
         } catch (Exception failure) {
             throw new AssertionError("BartWorks planned and actual material boundary", failure);
+        }
+    }
+
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    private static void savedTemplateReread() {
+        String thread = Thread.currentThread()
+            .getName();
+        Thread.currentThread()
+            .setName("Server thread");
+        Block previousBlock = GregTechAPI.sBlockMachines;
+        IMetaTileEntity previousController = GregTechAPI.METATILEENTITIES[RereadController.ID];
+        Map<String, Class<?>> loaded = null;
+        Class<?> previousClass = null, type = null;
+        String name = "com.science.gtnl.common.machine.multiblock.structuralReconstructionPlan.PrecisionAssembler";
+        try {
+            Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+            unsafeField.setAccessible(true);
+            sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
+            type = new RereadClasses().define(name);
+            // sourceWarning uses the native LaunchClassLoader's class lookup. Restore its one entry afterwards.
+            Field classes = net.minecraft.launchwrapper.LaunchClassLoader.class.getDeclaredField("cachedClasses");
+            classes.setAccessible(true);
+            loaded = (Map<String, Class<?>>) classes.get(net.minecraft.launchwrapper.Launch.classLoader);
+            previousClass = loaded.put(name, type);
+            GregTechAPI.sBlockMachines = rereadMachineBlock();
+            GregTechAPI.METATILEENTITIES[RereadController.ID] = (IMetaTileEntity) type.getConstructor()
+                .newInstance();
+            HologramGTNLElement shell = new HologramGTNLElement(
+                "precision.unit",
+                Arrays.asList(
+                    new ItemStack(Blocks.stone),
+                    new ItemStack(GregTechAPI.sBlockMachines, 1, RereadController.ID)),
+                true);
+            HologramGTNLElement glass = new HologramGTNLElement(
+                "precision.glass",
+                Arrays.asList(new ItemStack(Blocks.wool, 1, 0), new ItemStack(Blocks.wool, 1, 14)),
+                true);
+            IStructureDefinition<Object> definition = StructureDefinition.<Object>builder()
+                .addShape("main", new String[][] { { "AB" } })
+                .addElement('A', shell)
+                .addElement('B', glass)
+                .build();
+            int[] descriptions = { 0 };
+            try (GTMBExtensions.Registration source = StructureSources
+                .registerContextual("gtmb:gtnl/precision_assembler", (Class) type, (machine, trigger, intent) -> {
+                    descriptions[0]++;
+                    NBTTagCompound metadata = new NBTTagCompound();
+                    metadata.setInteger("gtnlSchema", 1);
+                    metadata.setString("family", "precision_assembler");
+                    metadata.setString("sourceCommit", HologramGTNLSemantics.COMMIT);
+                    metadata.setString("purpose", intent.name());
+                    return StructureSources.Resolution.ready(
+                        new StructureSources.Plan(
+                            definition,
+                            Arrays.asList(new StructureSources.Piece("main", 0, 0, 1, trigger)),
+                            metadata),
+                        () -> null);
+                })) {
+                MTEEnhancedMultiBlockBase<?> machine = HologramDetachedController
+                    .create(RereadController.ID, ExtendedFacing.NORTH_NORMAL_NONE);
+                HologramCapture capture = null;
+                for (int batch = 0; batch < 8 && (capture == null || capture.pending); batch++)
+                    capture = HologramCapture.collect(
+                        machine,
+                        new ItemStack(Blocks.stone),
+                        ExtendedFacing.NORTH_NORMAL_NONE,
+                        StructureSources.CaptureIntent.NEW_TEMPLATE,
+                        capture);
+                SimpleAssert.that(
+                    capture != null && !capture.pending && !capture.incomplete,
+                    "the reviewed fixture source is actually captured before saving");
+                HologramPresets.Preset preset = rereadPreset(capture, type);
+                rereadCase(unsafe, preset, 1, 2, 3, false, "NEW_TEMPLATE", false, false, true);
+                rereadCase(unsafe, preset, 2, 2, 3, false, "NEW_TEMPLATE", false, false, false);
+                rereadCase(unsafe, preset, 1, 4, 3, false, "NEW_TEMPLATE", false, false, false);
+                rereadCase(unsafe, preset, 1, 2, 5, false, "NEW_TEMPLATE", false, false, false);
+                rereadCase(unsafe, preset, 1, 2, 3, true, "NEW_TEMPLATE", false, false, false);
+                rereadCase(unsafe, preset, 1, 2, 3, false, "LIVE_SNAPSHOT", false, true, false);
+                rereadCase(unsafe, preset, 1, 2, 3, false, "NEW_TEMPLATE", true, false, true);
+                SimpleAssert.eq(8, descriptions[0], "every saved re-read resolves a new actual source declaration");
+            }
+        } catch (Exception failure) {
+            throw new AssertionError("saved template material re-admission", failure);
+        } finally {
+            GregTechAPI.sBlockMachines = previousBlock;
+            GregTechAPI.METATILEENTITIES[RereadController.ID] = previousController;
+            if (loaded != null) {
+                if (previousClass == null) loaded.remove(name, type);
+                else loaded.put(name, previousClass);
+            }
+            Thread.currentThread()
+                .setName(thread);
+        }
+    }
+
+    private static HologramPresets.Preset rereadPreset(HologramCapture capture, Class<?> type) throws IOException {
+        HologramPresets.Preset preset = new HologramPresets.Preset();
+        preset.id = "gtnl_reread_fixture";
+        preset.name = "Saved physical choices";
+        preset.schema = 2;
+        preset.sourceClass = type.getName();
+        preset.controllerId = RereadController.ID;
+        preset.controllerFacing = ExtendedFacing.NORTH_NORMAL_NONE.ordinal();
+        preset.semanticNbt = HologramBlueprintNbt.encodeCanonical(capture.sourceMetadata);
+        HologramPresets.Structure member = new HologramPresets.Structure();
+        member.id = "saved-member";
+        member.sourceClass = type.getName();
+        member.controllerId = RereadController.ID;
+        member.semanticNbt = preset.semanticNbt;
+        member.channels.put("machine_casing", 2);
+        member.channels.put("unit_casing", 3);
+        preset.structures.add(member);
+        for (HologramCapture.Cell cell : capture.cells) {
+            HologramGTNLElement leaf = HologramGTNLSemantics.reviewedElement(cell.element);
+            ItemStack target = cell.anchor || "precision.unit".equals(leaf.id)
+                ? new ItemStack(GregTechAPI.sBlockMachines, 1, RereadController.ID)
+                : new ItemStack(Blocks.wool, 1, 14);
+            HologramPresets.Cell saved = HologramPresets.cell(
+                target,
+                cell.x,
+                cell.y - 128,
+                cell.z,
+                target.getItem() instanceof ItemMachines ? ForgeDirection.NORTH.ordinal() : -1,
+                cell.anchor);
+            saved.metadata = target.getItem()
+                .getMetadata(target.getItemDamage());
+            saved.structureId = member.id;
+            saved.structureIds = new java.util.ArrayList<>(Arrays.asList(member.id));
+            if (!cell.anchor) saved.allowedTargets = HologramBlueprintData.savedTargets(leaf.candidates());
+            if (!cell.anchor && target.getItem() instanceof ItemMachines) {
+                NBTTagCompound nativeTile = new NBTTagCompound();
+                nativeTile.setString("id", "BaseMetaTileEntity");
+                nativeTile.setShort("mID", (short) RereadController.ID);
+                nativeTile.setInteger("fixtureConfiguration", 7);
+                saved.tileNbt = HologramBlueprintNbt.encodeCanonical(nativeTile);
+                saved.prompt = "saved hatch configuration";
+            }
+            preset.cells.add(saved);
+        }
+        return preset;
+    }
+
+    private static void rereadCase(sun.misc.Unsafe unsafe, HologramPresets.Preset original, int main, int casing,
+        int unit, boolean noHatches, String purpose, boolean invalid, boolean oldAir, boolean keep) throws Exception {
+        HologramPresets.Preset disk = HologramSnapshotMetadataSource.copyMetadata(original);
+        for (HologramPresets.Cell row : original.cells) disk.cells.add(HologramSnapshotMetadataSource.copyCell(row));
+        HologramPresets.Cell selected = null;
+        for (HologramPresets.Cell row : disk.cells) if ("minecraft:wool".equals(row.item)) selected = row;
+        SimpleAssert.that(selected != null, "saved fixture contains a material choice");
+        if (invalid) selected.damage = selected.metadata = 12;
+        if (oldAir) {
+            selected.item = null;
+            selected.block = "minecraft:air";
+            selected.damage = selected.metadata = 0;
+        }
+        NBTTagCompound oldMetadata = HologramBlueprintNbt.decode(disk.semanticNbt);
+        oldMetadata.setString("purpose", purpose);
+        disk.semanticNbt = HologramBlueprintNbt.encodeCanonical(oldMetadata);
+        disk.structures.get(0).semanticNbt = disk.semanticNbt;
+        byte[] encoded = HologramBlueprintCompactCodec.encode(disk, (done, total) -> {});
+        disk = new com.google.gson.Gson().fromJson(
+            HologramBlueprintCompactCodec.parse(encoded)
+                .getAsJsonObject("blueprint"),
+            HologramPresets.Preset.class);
+        HologramPresets.validate(disk);
+        EntityPlayerMP player = (EntityPlayerMP) unsafe.allocateInstance(EntityPlayerMP.class);
+        player.worldObj = (HologramServiceEditRegression.ReadOnlyWorld) unsafe
+            .allocateInstance(HologramServiceEditRegression.ReadOnlyWorld.class);
+        player.inventory = new InventoryPlayer(player);
+        player.inventory.mainInventory[0] = new ItemStack(Blocks.stone);
+        player.capabilities = new PlayerCapabilities();
+        player.capabilities.allowEdit = true;
+        HologramSession session = new HologramSession(player, 20, 64, 0, false, 2);
+        session.virtual = true;
+        session.virtualPreset = disk;
+        HologramBlueprintProjection.Population population = new HologramBlueprintProjection.Population(session);
+        SimpleAssert.that(
+            population.step(32, Long.MAX_VALUE) && !session.capture.incomplete,
+            "the real saved blueprint population retains its physical targets");
+        HologramPresets.Structure source = disk.structures.get(0);
+        session.blueprintActiveStructure = source.id;
+        HologramBlueprintData.applyStructureConfiguration(session, source);
+        NBTTagCompound channels = new NBTTagCompound();
+        channels.setInteger("machine_casing", casing);
+        channels.setInteger("unit_casing", unit);
+        HologramVirtualStructureEditing.Task task = new HologramVirtualStructureEditing.Task(
+            session,
+            source,
+            main,
+            channels,
+            noHatches);
+        session.main = main;
+        session.channels = channels;
+        session.noHatches = noHatches;
+        HologramBlueprintData.storeStructureConfiguration(session, source);
+        int batches = 0;
+        while (!task.step() && batches++ < 8) {}
+        SimpleAssert.that(batches < 8, "saved re-declaration finishes within eight bounded slices");
+        task.publish();
+        SimpleAssert.that(session.capture.sourceCurrent(), "re-read retains the newly captured source validity proof");
+        HologramCapture.Cell cell = session.capture.positions
+            .get((session.x + selected.x) + "," + (session.y + selected.y) + "," + (session.z + selected.z));
+        int index = HologramSessionPolicy.cellIndex(session, cell);
+        ItemStack target = HologramCellPolicy.draftTarget(session, cell, index);
+        SimpleAssert.eq(
+            keep ? invalid ? 12 : 14 : 0,
+            target.getItemDamage(),
+            "only same-purpose and same-parameter re-reading retains the frozen material choice");
+        SimpleAssert.that(
+            cell.element instanceof HologramGTNLElement,
+            "a retained saved target receives the fresh reviewed leaf");
+        SimpleAssert.eq(
+            !invalid,
+            HologramCellPolicy.acceptableSample(session, cell, target),
+            "an invalid saved material stays visible and is rejected by the fresh declaration");
+        if (keep) {
+            HologramPresets.Cell retained = session.virtualPreset.cells.stream()
+                .filter(row -> !row.controller && row.tileNbt != null && !row.tileNbt.isEmpty())
+                .findFirst()
+                .get();
+            SimpleAssert.eq(
+                7,
+                HologramBlueprintNbt.decode(retained.tileNbt)
+                    .getInteger("fixtureConfiguration"),
+                "same-template re-reading retains the saved native configuration");
+            SimpleAssert.eq(
+                ForgeDirection.NORTH.ordinal(),
+                retained.facing,
+                "same-template re-reading retains the saved hatch-facing row");
+        }
+    }
+
+    private static Block rereadMachineBlock() {
+        String registry = "gtmb:gtnl_reread_machines";
+        Object existing = Block.blockRegistry.getObject(registry);
+        if (existing instanceof Block && existing != Blocks.air) return (Block) existing;
+        Block block = new Block(Material.iron) {};
+        int slot = 3970;
+        while (Item.getItemById(slot) != null || Block.getBlockById(slot) != Blocks.air) slot--;
+        Block.blockRegistry.addObject(slot, registry, block);
+        Item.itemRegistry.addObject(slot, registry, new ItemMachines(block));
+        return block;
+    }
+
+    public static class RereadController extends MTEEnhancedMultiBlockBase<RereadController> {
+
+        static final int ID = 31960;
+
+        public RereadController() {
+            super("gtnl_reread_fixture");
+        }
+
+        @Override
+        public IMetaTileEntity newMetaEntity(IGregTechTileEntity tile) {
+            try {
+                return (IMetaTileEntity) getClass().getConstructor()
+                    .newInstance();
+            } catch (ReflectiveOperationException failure) {
+                throw new AssertionError(failure);
+            }
+        }
+
+        @Override
+        public ItemStack getStackForm(long count) {
+            return new ItemStack(GregTechAPI.sBlockMachines, (int) count, ID);
+        }
+
+        @Override
+        public IStructureDefinition<RereadController> getStructureDefinition() {
+            throw new AssertionError("registered pure source must bypass native definitions");
+        }
+
+        @Override
+        public void construct(ItemStack trigger, boolean hints) {
+            throw new AssertionError("registered pure source must bypass native construct");
+        }
+
+        @Override
+        protected MultiblockTooltipBuilder createTooltip() {
+            throw new AssertionError("no native tooltip");
+        }
+
+        @Override
+        public ITexture[] getTexture(IGregTechTileEntity tile, ForgeDirection side, ForgeDirection front, int color,
+            boolean active, boolean redstone) {
+            return new ITexture[0];
+        }
+    }
+
+    private static final class RereadClasses extends ClassLoader {
+
+        RereadClasses() {
+            super(HologramGTNLRegression.class.getClassLoader());
+        }
+
+        Class<?> define(String name) {
+            String parent = RereadController.class.getName()
+                .replace('.', '/');
+            ClassWriter writer = new ClassWriter(0);
+            writer.visit(
+                Opcodes.V1_8,
+                Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER,
+                name.replace('.', '/'),
+                null,
+                parent,
+                null);
+            MethodVisitor constructor = writer.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
+            constructor.visitCode();
+            constructor.visitVarInsn(Opcodes.ALOAD, 0);
+            constructor.visitMethodInsn(Opcodes.INVOKESPECIAL, parent, "<init>", "()V", false);
+            constructor.visitInsn(Opcodes.RETURN);
+            constructor.visitMaxs(1, 1);
+            constructor.visitEnd();
+            writer.visitEnd();
+            byte[] bytes = writer.toByteArray();
+            return defineClass(name, bytes, 0, bytes.length);
         }
     }
 
