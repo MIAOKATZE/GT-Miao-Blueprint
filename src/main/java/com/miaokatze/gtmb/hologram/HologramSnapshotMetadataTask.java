@@ -46,6 +46,7 @@ final class HologramSnapshotMetadataTask {
     private int[] selection;
     private int stage, cursor;
     private boolean keysCached, decorative;
+    private boolean keysComplete = true;
     private String sourceWarning = "";
     private FutureTask<Report> report;
     private final WorkerProgress workerProgress = new WorkerProgress();
@@ -234,10 +235,13 @@ final class HologramSnapshotMetadataTask {
             if (frozen != null) positions.add(new Position(cursor, frozen));
             cursor++;
             if (!decorative && s.virtualPreset != null) decorative = HologramCellPolicy.decorationTarget(s, cell);
-            if (!keysCached && !s.virtual) try {
-                TileEntity tile = s.player.worldObj.getTileEntity(cell.x, cell.y, cell.z);
-                if (tile != null) rootKeys(HologramNativeCapture.capture(tile), availableKeys);
-            } catch (IOException | RuntimeException ignored) { /* Invalid payload stays unsupported. */ }
+            if (!keysCached && !s.virtual) {
+                if (!s.player.worldObj.blockExists(cell.x, cell.y, cell.z)) keysComplete = false;
+                else try {
+                    TileEntity tile = s.player.worldObj.getTileEntity(cell.x, cell.y, cell.z);
+                    if (tile != null) rootKeys(HologramNativeCapture.capture(tile), availableKeys);
+                } catch (IOException | RuntimeException ignored) { /* Invalid payload stays unsupported. */ }
+            }
         } else {
             keyIterator = null;
             next();
@@ -389,7 +393,8 @@ final class HologramSnapshotMetadataTask {
             row.setString("sourceClass", saved.sourceClass == null ? "" : saved.sourceClass);
             row.setString("sourceMod", saved.sourceMod == null ? "" : saved.sourceMod);
             row.setBoolean("declared", warning.isEmpty());
-            TileEntity tile = authoring ? null
+            TileEntity tile = authoring || !s.player.worldObj.blockExists(s.x + saved.x, s.y + saved.y, s.z + saved.z)
+                ? null
                 : s.player.worldObj.getTileEntity(s.x + saved.x, s.y + saved.y, s.z + saved.z);
             row.setBoolean(
                 "formed",
@@ -417,7 +422,8 @@ final class HologramSnapshotMetadataTask {
     private void appendNbtKey() {
         if (!keyIterator.hasNext()) {
             state.setTag("nbtEntries", entries);
-            if (!keysCached) s.nbtKeysCapture = capture;
+            // A later snapshot must still inspect positions whose chunks were not observed in this pass.
+            if (!keysCached && keysComplete) s.nbtKeysCapture = capture;
             next();
             return;
         }

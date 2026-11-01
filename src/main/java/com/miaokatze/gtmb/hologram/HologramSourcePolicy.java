@@ -70,7 +70,9 @@ final class HologramSourcePolicy {
         return validate(session, policy, type, controllerId, "", new NBTTagCompound(), false);
     }
 
-    /** Appearance alone cannot authorize a native element callback or an unknown acceptance condition. */
+    /**
+     * Unknown cells stay protected. A requested material needs its own declaration proof, not exhaustive candidates.
+     */
     private static String declarationFailure(HologramSession session) {
         if (session.mode == 2) return null;
         Set<HologramCapture.SourceAuthority> sources = Collections.newSetFromMap(new IdentityHashMap<>());
@@ -78,33 +80,105 @@ final class HologramSourcePolicy {
             HologramCapture.Cell cell = session.capture.cells.get(index);
             if (cell.anchor || !HologramSessionPolicy.inScope(session, cell, index)
                 || HologramSessionPolicy.ignoredPlacementAir(session, cell, index)) continue;
-            ItemStack target = HologramCellPolicy.targetFor(session, cell, index);
-            if (cell.userPosition && target == null) continue;
             if (cell.sourceAuthority != null && sources.add(cell.sourceAuthority)) {
                 String failure = cell.sourceAuthority.validityFailure();
                 if (failure != null) return failure;
             }
-            if (cell.unknown) return "SOURCE_DECLARATION_UNVERIFIED";
-            if (cell.element == null) {
-                // Saved physical materials and explicit user positions use the existing payload/material gates.
-                if (cell.userPosition && (session.virtual || HologramCellPolicy.explicitTarget(session, cell, index)))
-                    continue;
-                return "SOURCE_DECLARATION_UNVERIFIED";
-            }
-            if (cell.element == StructureUtility.isAir()) continue;
-            Declarations.PureElement<?> pure = HologramElementCatalog.pure(cell.element);
-            if (pure != null) {
-                if (!pure.accepts(target)) return "SOURCE_TARGET_REJECTED";
-                if (!HologramCellPolicy.explicitTarget(session, cell, index) && !pure.placementAllows(target))
-                    return "SOURCE_AUTOMATIC_TARGET_REJECTED";
-                continue;
-            }
-            List<ItemStack> candidates = HologramCellPolicy.declaredCandidates(session, cell);
-            if (!cell.candidateComplete || candidates.stream()
-                .noneMatch(candidate -> HologramValues.sameMaterial(candidate, target)))
-                return "SOURCE_DECLARATION_UNVERIFIED";
+            String failure = targetFailure(session, cell, index);
+            // An unrequested/unreadable position contributes no construction authority and is skipped in-place.
+            if (failure != null && HologramCellPolicy.explicitTarget(session, cell, index)) return failure;
         }
         return null;
+    }
+
+    static String targetFailure(HologramSession session, HologramCapture.Cell cell, int index) {
+        if (session.mode == 2 || cell.anchor || HologramSessionPolicy.ignoredPlacementAir(session, cell, index))
+            return null;
+        ItemStack target = HologramCellPolicy.targetFor(session, cell, index);
+        if (cell.userPosition && target == null) return null;
+        if (cell.element == null) {
+            // Physical blueprint materials and explicit user positions retain their existing payload/material gates.
+            if (!cell.unknown && cell.userPosition
+                && (session.virtual || HologramCellPolicy.explicitTarget(session, cell, index))) return null;
+            return "SOURCE_DECLARATION_UNVERIFIED";
+        }
+        if (cell.element == StructureUtility.isAir()) return null;
+        Declarations.PureElement<?> pure = HologramElementCatalog.pure(cell.element);
+        boolean automatic = !HologramCellPolicy.explicitTarget(session, cell, index);
+        if (pure != null) {
+            if (!pure.accepts(target)) return "SOURCE_TARGET_REJECTED";
+            return automatic && !pure.placementAllows(target) ? "SOURCE_AUTOMATIC_TARGET_REJECTED" : null;
+        }
+        return HologramCellPolicy.declaredTarget(session, cell, target, automatic) ? null
+            : "SOURCE_DECLARATION_UNVERIFIED";
+    }
+
+    static String protectionReason(HologramSession session, HologramCapture.Cell cell, int index) {
+        String failure = targetFailure(session, cell, index);
+        if (failure == null) return null;
+        if ("SOURCE_AUTOMATIC_TARGET_REJECTED".equals(failure)) return "此格声明不允许自动放置当前材料，保留现场且不扣材料；请手动核对选材";
+        if ("SOURCE_TARGET_REJECTED".equals(failure)) return "此格默认材料不符合当前元素声明，保留现场且不扣材料；请重新核对选材";
+        return "此格没有可验证的施工材料声明，保留现场且不扣材料；仅有显示候选不能授权施工";
+    }
+
+    static String failureMessage(HologramSession session, String failure) {
+        String reason;
+        switch (failure) {
+            case "SOURCE_DECLARATION_UNVERIFIED":
+                reason = "所选材料没有可验证的施工声明；未知条件和仅显示的候选不能授权施工";
+                break;
+            case "SOURCE_TARGET_REJECTED":
+                reason = "所选材料不符合当前结构元素声明，请重新选择材料";
+                break;
+            case "SOURCE_AUTOMATIC_TARGET_REJECTED":
+                reason = "当前元素不允许自动放置此材料，请手动核对选材";
+                break;
+            case "SOURCE_SAVED_IDENTITY_MISMATCH":
+                return "图纸记录的控制器与当前注册来源不一致，请重新采集原结构";
+            case "SOURCE_SAVED_METADATA_INVALID":
+                return "图纸的结构来源数据无效，请重新采集原结构";
+            case "SOURCE_DECLARATION_MISMATCH":
+                return "结构格与当前注册来源不一致，请重新采集后核对材料";
+            case "SOURCE_RESCAN_REQUIRED":
+            case "SOURCE_NOT_CAPTURED":
+                return "缺少当前结构来源的有效采集结果，请重新采集后施工";
+            case "SOURCE_CONTROLLER_CHANGED":
+            case "SOURCE_IDENTITY_MISMATCH":
+                return "来源控制器已变化，请重新采集当前机器";
+            case "SOURCE_POSITION_CHANGED":
+            case "SOURCE_POSE_CHANGED":
+                return "来源控制器的位置或朝向已变化，请重新采集";
+            case "SOURCE_CHUNK_UNLOADED":
+            case "SOURCE_WORLD_CHANGED":
+                return "来源世界已变化或区块未加载，请载入原位置后重新采集";
+            case "SOURCE_REVISION_CHANGED":
+            case "SOURCE_DECLARATIONS_CHANGED":
+                return "结构来源或元素声明已更新，请重新采集并核对材料";
+            case "SOURCE_TRIGGER_CHANGED":
+            case "SOURCE_TRIGGER_MISSING":
+            case "SOURCE_INTENT_CHANGED":
+                return "采集工具、结构配置或采集用途已变化，请按当前配置重新采集";
+            case "SOURCE_NO_DECLARATION":
+                return "当前来源没有提供只读结构声明，已保留现场，请检查来源适配";
+            case "SOURCE_STATE_UNREADABLE":
+            case "SOURCE_OBSERVATION_FAILED":
+            case "SOURCE_READ_SET_FAILED":
+                return "无法核实来源控制器的当前状态，未施工，请重新采集";
+            case "SOURCE_DESCRIPTION_FAILED":
+            case "SOURCE_BOUNDARY_FAILED":
+            case "SOURCE_POLICY_FAILED":
+                return "结构来源无法完成声明或施工规则验证，未施工，请检查来源适配";
+            default:
+                return failure.startsWith("SOURCE_") ? "结构来源验证失败，请重新采集后核对（" + failure + "）" : failure;
+        }
+        for (int index = 0; index < session.capture.cells.size(); index++) {
+            HologramCapture.Cell cell = session.capture.cells.get(index);
+            if (!cell.anchor && HologramSessionPolicy.inScope(session, cell, index)
+                && HologramCellPolicy.explicitTarget(session, cell, index)
+                && failure.equals(targetFailure(session, cell, index)))
+                return "位置 " + cell.x + ", " + cell.y + ", " + cell.z + "：" + reason;
+        }
+        return reason;
     }
 
     private static String savedConstructionFailure(HologramSession session, HologramPresets.Structure source) {

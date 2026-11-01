@@ -165,7 +165,8 @@ final class HologramCellPolicy {
         if (c.userPosition) return null;
         ItemStack automatic = s.autoTargets.get(index);
         if (!s.noHatches && automatic != null) return automatic.copy();
-        TileEntity actual = HologramSessionPolicy.authoring(s) ? null : s.player.worldObj.getTileEntity(c.x, c.y, c.z);
+        TileEntity actual = HologramSessionPolicy.authoring(s) || !s.player.worldObj.blockExists(c.x, c.y, c.z) ? null
+            : s.player.worldObj.getTileEntity(c.x, c.y, c.z);
         // Capture replaces hint blocks with any recognized casing fallback. A remaining
         // hatch hint therefore needs its declared hatch even when automatic filling is off.
         // Preserve only an installed hatch accepted by that declaration; never synthesize one.
@@ -985,23 +986,7 @@ final class HologramCellPolicy {
 
     @SuppressWarnings("unchecked")
     static List<ItemStack> declaredCandidates(HologramSession s, HologramCapture.Cell cell) {
-        refreshDeclarationGeneration(s);
-        ItemStack signal = elementTrigger(s, cell);
-        ChannelDataAccessor.setChannelData(signal, "gt_hatch", 1);
-        HologramDeclarationCandidates declaration = s.declarations.collect(
-            cell.element,
-            s.machine,
-            s.player.worldObj,
-            cell.x,
-            cell.y,
-            cell.z,
-            s.areaStructureId,
-            signal,
-            AutoPlaceEnvironment.fromLegacy(
-                (predicate, simulate, count) -> HologramMaterialAccess.materialSource(s)
-                    .take(predicate, true, count),
-                s.player,
-                message -> {}));
+        HologramDeclarationCandidates declaration = declaration(s, cell);
         List<ItemStack> result = new ArrayList<>();
         for (ItemStack stack : declaration.stacks) {
             Block block = Block.getBlockFromItem(stack.getItem());
@@ -1015,6 +1000,30 @@ final class HologramCellPolicy {
         cell.candidateBoundary = declaration.complete ? ""
             : pure == null ? "仅列出已识别的结构声明；自定义校验或动态条件未完整解析" : pure.candidateBoundary();
         return result;
+    }
+
+    static boolean declaredTarget(HologramSession s, HologramCapture.Cell cell, ItemStack target, boolean automatic) {
+        return declaration(s, cell).allows(target, automatic);
+    }
+
+    private static HologramDeclarationCandidates declaration(HologramSession s, HologramCapture.Cell cell) {
+        refreshDeclarationGeneration(s);
+        ItemStack signal = elementTrigger(s, cell);
+        ChannelDataAccessor.setChannelData(signal, "gt_hatch", 1);
+        return s.declarations.collect(
+            cell.element,
+            s.machine,
+            s.player.worldObj,
+            cell.x,
+            cell.y,
+            cell.z,
+            s.areaStructureId,
+            signal,
+            AutoPlaceEnvironment.fromLegacy(
+                (predicate, simulate, count) -> HologramMaterialAccess.materialSource(s)
+                    .take(predicate, true, count),
+                s.player,
+                message -> {}));
     }
 
     @SuppressWarnings("unchecked")

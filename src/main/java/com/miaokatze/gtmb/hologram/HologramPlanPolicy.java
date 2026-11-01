@@ -40,6 +40,7 @@ final class HologramPlanPolicy {
         World w = s.player.worldObj;
         if (c.y < 0 || c.y >= w.getHeight() || !loaded) return "unsupported";
         if (c.anchor) return "protected";
+        if (HologramSourcePolicy.targetFailure(s, c, index) != null) return "protected";
         // Native payload errors must survive even when their primary material cannot be sampled.
         boolean resourceChecked = s.mode != 2 && s.virtual
             && s.virtualPreset != null
@@ -84,11 +85,7 @@ final class HologramPlanPolicy {
             || !s.player.canPlayerEdit(c.x, c.y, c.z, 1, HologramSessionPolicy.trigger(s))) return "protected";
         boolean empty = HologramCellPolicy.trivial(w, c.x, c.y, c.z);
         if (s.mode == 2) return empty ? "satisfied" : HologramCellPolicy.removable(s, c) ? "pending" : "protected";
-        if ((c.element == null && !HologramCellPolicy.explicitTarget(s, c, index))
-            || (c.unknown && !HologramCellPolicy.explicitTarget(s, c, index)
-                && !s.autoTargets.containsKey(index)
-                && !(!s.noHatches && s.channels.hasKey("gt_hatch", 3) && "hatch".equals(c.role))))
-            return "unsupported";
+        if (c.element == null && !HologramCellPolicy.explicitTarget(s, c, index)) return "unsupported";
         if (HologramCellPolicy.targetSatisfied(s, c, index, old, meta)) return "satisfied";
         if (s.facingPins.containsKey(HologramValues.position(c))
             && HologramCellPolicy.targetMatches(s, c, index, old, meta)) return s.mode == 1 ? "pending" : "satisfied";
@@ -122,6 +119,8 @@ final class HologramPlanPolicy {
         World w = s.player.worldObj;
         if (!(loaded == null ? w.blockExists(c.x, c.y, c.z) : loaded)) return "区块未加载";
         if (c.anchor) return "始终保留控制器锚点";
+        String declarationProtection = HologramSourcePolicy.protectionReason(s, c, index);
+        if (declarationProtection != null) return declarationProtection;
         if ("blocked".equals(c.status)) return "结构占位被遮挡，生存补建不会替换旧方块，请清空后重试";
         if (s.mode == 1 && (!s.replacementReady || !HologramCellPolicy.originalMember(s, c)))
             return "替换仅限已完整构建的原结构位置；新增位置与声明空气保持现场";
@@ -216,7 +215,7 @@ final class HologramPlanPolicy {
         }
         String semanticFailure = HologramSourcePolicy.constructionFailure(s);
         if (semanticFailure != null) {
-            s.status = semanticFailure;
+            s.status = HologramSourcePolicy.failureMessage(s, semanticFailure);
             return false;
         }
         if (s.virtual && (!s.virtualPlacement || !s.virtualLocked || s.mode == 2)) {

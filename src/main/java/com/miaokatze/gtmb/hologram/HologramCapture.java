@@ -682,6 +682,9 @@ public final class HologramCapture {
         java.lang.reflect.Method factory = element.getClass()
             .getEnclosingMethod();
         if (factory == null) return false;
+        // Both builder leaves emit only the fixed marker; their adder/filter callbacks are check/placement-only.
+        if (factory.getDeclaringClass() == gregtech.api.util.HatchElementBuilder.class
+            && "build".equals(factory.getName())) return true;
         if (factory.getDeclaringClass() == StructureUtility.class) {
             switch (factory.getName()) {
                 case "ofBlock":

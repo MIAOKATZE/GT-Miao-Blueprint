@@ -320,10 +320,23 @@ public final class HologramSourceContractRegression {
                 false,
                 hint.invoke(capture, leaf, fixture.world, 1, 100, 0, signal, 0),
                 "direct hint helper also rejects unknown leaf");
+            HologramSession session = session(fixture, capture);
+            SimpleAssert.eq(
+                null,
+                HologramSourcePolicy.constructionFailure(session),
+                "an unrequested unknown cell stays protected without rejecting known structure cells");
+            int unknownIndex = 0;
+            while (capture.cells.get(unknownIndex).anchor) unknownIndex++;
+            HologramCapture.Cell unknown = capture.cells.get(unknownIndex);
+            SimpleAssert.eq(
+                "protected",
+                HologramPlanPolicy.classify(session, unknown, unknownIndex),
+                "an unknown hint cannot gain per-cell construction authority");
+            session.pins.put(unknownIndex, new ItemStack(Blocks.stone));
             SimpleAssert.eq(
                 "SOURCE_DECLARATION_UNVERIFIED",
-                HologramSourcePolicy.constructionFailure(session(fixture, capture)),
-                "an unknown hint cannot gain whole-plan authority");
+                HologramSourcePolicy.constructionFailure(session),
+                "explicitly requesting an unknown material is still rejected");
         }
         fixture.unchanged();
     }

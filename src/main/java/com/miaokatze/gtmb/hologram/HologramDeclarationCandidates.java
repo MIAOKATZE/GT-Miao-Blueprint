@@ -27,21 +27,41 @@ import gregtech.api.util.HatchElementBuilder;
 /** Reads exact declarations without running check, hatch adders or setters on the live controller. */
 final class HologramDeclarationCandidates {
 
+    private final HologramDeclarationCollector collector;
     final List<ItemStack> stacks = new ArrayList<>();
+    private final List<ItemStack> placementStacks = new ArrayList<>();
+    private final List<Declarations.PureElement<?>> placementContracts = new ArrayList<>();
     final IdentityHashMap<IStructureElement<?>, Boolean> seen = new IdentityHashMap<>();
     boolean complete = true;
+
+    HologramDeclarationCandidates() {
+        this(null);
+    }
+
+    HologramDeclarationCandidates(HologramDeclarationCollector collector) {
+        this.collector = collector;
+    }
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
     void collect(IStructureElement element, Object context, World world, int x, int y, int z, ItemStack trigger,
         AutoPlaceEnvironment environment, int depth) {
+        collect(element, context, world, x, y, z, trigger, environment, depth, true);
+    }
+
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    private void collect(IStructureElement element, Object context, World world, int x, int y, int z, ItemStack trigger,
+        AutoPlaceEnvironment environment, int depth, boolean placement) {
         if (element == null || depth > 12 || seen.size() >= 128) {
             complete = false;
             return;
         }
-        if (seen.put(element, Boolean.TRUE) != null) return;
+        Boolean previous = seen.get(element);
+        if (previous != null && (previous || !placement)) return;
+        seen.put(element, placement);
         if (element instanceof Declarations.PureElement) {
             Declarations.PureElement<?> declaration = (Declarations.PureElement<?>) element;
-            for (ItemStack stack : declaration.candidates()) add(stack);
+            if (placement) placementContracts.add(declaration);
+            for (ItemStack stack : declaration.candidates()) add(stack, false);
             complete &= declaration.complete();
             return;
         }
@@ -50,7 +70,7 @@ final class HologramDeclarationCandidates {
                 IStructureElement<?>[] children = ((IStructureElementChain<?>) element).fallbacks();
                 if (children == null || children.length > 64) complete = false;
                 else for (IStructureElement<?> child : children)
-                    collect(child, context, world, x, y, z, trigger, environment, depth + 1);
+                    collect(child, context, world, x, y, z, trigger, environment, depth + 1, placement);
                 return;
             }
             IStructureElement<?> backing = HologramDeclarationWrappers.backing(element);
@@ -64,7 +84,8 @@ final class HologramDeclarationCandidates {
                     z,
                     HologramDeclarationWrappers.trigger(element, trigger),
                     environment,
-                    depth + 1);
+                    depth + 1,
+                    placement);
                 return;
             }
             IStructureElement<?> alternative = HologramDeclarationWrappers.alternativesBacking(element);
@@ -72,7 +93,7 @@ final class HologramDeclarationCandidates {
                 // Alternatives can be read through an initialized lazy element or transform;
                 // its arbitrary transform/supplier is never executed and completeness is not asserted.
                 complete = false;
-                collect(alternative, context, world, x, y, z, trigger, environment, depth + 1);
+                collect(alternative, context, world, x, y, z, trigger, environment, depth + 1, false);
                 return;
             }
             Method factory = element.getClass()
@@ -90,10 +111,11 @@ final class HologramDeclarationCandidates {
                     // Do not expand a potentially broad predicate over the whole machine registry.
                     return;
                 }
-                for (IMetaTileEntity prototype : GregTechAPI.METATILEENTITIES) {
-                    if (prototype == null) continue;
-                    ItemStack stack = prototype.getStackForm(1);
-                    if (stack != null && declared.test(stack)) add(stack);
+                if (collector == null) collectHatches(declared, placement);
+                else {
+                    HologramDeclarationCandidates shared = collector.hatches(element, trigger, declared);
+                    for (ItemStack stack : shared.stacks) add(stack, placement);
+                    complete &= shared.complete;
                 }
                 return;
             }
@@ -110,7 +132,7 @@ final class HologramDeclarationCandidates {
                     }
                     Pair<?, ?> pair = (Pair<?, ?>) hint;
                     if (pair.getLeft() instanceof Block && pair.getRight() instanceof Integer)
-                        add(new ItemStack((Block) pair.getLeft(), 1, (Integer) pair.getRight()));
+                        add(new ItemStack((Block) pair.getLeft(), 1, (Integer) pair.getRight()), placement);
                     else complete = false;
                 }
                 // allKnownTiers describes known alternatives, not every value of an arbitrary tier extractor.
@@ -118,13 +140,13 @@ final class HologramDeclarationCandidates {
                 return;
             }
             boolean fixed = factory.getDeclaringClass() == StructureUtility.class && "ofBlock".equals(name);
-            if (fixed && captured(element, "val$defaultBlock") == net.minecraft.init.Blocks.lit_redstone_lamp) {
+            if (fixed && captured(element, "val$block") == net.minecraft.init.Blocks.lit_redstone_lamp) {
                 // This reviewed fixed declaration retains its world state, but pays the vanilla lamp item.
                 ItemStack material = HologramBlockIdentity.materialStack(
                     net.minecraft.init.Blocks.lit_redstone_lamp,
-                    (Integer) captured(element, "val$defaultMeta"));
+                    (Integer) captured(element, "val$meta"));
                 if (material == null) complete = false;
-                else add(material);
+                else add(material, placement);
                 return;
             }
             boolean flat = factory.getDeclaringClass() == StructureUtility.class && "ofBlocksFlat".equals(name);
@@ -135,7 +157,7 @@ final class HologramDeclarationCandidates {
                     return;
                 }
                 HologramReplacementFamily.Family family = HologramReplacementFamily.wildcard(element);
-                if (family != null) for (ItemStack stack : family.targets()) add(stack);
+                if (family != null) for (ItemStack stack : family.targets()) add(stack, placement);
                 complete = false; // Inventory metadata mappings need not represent every accepted world metadata.
                 return;
             }
@@ -158,7 +180,7 @@ final class HologramDeclarationCandidates {
                     complete = false;
                     break;
                 }
-                add(stack);
+                add(stack, placement);
             }
             if (coil) complete = false; // Trigger selects one coil grade; full coil alternatives are not enumerated.
             if (coil) {
@@ -169,10 +191,28 @@ final class HologramDeclarationCandidates {
                         block,
                         target.getItem()
                             .getMetadata(target.getItemDamage()));
-                    if (family != null) for (ItemStack alternativeStack : family.targets()) add(alternativeStack);
+                    if (family != null)
+                        for (ItemStack alternativeStack : family.targets()) add(alternativeStack, placement);
                 }
             }
         } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
+            complete = false;
+        }
+    }
+
+    void collectHatches(Predicate<ItemStack> declared) {
+        collectHatches(declared, true);
+    }
+
+    private void collectHatches(Predicate<ItemStack> declared, boolean placement) {
+        try {
+            for (IMetaTileEntity prototype : GregTechAPI.METATILEENTITIES) {
+                if (prototype == null) continue;
+                ItemStack stack = prototype.getStackForm(1);
+                if (stack != null && declared.test(stack)) add(stack, placement);
+            }
+        } catch (RuntimeException | LinkageError invalid) {
+            // Preserve the original partial-candidate/incomplete result when a registry entry rejects reads.
             complete = false;
         }
     }
@@ -185,19 +225,39 @@ final class HologramDeclarationCandidates {
         return field.get(element);
     }
 
-    private void add(ItemStack stack) {
+    /** A partial enumeration can prove a particular native construction output; display-only alternatives cannot. */
+    boolean allows(ItemStack target, boolean automatic) {
+        if (target == null) return false;
+        for (Declarations.PureElement<?> contract : placementContracts)
+            if (contract.accepts(target) && (!automatic || contract.placementAllows(target))) return true;
+        return placementStacks.stream()
+            .anyMatch(candidate -> HologramValues.sameMaterial(candidate, target));
+    }
+
+    private void add(ItemStack stack, boolean placement) {
         if (stack == null || stack.getItem() == null) return;
         if (stack.getItemDamage() < 0 || stack.getItemDamage() == 32767) {
             complete = false;
             return;
         }
+        boolean present = false;
         for (ItemStack existing : stacks)
             if (existing.getItem() == stack.getItem() && existing.getItemDamage() == stack.getItemDamage()
-                && ItemStack.areItemStackTagsEqual(existing, stack)) return;
-        if (stacks.size() >= 512) {
+                && ItemStack.areItemStackTagsEqual(existing, stack)) {
+                    present = true;
+                    break;
+                }
+        if (!present && stacks.size() >= 512) {
             complete = false;
             return;
         }
+        if (placement && placementStacks.stream()
+            .noneMatch(existing -> HologramValues.sameMaterial(existing, stack))) {
+            ItemStack copy = stack.copy();
+            copy.stackSize = 1;
+            placementStacks.add(copy);
+        }
+        if (present) return;
         ItemStack copy = stack.copy();
         copy.stackSize = 1;
         stacks.add(copy);

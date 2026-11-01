@@ -48,6 +48,9 @@ final class HologramPlanClassifier {
             && s.virtualPreset.schema >= 2
             && s.mode == 0
             && !cell.anchor
+            && cell.userPosition
+            && cell.element == null
+            && !cell.unknown
             && !"templateController".equals(cell.role)
             && s.pins.containsKey(index)
             && cell.tileNbt.isEmpty()

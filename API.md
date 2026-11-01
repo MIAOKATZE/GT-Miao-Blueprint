@@ -81,6 +81,8 @@ piece 名、main/channel、负数 offset 和 Controller 坐标规则须来自声
 
 `Declarations.PureElement` 显式声明主材、候选完整性、角色、接受条件、自动放置条件、预览 metadata、合法朝向与世界身份匹配。所有方法只读取独立数据；`WorldState` 仅包含加载状态、block、metadata、tile 类型及已证明的机器/材料身份，未知身份为 -1。GTMB 不执行这类元素的 native check、hint 或 placement 回调。纯元素本身不证明整机几何或隐藏玩法约束。
 
+候选完整性表示列表是否穷尽，不等同于当前目标的施工证据。原生工厂明确提供的施工输出可逐目标验证；透明包装保留证据，OR 链可由一个已证明的分支授权该材料。未知条件、延迟工厂及仅用于展示的备选不授予权限。没有可证明目标的默认格保持保护，其余安全格可以继续；明确指定但无法验证的目标仍拒绝整次请求并报告位置。已注册来源的 Policy 和当前读集检查仍然有效。
+
 `MaterialVariants.registerExact` 只接受精确 block/item 类及真实 native pick 方法的声明类，回调输入只有 metadata。子类不继承注册；公开计划投影不获得普通格快速路径或实际 TE 读取权限。付款后的身份核验仍使用实际世界的原生材料身份。
 
 以上为当前源码合同。API/fixture、实际依赖加载、客户端交互与世界施工属于不同验证层，不能互相代替。
