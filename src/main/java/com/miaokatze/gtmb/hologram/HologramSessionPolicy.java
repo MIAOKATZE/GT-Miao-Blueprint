@@ -209,6 +209,7 @@ final class HologramSessionPolicy {
         // Large editor drafts are tool storage, not native structure signals copied into every captured cell.
         if (result.hasTagCompound()) result.getTagCompound()
             .removeTag(HologramSessionKeys.DRAFT);
+        HologramDraftPersistence.writeSettings(s, result);
         result.stackSize = s.main;
         List<String> existing = new ArrayList<>();
         ChannelDataAccessor.iterateChannelData(result)

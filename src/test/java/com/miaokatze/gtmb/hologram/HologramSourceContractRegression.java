@@ -55,6 +55,7 @@ public final class HologramSourceContractRegression {
             frozenDefinitionAndReadSet();
             registryLifecycle();
             continuationAdmission();
+            persistedSettingsContinuation();
             observationLineage();
             unknownLeafDoesNotRun();
             explicitPolicyAndSavedAuthority();
@@ -287,6 +288,68 @@ public final class HologramSourceContractRegression {
                     .that(!declarations.sourceCurrent(), "reader revision also invalidates captured coordinates");
                 SimpleAssert.eq("SOURCE_DECLARATIONS_CHANGED", declarations.failure, "reader change requests rescan");
             }
+        }
+        fixture.unchanged();
+    }
+
+    private static void persistedSettingsContinuation() throws Exception {
+        Fixture fixture = fixture();
+        fixture.controller.forbidNative = true;
+        HologramSession session = session(fixture, null);
+        ItemStack held = session.player.getHeldItem();
+        held.getTagCompound()
+            .setString("fixtureNativeSignal", "original");
+        SimpleAssert.that(
+            !held.getTagCompound()
+                .hasKey("gtitHologramMain"),
+            "a newly admitted tool has not persisted its default settings");
+        AtomicInteger descriptions = new AtomicInteger();
+        try (GTMBExtensions.Registration registration = readySource(
+            "gtmb_test:persisted-settings-source",
+            descriptions,
+            6200)) {
+            ItemStack initial = HologramSessionPolicy.trigger(session);
+            HologramCapture first = HologramCapture.collect(fixture.controller, initial, ExtendedFacing.DEFAULT);
+            SimpleAssert.that(first.pending && !first.incomplete, "the new tool genuinely yields a partial capture");
+            session.capture = first;
+            session.capturePending = true;
+            // Production open persists tool settings immediately after its first capture slice.
+            HologramDraftPersistence.persist(session);
+            ItemStack persisted = HologramSessionPolicy.trigger(session);
+            HologramCapture completed = finish(
+                fixture.controller,
+                persisted,
+                StructureSources.CaptureIntent.NEW_TEMPLATE,
+                first);
+            SimpleAssert
+                .eq(6201, completed.cells.size(), "persisting default tool settings cannot reject continuation");
+            SimpleAssert.eq(1, descriptions.get(), "the continuation keeps its original declaration graph");
+            SimpleAssert.that(
+                ItemStack.areItemStacksEqual(initial, persisted),
+                "the detached trigger encodes exactly the same GTMB settings as persistence");
+
+            HologramCapture changed = HologramCapture.collect(fixture.controller, persisted, ExtendedFacing.DEFAULT);
+            held.getTagCompound()
+                .setString("fixtureNativeSignal", "changed");
+            HologramCapture
+                .collect(fixture.controller, HologramSessionPolicy.trigger(session), ExtendedFacing.DEFAULT, changed);
+            SimpleAssert.eq("SOURCE_TRIGGER_CHANGED", changed.failure, "arbitrary native NBT changes remain fenced");
+            held.getTagCompound()
+                .setString("fixtureNativeSignal", "original");
+
+            changed = HologramCapture.collect(fixture.controller, persisted, ExtendedFacing.DEFAULT);
+            session.main = 2;
+            HologramCapture
+                .collect(fixture.controller, HologramSessionPolicy.trigger(session), ExtendedFacing.DEFAULT, changed);
+            SimpleAssert.eq("SOURCE_TRIGGER_CHANGED", changed.failure, "main signal changes still reject continuation");
+            session.main = 1;
+
+            changed = HologramCapture.collect(fixture.controller, persisted, ExtendedFacing.DEFAULT);
+            session.channels.setInteger("fixture_tier", 2);
+            HologramCapture
+                .collect(fixture.controller, HologramSessionPolicy.trigger(session), ExtendedFacing.DEFAULT, changed);
+            SimpleAssert
+                .eq("SOURCE_TRIGGER_CHANGED", changed.failure, "named channel changes still reject continuation");
         }
         fixture.unchanged();
     }
