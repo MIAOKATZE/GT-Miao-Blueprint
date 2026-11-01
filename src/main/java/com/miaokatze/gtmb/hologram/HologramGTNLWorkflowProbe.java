@@ -479,6 +479,7 @@ public final class HologramGTNLWorkflowProbe {
         private void exportReload(Spec spec) throws Exception {
             HologramPresets.Preset preset = HologramBlueprintProjection
                 .blueprint(source, "GTNL workflow " + spec.family);
+            if ("aeep".equals(spec.family)) recordBartWorksMaterials(preset);
             preset.id = java.util.UUID.randomUUID()
                 .toString();
             preset.authorName = actor.getCommandSenderName();
@@ -511,6 +512,64 @@ public final class HologramGTNLWorkflowProbe {
             if ("aeep".equals(spec.family))
                 require(highDamage >= 39, "AEEP high-damage BW casing identity was truncated");
             stage("production_projection_export_save_reload");
+        }
+
+        private void recordBartWorksMaterials(HologramPresets.Preset preset) {
+            Map<String, NBTTagCompound> materials = new LinkedHashMap<>();
+            for (int i = 0; i < preset.cells.size(); i++) {
+                HologramCapture.Cell declaration = source.capture.cells.get(i);
+                if (!(declaration.element instanceof HologramGTNLElement)) continue;
+                String id = ((HologramGTNLElement) declaration.element).id;
+                if (!"aeep.bolted".equals(id) && !"aeep.rebolted".equals(id)) continue;
+                NBTTagCompound identity = materials.get(id);
+                if (identity == null) {
+                    HologramPresets.Cell saved = preset.cells.get(i);
+                    ItemStack paid = saved.stack();
+                    identity = new NBTTagCompound();
+                    identity.setString("elementId", id);
+                    identity.setString("block", saved.block);
+                    identity.setString(
+                        "blockClass",
+                        saved.block()
+                            .getClass()
+                            .getName());
+                    identity.setString("item", saved.item);
+                    identity.setString(
+                        "itemClass",
+                        paid.getItem()
+                            .getClass()
+                            .getName());
+                    identity.setInteger("numericItemId", Item.getIdFromItem(paid.getItem()));
+                    identity.setInteger("fullItemDamage", saved.damage);
+                    identity.setInteger("plannedWorldMetadata", saved.metadata);
+                    identity.setIntArray("firstRelativePosition", new int[] { saved.x, saved.y, saved.z });
+                    identity.setString(
+                        "sourceWorldBlock",
+                        String.valueOf(
+                            Block.blockRegistry
+                                .getNameForObject(world.getBlock(declaration.x, declaration.y, declaration.z))));
+                    identity.setInteger(
+                        "sourceWorldMetadata",
+                        world.getBlockMetadata(declaration.x, declaration.y, declaration.z));
+                    TileEntity actual = world.getTileEntity(declaration.x, declaration.y, declaration.z);
+                    identity.setString(
+                        "sourceWorldTileClass",
+                        actual == null ? ""
+                            : actual.getClass()
+                                .getName());
+                    identity.setString(
+                        "expectedNativeTileClass",
+                        "bartworks.system.material."
+                            + ("aeep.bolted".equals(id) ? "BWTileEntityMetaGeneratedBlocksCasing"
+                                : "BWTileEntityMetaGeneratedBlocksCasingAdvanced"));
+                    identity.setBoolean("savedTilePayloadPresent", saved.tileNbt != null && !saved.tileNbt.isEmpty());
+                    materials.put(id, identity);
+                }
+                identity.setInteger("cells", identity.getInteger("cells") + 1);
+            }
+            NBTTagList identities = new NBTTagList();
+            for (NBTTagCompound identity : materials.values()) identities.appendTag(identity);
+            row.setTag("plannedBartWorksMaterials", identities);
         }
 
         private void createPlacement() throws Exception {

@@ -1063,7 +1063,6 @@ final class HologramGTNLSemantics {
 
     /** Saved labels cannot hide a GTNL controller material behind an ordinary or disabled source. */
     private static String savedControllerTargetFailure(HologramSession session) {
-        HologramPresets.Preset preset = session.virtualPreset;
         for (int index = 0; index < session.capture.cells.size(); index++) {
             HologramCapture.Cell cell = session.capture.cells.get(index);
             if (cell.anchor || cell.excluded || !HologramSessionPolicy.membershipEnabled(session, cell)) continue;
@@ -1073,17 +1072,54 @@ final class HologramGTNLSemantics {
             if (!isGTNLController(controller)) continue;
             String actualClass = controller.getClass()
                 .getName();
-            boolean matched = false;
-            if (preset.structures != null && !preset.structures.isEmpty()) {
-                for (HologramPresets.Structure source : preset.structures) if (source != null && source.enabled
-                    && cell.belongsTo(source.id)
-                    && source.controllerId == target.getItemDamage()
-                    && actualClass.equals(HologramBlueprintData.sourceClass(preset, source))) matched = true;
-            } else matched = preset.controllerId == target.getItemDamage()
-                && actualClass.equals(HologramBlueprintData.sourceClass(preset, null));
-            if (!matched) return "GTNL_SAVED_SOURCE_MISMATCH";
+            if (!savedControllerSourceMatches(session, cell, target, actualClass, ""))
+                return "GTNL_SAVED_SOURCE_MISMATCH";
         }
         return null;
+    }
+
+    private static boolean savedControllerSourceMatches(HologramSession session, HologramCapture.Cell cell,
+        ItemStack target, String actualClass, String structureId) {
+        HologramPresets.Preset preset = session.virtualPreset;
+        if (preset.structures != null && !preset.structures.isEmpty()) {
+            for (HologramPresets.Structure source : preset.structures) if (source != null && source.enabled
+                && (structureId.isEmpty() || structureId.equals(source.id))
+                && cell.belongsTo(source.id)
+                && source.controllerId == target.getItemDamage()
+                && actualClass.equals(HologramBlueprintData.sourceClass(preset, source))) return true;
+            return false;
+        }
+        return structureId.isEmpty() && preset.controllerId == target.getItemDamage()
+            && actualClass.equals(HologramBlueprintData.sourceClass(preset, null));
+    }
+
+    /** Identity only: the caller still requires source proof, current read-set and all non-controller leaves. */
+    static boolean reviewedTemplateController(HologramSession session, HologramCapture.Cell cell, int index,
+        String family, String structureId) {
+        if (!session.virtual || session.virtualPreset == null
+            || cell.anchor
+            || cell.unknown
+            || cell.element != null
+            || !"templateController".equals(cell.role)
+            || !cell.sourceWarning.isEmpty()) return false;
+        ItemStack target = HologramCellPolicy.targetFor(session, cell, index);
+        if (target == null || !(target.getItem() instanceof ItemMachines)) return false;
+        IMetaTileEntity controller = registeredPrototype(target.getItemDamage());
+        if (!isGTNLController(controller)) return false;
+        String actualClass = controller.getClass()
+            .getName();
+        if (!family.equals(FAMILIES.get(actualClass)) || !actualClass.equals(cell.sourceClass)
+            || !savedControllerSourceMatches(session, cell, target, actualClass, structureId)) return false;
+        HologramPresets.Preset preset = session.virtualPreset;
+        if (preset.structures != null && !preset.structures.isEmpty()) {
+            if (structureId.isEmpty()) return false;
+            HologramPresets.Structure source = HologramBlueprintData.blueprintSource(preset, structureId);
+            return cell.x == session.x + source.x && cell.y == session.y + source.y && cell.z == session.z + source.z;
+        }
+        return cell.memberships()
+            .isEmpty() && cell.x == session.x
+            && cell.y == session.y
+            && cell.z == session.z;
     }
 
     private static IMetaTileEntity registeredPrototype(int id) {
@@ -1125,6 +1161,7 @@ final class HologramGTNLSemantics {
                 HologramCapture.Cell cell = session.capture.cells.get(index);
                 if (!structureId.isEmpty() && !cell.belongsTo(structureId)) continue;
                 if (cell.anchor || cell.element == StructureUtility.isAir()) continue;
+                if (reviewedTemplateController(session, cell, index, family, structureId)) continue;
                 if (!(cell.element instanceof HologramGTNLElement))
                     return "GTNL_SAVED_RESCAN_REQUIRED: 保存的来源信息不授予施工资格，请重新读取模板";
                 interpreted++;

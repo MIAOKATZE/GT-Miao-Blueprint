@@ -4,12 +4,17 @@ import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.lang.reflect.Field;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import net.minecraft.block.Block;
+import net.minecraft.block.material.Material;
 import net.minecraft.init.Blocks;
 import net.minecraft.init.Items;
+import net.minecraft.item.Item;
+import net.minecraft.item.ItemBlock;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 
@@ -17,6 +22,11 @@ import com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor
 import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 import com.miaokatze.gtmb.testutil.TestRunner;
+
+import bartworks.system.material.BWItemMetaGeneratedBlock;
+import bartworks.system.material.BWMetaGeneratedBlocksCasing;
+import bartworks.system.material.BWTileEntityMetaGeneratedBlocksCasing;
+import gregtech.api.enums.OrePrefixes;
 
 /** Geometry and declaration contracts run without loading GTNL or invoking any upstream callback. */
 public final class HologramGTNLRegression {
@@ -29,6 +39,7 @@ public final class HologramGTNLRegression {
         tests.put("nuclear-geometry", HologramGTNLRegression::nuclearGeometry);
         tests.put("independent-channels", HologramGTNLRegression::channels);
         tests.put("fixed-leaf-purity-and-damage", HologramGTNLRegression::fixedLeaf);
+        tests.put("bartworks-planned-and-actual-material-identity", HologramGTNLRegression::bartWorksMaterial);
         tests.put("bounded-mbs-decoder", HologramGTNLRegression::codec);
         tests.put("real-sphere-resource", HologramGTNLRegression::sphere);
         TestRunner.run(HologramGTNLRegression.class, tests);
@@ -38,6 +49,7 @@ public final class HologramGTNLRegression {
         nuclearGeometry();
         channels();
         fixedLeaf();
+        bartWorksMaterial();
         codec();
         sphere();
     }
@@ -188,6 +200,146 @@ public final class HologramGTNLRegression {
             reject(new byte[8193], 1, 2, 3);
         } catch (IOException failure) {
             throw new AssertionError(failure);
+        }
+    }
+
+    private static void bartWorksMaterial() {
+        try {
+            Field field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+            field.setAccessible(true);
+            sun.misc.Unsafe unsafe = (sun.misc.Unsafe) field.get(null);
+            Block casing = registeredBartWorksBlock(
+                "gtnl_bw_casing",
+                (Block) unsafe.allocateInstance(BWMetaGeneratedBlocksCasing.class),
+                false,
+                unsafe);
+            ItemStack material = new ItemStack(casing, 1, 31895);
+            HologramResourceWorld world = HologramResourceWorld.create(casing, 31895);
+            SimpleAssert.eq(
+                0,
+                casing.getDamageValue(world, 0, 64, 0),
+                "native BW pick has no material identity without its tile");
+            SimpleAssert.eq(
+                31895,
+                HologramPresets.materialDamage(casing, 31895),
+                "reviewed native BW item plans the full positive-short material without a tile factory");
+            HologramPresets.Cell saved = HologramPresets.cell(material, 0, 0, 0, -1, false);
+            saved.metadata = 31895;
+            HologramPresets.validateBlueprintCell(saved, true, null);
+            SimpleAssert.eq(31895, saved.damage, "saved BW material is never truncated to a nibble");
+            expectMaterialFailure(
+                () -> HologramPresets.validateMaterialVariant(casing, 31895, new ItemStack(casing, 1, 0)));
+            expectMaterialFailure(() -> HologramPresets.materialDamage(casing, 0));
+            expectMaterialFailure(() -> HologramPresets.materialDamage(casing, 32768));
+
+            HologramCapture.Cell placed = new HologramCapture.Cell(null, 0, 64, 0);
+            placed.block = casing;
+            placed.meta = 31895;
+            expectMaterialFailure(() -> HologramCellPolicy.validateOrdinaryPlacedVariant(world, placed, material));
+            BWTileEntityMetaGeneratedBlocksCasing tile = new BWTileEntityMetaGeneratedBlocksCasing();
+            tile.setWorldObj(world);
+            tile.xCoord = placed.x;
+            tile.yCoord = placed.y;
+            tile.zCoord = placed.z;
+            world.tile = tile;
+            SimpleAssert.that(
+                world.getBlock(placed.x, placed.y, placed.z) == casing
+                    && Block.getBlockFromItem(material.getItem()) == casing,
+                "actual-world fixture and paid ItemBlock bind the same casing at the placed coordinate");
+            tile.mMetaData = 31895;
+            HologramCellPolicy.validateOrdinaryPlacedVariant(world, placed, material);
+            tile.mMetaData = 31766;
+            expectMaterialFailure(() -> HologramCellPolicy.validateOrdinaryPlacedVariant(world, placed, material));
+            SimpleAssert.eq(
+                31766,
+                casing.getDamageValue(world, 0, 64, 0),
+                "planned identity never replaces the actual world's native TE-aware material read");
+
+            Block unknownBlock = registeredBartWorksBlock(
+                "gtnl_bw_unknown_casing",
+                (Block) unsafe.allocateInstance(UnreviewedBartWorksCasing.class),
+                false,
+                unsafe);
+            SimpleAssert.eq(
+                0,
+                HologramMaterialDescriptor.kind(unknownBlock),
+                "unreviewed casing subclass does not inherit the planned identity proof");
+            expectMaterialFailure(
+                () -> HologramPresets
+                    .validateMaterialVariant(unknownBlock, 31895, new ItemStack(unknownBlock, 1, 31895)));
+            Block unknownItem = registeredBartWorksBlock(
+                "gtnl_bw_unknown_item",
+                (Block) unsafe.allocateInstance(BWMetaGeneratedBlocksCasing.class),
+                true,
+                unsafe);
+            SimpleAssert.eq(
+                0,
+                HologramMaterialDescriptor.kind(unknownItem),
+                "unreviewed native-item subclass cannot acquire planned identity by inheritance");
+            expectMaterialFailure(
+                () -> HologramPresets
+                    .validateMaterialVariant(unknownItem, 31895, new ItemStack(unknownItem, 1, 31895)));
+        } catch (Exception failure) {
+            throw new AssertionError("BartWorks planned and actual material boundary", failure);
+        }
+    }
+
+    private static Block registeredBartWorksBlock(String name, Block block, boolean unknownItem, sun.misc.Unsafe unsafe)
+        throws Exception {
+        String registry = "gtmb:" + name;
+        Object existing = Block.blockRegistry.getObject(registry);
+        if (existing instanceof Block && existing != Blocks.air) return (Block) existing;
+        Field delegate = Block.class.getDeclaredField("delegate");
+        delegate.setAccessible(true);
+        delegate.set(
+            block,
+            ((cpw.mods.fml.common.registry.FMLControlledNamespacedRegistry) Block.blockRegistry)
+                .getDelegate(block, Block.class));
+        int slot = 3980;
+        while (slot > 0 && (Item.getItemById(slot) != null || Block.getBlockById(slot) != Blocks.air)) slot--;
+        if (slot == 0) throw new AssertionError("No isolated BartWorks fixture registry slot");
+        Block.blockRegistry.addObject(slot, registry, block);
+        // Skip creative-tab/logger initialization; only these audited native identity methods are under test.
+        Item material = (Item) unsafe
+            .allocateInstance(unknownItem ? UnreviewedBartWorksItem.class : BWItemMetaGeneratedBlock.class);
+        Field blockField = ItemBlock.class.getDeclaredField("field_150939_a");
+        blockField.setAccessible(true);
+        blockField.set(material, block);
+        Field itemDelegate = Item.class.getDeclaredField("delegate");
+        itemDelegate.setAccessible(true);
+        itemDelegate.set(
+            material,
+            ((cpw.mods.fml.common.registry.FMLControlledNamespacedRegistry) Item.itemRegistry)
+                .getDelegate(material, Item.class));
+        material.setHasSubtypes(true);
+        material.setMaxStackSize(64);
+        Item.itemRegistry.addObject(slot, registry, material);
+        return block;
+    }
+
+    private static void expectMaterialFailure(MaterialCheck check) throws Exception {
+        try {
+            check.run();
+            throw new AssertionError("unpaid or unreviewed BW material identity was accepted");
+        } catch (IOException expected) {}
+    }
+
+    private interface MaterialCheck {
+
+        void run() throws Exception;
+    }
+
+    private static final class UnreviewedBartWorksCasing extends BWMetaGeneratedBlocksCasing {
+
+        private UnreviewedBartWorksCasing() {
+            super(Material.iron, BWTileEntityMetaGeneratedBlocksCasing.class, "unused", OrePrefixes.blockCasing);
+        }
+    }
+
+    private static final class UnreviewedBartWorksItem extends BWItemMetaGeneratedBlock {
+
+        private UnreviewedBartWorksItem(Block block) {
+            super(block);
         }
     }
 

@@ -193,6 +193,7 @@ final class HologramSemanticSafetyRegression {
                 + i] = (IMetaTileEntity) unsafe.allocateInstance(loader.define(classes[i]));
             IMetaTileEntity ordinary = (IMetaTileEntity) unsafe.allocateInstance(AdmissionController.class);
             GregTechAPI.METATILEENTITIES[firstId + classes.length] = ordinary;
+            reviewedControllerCells(classes, families, firstId);
             HologramPresets.Preset preset = session.virtualPreset;
             preset.sourceClass = null;
             preset.controllerId = firstId;
@@ -290,6 +291,232 @@ final class HologramSemanticSafetyRegression {
         } finally {
             System.arraycopy(previous, 0, GregTechAPI.METATILEENTITIES, firstId, previous.length);
         }
+    }
+
+    private static void reviewedControllerCells(String[] classes, String[] families, int firstId)
+        throws ReflectiveOperationException {
+        ItemMachines machines = new ItemMachines(new Block(Material.iron) {});
+        for (int i = 1; i < classes.length; i++) {
+            HologramSession session = savedSession();
+            session.capture = new HologramCapture(null, new ItemStack(Blocks.stone));
+            HologramPresets.Structure source = source("reviewed", classes[i], firstId + i);
+            source.x = 2;
+            source.y = 3;
+            source.z = -4;
+            session.virtualPreset.structures.add(source);
+            HologramCapture.Cell controller = new HologramCapture.Cell(
+                null,
+                session.x + source.x,
+                session.y + source.y,
+                session.z + source.z);
+            controller.role = "templateController";
+            controller.sourceClass = classes[i];
+            controller.userPosition = true;
+            HologramBlueprintData.setMemberships(controller, Collections.singletonList(source.id));
+            session.capture.cells.add(controller);
+            ItemStack target = new ItemStack(machines, 1, firstId + i);
+            session.pins.put(0, target);
+            controllerIdentity(
+                session,
+                controller,
+                families[i],
+                source.id,
+                true,
+                "each reviewed machine recognizes its reconstructed payable controller without an element");
+            failure(
+                session,
+                "GTNL_SAVED_RESCAN_REQUIRED",
+                "controller identity alone cannot replace the member proof or reviewed leaves");
+            if (i != 1) continue;
+
+            controller.role = "prefab";
+            controllerIdentity(
+                session,
+                controller,
+                families[i],
+                source.id,
+                false,
+                "an ordinary null leaf is never skipped");
+            controller.role = "templateController";
+            session.pins.put(0, new ItemStack(Blocks.stone));
+            controllerIdentity(
+                session,
+                controller,
+                families[i],
+                source.id,
+                false,
+                "the role string alone cannot authorize a block target");
+            session.pins.put(0, new ItemStack(machines, 1, firstId));
+            controllerIdentity(
+                session,
+                controller,
+                families[i],
+                source.id,
+                false,
+                "an unreviewed controller target is not a known family controller");
+            session.pins.put(0, new ItemStack(machines, 1, firstId + 2));
+            controllerIdentity(
+                session,
+                controller,
+                families[i],
+                source.id,
+                false,
+                "another reviewed controller ID cannot borrow this family proof");
+            session.pins.put(0, target);
+            controllerIdentity(
+                session,
+                controller,
+                families[2],
+                source.id,
+                false,
+                "the expected metadata family must match the real target");
+            source.controllerId++;
+            controllerIdentity(
+                session,
+                controller,
+                families[i],
+                source.id,
+                false,
+                "the source controller ID must match the real target");
+            source.controllerId--;
+            source.sourceClass = classes[0];
+            controllerIdentity(
+                session,
+                controller,
+                families[i],
+                source.id,
+                false,
+                "the source class cannot be substituted");
+            source.sourceClass = classes[i];
+            controller.sourceClass = classes[0];
+            controllerIdentity(
+                session,
+                controller,
+                families[i],
+                source.id,
+                false,
+                "a stale cell source cannot use a different member proof");
+            controller.sourceClass = classes[i];
+            source.enabled = false;
+            controllerIdentity(
+                session,
+                controller,
+                families[i],
+                source.id,
+                false,
+                "a disabled member supplies no controller qualification");
+            source.enabled = true;
+            HologramBlueprintData.setMemberships(controller, Collections.emptyList());
+            controllerIdentity(
+                session,
+                controller,
+                families[i],
+                source.id,
+                false,
+                "the controller must belong to the validated member");
+            HologramBlueprintData.setMemberships(controller, Collections.singletonList(source.id));
+            source.x++;
+            controllerIdentity(
+                session,
+                controller,
+                families[i],
+                source.id,
+                false,
+                "a controller outside the source anchor cannot be skipped");
+            source.x--;
+            HologramPresets.Structure other = source("other", classes[i], firstId + i);
+            other.x = source.x + 10;
+            session.virtualPreset.structures.add(other);
+            HologramBlueprintData.setMemberships(controller, Arrays.asList(source.id, other.id));
+            controllerIdentity(
+                session,
+                controller,
+                families[i],
+                other.id,
+                false,
+                "a shared cell cannot borrow another member's controller anchor");
+            session.virtualPreset.structures.remove(other);
+            HologramBlueprintData.setMemberships(controller, Collections.singletonList(source.id));
+            HologramCapture.Cell leaf = new HologramCapture.Cell(
+                StructureUtility.ofBlock(Blocks.stone, 0),
+                controller.x,
+                controller.y,
+                controller.z);
+            leaf.role = "templateController";
+            leaf.sourceClass = controller.sourceClass;
+            HologramBlueprintData.setMemberships(leaf, controller.memberships());
+            controllerIdentity(
+                session,
+                leaf,
+                families[i],
+                source.id,
+                false,
+                "a non-controller element still requires normal leaf validation");
+            controller.unknown = true;
+            controllerIdentity(
+                session,
+                controller,
+                families[i],
+                source.id,
+                false,
+                "an unknown cell cannot become a known controller by role alone");
+            controller.unknown = false;
+            controller.sourceWarning = "stale source";
+            controllerIdentity(
+                session,
+                controller,
+                families[i],
+                source.id,
+                false,
+                "an unresolved source warning is not qualified");
+            controller.sourceWarning = "";
+
+            session.virtualPreset.structures.clear();
+            session.virtualPreset.sourceClass = classes[i];
+            session.virtualPreset.controllerId = firstId + i;
+            HologramCapture.Cell legacy = HologramBlueprintData
+                .blueprintCell(controller, session.x, session.y, session.z);
+            HologramBlueprintData.setMemberships(legacy, Collections.emptyList());
+            session.capture.cells.set(0, legacy);
+            controllerIdentity(
+                session,
+                legacy,
+                families[i],
+                "",
+                true,
+                "an implicit legacy controller uses its original template anchor");
+            controllerIdentity(
+                session,
+                controller,
+                families[i],
+                "",
+                false,
+                "the legacy source cannot qualify a shifted controller position");
+            HologramBlueprintData.setMemberships(legacy, Collections.singletonList("missing"));
+            controllerIdentity(
+                session,
+                legacy,
+                families[i],
+                "",
+                false,
+                "an implicit source cannot qualify a forged member");
+            HologramBlueprintData.setMemberships(legacy, Collections.emptyList());
+            session.capture.observe(() -> "FIXTURE_SOURCE_CHANGED");
+            SimpleAssert.that(
+                !HologramPlanPolicy.constructionAllowed(session),
+                "controller recognition never bypasses source invalidation");
+            SimpleAssert.that(
+                session.status.contains("结构来源或现场状态已变化"),
+                "the normal source read-set guard still reports invalidation");
+        }
+    }
+
+    private static void controllerIdentity(HologramSession session, HologramCapture.Cell cell, String family,
+        String structureId, boolean expected, String label) {
+        SimpleAssert.eq(
+            expected,
+            HologramGTNLSemantics.reviewedTemplateController(session, cell, 0, family, structureId),
+            label);
     }
 
     private static void legacySourceMigration(String sourceClass, int controllerId)
