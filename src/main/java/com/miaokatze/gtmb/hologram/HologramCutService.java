@@ -18,7 +18,18 @@ import com.miaokatze.gtmb.util.ServerTaskScheduler;
 public final class HologramCutService {
 
     private static final HologramRequestGate queued = new HologramRequestGate(8, 128);
+    private static final java.util.Map<UUID, DemolitionConnection> demolitionRequests = new java.util.HashMap<>();
     private static MinecraftServer recoveredServer;
+
+    private static final class DemolitionConnection {
+
+        final EntityPlayerMP player;
+        final HologramDemolitionProtocol.History history = new HologramDemolitionProtocol.History();
+
+        DemolitionConnection(EntityPlayerMP player) {
+            this.player = player;
+        }
+    }
 
     private HologramCutService() {}
 
@@ -48,7 +59,13 @@ public final class HologramCutService {
 
     public static void clear() {
         queued.clear();
+        demolitionRequests.clear();
         recoveredServer = null;
+    }
+
+    static void disconnected(EntityPlayerMP player) {
+        DemolitionConnection connection = demolitionRequests.get(player.getUniqueID());
+        if (connection != null && connection.player == player) demolitionRequests.remove(player.getUniqueID());
     }
 
     public static void receive(EntityPlayerMP player, NBTTagCompound request) {
@@ -63,13 +80,20 @@ public final class HologramCutService {
         ServerTaskScheduler.scheduleServerTask(() -> {
             try {
                 if (!lease.active()) return;
-                if (HologramAeCraftingOrders.active(player) && !"list".equals(copy.getString("action"))) {
+                String action = copy.getString("action");
+                boolean demolitionControl = "demolitionStatus".equals(action) || "demolitionCancel".equals(action);
+                if (HologramAeCraftingOrders.active(player) && !"list".equals(action) && !demolitionControl
+                    || HologramDemolition.active(player) && !HologramDemolitionProtocol.handles(action)) {
                     NBTTagCompound busy = new NBTTagCompound();
                     busy.setString("action", "state");
                     busy.setString("requestId", copy.getString("requestId"));
                     busy.setBoolean("success", false);
-                    busy.setString("code", "material_order_busy");
-                    busy.setString("message", "AE 缺料订单正在后台处理；请先等待完成或取消订单");
+                    busy.setString(
+                        "code",
+                        HologramDemolition.active(player) ? "demolition_busy" : "material_order_busy");
+                    busy.setString(
+                        "message",
+                        HologramDemolition.active(player) ? "拆除正在进行，请等待完成或按 Esc 取消" : "AE 缺料订单正在后台处理；请先等待完成或取消订单");
                     HologramNetwork.sendCutState(player, busy);
                     return;
                 }
@@ -100,12 +124,14 @@ public final class HologramCutService {
     }
 
     static NBTTagCompound execute(EntityPlayerMP player, NBTTagCompound request) {
+        if (HologramDemolitionProtocol.handles(request.getString("action"))) return executeDemolition(player, request);
         NBTTagCompound response = new NBTTagCompound();
         response.setString("action", "state");
         response.setString("requestId", request.getString("requestId"));
         HologramCutStorage storage = null;
         NBTTagCompound state = null;
         try {
+            if (HologramDemolition.active(player)) throw new IOException("拆除正在进行，请等待完成或按 Esc 取消");
             for (Object key : request.func_150296_c()) {
                 String name = String.valueOf(key);
                 if (!java.util.Arrays
@@ -144,6 +170,8 @@ public final class HologramCutService {
             String requestId = UUID.fromString(request.getString("requestId"))
                 .toString();
             if (!requestId.equals(request.getString("requestId"))) throw new IOException("无效剪切请求编号");
+            if (!java.util.Arrays.asList("list", "preview", "cut", "paste", "undo", "openWorkspace")
+                .contains(request.getString("action"))) throw new IOException("未知剪切操作");
             if ("openWorkspace".equals(request.getString("action"))) {
                 // Opening a manager never loads the clipboard journal or retries a world mutation.
                 HologramLibraryFacade.actorId(player);
@@ -279,6 +307,59 @@ public final class HologramCutService {
             } catch (IOException ignored) {}
             com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Cut clipboard request failed", failure);
         }
+        return response;
+    }
+
+    private static NBTTagCompound executeDemolition(EntityPlayerMP player, NBTTagCompound request) {
+        NBTTagCompound response = new NBTTagCompound();
+        response.setString("action", "state");
+        response.setString("requestId", request.getString("requestId"));
+        try {
+            String id = HologramDemolitionProtocol.validate(request);
+            String action = request.getString("action");
+            DemolitionConnection connection = demolitionRequests.get(player.getUniqueID());
+            if (connection == null || connection.player != player) {
+                connection = new DemolitionConnection(player);
+                demolitionRequests.put(player.getUniqueID(), connection);
+            }
+            HologramDemolitionProtocol.History history = connection.history;
+            if ("demolitionStatus".equals(action)) {
+                HologramDemolitionProtocol.Receipt receipt = history.find(request.getString("id"));
+                boolean accepted = receipt != null && "demolish".equals(receipt.action) && receipt.accepted;
+                response.setString("reconciledRequestId", request.getString("id"));
+                response.setBoolean("requestCompleted", accepted);
+                response.setString("message", accepted ? "拆除请求已接收，请留意完成消息" : "该拆除请求未执行，可重新框选确认");
+            } else {
+                HologramDemolitionProtocol.Receipt receipt = history.find(id);
+                if (receipt != null) {
+                    if (!action.equals(receipt.action)) throw new IOException("拆除请求编号已使用");
+                    response.setBoolean("success", receipt.accepted);
+                    response.setString("code", "already_submitted");
+                    response.setString("message", receipt.accepted ? "该拆除请求已处理" : "该拆除请求未执行，请重新确认");
+                    response.setBoolean("demolitionActive", HologramDemolition.active(player));
+                    return response;
+                }
+                receipt = history.begin(id, action);
+                if ("demolish".equals(action)) {
+                    HologramDemolition.start(player, HologramDemolitionProtocol.selection(request));
+                    HologramSession workspace = HologramWorkspace.find(player.getUniqueID());
+                    if (workspace != null && workspace.player == player)
+                        HologramProjectorWorkflow.libraryCloseUi(workspace);
+                    response.setString("message", "已开始从上往下拆除；按 Esc 可取消剩余拆除");
+                } else {
+                    HologramDemolition.cancel(player);
+                    response.setString("message", "拆除已停止");
+                }
+                receipt.accepted = true;
+            }
+            response.setBoolean("success", true);
+            response.setString("code", "ok");
+        } catch (IOException invalid) {
+            response.setBoolean("success", false);
+            response.setString("code", "failed");
+            response.setString("message", invalid.getMessage());
+        }
+        response.setBoolean("demolitionActive", HologramDemolition.active(player));
         return response;
     }
 

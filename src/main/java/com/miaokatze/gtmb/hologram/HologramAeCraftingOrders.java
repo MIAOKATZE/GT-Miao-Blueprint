@@ -75,6 +75,7 @@ public final class HologramAeCraftingOrders {
 
     /** The request must be a fresh server-owned quote; client-supplied material rows are never accepted. */
     public static String submit(EntityPlayerMP player, HologramMaterials.Settings settings, NBTTagCompound quote) {
+        if (HologramDemolition.active(player)) return "拆除任务正在后台处理，请等待完成或停止后再提交 AE 缺料订单";
         if (active(player)) return "AE 缺料订单正在后台处理，请等待完成或取消当前订单";
         if (!quote.getBoolean("complete")) return "材料报价尚未完成，请刷新材料后再下单";
         if (ORDERS.size() >= MAX_ORDERS && !ORDERS.containsKey(player.getUniqueID())) return "AE 后台订单队列已满，请稍后重试";

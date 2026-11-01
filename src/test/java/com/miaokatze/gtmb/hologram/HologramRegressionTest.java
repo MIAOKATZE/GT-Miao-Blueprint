@@ -123,6 +123,13 @@ public final class HologramRegressionTest {
             }
         });
         cases.put("cut_clipboard_preserves_raw_data_atomic_storage_and_packet_budgets", HologramCutRegression::run);
+        cases.put("demolition_native_drops_permissions_and_top_down_selection", HologramDemolitionRegression::run);
+        cases.put("demolition_actions_confirm_once_without_cut_storage", HologramDemolitionProtocolRegression::run);
+        cases.put(
+            "demolition_three_mode_selection_and_confirmation",
+            com.miaokatze.gtmb.client.hologram.HologramDemolitionInputRegression::run);
+        cases.put("wireless_terminal_refresh_preserves_range_and_security", HologramWirelessAccessRegression::run);
+        cases.put("demolition_recovery_inventory_then_player_feet_is_exact", HologramRecoveryDeliveryRegression::run);
         cases.put("cut_native_tile_read_has_world_and_preserves_registry_payload", HologramCutTilesRegression::run);
         cases.put(
             "cut_native_disk_readback_rejects_stale_blocks_tiles_and_relocated_chunks",

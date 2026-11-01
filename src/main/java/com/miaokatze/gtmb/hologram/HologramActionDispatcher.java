@@ -18,6 +18,11 @@ final class HologramActionDispatcher {
         if (s == null || s.player != player || s.cancelled || !s.id.equals(action.getString("session"))) return;
         if (action.hasKey("editorWorkspaceEpoch") && (!action.hasKey("editorWorkspaceEpoch", 4)
             || action.getLong("editorWorkspaceEpoch") != s.editorWorkspaceEpoch)) return;
+        if (HologramDemolition.active(player) && !"close".equals(action.getString("op"))
+            && !"requestFullSnapshot".equals(action.getString("op"))) {
+            HologramBusyReplies.reject(player, action, HologramBusyReplies.Kind.ACTION);
+            return;
+        }
         // Each action gets fresh material connections only if it actually queries or changes materials.
         s.materialContext = null;
         if (action.getInteger("clientSnapshotProtocol") == 1) s.cellDeltaProtocol = true;
