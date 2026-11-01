@@ -52,9 +52,7 @@ public final class GTMiaoBlueprint {
     }
 
     @Mod.EventHandler
-    public void postInit(FMLPostInitializationEvent event) {
-        com.miaokatze.gtmb.hologram.HologramService.installStructureSemantics();
-    }
+    public void postInit(FMLPostInitializationEvent event) {}
 
     @Mod.EventHandler
     public void serverAboutToStart(FMLServerAboutToStartEvent event) {

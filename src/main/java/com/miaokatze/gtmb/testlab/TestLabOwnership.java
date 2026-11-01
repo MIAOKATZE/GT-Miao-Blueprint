@@ -53,7 +53,6 @@ final class TestLabOwnership {
             write(marker, HologramSnapshotCodec.compress(tag));
         }
         if (cfg.composite) claimComposite(cfg);
-        if (cfg.enabled) claimGtnl(cfg);
     }
 
     /** Additive claim leaves the five original facility layout bytes unchanged. Never adopts existing regions. */
@@ -82,34 +81,6 @@ final class TestLabOwnership {
         tag.setInteger("version", 1);
         tag.setString("owner", owner.toString());
         tag.setString("layout", cfg.compositeLayout());
-        write(marker, HologramSnapshotCodec.compress(tag));
-    }
-
-    /** An additive claim keeps the original five facilities and composite ownership byte-compatible. */
-    private void claimGtnl(TestLabConfig cfg) throws IOException {
-        Path marker = directory.resolve("gtnl-ownership-" + cfg.dimension + ".nbt");
-        if (Files.exists(marker)) {
-            if (Files.isSymbolicLink(marker) || !Files.isRegularFile(marker) || Files.size(marker) > 65536)
-                throw new IOException("Invalid GTNL workflow ownership marker");
-            NBTTagCompound tag = HologramSnapshotCodec.decode(Files.readAllBytes(marker));
-            if (!owner.toString()
-                .equals(tag.getString("owner"))
-                || !cfg.gtnlLayout()
-                    .equals(tag.getString("layout")))
-                throw new IOException("GTNL workflow ownership/layout differs; no existing area is adopted");
-            return;
-        }
-        TestLabZone zone = cfg.zone("gtnl-workflow");
-        Path regions = root.resolve("DIM" + cfg.dimension)
-            .resolve("region");
-        for (int rx = zone.x >> 9; rx <= (zone.x + zone.sizeX - 1) >> 9; rx++)
-            for (int rz = zone.z >> 9; rz <= (zone.z + zone.sizeZ - 1) >> 9; rz++)
-                if (Files.exists(regions.resolve("r." + rx + "." + rz + ".mca")))
-                    throw new IOException("Unclaimed GTNL workflow region already exists; no world adoption");
-        NBTTagCompound tag = new NBTTagCompound();
-        tag.setInteger("version", 1);
-        tag.setString("owner", owner.toString());
-        tag.setString("layout", cfg.gtnlLayout());
         write(marker, HologramSnapshotCodec.compress(tag));
     }
 

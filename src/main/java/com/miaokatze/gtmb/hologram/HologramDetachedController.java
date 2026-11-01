@@ -6,6 +6,7 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.tileentity.TileEntity;
 
 import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
+import com.miaokatze.gtmb.api.StructureSources;
 
 import gregtech.api.GregTechAPI;
 import gregtech.api.metatileentity.BaseMetaTileEntity;
@@ -21,7 +22,10 @@ final class HologramDetachedController {
     }
 
     static MTEEnhancedMultiBlockBase<?> fromLive(MTEEnhancedMultiBlockBase<?> source) throws IOException {
-        if (HologramGTNLSemantics.isGTNLController(source)) return create(
+        String failure = StructureSources.sourceFailure(source.getClass());
+        if (failure != null) throw new IOException(failure);
+        StructureSources.PolicyBinding policy = StructureSources.policy(source.getClass());
+        if (policy != null && policy.freshControllerOnly()) return create(
             source.getBaseMetaTileEntity()
                 .getMetaTileID(),
             source.getExtendedFacing());
@@ -45,8 +49,9 @@ final class HologramDetachedController {
             || !(GregTechAPI.METATILEENTITIES[id] instanceof MTEEnhancedMultiBlockBase))
             throw new IOException("来源控制器未注册，原蓝图已保留");
         Object prototype = GregTechAPI.METATILEENTITIES[id];
-        if (HologramGTNLSemantics.isGTNLController(prototype) && !HologramGTNLSemantics.supports(prototype))
-            throw new IOException(HologramGTNLSemantics.unsupportedReason(prototype));
+        String failure = StructureSources.sourceFailure(prototype.getClass());
+        if (failure != null) throw new IOException(failure);
+        StructureSources.PolicyBinding policy = StructureSources.policy(prototype.getClass());
         HologramResourceWorld world = HologramResourceWorld.declarations(GregTechAPI.sBlockMachines, 0);
         BaseMetaTileEntity tile = new BaseMetaTileEntity();
         tile.setWorldObj(world);
@@ -54,9 +59,8 @@ final class HologramDetachedController {
         tile.yCoord = 128;
         tile.zCoord = 0;
         world.tile = tile;
-        // GTNL loadNBTData can consume external machine data files. Template declarations
-        // need only a fresh reviewed controller; retained physical NBT stays in the blueprint.
-        NBTTagCompound owned = state == null || HologramGTNLSemantics.isGTNLController(prototype) ? null
+        // A source may require a fresh declaration controller; physical NBT remains in the saved blueprint.
+        NBTTagCompound owned = state == null || policy != null && policy.freshControllerOnly() ? null
             : (NBTTagCompound) state.copy();
         if (owned != null) {
             owned.setInteger("x", 0);

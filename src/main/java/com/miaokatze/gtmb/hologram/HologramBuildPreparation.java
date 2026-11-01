@@ -2,8 +2,6 @@ package com.miaokatze.gtmb.hologram;
 
 import net.minecraft.nbt.NBTTagCompound;
 
-import tectech.thing.metaTileEntity.multi.godforge.MTEForgeOfGods;
-
 /** Internal domain boundary. */
 final class HologramBuildPreparation {
 
@@ -91,14 +89,6 @@ final class HologramBuildPreparation {
             s.status = "原机尚未报告结构成型，请恢复默认或等待原机检查";
             return;
         }
-        if (s.machine instanceof MTEForgeOfGods) {
-            s.main = HologramValues.clamp(
-                ((MTEForgeOfGods) s.machine).getData()
-                    .getRingAmount(),
-                1,
-                3);
-            s.mainExplicit = true;
-        }
         s.calibratePending = true;
         scan(s);
     }
@@ -112,7 +102,7 @@ final class HologramBuildPreparation {
             HologramPresets.Structure source = HologramBlueprintData
                 .blueprintSource(s.virtualPreset, s.blueprintActiveStructure);
             if (source == null && s.virtualPreset.structures.size() == 1) source = s.virtualPreset.structures.get(0);
-            if (source != null && source.sourceClass != null && source.sourceClass.startsWith("com.science.gtnl.")) {
+            if (source != null && HologramSourcePolicy.requiresReread(s.virtualPreset, source)) {
                 s.blueprintActiveStructure = source.id;
                 if (!HologramVirtualStructureEditing.prepare(s, s.main, s.channels, s.noHatches)) return;
             }

@@ -14,7 +14,6 @@ import net.minecraft.tileentity.TileEntity;
 
 import gregtech.api.GregTechAPI;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
-import tectech.thing.metaTileEntity.multi.godforge.MTEForgeOfGods;
 
 /** Resumable native structure capture, calibration and capture retry policy. */
 final class HologramControllerCapture {
@@ -62,8 +61,7 @@ final class HologramControllerCapture {
         // Reconstruct with the inferred signals; otherwise the captured default block still reflects the old trigger.
         collect(s);
         s.status = s.capturePending ? "现场材质信道已识别，正在重新采集校准后的结构"
-            : s.capture.incomplete ? "现场材质已识别，但重新采集不完整，高级施工已阻止"
-                : "已校准现场材质信道与独立仓室；" + (s.machine instanceof MTEForgeOfGods ? "环数已按原机识别" : "无法可靠反推的主信号、尺寸及原始信道保留当前值");
+            : s.capture.incomplete ? "现场材质已识别，但重新采集不完整，高级施工已阻止" : "已校准现场材质信道与独立仓室；无法可靠反推的主信号、尺寸及原始信道保留当前值";
     }
 
     /** Only uniform, source-reviewed material options can establish a reliable named signal. */
@@ -212,11 +210,6 @@ final class HologramControllerCapture {
         }
         s.facing = s.machine.getExtendedFacing()
             .ordinal();
-        if (!s.mainExplicit && s.machine instanceof MTEForgeOfGods) s.main = HologramValues.clamp(
-            ((MTEForgeOfGods) s.machine).getData()
-                .getRingAmount(),
-            1,
-            3);
         ItemStack initialTrigger = HologramSessionPolicy.trigger(s);
         s.capture = HologramCapture
             .collect(s.machine, initialTrigger, s.machine.getExtendedFacing(), s.captureIntent, resumed);
@@ -243,7 +236,6 @@ final class HologramControllerCapture {
                 s.capture.failure = "CHANNEL_BRANCH_UNSTABLE";
             }
         }
-        HologramIndustrialConstraints.bind(s.capture, s.player.worldObj, savedPins, s.mainExplicit);
         for (String key : savedPins.keySet()) {
             boolean found = false;
             found = s.capture.positions.containsKey(key);

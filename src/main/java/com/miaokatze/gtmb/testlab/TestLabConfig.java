@@ -92,7 +92,6 @@ final class TestLabConfig {
                 layout.add(new TestLabZone(compositeNames[i], baseX + 5 * spacing, y, baseZ + i * 48, 40, 40, 40));
             layout.add(new TestLabZone("composite-bank", baseX + 5 * spacing + 48, y, baseZ));
         }
-        if (enabled) layout.add(new TestLabZone("gtnl-workflow", baseX + 6 * spacing, y, baseZ, 64, 32, 32));
         zones = Collections.unmodifiableList(layout);
     }
 
@@ -207,22 +206,6 @@ final class TestLabConfig {
             .append(zone.sizeZ)
             .append(';');
         return out.toString();
-    }
-
-    String gtnlLayout() {
-        TestLabZone zone = zone("gtnl-workflow");
-        return "gtnl-workflow-v1;" + zone.x
-            + ','
-            + zone.y
-            + ','
-            + zone.z
-            + ';'
-            + zone.sizeX
-            + ','
-            + zone.sizeY
-            + ','
-            + zone.sizeZ
-            + ';';
     }
 
     String layout() {

@@ -14,7 +14,7 @@ Start GTMB once to generate `config/gtmb-testlab.cfg`. In its `testlab` category
 | `baseX`, `baseZ` | `4096` | Multiples of 16, absolute value at most 1,000,000 |
 | `zoneSpacing` | `4096` | Multiple of 16, 256–65,536 |
 | `zoneY` | `80` | 32–224 |
-| `maxOwnedChunks` | `8` | 4–32; also limited by Forge ticket capacity; ordinary facilities lease four chunks, the GTNL workflow leases eight |
+| `maxOwnedChunks` | `8` | 4–32; also limited by Forge ticket capacity; ordinary facilities lease four chunks |
 | `operationsPerTick` | `512` | 1–4,096 cooperative steps |
 | `tickBudgetMillis` | `5` | 1–20 ms wall-time deadline between steps |
 | `runTimeoutSeconds` | `60` | 10–300 seconds per run |
@@ -40,7 +40,6 @@ Use the server console or a command sender with permission level 4. Commands hav
 | `/gtmbtestlab refresh` | Restore queued lab cuts through production undo, clear only owned facilities, then rebuild small floors and identifying markers |
 | `/gtmbtestlab reset` | Restore queued lab cuts through production undo and clear only owned facilities |
 | `/gtmbtestlab run minimal` | Run the bounded small-unit suite below |
-| `/gtmbtestlab run gtnl` | Check the fixed GTNL declarations and paid placement; when fixed GTSR 2.1.1 is installed, also run the independent E/P integration phase |
 | `/gtmbtestlab run stress` | Explicitly run finite in-memory frame/codec and server task queue load |
 | `/gtmbtestlab run composite` | Build the explicitly enabled native 40 cubed fixture and wait for connected self/share/RAW workflow verification; fixture readiness alone is never PASS |
 | `/gtmbtestlab stop` | Cancel the current run cooperatively and release its tickets |
@@ -71,15 +70,9 @@ The FakePlayer has a save-specific namespace-derived UUID, is separate from onli
 
 `stress` records production codec bytes/frames and finite iterations in memory. It also submits real, inert production `ServerTaskScheduler` callbacks with at most eight outstanding. It waits for submitted callbacks to execute; cancelled or stale callbacks cannot mutate the world or a newer report. The suite never clears the global scheduler queue. It reports `codec_frame_assembly`, `stress_bound` and `bounded_server_task_queue`. It is not a FakePlayer Netty throughput test, a TPS benchmark, or a general machine performance certification.
 
-`gtnl` is available in the 0.3.1 candidate. It uses the owned capture facility, a survival FakePlayer and the actual registered GTNL 0.2.7-rc2.1 controllers. The report separates cold/hot declaration graphs, sphere and reactor geometry, native high-damage samples, missing-material rejection, paid placement and replay. Only the native AssemblerMatrix serializer's newly generated `storeUUID` nonce is normalized during its before/after comparison; production NBT remains unchanged. Missing GTNL is reported as `NOT_APPLICABLE`.
+v0.3.1 候选仅保留通用测试设施。此前未发布的 GTNL 五机专属套件、命令和扩展区域已撤出产品；历史报告仍绑定原候选，不能用来证明当前通用实现通过了五机验收。原五区及 composite 的存档归属协议保持不变，旧额外标记和区域不会被接管或删除。
 
-The optional fixed GTSR 2.1.1 phase constructs small real fixtures and checks E/P-dependent structure acceptance, steam payment and cooling ledgers. Its work/efficiency counters are synthetic test setup; the actual `checkMachine` and `onRunningTick` calls use world-backed controllers and hatches. This does not certify a complete recipe, wireless network refill or client UI. E/P combinations require separate server restarts. Each case restores the original empty volume and actor inventory, and an independent failure does not hide later cases. Any failed case makes the complete run fail.
-
-五机业务阶段另租用 `gtnl-workflow`，大小为 64×32×32，使用八个对齐区块。它只在本地实验室启用时加入配置；独立的 `gtnl-ownership-<dimension>.nbt` 以追加方式绑定该新区域，原五区与 composite 的 layout 字节保持不变。新区域若已有未认领 region 文件会被拒绝，不借 reset 接管已有世界。建议专服验证把现有 `runTimeoutSeconds` 设为 300；任务仍受既有步数、时间和租约界限约束。
-
-该阶段为每种已审阅机器执行一个服务端领域代表：真实控制器采集、参数和候选/仓室朝向编辑、生产 JSON/PNG 格式写入并重载、来源重新准入、精确材料核算、缺料和陈旧请求拒绝、普通生存付款任务、重放和上游 `checkMachine`。Artifact 位于当前 save 的 `gtmb-testlab/workflow-<runId>`；PNG 是明确标注的空白格式夹具，不证明客户端画面。FakePlayer 没有连接，领域续批由实验室逐 tick 驱动，不伪造 Netty、GUI 确认或正常连接调度器。测试控制器保留真实 chunk TE 身份，只从 native tick 列表移除以隔离夹具干扰；最终成型检查显式调用原机方法，完整配方和自动运行生命周期不在此范围。
-
-AEEP 的状态反例在已付款并通过原机检查的真实结构上，调用已审阅的原生 `buildSphere`/`destroySphere` 同时改变球体和状态，随后验证旧来源失效、现场快照精确包含 187 个空气格并拒绝新建施工；不直接伪造状态布尔值。各机失败分别记录并继续其他机器，清理恢复全部已触及世界格与演员背包。高 damage 的独立原生/生产生命周期仍单列在 NativeProbe 中，不能因某个普通机型变体完成就外推其全部材料可放置。性能仅记录真实阶段样本；未生产的完整分位数、取消延迟、TPS 与客户端链路保持未验证。
+新的纯声明、来源有效性与材料扩展回归使用自有元素、控制器和 Block/Item 夹具，检查未知回调不执行、保存数据不能恢复权限、注销后失效和真实材料身份。它们属于 JVM 合同验证；完整客户端界面、真实付款施工与外部机器成型各自需要独立实机证据。
 
 ## Evidence and timing
 

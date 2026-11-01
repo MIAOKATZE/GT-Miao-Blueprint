@@ -5,26 +5,14 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
-import net.minecraft.block.Block;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
-import org.apache.commons.lang3.tuple.Pair;
+import com.miaokatze.gtmb.api.StructureSources;
 
-import bartworks.common.loaders.ItemRegistry;
-import gregtech.api.GregTechAPI;
-import gregtech.api.enums.HeatingCoilLevel;
-import gregtech.common.blocks.BlockCasings5;
-import gregtech.common.tileentities.machines.multi.MTEElectricImplosionCompressor;
-import gregtech.common.tileentities.machines.multi.MTEIndustrialCokeOven;
-import gregtech.common.tileentities.machines.multi.MTELargeChemicalReactor;
-import gtPlusPlus.core.block.ModBlocks;
-
-/** Local, source-reviewed machine options. Global indicator registration is not a support directory. */
+/** Options read from captured channel declarations and explicit source contracts. */
 public final class HologramCapabilities {
-
-    private static final String MACHINES = "gregtech.common.tileentities.machines.multi.";
 
     private HologramCapabilities() {}
 
@@ -45,81 +33,24 @@ public final class HologramCapabilities {
                     for (int i = 0; i < materials.size(); i++) row.option(i + 1, null, materials.get(i));
             }
         }
-        String type = context == null ? ""
-            : context.getClass()
-                .getName();
-        boolean ebf = type.equals(MACHINES + "MTEElectricBlastFurnace");
-        boolean extractor = type.equals(MACHINES + "MTEIndustrialExtractor");
-        boolean eic = type.equals(MACHINES + "MTEElectricImplosionCompressor");
-        boolean coke = type.equals(MACHINES + "MTEIndustrialCokeOven");
-        if (HologramGTNLSemantics.supports(context)) {
-            if (type.endsWith(".NuclearReactor")) range(result, "casing", "反应堆等级", 3, " 级");
-            if (type.endsWith(".LargeSteamMixer")) range(result, "machine_casing", "五组共同外壳等级", 2, " 级");
-            if (type.endsWith(".PrecisionAssembler")) {
-                range(result, "machine_casing", "机器外壳等级", 10, " 级");
-                range(result, "unit_casing", "单元外壳等级", 5, " 级");
-            }
-            if (type.endsWith(".AtomicEnergyExcitationPlant")) {
-                range(result, "machine_casing", "机器外壳等级", 4, " 级");
-                coil(result);
-                range(result, "glass", "玻璃选择", gregtech.api.util.GlassTier.getMaxTierIndex(), " 档");
-            }
-        }
-        if (ebf || coke || context instanceof MTELargeChemicalReactor) coil(result);
-        if (ebf) {
-            Row hatch = result.add("gt_hatch", "自动取用仓室（独立于无仓室施工）", "presence");
-            hatch.option(1, "启用", null);
-        }
-        if (extractor) {
-            Row pipe = result.add("item_pipe", "物品管道壳体", "material");
-            for (int raw = 1; raw <= 8; raw++)
-                pipe.option(raw, null, new ItemStack(GregTechAPI.sBlockCasings11, 1, raw - 1));
-        }
-        if (extractor || eic) {
-            Row glass = result.add("glass", "玻璃目标（实际材料与档位）", "material");
-            // chainAllGlasses caps the raw signal to the eleven primary HV..UXV glasses.
-            // Copy this reviewed mapping locally; getGlassList's lazy global registration is unnecessary here.
-            for (int i = 0; i < 11; i++) {
-                ItemStack stack = new ItemStack(ItemRegistry.bw_realglas, 1, i);
-                glass.option(i + 1, stack.getDisplayName() + " · 档位 " + (i + 3), stack);
-            }
-        }
-        if (eic) {
-            Row piston = result.add("piston_block", "活塞材料", "material");
-            List<Pair<Block, Integer>> list = MTEElectricImplosionCompressor.getTierBlockList();
-            for (int i = 0; i < list.size(); i++) {
-                Pair<Block, Integer> entry = list.get(i);
-                piston.option(i + 1, null, new ItemStack(entry.getLeft(), 1, entry.getRight()));
-            }
-        }
-        if (type.equals(MACHINES + "MTEMegaDistillationTower")) range(result, "height", "塔身层数", 5, " 层");
-        if (coke) {
-            Row casing = result.add("coke_oven_casing", "焦炉壳体", "material");
-            casing.option(1, null, new ItemStack(ModBlocks.blockCasingsMisc, 1, 2));
-            casing.option(2, null, new ItemStack(ModBlocks.blockCasingsMisc, 1, 3));
-            if (((MTEIndustrialCokeOven) context).getCoilTier() < HeatingCoilLevel.MAX.getTier() + 1) {
-                range(result, "length", "焦炉构造分段参数", 16, " 段");
-            } else {
-                result.add("length", "焦炉构造分段参数（MAX 线圈，不受普通 16 段上限限制）", "size");
+        StructureSources.PolicyBinding source = context == null ? null : StructureSources.policy(context.getClass());
+        if (source != null && trigger != null) {
+            NBTTagList channels = source.channels(trigger);
+            for (int i = 0; i < channels.tagCount(); i++) {
+                NBTTagCompound declared = channels.getCompoundTagAt(i);
+                Row row = result.add(declared.getString("id"), declared.getString("label"), declared.getString("kind"));
+                NBTTagList options = declared.getTagList("options", 10);
+                for (int j = 0; j < options.tagCount(); j++) {
+                    NBTTagCompound option = options.getCompoundTagAt(j);
+                    row.option(
+                        option.getInteger("value"),
+                        option.hasKey("label", 8) ? option.getString("label") : null,
+                        option.hasKey("item", 10) ? ItemStack.loadItemStackFromNBT(option.getCompoundTag("item"))
+                            : null);
+                }
             }
         }
         return result;
-    }
-
-    private static void range(Result result, String id, String label, int max, String unit) {
-        Row row = result.add(id, label, "size");
-        for (int raw = 1; raw <= max; raw++) row.option(raw, raw + unit, null);
-    }
-
-    private static void coil(Result result) {
-        Row row = result.add("coil", "加热线圈目标", "coil");
-        for (int raw = 1; raw <= 14; raw++) {
-            HeatingCoilLevel level = HeatingCoilLevel.getFromTier((byte) (raw - 1));
-            row.option(
-                raw,
-                level.getName() + " · " + level.getHeat() + " K",
-                new ItemStack(GregTechAPI.sBlockCasings5, 1, BlockCasings5.getMetaFromCoilHeat(level)));
-        }
     }
 
     public static final class Result {

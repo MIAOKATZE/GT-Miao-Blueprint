@@ -6,6 +6,7 @@ import java.util.IdentityHashMap;
 import com.gtnewhorizon.structurelib.structure.IStructureElement;
 import com.gtnewhorizon.structurelib.structure.IStructureElementChain;
 import com.gtnewhorizon.structurelib.structure.StructureUtility;
+import com.miaokatze.gtmb.api.Declarations;
 
 import gregtech.api.util.GTStructureUtility;
 
@@ -15,7 +16,6 @@ final class HologramDeclarationPurity {
     private HologramDeclarationPurity() {}
 
     static boolean contextFree(IStructureElement<?> element) {
-        if (HologramGTNLSemantics.reviewedElement(element) != null) return true;
         return contextFree(element, 0, new IdentityHashMap<>());
     }
 
@@ -23,6 +23,7 @@ final class HologramDeclarationPurity {
         IdentityHashMap<IStructureElement<?>, Boolean> seen) {
         if (element == null || depth > 12 || seen.size() >= 128 || seen.put(element, Boolean.TRUE) != null)
             return false;
+        if (element instanceof Declarations.PureElement) return true;
         // Keep chains contextual even if some children are pure: hatch/predicate branches must never borrow authority.
         if (element instanceof IStructureElementChain) return false;
         Method factory = element.getClass()

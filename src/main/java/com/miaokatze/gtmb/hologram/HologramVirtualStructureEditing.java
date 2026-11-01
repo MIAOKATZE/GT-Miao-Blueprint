@@ -84,8 +84,6 @@ final class HologramVirtualStructureEditing {
                 .resolve(machine, trigger);
             IStructureDefinition<?> definition;
             if (supplied == null) {
-                if (HologramGTNLSemantics.isGTNLController(machine))
-                    throw new IOException(HologramGTNLSemantics.unsupportedReason(machine));
                 declarations = HologramCapture.declarationPieces((IConstructable) machine, trigger);
                 definition = machine.getStructureDefinition();
             } else {
@@ -535,27 +533,34 @@ final class HologramVirtualStructureEditing {
         }
 
         private boolean rereadSameTemplate() throws IOException {
-            if (!HologramGTNLSemantics.supports(machine) || nativeCapture.sourceResolution == null
-                || !nativeCapture.sourceCurrent()
+            if (nativeCapture.sourceResolution == null || !nativeCapture.sourceCurrent()
                 || main != previousSource.main
                 || noHatches != previousSource.noHatches
                 || !channelValues(channels).equals(previousSource.channels)) return false;
-            NBTTagCompound fresh = nativeCapture.sourceMetadata;
-            if (fresh.getInteger("gtnlSchema") != 1
-                || !HologramGTNLSemantics.COMMIT.equals(fresh.getString("sourceCommit"))
-                || !nativeCapture.sourceResolution.sourceId.equals("gtmb:gtnl/" + fresh.getString("family")))
-                return false;
-            for (HologramCapture.Cell cell : nativeCapture.cells)
-                if (!cell.anchor && cell.element != com.gtnewhorizon.structurelib.structure.StructureUtility.isAir()
-                    && !(cell.element instanceof HologramGTNLElement)) return false;
             String encoded = previousSource.semanticNbt == null ? preset.semanticNbt : previousSource.semanticNbt;
             NBTTagCompound previous = HologramBlueprintNbt.decode(encoded);
-            // Saved metadata selects preservation behavior only. All authority still belongs to the new capture.
-            return previous != null && nativeCapture.captureIntent.name()
+            if (previous == null || !nativeCapture.captureIntent.name()
                 .equals(previous.getString("purpose"))
-                && fresh.getString("family")
-                    .equals(previous.getString("family"))
-                && HologramGTNLSemantics.COMMIT.equals(previous.getString("sourceCommit"));
+                || !nativeCapture.sourceResolution.sourceId.equals(previous.getString("sourceId"))) return false;
+            HologramCapture.SourceAuthority authority = null;
+            for (HologramCapture.Cell cell : nativeCapture.cells) {
+                if (cell.unknown || cell.sourceAuthority == null
+                    || authority != null && authority != cell.sourceAuthority) return false;
+                authority = cell.sourceAuthority;
+            }
+            int members = 0;
+            for (HologramCapture.Cell cell : original.cells) {
+                String key = HologramValues.position(cell);
+                if (!cell.belongsTo(source.id) && (legacyScope == null || !legacyScope.recovered.contains(key)))
+                    continue;
+                HologramCapture.Cell fresh = generated.get(key);
+                if (fresh == null || "templateController".equals(cell.role) != "templateController".equals(fresh.role))
+                    return false;
+                members++;
+            }
+            // Preserve physical choices only for the same purpose, parameters and complete freshly read geometry.
+            // New element/target/schema validation still owns eligibility; an invalid old choice stays visible.
+            return members == generated.size();
         }
 
         private static void append(HologramCapture capture, HologramCapture.Cell cell) throws IOException {

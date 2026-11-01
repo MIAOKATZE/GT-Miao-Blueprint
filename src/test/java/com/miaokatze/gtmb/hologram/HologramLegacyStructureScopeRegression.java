@@ -40,10 +40,7 @@ final class HologramLegacyStructureScopeRegression {
         try (AutoCloseable declaration = HologramDeclarationAdapters.registerScopedReader(
             HintedBlock.class,
             leaf -> new HologramDeclarationAdapters.Declaration(
-                new HologramGTNLElement(
-                    "fixture.legacy",
-                    Collections.singletonList(new ItemStack(leaf.block)),
-                    true)))) {
+                new HologramPureElementsRegression.Leaf(true, leaf.block, null)))) {
             EntityPlayerMP actor = (EntityPlayerMP) unsafe.allocateInstance(EntityPlayerMP.class);
             actor.worldObj = (World) unsafe.allocateInstance(HologramServiceEditRegression.ReadOnlyWorld.class);
             actor.inventory = new net.minecraft.entity.player.InventoryPlayer(actor);

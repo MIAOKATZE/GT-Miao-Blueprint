@@ -6,6 +6,8 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.World;
 
+import com.miaokatze.gtmb.api.Declarations;
+
 import gregtech.api.GregTechAPI;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.api.metatileentity.implementations.MTEHatch;
@@ -178,8 +180,10 @@ final class HologramPlanPolicy {
     static int replacementCellBuilt(HologramSession s, HologramCapture.Cell cell) {
         if (cell.anchor || cell.userPosition) return 0;
         if (!s.player.worldObj.blockExists(cell.x, cell.y, cell.z)) return -1;
-        HologramGTNLElement reviewed = HologramGTNLSemantics.reviewedElement(cell.element);
-        if (reviewed != null) return reviewed.matchesWorld(s.player.worldObj, cell.x, cell.y, cell.z) ? 1 : -1;
+        Declarations.PureElement<?> declaration = HologramElementCatalog.pure(cell.element);
+        if (declaration != null)
+            return declaration.matches(HologramCellPolicy.worldState(s.player.worldObj, cell.x, cell.y, cell.z)) ? 1
+                : -1;
         Block block = s.player.worldObj.getBlock(cell.x, cell.y, cell.z);
         TileEntity tile = s.player.worldObj.getTileEntity(cell.x, cell.y, cell.z);
         if (tile instanceof IGregTechTileEntity
@@ -210,7 +214,7 @@ final class HologramPlanPolicy {
             s.status = "结构来源或现场状态已变化，请重新采集后核对材料";
             return false;
         }
-        String semanticFailure = HologramGTNLSemantics.constructionFailure(s);
+        String semanticFailure = HologramSourcePolicy.constructionFailure(s);
         if (semanticFailure != null) {
             s.status = semanticFailure;
             return false;

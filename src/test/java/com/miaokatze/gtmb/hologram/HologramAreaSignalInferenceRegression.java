@@ -53,11 +53,8 @@ public final class HologramAreaSignalInferenceRegression {
         GregTechAPI.METATILEENTITIES[id] = prototype;
         try (AutoCloseable declaration = HologramDeclarationAdapters.registerScopedReader(
             HintedStone.class,
-            ignored -> new HologramDeclarationAdapters.Declaration(
-                new HologramGTNLElement(
-                    "fixture.stone",
-                    java.util.Collections.singletonList(new ItemStack(Blocks.stone)),
-                    true)))) {
+            element -> new HologramDeclarationAdapters.Declaration(
+                new HologramPureElementsRegression.Leaf(true, Blocks.stone, null)))) {
             Field field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
             field.setAccessible(true);
             SceneWorld world = (SceneWorld) ((sun.misc.Unsafe) field.get(null)).allocateInstance(SceneWorld.class);

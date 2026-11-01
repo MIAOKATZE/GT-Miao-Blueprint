@@ -44,6 +44,7 @@ final class HologramBlueprintValidationCache {
     private final Map<Key, HologramAePolicy.Identity> identities = new HashMap<>();
     private final Map<Key, String> aeShells = new HashMap<>();
     private final Set<String> emptyPayloads = new HashSet<>();
+    private long materialGeneration = HologramMaterialDescriptor.generation();
     private int entries, stringChars;
     long registryHits, registryMisses, filterHits, filterMisses, gtHits, gtMisses, damageHits, damageMisses;
     long syntaxHits, syntaxMisses;
@@ -160,8 +161,13 @@ final class HologramBlueprintValidationCache {
     }
 
     int materialDamage(Block block, int metadata) throws IOException {
+        long current = HologramMaterialDescriptor.generation();
+        if (materialGeneration != current) {
+            vanillaDamage.clear();
+            materialGeneration = current;
+        }
         // Third-party getDamageValue callbacks may inspect more than the detached block/meta carrier.
-        if (block == null || !vanillaMaterialClass(block.getClass()))
+        if (block == null || HologramMaterialDescriptor.hasExact(block) || !vanillaMaterialClass(block.getClass()))
             return HologramPresets.materialDamage(block, metadata);
         Key key = new Key(block, metadata, null, null);
         Integer value = vanillaDamage.get(key);
@@ -186,6 +192,7 @@ final class HologramBlueprintValidationCache {
 
     boolean ordinaryMaterial(Block block, int metadata) {
         return block != null && !block.hasTileEntity(metadata)
+            && !HologramMaterialDescriptor.hasExact(block)
             && (vanillaMaterial(block) || HologramMaterialDescriptor.kind(block) != 0);
     }
 

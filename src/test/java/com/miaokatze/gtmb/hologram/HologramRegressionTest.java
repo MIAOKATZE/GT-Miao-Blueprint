@@ -25,8 +25,8 @@ public final class HologramRegressionTest {
             "direct_world_gestures_keep_source_and_plan_revisions",
             com.miaokatze.gtmb.client.hologram.HologramSemanticRequestRegression::run);
         cases.put("contextual_sources_intent_revision_read_set_and_purity", HologramSourceContractRegression::run);
+        cases.put("public_pure_elements_world_identity_and_reader_lifecycle", HologramPureElementsRegression::run);
         cases.put("unknown_hatch_callbacks_and_semantic_metadata_boundary", HologramSemanticSafetyRegression::run);
-        cases.put("gtnl_reviewed_geometry_channels_and_exact_materials", HologramGTNLRegression::run);
         cases.put("blueprint_actual_cell_limits_and_sparse_area_scanning", HologramBlueprintLimitsRegression::run);
         cases.put(
             "blueprint_client_cell_admission_is_strict_and_atomic",

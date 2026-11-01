@@ -21,7 +21,7 @@ final class TestLabCommand extends CommandBase {
     }
 
     public String getCommandUsage(ICommandSender sender) {
-        return "/gtmbtestlab status|reset|refresh|run minimal|run stress|run gtnl|run composite|stop|report";
+        return "/gtmbtestlab status|reset|refresh|run minimal|run stress|run composite|stop|report";
     }
 
     public int getRequiredPermissionLevel() {
@@ -60,9 +60,9 @@ final class TestLabCommand extends CommandBase {
             } else {
                 String kind = args.length == 1 && ("reset".equals(args[0]) || "refresh".equals(args[0])) ? args[0]
                     : args.length == 2 && "run".equals(args[0])
-                        && ("minimal".equals(args[1]) || "stress".equals(args[1])
-                            || "gtnl".equals(args[1])
-                            || "composite".equals(args[1])) ? args[1] : "";
+                        && ("minimal".equals(args[1]) || "stress".equals(args[1]) || "composite".equals(args[1]))
+                            ? args[1]
+                            : "";
                 if (kind.isEmpty()) throw new WrongUsageException(getCommandUsage(sender));
                 runtime.start(kind);
                 say(

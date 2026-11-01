@@ -3,8 +3,14 @@ package com.miaokatze.gtmb.hologram;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Arrays;
+import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
 
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.entity.player.EntityPlayerMP;
+import net.minecraft.entity.player.InventoryPlayer;
+import net.minecraft.entity.player.PlayerCapabilities;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
@@ -20,7 +26,9 @@ import com.miaokatze.gtmb.api.GTMBExtensions;
 import com.miaokatze.gtmb.api.StructureSources;
 import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
+import com.mojang.authlib.GameProfile;
 
+import gregtech.api.GregTechAPI;
 import gregtech.api.interfaces.ITexture;
 import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
@@ -49,6 +57,8 @@ public final class HologramSourceContractRegression {
             continuationAdmission();
             observationLineage();
             unknownLeafDoesNotRun();
+            explicitPolicyAndSavedAuthority();
+            independentSourceBoundary();
         } catch (Exception failure) {
             throw new AssertionError("source capture contract", failure);
         } finally {
@@ -65,8 +75,6 @@ public final class HologramSourceContractRegression {
             StructureSources.Status.ABSENT,
             StructureSources.resolve(fixture.controller, trigger, StructureSources.CaptureIntent.NEW_TEMPLATE).status,
             "no optional GTNL source preserves the ordinary native path");
-        SimpleAssert
-            .that(!HologramGTNLSemantics.isGTNLController(fixture.controller), "ordinary controller is not GTNL");
         try (GTMBExtensions.Registration registration = StructureSources
             .register("gtmb_test:legacy-null-source", Controller.class, (controller, signal) -> null)) {
             SimpleAssert
@@ -312,8 +320,264 @@ public final class HologramSourceContractRegression {
                 false,
                 hint.invoke(capture, leaf, fixture.world, 1, 100, 0, signal, 0),
                 "direct hint helper also rejects unknown leaf");
+            SimpleAssert.eq(
+                "SOURCE_DECLARATION_UNVERIFIED",
+                HologramSourcePolicy.constructionFailure(session(fixture, capture)),
+                "an unknown hint cannot gain whole-plan authority");
         }
         fixture.unchanged();
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void explicitPolicyAndSavedAuthority() throws Exception {
+        Fixture fixture = fixture();
+        fixture.controller.forbidNative = true;
+        ItemStack signal = new ItemStack(Blocks.stone);
+        AtomicInteger validations = new AtomicInteger();
+        StructureSources.Policy policy = plan -> {
+            validations.incrementAndGet();
+            if (!plan.fresh) return "FIXTURE_FRESH_SOURCE_REQUIRED";
+            if (plan.metadata()
+                .getInteger("fixtureSchema") != 7) return "FIXTURE_SCHEMA_REJECTED";
+            if (plan.saved && plan.savedMetadata()
+                .getInteger("fixtureSchema") != 7) return "FIXTURE_SAVED_SCHEMA_REJECTED";
+            NBTTagCompound detached = plan.metadata();
+            detached.setInteger("fixtureSchema", 99);
+            SimpleAssert.eq(
+                7,
+                plan.metadata()
+                    .getInteger("fixtureSchema"),
+                "policy metadata is detached on read");
+            int stone = 0;
+            for (StructureSources.ValidationCell cell : plan.cells) {
+                if (cell.anchor || cell.canonicalAir || cell.templateController) continue;
+                ItemStack target = cell.target();
+                if (HologramValues.sameMaterial(target, signal)) stone++;
+                if (target != null) {
+                    target.stackSize = 99;
+                    SimpleAssert.eq(1, cell.target().stackSize, "policy cannot mutate the planned material");
+                }
+            }
+            return stone == 2 ? null : "FIXTURE_TWO_STONE_REQUIRED";
+        };
+        GTMBExtensions.Registration registration = StructureSources
+            .registerContextual("gtmb_test:readonly-policy", Controller.class, (controller, trigger, intent) -> {
+                int state = controller.state;
+                IStructureElement<Controller> leaf = (IStructureElement<Controller>) (IStructureElement<?>) new HologramPureElementsRegression.Leaf(
+                    true);
+                StructureSources.Plan geometry = plan(2, trigger, leaf);
+                NBTTagCompound metadata = geometry.metadata();
+                metadata.setInteger("fixtureSchema", 7);
+                return StructureSources.Resolution.ready(
+                    new StructureSources.Plan(geometry.definition, geometry.pieces, metadata),
+                    () -> controller.state == state ? null : "FIXTURE_STATE_CHANGED");
+            }, policy);
+        int controllerId = 31968;
+        IMetaTileEntity previous = GregTechAPI.METATILEENTITIES[controllerId];
+        try {
+            GregTechAPI.METATILEENTITIES[controllerId] = fixture.controller;
+            fixture.tile.setMetaTileID((short) controllerId);
+            HologramCapture capture = complete(fixture.controller, signal, StructureSources.CaptureIntent.NEW_TEMPLATE);
+            HologramSession session = session(fixture, capture);
+            SimpleAssert.that(capture.hasSourcePolicy(), "capture retains a scoped policy binding");
+            SimpleAssert
+                .that(HologramSourcePolicy.requiresFence(session), "registered policies share the revision fence");
+            SimpleAssert.that(
+                HologramSourcePolicy.constructionFailure(session) == null,
+                "a community-defined controller and pure element reach the production whole-plan gate");
+            int first = 0;
+            while (capture.cells.get(first).anchor) first++;
+            session.pins.put(first, new ItemStack(Blocks.dirt));
+            SimpleAssert.eq(
+                "FIXTURE_TWO_STONE_REQUIRED",
+                HologramSourcePolicy.constructionFailure(session),
+                "an individually legal choice still passes the registered whole-plan rule");
+            session.pins.put(first, new ItemStack(Blocks.cobblestone));
+            SimpleAssert.eq(
+                "SOURCE_TARGET_REJECTED",
+                HologramSourcePolicy.constructionFailure(session),
+                "an unrelated material is rejected by the current pure declaration");
+            session.pins.clear();
+            capture.sourceMetadata.setInteger("fixtureSchema", 99);
+            SimpleAssert.that(
+                HologramSourcePolicy.constructionFailure(session) == null,
+                "mutable receipt metadata cannot replace the immutable fresh source facts");
+            HologramCapture.Cell member = capture.cells.get(first);
+            SimpleAssert.that(
+                HologramVirtualTransform.at(member, member.x + 1, member.y, member.z).sourceAuthority
+                    == member.sourceAuthority,
+                "runtime transforms retain the same graph-free source qualification");
+
+            HologramPresets.Preset saved = new HologramPresets.Preset();
+            saved.schema = 2;
+            saved.id = "source_policy_fixture";
+            saved.name = "Source policy fixture";
+            saved.sourceClass = Controller.class.getName();
+            saved.controllerId = controllerId;
+            saved.semanticNbt = HologramBlueprintNbt.encodeCanonical(member.sourceAuthority.metadata());
+            for (HologramCapture.Cell cell : capture.cells) if (!cell.anchor) saved.cells.add(
+                HologramPresets.cell(signal, cell.x - session.x, cell.y - session.y, cell.z - session.z, -1, false));
+            session.virtual = session.virtualPlacement = session.virtualLocked = true;
+            session.virtualPreset = saved;
+            HologramBlueprintProjection.Population population = new HologramBlueprintProjection.Population(session);
+            SimpleAssert
+                .that(population.step(Integer.MAX_VALUE, Long.MAX_VALUE), "the real saved-blueprint path loads");
+            SimpleAssert.eq(
+                "FIXTURE_FRESH_SOURCE_REQUIRED",
+                HologramSourcePolicy.constructionFailure(session),
+                "saved metadata and restored material pins cannot recreate runtime source authority");
+            session.capture = capture;
+            SimpleAssert.that(
+                HologramSourcePolicy.constructionFailure(session) == null,
+                "fresh elements and current binding requalify the same saved physical choices");
+            rereadPreservesPhysicalTargets(fixture, capture, signal, controllerId);
+            registration.close();
+            SimpleAssert.that(!capture.sourceCurrent(), "closing the source retires its captured qualification");
+            SimpleAssert.eq("SOURCE_REVISION_CHANGED", capture.failure, "source retirement requires a fresh capture");
+            SimpleAssert.that(validations.get() >= 5, "the custom policy was exercised through real consumers");
+            SimpleAssert.eq(0, fixture.controller.constructs, "policy capture never invokes native construct");
+            SimpleAssert.eq(0, fixture.controller.definitions, "policy capture never invokes native definition");
+        } finally {
+            registration.close();
+            GregTechAPI.METATILEENTITIES[controllerId] = previous;
+        }
+        fixture.unchanged();
+    }
+
+    private static void rereadPreservesPhysicalTargets(Fixture fixture, HologramCapture captured, ItemStack signal,
+        int controllerId) throws Exception {
+        HologramSession session = session(fixture, captured);
+        session.virtual = session.virtualPlacement = session.virtualLocked = true;
+        session.virtualPreset = new HologramPresets.Preset();
+        session.virtualPreset.schema = 2;
+        session.virtualPreset.id = "source_reread_fixture";
+        HologramPresets.Structure source = new HologramPresets.Structure();
+        source.id = "member";
+        source.sourceClass = Controller.class.getName();
+        source.controllerId = controllerId;
+        source.main = 1;
+        source.mainExplicit = true;
+        source.semanticNbt = HologramBlueprintNbt.encodeCanonical(captured.cells.get(0).sourceAuthority.metadata());
+        session.virtualPreset.structures.add(source);
+        session.blueprintActiveStructure = source.id;
+        HologramCapture original = new HologramCapture(null, signal);
+        original.inheritSources(captured);
+        int body = 0;
+        for (HologramCapture.Cell old : captured.cells) {
+            HologramCapture.Cell cell = HologramBlueprintData.blueprintCell(old, old.x, old.y, old.z);
+            cell.anchor = false;
+            cell.userPosition = true;
+            cell.role = old.anchor ? "templateController" : "prefab";
+            cell.sourceClass = Controller.class.getName();
+            HologramBlueprintData.setMemberships(cell, java.util.Collections.singletonList(source.id));
+            ItemStack target = old.anchor ? signal.copy()
+                : new ItemStack(body++ == 0 ? Blocks.dirt : Blocks.cobblestone);
+            cell.block = net.minecraft.block.Block.getBlockFromItem(target.getItem());
+            cell.blueprintBlock = String.valueOf(net.minecraft.block.Block.blockRegistry.getNameForObject(cell.block));
+            cell.blueprintItem = String
+                .valueOf(net.minecraft.item.Item.itemRegistry.getNameForObject(target.getItem()));
+            cell.blueprintDamage = target.getItemDamage();
+            session.pins.put(original.cells.size(), target.copy());
+            original.cells.add(cell);
+            original.positions.put(HologramValues.position(cell), cell);
+            HologramPresets.Cell saved = HologramPresets.cell(
+                target,
+                cell.x - session.x,
+                cell.y - session.y,
+                cell.z - session.z,
+                old.anchor ? ForgeDirection.NORTH.ordinal() : -1,
+                old.anchor);
+            saved.structureId = source.id;
+            session.virtualPreset.cells.add(saved);
+        }
+        session.capture = original;
+        HologramVirtualStructureEditing.Task task = new HologramVirtualStructureEditing.Task(
+            session,
+            source,
+            1,
+            new NBTTagCompound());
+        int batches = 0;
+        while (!task.step()) if (++batches > 64) throw new AssertionError("source reread did not finish");
+        task.publish();
+        for (int index = 0; index < session.capture.cells.size(); index++) {
+            HologramCapture.Cell cell = session.capture.cells.get(index);
+            if ("templateController".equals(cell.role)) continue;
+            HologramCapture.Cell previous = original.positions.get(HologramValues.position(cell));
+            SimpleAssert
+                .that(cell.element != previous.element, "same-parameter reread obtains the new declaration leaf");
+            SimpleAssert.eq(previous.block, cell.block, "same-parameter reread preserves the physical block choice");
+            SimpleAssert.eq(
+                previous.blueprintItem,
+                cell.blueprintItem,
+                "same-parameter reread preserves the exact selected item identity");
+            SimpleAssert.that(
+                cell.sourceAuthority != previous.sourceAuthority,
+                "preserved physical choices receive the fresh runtime qualification");
+        }
+        SimpleAssert.eq(
+            "SOURCE_TARGET_REJECTED",
+            HologramSourcePolicy.constructionFailure(session),
+            "an invalid preserved target stays visible and is rejected by the new declaration before payment");
+        SimpleAssert.eq(0, task.nativeCapture.nativeConstructCalls, "registered reread never invokes native construct");
+        SimpleAssert
+            .eq(0, task.nativeCapture.nativeDefinitionCalls, "registered reread never invokes native definition");
+    }
+
+    private static void independentSourceBoundary() throws Exception {
+        Fixture fixture = fixture();
+        fixture.controller.forbidNative = true;
+        ItemStack signal = new ItemStack(Blocks.stone);
+        try (GTMBExtensions.Registration boundary = StructureSources.registerBoundary(
+            "gtmb_test:independent-boundary",
+            type -> Controller.class.getName()
+                .equals(type) ? "FIXTURE_SOURCE_REQUIRED" : null)) {
+            HologramCapture missing = HologramCapture.collect(fixture.controller, signal, ExtendedFacing.DEFAULT);
+            SimpleAssert.eq("FIXTURE_SOURCE_REQUIRED", missing.failure, "a claimed family cannot fall back to native");
+            HologramCapture qualified;
+            try (GTMBExtensions.Registration source = StructureSources.registerContextual(
+                "gtmb_test:boundary-source",
+                Controller.class,
+                (controller, trigger, intent) -> StructureSources.Resolution
+                    .ready(plan(2, trigger, StructureUtility.ofBlock(Blocks.stone, 0)), () -> null),
+                plan -> null)) {
+                qualified = complete(fixture.controller, signal, StructureSources.CaptureIntent.NEW_TEMPLATE);
+                SimpleAssert.that(qualified.sourceCurrent(), "an explicit policy satisfies the independent boundary");
+            }
+            SimpleAssert.that(!qualified.sourceCurrent(), "closing its source invalidates the captured graph");
+            SimpleAssert.eq(
+                "FIXTURE_SOURCE_REQUIRED",
+                StructureSources
+                    .resolve(fixture.controller, signal, StructureSources.CaptureIntent.NEW_TEMPLATE).failureCode,
+                "the boundary survives source removal without acquiring a native fallback");
+        }
+        SimpleAssert.eq(0, fixture.controller.constructs, "boundary handling never probes native construct");
+        fixture.unchanged();
+    }
+
+    private static HologramSession session(Fixture fixture, HologramCapture capture) throws Exception {
+        Field field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        field.setAccessible(true);
+        EntityPlayerMP player = (EntityPlayerMP) ((sun.misc.Unsafe) field.get(null))
+            .allocateInstance(EntityPlayerMP.class);
+        UUID identity = UUID.fromString("d5d5f836-c283-4e5c-a144-edc4eb331246");
+        for (Field candidate : EntityPlayer.class.getDeclaredFields()) if (candidate.getType() == GameProfile.class) {
+            candidate.setAccessible(true);
+            candidate.set(player, new GameProfile(identity, "SourcePolicyFixture"));
+        }
+        for (Field candidate : Entity.class.getDeclaredFields()) if (candidate.getType() == UUID.class) {
+            candidate.setAccessible(true);
+            candidate.set(player, identity);
+        }
+        player.worldObj = fixture.world;
+        player.inventory = new InventoryPlayer(player);
+        player.inventory.mainInventory[0] = new ItemStack(Blocks.stone);
+        player.capabilities = new PlayerCapabilities();
+        player.capabilities.isCreativeMode = true;
+        player.capabilities.allowEdit = true;
+        HologramSession session = new HologramSession(player, 0, 100, 0, false, 2);
+        session.machine = fixture.controller;
+        session.capture = capture;
+        return session;
     }
 
     private static void observationLineage() throws Exception {

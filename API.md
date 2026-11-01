@@ -24,7 +24,8 @@ reader generation 变化后，既有服务端会话在下一次候选/舱口查�
 | 公共模块 | 输入与结果 | 实际运行路径 |
 | --- | --- | --- |
 | `StructureSources` | 精确控制器类、trigger 副本与可选用途 → `Plan` 或带状态/有效性证明的 `Resolution` | GT 控制器采集前替代 native construct/buildPiece 来源，并区分缺席与明确不支持 |
-| `Declarations` | 精确 wrapper 类 → backing declaration 与可选 signal 投影 | 提示、候选解析、共享格交集和服务端目标验证 |
+| `Declarations` | 纯元素数据或精确 wrapper 类 → backing declaration 与可选 signal 投影 | 提示、候选解析、共享格交集和服务端目标验证 |
+| `MaterialVariants` | 精确 block/item 类型及 native 方法身份 → 完整物品 damage | 计划材料核验；注册及关闭使材料与报价缓存失效，不授予实际世界读取权限 |
 | `BlockTransforms` | 独立 metadata、tile/item NBT → 旋转后的数据 | 编辑、预览和原生放置的旋转流程 |
 | `NativeCapture` | 已审阅的 TileEntity/conduit → 完整独立 NBT | 原生 capture 边界，可替代有副作用的 serializer |
 | `NativePlacement` | block 与独立 payload → 新 tile 和完整材料账单 | payload 验证、材料核算和既有服务器事务 |
@@ -70,11 +71,19 @@ contextual 回调返回 null 或 `Resolution.absent()` 都会规范化为 `UNSUP
 
 来源回调只能读取声明，不能运行 checkMachine、hatch adder、放置、tick、世界修改或未知 deferred controller factory。ReadSet 同样必须只读，并在合法 owner 线程检查状态。definition 图必须在本次采集期间保持不变；Plan 保留 definition 引用，不对 element 图深复制。pieces 列表复制后不可变，Piece 保存并返回 trigger 副本。`Plan(definition, pieces, metadata)` 和 `metadata()` 分别复制 NBT；旧两参 Plan 构造器仍可用，metadata 默认为空。metadata 用于来源说明，不授予放置权限。来源每次新采集调用一次，续批复用同一图；main/channel 改动、重新扫描或另一采集重新求值，不能永久缓存旧 tier/offset。
 
-默认 native 路径同样每次采集只取得一个 definition，续批复用它。GTNL rc2 的 `NuclearReactor`、`AtomicEnergyExcitationPlant`、`AssemblerMatrix` 等每次 `getStructureDefinition()` 都新建 element 图。旧实现每次续批重建图，因同坐标的 element 身份变化而触发 `CONFLICTING_CELL`。修复冻结的是单次采集图，不是跨会话缓存。
+默认 native 路径同样每次采集只取得一个 definition，续批复用它。动态 definition 工厂可能每次创建新的 element 图；续批重建会因同坐标的 element 身份变化而触发 `CONFLICTING_CELL`。修复固定的是单次采集图，不是跨会话缓存。
 
-piece 名、main/channel、负数 offset 和 Controller 坐标规则须来自已审阅的声明，不以机器名、形状相似或控制器居中猜测。内置 GTNL 适配按精确机型和目标版本读取已知状态，重建五机声明；AEEP 新建模板选择实体 sphere，现场快照按观察到的 `isRenderActive` 选择 sphere/sphere_air。未知 GTNL 控制器即使没有已注册来源，采集器也会明确拒绝 native fallback。GTMB 不调用 checkMachine 试探语义。
+piece 名、main/channel、负数 offset 和 Controller 坐标规则须来自声明，不以机器名、形状相似或控制器居中猜测。GTMB 不内置任何按机器或 GTNL 版本选择的结构规则，也不调用 checkMachine 试探语义。无法用通用声明证明的部分保持未知，不授予施工资格。
 
-以上为当前源码合同。API/fixture、实际依赖加载、客户端交互与世界施工属于不同验证层，不能据此认定真实 GTNL 组合已经通过验收。
+`registerContextual(id, type, source, policy)` 可附加纯 `Policy`：`ValidationPlan` 提供不可变来源事实和目标副本，`ValidationCell` 不暴露世界或活控制器。Policy 可以声明有限参数域和信道展示数据；不允许以此在 GTMB 内维护专机规则表。`registerBoundary` 是独立的只读来源边界，关闭来源不会静默绕过仍存在的边界。
+
+当前来源绑定、采集用途和只读观察共同形成仅在运行时持有的资格。它不会写进蓝图；旧文件的 metadata 不能伪造 fresh 资格。声明 reader、来源注册或材料规则注销会使相应结果失效。同参重新读取可保留物理选材，但新声明仍会拒绝非法旧目标。
+
+`Declarations.PureElement` 显式声明主材、候选完整性、角色、接受条件、自动放置条件、预览 metadata、合法朝向与世界身份匹配。所有方法只读取独立数据；`WorldState` 仅包含加载状态、block、metadata、tile 类型及已证明的机器/材料身份，未知身份为 -1。GTMB 不执行这类元素的 native check、hint 或 placement 回调。纯元素本身不证明整机几何或隐藏玩法约束。
+
+`MaterialVariants.registerExact` 只接受精确 block/item 类及真实 native pick 方法的声明类，回调输入只有 metadata。子类不继承注册；公开计划投影不获得普通格快速路径或实际 TE 读取权限。付款后的身份核验仍使用实际世界的原生材料身份。
+
+以上为当前源码合同。API/fixture、实际依赖加载、客户端交互与世界施工属于不同验证层，不能互相代替。
 
 ## 声明、旋转与原生数据契约
 
@@ -135,7 +144,7 @@ Snapshot 包含不可变值和 cell 列表；tile()/item() 每次返回独立 NB
 
 该原生 fixture 有意让普通 A 声明覆盖 controller 坐标，验证真实 hint 样本集合与最终几何 union 完全相同，controller 由同一 protected anchor 同时替换 cell 列表和坐标索引中的旧格。几何计数包含 controller 原有位置，不凭空再加一格；raw 来源回归也检查此重叠保护边界。
 
-GTNL 根因已核对本地 `GT-Not-Leisure-0.2.7-rc2` 源码。源码分析、代表 fixture 和真实 GT/StructureLib 接口测试不等于安装了 GTNL 原模组，也不能宣称所有 GTNL 机器已完成 FML 或施工验收。
+源码分析、代表 fixture 和真实 GT/StructureLib 接口测试各有独立范围，不能宣称任意外部机器已完成 FML 或施工验收。
 ## 剪切缓存的原始方向变换扩展
 
 `CutTransforms` 是 contract 1 的兼容扩展，专用于当前存档中该玩家的原始剪切缓存。它不进入蓝图库、分享、作者处理、材料或普通蓝图 schema 审核。`CutTransforms.register("my_mod:raw_pose", adapter)` 返回 `GTMBExtensions.Registration`，descriptor kind 为 `cut-transform`；ID 与所有扩展目录共享唯一性，关闭句柄只卸载该次注册，新注册优先。

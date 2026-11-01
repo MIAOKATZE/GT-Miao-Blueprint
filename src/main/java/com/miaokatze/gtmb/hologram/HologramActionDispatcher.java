@@ -66,7 +66,7 @@ final class HologramActionDispatcher {
             HologramSnapshots.send(s);
             return;
         }
-        if (s.capture != null && s.capture.sourceMetadata.hasKey("gtnlSchema")
+        if (s.capture != null && HologramSourcePolicy.requiresFence(s)
             && !"scan".equals(op)
             && !"close".equals(op)
             && !"cancel".equals(op)
@@ -799,7 +799,7 @@ final class HologramActionDispatcher {
         }
         if (hatchTargets != null) {
             s.presetSupported = true;
-            s.presetReason = "自定义仓室搭配已应用；施工时仍核对权限、材料与现场";
+            s.presetReason = "自定义仓室搭配已满足声明配额；原机成型约束仍由原机判断，施工时仍核对权限、材料与现场";
             s.status = s.presetReason;
         }
         if (!action.getBoolean("applyHatchPreset") || s.presetSupported)

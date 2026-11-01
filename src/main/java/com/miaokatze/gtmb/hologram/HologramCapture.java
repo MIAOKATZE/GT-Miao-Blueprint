@@ -10,6 +10,7 @@ import java.util.Set;
 
 import net.minecraft.block.Block;
 import net.minecraft.init.Blocks;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.util.IIcon;
@@ -26,12 +27,12 @@ import com.gtnewhorizon.structurelib.structure.IStructureDefinition;
 import com.gtnewhorizon.structurelib.structure.IStructureElement;
 import com.gtnewhorizon.structurelib.structure.IStructureWalker;
 import com.gtnewhorizon.structurelib.structure.StructureUtility;
+import com.miaokatze.gtmb.api.Declarations;
 import com.miaokatze.gtmb.api.StructureSources;
 import com.miaokatze.gtmb.hologram.HologramBlueprintResources.ExactKey;
 
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase;
-import tectech.thing.metaTileEntity.multi.godforge.MTEForgeOfGods;
 
 /** Armed only during a server-thread preview. Hints describe appearance, never permission to write. */
 public final class HologramCapture {
@@ -203,33 +204,16 @@ public final class HologramCapture {
                     capture.invalidateSource(capture.sourceResolution.failureCode);
                     return capture;
                 }
-                if (capture.sourceResolution.status == StructureSources.Status.ABSENT
-                    && HologramGTNLSemantics.isGTNLController(machine)) {
-                    capture.invalidateSource(HologramGTNLSemantics.unsupportedReason(machine));
-                    return capture;
-                }
                 StructureSources.Plan supplied = capture.sourceResolution.plan;
                 if (capture.sourceResolution.status == StructureSources.Status.READY) {
                     capture.definition = supplied.definition;
                     capture.sourceMetadata = supplied.metadata();
                     for (StructureSources.Piece piece : supplied.pieces)
                         capture.pieces.add(new Piece(piece.name, piece.a, piece.b, piece.c, piece.trigger()));
-                } else if (machine instanceof MTEForgeOfGods && ((MTEForgeOfGods) machine).getData()
-                    .isRenderActive()) {
-                        // The native hint constructor always shows the dormant main ring. The live machine
-                        // checks shaft + air rings after converting its rings into the star renderer.
-                        int rings = ((MTEForgeOfGods) machine).getData()
-                            .getRingAmount();
-                        capture.pieces.add(new Piece("beam_shaft", 63, 14, 1, trigger.copy()));
-                        capture.pieces.add(new Piece("first_ring_air", 63, 14, -59, trigger.copy()));
-                        if (trigger.stackSize > 1) capture.pieces.add(
-                            new Piece(rings >= 2 ? "second_ring_air" : "second_ring", 55, 11, -67, trigger.copy()));
-                        if (trigger.stackSize > 2) capture.pieces
-                            .add(new Piece(rings >= 3 ? "third_ring_air" : "third_ring", 47, 13, -76, trigger.copy()));
-                    } else {
-                        capture.nativeConstructCalls++;
-                        ((IConstructable) machine).construct(capture.trigger.copy(), true);
-                    }
+                } else {
+                    capture.nativeConstructCalls++;
+                    ((IConstructable) machine).construct(capture.trigger.copy(), true);
+                }
             }
             // Some community controllers rebuild every element on every call. Rebuilding here on
             // continuation would conflict with cells already collected from the previous identity graph.
@@ -290,11 +274,17 @@ public final class HologramCapture {
 
     private void bindSource(MTEEnhancedMultiBlockBase<?> machine, ExtendedFacing facing) {
         sourceFacing = facing;
-        sourceBinding = new SourceBinding(machine, sourceResolution.validityProof(), facing);
         sourceMetadata.setString("sourceId", sourceResolution.sourceId);
         sourceMetadata.setLong("sourceRevision", sourceResolution.sourceRevision);
-        sourceMetadata.setLong("declarationGeneration", sourceBinding.declarationGeneration);
         sourceMetadata.setString("purpose", captureIntent.name());
+        sourceMetadata.setBoolean("sourcePolicy", sourceResolution.policy != null);
+        sourceBinding = new SourceBinding(
+            machine,
+            sourceResolution.validityProof(),
+            facing,
+            sourceResolution.policy,
+            captureIntent,
+            sourceMetadata);
     }
 
     /** Bind an already described, not yet walked graph used by the bounded legacy geometry search. */
@@ -323,6 +313,39 @@ public final class HologramCapture {
     void observe(StructureSources.ReadSet observation) {
         if (observation == null) throw new IllegalArgumentException("read set");
         observations.add(observation);
+    }
+
+    boolean hasSourcePolicy() {
+        if (sourceBinding != null && sourceBinding.authority.policy != null) return true;
+        for (SourceBinding source : inheritedSources) if (source.authority.policy != null) return true;
+        return false;
+    }
+
+    /** Runtime-only, graph-free qualification. Serialization deliberately carries only its metadata receipt. */
+    static final class SourceAuthority {
+
+        final StructureSources.PolicyBinding policy;
+        final StructureSources.CaptureIntent intent;
+        final int controllerId;
+        private final net.minecraft.nbt.NBTTagCompound metadata;
+        private final StructureSources.ReadSet proof;
+
+        SourceAuthority(StructureSources.PolicyBinding policy, StructureSources.CaptureIntent intent, int controllerId,
+            net.minecraft.nbt.NBTTagCompound metadata, StructureSources.ReadSet proof) {
+            this.policy = policy;
+            this.intent = intent;
+            this.controllerId = controllerId;
+            this.metadata = (net.minecraft.nbt.NBTTagCompound) metadata.copy();
+            this.proof = proof;
+        }
+
+        net.minecraft.nbt.NBTTagCompound metadata() {
+            return (net.minecraft.nbt.NBTTagCompound) metadata.copy();
+        }
+
+        String validityFailure() {
+            return proof.invalidReason();
+        }
     }
 
     private boolean resumeCurrent(MTEEnhancedMultiBlockBase<?> machine, ItemStack currentTrigger, ExtendedFacing facing,
@@ -372,15 +395,19 @@ public final class HologramCapture {
         final net.minecraft.world.WorldProvider provider;
         final int dimension;
         final TileEntity worldTile;
-        final int x, y, z;
+        final int x, y, z, controllerId;
         final ExtendedFacing facing;
         final long declarationGeneration;
+        final SourceAuthority authority;
 
-        SourceBinding(MTEEnhancedMultiBlockBase<?> machine, StructureSources.ReadSet proof, ExtendedFacing facing) {
+        SourceBinding(MTEEnhancedMultiBlockBase<?> machine, StructureSources.ReadSet proof, ExtendedFacing facing,
+            StructureSources.PolicyBinding policy, StructureSources.CaptureIntent intent,
+            net.minecraft.nbt.NBTTagCompound metadata) {
             this.machine = machine;
             this.proof = proof;
             this.tile = machine.getBaseMetaTileEntity();
             this.metaTile = tile.getMetaTileEntity();
+            this.controllerId = tile.getMetaTileID();
             this.world = tile.getWorld();
             this.provider = world.provider;
             this.dimension = provider == null ? 0 : provider.dimensionId;
@@ -390,12 +417,15 @@ public final class HologramCapture {
             this.worldTile = world.getTileEntity(x, y, z);
             this.facing = facing;
             this.declarationGeneration = HologramDeclarationAdapters.generation();
+            metadata.setLong("declarationGeneration", declarationGeneration);
+            this.authority = new SourceAuthority(policy, intent, controllerId, metadata, this::validityFailure);
         }
 
         String validityFailure() {
             try {
                 if (machine.getBaseMetaTileEntity() != tile || ((TileEntity) tile).isInvalid()
-                    || tile.getMetaTileEntity() != metaTile) return "SOURCE_CONTROLLER_CHANGED";
+                    || tile.getMetaTileEntity() != metaTile
+                    || tile.getMetaTileID() != controllerId) return "SOURCE_CONTROLLER_CHANGED";
                 if (tile.getWorld() != world || world.provider != provider
                     || provider != null && provider.dimensionId != dimension) return "SOURCE_WORLD_CHANGED";
                 if (tile.getXCoord() != x || tile.getYCoord() != y || tile.getZCoord() != z)
@@ -477,6 +507,7 @@ public final class HologramCapture {
                         return false;
                     }
                     Cell cell = new Cell(element, xx, yy, zz, piece.trigger);
+                    cell.sourceAuthority = capture.sourceBinding == null ? null : capture.sourceBinding.authority;
                     if (xx == x && yy == y && zz == z) capture.declaredAnchorIndex = capture.cells.size();
                     capture.cells.add(cell);
                     capture.positions.put(position, cell);
@@ -489,9 +520,9 @@ public final class HologramCapture {
                         if (observeDeclaration)
                             signals.add(Pair.of(piece.trigger.stackSize, HologramValues.stackKey(piece.trigger)));
                         if (observeDeclaration) HologramDeclarationWrappers.observeChannels(element, piece.trigger);
-                        HologramGTNLElement reviewed = HologramGTNLSemantics.reviewedElement(element);
-                        if (reviewed != null) {
-                            reviewed.describeCell(cell);
+                        Declarations.PureElement<?> declaration = HologramElementCatalog.pure(element);
+                        if (declaration != null) {
+                            describePure(cell, declaration);
                         } else if (element == StructureUtility.isAir()) {
                             cell.block = Blocks.air;
                             cell.meta = 0;
@@ -607,10 +638,10 @@ public final class HologramCapture {
     private boolean spawnHint(IStructureElement element, World world, int x, int y, int z, ItemStack signal, int depth)
         throws ReflectiveOperationException {
         if (element == null || depth > 12) return false;
-        HologramGTNLElement reviewed = HologramGTNLSemantics.reviewedElement(element);
-        if (reviewed != null) {
+        Declarations.PureElement<?> declaration = HologramElementCatalog.pure(element);
+        if (declaration != null) {
             if (current == null) return false;
-            reviewed.describeCell(current);
+            describePure(current, declaration);
             return true;
         }
         IStructureElement backing = HologramDeclarationWrappers.backing(element);
@@ -628,6 +659,20 @@ public final class HologramCapture {
         if (!reviewedHintLeaf(element)) return false;
         nativeHintCalls++;
         return element.spawnHint(context, world, x, y, z, signal);
+    }
+
+    /** Project declared data; native hint/check/placement methods remain outside the read path. */
+    private static void describePure(Cell cell, Declarations.PureElement<?> declaration) {
+        ItemStack sample = declaration.primary();
+        cell.block = Block.getBlockFromItem(sample.getItem());
+        cell.meta = declaration.targetMeta(sample);
+        cell.blueprintBlock = String.valueOf(Block.blockRegistry.getNameForObject(cell.block));
+        cell.blueprintItem = String.valueOf(Item.itemRegistry.getNameForObject(sample.getItem()));
+        cell.blueprintDamage = sample.getItemDamage();
+        cell.role = declaration.role();
+        cell.unknown = false;
+        cell.candidateComplete = declaration.complete();
+        cell.candidateBoundary = cell.candidateComplete ? "" : declaration.candidateBoundary();
     }
 
     /** Only these exact factories emit fixed hints without invoking caller-supplied callbacks. */
@@ -698,6 +743,7 @@ public final class HologramCapture {
         int z = machine.getBaseMetaTileEntity()
             .getZCoord();
         Cell anchor = new Cell(null, x, y, z);
+        anchor.sourceAuthority = sourceBinding == null ? null : sourceBinding.authority;
         anchor.anchor = true;
         anchor.role = "controller";
         anchor.renderKind = "item";
@@ -751,6 +797,7 @@ public final class HologramCapture {
     static final class Cell {
 
         final IStructureElement element;
+        SourceAuthority sourceAuthority;
         final int x, y, z;
         // Runtime-only hint, accepted only when the current capture still owns this exact cell at that index.
         int stableIndex = -1;

@@ -17,6 +17,7 @@ import com.gtnewhorizon.structurelib.structure.AutoPlaceEnvironment;
 import com.gtnewhorizon.structurelib.structure.IStructureElement;
 import com.gtnewhorizon.structurelib.structure.IStructureElementChain;
 import com.gtnewhorizon.structurelib.structure.StructureUtility;
+import com.miaokatze.gtmb.api.Declarations;
 
 import gregtech.api.GregTechAPI;
 import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
@@ -38,10 +39,10 @@ final class HologramDeclarationCandidates {
             return;
         }
         if (seen.put(element, Boolean.TRUE) != null) return;
-        HologramGTNLElement reviewed = HologramGTNLSemantics.reviewedElement(element);
-        if (reviewed != null) {
-            for (ItemStack stack : reviewed.candidates()) add(stack);
-            complete &= reviewed.complete();
+        if (element instanceof Declarations.PureElement) {
+            Declarations.PureElement<?> declaration = (Declarations.PureElement<?>) element;
+            for (ItemStack stack : declaration.candidates()) add(stack);
+            complete &= declaration.complete();
             return;
         }
         try {
@@ -72,16 +73,6 @@ final class HologramDeclarationCandidates {
                 // its arbitrary transform/supplier is never executed and completeness is not asserted.
                 complete = false;
                 collect(alternative, context, world, x, y, z, trigger, environment, depth + 1);
-                return;
-            }
-            if (context instanceof gregtech.common.tileentities.machines.multi.MTELargeChemicalReactor
-                && HologramIndustrialConstraints.lcrCoil(element)) {
-                // The reviewed enum's getBlocksToPlace is a pure trigger-to-coil mapping; its check mutates counters.
-                for (int raw = 1; raw <= gregtech.api.enums.HeatingCoilLevel.getMaxTier() + 1; raw++) {
-                    ItemStack signal = trigger.copy();
-                    signal.stackSize = raw;
-                    add(HologramIndustrialConstraints.coil(signal));
-                }
                 return;
             }
             Method factory = element.getClass()

@@ -269,7 +269,7 @@ final class HologramEditorConfigurationDialogs {
                     () -> "切换后重新采集与计算材料；现场快照保留机器当前状态，新建模板使用建造结构。"),
                 22,
                 () -> ui.session.state().data.getCompoundTag("structureSemantics")
-                    .hasKey("gtnlSchema")));
+                    .getBoolean("sourcePolicy")));
         content.child(visibleRow(note(() -> {
             NBTTagCompound semantics = ui.session.state().data.getCompoundTag("structureSemantics");
             return semantics.hasNoTags() ? "按原结构声明解释；自定义条件需单独核实"
@@ -277,7 +277,7 @@ final class HologramEditorConfigurationDialogs {
         }),
             28,
             () -> ui.session.state().data.getCompoundTag("structureSemantics")
-                .hasKey("gtnlSchema")));
+                .getBoolean("sourcePolicy")));
         ListWidget<IWidget, ?> rows = list().name("config.channels.rows");
         for (int row = 0; row < 4; row++) {
             final int slot = row;
@@ -347,9 +347,9 @@ final class HologramEditorConfigurationDialogs {
                 semanticRules,
                 84,
                 () -> ui.session.state().data.getCompoundTag("structureSemantics")
-                    .hasKey("gtnlSchema")));
+                    .getBoolean("sourcePolicy")));
         boolean semantics = ui.session.state().data.getCompoundTag("structureSemantics")
-            .hasKey("gtnlSchema");
+            .getBoolean("sourcePolicy");
         return dialog("channels", () -> "结构等级 / 信道", content, () -> ui.router.activate(62), semantics ? 466 : 354);
     }
 

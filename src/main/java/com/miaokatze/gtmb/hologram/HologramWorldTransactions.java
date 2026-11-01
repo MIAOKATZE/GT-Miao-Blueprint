@@ -23,6 +23,7 @@ import com.gtnewhorizon.structurelib.structure.IStructureElement;
 import com.gtnewhorizon.structurelib.structure.IStructureElement.PlaceResult;
 import com.gtnewhorizon.structurelib.structure.StructureUtility;
 import com.gtnewhorizon.structurelib.util.ItemStackPredicate;
+import com.miaokatze.gtmb.api.Declarations;
 
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase;
@@ -409,7 +410,7 @@ final class HologramWorldTransactions {
                 boolean nativeCancelled;
                 boolean nativePlacement = s.virtual && s.virtualPreset.schema >= 2
                     && HologramNativePlacement.supported(c.block);
-                HologramGTNLElement reviewed = HologramGTNLSemantics.reviewedElement(c.element);
+                Declarations.PureElement<?> declaration = HologramElementCatalog.pure(c.element);
                 try (HologramNativePlacementEvents.Scope events = HologramNativePlacementEvents
                     .open(w, s.player, c.x, c.y, c.z)) {
                     if (nativePlacement) {
@@ -420,9 +421,9 @@ final class HologramWorldTransactions {
                                 ? transaction.takeOneFuzzy(pin, false)
                                 : source.takeOne(pin, false)))
                             && w.setBlock(c.x, c.y, c.z, c.block, c.meta, 3) ? PlaceResult.ACCEPT : PlaceResult.REJECT;
-                    } else if (reviewed != null) {
-                        boolean eligible = HologramCellPolicy.explicitTarget(s, c, index) ? reviewed.accepts(pin)
-                            : reviewed.placementAllows(pin);
+                    } else if (declaration != null) {
+                        boolean eligible = HologramCellPolicy.explicitTarget(s, c, index) ? declaration.accepts(pin)
+                            : declaration.placementAllows(pin);
                         result = !eligible ? PlaceResult.REJECT
                             : StructureUtility.survivalPlaceBlock(
                                 pin,
