@@ -1141,7 +1141,8 @@ public final class HologramClient {
         }
         clearCutWorkspaceOpening();
         inputScreenChanged = true;
-        if (event.gui != null && HologramIsometricCamera.INSTANCE.active()) {
+        if (event.gui != null && HologramIsometricCamera.INSTANCE.active()
+            && !HologramIsometricCamera.INSTANCE.keepsGui(event.gui)) {
             HologramIsometricCamera.INSTANCE.close();
             if (event.gui instanceof GuiIngameMenu) {
                 // Forge publishes GuiOpenEvent before FML's non-cancelable KeyInputEvent for the same Escape.

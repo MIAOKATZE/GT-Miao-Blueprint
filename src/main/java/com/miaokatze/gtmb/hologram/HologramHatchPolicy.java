@@ -1,5 +1,6 @@
 package com.miaokatze.gtmb.hologram;
 
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
@@ -101,10 +102,9 @@ public final class HologramHatchPolicy {
     public static synchronized void declare(Object builder, Collection<? extends IHatchElement<?>> elements,
         boolean sharedBlacklist) {
         List<IHatchElement<?>> declared = new ArrayList<>(elements);
-        // Custom matchers are executable controller policy, not a pure class declaration.
-        // Exact integrations supply their reviewed rules separately.
+        // Standard or() nodes only combine their two declarations. Custom leaves still carry executable policy.
         if (declared.stream()
-            .anyMatch(element -> !(element instanceof gregtech.api.enums.HatchElement))) {
+            .anyMatch(element -> !reviewed(element, 0))) {
             reset(builder);
             return;
         }
@@ -124,6 +124,24 @@ public final class HologramHatchPolicy {
             }
             return false;
         });
+    }
+
+    private static boolean reviewed(IHatchElement<?> element, int depth) {
+        if (element instanceof gregtech.api.enums.HatchElement) return true;
+        if (element == null || depth >= 12) return false;
+        Class<?> type = element.getClass();
+        if (!type.getName()
+            .equals("gregtech.api.interfaces.HatchElementEither")
+            || type.getClassLoader() != IHatchElement.class.getClassLoader()) return false;
+        try {
+            Field first = type.getDeclaredField("first"), second = type.getDeclaredField("second");
+            first.setAccessible(true);
+            second.setAccessible(true);
+            return reviewed((IHatchElement<?>) first.get(element), depth + 1)
+                && reviewed((IHatchElement<?>) second.get(element), depth + 1);
+        } catch (ReflectiveOperationException changedContract) {
+            return false;
+        }
     }
 
     public static synchronized void reset(Object builder) {
