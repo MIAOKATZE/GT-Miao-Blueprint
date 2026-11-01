@@ -56,6 +56,7 @@ final class HologramVirtualTransform {
 
     static HologramCapture.Cell at(HologramCapture.Cell old, int x, int y, int z) {
         HologramCapture.Cell cell = new HologramCapture.Cell(old.element, x, y, z, old.elementTrigger);
+        cell.sourceAuthority = old.sourceAuthority;
         cell.block = old.block;
         cell.meta = old.meta;
         cell.unknown = old.unknown;

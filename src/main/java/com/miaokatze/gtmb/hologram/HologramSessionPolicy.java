@@ -101,6 +101,7 @@ final class HologramSessionPolicy {
     }
 
     static String jobInvalidReason(HologramSession s) {
+        if (s.capture != null && !s.capture.sourceCurrent()) return "结构来源或现场状态已变化";
         if (jobTool(s) == null) return "原工具槽中的投影仪已移走或被替换";
         if (s.player.isDead) return "玩家已死亡";
         if (s.player.dimension != s.dimension || s.player.worldObj != s.libraryWorld) return "玩家世界或维度已变化";

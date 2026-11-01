@@ -143,6 +143,7 @@ final class HologramSession {
     String status = "";
     NBTTagCompound channels = new NBTTagCompound();
     HologramCapture capture;
+    com.miaokatze.gtmb.api.StructureSources.CaptureIntent captureIntent = com.miaokatze.gtmb.api.StructureSources.CaptureIntent.NEW_TEMPLATE;
     boolean localPlanPending;
     long localPlanGeneration;
     String localPlanError = "";

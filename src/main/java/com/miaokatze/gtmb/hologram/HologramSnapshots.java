@@ -188,8 +188,9 @@ final class HologramSnapshots {
                 row.setString("sourceClass", saved.sourceClass == null ? "" : saved.sourceClass);
                 row.setString("sourceMod", saved.sourceMod == null ? "" : saved.sourceMod);
                 row.setBoolean("declared", warning.isEmpty());
-                TileEntity tile = HologramSessionPolicy.authoring(s) ? null
-                    : s.player.worldObj.getTileEntity(s.x + saved.x, s.y + saved.y, s.z + saved.z);
+                TileEntity tile = HologramSessionPolicy.authoring(s)
+                    || !s.player.worldObj.blockExists(s.x + saved.x, s.y + saved.y, s.z + saved.z) ? null
+                        : s.player.worldObj.getTileEntity(s.x + saved.x, s.y + saved.y, s.z + saved.z);
                 row.setBoolean(
                     "formed",
                     tile instanceof IGregTechTileEntity
@@ -310,9 +311,14 @@ final class HologramSnapshots {
         state.setBoolean("placementNbtAll", HologramSessionPolicy.placementKeys(s) == null);
         state.setTag("placementNbtKeys", HologramSessionPolicy.nbtKeys(HologramSessionPolicy.placementKeys(s)));
         if (s.nbtKeysCapture != s.capture) {
-            s.nbtKeysCapture = s.capture;
+            s.nbtKeysCapture = null;
             s.availableNbtKeys.clear();
+            boolean keysComplete = true;
             if (s.capture != null) for (HologramCapture.Cell cell : s.capture.cells) {
+                if (!s.virtual && !s.player.worldObj.blockExists(cell.x, cell.y, cell.z)) {
+                    keysComplete = false;
+                    continue;
+                }
                 try {
                     NBTTagCompound data = s.virtual ? HologramBlueprintNbt.decode(cell.tileNbt) : null;
                     if (!s.virtual) {
@@ -328,6 +334,7 @@ final class HologramSnapshots {
                     }
                 } catch (java.io.IOException | RuntimeException ignored) { /* Invalid payload stays unsupported. */ }
             }
+            if (keysComplete) s.nbtKeysCapture = s.capture;
         }
         NBTTagList entries = new NBTTagList();
         for (String key : s.availableNbtKeys) {
@@ -859,6 +866,13 @@ final class HologramSnapshots {
         if (s.open && !s.cancelled && s.libraryWorld == s.player.worldObj && HologramSessionPolicy.valid(s))
             s.libraryUiActive = true;
         NBTTagCompound state = new NBTTagCompound();
+        state.setString("captureIntent", s.captureIntent.name());
+        if (s.capture != null) {
+            s.capture.sourceCurrent();
+            state.setTag("structureSemantics", s.capture.sourceMetadata.copy());
+            if (!s.capture.sourceMetadata.hasNoTags())
+                state.setLong("sourceRevision", s.capture.sourceMetadata.getLong("sourceRevision"));
+        }
         if (s.presentationTransition != null)
             state.setString("editorWorkspacePreviousSession", s.presentationTransition.originId);
         state.setBoolean("geometryValidationPending", s.geometryEdits.validationPending);

@@ -101,6 +101,13 @@ public final class HologramHatchPolicy {
     public static synchronized void declare(Object builder, Collection<? extends IHatchElement<?>> elements,
         boolean sharedBlacklist) {
         List<IHatchElement<?>> declared = new ArrayList<>(elements);
+        // Custom matchers are executable controller policy, not a pure class declaration.
+        // Exact integrations supply their reviewed rules separately.
+        if (declared.stream()
+            .anyMatch(element -> !(element instanceof gregtech.api.enums.HatchElement))) {
+            reset(builder);
+            return;
+        }
         DECLARED.put(builder, declared);
         if (!sharedBlacklist) {
             Map<IHatchElement<?>, Integer> values = new java.util.LinkedHashMap<>();
@@ -127,20 +134,13 @@ public final class HologramHatchPolicy {
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
     public static synchronized void andFunction(Object builder, Function filter) {
-        BiFunction<Object, ItemStack, Predicate<ItemStack>> old = BUILDERS.get(builder);
-        if (old != null) BUILDERS.put(
-            builder,
-            (context, trigger) -> old.apply(context, trigger)
-                .and((Predicate<ItemStack>) filter.apply(context)));
+        // An arbitrary function cannot be queried while displaying or planning a blueprint.
+        reset(builder);
     }
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
     public static synchronized void andBiFunction(Object builder, BiFunction filter) {
-        BiFunction<Object, ItemStack, Predicate<ItemStack>> old = BUILDERS.get(builder);
-        if (old != null) BUILDERS.put(
-            builder,
-            (context, trigger) -> old.apply(context, trigger)
-                .and((Predicate<ItemStack>) filter.apply(context, trigger)));
+        reset(builder);
     }
 
     public static synchronized void built(Object builder, IStructureElement<?> element) {

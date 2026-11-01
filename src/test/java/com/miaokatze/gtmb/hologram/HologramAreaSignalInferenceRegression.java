@@ -51,7 +51,10 @@ public final class HologramAreaSignalInferenceRegression {
         IMetaTileEntity previous = GregTechAPI.METATILEENTITIES[id];
         SceneController prototype = new SceneController();
         GregTechAPI.METATILEENTITIES[id] = prototype;
-        try {
+        try (AutoCloseable declaration = HologramDeclarationAdapters.registerScopedReader(
+            HintedStone.class,
+            element -> new HologramDeclarationAdapters.Declaration(
+                new HologramPureElementsRegression.Leaf(true, Blocks.stone, null)))) {
             Field field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
             field.setAccessible(true);
             SceneWorld world = (SceneWorld) ((sun.misc.Unsafe) field.get(null)).allocateInstance(SceneWorld.class);
@@ -85,7 +88,7 @@ public final class HologramAreaSignalInferenceRegression {
         for (HologramCapture.Cell cell : expected.cells) if (!cell.anchor) {
             SimpleAssert.that(
                 cell.block == Blocks.stone && !cell.unknown,
-                "fixture emits the native stone hint through the explicit headless hook");
+                "fixture supplies stone through its explicit read-only declaration");
             world.blocks.put(HologramValues.position(cell), Blocks.stone);
         }
         int constructions = source.constructions;

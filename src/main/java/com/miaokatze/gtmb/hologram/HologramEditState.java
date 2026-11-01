@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 
 import net.minecraft.item.ItemStack;
+import net.minecraft.nbt.NBTTagCompound;
 
 final class HologramEditState {
 
@@ -243,7 +244,12 @@ final class HologramEditState {
                 s.virtualPreset.structures.add(HologramBlueprintData.copyStructure(original));
         }
         if (s.virtual && s.virtualPreset != null && s.virtualPreset.schema >= 2) {
-            HologramCapture capture = new HologramCapture(null, HologramSessionPolicy.trigger(s));
+            HologramCapture capture = new HologramCapture(
+                null,
+                HologramSessionPolicy.trigger(s),
+                s.capture.captureIntent);
+            capture.inheritSources(s.capture);
+            capture.sourceMetadata = (NBTTagCompound) s.capture.sourceMetadata.copy();
             for (HologramCapture.Cell saved : geometry) {
                 HologramCapture.Cell cell = HologramBlueprintData.blueprintCell(saved, saved.x, saved.y, saved.z);
                 capture.cells.add(cell);

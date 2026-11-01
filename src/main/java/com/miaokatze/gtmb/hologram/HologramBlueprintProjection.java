@@ -27,6 +27,8 @@ final class HologramBlueprintProjection {
         HologramPresets.Preset result = s.virtualPreset == null ? new HologramPresets.Preset()
             : HologramSnapshotMetadataSource.copyMetadata(s.virtualPreset);
         result.schema = 2;
+        if (!s.capture.sourceMetadata.hasNoTags())
+            result.semanticNbt = HologramBlueprintNbt.encodeCanonical(s.capture.sourceMetadata);
         result.name = name == null || name.trim()
             .isEmpty() ? "未命名蓝图" : name.trim();
         if (s.virtualPreset == null) {
@@ -47,6 +49,7 @@ final class HologramBlueprintProjection {
             declared.sourceClass = s.machine.getClass()
                 .getName();
             declared.sourceMod = HologramSessionPolicy.sourceMod(s.machine.getClass());
+            declared.semanticNbt = result.semanticNbt;
             HologramBlueprintData.storeStructureConfiguration(s, declared);
             result.structures.add(declared);
             result.sourceClass = s.machine.getClass()
@@ -247,6 +250,18 @@ final class HologramBlueprintProjection {
         boolean step(int maxWork, long deadline) {
             if (!initialized) {
                 s.capture = new HologramCapture(null, HologramSessionPolicy.trigger(s));
+                if (s.virtualPreset.semanticNbt != null) {
+                    try {
+                        s.capture.sourceMetadata = HologramBlueprintNbt.decode(s.virtualPreset.semanticNbt);
+                    } catch (java.io.IOException invalidMetadata) {
+                        s.capture.incomplete = true;
+                        s.capture.failure = "INVALID_SEMANTIC_METADATA";
+                    }
+                }
+                HologramArea sourceArea = HologramWorkspace.AREAS.get(s.player.getUniqueID());
+                if (sourceArea != null && sourceArea.blueprint == s.virtualPreset)
+                    for (HologramArea.Structure member : sourceArea.structures.values())
+                        if (member.capture != null) s.capture.inheritSources(member.capture);
                 s.pins.clear();
                 s.coordinatePins.clear();
                 s.facingPins.clear();

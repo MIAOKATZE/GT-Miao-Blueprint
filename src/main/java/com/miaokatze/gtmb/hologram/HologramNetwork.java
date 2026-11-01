@@ -1294,6 +1294,11 @@ public final class HologramNetwork {
 
     private static void dispatch(EntityPlayerMP player, NBTTagCompound tag) {
         String action = tag.getString("action");
+        if (HologramDemolition.active(player) && !action.isEmpty()) {
+            HologramBusyReplies.reject(player, tag, HologramBusyReplies.Kind.ACTION);
+            player.addChatMessage(new net.minecraft.util.ChatComponentText("拆除正在进行，请等待完成或按 Esc 取消"));
+            return;
+        }
         if ("voucherEditor".equals(action)) {
             HologramVoucherEditor.handle(player, tag);
             return;

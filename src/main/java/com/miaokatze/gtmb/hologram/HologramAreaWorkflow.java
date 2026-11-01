@@ -408,6 +408,7 @@ final class HologramAreaWorkflow {
             selected = HologramWorkspace
                 .create(previous.player, structure.x, structure.y, structure.z, true, previous.side);
             selected.areaStructureId = id;
+            selected.captureIntent = com.miaokatze.gtmb.api.StructureSources.CaptureIntent.LIVE_SNAPSHOT;
             selected.main = 1;
             selected.mainExplicit = false;
             selected.channels = new NBTTagCompound();
@@ -506,6 +507,7 @@ final class HologramAreaWorkflow {
             area.minZ,
             false,
             source.side);
+        staged.captureIntent = com.miaokatze.gtmb.api.StructureSources.CaptureIntent.LIVE_SNAPSHOT;
         if (!HologramEditorWorkspaceRegistry.physicalProjection(source) && !source.emptyProjection)
             staged.id = source.id;
         staged.uiSequence = source.uiSequence;
@@ -564,6 +566,12 @@ final class HologramAreaWorkflow {
         saved.sourceMod = HologramSessionPolicy.sourceMod(structure.machine.getClass());
         saved.enabled = structure.enabled;
         if (structure.capture != null) {
+            try {
+                if (!structure.capture.sourceMetadata.hasNoTags())
+                    saved.semanticNbt = HologramBlueprintNbt.encodeCanonical(structure.capture.sourceMetadata);
+            } catch (java.io.IOException invalidMetadata) {
+                throw new IllegalStateException("Invalid source metadata", invalidMetadata);
+            }
             saved.main = Math.max(1, structure.capture.trigger.stackSize);
             com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor
                 .iterateChannelData(structure.capture.trigger)
