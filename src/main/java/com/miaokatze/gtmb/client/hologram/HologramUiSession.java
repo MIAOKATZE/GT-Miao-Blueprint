@@ -325,6 +325,10 @@ final class HologramUiSession {
         if (!ui.ae.commandAllowed(op)) return;
         ui.preview.prepareCommand(op);
         NBTTagCompound n = request == null ? new NBTTagCompound() : request;
+        if (state.data.hasKey("sourceRevision", 4)) {
+            n.setLong("sourceRevision", state.data.getLong("sourceRevision"));
+            n.setLong("semanticPlanRevision", revision());
+        }
         ui.processing.prepareCommand(op, n);
         ui.nbt.prepareCommand(op, n);
         ui.library.prepareCommand(n);

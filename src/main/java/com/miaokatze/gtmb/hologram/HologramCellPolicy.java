@@ -24,6 +24,7 @@ import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
 import com.gtnewhorizon.structurelib.structure.AutoPlaceEnvironment;
 import com.gtnewhorizon.structurelib.structure.IStructureElement;
 import com.gtnewhorizon.structurelib.structure.IStructureElementChain;
+import com.miaokatze.gtmb.api.Declarations;
 
 import gregtech.api.GregTechAPI;
 import gregtech.api.interfaces.IHeatingCoil;
@@ -58,6 +59,23 @@ final class HologramCellPolicy {
             || (b instanceof BlockBush && b.isReplaceable(w, x, y, z) && w.getTileEntity(x, y, z) == null);
     }
 
+    /** Immutable observations for an explicit pure declaration; no native element or unreviewed pick is called. */
+    static Declarations.WorldState worldState(World world, int x, int y, int z) {
+        if (world == null || !world.blockExists(x, y, z))
+            return new Declarations.WorldState(false, null, 0, null, -1, -1);
+        Block block = world.getBlock(x, y, z);
+        int metadata = world.getBlockMetadata(x, y, z);
+        TileEntity tile = world.getTileEntity(x, y, z);
+        Integer damage = HologramMaterialDescriptor.actualDamage(block, metadata, tile);
+        return new Declarations.WorldState(
+            true,
+            block,
+            metadata,
+            tile == null ? null : tile.getClass(),
+            tile instanceof IGregTechTileEntity ? ((IGregTechTileEntity) tile).getMetaTileID() : -1,
+            damage == null ? -1 : damage);
+    }
+
     static boolean knownSatisfied(HologramCapture.Cell c, Block old, int meta) {
         if (HologramBlockIdentity.sameForPlacement(old, meta, c.block, c.meta)) return true;
         if (old instanceof IHeatingCoil && HologramValues.coil(c.block, c.meta)
@@ -73,6 +91,9 @@ final class HologramCellPolicy {
 
     /** A capture position plus a real valid coil family is the deliberately narrow destructive adapter. */
     static boolean destructive(HologramCapture.Cell c, Block old, int meta) {
+        Declarations.PureElement<?> declaration = HologramElementCatalog.pure(c.element);
+        if (declaration != null && !old.hasTileEntity(meta))
+            return declaration.accepts(HologramBlockIdentity.materialStack(old, meta));
         if (HologramFrameSupport.accepts(c.element, old, meta)) return true;
         if (old instanceof BlockFrameBox && !old.hasTileEntity(meta)
             && old == c.block
@@ -157,6 +178,8 @@ final class HologramCellPolicy {
                 ((IGregTechTileEntity) actual).getMetaTileID());
             if (hatchElement(s, c, existing, true) != null) return existing;
         }
+        Declarations.PureElement<?> declaration = HologramElementCatalog.pure(c.element);
+        if (declaration != null) return declaration.primary();
         if (c.block != null && c.block != Blocks.air && c.block != StructureLibAPI.getBlockHint()) {
             ItemStack block = HologramBlockIdentity.materialStack(c.block, c.meta);
             if (block != null) return block;
@@ -237,6 +260,8 @@ final class HologramCellPolicy {
         if (s.facingPins.containsKey(HologramValues.position(c)) || s.autoTargets.containsKey(index)
             || explicitGrade(s, c)
             || explicitTarget(s, c, index)) return targetMatches(s, c, index, old, meta);
+        Declarations.PureElement<?> declaration = HologramElementCatalog.pure(c.element);
+        if (declaration != null) return declaration.matches(worldState(s.player.worldObj, c.x, c.y, c.z));
         HologramReplacementFamily.Family family = HologramReplacementFamily.resolve(c.element, c.block, c.meta);
         if (family != null && family.contains(old, meta)) return true;
         return knownSatisfied(c, old, meta);
@@ -250,6 +275,12 @@ final class HologramCellPolicy {
         boolean restoredConfiguration) {
         ItemStack wanted = targetFor(s, c, index);
         if (wanted == null) return false;
+        Declarations.PureElement<?> declaration = HologramElementCatalog.pure(c.element);
+        if (declaration != null && !HologramRecovery.hasSeal(wanted)) {
+            if (!declaration.matchesTarget(worldState(s.player.worldObj, c.x, c.y, c.z), wanted)) return false;
+            if (!s.virtual || s.virtualPreset == null || s.virtualPreset.schema < 2) return true;
+            // Saved payload and actual paid material checks still apply after the pure cell declaration agrees.
+        }
         // These paths can never accept an absent primary block. Reject the mismatch before decoding
         // full payloads or invoking native variant validators; matching blocks still use every check below.
         if (s.virtual && s.virtualPreset != null
@@ -377,7 +408,7 @@ final class HologramCellPolicy {
         final int sourceDamage, metadata, dimension, x, y, z;
         final Block block;
         final HologramNativePlacement.Adapter adapter;
-        final long generation;
+        final long generation, materialGeneration;
         final boolean retainNbt, retainCovers;
         final List<String> keys;
         final java.util.UUID actor;
@@ -397,6 +428,7 @@ final class HologramCellPolicy {
             z = cell.z;
             this.adapter = adapter;
             generation = com.miaokatze.gtmb.api.ResourceContainers.generation();
+            materialGeneration = com.miaokatze.gtmb.api.MaterialVariants.generation();
             retainNbt = s.virtualPreset.retainNbt;
             retainCovers = HologramSessionPolicy.placementRetainCovers(s);
             List<String> selected = HologramSessionPolicy.placementKeys(s);
@@ -411,6 +443,7 @@ final class HologramCellPolicy {
             return block == cell.block && metadata == cell.meta
                 && this.adapter == adapter
                 && generation == com.miaokatze.gtmb.api.ResourceContainers.generation()
+                && materialGeneration == com.miaokatze.gtmb.api.MaterialVariants.generation()
                 && dimension == s.dimension
                 && x == cell.x
                 && y == cell.y
@@ -548,6 +581,8 @@ final class HologramCellPolicy {
     static int targetPreviewMeta(HologramSession s, HologramCapture.Cell cell, ItemStack target)
         throws java.io.IOException {
         if (target == null) return cell.meta;
+        Declarations.PureElement<?> declaration = HologramElementCatalog.pure(cell.element);
+        if (declaration != null) return declaration.targetMeta(target);
         int nativeMetadata = target.getItem()
             .getMetadata(target.getItemDamage());
         if (!s.virtual || s.virtualPreset == null || s.virtualPreset.schema < 2) return nativeMetadata;
@@ -746,6 +781,8 @@ final class HologramCellPolicy {
         HologramCapture original = s.capture;
         if (original == null) return false;
         World world = s.player.worldObj;
+        Declarations.PureElement<?> declaration = HologramElementCatalog.pure(c.element);
+        if (declaration != null) return declaration.matches(worldState(world, c.x, c.y, c.z));
         TileEntity tile = world.getTileEntity(c.x, c.y, c.z);
         if (tile instanceof IGregTechTileEntity) {
             if (world.getBlock(c.x, c.y, c.z) instanceof BlockFrameBox) return HologramFrameSupport
@@ -918,7 +955,7 @@ final class HologramCellPolicy {
             HologramSession other = HologramAreaDeclarations.areaDeclarationSession(s, area, id);
             HologramCapture.Cell shared = other == null || other.capture == null ? null
                 : other.capture.positions.get(HologramValues.position(cell));
-            if (shared == null || other.capture.incomplete || other.capture.pending) {
+            if (shared == null || other.capture.incomplete || other.capture.pending || !other.capture.sourceCurrent()) {
                 result.clear();
                 cell.candidateComplete = false;
                 cell.candidateBoundary = "共享格的成员结构声明不完整，目标编辑已保护";
@@ -974,7 +1011,9 @@ final class HologramCellPolicy {
                 result.add(stack);
         }
         cell.candidateComplete = declaration.complete;
-        cell.candidateBoundary = declaration.complete ? "" : "仅列出已识别的结构声明；自定义校验或动态条件未完整解析";
+        Declarations.PureElement<?> pure = HologramElementCatalog.pure(cell.element);
+        cell.candidateBoundary = declaration.complete ? ""
+            : pure == null ? "仅列出已识别的结构声明；自定义校验或动态条件未完整解析" : pure.candidateBoundary();
         return result;
     }
 
@@ -1004,6 +1043,11 @@ final class HologramCellPolicy {
             s.hatchParts.put(cell.element, parts);
         }
         for (IStructureElement part : parts) {
+            Declarations.PureElement<?> declaration = HologramElementCatalog.pure(part);
+            if (declaration != null) {
+                if (manual ? declaration.accepts(sample) : declaration.placementAllows(sample)) return part;
+                continue;
+            }
             try {
                 java.util.function.Predicate<ItemStack> declared = manual
                     ? HologramHatchPolicy.predicate(part, s.machine, signal)
@@ -1012,20 +1056,8 @@ final class HologramCellPolicy {
                     if (declared.test(sample)) return part;
                     continue;
                 }
-                IStructureElement.BlocksToPlace blocks = part.getBlocksToPlace(
-                    s.machine,
-                    s.player.worldObj,
-                    cell.x,
-                    cell.y,
-                    cell.z,
-                    signal,
-                    AutoPlaceEnvironment.fromLegacy(
-                        (predicate, simulate, count) -> HologramMaterialAccess.materialSource(s)
-                            .take(predicate, true, count),
-                        s.player,
-                        message -> {}));
-                if (blocks != null && blocks.getPredicate()
-                    .test(sample)) return part;
+                // A missing reviewed declaration is unknown. Calling the native placement
+                // predicate here would execute arbitrary controller callbacks during reads.
             } catch (RuntimeException | LinkageError ignored) {}
         }
         return null;
@@ -1118,6 +1150,8 @@ final class HologramCellPolicy {
 
     static boolean acceptableSample(HologramSession s, HologramCapture.Cell cell, ItemStack sample) {
         if (!placeableSample(s, cell, sample)) return false;
+        Declarations.PureElement<?> declaration = HologramElementCatalog.pure(cell.element);
+        if (declaration != null && !declaration.accepts(sample)) return false;
         if ("templateController".equals(cell.role))
             return sample.getItem() instanceof ItemMachines && sample.getItemDamage() == cell.blueprintDamage;
         // A captured world blueprint already declares the actual GT item at this cell. StructureLib's
@@ -1135,6 +1169,8 @@ final class HologramCellPolicy {
             // identity here; validating its intentionally tagless serialization would discard all cuts.
             List<ItemStack> declared = s.virtual && cell.structureTargets != null ? cell.structureTargets
                 : candidates(s, cell);
+            if (cell.memberships()
+                .size() > 1 && !cell.candidateComplete) return false;
             if (declared.stream()
                 .anyMatch(option -> HologramValues.sameMaterial(option, sample))) return true;
             // Old height-dependent declarations can describe a different cap at this coordinate.
@@ -1197,6 +1233,8 @@ final class HologramCellPolicy {
     }
 
     static String candidateRole(HologramSession s, HologramCapture.Cell c, ItemStack stack) {
+        Declarations.PureElement<?> declaration = HologramElementCatalog.pure(c.element);
+        if (declaration != null) return declaration.candidateRoleLabel(stack);
         if (hatchTier(stack) == Integer.MAX_VALUE) return "外壳/方块";
         gregtech.api.interfaces.metatileentity.IMetaTileEntity prototype = ItemMachines.getMetaTileEntity(stack);
         for (IStructureElement<?> part : HologramElementCatalog.parts(c.element))
@@ -1209,6 +1247,8 @@ final class HologramCellPolicy {
         if (c.anchor || target == null
             || (!(s.virtual && target.getItem() instanceof ItemMachines) && hatchTier(target) == Integer.MAX_VALUE))
             return new int[0];
+        Declarations.PureElement<?> declaration = HologramElementCatalog.pure(c.element);
+        if (declaration != null) return declaration.legalFacings(target);
         gregtech.api.interfaces.metatileentity.IMetaTileEntity prototype = ItemMachines.getMetaTileEntity(target);
         if (prototype instanceof gregtech.api.metatileentity.MetaPipeEntity) return new int[0];
         IStructureElement<?> part = s.virtual ? null : hatchElement(s, c, target, true);

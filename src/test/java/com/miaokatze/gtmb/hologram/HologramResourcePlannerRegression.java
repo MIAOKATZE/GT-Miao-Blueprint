@@ -573,7 +573,13 @@ public final class HologramResourcePlannerRegression {
                     } else if (scenario == 7) world.denyMine = true;
                     else if (scenario == 8) cell.itemNbt = HologramBlueprintNbt.encodeCaptured(payload);
                     else if (scenario == 9) {
+                        cell = new HologramCapture.Cell(
+                            StructureUtility.ofBlock(Blocks.chest, 0),
+                            cell.x,
+                            cell.y,
+                            cell.z);
                         cell.block = Blocks.chest;
+                        s.capture.cells.set(0, cell);
                         s.pins.put(0, new ItemStack(Blocks.chest));
                     } else if (scenario == 10) {
                         s.virtual = false;

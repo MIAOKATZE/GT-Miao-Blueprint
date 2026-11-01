@@ -5,14 +5,10 @@ import java.util.ArrayList;
 import java.util.IdentityHashMap;
 import java.util.List;
 
-import net.minecraft.item.ItemStack;
-
 import com.gtnewhorizon.structurelib.structure.IStructureElement;
 import com.gtnewhorizon.structurelib.structure.IStructureElementChain;
+import com.miaokatze.gtmb.api.Declarations;
 
-import gregtech.api.GregTechAPI;
-import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
-import gregtech.api.metatileentity.implementations.MTEHatch;
 import gregtech.api.util.HatchElementBuilder;
 
 /** Bounded inspection of reviewed StructureLib/GT wrappers; never invokes element check or machine callbacks. */
@@ -20,32 +16,31 @@ final class HologramElementCatalog {
 
     private HologramElementCatalog() {}
 
+    /** A pure contract can be inherited only through an explicitly transparent declaration wrapper. */
+    static Declarations.PureElement<?> pure(IStructureElement<?> element) {
+        IdentityHashMap<IStructureElement<?>, Boolean> seen = new IdentityHashMap<>();
+        for (int depth = 0; element != null && depth <= 12; depth++) {
+            if (seen.put(element, Boolean.TRUE) != null) return null;
+            if (element instanceof Declarations.PureElement) return (Declarations.PureElement<?>) element;
+            try {
+                element = HologramDeclarationWrappers.backing(element);
+            } catch (ReflectiveOperationException | RuntimeException | LinkageError invalid) {
+                return null;
+            }
+        }
+        return null;
+    }
+
     static String hatchRole(IStructureElement<?> element) {
         for (IStructureElement<?> part : parts(element)) {
+            Declarations.PureElement<?> declaration = pure(part);
+            if (declaration != null) return declaration.role();
             Method method = part.getClass()
                 .getEnclosingMethod();
             if (method != null && method.getDeclaringClass() == HatchElementBuilder.class
                 && "build".equals(method.getName())) return "hatch";
         }
         return "block";
-    }
-
-    static List<ItemStack> predicateCandidates(IStructureElement<?> element, IStructureElement.BlocksToPlace blocks) {
-        List<ItemStack> result = new ArrayList<>();
-        if (blocks == null || !"hatch".equals(hatchRole(element))) return result;
-        // Enumerate registered prototypes, rather than inferring machines from numeric hint metadata or inventory.
-        for (IMetaTileEntity prototype : GregTechAPI.METATILEENTITIES) {
-            if (!(prototype instanceof MTEHatch)) continue;
-            try {
-                ItemStack stack = prototype.getStackForm(1);
-                if (stack == null || stack.getItem() == null) continue;
-                if (blocks.getPredicate()
-                    .test(stack)) result.add(stack.copy());
-            } catch (RuntimeException | LinkageError ignored) {
-                // A rejected/broken predicate provides no authority and no fabricated candidate.
-            }
-        }
-        return result;
     }
 
     static List<IStructureElement<?>> parts(IStructureElement<?> root) {

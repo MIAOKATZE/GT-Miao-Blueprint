@@ -859,6 +859,13 @@ final class HologramSnapshots {
         if (s.open && !s.cancelled && s.libraryWorld == s.player.worldObj && HologramSessionPolicy.valid(s))
             s.libraryUiActive = true;
         NBTTagCompound state = new NBTTagCompound();
+        state.setString("captureIntent", s.captureIntent.name());
+        if (s.capture != null) {
+            s.capture.sourceCurrent();
+            state.setTag("structureSemantics", s.capture.sourceMetadata.copy());
+            if (!s.capture.sourceMetadata.hasNoTags())
+                state.setLong("sourceRevision", s.capture.sourceMetadata.getLong("sourceRevision"));
+        }
         if (s.presentationTransition != null)
             state.setString("editorWorkspacePreviousSession", s.presentationTransition.originId);
         state.setBoolean("geometryValidationPending", s.geometryEdits.validationPending);

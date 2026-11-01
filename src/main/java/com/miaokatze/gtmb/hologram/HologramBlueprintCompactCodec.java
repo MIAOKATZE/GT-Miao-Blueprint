@@ -122,7 +122,8 @@ public final class HologramBlueprintCompactCodec {
 
     private static void internRawNbt(JsonObject object, Map<String, Integer> ids, JsonArray dictionary)
         throws IOException {
-        for (String field : new String[] { "tileNbt", "itemNbt", "processingNbt", "quantumGroupingNbt" }) {
+        for (String field : new String[] { "tileNbt", "itemNbt", "processingNbt", "quantumGroupingNbt",
+            "semanticNbt" }) {
             JsonElement value = object.get(field);
             if (value == null || value.isJsonNull()) continue;
             if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive()
@@ -313,11 +314,12 @@ public final class HologramBlueprintCompactCodec {
     private static boolean nbtField(String key) {
         return key.equals("tileNbt") || key.equals("itemNbt")
             || key.equals("processingNbt")
+            || key.equals("semanticNbt")
             || key.equals("quantumGroupingNbt");
     }
 
     private static void resolveNbt(JsonObject object, JsonArray nbt) throws IOException {
-        for (String key : new String[] { "tileNbt", "itemNbt", "processingNbt", "quantumGroupingNbt" }) {
+        for (String key : new String[] { "tileNbt", "itemNbt", "processingNbt", "quantumGroupingNbt", "semanticNbt" }) {
             JsonElement value = object.get(key);
             if (value != null && !value.isJsonNull()) object.add(key, nbt.get(index(value, nbt.size())));
         }
@@ -494,7 +496,8 @@ public final class HologramBlueprintCompactCodec {
             }
 
             private void internNbt(JsonObject object) throws IOException {
-                for (String field : new String[] { "tileNbt", "itemNbt", "processingNbt", "quantumGroupingNbt" }) {
+                for (String field : new String[] { "tileNbt", "itemNbt", "processingNbt", "quantumGroupingNbt",
+                    "semanticNbt" }) {
                     JsonElement value = object.get(field);
                     if (value == null || value.isJsonNull()) continue;
                     String text = value.getAsString();

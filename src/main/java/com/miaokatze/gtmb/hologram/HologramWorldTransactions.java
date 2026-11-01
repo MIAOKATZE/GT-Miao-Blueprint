@@ -23,6 +23,7 @@ import com.gtnewhorizon.structurelib.structure.IStructureElement;
 import com.gtnewhorizon.structurelib.structure.IStructureElement.PlaceResult;
 import com.gtnewhorizon.structurelib.structure.StructureUtility;
 import com.gtnewhorizon.structurelib.util.ItemStackPredicate;
+import com.miaokatze.gtmb.api.Declarations;
 
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase;
@@ -63,6 +64,11 @@ final class HologramWorldTransactions {
 
     @SuppressWarnings("unchecked")
     static boolean operateChecked(HologramSession s, HologramCapture.Cell c, int index) {
+        if (s.capture != null && !s.capture.sourceCurrent()) {
+            c.status = "unsupported";
+            s.status = "结构来源或现场状态已变化，未扣除材料，请重新采集";
+            return false;
+        }
         if (HologramSessionPolicy.ignoredPlacementAir(s, c, index)) {
             c.status = "satisfied";
             return true;
@@ -404,6 +410,7 @@ final class HologramWorldTransactions {
                 boolean nativeCancelled;
                 boolean nativePlacement = s.virtual && s.virtualPreset.schema >= 2
                     && HologramNativePlacement.supported(c.block);
+                Declarations.PureElement<?> declaration = HologramElementCatalog.pure(c.element);
                 try (HologramNativePlacementEvents.Scope events = HologramNativePlacementEvents
                     .open(w, s.player, c.x, c.y, c.z)) {
                     if (nativePlacement) {
@@ -414,6 +421,21 @@ final class HologramWorldTransactions {
                                 ? transaction.takeOneFuzzy(pin, false)
                                 : source.takeOne(pin, false)))
                             && w.setBlock(c.x, c.y, c.z, c.block, c.meta, 3) ? PlaceResult.ACCEPT : PlaceResult.REJECT;
+                    } else if (declaration != null) {
+                        boolean eligible = HologramCellPolicy.explicitTarget(s, c, index) ? declaration.accepts(pin)
+                            : declaration.placementAllows(pin);
+                        result = !eligible ? PlaceResult.REJECT
+                            : StructureUtility.survivalPlaceBlock(
+                                pin,
+                                ItemStackPredicate.NBTMode.EXACT,
+                                null,
+                                true,
+                                w,
+                                c.x,
+                                c.y,
+                                c.z,
+                                source,
+                                s.player);
                     } else if (directCreative) result = c.element
                         .placeBlock(s.machine, w, c.x, c.y, c.z, HologramCellPolicy.elementTrigger(s, c))
                             ? PlaceResult.ACCEPT

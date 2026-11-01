@@ -20,6 +20,8 @@ import com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor
 import com.gtnewhorizon.structurelib.alignment.constructable.IConstructable;
 import com.gtnewhorizon.structurelib.structure.IStructureDefinition;
 import com.gtnewhorizon.structurelib.structure.IStructureElement;
+import com.miaokatze.gtmb.api.Declarations;
+import com.miaokatze.gtmb.api.StructureSources;
 
 import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
@@ -47,6 +49,10 @@ final class HologramAreaSignalInference {
     private final World actual;
     private final Scene scene;
     private final boolean strict;
+    private final StructureSources.PolicyBinding sourcePolicy;
+    private List<ItemStack> reviewedTriggers;
+    private int reviewedIndex;
+    private final Map<String, SceneCell> reviewedCells = new LinkedHashMap<>();
     private final List<String> signals = new ArrayList<>();
     private final Map<String, Candidate> geometries = new LinkedHashMap<>();
     private final IdentityHashMap<IStructureElement<?>, List<Options>> alternatives = new IdentityHashMap<>();
@@ -83,24 +89,21 @@ final class HologramAreaSignalInference {
 
     private HologramAreaSignalInference(MTEEnhancedMultiBlockBase<?> source, ItemStack seed, Scene scene,
         boolean strict, boolean copySource) throws IOException {
-        machine = copySource ? HologramDetachedController.fromLive(source) : source;
+        String failure = StructureSources.sourceFailure(source.getClass());
+        if (failure != null) throw new IOException(failure);
+        sourcePolicy = StructureSources.policy(source.getClass());
+        machine = copySource && sourcePolicy == null ? HologramDetachedController.fromLive(source) : source;
         this.scene = scene;
         this.strict = strict;
         actual = source.getBaseMetaTileEntity()
             .getWorld();
         trigger = seed.copy();
+        if (sourcePolicy != null) return;
         trigger.stackSize = 1;
         List<String> previous = new ArrayList<>();
         ChannelDataAccessor.iterateChannelData(trigger)
             .forEach(entry -> previous.add(entry.getKey()));
         for (String id : previous) ChannelDataAccessor.unsetChannelData(trigger, id);
-        // The native constructable may explicitly offer a saved main signal through its own snapshot source.
-        if (source instanceof tectech.thing.metaTileEntity.multi.godforge.MTEForgeOfGods) trigger.stackSize = Math.max(
-            1,
-            Math.min(
-                3,
-                ((tectech.thing.metaTileEntity.multi.godforge.MTEForgeOfGods) source).getData()
-                    .getRingAmount()));
     }
 
     HologramCapture capture() {
@@ -141,6 +144,7 @@ final class HologramAreaSignalInference {
 
     private boolean advance(long deadline) throws IOException {
         if (done) return true;
+        if (sourcePolicy != null) return advanceReviewed(deadline);
         if (!initialized) {
             if (best == null) fullCaptures++;
             best = HologramCapture.collect(machine, trigger, machine.getExtendedFacing(), best);
@@ -288,6 +292,65 @@ final class HologramAreaSignalInference {
         return done = true;
     }
 
+    /** A finite, source-reviewed parameter domain; never probes a native constructor. */
+    private boolean advanceReviewed(long deadline) {
+        String policyFailure = sourcePolicy.validityFailure();
+        if (policyFailure != null) {
+            if (best != null) {
+                best.incomplete = true;
+                best.failure = policyFailure;
+            }
+            return done = true;
+        }
+        if (reviewedTriggers == null) reviewedTriggers = sourcePolicy.inferenceTriggers(trigger);
+        while (reviewedIndex < reviewedTriggers.size() && System.nanoTime() < deadline) {
+            if (candidate == null || candidate.pending) {
+                if (candidate == null) {
+                    fullCaptures++;
+                    reviewedCells.clear();
+                }
+                candidate = HologramCapture.collect(
+                    machine,
+                    reviewedTriggers.get(reviewedIndex),
+                    machine.getExtendedFacing(),
+                    com.miaokatze.gtmb.api.StructureSources.CaptureIntent.LIVE_SNAPSHOT,
+                    candidate);
+                if (candidate.pending) return false;
+                if (best == null) best = candidate;
+                matching = !candidate.incomplete;
+                matchIndex = 0;
+            }
+            while (matching && matchIndex < candidate.cells.size() && System.nanoTime() < deadline)
+                matching = matches(candidate.cells.get(matchIndex++));
+            if (matching && matchIndex < candidate.cells.size()) return false;
+            if (matching && candidate.sourceCurrent()) {
+                List<SceneCell> observed = new ArrayList<>(reviewedCells.values());
+                candidate.observe(() -> {
+                    for (SceneCell cell : observed) if (!cell.current(actual)) return "SOURCE_SCENE_CHANGED";
+                    return "";
+                });
+                if (!candidate.sourceCurrent()) {
+                    best = candidate;
+                    return done = true;
+                }
+                if (bestKnownValid && best != candidate) ambiguous = true;
+                else {
+                    best = candidate;
+                    bestKnownValid = true;
+                    trigger = candidate.trigger.copy();
+                }
+            }
+            candidate = null;
+            reviewedIndex++;
+        }
+        if (reviewedIndex < reviewedTriggers.size()) return false;
+        if (best != null && (!bestKnownValid || ambiguous)) {
+            best.incomplete = true;
+            best.failure = ambiguous ? "SOURCE_AMBIGUOUS_PARAMETERS" : "SOURCE_SCENE_NOT_VERIFIED";
+        }
+        return done = true;
+    }
+
     private void nextCandidate() {
         candidateIndex++;
         matchIndex = 0;
@@ -326,6 +389,24 @@ final class HologramAreaSignalInference {
         comparedCells++;
         if (cell.anchor) return true;
         if (!scene.exists(cell.x, cell.y, cell.z)) return false;
+        if (sourcePolicy != null && scene instanceof WorldScene)
+            reviewedCells.putIfAbsent(HologramValues.position(cell), new SceneCell(actual, cell.x, cell.y, cell.z));
+        Declarations.PureElement<?> pure = HologramElementCatalog.pure(cell.element);
+        if (pure != null) {
+            if (scene instanceof WorldScene)
+                return pure.matches(HologramCellPolicy.worldState(actual, cell.x, cell.y, cell.z));
+            ItemStack material = scene.material(cell.x, cell.y, cell.z);
+            return pure.matches(
+                new Declarations.WorldState(
+                    true,
+                    scene.block(cell.x, cell.y, cell.z),
+                    scene.metadata(cell.x, cell.y, cell.z),
+                    null,
+                    material != null && material.getItem() instanceof gregtech.common.blocks.ItemMachines
+                        ? material.getItemDamage()
+                        : -1,
+                    material == null ? -1 : material.getItemDamage()));
+        }
         Block block = scene.block(cell.x, cell.y, cell.z);
         int meta = scene.metadata(cell.x, cell.y, cell.z);
         if (cell.block == Blocks.air && !cell.unknown) return scene.air(cell.x, cell.y, cell.z);
@@ -340,6 +421,37 @@ final class HologramAreaSignalInference {
         ItemStack observed = scene.material(cell.x, cell.y, cell.z);
         for (ItemStack option : options(cell)) if (HologramValues.sameMaterial(option, observed)) return true;
         return false;
+    }
+
+    /** Only fields used by this interpretation are observed; arbitrary TE state is not an atomic snapshot. */
+    private static final class SceneCell {
+
+        final int x, y, z, metadata, machineId, facing, materialId;
+        final Block block;
+        final TileEntity tile;
+
+        SceneCell(World world, int x, int y, int z) {
+            this.x = x;
+            this.y = y;
+            this.z = z;
+            block = world.getBlock(x, y, z);
+            metadata = world.getBlockMetadata(x, y, z);
+            tile = world.getTileEntity(x, y, z);
+            machineId = tile instanceof IGregTechTileEntity ? ((IGregTechTileEntity) tile).getMetaTileID() : -1;
+            facing = tile instanceof IGregTechTileEntity ? ((IGregTechTileEntity) tile).getFrontFacing()
+                .ordinal() : -1;
+            materialId = HologramCellPolicy.worldState(world, x, y, z).materialDamage;
+        }
+
+        boolean current(World world) {
+            return world.blockExists(x, y, z) && world.getBlock(x, y, z) == block
+                && world.getBlockMetadata(x, y, z) == metadata
+                && world.getTileEntity(x, y, z) == tile
+                && (!(tile instanceof IGregTechTileEntity) || ((IGregTechTileEntity) tile).getMetaTileID() == machineId
+                    && ((IGregTechTileEntity) tile).getFrontFacing()
+                        .ordinal() == facing)
+                && HologramCellPolicy.worldState(world, x, y, z).materialDamage == materialId;
+        }
     }
 
     private List<ItemStack> options(HologramCapture.Cell cell) {
@@ -430,17 +542,22 @@ final class HologramAreaSignalInference {
         HologramChannelTrace.Scope scope = HologramChannelTrace.begin(machine);
         HologramCapture result = null;
         try {
-            com.miaokatze.gtmb.api.StructureSources.Plan supplied = com.miaokatze.gtmb.api.StructureSources
-                .resolve(machine, proposed);
+            com.miaokatze.gtmb.api.StructureSources.Resolution resolution = com.miaokatze.gtmb.api.StructureSources
+                .resolve(machine, proposed, com.miaokatze.gtmb.api.StructureSources.CaptureIntent.NEW_TEMPLATE);
+            if (resolution.status == com.miaokatze.gtmb.api.StructureSources.Status.UNSUPPORTED)
+                throw new IllegalStateException(resolution.failureCode);
+            com.miaokatze.gtmb.api.StructureSources.Plan supplied = resolution.plan;
             if (supplied == null) {
                 result = HologramCapture.declarationPieces((IConstructable) machine, proposed);
                 result.definition = machine.getStructureDefinition();
+                result.bindPreparedSource(machine, machine.getExtendedFacing(), resolution);
                 return result;
             }
             result = new HologramCapture(machine, proposed);
             result.definition = supplied.definition;
             for (com.miaokatze.gtmb.api.StructureSources.Piece piece : supplied.pieces)
                 result.pieces.add(new HologramCapture.Piece(piece.name, piece.a, piece.b, piece.c, piece.trigger()));
+            result.bindPreparedSource(machine, machine.getExtendedFacing(), resolution);
             return result;
         } finally {
             HologramChannelTrace.Report report = HologramChannelTrace.end(scope);

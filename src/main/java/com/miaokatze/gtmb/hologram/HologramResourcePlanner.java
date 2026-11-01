@@ -53,6 +53,10 @@ final class HologramResourcePlanner {
         HologramDeferredPlanRefresh.cancel(s);
         resetPlan(s);
         if (s.capture == null) return;
+        if (!s.capture.sourceCurrent()) {
+            s.status = "结构来源或现场状态已变化，请重新采集后计算材料";
+            return;
+        }
         World w = s.player.worldObj;
         if (s.virtual && !s.allocationsFrozen) allocateVirtualTargets(s);
         buildPreset(s);
@@ -912,7 +916,7 @@ final class HologramResourcePlanner {
         }
         s.presetSupported = false;
         s.presetAvailable = false;
-        s.presetReason = "此定义未声明完整仓室配额，不能保证自动成型";
+        s.presetReason = "此定义未声明完整仓室配额；原机成型约束仍由原机判断";
         if (s.virtual || s.mode == 2) {
             s.presetReason = "拆除独立使用原结构范围，保留仓室预设设置供建造或替换使用";
             return;
@@ -920,11 +924,6 @@ final class HologramResourcePlanner {
         Map<String, gregtech.api.interfaces.IHatchElement<?>> types = new LinkedHashMap<>();
         Map<String, Integer> quotas = new LinkedHashMap<>();
         Map<ExactKey, Integer> reserved = new HashMap<>();
-        int minimumCasings = HologramIndustrialConstraints.minimumCasings(s.context);
-        int remainingCasings = 0;
-        for (int i = 0; i < s.capture.cells.size(); i++) if (HologramIndustrialConstraints
-            .casing(s.capture.cells.get(i), HologramCellPolicy.draftTarget(s, s.capture.cells.get(i), i)))
-            remainingCasings++;
         for (HologramCapture.Cell c : s.capture.cells) HologramCellPolicy.hatchRequirements(s, c)
             .forEach((type, count) -> {
                 types.putIfAbsent(type.name(), type);
@@ -966,8 +965,6 @@ final class HologramResourcePlanner {
             for (int i = 0; i < s.capture.cells.size(); i++) {
                 HologramCapture.Cell c = s.capture.cells.get(i);
                 if (!presetPosition(s, c, i, type)) continue;
-                if (HologramIndustrialConstraints.casing(c, HologramCellPolicy.draftTarget(s, c, i))
-                    && remainingCasings <= minimumCasings) continue;
                 List<ItemStack> options = new ArrayList<>();
                 for (ItemStack option : HologramCellPolicy.candidates(s, c))
                     if (HologramCellPolicy.hatchTier(option) != Integer.MAX_VALUE
@@ -986,15 +983,11 @@ final class HologramResourcePlanner {
                 continue;
             }
             s.autoTargets.put(chosenIndex, chosen.copy());
-            HologramCapture.Cell chosenCell = s.capture.cells.get(chosenIndex);
-            if (HologramIndustrialConstraints.casing(chosenCell, new ItemStack(chosenCell.block, 1, chosenCell.meta)))
-                remainingCasings--;
             HologramValues.mergeStack(reserved, chosen, 1, Integer::sum);
         }
-        s.presetSupported = unfilled == 0 && remainingCasings >= minimumCasings;
-        s.presetReason = s.presetSupported ? "已按声明配额生成仓室预设；各仓室按声明允许的等级范围自动调整，已有仓室与手选目标保留"
-            : remainingCasings < minimumCasings ? "当前手选目标或已有仓室超过原机允许的壳体数量；至少需保留 " + minimumCasings + " 格壳体"
-                : "部分声明仓室没有可放置位置或对应等级候选，不能保证自动成型（缺 " + unfilled + " 格）";
+        s.presetSupported = unfilled == 0;
+        s.presetReason = s.presetSupported ? "已满足声明配额并生成仓室预设；已有仓室与手选目标保留，原机成型约束仍由原机判断"
+            : "部分声明仓室没有可放置位置或对应等级候选（缺 " + unfilled + " 格）；原机成型约束仍由原机判断";
     }
 
     static boolean presetPosition(HologramSession s, HologramCapture.Cell c, int i,

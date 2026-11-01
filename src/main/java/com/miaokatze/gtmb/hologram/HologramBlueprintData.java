@@ -33,6 +33,7 @@ final class HologramBlueprintData {
         copy.name = original.name;
         copy.sourceMod = original.sourceMod;
         copy.sourceClass = original.sourceClass;
+        copy.semanticNbt = original.semanticNbt;
         copy.textBoxNbt = original.textBoxNbt;
         copy.controllerId = original.controllerId;
         copy.x = original.x;
@@ -79,7 +80,9 @@ final class HologramBlueprintData {
             String key = (originX + cell.x) + "," + (originY + cell.y) + "," + (originZ + cell.z);
             if (saved.put(key, cell) != null) throw new java.io.IOException("投影来源存在重复坐标");
         }
-        HologramCapture detached = new HologramCapture(null, original.trigger);
+        HologramCapture detached = new HologramCapture(null, original.trigger, original.captureIntent);
+        detached.inheritSources(original);
+        detached.sourceMetadata = (NBTTagCompound) original.sourceMetadata.copy();
         detached.extensionReports = (NBTTagCompound) original.extensionReports.copy();
         for (HologramCapture.Cell old : original.cells) {
             String position = HologramValues.position(old);

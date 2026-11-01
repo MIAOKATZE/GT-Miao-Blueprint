@@ -55,7 +55,10 @@ final class HologramServiceEditRegression {
             HologramCapture capture = new HologramCapture(null, new ItemStack(Blocks.stone));
             for (int x = 1; x <= 4; x++) {
                 HologramCapture.Cell cell = new HologramCapture.Cell(
-                    StructureUtility.ofBlock(Blocks.stone, 0),
+                    StructureUtility.ofChain(
+                        StructureUtility.ofBlock(Blocks.stone, 0),
+                        StructureUtility.ofBlock(Blocks.dirt, 0),
+                        StructureUtility.ofBlock(Blocks.cobblestone, 0)),
                     x,
                     64,
                     0);
