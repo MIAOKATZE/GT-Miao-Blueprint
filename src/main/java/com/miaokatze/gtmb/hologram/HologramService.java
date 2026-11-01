@@ -13,6 +13,10 @@ public final class HologramService {
 
     private HologramService() {}
 
+    public static void installStructureSemantics() {
+        HologramGTNLSemantics.install();
+    }
+
     public static void open(EntityPlayerMP player, int x, int y, int z, int side) {
         HologramProjectorWorkflow.open(player, x, y, z, side);
     }

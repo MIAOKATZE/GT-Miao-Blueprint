@@ -123,7 +123,8 @@ final class HologramControllerCapture {
             && s.retryMode == s.mode
             && s.retryScope == s.scope
             && s.retryLayer == s.layer
-            && s.retrySelected == s.selected;
+            && s.retrySelected == s.selected
+            && (s.capture == null || s.capture.captureIntent == s.captureIntent);
     }
 
     static void scheduleCaptureRetry(HologramSession s) {
@@ -217,7 +218,8 @@ final class HologramControllerCapture {
             1,
             3);
         ItemStack initialTrigger = HologramSessionPolicy.trigger(s);
-        s.capture = HologramCapture.collect(s.machine, initialTrigger, s.machine.getExtendedFacing(), resumed);
+        s.capture = HologramCapture
+            .collect(s.machine, initialTrigger, s.machine.getExtendedFacing(), s.captureIntent, resumed);
         if (s.capture.pending) {
             s.coordinatePins.putAll(savedPins);
             scheduleCaptureRetry(s);
@@ -227,7 +229,8 @@ final class HologramControllerCapture {
             .withSavedChannels(s.channels);
         ItemStack observedTrigger = HologramSessionPolicy.trigger(s);
         if (!s.capture.incomplete && !ItemStack.areItemStackTagsEqual(initialTrigger, observedTrigger)) {
-            s.capture = HologramCapture.collect(s.machine, observedTrigger, s.machine.getExtendedFacing());
+            s.capture = HologramCapture
+                .collect(s.machine, observedTrigger, s.machine.getExtendedFacing(), s.captureIntent);
             if (s.capture.pending) {
                 s.coordinatePins.putAll(savedPins);
                 scheduleCaptureRetry(s);

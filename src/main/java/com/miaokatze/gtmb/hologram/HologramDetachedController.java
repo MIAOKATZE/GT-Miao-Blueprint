@@ -21,6 +21,10 @@ final class HologramDetachedController {
     }
 
     static MTEEnhancedMultiBlockBase<?> fromLive(MTEEnhancedMultiBlockBase<?> source) throws IOException {
+        if (HologramGTNLSemantics.isGTNLController(source)) return create(
+            source.getBaseMetaTileEntity()
+                .getMetaTileID(),
+            source.getExtendedFacing());
         MTEEnhancedMultiBlockBase<?> detached = create(
             source.getBaseMetaTileEntity()
                 .getMetaTileID(),
@@ -40,6 +44,9 @@ final class HologramDetachedController {
         if (id < 0 || id >= GregTechAPI.METATILEENTITIES.length
             || !(GregTechAPI.METATILEENTITIES[id] instanceof MTEEnhancedMultiBlockBase))
             throw new IOException("来源控制器未注册，原蓝图已保留");
+        Object prototype = GregTechAPI.METATILEENTITIES[id];
+        if (HologramGTNLSemantics.isGTNLController(prototype) && !HologramGTNLSemantics.supports(prototype))
+            throw new IOException(HologramGTNLSemantics.unsupportedReason(prototype));
         HologramResourceWorld world = HologramResourceWorld.declarations(GregTechAPI.sBlockMachines, 0);
         BaseMetaTileEntity tile = new BaseMetaTileEntity();
         tile.setWorldObj(world);
@@ -47,7 +54,10 @@ final class HologramDetachedController {
         tile.yCoord = 128;
         tile.zCoord = 0;
         world.tile = tile;
-        NBTTagCompound owned = state == null ? null : (NBTTagCompound) state.copy();
+        // GTNL loadNBTData can consume external machine data files. Template declarations
+        // need only a fresh reviewed controller; retained physical NBT stays in the blueprint.
+        NBTTagCompound owned = state == null || HologramGTNLSemantics.isGTNLController(prototype) ? null
+            : (NBTTagCompound) state.copy();
         if (owned != null) {
             owned.setInteger("x", 0);
             owned.setInteger("y", 128);

@@ -15,6 +15,14 @@
 
 **必需前置：客户端与服务端均需 [MIAOKATZE Core 0.2.0 ~ +](https://github.com/MIAOKATZE/MIAOKATZE-Core)**（最低版本 0.2.0，不设版本上限）。FalsePatternLib 可在缺失时补下载；已有旧版请手动更新。
 
+### v0.3.1 候选：GTNL 结构语义与安全施工
+
+本候选为 GTNL **0.2.7-rc2.1** / GTNLLib **1.1.1** 增加 AssemblerMatrix、LargeSteamMixer、AtomicEnergyExcitationPlant、NuclearReactor 和 PrecisionAssembler 的固定结构声明。GTNL 是可选集成，基础安装仍使用 GTNH 2.9.0 与 Core 0.2.0。
+
+控制器的「结构等级 / 信道」窗口可选择新建模板或现场快照；切换用途会重新采集和计算材料。区域导入使用现场快照。AEEP 的现场空气球体保留 187 个空气约束和周围跳过格，新建模板使用实体球体材料。核反应堆使用 1–3 级声明，精密组装机保留两个独立等级，蒸汽搅拌机的五组外壳共享一个等级。
+
+结构候选、整机约束与自动补放限制分别校验。来源注销、状态变化、区块卸载或过期请求会要求重新采集；保存原样数据保留其来源信息，施工前重新核对资格。当前处于候选验证阶段，尚未发布 Release；完整游戏流程与兼容组合以候选验收回执为准。扩展作者参见 [StructureSources API](API.md)。
+
 ### v0.1.44 框选与镜头交互 / Selection and camera controls
 
 蓝图画布及蓝图等距框选使用中键拖动平移、右键拖动旋转。世界等距选点仍需按住 Ctrl；投影与剪切保留各自的镜头操作。顶部世界提示采用与 GTSWN 相同的字号适配规则。

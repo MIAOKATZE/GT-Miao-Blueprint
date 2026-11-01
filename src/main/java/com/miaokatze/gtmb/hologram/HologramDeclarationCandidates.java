@@ -38,6 +38,12 @@ final class HologramDeclarationCandidates {
             return;
         }
         if (seen.put(element, Boolean.TRUE) != null) return;
+        HologramGTNLElement reviewed = HologramGTNLSemantics.reviewedElement(element);
+        if (reviewed != null) {
+            for (ItemStack stack : reviewed.candidates()) add(stack);
+            complete &= reviewed.complete();
+            return;
+        }
         try {
             if (element instanceof IStructureElementChain) {
                 IStructureElement<?>[] children = ((IStructureElementChain<?>) element).fallbacks();

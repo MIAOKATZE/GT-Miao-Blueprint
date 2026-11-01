@@ -183,6 +183,7 @@ final class HologramSnapshotMetadataSource {
         if (s.capture == null || s.capture.incomplete || s.capturePending) throw new IOException("请先完整载入结构或区域，再进行蓝图处理");
         if (original != null) {
             dataContext.freeze(original.processingNbt);
+            dataContext.freeze(original.semanticNbt);
             dataContext.freeze(original.quantumGroupingNbt);
             copyScalars(original, result);
             if (publishSource && original.nativeBlueprint != null) result.nativeBlueprint = GSON
@@ -192,6 +193,8 @@ final class HologramSnapshotMetadataSource {
         result.retainedNbtKeys = keys == null ? null : new ArrayList<>();
         if (project) {
             result.schema = 2;
+            if (!s.capture.sourceMetadata.hasNoTags())
+                result.semanticNbt = HologramBlueprintNbt.encodeCanonical(s.capture.sourceMetadata);
             result.name = s.virtualPreset == null || s.virtualPreset.name == null
                 || s.virtualPreset.name.trim()
                     .isEmpty() ? "\u672a\u547d\u540d\u84dd\u56fe" : s.virtualPreset.name.trim();
@@ -208,6 +211,7 @@ final class HologramSnapshotMetadataSource {
                 declared.sourceClass = s.machine.getClass()
                     .getName();
                 declared.sourceMod = HologramSessionPolicy.sourceMod(s.machine.getClass());
+                declared.semanticNbt = result.semanticNbt;
                 HologramBlueprintData.storeStructureConfiguration(s, declared);
                 result.structures.add(declared);
                 result.sourceClass = declared.sourceClass;
@@ -298,6 +302,7 @@ final class HologramSnapshotMetadataSource {
         target.deidentificationLevel = source.deidentificationLevel;
         target.deidentificationChosen = source.deidentificationChosen;
         target.processingNbt = source.processingNbt;
+        target.semanticNbt = source.semanticNbt;
         target.quantumGroupingNbt = source.quantumGroupingNbt;
         target.retainNbt = source.retainNbt;
         target.retainCovers = source.retainCovers;

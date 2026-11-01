@@ -22,6 +22,8 @@ final class HologramElementCatalog {
 
     static String hatchRole(IStructureElement<?> element) {
         for (IStructureElement<?> part : parts(element)) {
+            HologramGTNLElement reviewed = HologramGTNLSemantics.reviewedElement(part);
+            if (reviewed != null) return reviewed.role();
             Method method = part.getClass()
                 .getEnclosingMethod();
             if (method != null && method.getDeclaringClass() == HatchElementBuilder.class

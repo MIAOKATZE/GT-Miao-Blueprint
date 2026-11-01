@@ -150,6 +150,7 @@ final class HologramPlanPolicy {
 
     static boolean planCurrent(HologramSession s) {
         if (s.capture == null || s.expectedBlocks.size() != s.capture.cells.size()) return false;
+        if (!s.capture.sourceCurrent()) return false;
         for (int i = 0; i < s.capture.cells.size(); i++)
             if (HologramSessionPolicy.inScope(s, s.capture.cells.get(i), i) && !expectedCurrent(s, i)) return false;
         return true;
@@ -177,6 +178,8 @@ final class HologramPlanPolicy {
     static int replacementCellBuilt(HologramSession s, HologramCapture.Cell cell) {
         if (cell.anchor || cell.userPosition) return 0;
         if (!s.player.worldObj.blockExists(cell.x, cell.y, cell.z)) return -1;
+        HologramGTNLElement reviewed = HologramGTNLSemantics.reviewedElement(cell.element);
+        if (reviewed != null) return reviewed.matchesWorld(s.player.worldObj, cell.x, cell.y, cell.z) ? 1 : -1;
         Block block = s.player.worldObj.getBlock(cell.x, cell.y, cell.z);
         TileEntity tile = s.player.worldObj.getTileEntity(cell.x, cell.y, cell.z);
         if (tile instanceof IGregTechTileEntity
@@ -203,6 +206,15 @@ final class HologramPlanPolicy {
     static boolean constructionAllowed(HologramSession s) {
         if (!HologramGeometryEdits.requirePlan(s)) return false;
         if (HologramSessionPolicy.blockedByAreaImport(s)) return false;
+        if (s.capture == null || !s.capture.sourceCurrent()) {
+            s.status = "结构来源或现场状态已变化，请重新采集后核对材料";
+            return false;
+        }
+        String semanticFailure = HologramGTNLSemantics.constructionFailure(s);
+        if (semanticFailure != null) {
+            s.status = semanticFailure;
+            return false;
+        }
         if (s.virtual && (!s.virtualPlacement || !s.virtualLocked || s.mode == 2)) {
             s.status = "请先放置蓝图，右击确定位置并核对材料后施工";
             return false;

@@ -73,6 +73,9 @@ final class HologramCellPolicy {
 
     /** A capture position plus a real valid coil family is the deliberately narrow destructive adapter. */
     static boolean destructive(HologramCapture.Cell c, Block old, int meta) {
+        HologramGTNLElement reviewed = HologramGTNLSemantics.reviewedElement(c.element);
+        if (reviewed != null && !old.hasTileEntity(meta))
+            return reviewed.accepts(HologramBlockIdentity.materialStack(old, meta));
         if (HologramFrameSupport.accepts(c.element, old, meta)) return true;
         if (old instanceof BlockFrameBox && !old.hasTileEntity(meta)
             && old == c.block
@@ -157,6 +160,8 @@ final class HologramCellPolicy {
                 ((IGregTechTileEntity) actual).getMetaTileID());
             if (hatchElement(s, c, existing, true) != null) return existing;
         }
+        HologramGTNLElement reviewed = HologramGTNLSemantics.reviewedElement(c.element);
+        if (reviewed != null) return reviewed.primary();
         if (c.block != null && c.block != Blocks.air && c.block != StructureLibAPI.getBlockHint()) {
             ItemStack block = HologramBlockIdentity.materialStack(c.block, c.meta);
             if (block != null) return block;
@@ -250,6 +255,9 @@ final class HologramCellPolicy {
         boolean restoredConfiguration) {
         ItemStack wanted = targetFor(s, c, index);
         if (wanted == null) return false;
+        HologramGTNLElement reviewed = HologramGTNLSemantics.reviewedElement(c.element);
+        if (reviewed != null && !HologramRecovery.hasSeal(wanted))
+            return reviewed.matchesTarget(s.player.worldObj, c.x, c.y, c.z, wanted);
         // These paths can never accept an absent primary block. Reject the mismatch before decoding
         // full payloads or invoking native variant validators; matching blocks still use every check below.
         if (s.virtual && s.virtualPreset != null
@@ -548,6 +556,8 @@ final class HologramCellPolicy {
     static int targetPreviewMeta(HologramSession s, HologramCapture.Cell cell, ItemStack target)
         throws java.io.IOException {
         if (target == null) return cell.meta;
+        HologramGTNLElement reviewed = HologramGTNLSemantics.reviewedElement(cell.element);
+        if (reviewed != null) return reviewed.targetMeta(target);
         int nativeMetadata = target.getItem()
             .getMetadata(target.getItemDamage());
         if (!s.virtual || s.virtualPreset == null || s.virtualPreset.schema < 2) return nativeMetadata;
@@ -746,6 +756,8 @@ final class HologramCellPolicy {
         HologramCapture original = s.capture;
         if (original == null) return false;
         World world = s.player.worldObj;
+        HologramGTNLElement reviewed = HologramGTNLSemantics.reviewedElement(c.element);
+        if (reviewed != null) return reviewed.matchesWorld(world, c.x, c.y, c.z);
         TileEntity tile = world.getTileEntity(c.x, c.y, c.z);
         if (tile instanceof IGregTechTileEntity) {
             if (world.getBlock(c.x, c.y, c.z) instanceof BlockFrameBox) return HologramFrameSupport
@@ -918,7 +930,7 @@ final class HologramCellPolicy {
             HologramSession other = HologramAreaDeclarations.areaDeclarationSession(s, area, id);
             HologramCapture.Cell shared = other == null || other.capture == null ? null
                 : other.capture.positions.get(HologramValues.position(cell));
-            if (shared == null || other.capture.incomplete || other.capture.pending) {
+            if (shared == null || other.capture.incomplete || other.capture.pending || !other.capture.sourceCurrent()) {
                 result.clear();
                 cell.candidateComplete = false;
                 cell.candidateBoundary = "共享格的成员结构声明不完整，目标编辑已保护";
@@ -1004,6 +1016,11 @@ final class HologramCellPolicy {
             s.hatchParts.put(cell.element, parts);
         }
         for (IStructureElement part : parts) {
+            HologramGTNLElement reviewed = HologramGTNLSemantics.reviewedElement(part);
+            if (reviewed != null) {
+                if (manual ? reviewed.accepts(sample) : reviewed.placementAllows(sample)) return part;
+                continue;
+            }
             try {
                 java.util.function.Predicate<ItemStack> declared = manual
                     ? HologramHatchPolicy.predicate(part, s.machine, signal)
@@ -1012,20 +1029,8 @@ final class HologramCellPolicy {
                     if (declared.test(sample)) return part;
                     continue;
                 }
-                IStructureElement.BlocksToPlace blocks = part.getBlocksToPlace(
-                    s.machine,
-                    s.player.worldObj,
-                    cell.x,
-                    cell.y,
-                    cell.z,
-                    signal,
-                    AutoPlaceEnvironment.fromLegacy(
-                        (predicate, simulate, count) -> HologramMaterialAccess.materialSource(s)
-                            .take(predicate, true, count),
-                        s.player,
-                        message -> {}));
-                if (blocks != null && blocks.getPredicate()
-                    .test(sample)) return part;
+                // A missing reviewed declaration is unknown. Calling the native placement
+                // predicate here would execute arbitrary controller callbacks during reads.
             } catch (RuntimeException | LinkageError ignored) {}
         }
         return null;
@@ -1118,6 +1123,8 @@ final class HologramCellPolicy {
 
     static boolean acceptableSample(HologramSession s, HologramCapture.Cell cell, ItemStack sample) {
         if (!placeableSample(s, cell, sample)) return false;
+        HologramGTNLElement reviewed = HologramGTNLSemantics.reviewedElement(cell.element);
+        if (reviewed != null && !reviewed.accepts(sample)) return false;
         if ("templateController".equals(cell.role))
             return sample.getItem() instanceof ItemMachines && sample.getItemDamage() == cell.blueprintDamage;
         // A captured world blueprint already declares the actual GT item at this cell. StructureLib's
@@ -1135,6 +1142,8 @@ final class HologramCellPolicy {
             // identity here; validating its intentionally tagless serialization would discard all cuts.
             List<ItemStack> declared = s.virtual && cell.structureTargets != null ? cell.structureTargets
                 : candidates(s, cell);
+            if (cell.memberships()
+                .size() > 1 && !cell.candidateComplete) return false;
             if (declared.stream()
                 .anyMatch(option -> HologramValues.sameMaterial(option, sample))) return true;
             // Old height-dependent declarations can describe a different cap at this coordinate.
@@ -1198,6 +1207,45 @@ final class HologramCellPolicy {
 
     static String candidateRole(HologramSession s, HologramCapture.Cell c, ItemStack stack) {
         if (hatchTier(stack) == Integer.MAX_VALUE) return "外壳/方块";
+        HologramGTNLElement reviewed = HologramGTNLSemantics.reviewedElement(c.element);
+        if (reviewed != null) {
+            switch (HologramGTNLSemantics.hatchRole(reviewed, stack)) {
+                case "gtnl:nuclear_item":
+                    return "核物品仓";
+                case "gtnl:nuclear_fluid":
+                    return "核流体仓";
+                case "gtnl:steam":
+                    return "普通供汽仓";
+                case "gtnl:steam_big":
+                    return "大型供汽仓";
+                case "gtnl:steam_wireless":
+                    return "无管供汽仓";
+                case "gtnl:maintenance":
+                    return "维护仓";
+                case "gtnl:parallel":
+                    return "并行控制仓";
+                case "gtnl:energy":
+                    return "能源仓";
+                case "gtnl:input_bus":
+                    return "物品输入总线";
+                case "gtnl:output_bus":
+                    return "物品输出总线";
+                case "gtnl:input":
+                    return "流体输入仓";
+                case "gtnl:output":
+                    return "流体输出仓";
+                case "gtnl:steam_input_bus":
+                    return "蒸汽物品输入总线";
+                case "gtnl:steam_output_bus":
+                    return "蒸汽物品输出总线";
+                case "gtsr:cooling":
+                    return "冷却仓（GTSR 增强角色）";
+                case "gtsr:pressure_cooling":
+                    return "压力冷却仓（GTSR 增强角色）";
+                default:
+                    return "已审阅仓室候选";
+            }
+        }
         gregtech.api.interfaces.metatileentity.IMetaTileEntity prototype = ItemMachines.getMetaTileEntity(stack);
         for (IStructureElement<?> part : HologramElementCatalog.parts(c.element))
             for (gregtech.api.interfaces.IHatchElement<?> type : HologramHatchPolicy.declared(part))
@@ -1209,6 +1257,16 @@ final class HologramCellPolicy {
         if (c.anchor || target == null
             || (!(s.virtual && target.getItem() instanceof ItemMachines) && hatchTier(target) == Integer.MAX_VALUE))
             return new int[0];
+        HologramGTNLElement reviewed = HologramGTNLSemantics.reviewedElement(c.element);
+        if (reviewed != null) {
+            List<Integer> directions = new ArrayList<>();
+            for (ForgeDirection direction : ForgeDirection.VALID_DIRECTIONS)
+                if (HologramGTNLSemantics.allowedFacing(reviewed, target, direction))
+                    directions.add(direction.ordinal());
+            return directions.stream()
+                .mapToInt(Integer::intValue)
+                .toArray();
+        }
         gregtech.api.interfaces.metatileentity.IMetaTileEntity prototype = ItemMachines.getMetaTileEntity(target);
         if (prototype instanceof gregtech.api.metatileentity.MetaPipeEntity) return new int[0];
         IStructureElement<?> part = s.virtual ? null : hatchElement(s, c, target, true);

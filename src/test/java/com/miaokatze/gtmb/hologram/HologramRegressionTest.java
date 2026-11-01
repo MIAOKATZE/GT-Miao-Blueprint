@@ -21,6 +21,12 @@ public final class HologramRegressionTest {
     public static void main(String[] args) throws Exception {
         if (!MinecraftTestBootstrap.enter(HologramRegressionTest.class, args)) return;
         Map<String, Runnable> cases = new LinkedHashMap<>();
+        cases.put(
+            "direct_world_gestures_keep_source_and_plan_revisions",
+            com.miaokatze.gtmb.client.hologram.HologramSemanticRequestRegression::run);
+        cases.put("contextual_sources_intent_revision_read_set_and_purity", HologramSourceContractRegression::run);
+        cases.put("unknown_hatch_callbacks_and_semantic_metadata_boundary", HologramSemanticSafetyRegression::run);
+        cases.put("gtnl_reviewed_geometry_channels_and_exact_materials", HologramGTNLRegression::run);
         cases.put("blueprint_actual_cell_limits_and_sparse_area_scanning", HologramBlueprintLimitsRegression::run);
         cases.put(
             "blueprint_client_cell_admission_is_strict_and_atomic",

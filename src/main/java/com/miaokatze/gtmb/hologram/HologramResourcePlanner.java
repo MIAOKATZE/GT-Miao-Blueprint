@@ -53,6 +53,10 @@ final class HologramResourcePlanner {
         HologramDeferredPlanRefresh.cancel(s);
         resetPlan(s);
         if (s.capture == null) return;
+        if (!s.capture.sourceCurrent()) {
+            s.status = "结构来源或现场状态已变化，请重新采集后计算材料";
+            return;
+        }
         World w = s.player.worldObj;
         if (s.virtual && !s.allocationsFrozen) allocateVirtualTargets(s);
         buildPreset(s);

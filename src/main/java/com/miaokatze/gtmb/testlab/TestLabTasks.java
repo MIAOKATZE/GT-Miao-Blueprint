@@ -20,6 +20,7 @@ final class TestLabTasks {
             return new TestLabResetTask(runtime, "refresh".equals(kind));
         if ("minimal".equals(kind)) return new TestLabMinimalTask(runtime);
         if ("stress".equals(kind)) return new TestLabStressTask(runtime);
+        if ("gtnl".equals(kind)) return new TestLabGTNLTask(runtime);
         if ("composite".equals(kind) && runtime.config().composite) return new TestLabCompositeTask(runtime);
         throw new IOException("Unknown bounded lab task");
     }

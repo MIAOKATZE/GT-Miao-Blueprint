@@ -52,6 +52,19 @@ public final class HologramCapabilities {
         boolean extractor = type.equals(MACHINES + "MTEIndustrialExtractor");
         boolean eic = type.equals(MACHINES + "MTEElectricImplosionCompressor");
         boolean coke = type.equals(MACHINES + "MTEIndustrialCokeOven");
+        if (HologramGTNLSemantics.supports(context)) {
+            if (type.endsWith(".NuclearReactor")) range(result, "casing", "反应堆等级", 3, " 级");
+            if (type.endsWith(".LargeSteamMixer")) range(result, "machine_casing", "五组共同外壳等级", 2, " 级");
+            if (type.endsWith(".PrecisionAssembler")) {
+                range(result, "machine_casing", "机器外壳等级", 10, " 级");
+                range(result, "unit_casing", "单元外壳等级", 5, " 级");
+            }
+            if (type.endsWith(".AtomicEnergyExcitationPlant")) {
+                range(result, "machine_casing", "机器外壳等级", 4, " 级");
+                coil(result);
+                range(result, "glass", "玻璃选择", gregtech.api.util.GlassTier.getMaxTierIndex(), " 档");
+            }
+        }
         if (ebf || coke || context instanceof MTELargeChemicalReactor) coil(result);
         if (ebf) {
             Row hatch = result.add("gt_hatch", "自动取用仓室（独立于无仓室施工）", "presence");

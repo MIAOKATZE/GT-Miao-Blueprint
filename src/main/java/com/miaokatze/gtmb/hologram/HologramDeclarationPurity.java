@@ -15,6 +15,7 @@ final class HologramDeclarationPurity {
     private HologramDeclarationPurity() {}
 
     static boolean contextFree(IStructureElement<?> element) {
+        if (HologramGTNLSemantics.reviewedElement(element) != null) return true;
         return contextFree(element, 0, new IdentityHashMap<>());
     }
 

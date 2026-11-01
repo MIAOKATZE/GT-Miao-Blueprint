@@ -108,6 +108,15 @@ final class HologramBuildPreparation {
     }
 
     static void scan(HologramSession s, boolean resetAttempts) {
+        if (resetAttempts && s.virtual && s.virtualPreset != null && !HologramVirtualStructureEditing.pending(s)) {
+            HologramPresets.Structure source = HologramBlueprintData
+                .blueprintSource(s.virtualPreset, s.blueprintActiveStructure);
+            if (source == null && s.virtualPreset.structures.size() == 1) source = s.virtualPreset.structures.get(0);
+            if (source != null && source.sourceClass != null && source.sourceClass.startsWith("com.science.gtnl.")) {
+                s.blueprintActiveStructure = source.id;
+                if (!HologramVirtualStructureEditing.prepare(s, s.main, s.channels, s.noHatches)) return;
+            }
+        }
         HologramControllerCapture.collect(s, resetAttempts);
         if (s.buildAfterCapture && !s.capturePending && s.capture != null) {
             s.buildAfterCapture = false;

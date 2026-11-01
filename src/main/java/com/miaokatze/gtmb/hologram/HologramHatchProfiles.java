@@ -31,6 +31,8 @@ final class HologramHatchProfiles {
 
     static String role(HologramSession s, HologramCapture.Cell cell, ItemStack stack) {
         if (stack == null || gregtech.common.blocks.ItemMachines.getMetaTileEntity(stack) == null) return "";
+        if (cell.element instanceof HologramGTNLElement)
+            return HologramGTNLSemantics.hatchRole((HologramGTNLElement) cell.element, stack);
         for (com.gtnewhorizon.structurelib.structure.IStructureElement<?> part : HologramElementCatalog
             .parts(cell.element))
             for (IHatchElement<?> type : HologramHatchPolicy.declared(part)) if (HologramHatchPolicy

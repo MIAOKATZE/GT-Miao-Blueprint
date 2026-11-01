@@ -15,7 +15,7 @@ registration.close();
 
 公共注册返回 `GTMBExtensions.Registration`。ID 是小写命名空间 ID，例如 `my_mod:my_wrapper`，在所有公共扩展种类间唯一。重复注册失败，不覆盖旧项。`descriptor()` 提供 ID、kind 和 contractVersion；`GTMBExtensions.descriptors()` 返回按注册顺序排列的不可变快照。旧 SPI 继续生效，不伪装成公共目录条目。
 
-在相应 FML 初始化阶段注册并保存 handle；客户端渲染只能在 client init 注册。close 可以重复调用，只删除本项。关闭不撤回已经完成的快照，也不改变正在继续的采集声明；关闭结构来源后，应重新采集已有规划。声明 reader 的注册和关闭更新 generation，使后续候选查询重新解析。
+在相应 FML 初始化阶段注册并保存 handle；客户端渲染只能在 client init 注册。close 可以重复调用，只删除本项。关闭不追溯删除已保存的快照数据。结构来源注册与有效关闭会推进 source revision，使保留旧来源证明的续批及操作资格失效，已有规划需要重新采集。声明 reader 的注册和关闭更新 generation，使后续候选查询重新解析。
 
 reader generation 变化后，既有服务端会话在下一次候选/舱口查询清除 per-cell 候选、舱口部件/需求及 capture 的 casing/family/role/channel 解释缓存，并重新解释角色与家族。续批采集也会在下一批清除这些解释缓存。已冻结的坐标、element 图和原有外观快照保留；要完整重采外观或采用新的结构来源，应重新扫描。保存成独立蓝图的声明快照不会因后来卸载 reader 被追溯改写。
 
@@ -23,7 +23,7 @@ reader generation 变化后，既有服务端会话在下一次候选/舱口查�
 
 | 公共模块 | 输入与结果 | 实际运行路径 |
 | --- | --- | --- |
-| `StructureSources` | 精确控制器类与 trigger 副本 → `Plan(definition, pieces)` | GT 控制器采集前，可替代 native construct/buildPiece 来源 |
+| `StructureSources` | 精确控制器类、trigger 副本与可选用途 → `Plan` 或带状态/有效性证明的 `Resolution` | GT 控制器采集前替代 native construct/buildPiece 来源，并区分缺席与明确不支持 |
 | `Declarations` | 精确 wrapper 类 → backing declaration 与可选 signal 投影 | 提示、候选解析、共享格交集和服务端目标验证 |
 | `BlockTransforms` | 独立 metadata、tile/item NBT → 旋转后的数据 | 编辑、预览和原生放置的旋转流程 |
 | `NativeCapture` | 已审阅的 TileEntity/conduit → 完整独立 NBT | 原生 capture 边界，可替代有副作用的 serializer |
@@ -50,13 +50,31 @@ GTMBExtensions.Registration source = StructureSources.register(
     });
 ```
 
-来源接口目前服务于 `MTEEnhancedMultiBlockBase` 控制器。返回 null 时继续 native `construct(..., true)` 和 buildPiece 捕获；非空 Plan 不调用 native construct 或 definition 工厂。只匹配精确类，子类可能改变验收语义，不自动继承适配。
+来源接口目前服务于 `MTEEnhancedMultiBlockBase` 控制器。原 `register(id, type, Source)` 和 `Source.describe(controller, detachedTrigger)` 保持兼容：返回 null 表示允许继续 native `construct(..., true)` 和 buildPiece 捕获；非空 Plan 不调用 native construct 或控制器的 definition 工厂。只匹配精确类，子类可能改变验收语义，不自动继承适配；同一精确类不能重复注册，也不能由新旧两种注册同时占用。
 
-来源回调只能读取声明，不能运行 checkMachine、hatch adder、放置、tick、世界修改或未知 deferred controller factory。definition 图必须在本次采集期间保持不变。pieces 列表不可变，Piece 保存并返回 trigger 副本。来源每次新采集调用一次，续批复用同一图；main/channel 改动、重新扫描或另一采集重新求值，不能永久缓存旧 tier/offset。
+需要区分用途、明确拒绝或跨批复核时，使用 `registerContextual(id, type, ContextualSource)`。回调接收 `CaptureIntent.NEW_TEMPLATE` 或 `CaptureIntent.LIVE_SNAPSHOT`，返回 `Resolution.ready(plan, readSet)` 或 `Resolution.unsupported(failureCode)`。新建模板是默认用途；区域采集显式使用现场快照。用途改变需要重新采集，不能只修改显示标题。
+
+| 解析结果 | 含义与行为 |
+| --- | --- |
+| `ABSENT` | 没有精确来源，或旧 `Source` 返回 null；保留旧 native fallback 语义 |
+| `READY` | 使用提供的 Plan，并保留其来源身份与有效性证明 |
+| `UNSUPPORTED` | 已匹配来源明确不支持，不能退回 native 来补全 |
+
+contextual 回调返回 null 或 `Resolution.absent()` 都会规范化为 `UNSUPPORTED / SOURCE_NO_DECLARATION`。三参 `resolve(controller, trigger, intent)` 返回上述显式状态，在已匹配 contextual 来源而 trigger 缺失时返回 `SOURCE_TRIGGER_MISSING`。原两参 `resolve(controller, trigger)` 仍返回 Plan/null，controller 或 trigger 为空时直接返回 null，否则默认使用 `NEW_TEMPLATE`；遇到显式不支持时抛出含 `failureCode` 的 `UnsupportedSourceException`，不会把拒绝转换为 null。
+
+`Resolution` 暴露 `status`、`plan`、`failureCode`、`sourceId` 和 `sourceRevision`，后两者由 registry 绑定。`StructureSources.revision()` 是全局来源版本：成功安装任一来源或有效关闭来源时递增。解析过程中 registry 变化会返回 `SOURCE_REVISION_CHANGED`；关闭旧 handle 不会删除后续注册。
+
+`ReadSet.invalidReason()` 只复读生成 Plan 所用的状态，未变返回 null，失效返回稳定原因码。`Resolution.validityFailure()` 先检查来源版本，再检查 ReadSet；`validityProof()` 返回不保留 definition 图的等价复核回调。复核不重新执行 describe、构造 definition 或调用机器构造/检查。ReadSet 可以为空，此时只能证明来源版本未变，不能据此声称世界状态未变。ReadSet 抛出运行时或链接异常时，复核返回 `SOURCE_READ_SET_FAILED`。
+
+采集器另外绑定控制器、世界、坐标、姿态、区块加载、声明 generation，以及续批的 trigger/用途。来源状态变化会使旧资格失效；区域派生可继承来源证明。该机制只覆盖实际记录并复核的观察，不提供通用原子世界快照，也不能证明任意未观察字段或发生后恢复的状态没有变化。
+
+来源回调只能读取声明，不能运行 checkMachine、hatch adder、放置、tick、世界修改或未知 deferred controller factory。ReadSet 同样必须只读，并在合法 owner 线程检查状态。definition 图必须在本次采集期间保持不变；Plan 保留 definition 引用，不对 element 图深复制。pieces 列表复制后不可变，Piece 保存并返回 trigger 副本。`Plan(definition, pieces, metadata)` 和 `metadata()` 分别复制 NBT；旧两参 Plan 构造器仍可用，metadata 默认为空。metadata 用于来源说明，不授予放置权限。来源每次新采集调用一次，续批复用同一图；main/channel 改动、重新扫描或另一采集重新求值，不能永久缓存旧 tier/offset。
 
 默认 native 路径同样每次采集只取得一个 definition，续批复用它。GTNL rc2 的 `NuclearReactor`、`AtomicEnergyExcitationPlant`、`AssemblerMatrix` 等每次 `getStructureDefinition()` 都新建 element 图。旧实现每次续批重建图，因同坐标的 element 身份变化而触发 `CONFLICTING_CELL`。修复冻结的是单次采集图，不是跨会话缓存。
 
-piece 名、main/channel、负数 offset 和 Controller 坐标规则仍由原生声明决定，不使用机器名、固定尺寸或控制器居中推断。若构造提示与运行时验收结构不同，例如 renderer 替换可视球体，集成可明确选择已审阅的运行时来源。GTMB 不推测私有状态或调用 checkMachine 试探。
+piece 名、main/channel、负数 offset 和 Controller 坐标规则须来自已审阅的声明，不以机器名、形状相似或控制器居中猜测。内置 GTNL 适配按精确机型和目标版本读取已知状态，重建五机声明；AEEP 新建模板选择实体 sphere，现场快照按观察到的 `isRenderActive` 选择 sphere/sphere_air。未知 GTNL 控制器即使没有已注册来源，采集器也会明确拒绝 native fallback。GTMB 不调用 checkMachine 试探语义。
+
+以上为当前源码合同。API/fixture、实际依赖加载、客户端交互与世界施工属于不同验证层，不能据此认定真实 GTNL 组合已经通过验收。
 
 ## 声明、旋转与原生数据契约
 

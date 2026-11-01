@@ -413,6 +413,7 @@ public final class HologramAeContainerScreen extends ModularScreen {
         pendingSlot = slot.id;
         request.setLong("editSeq", pending);
         if (bounded != null) request.setTag("stack", bounded.writeToNBT(new NBTTagCompound()));
+        HologramClient.stampSemanticRevision(request);
         HologramNetwork.sendAction(request);
     }
 
@@ -491,7 +492,11 @@ public final class HologramAeContainerScreen extends ModularScreen {
         explicitReturn = true;
         clearing.clear();
         if (active == this) active = null;
-        if (sendClose) HologramNetwork.sendAction(model.action("aePreviewClose"));
+        if (sendClose) {
+            NBTTagCompound request = model.action("aePreviewClose");
+            HologramClient.stampSemanticRevision(request);
+            HologramNetwork.sendAction(request);
+        }
         ClientGUI.open(editor);
     }
 

@@ -84,6 +84,8 @@ final class HologramVirtualStructureEditing {
                 .resolve(machine, trigger);
             IStructureDefinition<?> definition;
             if (supplied == null) {
+                if (HologramGTNLSemantics.isGTNLController(machine))
+                    throw new IOException(HologramGTNLSemantics.unsupportedReason(machine));
                 declarations = HologramCapture.declarationPieces((IConstructable) machine, trigger);
                 definition = machine.getStructureDefinition();
             } else {
@@ -287,7 +289,12 @@ final class HologramVirtualStructureEditing {
                 return false;
             }
             if (nativeCapture == null || nativeCapture.pending) {
-                nativeCapture = HologramCapture.collect(machine, trigger, machine.getExtendedFacing(), nativeCapture);
+                nativeCapture = HologramCapture.collect(
+                    machine,
+                    trigger,
+                    machine.getExtendedFacing(),
+                    com.miaokatze.gtmb.api.StructureSources.CaptureIntent.NEW_TEMPLATE,
+                    nativeCapture);
                 if (nativeCapture.pending) return false;
                 if (nativeCapture.incomplete) throw new IOException(nativeCapture.failure);
             }
@@ -347,7 +354,15 @@ final class HologramVirtualStructureEditing {
         }
 
         void publish() throws IOException {
-            HologramCapture merged = new HologramCapture(null, HologramSessionPolicy.trigger(s));
+            HologramCapture merged = new HologramCapture(
+                null,
+                HologramSessionPolicy.trigger(s),
+                nativeCapture.captureIntent);
+            merged.inheritSources(original);
+            merged.inheritSources(nativeCapture);
+            merged.sourceMetadata = (NBTTagCompound) nativeCapture.sourceMetadata.copy();
+            if (!nativeCapture.sourceMetadata.hasNoTags())
+                source.semanticNbt = HologramBlueprintNbt.encodeCanonical(nativeCapture.sourceMetadata);
             Map<String, ItemStack> previousPins = new HashMap<>();
             for (int i = 0; i < original.cells.size(); i++) {
                 HologramCapture.Cell cell = original.cells.get(i);

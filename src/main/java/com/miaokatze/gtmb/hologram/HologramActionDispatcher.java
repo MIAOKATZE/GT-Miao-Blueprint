@@ -58,6 +58,32 @@ final class HologramActionDispatcher {
         }
         if (s.actionCount++ >= 8) return;
         String op = action.getString("op");
+        if ("captureIntent".equals(op) && HologramSessionPolicy.valid(s) && !s.virtual && s.job != 1 && s.job != 2) {
+            String intent = action.getString("intent");
+            if (!"NEW_TEMPLATE".equals(intent) && !"LIVE_SNAPSHOT".equals(intent)) return;
+            s.captureIntent = com.miaokatze.gtmb.api.StructureSources.CaptureIntent.valueOf(intent);
+            HologramBuildPreparation.scan(s);
+            HologramSnapshots.send(s);
+            return;
+        }
+        if (s.capture != null && s.capture.sourceMetadata.hasKey("gtnlSchema")
+            && !"scan".equals(op)
+            && !"close".equals(op)
+            && !"cancel".equals(op)
+            && !"cancelAeSave".equals(op)
+            && !"cancelMaterialOrder".equals(op)
+            && !"aePreviewClose".equals(op)
+            && !"clearWorkspace".equals(op)) {
+            if (!s.capture.sourceCurrent() || !action.hasKey("sourceRevision", 4)
+                || !action.hasKey("semanticPlanRevision", 4)
+                || action.getLong("sourceRevision") != com.miaokatze.gtmb.api.StructureSources.revision()
+                || action.getLong("semanticPlanRevision") != s.planRevision) {
+                s.forcePlacementReady = false;
+                s.status = "结构语义或规划已变化，请重新采集后重试";
+                HologramSnapshots.send(s);
+                return;
+            }
+        }
         if (s.emptyProjection && !("switchEditorWorkspace".equals(op) || "close".equals(op))) {
             s.status = "右击控制器开启投影模式";
             HologramSnapshots.send(s);
