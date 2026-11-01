@@ -92,7 +92,8 @@ final class HologramWorkspace {
         return session.job != 1 && session.job != 2
             && !session.capturePending
             && session.blueprintSaveReceipt.isEmpty()
-            && !HologramAeCraftingOrders.active(session.player);
+            && !HologramAeCraftingOrders.active(session.player)
+            && !HologramDemolition.active(session.player);
     }
 
     static PresentationTransition preparePresentation(HologramSession origin, HologramSession target) {
@@ -228,6 +229,7 @@ final class HologramWorkspace {
     }
 
     static void clear() {
+        HologramDemolition.clear();
         HologramEditorWorkspaceRegistry.clear();
         HologramNetwork.clearServerQueues();
         for (HologramSession s : SESSIONS.values()) {
@@ -242,6 +244,7 @@ final class HologramWorkspace {
 
     /** Main-thread runtime reset. Completed transactions and durable cut/material journals are not undone. */
     static int restartRuntime(String reason) {
+        HologramDemolition.clear();
         HologramEditorWorkspaceRegistry.clear();
         // Retire old full snapshots before publishing terminal receipts; otherwise a stale DTO could
         // arrive after the cancellation and resurrect its editing/placement context.

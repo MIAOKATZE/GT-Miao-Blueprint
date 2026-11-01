@@ -43,6 +43,10 @@ public abstract class MixinHologramHatchPolicy {
     @Inject(
         method = { "hatchItemFilter(Ljava/util/function/Function;)Lgregtech/api/util/HatchElementBuilder;",
             "hatchItemFilter(Ljava/util/function/BiFunction;)Lgregtech/api/util/HatchElementBuilder;",
+            "hatchId(I)Lgregtech/api/util/HatchElementBuilder;", "hatchIds([I)Lgregtech/api/util/HatchElementBuilder;",
+            "hatchClass(Ljava/lang/Class;)Lgregtech/api/util/HatchElementBuilder;",
+            "hatchClasses([Ljava/lang/Class;)Lgregtech/api/util/HatchElementBuilder;",
+            "hatchClasses(Ljava/util/List;)Lgregtech/api/util/HatchElementBuilder;",
             "shouldReject(Ljava/util/function/Predicate;)Lgregtech/api/util/HatchElementBuilder;" },
         at = @At("RETURN"))
     private void gtit$reset(CallbackInfoReturnable<HatchElementBuilder<?>> callback) {

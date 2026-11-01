@@ -55,7 +55,10 @@ final class HologramServiceEditRegression {
             HologramCapture capture = new HologramCapture(null, new ItemStack(Blocks.stone));
             for (int x = 1; x <= 4; x++) {
                 HologramCapture.Cell cell = new HologramCapture.Cell(
-                    StructureUtility.ofBlock(Blocks.stone, 0),
+                    StructureUtility.ofChain(
+                        StructureUtility.ofBlock(Blocks.stone, 0),
+                        StructureUtility.ofBlock(Blocks.dirt, 0),
+                        StructureUtility.ofBlock(Blocks.cobblestone, 0)),
                     x,
                     64,
                     0);
@@ -241,15 +244,24 @@ final class HologramServiceEditRegression {
             cell.userPosition = true;
             SimpleAssert.eq(false, member.invoke(null, session, cell), "manual positions cannot authorize replacement");
             cell.userPosition = false;
-            cell.block = Blocks.air;
-            SimpleAssert.eq(false, member.invoke(null, session, cell), "declared air cannot authorize replacement");
+            HologramCapture.Cell declaredAir = new HologramCapture.Cell(
+                StructureUtility.isAir(),
+                cell.x,
+                cell.y,
+                cell.z);
+            declaredAir.block = Blocks.air;
+            declaredAir.stableIndex = 0;
+            capture.cells.set(0, declaredAir);
+            SimpleAssert
+                .eq(false, member.invoke(null, session, declaredAir), "declared air cannot authorize replacement");
             player.capabilities.isCreativeMode = false;
             HologramServiceEditRegression.<ItemStack>list(session, "planTargets")
                 .set(0, null);
             SimpleAssert.eq(
                 "blocked",
-                classify.invoke(null, session, cell, 0),
+                classify.invoke(null, session, declaredAir, 0),
                 "occupied declared air blocks survival construction");
+            capture.cells.set(0, cell);
             HologramServiceEditRegression.<ItemStack>list(session, "planTargets")
                 .set(0, new ItemStack(Blocks.dirt));
             player.capabilities.isCreativeMode = true;

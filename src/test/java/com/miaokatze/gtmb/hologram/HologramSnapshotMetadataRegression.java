@@ -3,17 +3,25 @@ package com.miaokatze.gtmb.hologram;
 import java.lang.reflect.Field;
 import java.util.UUID;
 
+import net.minecraft.block.Block;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.entity.player.InventoryPlayer;
 import net.minecraft.entity.player.PlayerCapabilities;
 import net.minecraft.init.Blocks;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 
+import com.gtnewhorizon.structurelib.structure.IStructureElement;
+import com.gtnewhorizon.structurelib.structure.StructureUtility;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 import com.mojang.authlib.GameProfile;
+
+import gregtech.api.GregTechAPI;
+import gregtech.api.enums.HatchElement;
+import gregtech.api.util.HatchElementBuilder;
 
 /** Compares complete field/NBT semantics with the original metadata writer using actual budget boundaries. */
 final class HologramSnapshotMetadataRegression {
@@ -46,6 +54,7 @@ final class HologramSnapshotMetadataRegression {
             player.capabilities.isCreativeMode = true;
             player.inventory.mainInventory[0] = new ItemStack(Blocks.stone);
             candidateSummaryGeneration(player);
+            metadataHatchCandidateReuse(unsafe, player);
             HologramSession session = new HologramSession(player, 0, 64, 0, false, 2);
             session.virtual = true;
             session.virtualPlacement = true;
@@ -139,6 +148,206 @@ final class HologramSnapshotMetadataRegression {
             }
         } catch (Exception failed) {
             throw new AssertionError("snapshot metadata", failed);
+        }
+    }
+
+    /** Compare the real source continuation with its uncached projection, including the registry scan count. */
+    private static void metadataHatchCandidateReuse(sun.misc.Unsafe unsafe, EntityPlayerMP player) throws Exception {
+        Block previousMachines = GregTechAPI.sBlockMachines;
+        gregtech.api.interfaces.metatileentity.IMetaTileEntity[] previous = GregTechAPI.METATILEENTITIES.clone();
+        try {
+            Block machines = new Block(net.minecraft.block.material.Material.iron) {};
+            Block.blockRegistry.addObject(4050, "gtmb:metadata_fixture_machines", machines);
+            Item.itemRegistry
+                .addObject(4050, "gtmb:metadata_fixture_machines", new gregtech.common.blocks.ItemMachines(machines));
+            GregTechAPI.sBlockMachines = machines;
+            java.util.Arrays.fill(GregTechAPI.METATILEENTITIES, null);
+            CountingMuffler first = (CountingMuffler) unsafe.allocateInstance(CountingMuffler.class);
+            CountingMuffler second = (CountingMuffler) unsafe.allocateInstance(CountingMuffler.class);
+            first.id = 32002;
+            second.id = 32003;
+            GregTechAPI.METATILEENTITIES[first.id] = first;
+            GregTechAPI.METATILEENTITIES[second.id] = second;
+            HatchElementBuilder<Object> builder = hatchBuilder();
+            HologramHatchPolicy.declare(builder, java.util.Collections.singletonList(HatchElement.Muffler), false);
+            IStructureElement<Object> hatch = builder.build();
+            HologramHatchPolicy.built(builder, hatch);
+            IStructureElement<Object> chain = StructureUtility.ofChain(
+                hatch,
+                StructureUtility.onElementPass(
+                    ignored -> { throw new AssertionError("metadata ran a casing callback"); },
+                    StructureUtility.withChannel("metadata_casing", StructureUtility.ofBlock(Blocks.stone, 0))));
+            SimpleAssert
+                .that(!HologramDeclarationPurity.contextFree(chain), "hatch chains retain contextual authority");
+            ItemStack signal = new ItemStack(Blocks.stone);
+            HologramSession session = new HologramSession(player, 0, 64, 0, false, 2);
+            session.capture = new HologramCapture(null, signal);
+            NBTTagCompound data = new NBTTagCompound();
+            data.setString("configuration", "metadata candidate reuse keeps full payload");
+            String payload = HologramBlueprintNbt.encodeCaptured(data);
+            for (int i = 0; i < 512; i++) {
+                HologramCapture.Cell cell = new HologramCapture.Cell(chain, i, 64, 0, signal);
+                cell.block = Blocks.stone;
+                cell.tileNbt = i % 17 == 0 ? payload : "";
+                session.capture.cells.add(cell);
+                session.capture.positions.put(HologramValues.position(cell), cell);
+                session.planTargets.add(signal.copy());
+            }
+            HologramPresets.Preset oracle = new HologramPresets.Preset();
+            java.util.Set<String> palette = new java.util.HashSet<>();
+            for (int i = 0; i < session.capture.cells.size(); i++) {
+                session.declarations.clear();
+                oracle.cells.add(HologramBlueprintProjection.projectedCell(session, i, oracle, palette));
+            }
+            int uncachedReads = first.reads + second.reads;
+            SimpleAssert.eq(1024, uncachedReads, "uncached native chains scan both registry prototypes per cell");
+            session.declarations.clear();
+            for (HologramCapture.Cell cell : session.capture.cells) cell.candidates = null;
+            first.reads = second.reads = 0;
+            HologramSnapshotMetadataSource source = new HologramSnapshotMetadataSource(
+                session,
+                new HologramSnapshotDataContext());
+            int steps = 0;
+            while (!source.step(1, Long.MAX_VALUE)) steps++;
+            int sharedReads = first.reads + second.reads;
+            SimpleAssert.eq(2, sharedReads, "512 real source rows expand a shared standard hatch leaf once");
+            SimpleAssert.that(steps >= 512, "source projection still checkpoints every row");
+            com.google.gson.Gson gson = new com.google.gson.Gson();
+            SimpleAssert.eq(
+                gson.toJson(oracle.cells),
+                gson.toJson(source.result.cells),
+                "shared hatch expansion preserves every projected DTO field and NBT payload");
+            SimpleAssert.eq(
+                3,
+                source.result.cells.get(0).allowedTargets.size(),
+                "both declared hatches and the casing remain editable candidates");
+            hatchCacheBoundaries(builder, hatch, chain, signal, first, second, gson);
+            System.out.println(
+                "Snapshot 512 native hatch-chain rows registryReads uncached=" + uncachedReads
+                    + " shared="
+                    + sharedReads);
+        } finally {
+            GregTechAPI.sBlockMachines = previousMachines;
+            System.arraycopy(previous, 0, GregTechAPI.METATILEENTITIES, 0, previous.length);
+        }
+    }
+
+    private static HatchElementBuilder<Object> hatchBuilder() {
+        return HatchElementBuilder.<Object>builder()
+            .adder((context, tile, texture) -> { throw new AssertionError("metadata ran a hatch adder"); })
+            .casingIndex(69)
+            .hint(1);
+    }
+
+    private static void hatchCacheBoundaries(HatchElementBuilder<Object> builder, IStructureElement<Object> hatch,
+        IStructureElement<Object> chain, ItemStack signal, CountingMuffler first, CountingMuffler second,
+        com.google.gson.Gson gson) throws ReflectiveOperationException {
+        HologramDeclarationCollector collector = new HologramDeclarationCollector();
+        first.reads = second.reads = 0;
+        HologramDeclarationCandidates one = collector.collect(chain, null, null, 0, 64, 0, "first", signal, null);
+        one.stacks.get(0).stackSize = 31;
+        one.stacks.get(0)
+            .setTagCompound(new NBTTagCompound());
+        HologramDeclarationCandidates two = collector
+            .collect(chain, null, null, 1, 64, 0, "second", signal.copy(), null);
+        SimpleAssert.that(
+            two.stacks.get(0).stackSize == 1 && !two.stacks.get(0)
+                .hasTagCompound(),
+            "per-position stacks cannot mutate the shared hatch expansion");
+        SimpleAssert.eq(2, first.reads + second.reads, "position and membership do not repeat standard enum expansion");
+        ItemStack different = signal.copy();
+        different.stackSize++;
+        collector.collect(chain, null, null, 2, 64, 0, "", different, null);
+        different = signal.copy();
+        different.setTagCompound(new NBTTagCompound());
+        different.getTagCompound()
+            .setInteger("metadata", 1);
+        collector.collect(chain, null, null, 3, 64, 0, "", different, null);
+        different.getTagCompound()
+            .setInteger("metadata", 2);
+        collector.collect(chain, null, null, 4, 64, 0, "", different, null);
+        collector.collect(chain, null, null, 4, 64, 1, "", new ItemStack(Blocks.dirt), null);
+        collector.collect(chain, null, null, 4, 64, 2, "", new ItemStack(Blocks.stone, 1, 1), null);
+        SimpleAssert.eq(
+            12,
+            first.reads + second.reads,
+            "full trigger item, damage, count and distinct owned NBT remain cache boundaries");
+        HatchElementBuilder<Object> otherBuilder = hatchBuilder();
+        HologramHatchPolicy.declare(otherBuilder, java.util.Collections.singletonList(HatchElement.Muffler), false);
+        IStructureElement<Object> other = otherBuilder.build();
+        HologramHatchPolicy.built(otherBuilder, other);
+        collector.collect(other, null, null, 5, 64, 0, "", signal, null);
+        SimpleAssert.eq(14, first.reads + second.reads, "different leaf identities never share registry results");
+        HologramDeclarationAdapters.register(
+            StructureUtility.ofBlock(Blocks.dirt, 0),
+            new HologramDeclarationAdapters.Declaration(StructureUtility.ofBlock(Blocks.dirt, 0)));
+        collector.collect(chain, null, null, 6, 64, 0, "", signal, null);
+        SimpleAssert.eq(16, first.reads + second.reads, "declaration generation invalidates the shared leaf");
+        HologramHatchPolicy.declare(builder, java.util.Collections.singletonList(HatchElement.InputHatch), false);
+        HologramHatchPolicy.built(builder, hatch);
+        HologramDeclarationCandidates changed = collector.collect(chain, null, null, 7, 64, 0, "", signal, null);
+        SimpleAssert.that(
+            changed.complete && changed.stacks.size() == 1,
+            "current recorded hatch types qualify every shared lookup");
+        SimpleAssert.eq(18, first.reads + second.reads, "a redeclared leaf recomputes the exact current enum rule");
+        HatchElementBuilder<Object> unknownBuilder = hatchBuilder();
+        java.util.function.Function<Object, java.util.function.Predicate<ItemStack>> filter = ignored -> {
+            throw new AssertionError("metadata ran an unknown hatch filter");
+        };
+        unknownBuilder.hatchItemFilterAnd(filter);
+        HologramHatchPolicy.andFunction(unknownBuilder, filter);
+        IStructureElement<Object> unknown = unknownBuilder.build();
+        HologramHatchPolicy.built(unknownBuilder, unknown);
+        HologramDeclarationCandidates rejected = collector.collect(unknown, null, null, 8, 64, 0, "", signal, null);
+        SimpleAssert.that(
+            !rejected.complete && rejected.stacks.isEmpty(),
+            "unrecorded hatch filters remain incomplete without a registry scan");
+        SimpleAssert.eq(18, first.reads + second.reads, "unknown filters do not borrow a reviewed leaf's candidates");
+        HologramHatchPolicy.declare(builder, java.util.Collections.singletonList(HatchElement.Muffler), false);
+        HologramHatchPolicy.built(builder, hatch);
+        collector.clear();
+        first.reads = second.reads = 0;
+        for (int i = 0; i < 1100; i++) collector.collect(chain, null, null, i, 64, 0, "", signal, null);
+        Field size = HologramDeclarationCollector.class.getDeclaredField("size");
+        size.setAccessible(true);
+        SimpleAssert.that(
+            size.getInt(collector) <= 1024,
+            "contextual and raw hatch entries share the existing total cache budget");
+        SimpleAssert.eq(
+            4,
+            first.reads + second.reads,
+            "budget eviction also retires raw leaves and resumes with one fresh expansion");
+        second.fail = true;
+        try {
+            HologramDeclarationCandidates expected = new HologramDeclarationCandidates();
+            expected.collect(chain, null, null, 0, 64, 0, signal, null, 0);
+            collector.clear();
+            HologramDeclarationCandidates actual = collector.collect(chain, null, null, 0, 64, 0, "", signal, null);
+            SimpleAssert
+                .that(!expected.complete && !actual.complete, "registry read failures retain the incomplete result");
+            SimpleAssert.eq(
+                gson.toJson(HologramBlueprintData.savedTargets(expected.stacks)),
+                gson.toJson(HologramBlueprintData.savedTargets(actual.stacks)),
+                "registry failures preserve the original partial candidates and casing fallback");
+        } finally {
+            second.fail = false;
+        }
+    }
+
+    private static final class CountingMuffler extends gregtech.api.metatileentity.implementations.MTEHatchMuffler {
+
+        int id, reads;
+        boolean fail;
+
+        private CountingMuffler() {
+            super("metadata_muffler", 1, new String[0], (gregtech.api.interfaces.ITexture[][][]) null);
+        }
+
+        @Override
+        public ItemStack getStackForm(long amount) {
+            reads++;
+            if (fail) throw new IllegalStateException("metadata registry read fixture");
+            return new ItemStack(GregTechAPI.sBlockMachines, (int) amount, id);
         }
     }
 

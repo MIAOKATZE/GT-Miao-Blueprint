@@ -588,6 +588,7 @@ public final class HologramBackgroundTasks {
                 NBTTagCompound request = new HologramAeReviewModel(context.data.getCompoundTag("aeSaveReview"), true)
                     .action();
                 request.setString("op", "cancelAeSave");
+                HologramClient.stampSemanticRevision(request);
                 HologramNetwork.sendAction(request);
             }
             HologramLibraryClient.INSTANCE.cancelBackgroundTask();
@@ -642,6 +643,7 @@ public final class HologramBackgroundTasks {
             request.setLong("placementReviewNonce", context.data.getLong("placementReviewNonce"));
         }
         command(session, sequence, op);
+        HologramClient.stampSemanticRevision(request);
         HologramNetwork.sendAction(request);
     }
 

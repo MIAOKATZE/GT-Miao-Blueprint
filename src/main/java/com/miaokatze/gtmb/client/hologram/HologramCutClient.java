@@ -23,7 +23,7 @@ import com.miaokatze.gtmb.hologram.HologramCutPlacementPreference;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
 import com.miaokatze.gtmb.hologram.HologramWorldFlow;
 
-/** A separate server-owned cut directory; ordinary blueprint state never enters this controller. */
+/** Cut storage and demolition share local selection input; ordinary blueprint state stays separate. */
 final class HologramCutClient {
 
     static final HologramCutClient INSTANCE = new HologramCutClient();
@@ -36,12 +36,12 @@ final class HologramCutClient {
     private final HologramWorldFlow.KeyEdge previousKey = new HologramWorldFlow.KeyEdge();
     private final HologramWorldFlow.KeyEdge nextKey = new HologramWorldFlow.KeyEdge();
     private final HologramWorldFlow.KeyEdge rotateKey = new HologramWorldFlow.KeyEdge();
-    private Object world;
+    private Object world, connection;
     private int dimension;
     private boolean loaded, directoryUnavailable, rightDown;
     private boolean skipNamePrompt;
     private boolean skipPlacementPrompt;
-    private boolean cutMode, cutSession;
+    private boolean cutMode, demolitionMode, cutSession;
     private String selected = "", previewId = "";
     private final HologramCutNotice status = new HologramCutNotice();
     private HologramState preview;
@@ -52,6 +52,9 @@ final class HologramCutClient {
     private int[] completedAnchor;
     private int[] locked;
     private com.miaokatze.gtmb.hologram.HologramAreaSelection selection;
+    private HologramCutConfirmScreen demolitionConfirmation;
+    private String demolitionRequest = "";
+    private long demolitionPollAt;
     private final HologramSelectionInput selectionInput = new HologramSelectionInput();
     private HologramCutInput.Stage stage = HologramCutInput.Stage.IDLE;
 
@@ -99,7 +102,16 @@ final class HologramCutClient {
     }
 
     boolean cameraContext() {
-        return held() && active();
+        return held() && (active() || demolitionMode && cutSession);
+    }
+
+    /** Only this session's explicit demolition confirmation may keep its world camera. */
+    boolean keepsCamera(net.minecraft.client.gui.GuiScreen screen) {
+        return screen != null && screen == demolitionConfirmation
+            && demolitionMode
+            && cutSession
+            && selecting()
+            && held();
     }
 
     boolean selecting() {
@@ -127,16 +139,18 @@ final class HologramCutClient {
     }
 
     boolean interceptsUse() {
-        return HologramCutInput.interceptsUse(stage, shift(), blueprintBusy(), cutMode);
+        return HologramCutInput.interceptsUse(stage, shift(), blueprintBusy(), cutMode || demolitionMode);
     }
 
     void tick() {
         Minecraft mc = mc();
         if (!HologramClient.worldInputFocused() || !Mouse.isCreated() || !Mouse.isButtonDown(1)) rightDown = false;
-        if (world != mc.theWorld || mc.thePlayer != null && dimension != mc.thePlayer.dimension) {
+        if (world != mc.theWorld || connection != mc.getNetHandler()
+            || mc.thePlayer != null && dimension != mc.thePlayer.dimension) {
             HologramCutStoragePreview.invalidate();
             HologramNetwork.clearCutClientTransport();
             world = mc.theWorld;
+            connection = mc.getNetHandler();
             dimension = mc.thePlayer == null ? 0 : mc.thePlayer.dimension;
             entries.clear();
             requests.clear();
@@ -145,6 +159,7 @@ final class HologramCutClient {
             skipNamePrompt = false;
             skipPlacementPrompt = false;
             cutMode = false;
+            demolitionMode = false;
             directoryUnavailable = false;
             status.show("");
             selected = "";
@@ -155,8 +170,8 @@ final class HologramCutClient {
         for (HologramCutRequests.Request expired : requests.expire(System.nanoTime())) {
             if (operationProgress.matches(expired.id)) operationProgress.clear();
             if (expired.writesWorld()) {
-                status.show(text("checkingResult"));
-                request("list", expired.id);
+                status.show(text("demolish".equals(expired.action) ? "demolitionChecking" : "checkingResult"));
+                request("demolish".equals(expired.action) ? "demolitionStatus" : "list", expired.id);
             } else if ("preview".equals(expired.action)) status.show(text("requestTimeout"));
             else if ("openWorkspace".equals(expired.action)) {
                 HologramClient.cutWorkspaceOpeningRejected(expired.id);
@@ -164,6 +179,9 @@ final class HologramCutClient {
             } else if ("list".equals(expired.action)) {
                 directoryUnavailable = true;
                 status.directoryFailed(text("syncTimeout"));
+            } else if ("demolitionStatus".equals(expired.action)) {
+                if (expired.target.equals(demolitionRequest)) demolitionRequest = "";
+                status.show(text("demolitionUnknown"));
             }
         }
         if (!held()) {
@@ -173,12 +191,14 @@ final class HologramCutClient {
             return;
         }
         // Recover an overlapping local cut left by older input routing without touching its server-owned queue.
-        if (blueprintBusy()
-            && HologramCutInput.exitsMode(stage, cutMode, cutSession, rawPreview != null || preview != null)) {
+        if (!demolitionMode && blueprintBusy()
+            && HologramCutInput
+                .exitsMode(stage, cutMode || demolitionMode, cutSession, rawPreview != null || preview != null)) {
             chooseBlueprintMode();
             closeScreen();
         }
         if (requests.observeHeld(true)) refreshDirectory();
+        pollDemolition(System.nanoTime());
         boolean cameraReady = HologramClient.worldInputFocused()
             && !HologramIsometricCamera.INSTANCE.blocksWorldInput();
         boolean enabled = cameraReady && mc.currentScreen == null
@@ -200,6 +220,12 @@ final class HologramCutClient {
         }
         selectionInput.tick(selection, cameraReady && selecting() && held() && !busy() && !blueprintBusy());
         lockedNudge();
+    }
+
+    private void pollDemolition(long now) {
+        if (demolitionRequest.isEmpty() || requests.active("demolitionStatus") || now < demolitionPollAt) return;
+        demolitionPollAt = Long.MAX_VALUE;
+        request("demolitionStatus", demolitionRequest);
     }
 
     private void lockedNudge() {
@@ -239,7 +265,7 @@ final class HologramCutClient {
         if (event.button == 1 && !event.buttonstate) rightDown = false;
         if (!held() || !HologramClient.worldInputFocused() || blueprintBusy()) return false;
         if (event.dwheel != 0 && aiming() && alt()) return false; // shared distance handler owns the wheel
-        boolean intercept = event.button == 1 && interceptsUse() || event.button == 0 && active();
+        boolean intercept = event.button == 1 && interceptsUse() || event.button == 0 && cameraContext();
         if (!intercept) return false;
         event.setCanceled(true);
         KeyBinding.setKeyBindState(mc().gameSettings.keyBindUseItem.getKeyCode(), false);
@@ -279,12 +305,13 @@ final class HologramCutClient {
             shift,
             alt,
             blueprintBusy(),
-            cutMode,
+            mode(),
             key(Keyboard.KEY_LCONTROL) || key(Keyboard.KEY_RCONTROL));
         if (!HologramCutInput.allowsWorldAction(intent, HologramBackgroundTasks.busy())) return;
         if (HologramCutInput.requiresCutReady(intent)
-            && (intent == HologramCutInput.Intent.SELECT ? cutUnavailable() : busy())) {
-            retryCutStorage();
+            && (demolitionMode ? busy() : intent == HologramCutInput.Intent.SELECT ? cutUnavailable() : busy())) {
+            if (demolitionMode) status.show(text("waiting"));
+            else retryCutStorage();
             return;
         }
         switch (intent) {
@@ -292,7 +319,8 @@ final class HologramCutClient {
                 mc().displayGuiScreen(new HologramCutModeScreen());
                 break;
             case SELECT:
-                beginSelection();
+                if (demolitionMode) beginDemolitionSelection();
+                else beginSelection();
                 break;
             case MORE:
                 try {
@@ -337,7 +365,8 @@ final class HologramCutClient {
     }
 
     boolean cameraClick(int button) {
-        if (!held() || !active() || mc().currentScreen != null || blueprintBusy()) return false;
+        if (!cameraContext() || mc().currentScreen != null || blueprintBusy()) return false;
+        if (busy()) return true;
         if (selecting()) {
             HologramSelectionInput.CameraAction action = HologramSelectionInput
                 .cameraAction(button, HologramClient.controlHeld(), shift(), alt(), false, continuousActive());
@@ -352,6 +381,16 @@ final class HologramCutClient {
     void beginSelection() {
         if (HologramBackgroundTasks.busy() || blueprintBusy()) return;
         cutMode = true;
+        demolitionMode = false;
+        continuous.enter();
+        resetSelection();
+        mc().displayGuiScreen(null);
+    }
+
+    private void beginDemolitionSelection() {
+        if (HologramBackgroundTasks.busy() || blueprintBusy() || requests.writing()) return;
+        cutMode = false;
+        demolitionMode = true;
         continuous.enter();
         resetSelection();
         mc().displayGuiScreen(null);
@@ -366,16 +405,18 @@ final class HologramCutClient {
         stage = HologramCutInput.Stage.SELECTING;
         cutSession = true;
         selection = new com.miaokatze.gtmb.hologram.HologramAreaSelection();
+        demolitionConfirmation = null;
         locked = null;
         preview = null;
         previewId = "";
         nudgeContext++;
-        status.show(text("selection"));
+        status.show(text(demolitionMode ? "demolitionSelection" : "selection"));
     }
 
     private void mark(boolean firstCorner) {
         if (busy()) {
-            retryCutStorage();
+            if (demolitionMode) status.show(text("waiting"));
+            else retryCutStorage();
             return;
         }
         int[] point = HologramClient.cutAnchor(false);
@@ -404,8 +445,11 @@ final class HologramCutClient {
         try {
             if (selection.regionSnapshot()
                 .tagCount() == 0) {
-                refreshDirectory();
-                openStorageWorkspace();
+                if (demolitionMode) status.show(text("demolitionEmpty"));
+                else {
+                    refreshDirectory();
+                    openStorageWorkspace();
+                }
                 return;
             }
             bounds = selection.bounds();
@@ -413,10 +457,19 @@ final class HologramCutClient {
             status.show(invalid.getMessage());
             return;
         }
-        String detail = text("confirmCutDetail") + " "
+        String detail = text(demolitionMode ? "confirmDemolitionDetail" : "confirmCutDetail") + " "
             + coordinates(new int[] { bounds[0], bounds[1], bounds[2] })
             + " → "
             + coordinates(new int[] { bounds[3], bounds[4], bounds[5] });
+        if (demolitionMode) {
+            demolitionConfirmation = new HologramCutConfirmScreen(
+                text("confirmDemolition"),
+                detail,
+                () -> submitDemolition(chosen),
+                () -> demolitionConfirmation = null);
+            mc().displayGuiScreen(demolitionConfirmation);
+            return;
+        }
         if (skipNamePrompt) mc().displayGuiScreen(
             new HologramCutConfirmScreen(
                 text("confirmCut"),
@@ -447,6 +500,19 @@ final class HologramCutClient {
         selection = null;
     }
 
+    private void submitDemolition(NBTTagCompound chosen) {
+        if (!held() || !demolitionMode
+            || !selecting()
+            || selection == null
+            || !chosen.equals(selection.snapshot())
+            || busy()) return;
+        NBTTagCompound n = action("demolish", "");
+        n.setTag("areaSelection", chosen);
+        continuous.submitted(n.getString("requestId"));
+        send(n);
+        demolitionConfirmation = null;
+    }
+
     NBTTagCompound selectionSnapshot() {
         return selecting() && held() && selection != null ? selection.snapshot() : null;
     }
@@ -467,9 +533,9 @@ final class HologramCutClient {
         HologramProgress progress = progress(false);
         if (progress != null) return HologramProgressView.summary(progress, System.nanoTime());
         String message = status();
-        return message.equals(text("selection")) || message.equals(text("moving")) || message.equals(text("locked"))
-            ? ""
-            : message;
+        return message.equals(text("selection")) || message.equals(text("demolitionSelection"))
+            || message.equals(text("moving"))
+            || message.equals(text("locked")) ? "" : message;
     }
 
     HologramProgress progress(boolean includeDirectory) {
@@ -489,6 +555,9 @@ final class HologramCutClient {
         HologramCutRequests.Request rejected = requests.acknowledge(event.getString("requestId"));
         if (rejected == null) return;
         if ("cut".equals(rejected.action)) continuous.completed(rejected.id, false);
+        if ("demolish".equals(rejected.action)) continuous.completed(rejected.id, false);
+        if ("demolitionStatus".equals(rejected.action) && rejected.target.equals(demolitionRequest))
+            demolitionRequest = "";
         if (operationProgress.matches(rejected.id)) operationProgress.clear();
         boolean visible = !"list".equals(rejected.action) || !rejected.target.isEmpty()
             || mc().currentScreen instanceof HologramCutStorageScreen;
@@ -499,6 +568,10 @@ final class HologramCutClient {
     }
 
     boolean busy() {
+        if (demolitionMode) return HologramBackgroundTasks.busy() || !demolitionRequest.isEmpty()
+            || requests.writing()
+            || requests.active("demolitionCancel")
+            || requests.active("demolitionStatus");
         return HologramBackgroundTasks.busy() || cutUnavailable() || requests.busy();
     }
 
@@ -516,6 +589,11 @@ final class HologramCutClient {
     }
 
     void refreshDirectory() {
+        String demolition = requests.unresolvedDemolition();
+        if (!demolition.isEmpty()) {
+            if (!requests.active("demolitionStatus")) request("demolitionStatus", demolition);
+            return;
+        }
         if (!requests.active("list")) request("list", requests.unresolvedWrite());
     }
 
@@ -578,6 +656,7 @@ final class HologramCutClient {
             return;
         }
         cutMode = true;
+        demolitionMode = false;
         continuous.exit();
         requests.exitActivity();
         operationProgress.clear();
@@ -692,14 +771,16 @@ final class HologramCutClient {
     }
 
     private boolean exitLocalMode() {
-        if (!HologramCutInput.exitsMode(stage, cutMode, cutSession, rawPreview != null || preview != null))
+        if (!HologramCutInput
+            .exitsMode(stage, cutMode || demolitionMode, cutSession, rawPreview != null || preview != null))
             return false;
         exitCutMode();
         return true;
     }
 
-    /** Escape leaves the tool inactive without issuing a world action or forgetting an in-flight write. */
+    /** Escape retires local input and cancels remaining demolition while retaining submitted write outcomes. */
     void exitCutMode() {
+        if (demolitionMode && held()) request("demolitionCancel", "");
         chooseBlueprintMode();
         closeScreen();
         status.show(text("exited"));
@@ -707,6 +788,11 @@ final class HologramCutClient {
 
     boolean cutMode() {
         return cutMode;
+    }
+
+    HologramCutInput.Mode mode() {
+        return demolitionMode ? HologramCutInput.Mode.DEMOLITION
+            : cutMode ? HologramCutInput.Mode.CUT : HologramCutInput.Mode.BLUEPRINT;
     }
 
     void chooseCutMode() {
@@ -717,7 +803,14 @@ final class HologramCutClient {
 
     void chooseBlueprintMode() {
         cutMode = false;
+        demolitionMode = false;
         cancel();
+    }
+
+    void chooseDemolitionMode() {
+        if (blueprintBusy() || HologramBackgroundTasks.busy() || requests.writing()) return;
+        cancel();
+        beginDemolitionSelection();
     }
 
     void cancel() {
@@ -733,6 +826,9 @@ final class HologramCutClient {
         stage = HologramCutInput.Stage.IDLE;
         cutSession = false;
         selection = null;
+        demolitionConfirmation = null;
+        demolitionRequest = "";
+        demolitionPollAt = 0;
         locked = null;
         preview = null;
         previewId = "";
@@ -803,6 +899,10 @@ final class HologramCutClient {
         if ("openWorkspace".equals(reply.action) && !n.getBoolean("success"))
             HologramClient.cutWorkspaceOpeningRejected(reply.id);
         String op = reply.action;
+        if ("demolish".equals(op) || "demolitionCancel".equals(op) || "demolitionStatus".equals(op)) {
+            receiveDemolition(n, reply);
+            return;
+        }
         boolean recoveryPending = "recovery_pending".equals(n.getString("code"));
         boolean acceptedDirectory = n.getBoolean("success") && n.hasKey("entries", 9) && !recoveryPending;
         if (recoveryPending || !n.getBoolean("success") && reply.writesWorld()) directoryUnavailable = true;
@@ -871,6 +971,42 @@ final class HologramCutClient {
             && mc().thePlayer != null) mc().thePlayer.addChatMessage(new ChatComponentText(status()));
     }
 
+    private void receiveDemolition(NBTTagCompound n, HologramCutRequests.Request reply) {
+        if (operationProgress.matches(reply.id)) operationProgress.clear();
+        String message = n.getString("message");
+        boolean accepted = n.getBoolean("success");
+        String submitted = "demolish".equals(reply.action) ? reply.id : "";
+        if ("demolitionStatus".equals(reply.action)) {
+            if (!accepted || !reply.target.equals(n.getString("reconciledRequestId"))) {
+                if (reply.target.equals(demolitionRequest)) demolitionRequest = "";
+                status.show(message);
+                return;
+            }
+            HologramCutRequests.Request reconciled = requests.reconcile(reply.target);
+            if (reconciled != null && "demolish".equals(reconciled.action)) submitted = reconciled.id;
+            else if (reply.target.equals(demolitionRequest)) submitted = demolitionRequest;
+            accepted = n.getBoolean("requestCompleted");
+        }
+        if (!submitted.isEmpty()) {
+            if (accepted && n.getBoolean("demolitionActive") && held() && demolitionMode && cutSession) {
+                demolitionRequest = submitted;
+                demolitionPollAt = System.nanoTime() + 1_000_000_000L;
+                stage = HologramCutInput.Stage.IDLE;
+                selection = null;
+            } else {
+                demolitionRequest = "";
+                boolean resume = continuous.completed(submitted, accepted);
+                if (resume && held() && demolitionMode && !blueprintBusy() && !HologramBackgroundTasks.busy())
+                    resetSelection();
+            }
+        } else if ("demolitionCancel".equals(reply.action) && accepted) {
+            demolitionRequest = "";
+        }
+        status.show(message);
+        if (!message.isEmpty() && !"demolitionStatus".equals(reply.action) && mc().thePlayer != null)
+            mc().thePlayer.addChatMessage(new ChatComponentText(message));
+    }
+
     private void finishCut(String requestId, boolean success) {
         boolean resume = continuous.completed(requestId, success);
         if (!success) return;
@@ -886,7 +1022,11 @@ final class HologramCutClient {
 
     /** A blueprint-mode hint may inspect the last accepted player directory, never trigger its refresh. */
     void idleGuide(List<String> lines) {
-        if (!held() || world != mc().theWorld || dimension != mc().thePlayer.dimension || cutMode || active()) return;
+        if (!held() || world != mc().theWorld
+            || dimension != mc().thePlayer.dimension
+            || cutMode
+            || demolitionMode
+            || active()) return;
         if (!busy()) lines.add(HologramClient.text("worldGuideCut", "Shift+Alt+right-click: begin cut selection"));
         if (!busy() && !entries.isEmpty()) lines.add(
             String.format(
@@ -898,7 +1038,19 @@ final class HologramCutClient {
     }
 
     boolean guide(List<String> lines) {
-        if (!held() || !cutMode && !active() || blueprintBusy() && !active()) return false;
+        if (!held() || !cutMode && !demolitionMode && !active() || blueprintBusy() && !active()) return false;
+        if (demolitionMode) {
+            lines.add(text("demolitionModeHint"));
+            if (selecting()) {
+                lines.add(
+                    text(
+                        HologramIsometricCamera.INSTANCE.active() ? "demolitionSelection.camera"
+                            : "demolitionSelection"));
+                HologramWorldGuide.selectionGuide(lines, selection.snapshot());
+            } else lines.add(text(busy() ? "demolitionWaiting" : "demolitionIdle"));
+            if (!status().isEmpty() && !lines.contains(status())) lines.add(status());
+            return true;
+        }
         if (HologramIsometricCamera.INSTANCE.active()) {
             if (selecting()) HologramWorldGuide.selectionGuide(lines, selection.snapshot());
             else lines.add(text(stage == HologramCutInput.Stage.MOVING ? "moving.camera" : "locked.camera"));

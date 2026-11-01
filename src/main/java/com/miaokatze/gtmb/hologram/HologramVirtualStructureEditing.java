@@ -85,7 +85,8 @@ final class HologramVirtualStructureEditing {
             IStructureDefinition<?> definition;
             if (supplied == null) {
                 declarations = HologramCapture.declarationPieces((IConstructable) machine, trigger);
-                definition = machine.getStructureDefinition();
+                definition = declarations.definition == null ? machine.getStructureDefinition()
+                    : declarations.definition;
             } else {
                 definition = supplied.definition;
                 for (com.miaokatze.gtmb.api.StructureSources.Piece piece : supplied.pieces) declarations.pieces
@@ -287,7 +288,12 @@ final class HologramVirtualStructureEditing {
                 return false;
             }
             if (nativeCapture == null || nativeCapture.pending) {
-                nativeCapture = HologramCapture.collect(machine, trigger, machine.getExtendedFacing(), nativeCapture);
+                nativeCapture = HologramCapture.collect(
+                    machine,
+                    trigger,
+                    machine.getExtendedFacing(),
+                    com.miaokatze.gtmb.api.StructureSources.CaptureIntent.NEW_TEMPLATE,
+                    nativeCapture);
                 if (nativeCapture.pending) return false;
                 if (nativeCapture.incomplete) throw new IOException(nativeCapture.failure);
             }
@@ -347,7 +353,16 @@ final class HologramVirtualStructureEditing {
         }
 
         void publish() throws IOException {
-            HologramCapture merged = new HologramCapture(null, HologramSessionPolicy.trigger(s));
+            boolean sameTemplate = rereadSameTemplate();
+            HologramCapture merged = new HologramCapture(
+                null,
+                HologramSessionPolicy.trigger(s),
+                nativeCapture.captureIntent);
+            merged.inheritSources(original);
+            merged.inheritSources(nativeCapture);
+            merged.sourceMetadata = (NBTTagCompound) nativeCapture.sourceMetadata.copy();
+            if (!nativeCapture.sourceMetadata.hasNoTags())
+                source.semanticNbt = HologramBlueprintNbt.encodeCanonical(nativeCapture.sourceMetadata);
             Map<String, ItemStack> previousPins = new HashMap<>();
             for (int i = 0; i < original.cells.size(); i++) {
                 HologramCapture.Cell cell = original.cells.get(i);
@@ -358,39 +373,57 @@ final class HologramVirtualStructureEditing {
                     shared = cell.memberships()
                         .size() > 1;
                 boolean payload = !cell.tileNbt.isEmpty() || !cell.itemNbt.isEmpty();
-                if (!own || shared
+                if (sameTemplate && own && !shared && replacement != null) {
+                    // Re-reading obtains fresh authority for the saved physical target; it does not choose new parts.
+                    // Keep invalid old choices visible so the fresh element and whole-machine gate reject them.
+                    replacement.block = cell.block;
+                    replacement.meta = cell.meta;
+                    replacement.blueprintBlock = cell.blueprintBlock;
+                    replacement.blueprintItem = cell.blueprintItem;
+                    replacement.blueprintDamage = cell.blueprintDamage;
+                    replacement.tileNbt = cell.tileNbt;
+                    replacement.itemNbt = cell.itemNbt;
+                    replacement.prompt = cell.prompt;
+                    replacement.excluded = cell.excluded;
+                    replacement.unknown = cell.unknown;
+                    ItemStack previous = s.pins.get(i);
+                    targets.put(key, previous == null ? null : previous.copy());
+                    append(merged, replacement);
+                } else if (!own || shared
                     || s.virtualEdited.contains(key)
                     || payload
                         && (replacement == null || cell.block != replacement.block || cell.meta != replacement.meta)) {
-                    if (own && shared && replacement == null && !s.virtualEdited.contains(key)) {
-                        List<String> ids = new ArrayList<>(cell.memberships());
-                        ids.remove(source.id);
-                        cell = HologramBlueprintData.blueprintCell(cell, cell.x, cell.y, cell.z);
-                        HologramBlueprintData.setMemberships(cell, ids);
+                            if (own && shared && replacement == null && !s.virtualEdited.contains(key)) {
+                                List<String> ids = new ArrayList<>(cell.memberships());
+                                ids.remove(source.id);
+                                cell = HologramBlueprintData.blueprintCell(cell, cell.x, cell.y, cell.z);
+                                HologramBlueprintData.setMemberships(cell, ids);
+                            }
+                            if (replacement != null && !own
+                                && cell.memberships()
+                                    .isEmpty()
+                                && !s.virtualEdited.contains(key)
+                                && !payload) {
+                                List<String> ids = new ArrayList<>(cell.memberships());
+                                ids.add(source.id);
+                                cell = HologramBlueprintData.blueprintCell(cell, cell.x, cell.y, cell.z);
+                                HologramBlueprintData.setMemberships(cell, ids);
+                            }
+                            append(merged, cell);
+                            targets.remove(key);
+                        } else
+                    if (replacement != null) {
+                        if (cell.block == replacement.block && cell.meta == replacement.meta) {
+                            replacement.tileNbt = cell.tileNbt;
+                            replacement.itemNbt = cell.itemNbt;
+                            replacement.prompt = cell.prompt;
+                            replacement.excluded = cell.excluded;
+                            ItemStack originalTarget = s.pins.get(i);
+                            if (originalTarget != null && !cell.itemNbt.isEmpty())
+                                targets.put(key, originalTarget.copy());
+                        }
+                        append(merged, replacement);
                     }
-                    if (replacement != null && !own
-                        && cell.memberships()
-                            .isEmpty()
-                        && !s.virtualEdited.contains(key)
-                        && !payload) {
-                        List<String> ids = new ArrayList<>(cell.memberships());
-                        ids.add(source.id);
-                        cell = HologramBlueprintData.blueprintCell(cell, cell.x, cell.y, cell.z);
-                        HologramBlueprintData.setMemberships(cell, ids);
-                    }
-                    append(merged, cell);
-                    targets.remove(key);
-                } else if (replacement != null) {
-                    if (cell.block == replacement.block && cell.meta == replacement.meta) {
-                        replacement.tileNbt = cell.tileNbt;
-                        replacement.itemNbt = cell.itemNbt;
-                        replacement.prompt = cell.prompt;
-                        replacement.excluded = cell.excluded;
-                        ItemStack originalTarget = s.pins.get(i);
-                        if (originalTarget != null && !cell.itemNbt.isEmpty()) targets.put(key, originalTarget.copy());
-                    }
-                    append(merged, replacement);
-                }
             }
             for (HologramCapture.Cell cell : generated.values()) append(merged, cell);
             HologramBlueprintLimits.require(merged.cells.size());
@@ -413,7 +446,7 @@ final class HologramVirtualStructureEditing {
                             cell.z - s.z,
                             "templateController".equals(cell.role) ? machine.getExtendedFacing()
                                 .getDirection()
-                                .ordinal() : -1,
+                                .ordinal() : sameTemplate ? s.facingPins.getOrDefault(key, -1) : -1,
                             "templateController".equals(cell.role));
                     saved.x = cell.x - s.x;
                     saved.y = cell.y - s.y;
@@ -498,6 +531,37 @@ final class HologramVirtualStructureEditing {
                 controllerItemNbt,
                 machine.getExtendedFacing()
                     .ordinal());
+        }
+
+        private boolean rereadSameTemplate() throws IOException {
+            if (nativeCapture.sourceResolution == null || !nativeCapture.sourceCurrent()
+                || main != previousSource.main
+                || noHatches != previousSource.noHatches
+                || !channelValues(channels).equals(previousSource.channels)) return false;
+            String encoded = previousSource.semanticNbt == null ? preset.semanticNbt : previousSource.semanticNbt;
+            NBTTagCompound previous = HologramBlueprintNbt.decode(encoded);
+            if (previous == null || !nativeCapture.captureIntent.name()
+                .equals(previous.getString("purpose"))
+                || !nativeCapture.sourceResolution.sourceId.equals(previous.getString("sourceId"))) return false;
+            HologramCapture.SourceAuthority authority = null;
+            for (HologramCapture.Cell cell : nativeCapture.cells) {
+                if (cell.unknown || cell.sourceAuthority == null
+                    || authority != null && authority != cell.sourceAuthority) return false;
+                authority = cell.sourceAuthority;
+            }
+            int members = 0;
+            for (HologramCapture.Cell cell : original.cells) {
+                String key = HologramValues.position(cell);
+                if (!cell.belongsTo(source.id) && (legacyScope == null || !legacyScope.recovered.contains(key)))
+                    continue;
+                HologramCapture.Cell fresh = generated.get(key);
+                if (fresh == null || "templateController".equals(cell.role) != "templateController".equals(fresh.role))
+                    return false;
+                members++;
+            }
+            // Preserve physical choices only for the same purpose, parameters and complete freshly read geometry.
+            // New element/target/schema validation still owns eligibility; an invalid old choice stays visible.
+            return members == generated.size();
         }
 
         private static void append(HologramCapture capture, HologramCapture.Cell cell) throws IOException {

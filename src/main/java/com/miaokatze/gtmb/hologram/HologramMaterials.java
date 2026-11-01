@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.function.Consumer;
 import java.util.function.Predicate;
 
+import net.minecraft.entity.item.EntityItem;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.inventory.IInventory;
@@ -18,6 +19,7 @@ import net.minecraft.item.ItemBlock;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
+import net.minecraft.world.World;
 import net.minecraftforge.fluids.FluidStack;
 
 import org.apache.logging.log4j.LogManager;
@@ -61,6 +63,7 @@ public final class HologramMaterials {
     private static final String SETTINGS = "gtitHologramMaterials";
     private static final String RECOVERY = "gtmbHologramMaterialRecovery";
     private static final String RECOVERY_ME = "gtmbRecoveryMeFirst";
+    private static final String RECOVERY_DROP = "gtmbRecoveryDropAtPlayer";
     private static final String RECOVERY_COUNT = "gtmbRecoveryCount";
     private static final String RECOVERY_FLUID = "gtmbHologramFluidRecovery";
     private static final String RECOVERY_ENERGY = "gtmbHologramEnergyRecovery";
@@ -145,6 +148,7 @@ public final class HologramMaterials {
         private final EntityPlayerMP player;
         private final Settings settings;
         private final int protectedSlot;
+        private final World recoveryWorld;
         private final List<Container> containers = new ArrayList<>();
         private final Map<Integer, ItemStack> retainedContainers = new LinkedHashMap<>();
         private ItemStack terminalStack;
@@ -153,6 +157,7 @@ public final class HologramMaterials {
         private String terminalKey;
         private boolean terminalInfiniteRange, terminalInfinitePower;
         private int terminalSlot = -1;
+        private long terminalRefreshTick = Long.MIN_VALUE, terminalUnavailableTick = Long.MIN_VALUE;
         private HologramMaterialReservations reservations;
 
         public Context(EntityPlayerMP player, Settings settings) {
@@ -172,6 +177,7 @@ public final class HologramMaterials {
             this.player = player;
             this.settings = settings;
             this.protectedSlot = protectedSlot;
+            recoveryWorld = player.worldObj;
             List<ItemStackExtractor> adapters = new ArrayList<>();
             if (settings.containers) {
                 if (suppliedAdapters != null) adapters.addAll(suppliedAdapters);
@@ -836,7 +842,30 @@ public final class HologramMaterials {
             for (ItemStack stack : player.inventory.mainInventory) if (stack == terminalStack) carried = true;
             if (!carried && Platform.isBaublesLoaded)
                 carried = PlayerInventoryUtil.getWirelessTerminalFromBaubles(player) == terminalStack;
-            return carried && terminal.rangeCheck() && terminal.getActionableNode() != null;
+            if (!carried) return false;
+            long tick = player.worldObj.getTotalWorldTime();
+            if (terminalUnavailableTick == tick) return false;
+            if (!terminal.rangeCheck()) {
+                if (terminalRefreshTick == tick) {
+                    terminalUnavailableTick = tick;
+                    return false;
+                }
+                terminalRefreshTick = tick;
+                // Native rangeCheck keeps a previous WAP even when a different WAP now covers the player.
+                terminal = new WirelessTerminalGuiObject(
+                    terminalHandler,
+                    terminalStack,
+                    player,
+                    player.worldObj,
+                    -1,
+                    0,
+                    0);
+                if (!terminal.rangeCheck()) {
+                    terminalUnavailableTick = tick;
+                    return false;
+                }
+            }
+            return terminal.getActionableNode() != null;
         }
 
         /** A crafting order must use the same carried, range-checked terminal and the player's AE permissions. */
@@ -1002,7 +1031,36 @@ public final class HologramMaterials {
             for (ItemStack stack : stacks) if (stack != null) recover(stack.copy(), settings.recoveryDestination == 1);
         }
 
-        /** Persisted real items remain here until a configured destination has room; no world drops are needed. */
+        /** Committed demolition drops try ME, then the backpack, then the online player's feet. */
+        public void recoverWorldAtPlayer(List<ItemStack> stacks) {
+            for (ItemStack stack : stacks) if (stack != null && stack.stackSize > 0) {
+                NBTTagCompound entry = itemReceipt(stack);
+                entry.setBoolean(RECOVERY_ME, true);
+                entry.setBoolean(RECOVERY_DROP, true);
+                NBTTagCompound owner = recoveryOwner();
+                NBTTagList stored = owner.getTagList(RECOVERY, 10);
+                stored.appendTag(entry);
+                owner.setTag(RECOVERY, stored);
+            }
+        }
+
+        public boolean pendingWorldRecovery() {
+            return pendingWorldRecovery(player);
+        }
+
+        static boolean pendingWorldRecovery(EntityPlayerMP player) {
+            NBTTagCompound data = player.getEntityData();
+            if (!data.hasKey(EntityPlayer.PERSISTED_NBT_TAG, 10)) return false;
+            NBTTagList stored = data.getCompoundTag(EntityPlayer.PERSISTED_NBT_TAG)
+                .getTagList(RECOVERY, 10);
+            for (int i = 0; i < stored.tagCount(); i++) {
+                NBTTagCompound receipt = stored.getCompoundTagAt(i);
+                if (receipt.getBoolean(RECOVERY_DROP) && receipt.getInteger(RECOVERY_COUNT) > 0) return true;
+            }
+            return false;
+        }
+
+        /** Only demolition receipts permit world drops; other real materials remain queued when destinations fill. */
         public void flushRecovery() {
             flushResourceRecovery();
             NBTTagCompound owner = recoveryOwner();
@@ -1032,18 +1090,41 @@ public final class HologramMaterials {
                     protectedSlot,
                     player.inventory.getInventoryStackLimit(),
                     stack);
-                // Persist this receipt immediately, before attempting the next queue entry.
+                boolean dropAtPlayer = stored.getCompoundTagAt(i)
+                    .getBoolean(RECOVERY_DROP);
+                // Persist inventory delivery before an external spawn callback can fail.
                 stored.getCompoundTagAt(i)
                     .setInteger(RECOVERY_COUNT, stack.stackSize);
+                if (dropAtPlayer && stack.stackSize > 0) dropAtPlayer(stack, stored.getCompoundTagAt(i), deadline);
                 if (stack.stackSize > 0) {
                     NBTTagCompound entry = itemReceipt(stack);
                     entry.setBoolean(RECOVERY_ME, meFirst);
+                    if (dropAtPlayer) entry.setBoolean(RECOVERY_DROP, true);
                     remaining.appendTag(entry);
                 }
             }
             owner.setTag(RECOVERY, remaining);
             player.inventory.markDirty();
             if (player.inventoryContainer != null) player.inventoryContainer.detectAndSendChanges();
+        }
+
+        private void dropAtPlayer(ItemStack stack, NBTTagCompound receipt, long deadline) {
+            if (player.isDead || player.worldObj == null
+                || player.worldObj != recoveryWorld
+                || player.worldObj.isRemote
+                || !player.worldObj.playerEntities.contains(player)) return;
+            while (stack.stackSize > 0 && System.nanoTime() < deadline) {
+                int amount = Math.min(stack.stackSize, Math.max(1, stack.getMaxStackSize()));
+                EntityItem drop = new EntityItem(
+                    player.worldObj,
+                    player.posX,
+                    player.posY,
+                    player.posZ,
+                    copy(stack, amount));
+                if (!player.worldObj.spawnEntityInWorld(drop)) return;
+                stack.stackSize -= amount;
+                receipt.setInteger(RECOVERY_COUNT, stack.stackSize);
+            }
         }
 
         private void recover(ItemStack stack) {

@@ -18,6 +18,7 @@ public final class HologramLifecycle {
         if (event.phase == TickEvent.Phase.START) HologramCutService.startupRecovery();
         if (event.phase == TickEvent.Phase.END) try {
             HologramAeCraftingOrders.tick();
+            HologramDemolition.tick();
             HologramService.tick();
         } finally {
             HologramWorkBudget.endServerTick();
@@ -26,13 +27,25 @@ public final class HologramLifecycle {
 
     @SubscribeEvent
     public void loggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
+        if (event.player instanceof net.minecraft.entity.player.EntityPlayerMP) {
+            HologramDemolition.cancel((net.minecraft.entity.player.EntityPlayerMP) event.player);
+            HologramCutService.disconnected((net.minecraft.entity.player.EntityPlayerMP) event.player);
+        }
         if (event.player instanceof net.minecraft.entity.player.EntityPlayerMP) HologramAeCraftingOrders
             .cancel((net.minecraft.entity.player.EntityPlayerMP) event.player, "玩家已离线，AE 缺料订单已取消");
     }
 
     @SubscribeEvent
     public void loggedIn(PlayerEvent.PlayerLoggedInEvent event) {
-        if (event.player instanceof net.minecraft.entity.player.EntityPlayerMP)
+        if (event.player instanceof net.minecraft.entity.player.EntityPlayerMP) {
             HologramAeCraftingOrders.recoverOrphans((net.minecraft.entity.player.EntityPlayerMP) event.player);
+            HologramDemolition.resumeRecovery((net.minecraft.entity.player.EntityPlayerMP) event.player);
+        }
+    }
+
+    @SubscribeEvent
+    public void respawned(PlayerEvent.PlayerRespawnEvent event) {
+        if (event.player instanceof net.minecraft.entity.player.EntityPlayerMP)
+            HologramDemolition.resumeRecovery((net.minecraft.entity.player.EntityPlayerMP) event.player);
     }
 }

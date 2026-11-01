@@ -18,6 +18,11 @@ final class HologramActionDispatcher {
         if (s == null || s.player != player || s.cancelled || !s.id.equals(action.getString("session"))) return;
         if (action.hasKey("editorWorkspaceEpoch") && (!action.hasKey("editorWorkspaceEpoch", 4)
             || action.getLong("editorWorkspaceEpoch") != s.editorWorkspaceEpoch)) return;
+        if (HologramDemolition.active(player) && !"close".equals(action.getString("op"))
+            && !"requestFullSnapshot".equals(action.getString("op"))) {
+            HologramBusyReplies.reject(player, action, HologramBusyReplies.Kind.ACTION);
+            return;
+        }
         // Each action gets fresh material connections only if it actually queries or changes materials.
         s.materialContext = null;
         if (action.getInteger("clientSnapshotProtocol") == 1) s.cellDeltaProtocol = true;
@@ -58,6 +63,32 @@ final class HologramActionDispatcher {
         }
         if (s.actionCount++ >= 8) return;
         String op = action.getString("op");
+        if ("captureIntent".equals(op) && HologramSessionPolicy.valid(s) && !s.virtual && s.job != 1 && s.job != 2) {
+            String intent = action.getString("intent");
+            if (!"NEW_TEMPLATE".equals(intent) && !"LIVE_SNAPSHOT".equals(intent)) return;
+            s.captureIntent = com.miaokatze.gtmb.api.StructureSources.CaptureIntent.valueOf(intent);
+            HologramBuildPreparation.scan(s);
+            HologramSnapshots.send(s);
+            return;
+        }
+        if (s.capture != null && HologramSourcePolicy.requiresFence(s)
+            && !"scan".equals(op)
+            && !"close".equals(op)
+            && !"cancel".equals(op)
+            && !"cancelAeSave".equals(op)
+            && !"cancelMaterialOrder".equals(op)
+            && !"aePreviewClose".equals(op)
+            && !"clearWorkspace".equals(op)) {
+            if (!s.capture.sourceCurrent() || !action.hasKey("sourceRevision", 4)
+                || !action.hasKey("semanticPlanRevision", 4)
+                || action.getLong("sourceRevision") != com.miaokatze.gtmb.api.StructureSources.revision()
+                || action.getLong("semanticPlanRevision") != s.planRevision) {
+                s.forcePlacementReady = false;
+                s.status = "结构语义或规划已变化，请重新采集后重试";
+                HologramSnapshots.send(s);
+                return;
+            }
+        }
         if (s.emptyProjection && !("switchEditorWorkspace".equals(op) || "close".equals(op))) {
             s.status = "右击控制器开启投影模式";
             HologramSnapshots.send(s);
@@ -773,7 +804,7 @@ final class HologramActionDispatcher {
         }
         if (hatchTargets != null) {
             s.presetSupported = true;
-            s.presetReason = "自定义仓室搭配已应用；施工时仍核对权限、材料与现场";
+            s.presetReason = "自定义仓室搭配已满足声明配额；原机成型约束仍由原机判断，施工时仍核对权限、材料与现场";
             s.status = s.presetReason;
         }
         if (!action.getBoolean("applyHatchPreset") || s.presetSupported)

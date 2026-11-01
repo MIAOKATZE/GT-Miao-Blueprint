@@ -14,14 +14,17 @@ public final class HologramService {
     private HologramService() {}
 
     public static void open(EntityPlayerMP player, int x, int y, int z, int side) {
+        if (demolitionBusy(player)) return;
         HologramProjectorWorkflow.open(player, x, y, z, side);
     }
 
     public static void openAir(EntityPlayerMP player) {
+        if (demolitionBusy(player)) return;
         HologramProjectorWorkflow.openAir(player);
     }
 
     public static void openWorld(EntityPlayerMP player, int x, int y, int z, int side) {
+        if (demolitionBusy(player)) return;
         HologramProjectorWorkflow.openWorld(player, x, y, z, side);
     }
 
@@ -30,14 +33,17 @@ public final class HologramService {
     }
 
     public static void toggleAreaSelection(EntityPlayerMP player) {
+        if (demolitionBusy(player)) return;
         HologramAreaWorkflow.toggleAreaSelection(player);
     }
 
     public static void beginAreaSelection(EntityPlayerMP player) {
+        if (demolitionBusy(player)) return;
         HologramAreaWorkflow.beginAreaSelection(player);
     }
 
     public static void finishAreaSelection(EntityPlayerMP player, NBTTagCompound request) {
+        if (demolitionBusy(player)) return;
         HologramAreaWorkflow.finishAreaSelection(player, request);
     }
 
@@ -62,14 +68,17 @@ public final class HologramService {
     }
 
     public static void openSettings(EntityPlayerMP player) {
+        if (demolitionBusy(player)) return;
         HologramProjectorWorkflow.openSettings(player);
     }
 
     public static void openVirtual(EntityPlayerMP player, int x, int y, int z, int side, String presetId) {
+        if (demolitionBusy(player)) return;
         HologramWorldPlacementWorkflow.openVirtual(player, x, y, z, side, presetId);
     }
 
     public static void quickPlaceLastBlueprint(EntityPlayerMP player, NBTTagCompound request) {
+        if (demolitionBusy(player)) return;
         HologramWorldPlacementWorkflow.quickPlaceLastBlueprint(player, request);
     }
 
@@ -78,6 +87,7 @@ public final class HologramService {
     }
 
     public static void confirmWorldPosition(EntityPlayerMP player, NBTTagCompound request) {
+        if (demolitionBusy(player)) return;
         HologramWorldPlacementWorkflow.confirmWorldPosition(player, request);
     }
 
@@ -94,15 +104,26 @@ public final class HologramService {
     }
 
     public static void immediateVirtual(EntityPlayerMP player, int x, int y, int z, int side, String presetId) {
+        if (demolitionBusy(player)) return;
         HologramWorldPlacementWorkflow.immediateVirtual(player, x, y, z, side, presetId);
     }
 
     public static void cancel(EntityPlayerMP player) {
+        if (HologramDemolition.active(player)) {
+            HologramDemolition.cancel(player);
+            return;
+        }
         HologramProjectorWorkflow.cancel(player);
     }
 
     public static void handle(EntityPlayerMP player, NBTTagCompound action) {
         HologramActionDispatcher.handle(player, action);
+    }
+
+    private static boolean demolitionBusy(EntityPlayerMP player) {
+        if (!HologramDemolition.active(player)) return false;
+        player.addChatMessage(new net.minecraft.util.ChatComponentText("拆除正在进行，请等待完成或按 Esc 取消"));
+        return true;
     }
 
     public static void tick() {
@@ -124,6 +145,7 @@ public final class HologramService {
 
     static NBTTagCompound libraryQuickBootstrap(EntityPlayerMP player, NBTTagCompound request)
         throws java.io.IOException {
+        if (HologramDemolition.active(player)) throw new java.io.IOException("拆除正在进行，请等待完成或按 Esc 取消");
         return HologramLibraryWorkflow.libraryQuickBootstrap(player, request);
     }
 
@@ -137,10 +159,12 @@ public final class HologramService {
 
     static String libraryActivate(EntityPlayerMP player, NBTTagCompound request, HologramPresets.Preset uploaded)
         throws java.io.IOException {
+        if (HologramDemolition.active(player)) throw new java.io.IOException("拆除正在进行，请等待完成或按 Esc 取消");
         return HologramLibraryWorkflow.libraryActivate(player, request, uploaded);
     }
 
     static void libraryExportDraft(EntityPlayerMP player, NBTTagCompound request) throws java.io.IOException {
+        if (HologramDemolition.active(player)) throw new java.io.IOException("拆除正在进行，请等待完成或按 Esc 取消");
         HologramLibraryWorkflow.libraryExportDraft(player, request);
     }
 

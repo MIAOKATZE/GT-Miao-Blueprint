@@ -290,6 +290,7 @@ final class HologramPresets {
     static final class Structure {
 
         String id, name, sourceMod, sourceClass;
+        String semanticNbt;
         String textBoxNbt;
         int x, y, z, controllerId = -1;
         boolean enabled = true;
@@ -312,6 +313,8 @@ final class HologramPresets {
         boolean deidentificationChosen;
         // Schema 2 extension: a bounded binary NBT receipt, never a recoverable copy of stripped identities.
         String processingNbt;
+        // Optional provenance only. Reloaded documents must revalidate construction independently.
+        String semanticNbt;
         String quantumGroupingNbt;
         List<HologramAePolicy.Issue> aeIssues = new ArrayList<>();
         boolean retainNbt = true, retainCovers = true;
@@ -581,6 +584,7 @@ final class HologramPresets {
             return path + "/length";
         } else if ((path.endsWith("/tileNbt") || path.endsWith("/itemNbt")
             || path.endsWith("/processingNbt")
+            || path.endsWith("/semanticNbt")
             || path.endsWith("/quantumGroupingNbt")) && reviewed != null
             && checked != null
             && reviewed.isJsonPrimitive()
@@ -917,6 +921,9 @@ final class HologramPresets {
     static void validate(Preset preset) throws IOException {
         HologramBlueprintVersions.validateIfPresent(preset);
         if (preset != null) {
+            validateSemanticMetadata(preset.semanticNbt);
+            if (preset.structures != null) for (Structure structure : preset.structures)
+                if (structure != null) validateSemanticMetadata(structure.semanticNbt);
             HologramBlueprintProcessing.validateReceipt(preset);
             HologramDeidentification.checked(preset.deidentificationLevel);
             if (preset.deidentificationVersion < 0 || preset.deidentificationVersion > HologramDeidentification.VERSION)
@@ -980,6 +987,12 @@ final class HologramPresets {
                 throw new IOException("模板控制器物品身份无效");
         }
         if (controllers != 1) throw new IOException("模板必须包含一个控制器");
+    }
+
+    private static void validateSemanticMetadata(String encoded) throws IOException {
+        if (encoded == null || encoded.isEmpty()) return;
+        if (encoded.length() > 65536) throw new IOException("结构语义元信息超过上限");
+        HologramBlueprintNbt.decode(encoded);
     }
 
     private static void validateBlueprint(Preset preset) throws IOException {

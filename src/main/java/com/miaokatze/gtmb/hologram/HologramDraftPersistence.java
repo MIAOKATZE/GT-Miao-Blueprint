@@ -23,13 +23,7 @@ final class HologramDraftPersistence {
     static void persist(HologramSession s) {
         ItemStack held = HologramSessionPolicy.jobTool(s);
         if (held == null) return;
-        HologramMaterials.write(held, s.materialSettings);
-        held.getTagCompound()
-            .setInteger("gtitHologramMain", s.main);
-        held.getTagCompound()
-            .setBoolean("gtitHologramMainExplicit", s.mainExplicit);
-        held.getTagCompound()
-            .setBoolean("gtitHologramDowngrade", s.hatchDowngrade);
+        writeSettings(s, held);
         List<String> existing = new ArrayList<>();
         ChannelDataAccessor.iterateChannelData(held)
             .forEach(entry -> existing.add(entry.getKey()));
@@ -38,6 +32,17 @@ final class HologramDraftPersistence {
             ChannelDataAccessor.setChannelData(held, (String) key, s.channels.getInteger((String) key));
         writeDraft(s, held);
         s.player.inventory.markDirty();
+    }
+
+    /** The detached native trigger and the saved tool carry the same current GTMB settings. */
+    static void writeSettings(HologramSession s, ItemStack held) {
+        HologramMaterials.write(held, s.materialSettings);
+        held.getTagCompound()
+            .setInteger("gtitHologramMain", s.main);
+        held.getTagCompound()
+            .setBoolean("gtitHologramMainExplicit", s.mainExplicit);
+        held.getTagCompound()
+            .setBoolean("gtitHologramDowngrade", s.hatchDowngrade);
     }
 
     static boolean draftMatches(HologramSession s, NBTTagCompound draft) {

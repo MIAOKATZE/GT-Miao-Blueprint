@@ -14,7 +14,6 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.WorldServer;
 
-import com.gtnewhorizon.structurelib.structure.StructureUtility;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
 /** Exercises the production sparse history, local material difference and dirty-cell encoder. */
@@ -64,17 +63,17 @@ final class HologramLocalEditRegression {
         s.materialSettings.me = false;
         s.materialContext = new HologramMaterials.Context(player, s.materialSettings);
         for (int i = 0; i < count; i++) {
-            HologramCapture.Cell cell = new HologramCapture.Cell(
-                StructureUtility.ofBlock(Blocks.stone, 0),
-                i % 128,
-                64,
-                i / 128);
+            // Match physical saved-blueprint projection, including its explicit material pins.
+            HologramCapture.Cell cell = new HologramCapture.Cell(null, i % 128, 64, i / 128);
             cell.block = Blocks.stone;
             cell.blueprintBlock = "minecraft:stone";
+            cell.userPosition = true;
             cell.structureId = i < 16 ? "small-module" : "background";
             s.capture.cells.add(cell);
             s.capture.positions.put(HologramValues.position(cell), cell);
             s.cellIndices.put(cell, i);
+            s.pins.put(i, new ItemStack(Blocks.stone));
+            s.coordinatePins.put(HologramValues.position(cell), new ItemStack(Blocks.stone));
             s.virtualPreset.cells.add(HologramPresets.cell(new ItemStack(Blocks.stone), cell.x, 0, cell.z, -1, false));
         }
         s.indexedCapture = s.capture;
@@ -139,7 +138,8 @@ final class HologramLocalEditRegression {
         annotations(s, world);
         before.apply(s);
         SimpleAssert.that(
-            !s.pins.containsKey(1) && s.capture.cells.get(count - 1) == untouched,
+            HologramValues.same(new ItemStack(Blocks.stone), s.pins.get(1))
+                && s.capture.cells.get(count - 1) == untouched,
             "sparse undo restores only its positions");
         s.cellDeltaProtocol = false;
         HologramLocalPlanRefresh.pending(s, Collections.singleton(1));
