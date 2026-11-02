@@ -194,6 +194,7 @@ final class HologramWorldTransactions {
             return true;
         }
         TileEntity originalTile = w.getTileEntity(c.x, c.y, c.z);
+        boolean suppressOreDrops = !empty && HologramStargateRules.suppressOreDrops(old, oldMeta);
         List<ItemStack> drops = empty
             || (s.player.capabilities.isCreativeMode && w.getTileEntity(c.x, c.y, c.z) == null)
                 ? Collections.emptyList()
@@ -325,57 +326,61 @@ final class HologramWorldTransactions {
                 reserved.setTagCompound(
                     cachedPayload == null ? null : cachePaid ? cachedPayload.itemPaid : cachedPayload.itemEmpty);
             if (!empty) {
-                placementStage = "remove";
-                BlockEvent.BreakEvent event = new BlockEvent.BreakEvent(c.x, c.y, c.z, w, old, oldMeta, s.player);
-                if (MinecraftForge.EVENT_BUS.post(event)) {
-                    rollbackMaterials(s, transaction, inventory);
-                    c.status = "protected";
-                    s.status = "领地/模组保护取消拆除，原方块保留，预留材料已归还";
-                    return true;
-                }
-                if (!sameWorldCell(w, c, old, oldMeta, originalTile)) {
-                    rollbackMaterials(s, transaction, inventory);
-                    c.status = "protected";
-                    s.status = "拆除事件已改变现场，该格保留，请重新扫描";
-                    return true;
-                }
-                if (originalTile != null) {
-                    // A listener may change a hatch inventory/fluid without changing the block identity.
-                    // Capture its latest state, rather than rolling back or recovering the obsolete preview.
-                    drops = HologramRecovery.drops(w, c.x, c.y, c.z);
-                    savedTile = (NBTTagCompound) drops.get(0)
-                        .getTagCompound()
-                        .getCompoundTag(HologramRecovery.TAG)
-                        .getCompoundTag("tile")
-                        .copy();
-                    snapshot = readOnlyBlockSnapshot(w, c.x, c.y, c.z);
-                }
-                boolean tile = originalTile != null;
-                boolean removed;
-                if (tile) {
-                    changedWorld = true;
-                    removed = HologramRecovery.removeWithoutDrops(w, c.x, c.y, c.z);
-                } else {
-                    boolean frame = old instanceof BlockFrameBox;
-                    if (!frame) {
-                        old.onBlockHarvested(w, c.x, c.y, c.z, oldMeta, s.player);
-                        if (!sameWorldCell(w, c, old, oldMeta, originalTile)) {
-                            rollbackMaterials(s, transaction, inventory);
-                            c.status = "protected";
-                            s.status = "采收回调已改变现场，该格保留，请重新扫描";
-                            return true;
-                        }
+                try (HologramDemolition.DropScope oreDrops = suppressOreDrops
+                    ? new HologramDemolition.DropScope(w, c.x, c.y, c.z, false)
+                    : null) {
+                    placementStage = "remove";
+                    BlockEvent.BreakEvent event = new BlockEvent.BreakEvent(c.x, c.y, c.z, w, old, oldMeta, s.player);
+                    if (MinecraftForge.EVENT_BUS.post(event)) {
+                        rollbackMaterials(s, transaction, inventory);
+                        c.status = "protected";
+                        s.status = "领地/模组保护取消拆除，原方块保留，预留材料已归还";
+                        return true;
                     }
-                    changedWorld = true;
-                    removed = frame ? w.setBlockToAir(c.x, c.y, c.z)
-                        : old.removedByPlayer(w, s.player, c.x, c.y, c.z, false);
-                    if (removed) old.onBlockDestroyedByPlayer(w, c.x, c.y, c.z, oldMeta);
-                }
-                if (!removed) {
-                    HologramRecovery.restore(w, c.x, c.y, c.z, old, oldMeta, savedTile);
-                    rollbackMaterials(s, transaction, inventory);
-                    c.status = "protected";
-                    return true;
+                    if (!sameWorldCell(w, c, old, oldMeta, originalTile)) {
+                        rollbackMaterials(s, transaction, inventory);
+                        c.status = "protected";
+                        s.status = "拆除事件已改变现场，该格保留，请重新扫描";
+                        return true;
+                    }
+                    if (originalTile != null) {
+                        // A listener may change a hatch inventory/fluid without changing the block identity.
+                        // Capture its latest state, rather than rolling back or recovering the obsolete preview.
+                        drops = HologramRecovery.drops(w, c.x, c.y, c.z);
+                        savedTile = (NBTTagCompound) drops.get(0)
+                            .getTagCompound()
+                            .getCompoundTag(HologramRecovery.TAG)
+                            .getCompoundTag("tile")
+                            .copy();
+                        snapshot = readOnlyBlockSnapshot(w, c.x, c.y, c.z);
+                    }
+                    boolean tile = originalTile != null;
+                    boolean removed;
+                    if (tile) {
+                        changedWorld = true;
+                        removed = HologramRecovery.removeWithoutDrops(w, c.x, c.y, c.z);
+                    } else {
+                        boolean frame = old instanceof BlockFrameBox;
+                        if (!frame) {
+                            old.onBlockHarvested(w, c.x, c.y, c.z, oldMeta, s.player);
+                            if (!sameWorldCell(w, c, old, oldMeta, originalTile)) {
+                                rollbackMaterials(s, transaction, inventory);
+                                c.status = "protected";
+                                s.status = "采收回调已改变现场，该格保留，请重新扫描";
+                                return true;
+                            }
+                        }
+                        changedWorld = true;
+                        removed = frame ? w.setBlockToAir(c.x, c.y, c.z)
+                            : old.removedByPlayer(w, s.player, c.x, c.y, c.z, false);
+                        if (removed) old.onBlockDestroyedByPlayer(w, c.x, c.y, c.z, oldMeta);
+                    }
+                    if (!removed) {
+                        HologramRecovery.restore(w, c.x, c.y, c.z, old, oldMeta, savedTile);
+                        rollbackMaterials(s, transaction, inventory);
+                        c.status = "protected";
+                        return true;
+                    }
                 }
             }
             if (s.mode != 2) {
@@ -731,6 +736,7 @@ final class HologramWorldTransactions {
             return false;
         }
         // Delivery is outside the rollback region: ME insertion is an external, committed transfer.
+        if (suppressOreDrops) drops = Collections.emptyList();
         HologramMaterialAccess.materialSource(s)
             .recoverWorld(drops);
         for (ItemStack drop : drops) s.recovered.add(drop.copy());
@@ -785,47 +791,53 @@ final class HologramWorldTransactions {
                 protectedCount++;
                 continue;
             }
-            BlockEvent.BreakEvent event = new BlockEvent.BreakEvent(
-                cell.x,
-                cell.y,
-                cell.z,
-                world,
-                block,
-                metadata,
-                s.player);
-            if (MinecraftForge.EVENT_BUS.post(event) || !sameWorldCell(world, cell, block, metadata, tile)) {
-                protectedCount++;
-                continue;
-            }
-            List<ItemStack> recovered = HologramMaterialAccess.drops(block, world, cell, metadata);
-            NBTTagCompound saved = tile == null ? null : HologramNativeCapture.capture(tile);
-            boolean changed = false;
-            try {
-                if (tile != null) {
-                    changed = true;
-                    if (!HologramRecovery.removeWithoutDrops(world, cell.x, cell.y, cell.z))
-                        throw new java.io.IOException("无法移除受支持的占位设备");
-                } else {
-                    block.onBlockHarvested(world, cell.x, cell.y, cell.z, metadata, s.player);
-                    if (!sameWorldCell(world, cell, block, metadata, tile)) {
-                        protectedCount++;
-                        continue;
-                    }
-                    changed = true;
-                    if (!block.removedByPlayer(world, s.player, cell.x, cell.y, cell.z, false))
-                        throw new java.io.IOException("方块拒绝清障");
-                    block.onBlockDestroyedByPlayer(world, cell.x, cell.y, cell.z, metadata);
+            boolean suppressOreDrops = HologramStargateRules.suppressOreDrops(block, metadata);
+            try (HologramDemolition.DropScope oreDrops = suppressOreDrops
+                ? new HologramDemolition.DropScope(world, cell.x, cell.y, cell.z, false)
+                : null) {
+                BlockEvent.BreakEvent event = new BlockEvent.BreakEvent(
+                    cell.x,
+                    cell.y,
+                    cell.z,
+                    world,
+                    block,
+                    metadata,
+                    s.player);
+                if (MinecraftForge.EVENT_BUS.post(event) || !sameWorldCell(world, cell, block, metadata, tile)) {
+                    protectedCount++;
+                    continue;
                 }
-            } catch (java.io.IOException | RuntimeException | LinkageError failure) {
-                if (changed) HologramRecovery.restore(world, cell.x, cell.y, cell.z, block, metadata, saved);
-                protectedCount++;
-                continue;
+                List<ItemStack> recovered = HologramMaterialAccess.drops(block, world, cell, metadata);
+                NBTTagCompound saved = tile == null ? null : HologramNativeCapture.capture(tile);
+                boolean changed = false;
+                try {
+                    if (tile != null) {
+                        changed = true;
+                        if (!HologramRecovery.removeWithoutDrops(world, cell.x, cell.y, cell.z))
+                            throw new java.io.IOException("无法移除受支持的占位设备");
+                    } else {
+                        block.onBlockHarvested(world, cell.x, cell.y, cell.z, metadata, s.player);
+                        if (!sameWorldCell(world, cell, block, metadata, tile)) {
+                            protectedCount++;
+                            continue;
+                        }
+                        changed = true;
+                        if (!block.removedByPlayer(world, s.player, cell.x, cell.y, cell.z, false))
+                            throw new java.io.IOException("方块拒绝清障");
+                        block.onBlockDestroyedByPlayer(world, cell.x, cell.y, cell.z, metadata);
+                    }
+                } catch (java.io.IOException | RuntimeException | LinkageError failure) {
+                    if (changed) HologramRecovery.restore(world, cell.x, cell.y, cell.z, block, metadata, saved);
+                    protectedCount++;
+                    continue;
+                }
+                // Persist recovery before attempting destination insertion. A full inventory cannot erase the refund.
+                if (suppressOreDrops) recovered = Collections.emptyList();
+                HologramMaterialAccess.materialSource(s)
+                    .recoverWorld(recovered);
+                for (ItemStack drop : recovered) s.recovered.add(drop.copy());
+                removed++;
             }
-            // Persist recovery before attempting destination insertion. A full inventory cannot erase the refund.
-            HologramMaterialAccess.materialSource(s)
-                .recoverWorld(recovered);
-            for (ItemStack drop : recovered) s.recovered.add(drop.copy());
-            removed++;
         }
         List<ItemStack> obstructionRefunds = new ArrayList<>(s.recovered);
         HologramResourcePlanner.refreshPlan(s);

@@ -27,6 +27,7 @@ public final class HologramMaterialQuote {
         final String session;
         final long revision;
         final long voucherRevision = DecorationVoucherConfig.revision();
+        final boolean voucherEnabled = HologramDecorationVoucher.enabled();
         final HologramCapture capture;
         final NBTTagCompound ordinary, voucher;
         final long eligibleDemand;
@@ -64,6 +65,7 @@ public final class HologramMaterialQuote {
         boolean current(HologramSession s) {
             return session.equals(s.id) && revision == s.planRevision
                 && voucherRevision == DecorationVoucherConfig.revision()
+                && voucherEnabled == HologramDecorationVoucher.enabled()
                 && capture == s.capture
                 && !s.localPlanPending
                 && !HologramSessionPolicy.authoring(s);
@@ -224,7 +226,8 @@ public final class HologramMaterialQuote {
 
     static void project(HologramSession s) throws IOException {
         if (!cached(s)) throw new IOException("材料需求缓存已失效，请等待完整计划");
-        s.materialQuote = (NBTTagCompound) (s.jobVoucherRequested ? s.materialQuoteCache.voucher
+        s.materialQuote = (NBTTagCompound) (s.jobVoucherRequested && HologramDecorationVoucher.enabled()
+            ? s.materialQuoteCache.voucher
             : s.materialQuoteCache.ordinary).copy();
         stamp(s, s.materialQuote);
         long missing = 0;
@@ -243,13 +246,20 @@ public final class HologramMaterialQuote {
 
     private static void stamp(HologramSession s, NBTTagCompound quote) {
         quote.setLong("voucherRulesRevision", DecorationVoucherConfig.revision());
+        quote.setBoolean("decorationVoucherEnabled", HologramDecorationVoucher.enabled());
         quote.setString("session", s.id);
         quote.setLong("planRevision", s.planRevision);
         quote.setLong("placementReviewNonce", s.placementReviewNonce);
-        quote.setBoolean("useDecorationVoucher", s.jobVoucherRequested);
+        quote.setBoolean("useDecorationVoucher", s.jobVoucherRequested && HologramDecorationVoucher.enabled());
         quote.setBoolean("creativePaymentsFree", s.player.capabilities.isCreativeMode);
         if (!quote.hasKey("inventoryCheck", 8)) quote.setString("inventoryCheck", "cached");
         quote.setString("validation", "库存以确认施工时为准");
+    }
+
+    static boolean rulesCurrent(NBTTagCompound quote) {
+        return quote != null && quote.getLong("voucherRulesRevision") == DecorationVoucherConfig.revision()
+            && quote.hasKey("decorationVoucherEnabled", 1)
+            && quote.getBoolean("decorationVoucherEnabled") == HologramDecorationVoucher.enabled();
     }
 
     interface ItemStock {
@@ -435,6 +445,7 @@ public final class HologramMaterialQuote {
         private final String session;
         private final long revision;
         private final long voucherRevision = DecorationVoucherConfig.revision();
+        private final boolean voucherEnabled = HologramDecorationVoucher.enabled();
         private final HologramCapture capture;
         private final NBTTagList materials, voucherMaterials, resources;
         private final List<NBTTagCompound> ordinaryRows, waivedRows;
@@ -454,11 +465,11 @@ public final class HologramMaterialQuote {
             revision = s.planRevision;
             capture = s.capture;
             this.materials = materials;
-            this.voucherMaterials = voucherMaterials;
+            this.voucherMaterials = voucherEnabled ? voucherMaterials : (NBTTagList) materials.copy();
             this.resources = resources;
             this.inventory = inventory;
             ordinaryRows = rows(materials);
-            waivedRows = rows(voucherMaterials);
+            waivedRows = rows(this.voucherMaterials);
             fuzzy = item -> HologramMaterialAccess.fuzzyBlueprintShells(s, item);
             counter = new QuoteCounter(ordinaryRows, requirements, fuzzy);
         }
@@ -467,7 +478,8 @@ public final class HologramMaterialQuote {
             if (Thread.currentThread() != owner) throw new IllegalStateException("Quote stock requires owner thread");
             if (!done() && (!session.equals(s.id) || revision != s.planRevision
                 || capture != s.capture
-                || voucherRevision != DecorationVoucherConfig.revision()))
+                || voucherRevision != DecorationVoucherConfig.revision()
+                || voucherEnabled != HologramDecorationVoucher.enabled()))
                 throw new IllegalStateException("Obsolete quote preparation cannot observe or publish a new plan");
             int work = 0;
             while (!done() && work < maxWork && (work == 0 || System.nanoTime() < deadline)) {
@@ -560,7 +572,7 @@ public final class HologramMaterialQuote {
                 try {
                     project(s);
                 } catch (IOException incomplete) {
-                    s.materialQuote = s.jobVoucherRequested ? voucher : ordinary;
+                    s.materialQuote = s.jobVoucherRequested && HologramDecorationVoucher.enabled() ? voucher : ordinary;
                 }
                 result = (NBTTagCompound) s.materialQuote.copy();
                 index = 1;
@@ -627,8 +639,7 @@ public final class HologramMaterialQuote {
 
     /** Recheck only cached payable identities. No cell/world traversal, plan rebuild or render-payload encoding. */
     static void recheck(HologramSession s) throws IOException {
-        if (s.materialQuote == null || !s.materialQuote.getBoolean("complete")
-            || s.materialQuote.getLong("voucherRulesRevision") != DecorationVoucherConfig.revision()
+        if (!rulesCurrent(s.materialQuote) || !s.materialQuote.getBoolean("complete")
             || s.materialQuote.getLong("planRevision") != s.planRevision
             || !s.id.equals(s.materialQuote.getString("session"))) throw new IOException("材料需求缓存已失效，请重新打开材料确认");
         StockSnapshot inventory = new StockSnapshot(stock(s));

@@ -14,6 +14,7 @@ import net.minecraft.block.material.Material;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.entity.item.EntityItem;
+import net.minecraft.entity.item.EntityXPOrb;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.entity.player.InventoryPlayer;
@@ -34,6 +35,7 @@ import net.minecraft.world.chunk.Chunk;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.entity.EntityJoinWorldEvent;
 import net.minecraftforge.event.world.BlockEvent;
+import net.minecraftforge.oredict.OreDictionary;
 
 import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
@@ -86,6 +88,7 @@ public final class HologramDemolitionRegression {
                 chest(world, player);
                 nativeFailure(world, player);
                 declaredToolLifecycle(world, player, guard);
+                stargateOres(world, player);
                 try (AutoCloseable nativeScope = HologramDemolitionDestinationRegression.nativeClassScope()) {
                     nativeGtHatches(unsafe, world, player);
                 }
@@ -200,6 +203,17 @@ public final class HologramDemolitionRegression {
         SimpleAssert.that(
             !MinecraftForge.EVENT_BUS.post(joinEvent(outside, world)),
             "capture always ends with the native callback scope");
+        try (HologramDemolition.DropScope source = new HologramDemolition.DropScope(world, 0, 64, 0, false)) {
+            EntityItem forced = new EntityItem(world, .5, 64.5, .5, new ItemStack(Items.emerald));
+            forced.forceSpawn = true;
+            EntityJoinWorldEvent canceled = joinEvent(forced, world);
+            canceled.setCanceled(true);
+            MinecraftForge.EVENT_BUS.post(canceled);
+            SimpleAssert.that(
+                forced.isDead && forced.getEntityItem().stackSize == 0,
+                "previously canceled forceSpawn ore loot cannot bypass source suppression");
+            SimpleAssert.that(source.items.isEmpty(), "suppressed ore loot never becomes a recovery receipt");
+        }
     }
 
     private static void protection(Scene world, Player player, Guard guard) throws IOException {
@@ -271,6 +285,78 @@ public final class HologramDemolitionRegression {
         SimpleAssert.that(
             !MinecraftForge.EVENT_BUS.post(joinEvent(later, world)),
             "exception never leaks capture to later world activity");
+    }
+
+    private static void stargateOres(Scene world, Player player) throws Exception {
+        String threadName = Thread.currentThread()
+            .getName();
+        Thread.currentThread()
+            .setName("Server thread");
+        try (AutoCloseable nativeOres = HologramStargateRulesRegression.nativeOreEnvironment()) {
+            OreBlock ore = (OreBlock) HologramStargateRulesRegression
+                .registeredOre("gtmb:stargate_native_ore_fixture", new OreBlock());
+            OreDictionary.registerOre("oreGtmbNativeFixture", new ItemStack(ore, 1, 7));
+            SimpleAssert.that(HologramStargateRules.isOre(ore, 7), "ore dictionary identifies the original ore block");
+            SimpleAssert
+                .that(!HologramStargateRules.isOre(ore, 8), "ore metadata remains distinct from other variants");
+            world.block = ore;
+            world.metadata = 7;
+            world.tile = null;
+            world.liveItems = world.liveXp = 0;
+            try (HologramStargateRulesRegression.Mode ordinary = new HologramStargateRulesRegression.Mode(false)) {
+                HologramDemolition.Removal result = HologramDemolition.removeBlock(player, world, -3, 64, -2);
+                SimpleAssert.that(result.removed && !result.drops.isEmpty(), "default mode retains native ore drops");
+                SimpleAssert.that(world.liveXp > 0, "default mode retains native ore experience");
+            }
+            try (HologramStargateRulesRegression.Mode rules = new HologramStargateRulesRegression.Mode(true)) {
+                for (int path = 0; path < 3; path++) {
+                    world.block = ore;
+                    world.metadata = 7;
+                    world.tile = null;
+                    world.liveItems = world.liveXp = 0;
+                    ore.fail = path == 1;
+                    ore.early = path == 2;
+                    ore.xpCalls = 0;
+                    HologramDemolition.Removal result = HologramDemolition.removeBlock(player, world, -3, 64, -2);
+                    SimpleAssert.that(result.removed && world.block == Blocks.air, "rules allow native ore removal");
+                    SimpleAssert.eq(path == 1, result.failure != null, "real native failure remains visible");
+                    SimpleAssert
+                        .that(result.drops.isEmpty(), "normal, failed and early native paths return no ore loot");
+                    SimpleAssert
+                        .eq(0, world.liveItems + world.liveXp, "ore drops and experience leave no live entities");
+                    SimpleAssert.eq(0, ore.xpCalls, "native ore experience callback is not invoked");
+                }
+                ore.fail = ore.early = false;
+                ore.neighbor = true;
+                world.block = ore;
+                world.metadata = 7;
+                HologramDemolition.Removal neighbor = HologramDemolition.removeBlock(player, world, -3, 64, -2);
+                SimpleAssert.eq(1, neighbor.drops.size(), "neighbor callback drops remain recoverable");
+                SimpleAssert.eq(
+                    Item.getItemFromBlock(ore),
+                    neighbor.drops.get(0)
+                        .getItem(),
+                    "neighbor ore items are kept");
+                SimpleAssert.eq(3, neighbor.drops.get(0).stackSize, "neighbor drops keep their complete count");
+                ore.neighbor = false;
+
+                world.block = Blocks.chest;
+                world.metadata = 2;
+                TileEntityChest chest = new TileEntityChest();
+                world.tile = chest;
+                chest.setInventorySlotContents(0, new ItemStack(ore, 13, 7));
+                chest.setWorldObj(world);
+                HologramDemolition.Removal device = HologramDemolition.removeBlock(player, world, 0, 64, 0);
+                int cargo = 0;
+                for (ItemStack drop : device.drops)
+                    if (drop.getItem() == Item.getItemFromBlock(ore) && drop.getItemDamage() == 7)
+                        cargo += drop.stackSize;
+                SimpleAssert.eq(13, cargo, "ordinary device inventories retain all ore cargo under Stargate rules");
+            }
+        } finally {
+            Thread.currentThread()
+                .setName(threadName);
+        }
     }
 
     private static void declaredToolLifecycle(Scene world, Player player, Guard guard) throws Exception {
@@ -526,6 +612,8 @@ public final class HologramDemolitionRegression {
                 HologramDemolition.DROPS.spawned((EntityJoinWorldEvent) event);
                 return event.isCanceled();
             }
+            if (event instanceof BlockEvent.HarvestDropsEvent)
+                HologramDemolition.DROPS.harvested((BlockEvent.HarvestDropsEvent) event);
             if (event instanceof BlockEvent.BreakEvent && toolCheck != null) toolCheck.run();
             return event instanceof BlockEvent.BreakEvent && cancel || original.post(event);
         }
@@ -638,6 +726,43 @@ public final class HologramDemolitionRegression {
         }
     }
 
+    private static final class OreBlock extends Block {
+
+        boolean fail, early, neighbor;
+        int xpCalls;
+
+        OreBlock() {
+            super(Material.rock);
+        }
+
+        @Override
+        public boolean canHarvestBlock(EntityPlayer player, int metadata) {
+            return true;
+        }
+
+        @Override
+        public void onBlockHarvested(World world, int x, int y, int z, int metadata, EntityPlayer player) {
+            if (early) world.setBlockToAir(x, y, z);
+        }
+
+        @Override
+        public void breakBlock(World world, int x, int y, int z, Block block, int metadata) {
+            EntityItem item = new EntityItem(world, x + .5, y + .5, z + .5, new ItemStack(Items.emerald, 11));
+            item.forceSpawn = true;
+            world.spawnEntityInWorld(item);
+            world.spawnEntityInWorld(new EntityXPOrb(world, x + .5, y + .5, z + .5, 7));
+            if (neighbor)
+                world.spawnEntityInWorld(new EntityItem(world, x + 1.5, y + .5, z + .5, new ItemStack(this, 3, 7)));
+            if (fail) throw new IllegalStateException("native ore failure after loot");
+        }
+
+        @Override
+        public void dropXpOnBlockBreak(World world, int x, int y, int z, int experience) {
+            xpCalls++;
+            super.dropXpOnBlockBreak(world, x, y, z, experience);
+        }
+    }
+
     private static final class Player extends EntityPlayerMP {
 
         boolean edit;
@@ -666,7 +791,7 @@ public final class HologramDemolitionRegression {
     private static final class Scene extends WorldServer {
 
         Block block;
-        int metadata, liveItems;
+        int metadata, liveItems, liveXp;
         TileEntity tile;
         boolean mine;
         GameRules rules;
@@ -734,6 +859,7 @@ public final class HologramDemolitionRegression {
             if (MinecraftForge.EVENT_BUS.post(joinEvent(entity, this)) && !entity.forceSpawn) return false;
             if (entity instanceof EntityItem && !entity.isDead && ((EntityItem) entity).getEntityItem().stackSize > 0)
                 liveItems++;
+            if (entity instanceof EntityXPOrb && !entity.isDead) liveXp++;
             return true;
         }
     }

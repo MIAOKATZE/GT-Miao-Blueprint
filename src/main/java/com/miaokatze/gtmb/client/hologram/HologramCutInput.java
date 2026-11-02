@@ -142,7 +142,7 @@ final class HologramCutInput {
         }
 
         boolean cut() {
-            return mode == Mode.CUT;
+            return mode() == Mode.CUT;
         }
 
         void cycle() {

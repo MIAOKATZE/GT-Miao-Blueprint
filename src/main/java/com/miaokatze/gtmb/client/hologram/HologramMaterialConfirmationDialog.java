@@ -354,7 +354,7 @@ final class HologramMaterialConfirmationDialog {
         panel.child(
             button(
                 55,
-                () -> lessonClose == null ? ui.review.lastConfirmationAction() : "最终确认 · 教学隔离",
+                () -> lessonClose != null ? "最终确认 · 教学隔离" : ui.review.lastConfirmationAction(),
                 184,
                 402,
                 434,

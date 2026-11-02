@@ -40,6 +40,7 @@ public final class HologramVoucherEditor {
                 status = "配置保存失败：" + failure.getMessage();
             }
         }
+        if (HologramStargateRules.enabled()) status += "；星门规则已禁用抵扣，配置保留用于普通模式";
         NBTTagCompound reply = DecorationVoucherConfig.snapshot();
         reply.setBoolean("voucherEditor", true);
         reply.setString("status", status);

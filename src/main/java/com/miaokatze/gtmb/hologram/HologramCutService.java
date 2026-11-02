@@ -57,7 +57,9 @@ public final class HologramCutService {
                 NBTTagCompound state = storage.load();
                 recover(storage, state);
             } catch (Exception failure) {
-                com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG
+                if (failure instanceof OreMoveBlocked) com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG
+                    .info("Ore-related cut remains in durable recovery journal: " + file);
+                else com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG
                     .error("Interrupted cut remains in durable recovery journal: " + file, failure);
             }
         } catch (IOException failure) {
@@ -325,7 +327,12 @@ public final class HologramCutService {
                                 : "旧剪切日志缺少权限记录，已保留原记录并阻止自动恢复；请管理员核对存档");
                 } else directory(response, durable);
             } catch (IOException ignored) {}
-            com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Cut clipboard request failed", failure);
+            if (failure instanceof OreMoveBlocked) {
+                response.setString("code", HologramStargateRules.RESTRICTION_CODE);
+                response.setString("message", failure.getMessage());
+            }
+            if (!(failure instanceof OreMoveBlocked))
+                com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Cut clipboard request failed", failure);
         }
         return response;
     }
@@ -364,10 +371,12 @@ public final class HologramCutService {
 
     private static void editRights(EntityPlayerMP player, HologramCutWorld.Edit edit) throws IOException {
         if (editableWorld(player) != edit.world) throw new IOException("剪切原世界已变化，操作已停止");
-        for (BlockSnapshot snapshot : edit.snapshots)
+        for (BlockSnapshot snapshot : edit.snapshots) {
+            movable(snapshot.getReplacedBlock(), snapshot.meta);
             if (!edit.world.canMineBlock(player, snapshot.x, snapshot.y, snapshot.z)
                 || !player.canPlayerEdit(snapshot.x, snapshot.y, snapshot.z, 1, player.getHeldItem()))
                 throw new IOException("该区域不允许编辑，原方块与暂存已保留");
+        }
     }
 
     private static void coordinateRights(EntityPlayerMP player, WorldServer world, NBTTagCompound shape, int x, int y,
@@ -377,6 +386,12 @@ public final class HologramCutService {
         for (int i = 0; i < cells.tagCount(); i++) {
             NBTTagCompound cell = cells.getCompoundTagAt(i);
             int px = x + cell.getInteger("x"), py = y + cell.getInteger("y"), pz = z + cell.getInteger("z");
+            if (HologramStargateRules.enabled()) {
+                if (world.blockExists(px, py, pz))
+                    movable(world.getBlock(px, py, pz), world.getBlockMetadata(px, py, pz));
+                if (cell.hasKey("block", 8))
+                    movable(Block.getBlockFromName(cell.getString("block")), cell.getInteger("meta"));
+            }
             if (!world.canMineBlock(player, px, py, pz) || !player.canPlayerEdit(px, py, pz, 1, player.getHeldItem()))
                 throw new IOException("该区域不允许编辑，原方块与暂存已保留");
         }
@@ -539,6 +554,7 @@ public final class HologramCutService {
         NBTTagCompound candidate = approved ? entry : pending.getCompoundTag("candidate");
         NBTTagCompound changes = HologramCutWorld
             .recoveryChanges(world, before, candidate, x, y, z, approved && air, !approved);
+        oreRecoveryRights(world, before, candidate, x, y, z);
         if (changes != null) HologramCutWorld.apply(world, changes, x, y, z, air);
         HologramCutWorld.saveAndVerify(world, entry, x, y, z, air);
         NBTTagCompound completed = (NBTTagCompound) state.copy();
@@ -549,6 +565,33 @@ public final class HologramCutService {
         if (!consumeId.isEmpty()) remove(state, consumeId);
         state.removeTag("pending");
         if (approved) HologramCutWorld.notifyCommitted(world, entry, x, y, z, air);
+    }
+
+    private static void movable(Block block, int metadata) throws OreMoveBlocked {
+        if (HologramStargateRules.suppressOreDrops(block, metadata)) throw new OreMoveBlocked();
+    }
+
+    private static void oreRecoveryRights(WorldServer world, NBTTagCompound before, NBTTagCompound candidate, int x,
+        int y, int z) throws IOException {
+        if (!HologramStargateRules.enabled()) return;
+        NBTTagList originals = before.getTagList("cells", 10), targets = candidate.getTagList("cells", 10);
+        for (int i = 0; i < originals.tagCount(); i++) {
+            NBTTagCompound cell = originals.getCompoundTagAt(i);
+            movable(Block.getBlockFromName(cell.getString("block")), cell.getInteger("meta"));
+            int px = x + cell.getInteger("x"), py = y + cell.getInteger("y"), pz = z + cell.getInteger("z");
+            movable(world.getBlock(px, py, pz), world.getBlockMetadata(px, py, pz));
+        }
+        for (int i = 0; i < targets.tagCount(); i++) {
+            NBTTagCompound cell = targets.getCompoundTagAt(i);
+            movable(Block.getBlockFromName(cell.getString("block")), cell.getInteger("meta"));
+        }
+    }
+
+    private static final class OreMoveBlocked extends IOException {
+
+        OreMoveBlocked() {
+            super(HologramStargateRules.restrictionMessage());
+        }
     }
 
     private static boolean seen(NBTTagCompound state, String id) {

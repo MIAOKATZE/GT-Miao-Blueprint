@@ -13,6 +13,7 @@ import net.minecraft.entity.player.PlayerCapabilities;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagList;
 import net.minecraft.tileentity.TileEntityChest;
 
 import com.miaokatze.gtmb.testutil.SimpleAssert;
@@ -207,6 +208,18 @@ public final class HologramWorldServiceRegression {
         set(session, "job", 0);
         set(session, "completed", oldCompleted);
         set(session, "status", appliedStatus);
+        // This fixture omits network publication; prepare the real quote normally completed by that snapshot.
+        NBTTagList materials = new NBTTagList();
+        NBTTagCompound stone = new ItemStack(Blocks.stone).writeToNBT(new NBTTagCompound());
+        stone.setLong("required", 1);
+        stone.setLong("shellRequired", 1);
+        materials.appendTag(stone);
+        HologramSession reviewed = (HologramSession) session;
+        HologramMaterialQuote.snapshot(reviewed, materials, new NBTTagList());
+        SimpleAssert.that(
+            HologramMaterialQuote.rulesCurrent(reviewed.materialQuote) && reviewed.materialQuote.getBoolean("complete")
+                && reviewed.materialQuote.getLong("planRevision") == appliedRevision,
+            "material confirmation receives the completed server quote for the current reviewed plan");
         configure.setBoolean("forceExplicit", false);
         action.invoke(null, session, configure, "confirmBlueprintPlacement");
         SimpleAssert

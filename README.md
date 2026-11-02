@@ -31,13 +31,33 @@
 
 *玩家提供的游戏截图，原图未修改。/ Player-provided gameplay screenshot, reproduced unchanged.*
 
-### v0.3.7 候选：重复识别与原生拆除修复
+### v0.3.8：星门规则模式 / Stargate rules mode
+
+默认关闭。启动一次后，在**服务端或单人存档所用实例**的 `config/gtmb-stargate-rules.cfg` 中设置下方选项，并重启服务器或游戏：
+
+```cfg
+stargateRules {
+    B:enabled=true
+}
+```
+
+启用后，蓝图、剪切和拆除三档均可使用，自动建造、替换及清障继续按正常材料与权限规则执行。**装饰代用券不再抵扣材料**；已有券和工具设置保留，关闭规则模式后可按普通配置使用。
+
+**矿石方块可以被拆除，但不返还该矿块的掉落或经验**，替换和清障同样适用。设备库存中原有的矿石仍正常返还。为了避免整块搬矿后手动开采，包含矿石方块的世界剪切、粘贴或撤销会明确拒绝，原方块与暂存保留；矿石相关的旧未完成搬运记录也保持保护。普通建筑和设备的搬运、蓝图编辑与投影、材料查看、授权 AE 功能继续可用。
+
+矿石判定复用 GT 原生矿石接口与矿物辞典，不按矿种或机器名称写特判。此模式针对挖矿收益和免费材料抵扣设置边界，不将整合包已有的生存建造能力一律视为违规；具体星门资格仍由所属服务器或活动管理团队判断。升级客户端可看到对应提示，限制以服务端为准。
+
+*Disabled by default. Enable `stargateRules.enabled` in the server's `config/gtmb-stargate-rules.cfg` and restart. All three modes remain available with normal material and permission checks, but decoration vouchers cannot waive costs. Removed ore blocks yield no drops or XP, including during replacement and obstruction removal; ore already stored inside devices is retained. World cut/paste/undo operations involving ore blocks are rejected with their original blocks and records preserved, preventing ore relocation from bypassing the removal rule. This option does not certify Stargate eligibility.*
+
+请同时替换客户端与服务端的旧 0.3.8 候选包，避免旧客户端仍保留过严的按钮限制。上方截图展示三档模式入口，不作为新规则的实机验收图。当前正式发布 v0.3.8，包含此前 0.3.7 的更新。
+
+### v0.3.7：重复识别与原生拆除修复
 
 结构采集结果按当前会话判断，修复连续切换机器时“预览已采集”却误报失败的问题。客户端接收快照改为非阻塞准入，服务端与客户端协商后按实际处理进度发送，保留施工和 AE 回执顺序；完整流控需要两端均升级到 0.3.7。未协商流控的连接发生过载时会明确终止，避免丢失操作回执。
 
 区域拆除按方块声明的工具条件调用正常破坏与掉落回调，不再把 GT 仓室的完整 TileEntity 状态封装成拆除产物；原生物品 NBT、内容物及保护事件仍由方块规则决定。确认框可选择“背包”或“AE 网络”，只投所选位置，容量不足的余量才掉到脚下；AE 不可用时停止剩余拆除并保留待交付物品。既有剪切、结构改造和旧封装物品的恢复规则保持兼容。
 
-采集续批复用初始化结果，候选解析与原生材料规划分批推进，未知元素保护、配额和来源有效性检查保持。第三方单次回调仍在原线程原子执行。本轮针对已确认的通用机制修复，不代表已复现玩家现场冻结；验证与交付边界见 `plan/v037-repeat-capture-20261102/交接报告.md`。0.3.7 仍为候选，Release 保持草稿状态。
+采集续批复用初始化结果，候选解析与原生材料规划分批推进，未知元素保护、配额和来源有效性检查保持。第三方单次回调仍在原线程原子执行。本轮针对已确认的通用机制修复，不代表已复现玩家现场冻结；验证与交付边界见 `plan/v037-repeat-capture-20261102/交接报告.md`。这些改动已随 v0.3.8 发布。
 
 <details>
 <summary>历史候选变更 / Earlier candidate changes</summary>
@@ -568,7 +588,7 @@ ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继
 
 | 项目 / Requirement | 版本或说明 / Version or notes |
 | --- | --- |
-| **目标整包 / Target pack** | **GTNH2.9.0 正式版**；模组版本范围 **0.3.0 ~ +**（当前 0.3.0 为待发布草稿 / Draft） |
+| **目标整包 / Target pack** | **GTNH 2.9.0 正式版**；模组版本范围 **0.3.0 ~ +**；当前 [v0.3.8](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases/tag/v0.3.8) |
 | **游戏与加载器 / Game & loader** | Minecraft **1.7.10** · Forge **10.13.4.1614** |
 | **安装位置 / Install on** | **客户端与服务端均需安装 / Both client and server** |
 | **必需依赖 / Required mods** | GregTech、StructureLib、Applied Energistics 2、GTNHLib、ModularUI、ModularUI2 **2.3.94-1.7.10**；目标 GTNH 整包已提供。 / Included in the target GTNH pack. |

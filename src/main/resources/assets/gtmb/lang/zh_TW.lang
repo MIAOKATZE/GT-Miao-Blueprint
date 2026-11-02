@@ -152,6 +152,9 @@ gtmb.hologram.progress.area.detail.failed=材料規劃失敗
 gtmb.hologram.progress.area.detail.paused=材料規劃已暫停
 
 # Decoration voucher
+gtmb.hologram.stargateRules.worldHint=星門規則：裝飾券抵扣停用；礦石不返還掉落或經驗
+gtmb.hologram.stargateRules.oreDrops=星門規則：礦石會被破壞且不返還掉落或經驗
+
 item.decoration_voucher.name=裝飾抵用券
 item.decoration_voucher.description.0=§7為§f一次藍圖施工§7抵扣允許的建築裝飾材料。§r
 item.decoration_voucher.description.1=§e有可抵扣方塊即可在材料確認頁勾選查看§7；生存施工須在主背包備券。§r

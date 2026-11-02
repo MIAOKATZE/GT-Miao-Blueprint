@@ -58,12 +58,13 @@ public final class HologramDecorationVoucher {
     private HologramDecorationVoucher() {}
 
     public static boolean enabled() {
-        return DecorationVoucherConfig.view().enabled;
+        return !HologramStargateRules.enabled() && DecorationVoucherConfig.view().enabled;
     }
 
     /** Ordinary decorative items must themselves belong to an allowed decoration namespace. */
     public static boolean eligible(ItemStack stack) {
-        return stack != null && Block.getBlockFromItem(stack.getItem()) != null
+        return enabled() && stack != null
+            && Block.getBlockFromItem(stack.getItem()) != null
             && Block.getBlockFromItem(stack.getItem()) != net.minecraft.init.Blocks.air
             && safe(stack)
             && DecorationVoucherConfig.view()
@@ -99,7 +100,7 @@ public final class HologramDecorationVoucher {
 
     /** Filter before ledger quotation so a waived raw fraction never earns spendable fractional credit. */
     public static HologramDecorMaterials.Descriptor payable(Block host, HologramDecorMaterials.Descriptor descriptor) {
-        if (descriptor == null) return null;
+        if (descriptor == null || !enabled()) return descriptor;
         List<HologramDecorMaterials.Cost> remaining = new ArrayList<>();
         for (HologramDecorMaterials.Cost cost : descriptor.costs) if (!covered(host, cost)) remaining.add(cost);
         return new HologramDecorMaterials.Descriptor(remaining);
@@ -150,7 +151,7 @@ public final class HologramDecorationVoucher {
     }
 
     static boolean hostAllowed(Block block) {
-        if (block == null) return false;
+        if (!enabled() || block == null) return false;
         String name = Block.blockRegistry.getNameForObject(block);
         String modId = namespace(name);
         return DecorationVoucherConfig.view()

@@ -590,6 +590,7 @@ public final class HologramNetwork {
     static void completeOwnedState(SnapshotTicket ticket, NBTTagCompound owned,
         java.util.function.BooleanSupplier valid, Runnable ready) {
         if (!ticket.current()) return;
+        HologramSnapshots.writeServerRules(owned);
         if (owned.hasKey("progress", 10)) owned.getCompoundTag("progress")
             .setLong("sequence", progressSequence.incrementAndGet());
         OutgoingSnapshot previous = null;
@@ -976,6 +977,11 @@ public final class HologramNetwork {
 
     /** Main-thread FIFO: one bounded fragment per player and tick, including every ACK snapshot. */
     public static final class TransportTicks {
+
+        @SubscribeEvent
+        public void loggedIn(cpw.mods.fml.common.gameevent.PlayerEvent.PlayerLoggedInEvent event) {
+            if (event.player instanceof EntityPlayerMP) sendServerRules((EntityPlayerMP) event.player);
+        }
 
         @SubscribeEvent
         public void clientTick(TickEvent.ClientTickEvent event) {
@@ -1369,13 +1375,26 @@ public final class HologramNetwork {
 
         State(NBTTagCompound tag) {
             super(tag);
+            HologramSnapshots.writeServerRules(this.tag);
         }
+    }
+
+    /** Independent of workspace/session state, including before the client has received its first world. */
+    private static void sendServerRules(EntityPlayerMP player) {
+        if (channel == null) return;
+        NBTTagCompound rules = new NBTTagCompound();
+        rules.setBoolean("serverRulesOnly", true);
+        channel.sendTo(new State(rules), player);
     }
 
     public static final class ServerHandler implements IMessageHandler<Action, IMessage> {
 
         public IMessage onMessage(Action msg, MessageContext ctx) {
             EntityPlayerMP player = ctx.getServerHandler().playerEntity;
+            if ("serverRules".equals(msg.tag.getString("action"))) {
+                sendServerRules(player);
+                return null;
+            }
             // Preserve an independent lane for disk receipts; different capabilities are never coalesced.
             boolean receipt = "ackBlueprintSaved".equals(msg.tag.getString("op"));
             boolean snapshotControl = "snapshotFlow".equals(msg.tag.getString("op"))

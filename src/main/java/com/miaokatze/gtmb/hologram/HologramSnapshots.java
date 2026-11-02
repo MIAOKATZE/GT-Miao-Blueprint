@@ -22,6 +22,11 @@ import gregtech.common.blocks.ItemMachines;
 /** Server snapshot construction; transport is an explicit SnapshotSink port. */
 final class HologramSnapshots {
 
+    /** A positive restriction flag preserves unrestricted semantics for older snapshots without this field. */
+    static void writeServerRules(NBTTagCompound state) {
+        state.setBoolean("stargateRules", HologramStargateRules.enabled());
+    }
+
     private HologramSnapshots() {}
 
     static void aeSnapshot(HologramSession s, NBTTagCompound state) {
@@ -564,6 +569,7 @@ final class HologramSnapshots {
     /** Only detached cursors and counters, never cell payloads or an editable state/authority replacement. */
     static NBTTagCompound progress(HologramSession s) {
         NBTTagCompound progress = new NBTTagCompound();
+        writeServerRules(progress);
         progress.setString("scope", "server");
         progress.setString("session", s.id);
         progress.setLong("planRevision", s.planRevision);
@@ -761,6 +767,7 @@ final class HologramSnapshots {
 
     static NBTTagCompound areaSelection(HologramSession s) {
         NBTTagCompound state = new NBTTagCompound();
+        writeServerRules(state);
         state.setBoolean("areaSelectionOnly", true);
         state.setString("session", s.id);
         state.setString("generation", s.id);
@@ -866,6 +873,7 @@ final class HologramSnapshots {
         if (s.open && !s.cancelled && s.libraryWorld == s.player.worldObj && HologramSessionPolicy.valid(s))
             s.libraryUiActive = true;
         NBTTagCompound state = new NBTTagCompound();
+        writeServerRules(state);
         state.setString("captureIntent", s.captureIntent.name());
         if (s.capture != null) {
             s.capture.sourceCurrent();

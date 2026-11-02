@@ -41,6 +41,7 @@ final class HologramMaterialQuoteRegression {
             craftingDeliveryCannotFeedItsOwnUnfinishedCpu();
             craftingDeliveryFailurePreservesRealReceipts();
             creativeVoucherSelectionAndCommittedPlacement();
+            voucherSelectionAndCommittedPlacement(false, true);
         } catch (Exception failure) {
             throw new AssertionError("Material quote regression", failure);
         }
@@ -603,11 +604,11 @@ final class HologramMaterialQuoteRegression {
 
     /** Real server review/projection and the successful placement transaction share the creative no-debit rule. */
     private static void creativeVoucherSelectionAndCommittedPlacement() throws Exception {
-        voucherSelectionAndCommittedPlacement(true);
-        voucherSelectionAndCommittedPlacement(false);
+        voucherSelectionAndCommittedPlacement(true, false);
+        voucherSelectionAndCommittedPlacement(false, false);
     }
 
-    private static void voucherSelectionAndCommittedPlacement(boolean creative) throws Exception {
+    private static void voucherSelectionAndCommittedPlacement(boolean creative, boolean stargate) throws Exception {
         java.lang.reflect.Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
         unsafeField.setAccessible(true);
         sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
@@ -642,8 +643,12 @@ final class HologramMaterialQuoteRegression {
         java.lang.reflect.Field config = DecorationVoucherConfig.class.getDeclaredField("current");
         config.setAccessible(true);
         Object previousConfig = config.get(null);
+        java.lang.reflect.Field rules = HologramStargateRules.class.getDeclaredField("enabled");
+        rules.setAccessible(true);
+        boolean previousRules = rules.getBoolean(null);
         com.miaokatze.gtmb.common.items.hologram.ItemDecorationVoucher previousVoucher = com.miaokatze.gtmb.register.DecorationVoucherRegistry.voucher;
         try {
+            rules.setBoolean(null, false);
             config.set(null, new DecorationVoucherConfig.View(true, Collections.singletonList("minecraft")));
             if (previousVoucher == null)
                 com.miaokatze.gtmb.register.DecorationVoucherRegistry.voucher = new com.miaokatze.gtmb.common.items.hologram.ItemDecorationVoucher();
@@ -689,6 +694,10 @@ final class HologramMaterialQuoteRegression {
                         return creative ? 0 : limit;
                     }
                 });
+            if (stargate) {
+                stargateVoucherPayment(session, cell, stone, rows, stock, world, player, voucher, rules);
+                return;
+            }
             HologramMaterialQuote
                 .snapshot(session, rows, HologramMaterialQuote.voucherRows(rows), new NBTTagList(), stock);
             require(session.planMissing == 0, "creative free shell demand cannot create a partial-confirmation gate");
@@ -801,8 +810,114 @@ final class HologramMaterialQuoteRegression {
             if (creative) staticAeDecorationPlacement(world, player);
         } finally {
             config.set(null, previousConfig);
+            rules.setBoolean(null, previousRules);
             com.miaokatze.gtmb.register.DecorationVoucherRegistry.voucher = previousVoucher;
         }
+    }
+
+    private static void stargateVoucherPayment(HologramSession session, HologramCapture.Cell cell, ItemStack stone,
+        NBTTagList rows, HologramMaterialQuote.StockSnapshot stock, CreativeVoucherWorld world, EntityPlayerMP player,
+        ItemStack voucher, java.lang.reflect.Field rules) throws Exception {
+        // A retained selection and already prepared discounted quote must never grant a free shell in this mode.
+        session.jobVoucherRequested = true;
+        HologramMaterialQuote.snapshot(session, rows, HologramMaterialQuote.voucherRows(rows), new NBTTagList(), stock);
+        require(
+            session.materialQuote.getBoolean("useDecorationVoucher") && session.materialQuote.getTagList("rows", 10)
+                .getCompoundTagAt(0)
+                .getLong("required") == 2,
+            "ordinary mode produces the real discounted quote before the policy changes");
+        HologramMaterialQuote.Preparation pending = new HologramMaterialQuote.Preparation(
+            session,
+            rows,
+            HologramMaterialQuote.voucherRows(rows),
+            new NBTTagList(),
+            stock);
+        rules.setBoolean(null, true);
+        require(
+            DecorationVoucherConfig.view().enabled && !HologramDecorationVoucher.enabled()
+                && !HologramDecorationVoucher.eligible(stone)
+                && !HologramDecorationVoucher.covered(cell.block, stone)
+                && !HologramMaterialAccess.freeShell(session, cell, stone)
+                && HologramDecorationVoucher.available(player) == 0
+                && !HologramDecorationVoucher.reserveMain(player)
+                && voucher.stackSize == 2,
+            "Stargate rules override a permissive voucher configuration without consuming retained vouchers");
+        HologramDecorMaterials.Descriptor descriptor = new HologramDecorMaterials.Descriptor(
+            Collections.singletonList(new HologramDecorMaterials.Cost(stone, stone, 1, 2)));
+        require(
+            HologramDecorationVoucher.payable(cell.block, descriptor) == descriptor
+                && HologramMaterialAccess.payableDecoration(session, cell, descriptor) == descriptor
+                && !HologramDecorationVoucher.hasCovered(cell.block, descriptor),
+            "native decoration costs retain their complete payable ledger in Stargate mode");
+        require(
+            !HologramMaterialQuote.cached(session),
+            "ordinary cached quotes are fenced by effective voucher policy");
+        boolean staleRejected = false;
+        try {
+            HologramMaterialQuote.recheck(session);
+        } catch (java.io.IOException expected) {
+            staleRejected = true;
+        }
+        require(staleRejected, "recounting an old discounted quote cannot bless it under the new policy");
+        boolean pendingRejected = false;
+        try {
+            pending.step(1, Long.MAX_VALUE);
+        } catch (IllegalStateException expected) {
+            pendingRejected = true;
+        }
+        require(pendingRejected, "a pending ordinary quote cannot publish after effective voucher policy changes");
+        NBTTagCompound action = new NBTTagCompound();
+        action.setString("session", session.id);
+        action.setLong("planRevision", session.planRevision);
+        action.setLong("placementReviewNonce", session.placementReviewNonce);
+        action.setBoolean("useDecorationVoucher", true);
+        boolean confirmationRejected = false;
+        try {
+            HologramMaterialWorkflow.validateConfirmation(session, action);
+        } catch (java.io.IOException expected) {
+            confirmationRejected = true;
+        }
+        require(confirmationRejected, "confirmation rejects the old discounted quote before any debit or world write");
+        HologramMaterialQuote.snapshot(session, rows, HologramMaterialQuote.voucherRows(rows), new NBTTagList(), stock);
+        NBTTagCompound state = new NBTTagCompound();
+        HologramMaterialWorkflow.writeState(session, state);
+        NBTTagCompound choice = state.getCompoundTag("decorativeVoucher"),
+            quote = state.getCompoundTag("materialQuote");
+        require(
+            !choice.getBoolean("enabled") && !choice.getBoolean("selected")
+                && !choice.getBoolean("usable")
+                && choice.getLong("available") == 0
+                && choice.getLong("eligibleDemand") == 0
+                && !quote.getBoolean("decorationVoucherEnabled")
+                && !quote.getBoolean("useDecorationVoucher")
+                && quote.getTagList("rows", 10)
+                    .getCompoundTagAt(0)
+                    .getLong("required") == 7,
+            "server metadata and supplied discounted material rows resolve to the full ordinary demand");
+        long nonce = session.placementReviewNonce;
+        action.setBoolean("enabled", true);
+        HologramMaterialWorkflow.action(session, action, "setDecorativeVoucher");
+        require(
+            session.status.contains("未启用") && session.placementReviewNonce == nonce
+                && !session.materialQuote.getBoolean("useDecorationVoucher"),
+            "forged voucher selection cannot activate the retained request or change the full-price quote");
+        action.setBoolean("useDecorationVoucher", false);
+        HologramMaterialWorkflow.validateConfirmation(session, action);
+        require(
+            HologramWorldTransactions.operateChecked(session, cell, 0),
+            "Stargate mode accepts actual material-paid placement despite a retained voucher request");
+        require(
+            "placed".equals(cell.status) && world.placed == net.minecraft.init.Blocks.stone
+                && world.writes == 1
+                && !session.jobVoucherConsumed
+                && voucher.stackSize == 2
+                && player.inventory.mainInventory[2].stackSize == 63,
+            "the committed placement pays one real shell and preserves both vouchers");
+        rules.setBoolean(null, false);
+        require(
+            HologramDecorationVoucher.enabled() && HologramDecorationVoucher.covered(cell.block, stone)
+                && HologramDecorationVoucher.available(player) == 2,
+            "ordinary mode retains the same configured voucher eligibility and existing items");
     }
 
     private static void staticAeDecorationPlacement(CreativeVoucherWorld world, EntityPlayerMP player)

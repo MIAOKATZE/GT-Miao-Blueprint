@@ -10,12 +10,15 @@ import java.util.Set;
 import java.util.UUID;
 
 import net.minecraft.block.Block;
+import net.minecraft.entity.Entity;
 import net.minecraft.entity.item.EntityItem;
+import net.minecraft.entity.item.EntityXPOrb;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.item.ItemStack;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.util.ChatComponentText;
+import net.minecraft.util.MathHelper;
 import net.minecraft.world.World;
 import net.minecraft.world.WorldServer;
 import net.minecraft.world.chunk.storage.ExtendedBlockStorage;
@@ -287,7 +290,9 @@ public final class HologramDemolition {
             || !world.canMineBlock(player, x, y, z)
             || !player.canPlayerEdit(x, y, z, 1, player.getHeldItem()))
             return new Removal(false, Collections.emptyList(), null);
-        try (ToolScope tool = new ToolScope(player, block, metadata, x, y, z); DropScope scope = new DropScope(world)) {
+        boolean suppressOreDrops = HologramStargateRules.suppressOreDrops(block, metadata);
+        try (ToolScope tool = new ToolScope(player, block, metadata, x, y, z);
+            DropScope scope = suppressOreDrops ? new DropScope(world, x, y, z, true) : new DropScope(world)) {
             try {
                 BlockEvent.BreakEvent event = new BlockEvent.BreakEvent(x, y, z, world, block, metadata, player);
                 if (MinecraftForge.EVENT_BUS.post(event)
@@ -318,7 +323,7 @@ public final class HologramDemolition {
                 if (!block.removedByPlayer(world, player, x, y, z, true)) return new Removal(false, scope.items, null);
                 block.onBlockDestroyedByPlayer(world, x, y, z, metadata);
                 block.harvestBlock(world, player, x, y, z, metadata);
-                block.dropXpOnBlockBreak(world, x, y, z, event.getExpToDrop());
+                if (!suppressOreDrops) block.dropXpOnBlockBreak(world, x, y, z, event.getExpToDrop());
                 return new Removal(
                     !HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile),
                     scope.items,
@@ -392,15 +397,32 @@ public final class HologramDemolition {
     public static final class DropListener {
 
         @SubscribeEvent(priority = EventPriority.LOWEST)
+        public void harvested(BlockEvent.HarvestDropsEvent event) {
+            DropScope scope = CAPTURE.get();
+            if (scope != null && scope.discard
+                && event.world == scope.world
+                && event.x == scope.x
+                && event.y == scope.y
+                && event.z == scope.z) event.drops.clear();
+        }
+
+        @SubscribeEvent(priority = EventPriority.LOWEST, receiveCanceled = true)
         public void spawned(EntityJoinWorldEvent event) {
             DropScope scope = CAPTURE.get();
-            if (scope == null || event.world != scope.world
-                || event.isCanceled()
-                || !(event.entity instanceof EntityItem)) return;
+            if (scope == null || event.world != scope.world) return;
+            boolean discard = scope.discards(event.entity);
+            if (event.isCanceled() && !discard) return;
+            if (discard && event.entity instanceof EntityXPOrb) {
+                event.setCanceled(true);
+                event.entity.setDead();
+                return;
+            }
+            if (!(event.entity instanceof EntityItem)) return;
+            if (!discard && !scope.captureOtherDrops) return;
             EntityItem item = (EntityItem) event.entity;
             ItemStack stack = item.getEntityItem();
             if (stack == null || stack.stackSize <= 0) return;
-            scope.items.add(stack.copy());
+            if (!discard) scope.items.add(stack.copy());
             event.setCanceled(true);
             // World ignores event cancellation for forceSpawn entities. Leave no live second item in that case.
             ItemStack empty = stack.copy();
@@ -413,12 +435,34 @@ public final class HologramDemolition {
     static final class DropScope implements AutoCloseable {
 
         final World world;
+        final boolean discard, captureOtherDrops;
+        final int x, y, z;
         final List<ItemStack> items = new ArrayList<>();
 
         DropScope(World world) {
+            this(world, false, 0, 0, 0, true);
+        }
+
+        DropScope(World world, int x, int y, int z, boolean captureOtherDrops) {
+            this(world, true, x, y, z, captureOtherDrops);
+        }
+
+        private DropScope(World world, boolean discard, int x, int y, int z, boolean captureOtherDrops) {
             if (CAPTURE.get() != null) throw new IllegalStateException("Nested area demolition drop capture");
             this.world = world;
+            this.discard = discard;
+            this.captureOtherDrops = captureOtherDrops;
+            this.x = x;
+            this.y = y;
+            this.z = z;
             CAPTURE.set(this);
+        }
+
+        boolean discards(Entity entity) {
+            // HarvestDropsEvent has an exact source; direct native spawns can only be attributed by their cell.
+            return discard && MathHelper.floor_double(entity.posX) == x
+                && MathHelper.floor_double(entity.posY) == y
+                && MathHelper.floor_double(entity.posZ) == z;
         }
 
         @Override
