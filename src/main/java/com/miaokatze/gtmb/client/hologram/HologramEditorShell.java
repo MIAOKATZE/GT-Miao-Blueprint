@@ -633,29 +633,25 @@ final class HologramEditorShell {
     private ButtonWidget<?> nativeAction(int id, String icon, Supplier<String> label, BooleanSupplier enabled,
         Supplier<String> tooltip, boolean iconOnly) {
         boolean primary = id == 140 || id == 141 || id == 210 || id == 224 || id == 54;
-        BooleanSupplier available = () -> enabled.getAsBoolean() && !ui.canvas.stargateBlockedControl(id);
         Runnable invoke = () -> ui.host.parent()
             .deferAction(() -> {
-                if (!available.getAsBoolean()) return;
+                if (!enabled.getAsBoolean()) return;
                 try (HologramMuiCanvasScreen.FieldGraph ignored = ui.host.parent()
                     .fieldGraph(ui)) {
                     ui.router.activate(id);
                 }
             });
         ButtonWidget<?> widget = (iconOnly
-            ? HologramEditorNativeTheme.iconButton(icon, label, invoke, available, () -> false)
-            : HologramEditorNativeTheme.button(label, icon, invoke, available, () -> false, primary))
+            ? HologramEditorNativeTheme.iconButton(icon, label, invoke, enabled, () -> false)
+            : HologramEditorNativeTheme.button(label, icon, invoke, enabled, () -> false, primary))
                 .tooltipBuilder(t -> {
                     if (iconOnly) t.addLine(label.get());
-                    if (ui.canvas.stargateBlockedControl(id)) t.addLine(HologramClient.stargateRulesMessage());
-                    else {
-                        String text = tooltip.get();
-                        if (text != null && !text.isEmpty()) t.addLine(text);
-                    }
+                    String text = tooltip.get();
+                    if (text != null && !text.isEmpty()) t.addLine(text);
                 })
                 .tooltipAutoUpdate(true);
-        HologramEditorNativeTheme.guided(widget, () -> actionAccent(id, available), available);
-        registerControl(id, widget, label, available);
+        HologramEditorNativeTheme.guided(widget, () -> actionAccent(id, enabled), enabled);
+        registerControl(id, widget, label, enabled);
         return widget;
     }
 

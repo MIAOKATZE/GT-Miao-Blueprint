@@ -2,13 +2,19 @@ package com.miaokatze.gtmb.hologram;
 
 import java.io.File;
 
+import net.minecraft.block.Block;
+import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
 import net.minecraftforge.common.config.Configuration;
+import net.minecraftforge.oredict.OreDictionary;
 
-/** Server-owned opt-in rules: planning remains available, automatic world changes are disabled. */
+import gregtech.api.util.GTUtility;
+
+/** Server-owned opt-in material rules; automatic construction and ordinary device recovery remain available. */
 public final class HologramStargateRules {
 
     public static final String FILE_NAME = "gtmb-stargate-rules.cfg";
-    public static final String RESTRICTION_CODE = "STARGATE_RULES_ACTIVE";
+    public static final String RESTRICTION_CODE = "STARGATE_ORE_MOVE_BLOCKED";
     private static final String CATEGORY = "stargateRules";
     private static volatile boolean enabled;
 
@@ -18,16 +24,15 @@ public final class HologramStargateRules {
     public static void load(File configDirectory) {
         Configuration config = new Configuration(new File(configDirectory, FILE_NAME), true);
         config.load();
-        enabled = config
-            .get(
-                CATEGORY,
-                "enabled",
-                false,
-                "Disable all GTMB automatic world changes, including construction, replacement, obstruction removal, "
-                    + "cut/paste/undo and area demolition, without an operator exemption. Recognition, blueprint "
-                    + "editing, previews, materials and existing authorized AE orders remain available. "
-                    + "Existing blueprints and recovery records are retained; cut world journals are not replayed. "
-                    + "Edit and restart the server.")
+        enabled = config.get(
+            CATEGORY,
+            "enabled",
+            false,
+            "Keep automatic construction, replacement, obstruction removal and demolition enabled with normal "
+                + "material costs, but disable decoration vouchers and discard all drops from removed ore blocks. "
+                + "Cut/paste/undo may move ordinary buildings and devices, but may not move or overwrite ore blocks. "
+                + "Existing blueprints and recovery records are retained; ore-related cut journals are not replayed. "
+                + "Edit and restart the server.")
             .getBoolean(false);
         if (config.hasChanged()) config.save();
     }
@@ -37,6 +42,21 @@ public final class HologramStargateRules {
     }
 
     public static String restrictionMessage() {
-        return "星门规则模式已开启：仅允许识别、编辑、预览和材料功能，自动建造、替换、清障、剪切、粘贴、撤销及区域拆除已禁用";
+        return "星门规则模式下不能剪切、搬运矿石或覆盖矿石；原方块、暂存和恢复记录已保留";
+    }
+
+    /** Inspect the removed world block, never the contents of a recovered device or its item inventory. */
+    static boolean suppressOreDrops(Block block, int metadata) {
+        return enabled && isOre(block, metadata);
+    }
+
+    static boolean isOre(Block block, int metadata) {
+        if (block == null) return false;
+        if (GTUtility.isOre(block, metadata)) return true;
+        Item item = Item.getItemFromBlock(block);
+        if (item == null) return false;
+        for (int oreId : OreDictionary.getOreIDs(new ItemStack(item, 1, metadata))) if (OreDictionary.getOreName(oreId)
+            .startsWith("ore")) return true;
+        return false;
     }
 }

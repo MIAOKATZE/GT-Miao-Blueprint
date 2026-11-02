@@ -302,16 +302,15 @@ final class HologramUiConfiguration {
             315,
             138,
             17,
-            ui.canvas.stargateRulesActive() ? HologramClient.text("stargateRules.materialReview", "Material review")
-                : ui.review.placementReviewActive() ? "继续放置预检"
-                    : ui.session.state().data.getBoolean("virtual")
-                        && !ui.session.state().data.getBoolean("virtualPlacement")
-                            ? "从蓝图库放置"
-                            : ui.session.state().data.getBoolean("virtual")
-                                && !ui.session.state().data.getBoolean("virtualLocked")
-                                    ? "世界右键确定位置"
-                                    : new String[] { "确认构建", "确认替换", "确认拆除" }[Math
-                                        .floorMod(ui.session.state().data.getInteger("mode"), 3)],
+            ui.review.placementReviewActive() ? "继续放置预检"
+                : ui.session.state().data.getBoolean("virtual")
+                    && !ui.session.state().data.getBoolean("virtualPlacement")
+                        ? "从蓝图库放置"
+                        : ui.session.state().data.getBoolean("virtual")
+                            && !ui.session.state().data.getBoolean("virtualLocked")
+                                ? "世界右键确定位置"
+                                : new String[] { "确认构建", "确认替换", "确认拆除" }[Math
+                                    .floorMod(ui.session.state().data.getInteger("mode"), 3)],
             ui.session.editable()
                 && (!ui.session.state().data.getBoolean("virtual")
                     || ui.session.state().data.getBoolean("virtualPlacement")

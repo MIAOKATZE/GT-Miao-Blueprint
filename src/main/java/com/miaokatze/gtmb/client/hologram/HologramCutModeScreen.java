@@ -7,9 +7,7 @@ import com.cleanroommc.modularui.api.drawable.IKey;
 /** Modal Shift switcher: all input stays in this screen until one release commits the choice. */
 final class HologramCutModeScreen extends HologramMuiScreen {
 
-    private final HologramCutInput.Switcher choice = new HologramCutInput.Switcher(
-        HologramCutClient.INSTANCE.mode(),
-        () -> !HologramClient.stargateRulesEnabled());
+    private final HologramCutInput.Switcher choice = new HologramCutInput.Switcher(HologramCutClient.INSTANCE.mode());
 
     @Override
     public void updateScreen() {
@@ -46,16 +44,8 @@ final class HologramCutModeScreen extends HologramMuiScreen {
                     .hoverBackground(HologramMuiTheme.row(() -> choice.mode() == mode, true))
                     .overlay(
                         IKey.dynamic(() -> (choice.mode() == mode ? "▶ " : "") + HologramCutClient.text(label))
-                            .color(
-                                () -> mode != HologramCutInput.Mode.BLUEPRINT && HologramClient.stargateRulesEnabled()
-                                    ? HologramMuiTheme.MUTED
-                                    : choice.mode() == mode ? HologramMuiTheme.TITLE : HologramMuiTheme.TEXT)
+                            .color(() -> choice.mode() == mode ? HologramMuiTheme.TITLE : HologramMuiTheme.TEXT)
                             .shadow(false))
-                    .tooltipBuilder(t -> {
-                        if (mode != HologramCutInput.Mode.BLUEPRINT && HologramClient.stargateRulesEnabled())
-                            t.addLine(HologramClient.stargateRulesMessage());
-                    })
-                    .tooltipAutoUpdate(true)
                     .name("cut_mode_" + mode.ordinal())
                     .onMousePressed(button -> {
                         if (button == 1 && HologramCutClient.shift()) choice.cycle();
@@ -63,16 +53,8 @@ final class HologramCutModeScreen extends HologramMuiScreen {
                     }));
         }
         panel().child(
-            HologramMuiTheme.label(
-                () -> HologramClient.stargateRulesEnabled()
-                    ? HologramClient
-                        .text("stargateRules.modeHint", "Stargate rules: Blueprint mode only. Release Shift to select.")
-                    : HologramCutClient.text("switcherHint"),
-                12,
-                86,
-                282,
-                28,
-                HologramMuiTheme.MUTED));
+            HologramMuiTheme
+                .label(() -> HologramCutClient.text("switcherHint"), 12, 86, 282, 28, HologramMuiTheme.MUTED));
     }
 
     @Override

@@ -145,8 +145,7 @@ final class HologramUiBuildReview {
     }
 
     boolean confirmationAllowed(int operations) {
-        return !ui.canvas.stargateBlockedControl(55) && ui.session.editable()
-            && !ui.session.materialReviewPending()
+        return ui.session.editable() && !ui.session.materialReviewPending()
             && (ui.session.state().data.getBoolean("blueprintAwaitingConfirmation") || operations > 0)
             && this.confirmedRevision == ui.session.revision()
             && HologramPlacementConfirmation.cacheReviewMatches(ui.session.state().data, this.reviewedCacheQuote)

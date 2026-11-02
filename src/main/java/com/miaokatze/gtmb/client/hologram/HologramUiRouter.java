@@ -979,10 +979,6 @@ final class HologramUiRouter {
     }
 
     void activate(int id) {
-        if (ui.canvas.stargateBlockedControl(id)) {
-            ui.session.notice(HologramClient.stargateRulesMessage());
-            return;
-        }
         if (ui.tutorial.activate(id) || ui.guide.activate(id) || ui.tools.activateControl(id)) return;
         if (id == HologramEditorControlIds.LIBRARY) {
             ui.library.activateControl(id);

@@ -168,10 +168,6 @@ final class HologramCutClient {
             cancel();
             closeScreen();
         }
-        if (HologramClient.stargateRulesEnabled() && (cutMode || demolitionMode)) {
-            chooseBlueprintMode();
-            status.show(HologramClient.stargateRulesMessage());
-        }
         for (HologramCutRequests.Request expired : requests.expire(System.nanoTime())) {
             if (operationProgress.matches(expired.id)) operationProgress.clear();
             if (expired.writesWorld()) {
@@ -384,7 +380,6 @@ final class HologramCutClient {
     }
 
     void beginSelection() {
-        if (worldChangesRestricted()) return;
         if (HologramBackgroundTasks.busy() || blueprintBusy()) return;
         cutMode = true;
         demolitionMode = false;
@@ -394,7 +389,6 @@ final class HologramCutClient {
     }
 
     private void beginDemolitionSelection() {
-        if (worldChangesRestricted()) return;
         if (HologramBackgroundTasks.busy() || blueprintBusy() || requests.writing()) return;
         cutMode = false;
         demolitionMode = true;
@@ -662,7 +656,6 @@ final class HologramCutClient {
     }
 
     void beginPreview() {
-        if (worldChangesRestricted()) return;
         if (busy() || blueprintBusy() || HologramBackgroundTasks.busy()) return;
         if (selected.isEmpty() || entries.isEmpty()) {
             status.show(text("emptyPreview"));
@@ -701,7 +694,6 @@ final class HologramCutClient {
     }
 
     void undo(String id) {
-        if (worldChangesRestricted()) return;
         if (!held() || busy() || !containsEntry(id)) return;
         mc().displayGuiScreen(new HologramCutConfirmScreen(text("confirmUndo"), text("confirmUndoDetail"), () -> {
             if (busy()) retryCutStorage();
@@ -711,12 +703,11 @@ final class HologramCutClient {
 
     /** Editor controls share the tool's held-item, directory and unresolved-write gates. */
     boolean canUseStorageEntry(String id) {
-        return !HologramClient.stargateRulesEnabled() && held() && !busy() && containsEntry(id);
+        return held() && !busy() && containsEntry(id);
     }
 
     /** Called only after the embedded workbench's explicit confirmation; never reopens a storage screen. */
     void requestStorageUndo(String id) {
-        if (worldChangesRestricted()) return;
         if (!held() || !containsEntry(id)) return;
         if (busy()) {
             status.directoryFailed(text("syncRequired"));
@@ -890,10 +881,6 @@ final class HologramCutClient {
     }
 
     private void send(NBTTagCompound n) {
-        String operation = n.getString("action");
-        if (("cut".equals(operation) || "paste".equals(operation)
-            || "undo".equals(operation)
-            || "demolish".equals(operation)) && worldChangesRestricted()) return;
         long now = System.nanoTime();
         requests.begin(n.getString("requestId"), n.getString("action"), n.getString("id"), now);
         if (!"list".equals(n.getString("action")) || !n.getString("id")
@@ -909,12 +896,6 @@ final class HologramCutClient {
                 now);
         if (!"list".equals(n.getString("action"))) status.show(text("waiting"));
         HologramNetwork.sendCutAction(n);
-    }
-
-    private boolean worldChangesRestricted() {
-        if (!HologramClient.stargateRulesEnabled()) return false;
-        status.show(HologramClient.stargateRulesMessage());
-        return true;
     }
 
     private void receive(NBTTagCompound n) {

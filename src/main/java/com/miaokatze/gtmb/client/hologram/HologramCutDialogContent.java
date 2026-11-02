@@ -57,8 +57,16 @@ final class HologramCutDialogContent {
                     .textAlign(Alignment.TopLeft)
                     .name("demolition_action"))
             .child(
-                HologramMuiTheme
-                    .label(() -> text("confirmDemolitionProtection"), 14, 116, 278, 27, HologramMuiTheme.TITLE)
+                HologramMuiTheme.label(
+                    () -> text("confirmDemolitionProtection") + (HologramClient.stargateRulesEnabled()
+                        ? "\n" + HologramClient
+                            .text("stargateRules.oreDrops", "Stargate rules: ores are destroyed without drops or XP")
+                        : ""),
+                    14,
+                    116,
+                    278,
+                    27,
+                    HologramMuiTheme.TITLE)
                     .textAlign(Alignment.TopLeft)
                     .name("demolition_protection"))
             .child(

@@ -41,13 +41,15 @@ stargateRules {
 }
 ```
 
-启用后仍可识别结构、编辑和保存蓝图、查看材料与投影预览；AE 功能继续遵守原有网络权限和材料规则。自动建造、替换、清障、剪切搬运与撤销、区域拆除均禁用，管理员也不豁免。升级到 0.3.8 的客户端会显示服务端限制；旧端请求同样会被服务端拦截，修改客户端配置不能绕过。
+启用后，蓝图、剪切和拆除三档均可使用，自动建造、替换及清障继续按正常材料与权限规则执行。**装饰代用券不再抵扣材料**；已有券和工具设置保留，关闭规则模式后可按普通配置使用。
 
-这是依据“不得用 WorldEdit 类操作搭建功能性结构，即使支付材料也不例外”的约束提供的保守开关：装饰方块也可能组成机器结构，因此不按方块白名单放行自动施工。旧蓝图和剪切暂存仍保留，未完成的世界搬运事务暂停恢复；已经产生的待返还物品继续按原规则交付。关闭此配置并重启后恢复通常功能。它不替代服务器管理或星门资格审核。
+**矿石方块可以被拆除，但不返还该矿块的掉落或经验**，替换和清障同样适用。设备库存中原有的矿石仍正常返还。为了避免整块搬矿后手动开采，包含矿石方块的世界剪切、粘贴或撤销会明确拒绝，原方块与暂存保留；矿石相关的旧未完成搬运记录也保持保护。普通建筑和设备的搬运、蓝图编辑与投影、材料查看、授权 AE 功能继续可用。
 
-*Disabled by default. Set `stargateRules.enabled` in the server's `config/gtmb-stargate-rules.cfg` and restart. Capture, virtual editing, saved blueprints, material inspection, previews and permission-checked AE access remain available. Automatic construction, replacement, obstruction removal, cut/paste/undo and area demolition are blocked, including for operators. Existing blueprints, clipboard records and pending returns are retained; world-edit journals cannot replay while enabled. This conservative option does not certify Stargate eligibility.*
+矿石判定复用 GT 原生矿石接口与矿物辞典，不按矿种或机器名称写特判。此模式针对挖矿收益和免费材料抵扣设置边界，不将整合包已有的生存建造能力一律视为违规；具体星门资格仍由所属服务器或活动管理团队判断。升级客户端可看到对应提示，限制以服务端为准。
 
-上方三档截图展示默认关闭此限制时的界面。0.3.8 为开发候选；0.3.7 已合并，Release 仍为草稿，未正式发布。
+*Disabled by default. Enable `stargateRules.enabled` in the server's `config/gtmb-stargate-rules.cfg` and restart. All three modes remain available with normal material and permission checks, but decoration vouchers cannot waive costs. Removed ore blocks yield no drops or XP, including during replacement and obstruction removal; ore already stored inside devices is retained. World cut/paste/undo operations involving ore blocks are rejected with their original blocks and records preserved, preventing ore relocation from bypassing the removal rule. This option does not certify Stargate eligibility.*
+
+请同时替换客户端与服务端的旧 0.3.8 候选包，避免旧客户端仍保留过严的按钮限制。上方截图展示三档模式入口，不作为新规则的实机验收图。0.3.8 为开发候选；0.3.7 已合并，Release 仍为草稿，未正式发布。
 
 ### v0.3.7：重复识别与原生拆除修复
 

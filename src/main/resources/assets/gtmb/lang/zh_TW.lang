@@ -152,11 +152,8 @@ gtmb.hologram.progress.area.detail.failed=材料規劃失敗
 gtmb.hologram.progress.area.detail.paused=材料規劃已暫停
 
 # Decoration voucher
-gtmb.hologram.stargateRules.restricted=星門規則模式已開啟：自動建造、替換、清障、剪下、貼上、撤銷及區域拆除已禁用；識別、虛擬編輯、投影和材料功能仍可使用。
-gtmb.hologram.stargateRules.disabled=星門規則：施工已禁用
-gtmb.hologram.stargateRules.materialReview=查看材料與改動
-gtmb.hologram.stargateRules.modeHint=星門規則模式：僅可選擇藍圖。放開 Shift 進入；剪下與拆除已禁用。
-gtmb.hologram.stargateRules.worldHint=星門規則模式：自動世界修改已禁用
+gtmb.hologram.stargateRules.worldHint=星門規則：裝飾券抵扣停用；礦石不返還掉落或經驗
+gtmb.hologram.stargateRules.oreDrops=星門規則：礦石會被破壞且不返還掉落或經驗
 
 item.decoration_voucher.name=裝飾抵用券
 item.decoration_voucher.description.0=§7為§f一次藍圖施工§7抵扣允許的建築裝飾材料。§r

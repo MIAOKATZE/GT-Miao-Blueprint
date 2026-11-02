@@ -88,11 +88,11 @@ final class HologramMaterialWorkflow {
     static void validateConfirmation(HologramSession s, NBTTagCompound action) throws IOException {
         requireReview(s, action);
         if (HologramAeCraftingOrders.active(s.player)) throw new IOException("请等待 AE 合成完成并刷新材料后再施工");
-        if (action.hasKey("useDecorationVoucher") && action.getBoolean("useDecorationVoucher") != s.jobVoucherRequested)
+        boolean voucherSelected = s.jobVoucherRequested && HologramDecorationVoucher.enabled();
+        if (action.hasKey("useDecorationVoucher") && action.getBoolean("useDecorationVoucher") != voucherSelected)
             throw new IOException("抵扣券选择已变化，请先更新材料报价再确认");
-        if (s.jobVoucherRequested && (!HologramDecorationVoucher.enabled()
-            || !s.player.capabilities.isCreativeMode && HologramDecorationVoucher.available(s.player) < 1))
-            throw new IOException("主背包中没有可用建筑材料抵扣券，请取消抵扣或补充后再确认");
+        if (voucherSelected && !s.player.capabilities.isCreativeMode
+            && HologramDecorationVoucher.available(s.player) < 1) throw new IOException("主背包中没有可用建筑材料抵扣券，请取消抵扣或补充后再确认");
     }
 
     /** Replaces the startup inventory check with a recount of the already reviewed exact identities. */
@@ -161,9 +161,7 @@ final class HologramMaterialWorkflow {
             || !action.hasKey("placementReviewNonce", 4)
             || action.getLong("placementReviewNonce") != s.placementReviewNonce)
             throw new IOException("材料确认已更新，请重新核对材料与抵扣券选择");
-        if (s.materialQuote == null
-            || s.materialQuote.getLong("voucherRulesRevision") != DecorationVoucherConfig.revision())
-            throw new IOException("抵用券规则已更新，正在重新核算材料，请稍候");
+        if (!HologramMaterialQuote.rulesCurrent(s.materialQuote)) throw new IOException("抵用券规则已更新，正在重新核算材料，请稍候");
     }
 
     static void writeState(HologramSession s, NBTTagCompound state) {
@@ -182,7 +180,8 @@ final class HologramMaterialWorkflow {
             state.setTag("materialQuote", s.materialQuote.copy());
         NBTTagCompound voucher = new NBTTagCompound();
         voucher.setBoolean("enabled", HologramDecorationVoucher.enabled());
-        voucher.setBoolean("selected", s.jobVoucherRequested);
+        boolean selected = s.jobVoucherRequested && HologramDecorationVoucher.enabled();
+        voucher.setBoolean("selected", selected);
         voucher.setLong("available", HologramDecorationVoucher.available(s.player));
         long eligibleDemand = HologramMaterialQuote.cached(s) ? s.materialQuoteCache.eligibleDemand : 0;
         voucher.setLong("eligibleDemand", eligibleDemand);
@@ -191,8 +190,9 @@ final class HologramMaterialWorkflow {
             HologramDecorationVoucher.enabled() && eligibleDemand > 0 && voucher.getLong("available") > 0);
         voucher.setString(
             "status",
-            s.jobVoucherRequested ? s.player.capabilities.isCreativeMode ? "已选择减免方案；创造施工不消耗抵扣券" : "已选择；首次成功支付建筑材料时消耗一张"
-                : "仅抵扣配置允许的建筑模组材料");
+            HologramStargateRules.enabled() ? "星门规则：装饰抵用券抵扣已禁用，按正常材料需求施工"
+                : selected ? s.player.capabilities.isCreativeMode ? "已选择减免方案；创造施工不消耗抵扣券" : "已选择；首次成功支付建筑材料时消耗一张"
+                    : "仅抵扣配置允许的建筑模组材料");
         state.setTag("decorativeVoucher", voucher);
     }
 

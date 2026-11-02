@@ -8,10 +8,6 @@ final class HologramBuildPreparation {
     private HologramBuildPreparation() {}
 
     static void nativeBuild(HologramSession s) {
-        if (HologramStargateRules.enabled()) {
-            s.status = HologramStargateRules.restrictionMessage();
-            return;
-        }
         if (HologramDeferredPlanRefresh.blocked(s)) return;
         if (HologramSessionPolicy.blockedByAreaImport(s)) return;
         if (s.mode != 0) {
@@ -36,11 +32,6 @@ final class HologramBuildPreparation {
     }
 
     private static void directBuild(HologramSession s, boolean rescan, NBTTagCompound reviewedAction) {
-        if (HologramStargateRules.enabled()) {
-            s.buildAfterCapture = s.forcePlacementReady = false;
-            s.status = HologramStargateRules.restrictionMessage();
-            return;
-        }
         if (HologramDeferredPlanRefresh.blocked(s)) return;
         if (HologramSessionPolicy.blockedByAreaImport(s)) return;
         if (!HologramBuildPreparation.aeReady(s)) return;
@@ -64,11 +55,6 @@ final class HologramBuildPreparation {
     }
 
     static void reviewedBuild(HologramSession s, NBTTagCompound action) {
-        if (HologramStargateRules.enabled()) {
-            s.forcePlacementReady = false;
-            s.status = HologramStargateRules.restrictionMessage();
-            return;
-        }
         if (HologramDeferredPlanRefresh.blocked(s)) return;
         if (s.job == 1 || s.job == 2) return;
         if (!action.hasKey("planRevision", 4) || action.getLong("planRevision") != s.planRevision) {

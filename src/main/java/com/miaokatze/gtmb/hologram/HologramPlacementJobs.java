@@ -56,8 +56,7 @@ final class HologramPlacementJobs {
 
     static void tickJob(HologramSession s) {
         if (s.job != 1) return;
-        String invalid = HologramStargateRules.enabled() ? HologramStargateRules.restrictionMessage()
-            : HologramSessionPolicy.jobInvalidReason(s);
+        String invalid = HologramSessionPolicy.jobInvalidReason(s);
         if (!invalid.isEmpty()) {
             // Keep attempted/total counters and unpublished outcomes for the stopped-job receipt.
             // job=4 itself prevents any remaining work from executing.
@@ -158,11 +157,6 @@ final class HologramPlacementJobs {
     }
 
     static void start(HologramSession s, net.minecraft.nbt.NBTTagCompound reviewedAction) {
-        if (HologramStargateRules.enabled()) {
-            s.forcePlacementReady = false;
-            s.status = HologramStargateRules.restrictionMessage();
-            return;
-        }
         if (HologramDeferredPlanRefresh.blocked(s)) return;
         if (!HologramSessionPolicy.wholeBlueprintPlacement(s) && (s.scope == 2 || s.scope == 3)
             && (s.selected < 0 || s.selected >= s.capture.cells.size())) {

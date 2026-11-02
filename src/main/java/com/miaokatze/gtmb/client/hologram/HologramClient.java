@@ -60,12 +60,6 @@ public final class HologramClient {
         return serverRules.enabled();
     }
 
-    static String stargateRulesMessage() {
-        return text(
-            "stargateRules.restricted",
-            "Stargate rules disable automatic building, replacement, clearing, cut, paste, undo and demolition. Preview, editing and materials remain available.");
-    }
-
     /** Direct world gestures carry the same revision evidence as window commands. */
     static void stampSemanticRevision(NBTTagCompound request) {
         HologramState current = state;
@@ -985,8 +979,8 @@ public final class HologramClient {
             && toolId.equals(state.data.getString("toolId"));
         lines.add(text("worldGuideHeld", "Neko Blueprint Hologram Projector · Blueprint mode"));
         lines.add(text("worldGuideOpen", "Right-click: workspace / import a constructable controller"));
-        if (stargateRulesEnabled())
-            lines.add(text("stargateRules.worldHint", "Stargate rules: automatic world changes disabled"));
+        if (stargateRulesEnabled()) lines.add(
+            text("stargateRules.worldHint", "Stargate rules: vouchers disabled; ore drops and XP are not returned"));
         // Capture owns ordinary gestures until its authoritative result arrives.
         if (state != null && state.data.getBoolean("capturePending")) return;
         lines.add(text("worldGuideChoose", "Shift+right-click: choose Blueprint / Cut selection"));

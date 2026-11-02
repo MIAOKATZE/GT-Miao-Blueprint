@@ -291,8 +291,6 @@ final class HologramEditorPropertiesPane {
 
     private String constructionActionLabel() {
         NBTTagCompound state = ui.session.state().data;
-        if (ui.canvas.stargateRulesActive())
-            return HologramClient.text("stargateRules.materialReview", "Material review");
         return ui.review.placementReviewActive() ? "继续放置预检"
             : state.getBoolean("virtual") && !state.getBoolean("virtualPlacement") ? "从蓝图库放置"
                 : state.getBoolean("virtual") && !state.getBoolean("virtualLocked") ? "世界右键确定位置"

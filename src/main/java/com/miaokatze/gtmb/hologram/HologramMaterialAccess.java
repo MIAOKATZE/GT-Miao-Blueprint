@@ -22,6 +22,7 @@ final class HologramMaterialAccess {
     static List<ItemStack> drops(Block block, World world, HologramCapture.Cell cell, int meta) {
         if (world.getTileEntity(cell.x, cell.y, cell.z) != null)
             return HologramRecovery.drops(world, cell.x, cell.y, cell.z);
+        if (HologramStargateRules.suppressOreDrops(block, meta)) return Collections.emptyList();
         if (block instanceof BlockFrameBox && !block.hasTileEntity(meta))
             return Collections.singletonList(((BlockFrameBox) block).getStackForm(1, meta));
         return block.getDrops(world, cell.x, cell.y, cell.z, meta, 0);
