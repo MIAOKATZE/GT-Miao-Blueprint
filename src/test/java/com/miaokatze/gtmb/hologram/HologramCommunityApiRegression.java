@@ -29,6 +29,7 @@ final class HologramCommunityApiRegression {
     static void run() throws Exception {
         int before = GTMBExtensions.descriptors()
             .size();
+        HologramMaterialVariantsRegression.run();
         declarationLifecycle();
         nativeLifecycle();
         processingLifecycle();

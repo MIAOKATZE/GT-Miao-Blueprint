@@ -3,6 +3,7 @@ package com.miaokatze.gtmb.client.hologram;
 import java.util.List;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.settings.GameSettings;
 import net.minecraft.client.settings.KeyBinding;
 import net.minecraft.util.MovingObjectPosition;
@@ -91,6 +92,7 @@ final class HologramIsometricCamera implements WorldCameras.Source {
     private HeightSlice lastSlice;
     private CameraSettings settings = settingsFor(slice);
     private CameraSettings blueprintSettings = settingsFor(slice, BLUEPRINT_NAVIGATION);
+    private CameraSettings demolitionConfirmationSettings = settingsFor(slice, NAVIGATION, WorldCameras.GuiPolicy.KEEP);
     private boolean closing, displaced, sliceKeyDown, toggleKeyDown, escapeKeyDown, previousContext, previousFocus;
     private Object inputWorld;
     private CameraFrame tracedFrame;
@@ -145,6 +147,7 @@ final class HologramIsometricCamera implements WorldCameras.Source {
             if (slice.enabled()) lastSlice = slice;
             settings = settingsFor(slice);
             blueprintSettings = settingsFor(slice, BLUEPRINT_NAVIGATION);
+            demolitionConfirmationSettings = settingsFor(slice, NAVIGATION, WorldCameras.GuiPolicy.KEEP);
         }
     };
 
@@ -172,7 +175,7 @@ final class HologramIsometricCamera implements WorldCameras.Source {
 
     void tick() {
         Minecraft mc = Minecraft.getMinecraft();
-        boolean context = HologramClient.cameraContext();
+        boolean context = HologramClient.cameraContext() || keepsGui(mc.currentScreen);
         boolean focused = HologramClient.worldInputFocused();
         boolean contextChanged = inputWorld != mc.theWorld || previousContext != context || previousFocus != focused;
         inputWorld = mc.theWorld;
@@ -186,7 +189,7 @@ final class HologramIsometricCamera implements WorldCameras.Source {
         escapeKeyDown = escapeDown;
         if (active() && (mc.theWorld != world || mc.thePlayer == null
             || mc.thePlayer.isDead
-            || mc.currentScreen != null && !WorldCameraHooks.isAutomaticPauseScreen()
+            || mc.currentScreen != null && !keepsGui(mc.currentScreen) && !WorldCameraHooks.isAutomaticPauseScreen()
             || !context)) close();
         if (active() && escapePressed) close();
         else if (context && togglePressed && HologramClient.cameraToggleRequested()) {
@@ -415,7 +418,12 @@ final class HologramIsometricCamera implements WorldCameras.Source {
 
     @Override
     public CameraSettings settings() {
+        if (active() && keepsGui(Minecraft.getMinecraft().currentScreen)) return demolitionConfirmationSettings;
         return blueprintNavigation() ? blueprintSettings : settings;
+    }
+
+    boolean keepsGui(GuiScreen screen) {
+        return HologramCutClient.INSTANCE.keepsCamera(screen);
     }
 
     private boolean blueprintNavigation() {
@@ -464,18 +472,24 @@ final class HologramIsometricCamera implements WorldCameras.Source {
     }
 
     private static CameraSettings settingsFor(HeightSlice slice, CameraSettings.Navigation navigation) {
+        return settingsFor(slice, navigation, WorldCameras.GuiPolicy.RELEASE);
+    }
+
+    private static CameraSettings settingsFor(HeightSlice slice, CameraSettings.Navigation navigation,
+        WorldCameras.GuiPolicy guiPolicy) {
         return CameraSettings.builder()
             .render(RENDER)
             .input(INPUT)
             .hud(HUD)
             .navigation(navigation)
-            .guiPolicy(WorldCameras.GuiPolicy.RELEASE)
+            .guiPolicy(guiPolicy)
             .slice(slice)
             .build();
     }
 
     @Override
     public WorldCameras.GuiPolicy guiPolicy() {
-        return WorldCameras.GuiPolicy.RELEASE;
+        return active() && keepsGui(Minecraft.getMinecraft().currentScreen) ? WorldCameras.GuiPolicy.KEEP
+            : WorldCameras.GuiPolicy.RELEASE;
     }
 }

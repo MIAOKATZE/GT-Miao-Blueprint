@@ -99,6 +99,7 @@ final class HologramSettingsScreen extends HologramMuiScreen {
             case 8 -> {
                 NBTTagCompound request = new NBTTagCompound();
                 request.setString("action", "useAir");
+                HologramClient.stampSemanticRevision(request);
                 HologramNetwork.sendAction(request);
             }
             default -> {}
@@ -124,6 +125,7 @@ final class HologramSettingsScreen extends HologramMuiScreen {
             presetIndex < 0 ? ""
                 : presets().getCompoundTagAt(presetIndex)
                     .getString("id"));
+        HologramClient.stampSemanticRevision(request);
         HologramNetwork.sendAction(request);
     }
 

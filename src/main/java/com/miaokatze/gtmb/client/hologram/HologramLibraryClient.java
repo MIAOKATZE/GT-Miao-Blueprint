@@ -2884,6 +2884,7 @@ final class HologramLibraryClient {
                 recordSaveWitness("localPairReadback", readback);
                 traceSave("local_pair_readback");
             }
+            HologramClient.stampSemanticRevision(acknowledgement);
             HologramNetwork.sendAction(acknowledgement);
             recordSaveWitness("ownerDiskAck", acknowledgement);
             traceSave("owner_disk_ack");

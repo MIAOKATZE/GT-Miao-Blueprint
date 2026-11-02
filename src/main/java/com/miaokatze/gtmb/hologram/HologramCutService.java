@@ -2,14 +2,22 @@ package com.miaokatze.gtmb.hologram;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.BitSet;
 import java.util.UUID;
 
+import net.minecraft.block.Block;
 import net.minecraft.entity.player.EntityPlayerMP;
+import net.minecraft.init.Blocks;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.world.WorldServer;
 import net.minecraftforge.common.DimensionManager;
+import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.common.util.BlockSnapshot;
+import net.minecraftforge.common.util.ForgeDirection;
+import net.minecraftforge.event.ForgeEventFactory;
+import net.minecraftforge.event.world.BlockEvent;
 
 import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 import com.miaokatze.gtmb.util.ServerTaskScheduler;
@@ -18,7 +26,18 @@ import com.miaokatze.gtmb.util.ServerTaskScheduler;
 public final class HologramCutService {
 
     private static final HologramRequestGate queued = new HologramRequestGate(8, 128);
+    private static final java.util.Map<UUID, DemolitionConnection> demolitionRequests = new java.util.HashMap<>();
     private static MinecraftServer recoveredServer;
+
+    private static final class DemolitionConnection {
+
+        final EntityPlayerMP player;
+        final HologramDemolitionProtocol.History history = new HologramDemolitionProtocol.History();
+
+        DemolitionConnection(EntityPlayerMP player) {
+            this.player = player;
+        }
+    }
 
     private HologramCutService() {}
 
@@ -48,7 +67,13 @@ public final class HologramCutService {
 
     public static void clear() {
         queued.clear();
+        demolitionRequests.clear();
         recoveredServer = null;
+    }
+
+    static void disconnected(EntityPlayerMP player) {
+        DemolitionConnection connection = demolitionRequests.get(player.getUniqueID());
+        if (connection != null && connection.player == player) demolitionRequests.remove(player.getUniqueID());
     }
 
     public static void receive(EntityPlayerMP player, NBTTagCompound request) {
@@ -63,13 +88,20 @@ public final class HologramCutService {
         ServerTaskScheduler.scheduleServerTask(() -> {
             try {
                 if (!lease.active()) return;
-                if (HologramAeCraftingOrders.active(player) && !"list".equals(copy.getString("action"))) {
+                String action = copy.getString("action");
+                boolean demolitionControl = "demolitionStatus".equals(action) || "demolitionCancel".equals(action);
+                if (HologramAeCraftingOrders.active(player) && !"list".equals(action) && !demolitionControl
+                    || HologramDemolition.active(player) && !HologramDemolitionProtocol.handles(action)) {
                     NBTTagCompound busy = new NBTTagCompound();
                     busy.setString("action", "state");
                     busy.setString("requestId", copy.getString("requestId"));
                     busy.setBoolean("success", false);
-                    busy.setString("code", "material_order_busy");
-                    busy.setString("message", "AE 缺料订单正在后台处理；请先等待完成或取消订单");
+                    busy.setString(
+                        "code",
+                        HologramDemolition.active(player) ? "demolition_busy" : "material_order_busy");
+                    busy.setString(
+                        "message",
+                        HologramDemolition.active(player) ? "拆除正在进行，请等待完成或按 Esc 取消" : "AE 缺料订单正在后台处理；请先等待完成或取消订单");
                     HologramNetwork.sendCutState(player, busy);
                     return;
                 }
@@ -100,12 +132,14 @@ public final class HologramCutService {
     }
 
     static NBTTagCompound execute(EntityPlayerMP player, NBTTagCompound request) {
+        if (HologramDemolitionProtocol.handles(request.getString("action"))) return executeDemolition(player, request);
         NBTTagCompound response = new NBTTagCompound();
         response.setString("action", "state");
         response.setString("requestId", request.getString("requestId"));
         HologramCutStorage storage = null;
         NBTTagCompound state = null;
         try {
+            if (HologramDemolition.active(player)) throw new IOException("拆除正在进行，请等待完成或按 Esc 取消");
             for (Object key : request.func_150296_c()) {
                 String name = String.valueOf(key);
                 if (!java.util.Arrays
@@ -144,6 +178,8 @@ public final class HologramCutService {
             String requestId = UUID.fromString(request.getString("requestId"))
                 .toString();
             if (!requestId.equals(request.getString("requestId"))) throw new IOException("无效剪切请求编号");
+            if (!java.util.Arrays.asList("list", "preview", "cut", "paste", "undo", "openWorkspace")
+                .contains(request.getString("action"))) throw new IOException("未知剪切操作");
             if ("openWorkspace".equals(request.getString("action"))) {
                 // Opening a manager never loads the clipboard journal or retries a world mutation.
                 HologramLibraryFacade.actorId(player);
@@ -187,6 +223,7 @@ public final class HologramCutService {
                     response.setString("message", "该剪切请求已完成");
                     response.setString("code", "already_completed");
                 } else {
+                    WorldServer editWorld = editableWorld(player);
                     // Leave enough tombstone capacity for every queued entry to be placed or undone.
                     if ("cut".equals(action) && state.getTagList("requests", 10)
                         .tagCount() >= 65536 - HologramCutProtocol.MAX_ENTRIES) throw new IOException("剪切请求记录已达安全上限");
@@ -194,6 +231,7 @@ public final class HologramCutService {
                     String consumeId = null;
                     int x, y, z, dimension;
                     boolean cut = "cut".equals(action);
+                    HologramCutWorld.Edit edit;
                     if (cut) {
                         if (state.getTagList("entries", 10)
                             .tagCount() >= HologramCutProtocol.MAX_ENTRIES) throw new IOException("剪切暂存队列已满，请先放置或撤销");
@@ -203,22 +241,11 @@ public final class HologramCutService {
                         y = box[1];
                         z = box[2];
                         dimension = player.dimension;
-                        entry = HologramCutEntry.capture(
-                            (WorldServer) player.worldObj,
-                            x,
-                            y,
-                            z,
-                            box[3] - x + 1,
-                            box[4] - y + 1,
-                            box[5] - z + 1,
-                            selection);
+                        NBTTagCompound shape = selectionShape(selection, box);
+                        coordinateRights(player, editWorld, shape, x, y, z);
+                        edit = new HologramCutWorld.Edit(editWorld, shape, x, y, z);
+                        entry = edit.before;
                         entry.setString("id", requestId);
-                        long sequence = state.getLong("sequence") + 1;
-                        state.setLong("sequence", sequence);
-                        entry.setLong("sequence", sequence);
-                        HologramCutNaming.apply(state, entry, request);
-                        state.getTagList("entries", 10)
-                            .appendTag(entry);
                     } else {
                         entry = find(state, request.getString("id"));
                         if (entry == null) throw new IOException("剪切暂存不存在");
@@ -226,6 +253,7 @@ public final class HologramCutService {
                         consumeId = entry.getString("id");
                         boolean undo = "undo".equals(action);
                         dimension = undo ? entry.getInteger("dimension") : player.dimension;
+                        if (dimension != player.dimension) throw new IOException("请回到剪切原维度再撤销，原方块与暂存已保留");
                         x = undo ? entry.getInteger("x") : request.getInteger("originX");
                         y = undo ? entry.getInteger("y") : request.getInteger("originY");
                         z = undo ? entry.getInteger("z") : request.getInteger("originZ");
@@ -238,6 +266,18 @@ public final class HologramCutService {
                             entry.getInteger("sizeX"),
                             entry.getInteger("sizeY"),
                             entry.getInteger("sizeZ"));
+                        coordinateRights(player, editWorld, entry, x, y, z);
+                        edit = new HologramCutWorld.Edit(editWorld, entry, x, y, z);
+                    }
+                    authorizeBreaks(player, edit);
+                    if (!cut) authorizePlacement(player, edit, entry, storage, state, action, requestId);
+                    if (cut) {
+                        long sequence = state.getLong("sequence") + 1;
+                        state.setLong("sequence", sequence);
+                        entry.setLong("sequence", sequence);
+                        HologramCutNaming.apply(state, entry, request);
+                        state.getTagList("entries", 10)
+                            .appendTag(entry);
                     }
                     HologramCutPlacementPreference.remember(state, request);
                     NBTTagCompound done = new NBTTagCompound();
@@ -252,6 +292,8 @@ public final class HologramCutService {
                     pending.setInteger("z", z);
                     pending.setBoolean("air", cut);
                     if (consumeId != null) pending.setString("consumeId", consumeId);
+                    if (!cut) pending.setTag("before", edit.before.copy());
+                    storage.markPending(pending, action, requestId, true);
                     state.setTag("pending", pending);
                     storage.save(state); // Original blocks and inventories are durable before the first mutation.
                     recover(storage, state);
@@ -274,11 +316,192 @@ public final class HologramCutService {
                 NBTTagCompound durable = storage.load();
                 if (durable.hasKey("pending", 10)) {
                     response.setString("code", "recovery_pending");
-                    response.setString("message", "剪切操作待恢复，原件记录已保留；再次同步将重试存盘");
+                    response.setString(
+                        "message",
+                        durable.getCompoundTag("pending")
+                            .hasKey("authorization", 10)
+                                ? "剪切操作待恢复，原件记录已保留："
+                                    + (failure.getMessage() == null ? "再次同步将核对存盘" : failure.getMessage())
+                                : "旧剪切日志缺少权限记录，已保留原记录并阻止自动恢复；请管理员核对存档");
                 } else directory(response, durable);
             } catch (IOException ignored) {}
             com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Cut clipboard request failed", failure);
         }
+        return response;
+    }
+
+    private static WorldServer editableWorld(EntityPlayerMP player) throws IOException {
+        HologramLibraryFacade.actorId(player);
+        if (player.isDead || !(player.worldObj instanceof WorldServer)
+            || player.dimension != player.worldObj.provider.dimensionId
+            || !player.capabilities.allowEdit
+            || !ItemNekoHologramProjector.isProjector(player.getHeldItem()))
+            throw new IOException("剪切未执行：请在允许编辑的原维度持有投影仪，原方块与暂存已保留");
+        return (WorldServer) player.worldObj;
+    }
+
+    /** Geometry only. The following Edit snapshot observes attached originals without creating default tiles. */
+    private static NBTTagCompound selectionShape(HologramAreaSelection selection, int[] box) throws IOException {
+        int sx = box[3] - box[0] + 1, sy = box[4] - box[1] + 1, sz = box[5] - box[2] + 1;
+        BitSet selected = HologramCutEntry.selectionMask(selection, box[0], box[1], box[2], sx, sy, sz);
+        NBTTagCompound shape = new NBTTagCompound();
+        shape.setInteger("sizeX", sx);
+        shape.setInteger("sizeY", sy);
+        shape.setInteger("sizeZ", sz);
+        shape.setInteger("selectionVersion", 1);
+        shape.setInteger("selectedCells", selected.cardinality());
+        NBTTagList cells = new NBTTagList();
+        for (int i = selected.nextSetBit(0); i >= 0; i = selected.nextSetBit(i + 1)) {
+            NBTTagCompound cell = new NBTTagCompound();
+            cell.setInteger("x", i % sx);
+            cell.setInteger("y", i / (sx * sz));
+            cell.setInteger("z", i / sx % sz);
+            cells.appendTag(cell);
+        }
+        shape.setTag("cells", cells);
+        return shape;
+    }
+
+    private static void editRights(EntityPlayerMP player, HologramCutWorld.Edit edit) throws IOException {
+        if (editableWorld(player) != edit.world) throw new IOException("剪切原世界已变化，操作已停止");
+        for (BlockSnapshot snapshot : edit.snapshots)
+            if (!edit.world.canMineBlock(player, snapshot.x, snapshot.y, snapshot.z)
+                || !player.canPlayerEdit(snapshot.x, snapshot.y, snapshot.z, 1, player.getHeldItem()))
+                throw new IOException("该区域不允许编辑，原方块与暂存已保留");
+    }
+
+    private static void coordinateRights(EntityPlayerMP player, WorldServer world, NBTTagCompound shape, int x, int y,
+        int z) throws IOException {
+        HologramCutEntry.validate(shape);
+        NBTTagList cells = shape.getTagList("cells", 10);
+        for (int i = 0; i < cells.tagCount(); i++) {
+            NBTTagCompound cell = cells.getCompoundTagAt(i);
+            int px = x + cell.getInteger("x"), py = y + cell.getInteger("y"), pz = z + cell.getInteger("z");
+            if (!world.canMineBlock(player, px, py, pz) || !player.canPlayerEdit(px, py, pz, 1, player.getHeldItem()))
+                throw new IOException("该区域不允许编辑，原方块与暂存已保留");
+        }
+    }
+
+    private static void authorizeBreaks(EntityPlayerMP player, HologramCutWorld.Edit edit) throws IOException {
+        editRights(player, edit);
+        for (BlockSnapshot snapshot : edit.snapshots) {
+            Block block = snapshot.getReplacedBlock();
+            if (block == Blocks.air) continue;
+            if (MinecraftForge.EVENT_BUS.post(
+                new BlockEvent.BreakEvent(
+                    snapshot.x,
+                    snapshot.y,
+                    snapshot.z,
+                    edit.world,
+                    block,
+                    snapshot.meta,
+                    player)))
+                throw new IOException("保护取消了方块移除，原方块与暂存已保留");
+        }
+        edit.verifyOriginal();
+        editRights(player, edit);
+    }
+
+    /** Forge PlaceEvent observes the real installed target. Until every event accepts, only rollback is durable. */
+    private static void authorizePlacement(EntityPlayerMP player, HologramCutWorld.Edit edit, NBTTagCompound entry,
+        HologramCutStorage storage, NBTTagCompound state, String action, String requestId) throws Exception {
+        NBTTagCompound rollback = new NBTTagCompound();
+        rollback.setTag("entry", edit.before.copy());
+        rollback.setTag("candidate", entry.copy());
+        rollback.setInteger("dimension", edit.world.provider.dimensionId);
+        rollback.setInteger("x", edit.x);
+        rollback.setInteger("y", edit.y);
+        rollback.setInteger("z", edit.z);
+        rollback.setBoolean("air", false);
+        storage.markPending(rollback, action, requestId, false);
+        state.setTag("pending", rollback);
+        storage.save(state);
+        boolean approved = false;
+        try {
+            try {
+                edit.stage(entry);
+                NBTTagList cells = entry.getTagList("cells", 10);
+                for (int i = 0; i < cells.tagCount(); i++) {
+                    if (Block.getBlockFromName(
+                        cells.getCompoundTagAt(i)
+                            .getString("block"))
+                        == Blocks.air) continue;
+                    BlockEvent.PlaceEvent event = ForgeEventFactory
+                        .onPlayerBlockPlace(player, edit.snapshots.get(i), ForgeDirection.UP);
+                    if (event.isCanceled()) throw new IOException("保护取消了方块放置，原方块与暂存已保留");
+                }
+                edit.verifyStaged(entry);
+                editRights(player, edit);
+            } finally {
+                edit.restore();
+            }
+            edit.verifyOriginal();
+            editRights(player, edit);
+            approved = true;
+        } finally {
+            if (!approved) {
+                // Keep the original live instances after a veto; only a restart needs raw reconstruction.
+                HologramCutWorld.saveAndVerify(edit.world, edit.before, edit.x, edit.y, edit.z, false);
+                NBTTagCompound completed = (NBTTagCompound) state.copy();
+                completed.removeTag("pending");
+                storage.save(completed);
+                state.removeTag("pending");
+            }
+        }
+        // The disk still contains rollback-only until the complete approved redo is atomically saved below.
+        state.removeTag("pending");
+    }
+
+    private static NBTTagCompound executeDemolition(EntityPlayerMP player, NBTTagCompound request) {
+        NBTTagCompound response = new NBTTagCompound();
+        response.setString("action", "state");
+        response.setString("requestId", request.getString("requestId"));
+        try {
+            String id = HologramDemolitionProtocol.validate(request);
+            String action = request.getString("action");
+            DemolitionConnection connection = demolitionRequests.get(player.getUniqueID());
+            if (connection == null || connection.player != player) {
+                connection = new DemolitionConnection(player);
+                demolitionRequests.put(player.getUniqueID(), connection);
+            }
+            HologramDemolitionProtocol.History history = connection.history;
+            if ("demolitionStatus".equals(action)) {
+                HologramDemolitionProtocol.Receipt receipt = history.find(request.getString("id"));
+                boolean accepted = receipt != null && "demolish".equals(receipt.action) && receipt.accepted;
+                response.setString("reconciledRequestId", request.getString("id"));
+                response.setBoolean("requestCompleted", accepted);
+                response.setString("message", accepted ? "拆除请求已接收，请留意完成消息" : "该拆除请求未执行，可重新框选确认");
+            } else {
+                HologramDemolitionProtocol.Receipt receipt = history.find(id);
+                if (receipt != null) {
+                    if (!action.equals(receipt.action)) throw new IOException("拆除请求编号已使用");
+                    response.setBoolean("success", receipt.accepted);
+                    response.setString("code", "already_submitted");
+                    response.setString("message", receipt.accepted ? "该拆除请求已处理" : "该拆除请求未执行，请重新确认");
+                    response.setBoolean("demolitionActive", HologramDemolition.active(player));
+                    return response;
+                }
+                receipt = history.begin(id, action);
+                if ("demolish".equals(action)) {
+                    HologramDemolition.start(player, HologramDemolitionProtocol.selection(request));
+                    HologramSession workspace = HologramWorkspace.find(player.getUniqueID());
+                    if (workspace != null && workspace.player == player)
+                        HologramProjectorWorkflow.libraryCloseUi(workspace);
+                    response.setString("message", "已开始从上往下拆除；按 Esc 可取消剩余拆除");
+                } else {
+                    HologramDemolition.cancel(player);
+                    response.setString("message", "拆除已停止");
+                }
+                receipt.accepted = true;
+            }
+            response.setBoolean("success", true);
+            response.setString("code", "ok");
+        } catch (IOException invalid) {
+            response.setBoolean("success", false);
+            response.setString("code", "failed");
+            response.setString("message", invalid.getMessage());
+        }
+        response.setBoolean("demolitionActive", HologramDemolition.active(player));
         return response;
     }
 
@@ -293,6 +516,12 @@ public final class HologramCutService {
     static void recover(HologramCutStorage storage, NBTTagCompound state) throws Exception {
         if (!state.hasKey("pending", 10)) return;
         NBTTagCompound pending = state.getCompoundTag("pending");
+        boolean approved = storage.approvedPending(pending);
+        if (approved && !seen(
+            state,
+            pending.getCompoundTag("authorization")
+                .getString("requestId")))
+            throw new IOException("剪切恢复缺少对应请求记录，原记录已保留");
         int dimension = pending.getInteger("dimension");
         WorldServer world = DimensionManager.getWorld(dimension);
         if (world == null) {
@@ -303,16 +532,20 @@ public final class HologramCutService {
         NBTTagCompound entry = pending.getCompoundTag("entry");
         int x = pending.getInteger("x"), y = pending.getInteger("y"), z = pending.getInteger("z");
         boolean air = pending.getBoolean("air");
-        HologramCutWorld.apply(world, entry, x, y, z, air);
+        NBTTagCompound before = approved ? air ? entry : pending.getCompoundTag("before") : entry;
+        NBTTagCompound candidate = approved ? entry : pending.getCompoundTag("candidate");
+        NBTTagCompound changes = HologramCutWorld
+            .recoveryChanges(world, before, candidate, x, y, z, approved && air, !approved);
+        if (changes != null) HologramCutWorld.apply(world, changes, x, y, z, air);
         HologramCutWorld.saveAndVerify(world, entry, x, y, z, air);
         NBTTagCompound completed = (NBTTagCompound) state.copy();
-        String consumeId = pending.getString("consumeId");
+        String consumeId = approved ? pending.getString("consumeId") : "";
         if (!consumeId.isEmpty()) remove(completed, consumeId);
         completed.removeTag("pending");
         storage.save(completed);
         if (!consumeId.isEmpty()) remove(state, consumeId);
         state.removeTag("pending");
-        HologramCutWorld.notifyCommitted(world, entry, x, y, z, air);
+        if (approved) HologramCutWorld.notifyCommitted(world, entry, x, y, z, air);
     }
 
     private static boolean seen(NBTTagCompound state, String id) {

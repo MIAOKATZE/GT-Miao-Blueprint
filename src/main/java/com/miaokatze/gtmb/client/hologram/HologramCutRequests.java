@@ -34,7 +34,7 @@ final class HologramCutRequests {
         }
 
         boolean writesWorld() {
-            return "cut".equals(action) || "paste".equals(action) || "undo".equals(action);
+            return "cut".equals(action) || "paste".equals(action) || "undo".equals(action) || "demolish".equals(action);
         }
     }
 
@@ -108,6 +108,12 @@ final class HologramCutRequests {
 
     String unresolvedWrite() {
         for (Request request : requests.values()) if (request.writesWorld() && request.expired) return request.id;
+        return "";
+    }
+
+    String unresolvedDemolition() {
+        for (Request request : requests.values())
+            if ("demolish".equals(request.action) && request.expired) return request.id;
         return "";
     }
 

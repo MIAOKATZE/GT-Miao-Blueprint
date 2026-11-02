@@ -16,10 +16,8 @@ import net.minecraftforge.common.util.ForgeDirection;
 import net.minecraftforge.event.world.BlockEvent;
 
 import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
-import com.gtnewhorizon.structurelib.structure.AutoPlaceEnvironment;
 import com.gtnewhorizon.structurelib.structure.ICustomBlockSetting;
 import com.gtnewhorizon.structurelib.structure.IItemSource;
-import com.gtnewhorizon.structurelib.structure.IStructureElement;
 import com.gtnewhorizon.structurelib.structure.IStructureElement.PlaceResult;
 import com.gtnewhorizon.structurelib.structure.StructureUtility;
 import com.gtnewhorizon.structurelib.util.ItemStackPredicate;
@@ -63,8 +61,19 @@ final class HologramWorldTransactions {
 
     @SuppressWarnings("unchecked")
     static boolean operateChecked(HologramSession s, HologramCapture.Cell c, int index) {
+        if (s.capture != null && !s.capture.sourceCurrent()) {
+            c.status = "unsupported";
+            s.status = "结构来源或现场状态已变化，未扣除材料，请重新采集";
+            return false;
+        }
         if (HologramSessionPolicy.ignoredPlacementAir(s, c, index)) {
             c.status = "satisfied";
+            return true;
+        }
+        String declarationProtection = HologramSourcePolicy.protectionReason(s, c, index);
+        if (declarationProtection != null) {
+            c.status = "protected";
+            s.status = declarationProtection;
             return true;
         }
         World w = s.player.worldObj;
@@ -179,10 +188,7 @@ final class HologramWorldTransactions {
             c.status = "protected";
             return true;
         }
-        if (s.mode != 2 && ((c.unknown && !HologramCellPolicy.explicitTarget(s, c, index)
-            && !s.autoTargets.containsKey(index)
-            && !(!s.noHatches && s.channels.hasKey("gt_hatch", 3) && "hatch".equals(c.role)))
-            || (c.element == null && !HologramCellPolicy.explicitTarget(s, c, index))
+        if (s.mode != 2 && ((c.element == null && !HologramCellPolicy.explicitTarget(s, c, index))
             || HologramCellPolicy.targetFor(s, c, index) == null)) {
             c.status = "unsupported";
             return true;
@@ -396,10 +402,6 @@ final class HologramWorldTransactions {
                 if (pin != null && material == null) source = new HologramMaterialSources.FilteredSource(source, pin);
                 if (s.noHatches && !HologramCellPolicy.explicitTarget(s, c, index))
                     source = new HologramMaterialSources.ShellSource(source);
-                boolean directCreative = s.player.capabilities.isCreativeMode && !s.noHatches && pin == null;
-                boolean customBlock = HologramCellPolicy.explicitTarget(s, c, index) && pin != null
-                    && !(pin.getItem() instanceof ItemMachines)
-                    && HologramCellPolicy.acceptableSample(s, c, pin);
                 PlaceResult result;
                 boolean nativeCancelled;
                 boolean nativePlacement = s.virtual && s.virtualPreset.schema >= 2
@@ -414,11 +416,9 @@ final class HologramWorldTransactions {
                                 ? transaction.takeOneFuzzy(pin, false)
                                 : source.takeOne(pin, false)))
                             && w.setBlock(c.x, c.y, c.z, c.block, c.meta, 3) ? PlaceResult.ACCEPT : PlaceResult.REJECT;
-                    } else if (directCreative) result = c.element
-                        .placeBlock(s.machine, w, c.x, c.y, c.z, HologramCellPolicy.elementTrigger(s, c))
-                            ? PlaceResult.ACCEPT
-                            : PlaceResult.REJECT;
-                    else if (customBlock) {
+                    } else {
+                        // The exact material was proved above. Never re-enter a chain's unknown checks,
+                        // tier setters, hatch adders or deferred suppliers while placing that material.
                         result = StructureUtility.survivalPlaceBlock(
                             pin,
                             HologramMaterialAccess.fuzzyBlueprintShells(s, pin) ? ItemStackPredicate.NBTMode.IGNORE
@@ -432,37 +432,7 @@ final class HologramWorldTransactions {
                             source,
                             s.player,
                             s.player::addChatMessage);
-                    } else if ((HologramCellPolicy.explicitTarget(s, c, index) || s.autoTargets.containsKey(index))
-                        && pin.getItem() instanceof ItemMachines
-                        && HologramCellPolicy.acceptableSample(s, c, pin)) {
-                            // Explicit overrides use the legal GT item directly, without structure candidate filters.
-                            // Manual choices do not use the automatic atLeast fill quota.
-                            result = StructureUtility.survivalPlaceBlock(
-                                pin,
-                                HologramMaterialAccess.fuzzyBlueprintShells(s, pin) ? ItemStackPredicate.NBTMode.IGNORE
-                                    : ItemStackPredicate.NBTMode.EXACT,
-                                null,
-                                true,
-                                w,
-                                c.x,
-                                c.y,
-                                c.z,
-                                source,
-                                s.player);
-                        } else {
-                            IStructureElement placement = pin.getItem() instanceof ItemMachines
-                                ? HologramCellPolicy.hatchElement(s, c, pin, false)
-                                : c.element;
-                            result = placement == null ? PlaceResult.REJECT
-                                : placement.survivalPlaceBlock(
-                                    s.machine,
-                                    w,
-                                    c.x,
-                                    c.y,
-                                    c.z,
-                                    HologramCellPolicy.elementTrigger(s, c),
-                                    AutoPlaceEnvironment.fromLegacy(source, s.player, s.player::addChatMessage));
-                        }
+                    }
                     nativeCancelled = events.cancelled();
                 }
                 if (Boolean.getBoolean("gtmb.v0111.nativeContractsOnly")) System.out.println(
@@ -523,7 +493,7 @@ final class HologramWorldTransactions {
                 }
                 Block placed = w.getBlock(c.x, c.y, c.z);
                 placementStage = "native-callbacks";
-                if (placed instanceof ICustomBlockSetting || directCreative) {
+                if (placed instanceof ICustomBlockSetting) {
                     ItemStack placedStack = new ItemStack(placed, 1, w.getBlockMetadata(c.x, c.y, c.z));
                     placed.onBlockPlacedBy(w, c.x, c.y, c.z, s.player, placedStack);
                     placed.onPostBlockPlaced(w, c.x, c.y, c.z, w.getBlockMetadata(c.x, c.y, c.z));

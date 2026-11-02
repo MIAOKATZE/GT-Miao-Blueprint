@@ -14,6 +14,12 @@ import com.miaokatze.gtmb.hologram.HologramWorldFlow;
  */
 final class HologramCutInput {
 
+    enum Mode {
+        BLUEPRINT,
+        CUT,
+        DEMOLITION
+    }
+
     enum Stage {
         IDLE,
         SELECTING,
@@ -73,6 +79,14 @@ final class HologramCutInput {
         return shift ? Intent.SWITCHER : Intent.NONE;
     }
 
+    static Intent right(Stage stage, boolean shift, boolean alt, boolean blueprintBusy, Mode mode, boolean control) {
+        if (mode != Mode.DEMOLITION) return right(stage, shift, alt, blueprintBusy, mode == Mode.CUT, control);
+        if (blueprintBusy) return Intent.NONE;
+        if (stage == Stage.SELECTING) return right(stage, shift, alt, false, false, control);
+        if (shift && !alt) return Intent.SWITCHER;
+        return Intent.SELECT;
+    }
+
     static boolean interceptsUse(Stage stage, boolean shift, boolean blueprintBusy, boolean cutMode) {
         return !blueprintBusy && (stage != Stage.IDLE || cutMode || shift);
     }
@@ -108,20 +122,31 @@ final class HologramCutInput {
 
     static final class Switcher {
 
-        private boolean cut, finished;
+        private Mode mode;
+        private boolean finished;
 
-        Switcher() {}
+        Switcher() {
+            this(Mode.BLUEPRINT);
+        }
 
         Switcher(boolean cut) {
-            this.cut = cut;
+            this(cut ? Mode.CUT : Mode.BLUEPRINT);
+        }
+
+        Switcher(Mode mode) {
+            this.mode = mode;
+        }
+
+        Mode mode() {
+            return mode;
         }
 
         boolean cut() {
-            return cut;
+            return mode == Mode.CUT;
         }
 
         void cycle() {
-            if (!finished) cut = !cut;
+            if (!finished) mode = Mode.values()[(mode.ordinal() + 1) % Mode.values().length];
         }
 
         boolean release(boolean shift) {

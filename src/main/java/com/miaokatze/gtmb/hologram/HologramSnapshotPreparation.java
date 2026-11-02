@@ -193,6 +193,7 @@ final class HologramSnapshotPreparation {
         final long revision, ui, batch, planGeneration, clientTask;
         final long voucherRevision = DecorationVoucherConfig.revision();
         final long declarationGeneration = HologramDeclarationAdapters.generation();
+        final HologramDeclarationAdapters.Bindings declarationBindings = new HologramDeclarationAdapters.Bindings();
         final int x, y, z, size, job, scope, layer, selected;
         final boolean authoring, draftOnly;
         final String planError;
@@ -253,6 +254,7 @@ final class HologramSnapshotPreparation {
             return ticket.current() && HologramWorkspace.find(s.player.getUniqueID()) == s
                 && voucherRevision == DecorationVoucherConfig.revision()
                 && declarationGeneration == HologramDeclarationAdapters.generation()
+                && declarationBindings.validityFailure() == null
                 && session.equals(s.id)
                 && s.player.worldObj == world
                 && capture == s.capture
@@ -278,6 +280,13 @@ final class HologramSnapshotPreparation {
         }
 
         void step(long deadline, LongSupplier clock) {
+            try (HologramDeclarationAdapters.Scope declarations = HologramDeclarationAdapters
+                .observe(declarationBindings)) {
+                prepareStep(deadline, clock);
+            }
+        }
+
+        private void prepareStep(long deadline, LongSupplier clock) {
             if (stage == 0) {
                 int materialized = 0;
                 for (Task queued : TASKS.values()) if (queued.state != null) materialized++;

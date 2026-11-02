@@ -27,6 +27,7 @@ import net.minecraft.world.chunk.storage.ExtendedBlockStorage;
 import net.minecraft.world.chunk.storage.RegionFileCache;
 import net.minecraft.world.storage.ThreadedFileIOBase;
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.common.util.BlockSnapshot;
 import net.minecraftforge.event.world.ChunkDataEvent;
 
 import cpw.mods.fml.common.eventhandler.EventPriority;
@@ -36,6 +37,284 @@ import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 final class HologramCutWorld {
 
     private HologramCutWorld() {}
+
+    /** Original live objects are parked, never torn down, while Forge inspects a reversible installation. */
+    static final class Edit {
+
+        final WorldServer world;
+        final int x, y, z;
+        final NBTTagCompound before;
+        final List<BlockSnapshot> snapshots = new ArrayList<>();
+        private final List<TileEntity> originalTiles = new ArrayList<>();
+        private final List<Boolean> originalLoaded = new ArrayList<>();
+        private final Set<TileEntity> originalIdentities = Collections.newSetFromMap(new IdentityHashMap<>());
+        private final List<TileEntity> candidates = new ArrayList<>();
+        private final List<NBTTagCompound> candidateStates = new ArrayList<>();
+        private final Map<Chunk, Map<Integer, ExtendedBlockStorage>> originalSections = new IdentityHashMap<>();
+        private boolean staged;
+
+        Edit(WorldServer world, NBTTagCompound shape, int x, int y, int z) throws IOException {
+            HologramCutEntry.validate(shape);
+            HologramCutEntry
+                .bounds(x, y, z, shape.getInteger("sizeX"), shape.getInteger("sizeY"), shape.getInteger("sizeZ"));
+            if (!(world.theChunkProviderServer.currentChunkLoader instanceof AnvilChunkLoader))
+                throw new IOException("剪切需要可验证存盘的 Anvil 世界");
+            this.world = world;
+            this.x = x;
+            this.y = y;
+            this.z = z;
+            HologramCutChunks.loadWithLightNeighbors(world, x, z, shape.getInteger("sizeX"), shape.getInteger("sizeZ"));
+            before = HologramCutEntry.directory(shape);
+            before.setInteger("dimension", world.provider.dimensionId);
+            before.setInteger("x", x);
+            before.setInteger("y", y);
+            before.setInteger("z", z);
+            NBTTagList cells = new NBTTagList();
+            NBTTagList selected = shape.getTagList("cells", 10);
+            Set<TileEntity> loaded = Collections.newSetFromMap(new IdentityHashMap<>());
+            for (Object tile : world.loadedTileEntityList) loaded.add((TileEntity) tile);
+            int blocks = 0;
+            for (int i = 0; i < selected.tagCount(); i++) {
+                NBTTagCompound position = selected.getCompoundTagAt(i);
+                int px = x + position.getInteger("x"), py = y + position.getInteger("y"),
+                    pz = z + position.getInteger("z");
+                Block block = world.getBlock(px, py, pz);
+                int metadata = world.getBlockMetadata(px, py, pz);
+                TileEntity tile = attachedTile(world, px, py, pz);
+                if (block.hasTileEntity(metadata) && tile == null) throw new IOException("原方块实体尚未完整加载，原方块与暂存已保留");
+                NBTTagCompound data = null;
+                if (tile != null) {
+                    data = new NBTTagCompound();
+                    tile.writeToNBT(data);
+                }
+                NBTTagCompound cell = new NBTTagCompound();
+                cell.setInteger("x", position.getInteger("x"));
+                cell.setInteger("y", position.getInteger("y"));
+                cell.setInteger("z", position.getInteger("z"));
+                cell.setString("block", Block.blockRegistry.getNameForObject(block));
+                cell.setInteger("meta", metadata);
+                if (data != null) cell.setTag("tile", data.copy());
+                cells.appendTag(cell);
+                if (block != Blocks.air) blocks++;
+                snapshots.add(new BlockSnapshot(world, px, py, pz, block, metadata, data));
+                originalTiles.add(tile);
+                if (tile != null) originalIdentities.add(tile);
+                originalLoaded.add(tile != null && loaded.contains(tile));
+            }
+            before.setInteger("blocks", blocks);
+            before.setTag("cells", cells);
+        }
+
+        void verifyOriginal() throws IOException {
+            verify(before, originalTiles);
+            NBTTagList cells = before.getTagList("cells", 10);
+            for (int i = 0; i < originalTiles.size(); i++) if (!sameNbt(
+                tileState(originalTiles.get(i)),
+                cells.getCompoundTagAt(i)
+                    .hasKey("tile", 10)
+                        ? cells.getCompoundTagAt(i)
+                            .getCompoundTag("tile")
+                        : null))
+                throw new IOException("保护回调改变了原方块实体内容，操作已停止");
+        }
+
+        private void verify(NBTTagCompound expected, List<TileEntity> tiles) throws IOException {
+            NBTTagList cells = expected.getTagList("cells", 10);
+            for (int i = 0; i < cells.tagCount(); i++) {
+                NBTTagCompound cell = cells.getCompoundTagAt(i);
+                int px = x + cell.getInteger("x"), py = y + cell.getInteger("y"), pz = z + cell.getInteger("z");
+                if (world.getBlock(px, py, pz) != Block.getBlockFromName(cell.getString("block"))
+                    || world.getBlockMetadata(px, py, pz) != cell.getInteger("meta")
+                    || attachedTile(world, px, py, pz) != tiles.get(i)
+                    || tiles.get(i) != null && (tiles.get(i)
+                        .isInvalid()
+                        || tiles.get(i)
+                            .getWorldObj() != world
+                        || tiles.get(i).xCoord != px
+                        || tiles.get(i).yCoord != py
+                        || tiles.get(i).zCoord != pz))
+                    throw new IOException("保护回调改变了剪切原格或方块实体，操作已停止");
+            }
+        }
+
+        /** Native readers run before installing anything; validation/readiness/teardown remain commit-only. */
+        void stage(NBTTagCompound entry) throws IOException {
+            NBTTagList cells = entry.getTagList("cells", 10);
+            Set<TileEntity> unique = Collections.newSetFromMap(new IdentityHashMap<>());
+            for (int i = 0; i < cells.tagCount(); i++) {
+                NBTTagCompound cell = cells.getCompoundTagAt(i);
+                Block block = Block.getBlockFromName(cell.getString("block"));
+                if (block == null) throw new IOException("原方块模组未加载");
+                TileEntity candidate = null;
+                if (cell.hasKey("tile", 10)) {
+                    NBTTagCompound payload = HologramCutEntry.relocatedTile(
+                        cell,
+                        x + cell.getInteger("x"),
+                        y + cell.getInteger("y"),
+                        z + cell.getInteger("z"));
+                    candidate = "savedMultipart".equals(payload.getString("id")) ? createTile(world, payload)
+                        : HologramCutTiles.create(world, block, cell.getInteger("meta"), payload);
+                    if (candidate == null || originalIdentities.contains(candidate)
+                        || world.loadedTileEntityList.contains(candidate)
+                        || !unique.add(candidate)
+                        || candidate.getWorldObj() != world
+                        || candidate.isInvalid()
+                        || candidate.xCoord != payload.getInteger("x")
+                        || candidate.yCoord != payload.getInteger("y")
+                        || candidate.zCoord != payload.getInteger("z"))
+                        throw new IOException("原生方块实体不能安全地准备可撤销放置，原方块与暂存已保留");
+                } else
+                    if (block.hasTileEntity(cell.getInteger("meta"))) throw new IOException("剪切记录缺少原始方块实体，原方块与暂存已保留");
+                candidates.add(candidate);
+            }
+            verifyOriginal();
+            staged = true;
+            world.loadedTileEntityList.removeIf(originalIdentities::contains);
+            for (int i = 0; i < cells.tagCount(); i++) {
+                NBTTagCompound cell = cells.getCompoundTagAt(i);
+                int px = x + cell.getInteger("x"), py = y + cell.getInteger("y"), pz = z + cell.getInteger("z");
+                Chunk chunk = world.getChunkFromChunkCoords(px >> 4, pz >> 4);
+                Map<Integer, ExtendedBlockStorage> sections = originalSections
+                    .computeIfAbsent(chunk, ignored -> new LinkedHashMap<>());
+                if (!sections.containsKey(py >> 4)) sections.put(py >> 4, chunk.getBlockStorageArray()[py >> 4]);
+                chunk.chunkTileEntityMap.remove(new ChunkPosition(px & 15, py, pz & 15));
+                writeSection(
+                    world,
+                    chunk,
+                    px,
+                    py,
+                    pz,
+                    Block.getBlockFromName(cell.getString("block")),
+                    cell.getInteger("meta"));
+                TileEntity candidate = candidates.get(i);
+                if (candidate != null) {
+                    chunk.chunkTileEntityMap.put(new ChunkPosition(px & 15, py, pz & 15), candidate);
+                    world.loadedTileEntityList.add(candidate);
+                }
+            }
+            for (TileEntity candidate : candidates) candidateStates.add(tileState(candidate));
+        }
+
+        void verifyStaged(NBTTagCompound entry) throws IOException {
+            verify(entry, candidates);
+            for (int i = 0; i < candidates.size(); i++)
+                if (!sameNbt(candidateStates.get(i), tileState(candidates.get(i))))
+                    throw new IOException("保护回调改变了候选方块实体内容，原方块与暂存已保留");
+        }
+
+        /** Restore exact original live tile instances; no lifecycle/readiness/tick callback was dispatched. */
+        void restore() {
+            if (!staged) return;
+            Set<TileEntity> removed = Collections.newSetFromMap(new IdentityHashMap<>());
+            removed.addAll(originalIdentities);
+            removed.addAll(candidates);
+            NBTTagList cells = before.getTagList("cells", 10);
+            for (int i = 0; i < cells.tagCount(); i++) {
+                NBTTagCompound cell = cells.getCompoundTagAt(i);
+                int px = x + cell.getInteger("x"), py = y + cell.getInteger("y"), pz = z + cell.getInteger("z");
+                Chunk chunk = world.getChunkFromChunkCoords(px >> 4, pz >> 4);
+                TileEntity stagedTile = chunk.chunkTileEntityMap.remove(new ChunkPosition(px & 15, py, pz & 15));
+                if (stagedTile != null) removed.add(stagedTile);
+                writeSection(
+                    world,
+                    chunk,
+                    px,
+                    py,
+                    pz,
+                    Block.getBlockFromName(cell.getString("block")),
+                    cell.getInteger("meta"));
+                TileEntity original = originalTiles.get(i);
+                if (original != null) {
+                    chunk.chunkTileEntityMap.put(new ChunkPosition(px & 15, py, pz & 15), original);
+                }
+            }
+            world.loadedTileEntityList.removeIf(removed::contains);
+            for (int i = 0; i < originalTiles.size(); i++)
+                if (originalLoaded.get(i)) world.loadedTileEntityList.add(originalTiles.get(i));
+            for (Map.Entry<Chunk, Map<Integer, ExtendedBlockStorage>> chunk : originalSections.entrySet())
+                for (Map.Entry<Integer, ExtendedBlockStorage> section : chunk.getValue()
+                    .entrySet())
+                    if (section.getValue() == null && chunk.getKey()
+                        .getBlockStorageArray()[section.getKey()] != null
+                        && chunk.getKey()
+                            .getBlockStorageArray()[section.getKey()].isEmpty())
+                        chunk.getKey()
+                            .getBlockStorageArray()[section.getKey()] = null;
+            staged = false;
+        }
+
+        private static NBTTagCompound tileState(TileEntity tile) {
+            if (tile == null) return null;
+            NBTTagCompound state = new NBTTagCompound();
+            tile.writeToNBT(state);
+            return state;
+        }
+    }
+
+    private static void writeSection(WorldServer world, Chunk chunk, int x, int y, int z, Block block, int metadata) {
+        ExtendedBlockStorage[] sections = chunk.getBlockStorageArray();
+        if (sections[y >> 4] == null && block != Blocks.air)
+            sections[y >> 4] = new ExtendedBlockStorage((y >> 4) << 4, !world.provider.hasNoSky);
+        if (sections[y >> 4] != null) {
+            sections[y >> 4].func_150818_a(x & 15, y & 15, z & 15, block);
+            sections[y >> 4].setExtBlockMetadata(x & 15, y & 15, z & 15, metadata);
+        }
+        chunk.setChunkModified();
+    }
+
+    /**
+     * Never overwrite a third state after an interrupted transaction; already restored originals keep their identity.
+     */
+    static NBTTagCompound recoveryChanges(WorldServer world, NBTTagCompound before, NBTTagCompound candidate, int x,
+        int y, int z, boolean candidateAir, boolean rollback) throws IOException {
+        HologramCutEntry.validate(before);
+        HologramCutEntry.validate(candidate);
+        for (String size : new String[] { "sizeX", "sizeY", "sizeZ" })
+            if (before.getInteger(size) != candidate.getInteger(size)) throw new IOException("剪切恢复前后图范围不一致，原记录已保留");
+        HologramCutEntry
+            .bounds(x, y, z, before.getInteger("sizeX"), before.getInteger("sizeY"), before.getInteger("sizeZ"));
+        HologramCutChunks.loadWithLightNeighbors(world, x, z, before.getInteger("sizeX"), before.getInteger("sizeZ"));
+        NBTTagList original = before.getTagList("cells", 10), prepared = candidate.getTagList("cells", 10);
+        if (original.tagCount() != prepared.tagCount()) throw new IOException("剪切恢复前后图选区不一致，原记录已保留");
+        NBTTagCompound desired = rollback ? before : candidate;
+        NBTTagCompound changes = HologramCutEntry.directory(desired);
+        NBTTagList cells = new NBTTagList();
+        for (int i = 0; i < original.tagCount(); i++) {
+            NBTTagCompound oldCell = original.getCompoundTagAt(i), newCell = prepared.getCompoundTagAt(i);
+            for (String coordinate : new String[] { "x", "y", "z" })
+                if (oldCell.getInteger(coordinate) != newCell.getInteger(coordinate))
+                    throw new IOException("剪切恢复前后图坐标不一致，原记录已保留");
+            int px = x + oldCell.getInteger("x"), py = y + oldCell.getInteger("y"), pz = z + oldCell.getInteger("z");
+            boolean isBefore = matchesCell(world, oldCell, px, py, pz, false);
+            boolean isCandidate = matchesCell(world, newCell, px, py, pz, candidateAir);
+            if (!isBefore && !isCandidate)
+                throw new IOException("剪切恢复发现前后图之外的现场变化，已阻止覆盖并保留日志 at [" + px + "," + py + "," + pz + "]");
+            if (rollback ? !isBefore : !isCandidate) cells.appendTag((rollback ? oldCell : newCell).copy());
+        }
+        if (cells.tagCount() == 0) return null;
+        changes.setInteger("selectionVersion", 1);
+        changes.setInteger("selectedCells", cells.tagCount());
+        changes.setTag("cells", cells);
+        return changes;
+    }
+
+    private static boolean matchesCell(WorldServer world, NBTTagCompound cell, int x, int y, int z, boolean air)
+        throws IOException {
+        if (world.getBlock(x, y, z) != (air ? Blocks.air : Block.getBlockFromName(cell.getString("block")))
+            || world.getBlockMetadata(x, y, z) != (air ? 0 : cell.getInteger("meta"))) return false;
+        TileEntity tile = attachedTile(world, x, y, z);
+        if ((tile != null) != (!air && cell.hasKey("tile", 10))) return false;
+        if (tile == null) return true;
+        if (tile.isInvalid() || tile.getWorldObj() != world || tile.xCoord != x || tile.yCoord != y || tile.zCoord != z)
+            return false;
+        NBTTagCompound live = new NBTTagCompound();
+        try {
+            tile.writeToNBT(live);
+        } catch (RuntimeException | LinkageError failure) {
+            throw new IOException("剪切恢复无法核对原生方块实体，原记录已保留", failure);
+        }
+        return sameNbt(live, HologramCutEntry.relocatedTile(cell, x, y, z));
+    }
 
     /** FMP registers a loading carrier, so its own factory must build the live composite. No payload is rewritten. */
     static TileEntity createTile(WorldServer world, NBTTagCompound tag) throws IOException {

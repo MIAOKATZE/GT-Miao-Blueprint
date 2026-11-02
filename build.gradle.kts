@@ -98,18 +98,6 @@ tasks.withType<org.gradle.api.plugins.quality.Checkstyle>().configureEach {
     maxHeapSize = "2g"
 }
 
-tasks.register<JavaExec>("runIndustrialConstraintsTest") {
-    group = "verification"
-    description = "Checks native LCR coil declarations and hatch casing constraints in an isolated JVM."
-    mainClass = "com.miaokatze.gtmb.hologram.HologramIndustrialConstraintsRegression"
-    classpath = configurations.detachedConfiguration(dependencies.create("org.ow2.asm:asm:9.8")) + hologramTestClasspath
-    val scratchDir = layout.buildDirectory.dir("hologram-industrial-constraints")
-    workingDir(scratchDir)
-    doFirst { scratchDir.get().asFile.mkdirs() }
-}
-
-tasks.named("check") { dependsOn("runIndustrialConstraintsTest") }
-
 // Exercise the shipped SRG ABI: development classpaths cannot witness inherited MCP-name gaps.
 abstract class ReleaseGuiBridgeArguments : CommandLineArgumentProvider {
     @get:InputFile

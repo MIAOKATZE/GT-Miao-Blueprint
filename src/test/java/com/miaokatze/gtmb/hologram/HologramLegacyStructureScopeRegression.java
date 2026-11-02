@@ -37,7 +37,10 @@ final class HologramLegacyStructureScopeRegression {
         IMetaTileEntity previous = GregTechAPI.METATILEENTITIES[id];
         LegacyController prototype = new LegacyController();
         GregTechAPI.METATILEENTITIES[id] = prototype;
-        try {
+        try (AutoCloseable declaration = HologramDeclarationAdapters.registerScopedReader(
+            HintedBlock.class,
+            leaf -> new HologramDeclarationAdapters.Declaration(
+                new HologramPureElementsRegression.Leaf(true, leaf.block, null)))) {
             EntityPlayerMP actor = (EntityPlayerMP) unsafe.allocateInstance(EntityPlayerMP.class);
             actor.worldObj = (World) unsafe.allocateInstance(HologramServiceEditRegression.ReadOnlyWorld.class);
             actor.inventory = new net.minecraft.entity.player.InventoryPlayer(actor);

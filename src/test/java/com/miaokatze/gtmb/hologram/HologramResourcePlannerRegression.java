@@ -573,7 +573,13 @@ public final class HologramResourcePlannerRegression {
                     } else if (scenario == 7) world.denyMine = true;
                     else if (scenario == 8) cell.itemNbt = HologramBlueprintNbt.encodeCaptured(payload);
                     else if (scenario == 9) {
+                        cell = new HologramCapture.Cell(
+                            StructureUtility.ofBlock(Blocks.chest, 0),
+                            cell.x,
+                            cell.y,
+                            cell.z);
                         cell.block = Blocks.chest;
+                        s.capture.cells.set(0, cell);
                         s.pins.put(0, new ItemStack(Blocks.chest));
                     } else if (scenario == 10) {
                         s.virtual = false;
@@ -630,7 +636,14 @@ public final class HologramResourcePlannerRegression {
         s.virtualPreset.schema = 2;
         s.virtualLocked = true;
         s.mode = 0;
-        for (int i = 0; i < size; i++) s.pins.put(i, new ItemStack(Blocks.stone));
+        for (int i = 0; i < size; i++) {
+            HologramCapture.Cell old = s.capture.cells.get(i);
+            HologramCapture.Cell cell = new HologramCapture.Cell(null, old.x, old.y, old.z);
+            cell.block = Blocks.stone;
+            cell.userPosition = true;
+            s.capture.cells.set(i, cell);
+            s.pins.put(i, new ItemStack(Blocks.stone));
+        }
         return s;
     }
 
@@ -901,8 +914,12 @@ public final class HologramResourcePlannerRegression {
         throws Exception {
         HologramSession s = session(player, 1);
         s.virtualPreset.schema = 2;
-        HologramCapture.Cell cell = s.capture.cells.get(0);
+        HologramCapture.Cell previousCell = s.capture.cells.get(0);
+        // Physical blueprints are projected without a live StructureLib leaf, as populateVirtual does.
+        HologramCapture.Cell cell = new HologramCapture.Cell(null, previousCell.x, previousCell.y, previousCell.z);
+        cell.block = previousCell.block;
         cell.userPosition = true;
+        s.capture.cells.set(0, cell);
         HologramPlanClassifier classifier = new HologramPlanClassifier(s);
         net.minecraft.block.Block[] types = { Blocks.stone, Blocks.wool, Blocks.stained_glass };
         boolean originalCreative = player.capabilities.isCreativeMode;

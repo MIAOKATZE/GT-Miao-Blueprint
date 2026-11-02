@@ -76,7 +76,13 @@ public final class HologramRecovery {
         seal.setString("item", item);
         seal.setInteger("damage", damage);
         seal.setInteger("mID", id);
-        seal.setTag("tile", tile.copy());
+        NBTTagCompound payload = (NBTTagCompound) tile.copy();
+        // Placement always supplies the destination coordinates. Keeping the source position here makes
+        // otherwise identical recovered machines unstackable; every other persistent field stays exact.
+        payload.setInteger("x", 0);
+        payload.setInteger("y", 0);
+        payload.setInteger("z", 0);
+        seal.setTag("tile", payload);
         return seal;
     }
 

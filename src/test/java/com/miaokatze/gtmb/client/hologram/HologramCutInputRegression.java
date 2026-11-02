@@ -116,7 +116,9 @@ public final class HologramCutInputRegression {
         choice.cycle();
         SimpleAssert.that(choice.cut(), "one extra right press selects cut");
         choice.cycle();
-        SimpleAssert.that(!choice.cut(), "second extra press cycles back to blueprint");
+        SimpleAssert.eq(HologramCutInput.Mode.DEMOLITION, choice.mode(), "second extra press selects demolition");
+        choice.cycle();
+        SimpleAssert.eq(HologramCutInput.Mode.BLUEPRINT, choice.mode(), "third extra press returns to blueprint");
         choice.cycle();
         SimpleAssert.that(choice.release(false), "first Shift release commits chosen mode");
         SimpleAssert.that(!choice.release(false), "later ticks cannot execute a second operation");
@@ -334,8 +336,9 @@ public final class HologramCutInputRegression {
         HologramCutInput.Switcher remembered = new HologramCutInput.Switcher(true);
         SimpleAssert.that(remembered.cut(), "reopened mode selector starts on the selected CUT mode");
         remembered.cycle();
-        SimpleAssert
-            .that(remembered.release(false) && !remembered.cut(), "one additional right press returns to blueprint");
+        SimpleAssert.that(
+            remembered.release(false) && remembered.mode() == HologramCutInput.Mode.DEMOLITION,
+            "one additional right press advances from cut to demolition");
         for (HologramCutInput.Stage stage : HologramCutInput.Stage.values()) {
             SimpleAssert.eq(
                 stage == HologramCutInput.Stage.SELECTING ? HologramCutInput.Intent.MARK

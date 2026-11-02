@@ -1,6 +1,8 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.math.BigInteger;
+import java.util.ArrayList;
+import java.util.List;
 
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
@@ -22,6 +24,7 @@ import appeng.api.networking.IGridNode;
 import appeng.api.networking.energy.IEnergyGrid;
 import appeng.api.networking.security.ISecurityGrid;
 import appeng.helpers.WirelessTerminalGuiObject;
+import appeng.util.PlayerInventoryUtil;
 import gregtech.api.GregTechAPI;
 import gregtech.common.misc.WirelessNetworkManager;
 
@@ -160,7 +163,12 @@ final class HologramEnergyNetwork implements HologramEnergy.Bank {
     }
 
     private static Connection findConnection(EntityPlayerMP player, String requestedKey) {
-        for (ItemStack stack : player.inventory.mainInventory) {
+        // Match the material source's native baubles-first terminal selection before checking other carried banks.
+        ItemStack preferred = PlayerInventoryUtil.getFirstWirelessTerminal(player);
+        List<ItemStack> carried = new ArrayList<>();
+        if (preferred != null) carried.add(preferred);
+        for (ItemStack stack : player.inventory.mainInventory) if (stack != preferred) carried.add(stack);
+        for (ItemStack stack : carried) {
             if (stack == null || stack.stackSize <= 0) continue;
             try {
                 IWirelessTermHandler handler = AEApi.instance()

@@ -200,14 +200,24 @@ final class HologramWorldGuide {
     }
 
     static void draw(List<String> messages, ScaledResolution resolution) {
-        if (messages.isEmpty()) return;
         Minecraft mc = Minecraft.getMinecraft();
         FontRenderer font = mc.fontRenderer;
         List<String> rows = new ArrayList<>();
+        if (HologramClient.projectorWorld()) {
+            HologramCutInput.Mode mode = HologramCutClient.INSTANCE.mode();
+            String key = mode == HologramCutInput.Mode.CUT ? "mode"
+                : mode == HologramCutInput.Mode.DEMOLITION ? "demolition" : "blueprint";
+            String color = mode == HologramCutInput.Mode.DEMOLITION ? "\u00a7c"
+                : mode == HologramCutInput.Mode.CUT ? "\u00a7e" : "\u00a7b";
+            rows.add(
+                color + String
+                    .format(java.util.Locale.ROOT, HologramCutClient.text("currentMode"), HologramCutClient.text(key)));
+        }
         for (int i = 0; i < messages.size(); i++) {
             String styled = highlight(messages.get(i), i == 0 ? "\u00a7b" : "\u00a77");
             rows.add(styled);
         }
+        if (rows.isEmpty()) return;
         int width = 0;
         for (String row : rows) width = Math.max(width, font.getStringWidth(row));
         // Match GTSWN's TerminalBaubleController top hint card, including its fit-to-width/height font scale.

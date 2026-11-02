@@ -14,7 +14,7 @@ Start GTMB once to generate `config/gtmb-testlab.cfg`. In its `testlab` category
 | `baseX`, `baseZ` | `4096` | Multiples of 16, absolute value at most 1,000,000 |
 | `zoneSpacing` | `4096` | Multiple of 16, 256–65,536 |
 | `zoneY` | `80` | 32–224 |
-| `maxOwnedChunks` | `8` | 4–32; also limited by Forge ticket capacity; each current facility leases four chunks |
+| `maxOwnedChunks` | `8` | 4–32; also limited by Forge ticket capacity; ordinary facilities lease four chunks |
 | `operationsPerTick` | `512` | 1–4,096 cooperative steps |
 | `tickBudgetMillis` | `5` | 1–20 ms wall-time deadline between steps |
 | `runTimeoutSeconds` | `60` | 10–300 seconds per run |
@@ -69,6 +69,10 @@ The FakePlayer has a save-specific namespace-derived UUID, is separate from onli
 - `codec_roundtrip`, `dedicated_safe_backend`: production snapshot compression, cut packet frame codecs and ordered assembly roundtrip using common/server objects.
 
 `stress` records production codec bytes/frames and finite iterations in memory. It also submits real, inert production `ServerTaskScheduler` callbacks with at most eight outstanding. It waits for submitted callbacks to execute; cancelled or stale callbacks cannot mutate the world or a newer report. The suite never clears the global scheduler queue. It reports `codec_frame_assembly`, `stress_bound` and `bounded_server_task_queue`. It is not a FakePlayer Netty throughput test, a TPS benchmark, or a general machine performance certification.
+
+v0.3.1 候选仅保留通用测试设施。此前未发布的 GTNL 五机专属套件、命令和扩展区域已撤出产品；历史报告仍绑定原候选，不能用来证明当前通用实现通过了五机验收。原五区及 composite 的存档归属协议保持不变，旧额外标记和区域不会被接管或删除。
+
+新的纯声明、来源有效性与材料扩展回归使用自有元素、控制器和 Block/Item 夹具，检查未知回调不执行、保存数据不能恢复权限、注销后失效和真实材料身份。它们属于 JVM 合同验证；完整客户端界面、真实付款施工与外部机器成型各自需要独立实机证据。
 
 ## Evidence and timing
 

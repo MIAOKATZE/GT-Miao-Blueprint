@@ -4,6 +4,7 @@ import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 
 import com.cleanroommc.modularui.screen.ModularPanel;
+import com.cleanroommc.modularui.utils.Alignment;
 import com.cleanroommc.modularui.value.StringValue;
 import com.miaokatze.gtmb.hologram.HologramCutNaming;
 
@@ -39,27 +40,56 @@ final class HologramCutDialogContent {
         BiConsumer<Boolean, Boolean> finish) {
         HologramMuiTheme.header(panel, title, 306);
         panel.child(HologramMuiTheme.label(detail, 14, 41, 278, 66, HologramMuiTheme.TEXT));
+        confirmationActions(panel, allowSkip, 120, "confirm", finish);
+    }
+
+    static void demolitionConfirmation(ModularPanel panel, Supplier<String> title, Supplier<String> range,
+        BiConsumer<Boolean, Boolean> finish) {
+        HologramMuiTheme.header(panel, title, 306);
+        panel.child(
+            HologramMuiTheme.label(range, 14, 41, 278, 36, HologramEditorTheme.PAPER_INFORMATION)
+                .textAlign(Alignment.TopLeft)
+                .name("demolition_range"))
+            .child(
+                HologramMuiTheme.label(() -> text("confirmDemolitionDetail"), 14, 83, 278, 27, HologramMuiTheme.ERROR)
+                    .textAlign(Alignment.TopLeft)
+                    .name("demolition_action"))
+            .child(
+                HologramMuiTheme
+                    .label(() -> text("confirmDemolitionProtection"), 14, 116, 278, 27, HologramMuiTheme.TITLE)
+                    .textAlign(Alignment.TopLeft)
+                    .name("demolition_protection"))
+            .child(
+                HologramMuiTheme
+                    .label(() -> text("confirmDemolitionDrops"), 14, 149, 278, 36, HologramEditorTheme.PAPER_NEXT)
+                    .textAlign(Alignment.TopLeft)
+                    .name("demolition_destination"));
+        confirmationActions(panel, false, 198, "confirmDemolitionAction", finish);
+    }
+
+    private static void confirmationActions(ModularPanel panel, boolean allowSkip, int y, String confirmKey,
+        BiConsumer<Boolean, Boolean> finish) {
         if (!allowSkip) {
             panel.child(
                 HologramMuiTheme
-                    .primaryButton(() -> text("confirm"), 162, 120, 132, 22, () -> finish.accept(true, false))
+                    .primaryButton(() -> text(confirmKey), 162, y, 132, 22, () -> finish.accept(true, false))
                     .name("cut_confirm"));
             panel.child(
-                HologramMuiTheme.button(() -> text("cancel"), 12, 120, 132, 22, () -> finish.accept(false, false))
+                HologramMuiTheme.button(() -> text("cancel"), 12, y, 132, 22, () -> finish.accept(false, false))
                     .name("cut_cancel"));
         } else {
             panel.child(
-                HologramMuiTheme.button(() -> text("cancel"), 12, 120, 56, 22, () -> finish.accept(false, false))
+                HologramMuiTheme.button(() -> text("cancel"), 12, y, 56, 22, () -> finish.accept(false, false))
                     .name("cut_cancel"));
             panel.child(
-                HologramMuiTheme.primaryButton(() -> text("confirm"), 74, 120, 56, 22, () -> finish.accept(true, false))
+                HologramMuiTheme.primaryButton(() -> text(confirmKey), 74, y, 56, 22, () -> finish.accept(true, false))
                     .name("cut_confirm"));
             panel.child(
                 HologramMuiTheme
                     .button(
                         () -> text("placement.confirmWithoutPrompt"),
                         136,
-                        120,
+                        y,
                         158,
                         22,
                         () -> finish.accept(true, true))

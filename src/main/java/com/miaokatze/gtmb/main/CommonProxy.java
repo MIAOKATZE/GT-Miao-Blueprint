@@ -34,6 +34,8 @@ public class CommonProxy {
     public void init() {
         ProjectorRegistry.registerRecipe();
         HologramNetwork.init();
+        net.minecraftforge.common.MinecraftForge.EVENT_BUS
+            .register(com.miaokatze.gtmb.hologram.HologramDemolition.DROPS);
         FMLCommonHandler.instance()
             .bus()
             .register(new HologramLifecycle());

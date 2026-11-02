@@ -71,7 +71,7 @@ final class TestLabOwnership {
         }
         Path regions = root.resolve("DIM" + cfg.dimension)
             .resolve("region");
-        for (TestLabZone zone : cfg.zones.subList(5, cfg.zones.size())) {
+        for (TestLabZone zone : cfg.zones) if (zone.id.startsWith("composite-")) {
             for (int rx = zone.x >> 9; rx <= (zone.x + zone.sizeX - 1) >> 9; rx++)
                 for (int rz = zone.z >> 9; rz <= (zone.z + zone.sizeZ - 1) >> 9; rz++)
                     if (Files.exists(regions.resolve("r." + rx + "." + rz + ".mca")))

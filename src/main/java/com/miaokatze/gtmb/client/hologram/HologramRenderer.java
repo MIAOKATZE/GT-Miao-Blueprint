@@ -1833,7 +1833,8 @@ final class HologramRenderer {
 
     static void world(HologramState state, float partialTicks) {
         boolean witness = Boolean.getBoolean("gtmb.hologram.realInteractionSmoke")
-            || Boolean.getBoolean("gtmb.hologram.followupAreaClient");
+            || Boolean.getBoolean("gtmb.hologram.followupAreaClient")
+            || Boolean.getBoolean("gtmb.hologram.previewCaptureWitness");
         if (witness) worldRenderWitness = null;
         HologramTextures.begin(state);
         HologramBlockRender.begin(state);

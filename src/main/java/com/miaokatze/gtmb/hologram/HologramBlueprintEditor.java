@@ -747,7 +747,9 @@ final class HologramBlueprintEditor {
                     structure.y = copy.y - s.y;
                     structure.z = copy.z - s.z;
                 }
-        HologramCapture capture = new HologramCapture(null, HologramSessionPolicy.trigger(s));
+        HologramCapture capture = new HologramCapture(null, HologramSessionPolicy.trigger(s), s.capture.captureIntent);
+        capture.inheritSources(s.capture);
+        capture.sourceMetadata = (NBTTagCompound) s.capture.sourceMetadata.copy();
         capture.cells.addAll(
             HologramSessionPolicy.authoring(s) ? HologramGeometryEdits.stableOrder(s.capture.cells, staged, copies)
                 : staged.values());

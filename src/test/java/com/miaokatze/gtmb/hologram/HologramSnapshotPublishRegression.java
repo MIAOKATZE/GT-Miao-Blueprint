@@ -1093,6 +1093,12 @@ public final class HologramSnapshotPublishRegression {
             java.lang.reflect.Method valid = oldTask.getClass()
                 .getDeclaredMethod("valid");
             valid.setAccessible(true);
+            SimpleAssert.eq(true, valid.invoke(oldTask), "unrelated new declaration preserves in-flight preparation");
+            HologramDeclarationAdapters.register(
+                declared,
+                new HologramDeclarationAdapters.Declaration(
+                    com.gtnewhorizon.structurelib.structure.StructureUtility
+                        .ofBlock(net.minecraft.init.Blocks.stone, 0)));
             SimpleAssert.eq(false, valid.invoke(oldTask), "adapter generation invalidates an in-flight full snapshot");
             HologramSnapshotPreparation.tick(source);
             SimpleAssert.that(

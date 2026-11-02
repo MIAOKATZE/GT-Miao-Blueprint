@@ -247,11 +247,37 @@ final class HologramEditorConfigurationDialogs {
     }
 
     private ModularPanel channels() {
-        Flow content = column();
+        Flow content = column().collapseDisabledChild(true);
         content.child(
             note(
                 () -> "来源：" + HologramEditorPropertiesPane
                     .sourceLabel(ui, ui.session.state().data.getString("activeStructure"))));
+        content.child(
+            visibleRow(
+                local(
+                    () -> "用途：" + ("LIVE_SNAPSHOT".equals(ui.session.state().data.getString("captureIntent")) ? "现场快照"
+                        : "新建模板"),
+                    () -> {
+                        NBTTagCompound request = new NBTTagCompound();
+                        request.setString(
+                            "intent",
+                            "LIVE_SNAPSHOT".equals(ui.session.state().data.getString("captureIntent")) ? "NEW_TEMPLATE"
+                                : "LIVE_SNAPSHOT");
+                        ui.session.send("captureIntent", request, true);
+                    },
+                    () -> editable() && !ui.session.state().data.getBoolean("virtual"),
+                    () -> "切换后重新采集与计算材料；现场快照保留机器当前状态，新建模板使用建造结构。"),
+                22,
+                () -> ui.session.state().data.getCompoundTag("structureSemantics")
+                    .getBoolean("sourcePolicy")));
+        content.child(visibleRow(note(() -> {
+            NBTTagCompound semantics = ui.session.state().data.getCompoundTag("structureSemantics");
+            return semantics.hasNoTags() ? "按原结构声明解释；自定义条件需单独核实"
+                : semantics.getBoolean("partial") ? "部分规则已识别；未核实部分不授予施工资格" : "已识别结构规则；施工前仍须核对整机约束与现场";
+        }),
+            28,
+            () -> ui.session.state().data.getCompoundTag("structureSemantics")
+                .getBoolean("sourcePolicy")));
         ListWidget<IWidget, ?> rows = list().name("config.channels.rows");
         for (int row = 0; row < 4; row++) {
             final int slot = row;
@@ -310,7 +336,31 @@ final class HologramEditorConfigurationDialogs {
                     .getBoolean("editable"),
             this::reason).expanded());
         content.child(toggles);
-        return dialog("channels", () -> "结构等级 / 信道", content, () -> ui.router.activate(62), 354);
+        ListWidget<IWidget, ?> semanticRules = new ListWidget<>().widthRel(1f)
+            .height(84);
+        for (int row = 0; row < 16; row++) {
+            final int index = row;
+            semanticRules.child(visibleRow(note(() -> semanticRule(index)), 28, () -> !semanticRule(index).isEmpty()));
+        }
+        content.child(
+            visibleRow(
+                semanticRules,
+                84,
+                () -> ui.session.state().data.getCompoundTag("structureSemantics")
+                    .getBoolean("sourcePolicy")));
+        boolean semantics = ui.session.state().data.getCompoundTag("structureSemantics")
+            .getBoolean("sourcePolicy");
+        return dialog("channels", () -> "结构等级 / 信道", content, () -> ui.router.activate(62), semantics ? 466 : 354);
+    }
+
+    private String semanticRule(int index) {
+        NBTTagCompound semantics = ui.session.state().data.getCompoundTag("structureSemantics");
+        NBTTagList rules = semantics.getTagList("rules", 10);
+        if (index < rules.tagCount()) return "整机 · " + rules.getCompoundTagAt(index)
+            .getString("text");
+        NBTTagList restrictions = semantics.getTagList("restrictions", 8);
+        int restriction = index - rules.tagCount();
+        return restriction < restrictions.tagCount() ? "补放 · " + restrictions.getStringTagAt(restriction) : "";
     }
 
     private NBTTagCompound capabilityRow(int row) {
