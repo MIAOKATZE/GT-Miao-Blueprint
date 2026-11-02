@@ -158,6 +158,7 @@ final class HologramSemanticSafetyRegression {
             SimpleAssert.that(
                 separate.presetSupported && separate.autoTargets.size() == 2,
                 "independent requirements still allocate distinct physical hatches");
+            boundedPreset(unsafe, energy, energyId, energyStack, mufflerStack);
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("native hatch quota accounting", failure);
         } finally {
@@ -165,6 +166,70 @@ final class HologramSemanticSafetyRegression {
             GregTechAPI.METATILEENTITIES[energyId] = previousEnergy;
             GregTechAPI.METATILEENTITIES[mufflerId] = previousMuffler;
             GregTechAPI.METATILEENTITIES[otherEnergyId] = previousOtherEnergy;
+        }
+    }
+
+    private static void boundedPreset(sun.misc.Unsafe unsafe, IMetaTileEntity energy, int energyId,
+        ItemStack energyStack, ItemStack mufflerStack) throws ReflectiveOperationException {
+        Map<IHatchElement<?>, Integer> requirements = new LinkedHashMap<>();
+        requirements.put(HatchElement.Energy, 2);
+        requirements.put(HatchElement.Energy.or(HatchElement.ExoticEnergy), 2);
+        requirements.put(HatchElement.Muffler, 1);
+        for (int path = 0; path < 3; path++) {
+            HologramSession s = presetSession(unsafe, requirements, energyStack, mufflerStack);
+            HologramCapture.Cell example = s.capture.cells.get(0);
+            for (int x = s.capture.cells.size(); x < 1024; x++) {
+                HologramCapture.Cell cell = new HologramCapture.Cell(example.element, x, 64, 0, example.elementTrigger);
+                cell.block = Blocks.stone;
+                cell.candidates = example.candidates;
+                s.capture.cells.add(cell);
+            }
+            HologramServiceEditRegression.ReadOnlyWorld world = (HologramServiceEditRegression.ReadOnlyWorld) s.player.worldObj;
+            if (path == 1) s.pins.put(0, energyStack.copy());
+            if (path == 2) {
+                BaseMetaTileEntity installed = (BaseMetaTileEntity) unsafe.allocateInstance(BaseMetaTileEntity.class);
+                installed.setMetaTileID((short) energyId);
+                installed.setMetaTileEntity(energy);
+                world.occupant = installed;
+            }
+            HologramResourcePlanner.PresetTask task = new HologramResourcePlanner.PresetTask(s);
+            java.util.Set<String> phases = new java.util.HashSet<>();
+            int operations = 0;
+            while (!task.done() && operations++ < 20000) {
+                phases.add(task.phase());
+                long before = world.tileReads;
+                task.advance();
+                SimpleAssert.that(
+                    world.tileReads - before <= 1,
+                    "one preset operation observes at most one position, including sort and allocation");
+            }
+            SimpleAssert.that(task.done() && operations > 1024, "large native quotas finish over bounded operations");
+            SimpleAssert.that(
+                phases.contains("preset.positions") && phases.contains("preset.allocate"),
+                "position counts and quota choices both expose continuation phases");
+            SimpleAssert.that(s.presetSupported, "known overlapping quotas are completely satisfied on path " + path);
+            SimpleAssert.eq(
+                path == 0 ? 3 : 2,
+                s.autoTargets.size(),
+                "fixed physical target count matches the original native quota semantics");
+            int first = path == 0 ? 0 : 1;
+            SimpleAssert.eq(
+                energyStack.getItemDamage(),
+                s.autoTargets.get(first)
+                    .getItemDamage(),
+                "stable native type and position order retain the first energy allocation");
+            if (path == 0) SimpleAssert.eq(
+                energyStack.getItemDamage(),
+                s.autoTargets.get(1)
+                    .getItemDamage(),
+                "overlapping groups still use one shared second physical energy hatch");
+            SimpleAssert.eq(
+                mufflerStack.getItemDamage(),
+                s.autoTargets.get(2)
+                    .getItemDamage(),
+                "independent muffler quota retains the next free physical position");
+            SimpleAssert.eq(path == 1 ? 1 : 0, s.pins.size(), "budgeting preserves explicit target ownership");
+            SimpleAssert.eq(1, s.player.inventory.mainInventory[1].stackSize, "planning never spends hatch stock");
         }
     }
 

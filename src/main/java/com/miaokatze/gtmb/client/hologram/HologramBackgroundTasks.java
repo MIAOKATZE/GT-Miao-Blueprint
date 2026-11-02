@@ -172,7 +172,8 @@ public final class HologramBackgroundTasks {
             controlPredecessors.clear();
             acceptedControls.clear();
             issuedSequence = command;
-            startRevision = context == null ? -1 : context.data.getLong("planRevision");
+            startRevision = context == null || !session.equals(context.session) ? -1
+                : context.data.getLong("planRevision");
         }
         boundToken = OWNER.token();
     }
@@ -672,6 +673,7 @@ public final class HologramBackgroundTasks {
             case "attachment.upload" -> "文字或图片数据上传失败";
             case "snapshot.prepare" -> "蓝图快照准备失败";
             case "snapshot.encode" -> "蓝图快照编码失败";
+            case "snapshot.decode" -> "蓝图快照解码失败";
             case "snapshot.queue" -> "蓝图快照发送队列已满";
             case "snapshot.budget" -> "蓝图快照超过传输预算";
             default -> "蓝图快照传输失败";

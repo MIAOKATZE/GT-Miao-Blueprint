@@ -153,9 +153,14 @@ final class HologramResourcePlanner {
         s.cellAssetBudgets.clear();
     }
 
-    /** Area imports plan into an unactivated staging session. Native/world calls stay on this thread. */
+    /** Area imports plan into an unactivated virtual staging session. */
     static PlanTask beginPlan(HologramSession staging) {
         if (!staging.virtual) throw new IllegalArgumentException("Staged planning requires a virtual session");
+        return new PlanTask(staging);
+    }
+
+    /** Native capture finalization reuses the same bounded planner on the owning server thread. */
+    static PlanTask beginCapturePlan(HologramSession staging) {
         return new PlanTask(staging);
     }
 
@@ -168,6 +173,7 @@ final class HologramResourcePlanner {
         private HologramExteriorTask exterior;
         private HologramResourceTask resources;
         private HologramPlanClassifier classifier;
+        private PresetTask preset;
         private int stage, cursor, lastWork;
         private boolean needsExterior;
         private java.util.Set<String> outside = Collections.emptySet();
@@ -205,6 +211,7 @@ final class HologramResourcePlanner {
             if (stage == 1) return allocation.phase();
             if (stage == 4) return exterior.phase();
             if (stage == 8) return resources.phase();
+            if (stage == 11) return preset.phase();
             return stage == 0 ? "plan.initialize"
                 : stage == 2 ? "plan.preset"
                     : stage == 3 ? "facing.cells"
@@ -217,6 +224,7 @@ final class HologramResourcePlanner {
             if (stage == 1) return allocation.completed();
             if (stage == 4) return exterior.completed();
             if (stage == 8) return resources.completed();
+            if (stage == 11) return preset.completed();
             return done() ? total() : cursor;
         }
 
@@ -224,6 +232,7 @@ final class HologramResourcePlanner {
             if (stage == 1) return allocation.total();
             if (stage == 4) return exterior.total();
             if (stage == 8) return resources.total();
+            if (stage == 11) return preset.total();
             return s.capture == null ? 0 : s.capture.cells.size();
         }
 
@@ -231,6 +240,11 @@ final class HologramResourcePlanner {
             if (stage == 0) {
                 resetPlan(s);
                 if (s.capture == null) {
+                    stage = 9;
+                    return;
+                }
+                if (!s.virtual && !s.capture.sourceCurrent()) {
+                    s.status = "结构来源或现场状态已变化，请重新采集后计算材料";
                     stage = 9;
                     return;
                 }
@@ -244,9 +258,21 @@ final class HologramResourcePlanner {
                     s.cellIndices.put(s.capture.cells.get(i), i);
                 } else {
                     s.indexedCapture = s.capture;
-                    allocation = new HologramVirtualAllocationTask(s);
                     cursor = 0;
-                    stage = 1;
+                    if (s.virtual) {
+                        allocation = new HologramVirtualAllocationTask(s);
+                        stage = 1;
+                    } else {
+                        preset = new PresetTask(s);
+                        stage = 11;
+                    }
+                }
+            } else if (stage == 11) {
+                if (!preset.done()) preset.advance();
+                else {
+                    s.planFacings.clear();
+                    cursor = 0;
+                    stage = s.mode == 2 ? 6 : 3;
                 }
             } else if (stage == 1) {
                 if (!allocation.done()) allocation.advance();
@@ -904,87 +930,166 @@ final class HologramResourcePlanner {
 
     /** Freeze a whole-machine target list; quotas and inventory are shared across every position. */
     static void buildPreset(HologramSession s) {
-        s.autoTargets.clear();
-        if (s.allocationsFrozen) {
-            for (int i = 0; i < s.capture.cells.size(); i++) {
-                HologramCapture.Cell cell = s.capture.cells.get(i);
-                ItemStack target = s.frozenAutoTargets.get(HologramValues.position(cell));
-                if (!cell.anchor && !s.pins.containsKey(i) && HologramCellPolicy.acceptableSample(s, cell, target))
-                    s.autoTargets.put(i, target.copy());
+        PresetTask task = new PresetTask(s);
+        while (!task.done()) task.advance();
+    }
+
+    /** Same quota/target order as synchronous planning, with at most one position examined per advance. */
+    static final class PresetTask {
+
+        private final HologramSession s;
+        private final Map<String, gregtech.api.interfaces.IHatchElement<?>> types = new LinkedHashMap<>();
+        private final Map<String, Integer> quotas = new LinkedHashMap<>(), positions = new HashMap<>();
+        private final Map<ExactKey, Integer> reserved = new HashMap<>();
+        private List<String> ordered;
+        private int stage, cursor, typeCursor, positionCount, chosenIndex = -1;
+        private ItemStack chosen;
+
+        PresetTask(HologramSession s) {
+            this.s = s;
+        }
+
+        boolean done() {
+            return stage == 8;
+        }
+
+        String phase() {
+            return stage == 5 ? "preset.positions" : stage == 7 ? "preset.allocate" : "preset.cells";
+        }
+
+        long completed() {
+            return done() ? total() : cursor;
+        }
+
+        long total() {
+            return s.capture.cells.size();
+        }
+
+        void advance() {
+            if (stage == 0) {
+                s.autoTargets.clear();
+                if (s.allocationsFrozen) {
+                    stage = 1;
+                    return;
+                }
+                s.presetSupported = false;
+                s.presetAvailable = false;
+                s.presetReason = "此定义未声明完整仓室配额；原机成型约束仍由原机判断";
+                if (s.virtual || s.mode == 2) {
+                    s.presetReason = "拆除独立使用原结构范围，保留仓室预设设置供建造或替换使用";
+                    stage = 8;
+                } else stage = 2;
+            } else if (stage == 1) {
+                if (cursor < s.capture.cells.size()) {
+                    int i = cursor++;
+                    HologramCapture.Cell cell = s.capture.cells.get(i);
+                    ItemStack target = s.frozenAutoTargets.get(HologramValues.position(cell));
+                    if (!cell.anchor && !s.pins.containsKey(i) && HologramCellPolicy.acceptableSample(s, cell, target))
+                        s.autoTargets.put(i, target.copy());
+                } else stage = 8;
+            } else if (stage == 2) {
+                if (cursor < s.capture.cells.size()) {
+                    HologramCellPolicy.hatchRequirements(s, s.capture.cells.get(cursor++))
+                        .forEach((type, count) -> {
+                            types.putIfAbsent(type.name(), type);
+                            quotas.merge(type.name(), count, Math::max);
+                        });
+                } else {
+                    cursor = 0;
+                    stage = 3;
+                }
+            } else if (stage == 3) {
+                stage = 8;
+                if (types.isEmpty()) return;
+                s.presetAvailable = true;
+                if (s.presetPaused) {
+                    s.presetReason = "预设已撤销；选择电压级后可重新生成";
+                    return;
+                }
+                if (s.noHatches || !(s.presetEnabled || s.channels.hasKey("gt_hatch", 3))) {
+                    s.presetReason = "选择电压级后生成目标；保留已有仓室与手动指定";
+                    return;
+                }
+                ordered = new ArrayList<>(types.keySet());
+                stage = 4;
+            } else if (stage == 4) {
+                if (cursor < s.capture.cells.size()) countExisting(cursor++);
+                else {
+                    cursor = 0;
+                    stage = ordered.size() > 1 ? 5 : 7;
+                }
+            } else if (stage == 5) {
+                if (typeCursor >= ordered.size()) {
+                    // Sorting only compares the counts frozen before automatic allocations begin.
+                    ordered.sort((a, b) -> Integer.compare(positions.get(a), positions.get(b)));
+                    typeCursor = 0;
+                    stage = 7;
+                } else if (cursor < s.capture.cells.size()) {
+                    int i = cursor++;
+                    if (presetPosition(s, s.capture.cells.get(i), i, types.get(ordered.get(typeCursor))))
+                        positionCount++;
+                } else {
+                    positions.put(ordered.get(typeCursor++), positionCount);
+                    cursor = positionCount = 0;
+                }
+            } else if (stage == 7) {
+                if (typeCursor >= ordered.size()) {
+                    int unfilled = 0;
+                    for (int remaining : quotas.values()) unfilled += remaining;
+                    s.presetSupported = unfilled == 0;
+                    s.presetReason = s.presetSupported ? "已满足声明配额并生成仓室预设；已有仓室与手选目标保留，原机成型约束仍由原机判断"
+                        : "部分声明仓室没有可放置位置或对应等级候选（缺 " + unfilled + " 格）；原机成型约束仍由原机判断";
+                    stage = 8;
+                } else if (quotas.get(ordered.get(typeCursor)) <= 0) {
+                    typeCursor++;
+                    cursor = 0;
+                } else if (cursor < s.capture.cells.size()) choose(cursor++);
+                else commitChoice();
             }
-            return;
         }
-        s.presetSupported = false;
-        s.presetAvailable = false;
-        s.presetReason = "此定义未声明完整仓室配额；原机成型约束仍由原机判断";
-        if (s.virtual || s.mode == 2) {
-            s.presetReason = "拆除独立使用原结构范围，保留仓室预设设置供建造或替换使用";
-            return;
-        }
-        Map<String, gregtech.api.interfaces.IHatchElement<?>> types = new LinkedHashMap<>();
-        Map<String, Integer> quotas = new LinkedHashMap<>();
-        Map<ExactKey, Integer> reserved = new HashMap<>();
-        for (HologramCapture.Cell c : s.capture.cells) HologramCellPolicy.hatchRequirements(s, c)
-            .forEach((type, count) -> {
-                types.putIfAbsent(type.name(), type);
-                quotas.merge(type.name(), count, Math::max);
-            });
-        if (types.isEmpty()) return;
-        s.presetAvailable = true;
-        if (s.presetPaused) {
-            s.presetReason = "预设已撤销；选择电压级后可重新生成";
-            return;
-        }
-        if (s.noHatches || !(s.presetEnabled || s.channels.hasKey("gt_hatch", 3))) {
-            s.presetReason = "选择电压级后生成目标；保留已有仓室与手动指定";
-            return;
-        }
-        // Count legal existing devices and explicit targets without changing either of them.
-        for (int i = 0; i < s.capture.cells.size(); i++) {
+
+        private void countExisting(int i) {
             HologramCapture.Cell c = s.capture.cells.get(i);
-            if (c.anchor) continue;
+            if (c.anchor) return;
             ItemStack stack = s.pins.get(i);
             TileEntity actual = s.player.worldObj.getTileEntity(c.x, c.y, c.z);
             if (stack == null && actual instanceof IGregTechTileEntity)
                 stack = new ItemStack(GregTechAPI.sBlockMachines, 1, ((IGregTechTileEntity) actual).getMetaTileID());
-            if (stack == null || HologramCellPolicy.hatchElement(s, c, stack, true) == null) continue;
+            if (stack == null || HologramCellPolicy.hatchElement(s, c, stack, true) == null) return;
             if (s.pins.containsKey(i) && !(actual instanceof IGregTechTileEntity))
                 HologramValues.mergeStack(reserved, stack, 1, Integer::sum);
-            gregtech.api.interfaces.metatileentity.IMetaTileEntity prototype = ItemMachines.getMetaTileEntity(stack);
-            contributeQuotas(types, quotas, prototype);
+            contributeQuotas(types, quotas, ItemMachines.getMetaTileEntity(stack));
         }
-        List<String> ordered = new ArrayList<>(types.keySet());
-        ordered.sort((a, b) -> Integer.compare(presetPositions(s, types.get(a)), presetPositions(s, types.get(b))));
-        for (String name : ordered) while (quotas.get(name) > 0) {
-            gregtech.api.interfaces.IHatchElement<?> type = types.get(name);
-            ItemStack chosen = null;
-            int chosenIndex = -1;
-            for (int i = 0; i < s.capture.cells.size(); i++) {
-                HologramCapture.Cell c = s.capture.cells.get(i);
-                if (!presetPosition(s, c, i, type)) continue;
-                List<ItemStack> options = new ArrayList<>();
-                for (ItemStack option : HologramCellPolicy.candidates(s, c))
-                    if (HologramCellPolicy.hatchTier(option) != Integer.MAX_VALUE
-                        && HologramHatchPolicy.contribution(type, ItemMachines.getMetaTileEntity(option)) > 0)
-                        options.add(option);
-                ItemStack pick = presetCandidate(s, options, reserved);
-                if (pick == null) continue;
-                if (chosen == null || HologramCellPolicy.hatchTier(pick) > HologramCellPolicy.hatchTier(chosen)) {
-                    chosen = pick;
-                    chosenIndex = i;
-                }
-                if (HologramCellPolicy.hatchTier(pick) == s.hatchTier) break;
+
+        private void choose(int i) {
+            gregtech.api.interfaces.IHatchElement<?> type = types.get(ordered.get(typeCursor));
+            HologramCapture.Cell c = s.capture.cells.get(i);
+            if (!presetPosition(s, c, i, type)) return;
+            List<ItemStack> options = new ArrayList<>();
+            for (ItemStack option : HologramCellPolicy.candidates(s, c))
+                if (HologramCellPolicy.hatchTier(option) != Integer.MAX_VALUE
+                    && HologramHatchPolicy.contribution(type, ItemMachines.getMetaTileEntity(option)) > 0)
+                    options.add(option);
+            ItemStack pick = presetCandidate(s, options, reserved);
+            if (pick == null) return;
+            if (chosen == null || HologramCellPolicy.hatchTier(pick) > HologramCellPolicy.hatchTier(chosen)) {
+                chosen = pick;
+                chosenIndex = i;
             }
-            if (chosen == null) break;
-            s.autoTargets.put(chosenIndex, chosen.copy());
-            HologramValues.mergeStack(reserved, chosen, 1, Integer::sum);
-            contributeQuotas(types, quotas, ItemMachines.getMetaTileEntity(chosen));
+            if (HologramCellPolicy.hatchTier(pick) == s.hatchTier) commitChoice();
         }
-        int unfilled = 0;
-        for (int remaining : quotas.values()) unfilled += remaining;
-        s.presetSupported = unfilled == 0;
-        s.presetReason = s.presetSupported ? "已满足声明配额并生成仓室预设；已有仓室与手选目标保留，原机成型约束仍由原机判断"
-            : "部分声明仓室没有可放置位置或对应等级候选（缺 " + unfilled + " 格）；原机成型约束仍由原机判断";
+
+        private void commitChoice() {
+            if (chosen == null) typeCursor++;
+            else {
+                s.autoTargets.put(chosenIndex, chosen.copy());
+                HologramValues.mergeStack(reserved, chosen, 1, Integer::sum);
+                contributeQuotas(types, quotas, ItemMachines.getMetaTileEntity(chosen));
+                chosen = null;
+                chosenIndex = -1;
+            }
+            cursor = 0;
+        }
     }
 
     private static void contributeQuotas(Map<String, gregtech.api.interfaces.IHatchElement<?>> types,

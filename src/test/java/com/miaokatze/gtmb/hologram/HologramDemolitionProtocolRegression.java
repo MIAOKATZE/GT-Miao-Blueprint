@@ -27,6 +27,27 @@ public final class HologramDemolitionProtocolRegression {
         start.setTag("areaSelection", selection.snapshot());
         SimpleAssert
             .eq(start.getString("requestId"), HologramDemolitionProtocol.validate(start), "canonical request admitted");
+        SimpleAssert
+            .eq(-1, HologramDemolitionProtocol.destination(start), "old requests keep legacy recovery ordering");
+        for (int destination : new int[] { 0, 1 }) {
+            NBTTagCompound explicit = (NBTTagCompound) start.copy();
+            explicit.setInteger("demolitionDestination", destination);
+            HologramDemolitionProtocol.validate(explicit);
+            SimpleAssert.eq(
+                destination,
+                HologramDemolitionProtocol.destination(explicit),
+                "explicit destination survives server decoding");
+        }
+        for (int destination : new int[] { -1, 2, Integer.MAX_VALUE }) {
+            NBTTagCompound invalid = (NBTTagCompound) start.copy();
+            invalid.setInteger("demolitionDestination", destination);
+            rejects(() -> HologramDemolitionProtocol.validate(invalid), "invalid destination never starts a job");
+        }
+        NBTTagCompound wrongDestination = (NBTTagCompound) start.copy();
+        wrongDestination.setString("demolitionDestination", "1");
+        rejects(() -> HologramDemolitionProtocol.validate(wrongDestination), "string destination is rejected");
+        wrongDestination.setByte("demolitionDestination", (byte) 1);
+        rejects(() -> HologramDemolitionProtocol.validate(wrongDestination), "numeric coercion is not accepted");
         HologramAreaSelection decoded = HologramDemolitionProtocol.selection(start);
         SimpleAssert.that(decoded.contains(2, 61, 3) && !decoded.contains(9, 61, 3), "request keeps the chosen region");
         for (String foreign : new String[] { "name", "preview", "entries", "skipNamePrompt", "originX" }) {
@@ -51,6 +72,9 @@ public final class HologramDemolitionProtocolRegression {
         status.setTag("areaSelection", selection.snapshot());
         rejects(() -> HologramDemolitionProtocol.validate(status), "status is read-only and carries no selection");
         HologramDemolitionProtocol.validate(request("demolitionCancel"));
+        NBTTagCompound invalidCancel = request("demolitionCancel");
+        invalidCancel.setInteger("demolitionDestination", 0);
+        rejects(() -> HologramDemolitionProtocol.validate(invalidCancel), "cancel cannot carry a destination");
         replay();
     }
 

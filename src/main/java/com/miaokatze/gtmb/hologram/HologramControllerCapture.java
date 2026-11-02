@@ -2,6 +2,7 @@ package com.miaokatze.gtmb.hologram;
 
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 
@@ -21,6 +22,7 @@ final class HologramControllerCapture {
     private HologramControllerCapture() {}
 
     static final int CAPTURE_ATTEMPTS = 3;
+    private static final int FINISH_WORK_PER_BATCH = 4096;
 
     static void applyCurrentCalibration(HologramSession s) {
         int main = s.main;
@@ -127,7 +129,7 @@ final class HologramControllerCapture {
 
     static void scheduleCaptureRetry(HologramSession s) {
         // A timeout mixed with another failure is not treated as a transient cold-load timeout.
-        boolean continuing = s.capture != null && s.capture.pending;
+        boolean continuing = s.capture != null && (s.capture.pending || s.captureWork != null);
         boolean timeoutOnly = s.capture != null && s.capture.incomplete
             && (s.capture.failure.equals("TIME_LIMIT") || s.capture.failure.startsWith("TIME_LIMIT "));
         if (!continuing && !timeoutOnly) return;
@@ -135,6 +137,7 @@ final class HologramControllerCapture {
             s.status = "结构采集连续 " + CAPTURE_ATTEMPTS + " 次超时，高级施工已阻止；可重新扫描或使用原版提示";
             return;
         }
+        if (s.captureWork != null) s.captureWork.retainPins(s);
         s.capturePending = true;
         s.captureRetryDue = s.player.worldObj.getTotalWorldTime() + 2;
         s.retryFacing = s.facing;
@@ -145,7 +148,9 @@ final class HologramControllerCapture {
         s.retryScope = s.scope;
         s.retryLayer = s.layer;
         s.retrySelected = s.selected;
-        s.status = continuing ? "正在分批采集完整结构（已采集 " + s.capture.cells.size() + " 格）"
+        s.status = continuing
+            ? s.captureWork != null && s.captureWork.finalizing() ? "正在分批解析候选与计算计划（" + s.capture.cells.size() + " 格）"
+                : "正在分批采集完整结构（已采集 " + s.capture.cells.size() + " 格）"
             : "正在采集结构：首次加载超出单次预算，稍后自动重试（" + s.captureAttempts + "/" + CAPTURE_ATTEMPTS + "）";
     }
 
@@ -159,129 +164,97 @@ final class HologramControllerCapture {
             else HologramResourcePlanner.refreshPlan(s);
             return;
         }
-        HologramCapture resumed = !resetAttempts && s.capture != null && s.capture.pending ? s.capture : null;
-        HologramMaterialAccess.refreshMaterialChoices(s);
-        boolean calibrate = s.calibratePending, build = !resetAttempts && s.buildAfterCapture;
-        HologramSession.cancelCaptureRetry(s);
-        s.calibratePending = calibrate;
-        s.buildAfterCapture = build;
-        if (resetAttempts) s.captureAttempts = 0;
-        s.captureAttempts++;
-        s.job = 0;
-        s.cursor = 0;
-        s.completed = 0;
-        s.recovered.clear();
-        s.defer = false;
-        s.stopTick = false;
-        HologramSession.clearPending(s);
-        Map<String, ItemStack> savedPins = new HashMap<>(s.coordinatePins);
-        String selectedPosition = s.scanSelectedPosition;
-        java.util.Set<String> selectedPositions = new java.util.HashSet<>(s.scanSelectedPositions);
-        if (s.capture != null) for (int i = 0; i < s.capture.cells.size(); i++) {
-            HologramCapture.Cell cell = s.capture.cells.get(i);
-            if (s.pins.containsKey(i)) savedPins.put(
-                HologramValues.position(cell),
-                s.pins.get(i)
-                    .copy());
-            if (resetAttempts && i == s.selected) selectedPosition = HologramValues.position(cell);
-            if (resetAttempts && s.selectedIndices.contains(i)) selectedPositions.add(HologramValues.position(cell));
+        FinishWork work = !resetAttempts ? s.captureWork : null;
+        HologramCapture resumed = !resetAttempts && (work == null || !work.finalizing())
+            && s.capture != null
+            && s.capture.pending ? s.capture : null;
+        if (work == null) {
+            HologramMaterialAccess.refreshMaterialChoices(s);
+            boolean calibrate = s.calibratePending, build = !resetAttempts && s.buildAfterCapture;
+            HologramSession.cancelCaptureRetry(s);
+            s.calibratePending = calibrate;
+            s.buildAfterCapture = build;
+            if (resetAttempts) s.captureAttempts = 0;
+            s.job = 0;
+            s.cursor = 0;
+            s.completed = 0;
+            s.recovered.clear();
+            s.defer = false;
+            s.stopTick = false;
+            HologramSession.clearPending(s);
+            Map<String, ItemStack> savedPins = new HashMap<>(s.coordinatePins);
+            if (s.capture != null) {
+                // Only explicit edits and selections need coordinates; do not rescan the captured prefix.
+                for (Map.Entry<Integer, ItemStack> pin : s.pins.entrySet()) savedPins.put(
+                    HologramValues.position(s.capture.cells.get(pin.getKey())),
+                    pin.getValue()
+                        .copy());
+                if (resetAttempts) {
+                    if (s.selected >= 0 && s.selected < s.capture.cells.size())
+                        s.scanSelectedPosition = HologramValues.position(s.capture.cells.get(s.selected));
+                    for (int i : s.selectedIndices)
+                        s.scanSelectedPositions.add(HologramValues.position(s.capture.cells.get(i)));
+                }
+            }
+            s.pins.clear();
+            s.hatchCandidates.clear();
+            s.declarations.clear();
+            s.hatchParts.clear();
+            s.hatchRequirements.clear();
+            s.capabilities = HologramCapabilities.describe(s.context, HologramSessionPolicy.trigger(s), null)
+                .withSavedChannels(s.channels);
+            if (s.target == null) {
+                s.capture = null;
+                HologramResourcePlanner.refreshPlan(s);
+                s.status = "信道配置已保存；请右键控制器选择施工目标";
+                return;
+            }
+            if (!HologramStructureDiscovery.captureSupported(s.machine)) {
+                s.capture = null;
+                HologramResourcePlanner.refreshPlan(s);
+                s.status = "未支持高级采集；仍可使用机器原版构造器接口";
+                return;
+            }
+            s.facing = s.machine.getExtendedFacing()
+                .ordinal();
+            work = s.captureWork = new FinishWork(savedPins);
         }
-        s.scanSelectedPosition = selectedPosition;
-        s.scanSelectedPositions.clear();
-        s.scanSelectedPositions.addAll(selectedPositions);
-        s.pins.clear();
-        s.hatchCandidates.clear();
-        s.declarations.clear();
-        s.hatchParts.clear();
-        s.hatchRequirements.clear();
-        s.capabilities = HologramCapabilities.describe(s.context, HologramSessionPolicy.trigger(s), null)
-            .withSavedChannels(s.channels);
-        if (s.target == null) {
-            s.capture = null;
-            HologramResourcePlanner.refreshPlan(s);
-            s.status = "信道配置已保存；请右键控制器选择施工目标";
-            return;
-        }
-        if (!HologramStructureDiscovery.captureSupported(s.machine)) {
-            s.capture = null;
-            HologramResourcePlanner.refreshPlan(s);
-            s.status = "未支持高级采集；仍可使用机器原版构造器接口";
-            return;
-        }
-        s.facing = s.machine.getExtendedFacing()
-            .ordinal();
-        ItemStack initialTrigger = HologramSessionPolicy.trigger(s);
-        s.capture = HologramCapture
-            .collect(s.machine, initialTrigger, s.machine.getExtendedFacing(), s.captureIntent, resumed);
-        if (s.capture.pending) {
-            s.coordinatePins.putAll(savedPins);
-            scheduleCaptureRetry(s);
-            return;
-        }
-        s.capabilities = HologramCapabilities.describe(s.context, initialTrigger, s.capture.channelReport)
-            .withSavedChannels(s.channels);
-        ItemStack observedTrigger = HologramSessionPolicy.trigger(s);
-        if (!s.capture.incomplete && !ItemStack.areItemStackTagsEqual(initialTrigger, observedTrigger)) {
+        s.capturePending = false;
+        s.captureRetryDue = 0;
+        s.retryChannels = null;
+        if (!work.finalizing()) {
+            s.captureAttempts++;
+            ItemStack initialTrigger = HologramSessionPolicy.trigger(s);
             s.capture = HologramCapture
-                .collect(s.machine, observedTrigger, s.machine.getExtendedFacing(), s.captureIntent);
+                .collect(s.machine, initialTrigger, s.machine.getExtendedFacing(), s.captureIntent, resumed);
             if (s.capture.pending) {
-                s.coordinatePins.putAll(savedPins);
                 scheduleCaptureRetry(s);
                 return;
             }
-            s.capabilities = HologramCapabilities.describe(s.context, observedTrigger, s.capture.channelReport)
+            s.capabilities = HologramCapabilities.describe(s.context, initialTrigger, s.capture.channelReport)
                 .withSavedChannels(s.channels);
-            if (!ItemStack.areItemStackTagsEqual(observedTrigger, HologramSessionPolicy.trigger(s))) {
-                s.capture.incomplete = true;
-                s.capture.failure = "CHANNEL_BRANCH_UNSTABLE";
+            ItemStack observedTrigger = HologramSessionPolicy.trigger(s);
+            if (!s.capture.incomplete && !ItemStack.areItemStackTagsEqual(initialTrigger, observedTrigger)) {
+                s.capture = HologramCapture
+                    .collect(s.machine, observedTrigger, s.machine.getExtendedFacing(), s.captureIntent);
+                if (s.capture.pending) {
+                    scheduleCaptureRetry(s);
+                    return;
+                }
+                s.capabilities = HologramCapabilities.describe(s.context, observedTrigger, s.capture.channelReport)
+                    .withSavedChannels(s.channels);
+                if (!ItemStack.areItemStackTagsEqual(observedTrigger, HologramSessionPolicy.trigger(s))) {
+                    s.capture.incomplete = true;
+                    s.capture.failure = "CHANNEL_BRANCH_UNSTABLE";
+                }
             }
+            work.beginFinish();
         }
-        for (String key : savedPins.keySet()) {
-            boolean found = false;
-            found = s.capture.positions.containsKey(key);
-            if (!found && !s.manualPositions.containsKey(key)) {
-                String[] xyz = key.split(",");
-                HologramCapture.Cell cell = new HologramCapture.Cell(
-                    null,
-                    Integer.parseInt(xyz[0]),
-                    Integer.parseInt(xyz[1]),
-                    Integer.parseInt(xyz[2]));
-                cell.userPosition = true;
-                cell.block = Blocks.air;
-                cell.role = "manual";
-                s.manualPositions.put(key, cell);
-            }
+        if (!work.step(s, FINISH_WORK_PER_BATCH, HologramWorkBudget.remainingNanos(HologramWorkBudget.SLICE_NANOS))) {
+            scheduleCaptureRetry(s);
+            return;
         }
-        for (HologramCapture.Cell manual : s.manualPositions.values()) {
-            boolean found = false;
-            found = s.capture.positions.containsKey(HologramValues.position(manual));
-            if (!found && s.capture.cells.size() >= HologramCapture.LIMIT) {
-                s.capture.incomplete = true;
-                s.capture.failure = "CELL_LIMIT: 保留手动格后蓝图实际记录格数须小于一百万";
-                break;
-            }
-            if (!found) {
-                s.capture.cells.add(manual);
-                s.capture.positions.put(HologramValues.position(manual), manual);
-            }
-        }
-        s.selected = -1;
-        s.selectedIndices.clear();
-        // Memberships must be attached before resolving shared-cell declaration intersections.
-        HologramAreaDeclarations.bindAreaMemberships(s);
-        for (int i = 0; i < s.capture.cells.size(); i++) {
-            HologramCapture.Cell cell = s.capture.cells.get(i);
-            ItemStack savedPin = savedPins.get(HologramValues.position(cell));
-            if (savedPin != null && !cell.anchor) s.pins.put(i, savedPin);
-            if (HologramValues.position(cell)
-                .equals(selectedPosition)) s.selected = i;
-            if (selectedPositions.contains(HologramValues.position(cell))) s.selectedIndices.add(i);
-            cell.candidates = HologramCellPolicy.candidates(s, cell);
-        }
-        s.scanSelectedPosition = null;
-        s.scanSelectedPositions.clear();
-        HologramDraftPersistence.restoreBlueprintAnnotations(s);
-        HologramResourcePlanner.refreshPlan(s);
+        s.captureWork = null;
         s.status = s.capture.incomplete ? "结构采集不完整，高级施工已阻止" : "预览已采集；未知元素及机器部件保持保护";
         scheduleCaptureRetry(s);
         if (s.calibratePending && !s.capturePending) {
@@ -289,7 +262,130 @@ final class HologramControllerCapture {
             if (!s.capture.incomplete) applyCurrentCalibration(s);
             else s.status = "采集失败，当前规划已保留，未校准现场目标";
         }
+    }
 
+    /** Capture retries also carry the bounded candidate/planning tail on the same server thread. */
+    static final class FinishWork {
+
+        private final Thread owner = Thread.currentThread();
+        private final Map<String, ItemStack> savedPins;
+        private Iterator<String> pinPositions;
+        private Iterator<HologramCapture.Cell> manual;
+        private HologramResourcePlanner.PlanTask planner;
+        private boolean pinsRetained;
+        private int stage, cursor, lastWork;
+
+        FinishWork(Map<String, ItemStack> savedPins) {
+            this.savedPins = savedPins;
+        }
+
+        boolean finalizing() {
+            return stage != 0;
+        }
+
+        void beginFinish() {
+            pinPositions = savedPins.keySet()
+                .iterator();
+            stage = 1;
+        }
+
+        private void retainPins(HologramSession s) {
+            if (pinsRetained) return;
+            s.coordinatePins.putAll(savedPins);
+            pinsRetained = true;
+        }
+
+        String phase() {
+            return planner != null ? planner.phase() : stage == 4 ? "capture.candidates" : "capture.restore";
+        }
+
+        int lastWork() {
+            return lastWork;
+        }
+
+        boolean step(HologramSession s, int maxWork, long maxNanos) {
+            if (Thread.currentThread() != owner)
+                throw new IllegalStateException("Capture finalization must stay on its server thread");
+            if (maxWork <= 0 || maxNanos <= 0) {
+                lastWork = 0;
+                return planner != null && planner.done();
+            }
+            long started = System.nanoTime();
+            HologramPlanBudget budget = new HologramPlanBudget(maxWork, maxNanos);
+            s.capture.sourceCurrent(HologramSessionPolicy.trigger(s));
+            while (stage < 6 && budget.take()) advance(s);
+            lastWork = budget.used();
+            if (planner == null) return false;
+            boolean done = planner
+                .step(Math.max(0, maxWork - lastWork), Math.max(0L, maxNanos - (System.nanoTime() - started)));
+            lastWork += planner.lastWork();
+            return done;
+        }
+
+        private void advance(HologramSession s) {
+            if (stage == 1) {
+                if (pinPositions.hasNext()) {
+                    String key = pinPositions.next();
+                    if (!s.capture.positions.containsKey(key) && !s.manualPositions.containsKey(key)) {
+                        String[] xyz = key.split(",");
+                        HologramCapture.Cell cell = new HologramCapture.Cell(
+                            null,
+                            Integer.parseInt(xyz[0]),
+                            Integer.parseInt(xyz[1]),
+                            Integer.parseInt(xyz[2]));
+                        cell.userPosition = true;
+                        cell.block = Blocks.air;
+                        cell.role = "manual";
+                        s.manualPositions.put(key, cell);
+                    }
+                } else {
+                    pinPositions = null;
+                    manual = s.manualPositions.values()
+                        .iterator();
+                    stage = 2;
+                }
+            } else if (stage == 2) {
+                if (manual.hasNext()) {
+                    HologramCapture.Cell cell = manual.next();
+                    String key = HologramValues.position(cell);
+                    if (s.capture.positions.containsKey(key)) return;
+                    if (s.capture.cells.size() >= HologramCapture.LIMIT) {
+                        s.capture.incomplete = true;
+                        s.capture.failure = "CELL_LIMIT: 保留手动格后蓝图实际记录格数须小于一百万";
+                        stage = 3;
+                        return;
+                    }
+                    s.capture.cells.add(cell);
+                    s.capture.positions.put(key, cell);
+                } else {
+                    manual = null;
+                    stage = 3;
+                }
+            } else if (stage == 3) {
+                s.selected = -1;
+                s.selectedIndices.clear();
+                // Memberships must precede shared-cell candidate intersections.
+                HologramAreaDeclarations.bindAreaMemberships(s);
+                stage = 4;
+            } else if (stage == 4) {
+                if (cursor < s.capture.cells.size()) {
+                    int i = cursor++;
+                    HologramCapture.Cell cell = s.capture.cells.get(i);
+                    String key = HologramValues.position(cell);
+                    ItemStack pin = savedPins.get(key);
+                    if (pin != null && !cell.anchor) s.pins.put(i, pin);
+                    if (key.equals(s.scanSelectedPosition)) s.selected = i;
+                    if (s.scanSelectedPositions.contains(key)) s.selectedIndices.add(i);
+                    cell.candidates = HologramCellPolicy.candidates(s, cell);
+                } else stage = 5;
+            } else if (stage == 5) {
+                s.scanSelectedPosition = null;
+                s.scanSelectedPositions.clear();
+                HologramDraftPersistence.restoreBlueprintAnnotations(s);
+                planner = HologramResourcePlanner.beginCapturePlan(s);
+                stage = 6;
+            }
+        }
     }
 
 }

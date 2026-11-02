@@ -2,13 +2,17 @@ package com.miaokatze.gtmb.hologram;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Random;
 import java.util.Set;
 
 import net.minecraft.block.Block;
 import net.minecraft.block.material.Material;
 import net.minecraft.entity.Entity;
+import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.entity.item.EntityItem;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
@@ -16,6 +20,7 @@ import net.minecraft.entity.player.InventoryPlayer;
 import net.minecraft.entity.player.PlayerCapabilities;
 import net.minecraft.init.Blocks;
 import net.minecraft.init.Items;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.stats.StatBase;
@@ -25,15 +30,25 @@ import net.minecraft.world.GameRules;
 import net.minecraft.world.World;
 import net.minecraft.world.WorldProviderSurface;
 import net.minecraft.world.WorldServer;
+import net.minecraft.world.chunk.Chunk;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.event.entity.EntityJoinWorldEvent;
 import net.minecraftforge.event.world.BlockEvent;
 
+import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
 import cpw.mods.fml.common.eventhandler.Event;
 import cpw.mods.fml.common.eventhandler.EventBus;
+import gregtech.api.GregTechAPI;
+import gregtech.api.metatileentity.BaseMetaTileEntity;
+import gregtech.api.metatileentity.CommonBaseMetaTileEntity;
+import gregtech.api.metatileentity.CommonMetaTileEntity;
+import gregtech.api.metatileentity.implementations.MTEHatchInputBus;
+import gregtech.api.threads.RunnableMachineUpdate;
+import gregtech.common.blocks.BlockMachines;
+import gregtech.common.blocks.ItemMachines;
 
 /** Exact geometry, real vanilla chest callbacks, native failure receipts and Forge capture/permission boundaries. */
 public final class HologramDemolitionRegression {
@@ -70,6 +85,10 @@ public final class HologramDemolitionRegression {
                 protection(world, player, guard);
                 chest(world, player);
                 nativeFailure(world, player);
+                declaredToolLifecycle(world, player, guard);
+                try (AutoCloseable nativeScope = HologramDemolitionDestinationRegression.nativeClassScope()) {
+                    nativeGtHatches(unsafe, world, player);
+                }
             } finally {
                 unsafe.putObject(busBase, busOffset, originalBus);
             }
@@ -254,6 +273,239 @@ public final class HologramDemolitionRegression {
             "exception never leaks capture to later world activity");
     }
 
+    private static void declaredToolLifecycle(Scene world, Player player, Guard guard) throws Exception {
+        List<String> lifecycle = new ArrayList<>();
+        TrackingProjector projector = new TrackingProjector(lifecycle);
+        ItemStack held = new ItemStack(projector);
+        NBTTagCompound configuration = new NBTTagCompound();
+        configuration.setBoolean("gtitHologramAreaSelecting", true);
+        held.setTagCompound(configuration);
+        player.inventory.mainInventory[0] = held;
+        DeclaredToolBlock block = new DeclaredToolBlock(lifecycle);
+        world.block = block;
+        world.metadata = 7;
+        world.tile = null;
+        SimpleAssert
+            .eq(-1, projector.getHarvestLevel(held, "cutter"), "ordinary held projector gains no harvest power");
+        SimpleAssert
+            .that(projector.onBlockStartBreak(held, 0, 64, 0, player), "ordinary selection still blocks mining");
+        lifecycle.clear();
+        guard.toolCheck = () -> {
+            lifecycle.add("event");
+            SimpleAssert.eq(held, player.getHeldItem(), "BreakEvent sees the original held projector identity");
+            SimpleAssert.that(
+                projector.getToolClasses(held)
+                    .contains("cutter"),
+                "actual metadata selects its tool class");
+            SimpleAssert.eq(12, projector.getHarvestLevel(held, "cutter"), "declared high harvest level is adapted");
+            SimpleAssert
+                .eq(-1, projector.getHarvestLevel(held.copy(), "cutter"), "a copied stack gains no scoped ability");
+            Throwable[] otherThread = { null };
+            Thread reader = new Thread(() -> {
+                try {
+                    SimpleAssert
+                        .eq(-1, projector.getHarvestLevel(held, "cutter"), "other threads gain no harvest power");
+                } catch (Throwable failure) {
+                    otherThread[0] = failure;
+                }
+            });
+            reader.start();
+            try {
+                reader.join();
+            } catch (InterruptedException failure) {
+                throw new AssertionError(failure);
+            }
+            if (otherThread[0] != null) throw new AssertionError(otherThread[0]);
+        };
+        try {
+            HologramDemolition.Removal result = HologramDemolition.removeBlock(player, world, 0, 64, 0);
+            SimpleAssert.that(result.removed && result.failure == null, "declared tool follows native removal");
+            List<String> expected = new ArrayList<>();
+            Collections.addAll(
+                expected,
+                "event",
+                "item-start",
+                "can-harvest",
+                "item-destroyed",
+                "harvested",
+                "removed",
+                "destroyed",
+                "harvest");
+            SimpleAssert.eq(expected, lifecycle, "Forge block and item hooks run in native order");
+            SimpleAssert
+                .eq(-1, projector.getHarvestLevel(held, "cutter"), "normal mining remains unchanged after scope");
+            SimpleAssert.eq(configuration, held.getTagCompound(), "tool scope does not write projector configuration");
+
+            lifecycle.clear();
+            block.refuse = true;
+            world.block = block;
+            world.metadata = 7;
+            result = HologramDemolition.removeBlock(player, world, 0, 64, 0);
+            SimpleAssert.that(!result.removed && world.block == block, "custom harvest rejection preserves the block");
+            SimpleAssert.that(!lifecycle.contains("removed"), "a refused native harvest never removes without drops");
+            block.refuse = false;
+            projector.fail = true;
+            result = HologramDemolition.removeBlock(player, world, 0, 64, 0);
+            SimpleAssert.that(
+                !result.removed && result.failure != null && result.drops.size() == 1,
+                "tool callback failure keeps real emitted drops and the actual unchanged source");
+            SimpleAssert.eq(-1, projector.getHarvestLevel(held, "cutter"), "tool failure always closes harvest scope");
+        } finally {
+            guard.toolCheck = null;
+            player.inventory.mainInventory[0] = new ItemStack(Items.diamond_pickaxe);
+        }
+    }
+
+    /** Real GT .265 block/TE/hatch methods; only registry setup, MTE allocation and world storage are fixtures. */
+    @SuppressWarnings("unchecked")
+    private static void nativeGtHatches(sun.misc.Unsafe unsafe, Scene world, Player player) throws Exception {
+        String name = "gtmb:regression_native_demolition_machine";
+        BlockMachines machines = Block.blockRegistry.containsKey(name)
+            ? (BlockMachines) Block.blockRegistry.getObject(name)
+            : null;
+        if (machines == null) {
+            machines = (BlockMachines) unsafe.allocateInstance(BlockMachines.class);
+            Block vanillaDefaults = new VanillaBlockDefaults();
+            // Copy every real vanilla callback ThreadLocal initializer skipped by Unsafe, including silk checks,
+            // harvesters and Forge drop capture. The fixture does not replace any native GT/block callback.
+            for (Field initialized : Block.class.getDeclaredFields())
+                if (!java.lang.reflect.Modifier.isStatic(initialized.getModifiers())
+                    && ThreadLocal.class.isAssignableFrom(initialized.getType())) {
+                        initialized.setAccessible(true);
+                        initialized.set(machines, initialized.get(vanillaDefaults));
+                    }
+            Field delegate = Block.class.getDeclaredField("delegate");
+            delegate.setAccessible(true);
+            delegate.set(
+                machines,
+                ((cpw.mods.fml.common.registry.FMLControlledNamespacedRegistry) Block.blockRegistry)
+                    .getDelegate(machines, Block.class));
+            Field material = Block.class.getDeclaredField("blockMaterial");
+            material.setAccessible(true);
+            material.set(machines, Material.iron);
+            machines.setHardness(1);
+            int blockId = 4094;
+            while (Block.blockRegistry.containsId(blockId) || Item.itemRegistry.containsId(blockId)) blockId--;
+            Block.blockRegistry.addObject(blockId, name, machines);
+            Item.itemRegistry.addObject(blockId, name, new ItemMachines(machines));
+        }
+        Field temporaryField = BlockMachines.class.getDeclaredField("mTemporaryTileEntity");
+        temporaryField.setAccessible(true);
+        ThreadLocal<Object> temporary = (ThreadLocal<Object>) temporaryField.get(null);
+        Object previousTemporary = temporary.get();
+        Block previousMachines = GregTechAPI.sBlockMachines;
+        ItemStack previousHeld = player.getHeldItem();
+        boolean updates = RunnableMachineUpdate.isCurrentThreadEnabled();
+        GregTechAPI.sBlockMachines = machines;
+        RunnableMachineUpdate.setCurrentThreadEnabled(false);
+        player.inventory.mainInventory[0] = new ItemStack(new ItemNekoHologramProjector());
+        try {
+            BaseMetaTileEntity first = nativeHatch(unsafe, world, 0, null);
+            world.block = machines;
+            world.metadata = 0;
+            world.tile = first;
+            HologramDemolition.Removal firstResult = HologramDemolition.removeBlock(player, world, 0, 64, 0);
+            ItemStack empty = nativeMachineDrop(firstResult);
+            BaseMetaTileEntity second = nativeHatch(unsafe, world, 193, null);
+            world.block = machines;
+            world.metadata = 0;
+            world.tile = second;
+            HologramDemolition.Removal secondResult = HologramDemolition.removeBlock(player, world, 193, 64, -21);
+            ItemStack elsewhere = nativeMachineDrop(secondResult);
+            SimpleAssert.that(
+                ItemStack.areItemStackTagsEqual(empty, elsewhere),
+                "two real empty GT input buses at different coordinates have equal native item NBT");
+            ItemStack[] recovered = new ItemStack[3];
+            recovered[1] = empty.copy();
+            ItemStack additional = elsewhere.copy();
+            HologramMaterials.insertRecovery(recovered, 0, 64, additional);
+            SimpleAssert.eq(
+                2,
+                recovered[1].stackSize,
+                "real native GT input bus drops stack through ordinary inventory insertion");
+            SimpleAssert.eq(0, additional.stackSize, "the second native bus needs no extra slot");
+
+            ItemStack cargo = new ItemStack(Items.diamond, 57);
+            NBTTagCompound cargoNbt = new NBTTagCompound();
+            cargoNbt.setString("native-cargo", "原生 GT 仓室内容物完整 NBT");
+            cargo.setTagCompound(cargoNbt);
+            BaseMetaTileEntity loaded = nativeHatch(unsafe, world, -51, cargo);
+            world.block = machines;
+            world.metadata = 0;
+            world.tile = loaded;
+            HologramDemolition.Removal loadedResult = HologramDemolition.removeBlock(player, world, -51, 64, -21);
+            ItemStack loadedShell = nativeMachineDrop(loadedResult);
+            int diamonds = 0;
+            for (ItemStack drop : loadedResult.drops) if (drop.getItem() == Items.diamond) {
+                diamonds += drop.stackSize;
+                SimpleAssert
+                    .eq(cargoNbt, drop.getTagCompound(), "real GT native inventory drops preserve exact item NBT");
+            }
+            SimpleAssert.eq(57, diamonds, "real GT block break drops every cargo item exactly once");
+            SimpleAssert.eq(2, loadedResult.drops.size(), "real GT cargo is independent of its single machine shell");
+            SimpleAssert.that(
+                loaded.getStackInSlot(0) == null && world.tile == null,
+                "real GT breakBlock clears the delivered inventory and removes its tile");
+            SimpleAssert.that(
+                ItemStack.areItemStackTagsEqual(empty, loadedShell),
+                "ordinary GT bus contents are native independent drops rather than sealed full-TE payload");
+
+            BaseMetaTileEntity configured = nativeHatch(unsafe, world, 71, null);
+            Field color = CommonBaseMetaTileEntity.class.getDeclaredField("mColor");
+            color.setAccessible(true);
+            color.setByte(configured, (byte) 5);
+            world.block = machines;
+            world.metadata = 0;
+            world.tile = configured;
+            ItemStack colored = nativeMachineDrop(HologramDemolition.removeBlock(player, world, 71, 64, -21));
+            SimpleAssert.eq(
+                (byte) 5,
+                colored.getTagCompound()
+                    .getByte("mColor"),
+                "GT native retained configuration survives");
+            SimpleAssert.that(
+                !ItemStack.areItemStackTagsEqual(empty, colored),
+                "different legitimate native item NBT never force-merges");
+        } finally {
+            player.inventory.mainInventory[0] = previousHeld;
+            GregTechAPI.sBlockMachines = previousMachines;
+            RunnableMachineUpdate.setCurrentThreadEnabled(updates);
+            if (previousTemporary == null) temporary.remove();
+            else temporary.set(previousTemporary);
+        }
+    }
+
+    private static BaseMetaTileEntity nativeHatch(sun.misc.Unsafe unsafe, Scene world, int x, ItemStack cargo)
+        throws Exception {
+        BaseMetaTileEntity tile = new BaseMetaTileEntity();
+        MTEHatchInputBus hatch = (MTEHatchInputBus) unsafe.allocateInstance(MTEHatchInputBus.class);
+        Field inventory = CommonMetaTileEntity.class.getDeclaredField("mInventory");
+        inventory.setAccessible(true);
+        inventory.set(hatch, new ItemStack[] { cargo, null });
+        hatch.setBaseMetaTileEntity(tile);
+        tile.setMetaTileID((short) 28);
+        tile.setWorldObj(world);
+        tile.xCoord = x;
+        tile.yCoord = 64;
+        tile.zCoord = -21;
+        return tile;
+    }
+
+    private static ItemStack nativeMachineDrop(HologramDemolition.Removal result) {
+        if (result.failure != null) throw new AssertionError("real native GT removal failed", result.failure);
+        SimpleAssert.that(result.removed, "real native GT harvest removes its source");
+        ItemStack machine = null;
+        for (ItemStack drop : result.drops) if (drop.getItem() instanceof ItemMachines) {
+            SimpleAssert.that(machine == null && drop.stackSize == 1, "exactly one native GT machine item is emitted");
+            machine = drop;
+            SimpleAssert
+                .that(!HologramRecovery.hasSeal(drop), "new demolition drops never receive GTMB sealed TE data");
+            SimpleAssert.eq(28, drop.getItemDamage(), "native machine item keeps the actual hatch ID");
+        }
+        SimpleAssert.that(machine != null, "actual GT setItemNBT/getDrops path produces its native machine item");
+        return machine;
+    }
+
     /**
      * Raw JVM lacks FML's event transformer/default constructors. Only listener logic and the bus's boolean
      * cancellation contract are exercised here; a native Forge run must verify actual listener registration.
@@ -261,6 +513,7 @@ public final class HologramDemolitionRegression {
     private static final class Guard extends EventBus {
 
         boolean cancel;
+        Runnable toolCheck;
         final EventBus original;
 
         Guard(EventBus original) {
@@ -273,7 +526,92 @@ public final class HologramDemolitionRegression {
                 HologramDemolition.DROPS.spawned((EntityJoinWorldEvent) event);
                 return event.isCanceled();
             }
+            if (event instanceof BlockEvent.BreakEvent && toolCheck != null) toolCheck.run();
             return event instanceof BlockEvent.BreakEvent && cancel || original.post(event);
+        }
+    }
+
+    private static final class TrackingProjector extends ItemNekoHologramProjector {
+
+        final List<String> lifecycle;
+        boolean fail;
+
+        TrackingProjector(List<String> lifecycle) {
+            this.lifecycle = lifecycle;
+        }
+
+        @Override
+        public boolean onBlockStartBreak(ItemStack stack, int x, int y, int z, EntityPlayer player) {
+            lifecycle.add("item-start");
+            return super.onBlockStartBreak(stack, x, y, z, player);
+        }
+
+        @Override
+        public boolean onBlockDestroyed(ItemStack stack, World world, Block block, int x, int y, int z,
+            EntityLivingBase player) {
+            lifecycle.add("item-destroyed");
+            if (fail) {
+                world.spawnEntityInWorld(new EntityItem(world, x, y, z, new ItemStack(Items.diamond)));
+                throw new IllegalStateException("native tool callback failure after a real drop");
+            }
+            return false;
+        }
+    }
+
+    private static final class VanillaBlockDefaults extends Block {
+
+        VanillaBlockDefaults() {
+            super(Material.iron);
+        }
+    }
+
+    private static final class DeclaredToolBlock extends Block {
+
+        final List<String> lifecycle;
+        boolean refuse;
+
+        DeclaredToolBlock(List<String> lifecycle) {
+            super(Material.iron);
+            this.lifecycle = lifecycle;
+        }
+
+        @Override
+        public String getHarvestTool(int metadata) {
+            return metadata == 7 ? "cutter" : "wrench";
+        }
+
+        @Override
+        public int getHarvestLevel(int metadata) {
+            return 12;
+        }
+
+        @Override
+        public boolean canHarvestBlock(EntityPlayer player, int metadata) {
+            lifecycle.add("can-harvest");
+            return !refuse && super.canHarvestBlock(player, metadata);
+        }
+
+        @Override
+        public void onBlockHarvested(World world, int x, int y, int z, int metadata, EntityPlayer player) {
+            lifecycle.add("harvested");
+        }
+
+        @Override
+        public boolean removedByPlayer(World world, EntityPlayer player, int x, int y, int z, boolean harvest) {
+            lifecycle.add("removed");
+            SimpleAssert.that(harvest, "native delayed removal receives the positive harvest decision");
+            return true;
+        }
+
+        @Override
+        public void onBlockDestroyedByPlayer(World world, int x, int y, int z, int metadata) {
+            lifecycle.add("destroyed");
+        }
+
+        @Override
+        public void harvestBlock(World world, EntityPlayer player, int x, int y, int z, int metadata) {
+            lifecycle.add("harvest");
+            world.setBlockToAir(x, y, z);
         }
     }
 
@@ -318,6 +656,11 @@ public final class HologramDemolitionRegression {
 
         @Override
         public void addExhaustion(float amount) {}
+
+        @Override
+        public boolean isSneaking() {
+            return false;
+        }
     }
 
     private static final class Scene extends WorldServer {
@@ -350,6 +693,11 @@ public final class HologramDemolitionRegression {
         @Override
         public TileEntity getTileEntity(int x, int y, int z) {
             return tile;
+        }
+
+        @Override
+        public Chunk getChunkFromBlockCoords(int x, int z) {
+            return null;
         }
 
         @Override

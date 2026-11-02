@@ -1,9 +1,12 @@
 package com.miaokatze.gtmb.client.hologram;
 
+import java.util.function.IntConsumer;
+
 import net.minecraft.client.Minecraft;
 
 import org.lwjgl.input.Keyboard;
 
+import com.cleanroommc.modularui.value.IntValue;
 import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 
 /** No mutation occurs until the dedicated confirm button receives a separate click. */
@@ -13,7 +16,7 @@ final class HologramCutConfirmScreen extends HologramMuiScreen {
     private final Runnable confirm, cancel, confirmWithoutPrompt;
     private final Object world, connection;
     private final int dimension, slot;
-    private final boolean demolition;
+    private final IntValue demolitionDestination;
     private boolean finished;
 
     HologramCutConfirmScreen(String title, String detail, Runnable confirm, Runnable cancel) {
@@ -22,28 +25,30 @@ final class HologramCutConfirmScreen extends HologramMuiScreen {
 
     HologramCutConfirmScreen(String title, String detail, Runnable confirm, Runnable cancel,
         Runnable confirmWithoutPrompt) {
-        this(title, detail, confirm, cancel, confirmWithoutPrompt, false);
+        this(title, detail, confirm, cancel, confirmWithoutPrompt, null);
     }
 
-    static HologramCutConfirmScreen demolition(String range, Runnable confirm, Runnable cancel) {
+    static HologramCutConfirmScreen demolition(String range, int selectedDestination, IntConsumer confirm,
+        Runnable cancel) {
+        IntValue destination = new IntValue(selectedDestination);
         return new HologramCutConfirmScreen(
             HologramCutClient.text("confirmDemolition"),
             range,
-            confirm,
+            () -> confirm.accept(destination.getIntValue()),
             cancel,
             null,
-            true);
+            destination);
     }
 
     private HologramCutConfirmScreen(String title, String detail, Runnable confirm, Runnable cancel,
-        Runnable confirmWithoutPrompt, boolean demolition) {
-        super("cut_confirm", 306, demolition ? 232 : 154);
+        Runnable confirmWithoutPrompt, IntValue demolitionDestination) {
+        super("cut_confirm", 306, demolitionDestination != null ? 286 : 154);
         this.title = title;
         this.detail = detail;
         this.confirm = confirm;
         this.cancel = cancel;
         this.confirmWithoutPrompt = confirmWithoutPrompt;
-        this.demolition = demolition;
+        this.demolitionDestination = demolitionDestination;
         Minecraft minecraft = Minecraft.getMinecraft();
         world = minecraft.theWorld;
         connection = minecraft.getNetHandler();
@@ -53,8 +58,8 @@ final class HologramCutConfirmScreen extends HologramMuiScreen {
 
     @Override
     protected void buildPanel() {
-        if (demolition)
-            HologramCutDialogContent.demolitionConfirmation(panel(), () -> title, () -> detail, this::finish);
+        if (demolitionDestination != null) HologramCutDialogContent
+            .demolitionConfirmation(panel(), () -> title, () -> detail, demolitionDestination, this::finish);
         else HologramCutDialogContent
             .confirmation(panel(), () -> title, () -> detail, confirmWithoutPrompt != null, this::finish);
     }

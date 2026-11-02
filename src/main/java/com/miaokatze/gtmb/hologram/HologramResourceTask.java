@@ -14,7 +14,7 @@ import net.minecraft.world.World;
 
 import com.miaokatze.gtmb.hologram.HologramBlueprintResources.ExactKey;
 
-/** Resource report from a private virtual plan, including resumable distinct-material checks. */
+/** Resource report from a bounded plan, including resumable distinct-material checks. */
 final class HologramResourceTask {
 
     private final HologramSession s;
@@ -180,8 +180,9 @@ final class HologramResourceTask {
                     .shellCount(s, entry.getValue(), Math.max(4096, s.capture.cells.size()));
                 s.planMissing += Math.max(0, counts.get(entry.getKey()) - available);
                 checked++;
-            } else
-                if (s.virtualPreset != null && s.virtualPreset.schema >= 2 && !s.player.capabilities.isCreativeMode) {
+            } else if (s.virtual && s.virtualPreset != null
+                && s.virtualPreset.schema >= 2
+                && !s.player.capabilities.isCreativeMode) {
                     total = new HologramBlueprintResources.Accumulator();
                     merge = total.merge(s.blueprintResources);
                     stage = 6;
@@ -332,7 +333,7 @@ final class HologramResourceTask {
         if (HologramSessionPolicy.ignoredPlacementAir(s, c, i)) return;
         if (!HologramSessionPolicy.inScope(s, c, i) || !"pending".equals(c.status)) return;
         ItemStack target = HologramCellPolicy.targetFor(s, c, i);
-        if (s.mode != 2 && s.virtualPreset.schema >= 2 && !classifier.emptyOrdinary(s, c, i)) {
+        if (s.mode != 2 && s.virtual && s.virtualPreset.schema >= 2 && !classifier.emptyOrdinary(s, c, i)) {
             try {
                 HologramEnergyPayload.Prepared[] prepared = new HologramEnergyPayload.Prepared[1];
                 merge = aggregate.merge(HologramCellPolicy.resourcePlan(s, c, prepared));

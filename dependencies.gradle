@@ -9,6 +9,8 @@ dependencies {
     // MUI2's optional client input interfaces must also be present for javac and non-FML regressions.
     compileOnly("com.github.GTNewHorizons:lwjgl3ify:3.0.42:api") { transitive = false }
     testImplementation("com.github.GTNewHorizons:lwjgl3ify:3.0.42:api") { transitive = false }
+    // GT's native BlockMachines implements this interface; only the real demolition regression needs it here.
+    testImplementation("com.github.GTNewHorizons:Chisel:2.17.34-GTNH:dev") { transitive = false }
     compileOnly rfg.deobf("curse.maven:neverenoughanimation-1062347:7664003-sources-7663978")
     testImplementation rfg.deobf("curse.maven:neverenoughanimation-1062347:7664003-sources-7663978")
     // Native MUI2 viewport/hover signatures; GTNHLib supplies these libraries in the target pack.

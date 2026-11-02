@@ -53,6 +53,7 @@ final class HologramCutClient {
     private int[] locked;
     private com.miaokatze.gtmb.hologram.HologramAreaSelection selection;
     private HologramCutConfirmScreen demolitionConfirmation;
+    private int demolitionDestination;
     private String demolitionRequest = "";
     private long demolitionPollAt;
     private final HologramSelectionInput selectionInput = new HologramSelectionInput();
@@ -464,8 +465,11 @@ final class HologramCutClient {
                 + String.format(java.util.Locale.ROOT, text("confirmDemolitionFrom"), from)
                 + "\n"
                 + String.format(java.util.Locale.ROOT, text("confirmDemolitionTo"), to);
-            demolitionConfirmation = HologramCutConfirmScreen
-                .demolition(range, () -> submitDemolition(chosen), () -> demolitionConfirmation = null);
+            demolitionConfirmation = HologramCutConfirmScreen.demolition(
+                range,
+                demolitionDestination,
+                destination -> submitDemolition(chosen, destination),
+                () -> demolitionConfirmation = null);
             mc().displayGuiScreen(demolitionConfirmation);
             return;
         }
@@ -500,7 +504,7 @@ final class HologramCutClient {
         selection = null;
     }
 
-    private void submitDemolition(NBTTagCompound chosen) {
+    private void submitDemolition(NBTTagCompound chosen, int destination) {
         if (!held() || !demolitionMode
             || !selecting()
             || selection == null
@@ -508,6 +512,8 @@ final class HologramCutClient {
             || busy()) return;
         NBTTagCompound n = action("demolish", "");
         n.setTag("areaSelection", chosen);
+        n.setInteger("demolitionDestination", destination);
+        demolitionDestination = destination;
         continuous.submitted(n.getString("requestId"));
         send(n);
         demolitionConfirmation = null;
@@ -827,6 +833,7 @@ final class HologramCutClient {
         cutSession = false;
         selection = null;
         demolitionConfirmation = null;
+        demolitionDestination = 0;
         demolitionRequest = "";
         demolitionPollAt = 0;
         locked = null;

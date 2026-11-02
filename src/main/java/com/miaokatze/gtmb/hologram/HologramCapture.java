@@ -564,6 +564,15 @@ public final class HologramCapture {
         return false;
     }
 
+    /** Candidate/planning continuations retain the same full signal boundary as native traversal. */
+    boolean sourceCurrent(ItemStack currentTrigger) {
+        if (!ItemStack.areItemStacksEqual(trigger, currentTrigger)) {
+            invalidateSource("SOURCE_TRIGGER_CHANGED");
+            return false;
+        }
+        return sourceCurrent();
+    }
+
     private void invalidateSource(String reason) {
         ownSources.rejection = reason;
         rejectSource(reason);

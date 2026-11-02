@@ -42,6 +42,7 @@ import appeng.api.config.PowerMultiplier;
 import appeng.api.config.SecurityPermissions;
 import appeng.api.features.IWirelessTermHandler;
 import appeng.api.networking.IGrid;
+import appeng.api.networking.IGridNode;
 import appeng.api.networking.energy.IEnergySource;
 import appeng.api.networking.security.BaseActionSource;
 import appeng.api.networking.security.ISecurityGrid;
@@ -73,6 +74,8 @@ public final class HologramMaterials {
     private static final String RECOVERY_PENDING = "gtmbRecoveryPendingDrops";
     private static final String RECOVERY_BYTES = "gtmbRecoveryBytes";
     private static final String RECOVERY_SCAN = "gtmbRecoveryIndexCursor";
+    private static final String DEMOLITION_DESTINATION = "gtmbDemolitionDestination";
+    private static final String RECOVERY_UNCERTAIN = "gtmbRecoveryInjectionUncertain";
     static final int RECOVERY_VISITS = 96;
     static final int RECOVERY_BACKLOG_ENTRIES = 1024;
     static final long RECOVERY_BACKLOG_BYTES = 8L * 1024 * 1024;
@@ -160,6 +163,7 @@ public final class HologramMaterials {
         private final EntityPlayerMP player;
         private final Settings settings;
         private final int protectedSlot;
+        private final int demolitionDestination;
         private final World recoveryWorld;
         private final List<Container> containers = new ArrayList<>();
         private final Map<Integer, ItemStack> retainedContainers = new LinkedHashMap<>();
@@ -186,9 +190,19 @@ public final class HologramMaterials {
 
         private Context(EntityPlayerMP player, Settings settings, List<ItemStackExtractor> suppliedAdapters,
             int protectedSlot) {
+            this(player, settings, suppliedAdapters, protectedSlot, -2);
+        }
+
+        Context(EntityPlayerMP player, Settings settings, int protectedSlot, int demolitionDestination) {
+            this(player, settings, null, protectedSlot, demolitionDestination);
+        }
+
+        private Context(EntityPlayerMP player, Settings settings, List<ItemStackExtractor> suppliedAdapters,
+            int protectedSlot, int demolitionDestination) {
             this.player = player;
             this.settings = settings;
             this.protectedSlot = protectedSlot;
+            this.demolitionDestination = demolitionDestination;
             recoveryWorld = player.worldObj;
             List<ItemStackExtractor> adapters = new ArrayList<>();
             if (settings.containers) {
@@ -1001,6 +1015,12 @@ public final class HologramMaterials {
 
         /** Update the known remainder before charging so later failures cannot refund already inserted items. */
         private void returnToMe(ItemStack stack) {
+            returnToMe(stack, null);
+        }
+
+        private void returnToMe(ItemStack stack, NBTTagCompound demolitionReceipt) {
+            if (demolitionReceipt != null && demolitionReceipt.hasKey(RECOVERY_UNCERTAIN))
+                throw new IllegalStateException("AE 注入结果未确认，回收记录已保留，需核查后再交付");
             if (!settings.me || !terminalAvailable()) return;
             IMEMonitor<IAEItemStack> monitor = terminal.getItemInventory();
             if (monitor == null) return;
@@ -1008,14 +1028,79 @@ public final class HologramMaterials {
             int count = poweredCount(offered);
             if (count <= 0) return;
             offered.setStackSize(count);
-            IAEItemStack left = monitor.injectItems(offered, Actionable.MODULATE, new PlayerSource(player, terminal));
+            if (demolitionReceipt != null) setRecoveryUncertain(demolitionReceipt, count);
+            IAEItemStack left = monitor.injectItems(
+                demolitionReceipt == null ? offered : offered.copy(),
+                Actionable.MODULATE,
+                new PlayerSource(player, terminal));
             int previous = stack.stackSize;
-            stack.stackSize = recoveryRemainder(previous, count, left == null ? 0 : left.getStackSize());
+            stack.stackSize = recoveryRemainder(
+                previous,
+                count,
+                demolitionReceipt == null ? left == null ? 0 : left.getStackSize()
+                    : checkedItemRemainder(offered, left));
+            if (demolitionReceipt != null) {
+                demolitionReceipt.setInteger(RECOVERY_COUNT, stack.stackSize);
+                setRecoveryUncertain(demolitionReceipt, 0);
+            }
             int inserted = previous - stack.stackSize;
             if (inserted > 0) {
                 charge(inserted, offered.getAmountPerUnit(), null);
                 Stats.ItemsInserted.addToPlayer(player, inserted);
             }
+        }
+
+        private void requireDemolitionMe() {
+            if (!settings.me || !terminalAvailable()) throw new IllegalStateException("所选 AE 终端不可访问");
+            IGridNode node = terminal.getActionableNode();
+            if (node == null || !node.isActive()) throw new IllegalStateException("所选 AE 网络未运行或未供电");
+            IGrid grid = node.getGrid();
+            ISecurityGrid security = grid == null ? null : grid.getCache(ISecurityGrid.class);
+            if (security == null || !security.hasPermission(player, SecurityPermissions.INJECT))
+                throw new IllegalStateException("没有向所选 AE 网络存入物品的权限");
+            if (!terminalInfinitePower && !terminalHandler.hasPower(player, 0.5, terminalStack))
+                throw new IllegalStateException("所选 AE 终端电量不足");
+            if (terminal.getItemInventory() == null) throw new IllegalStateException("所选 AE 物品存储不可用");
+        }
+
+        /** Readiness failures are distinct from a usable destination's capacity overflow. */
+        void requireDemolitionDestination(int destination) {
+            if (destination != 1) return;
+            requireDemolitionMe();
+            if (networkPower(1, Actionable.SIMULATE, PowerMultiplier.CONFIG, null) < 1)
+                throw new IllegalStateException("所选 AE 回收的传输电量不足");
+        }
+
+        private DemolitionItemAccess demolitionMe() {
+            return new DemolitionItemAccess() {
+
+                @Override
+                public void requireAvailable() {
+                    requireDemolitionMe();
+                }
+
+                @Override
+                public IAEItemStack create(ItemStack stack) {
+                    return AEItemStack.create(stack);
+                }
+
+                @Override
+                public int poweredCount(IAEItemStack stack) {
+                    return Context.this.poweredCount(stack);
+                }
+
+                @Override
+                public IAEItemStack inject(IAEItemStack stack, Actionable mode) {
+                    return terminal.getItemInventory()
+                        .injectItems(stack, mode, new PlayerSource(player, terminal));
+                }
+
+                @Override
+                public void charge(int amount, int unit) {
+                    Context.this.charge(amount, unit, null);
+                    Stats.ItemsInserted.addToPlayer(player, amount);
+                }
+            };
         }
 
         /** Must follow the service's main inventory snapshot restore, before returning fallback materials. */
@@ -1043,12 +1128,20 @@ public final class HologramMaterials {
             for (ItemStack stack : stacks) if (stack != null) recover(stack.copy(), settings.recoveryDestination == 1);
         }
 
-        /** Committed demolition drops try ME, then the backpack, then the online player's feet. */
+        /** Compatibility entrypoint: committed drops retain AE, backpack, then feet delivery. */
         public void recoverWorldAtPlayer(List<ItemStack> stacks) {
+            recoverWorldAtPlayer(stacks, -1);
+        }
+
+        /** Explicit demolition destinations never fall through to the other inventory. */
+        public void recoverWorldAtPlayer(List<ItemStack> stacks, int destination) {
+            if (destination < -1 || destination > 1)
+                throw new IllegalArgumentException("Invalid demolition destination");
             for (ItemStack stack : stacks) if (stack != null && stack.stackSize > 0) {
                 NBTTagCompound entry = itemReceipt(stack);
                 entry.setBoolean(RECOVERY_ME, true);
                 entry.setBoolean(RECOVERY_DROP, true);
+                if (destination >= 0) entry.setInteger(DEMOLITION_DESTINATION, destination);
                 enqueueRecovery(entry);
             }
         }
@@ -1078,7 +1171,16 @@ public final class HologramMaterials {
 
         /** Only demolition receipts permit world drops; other real materials remain queued when destinations fill. */
         public void flushRecovery() {
-            flushResourceRecovery();
+            try {
+                flushRecoveryItems();
+            } finally {
+                player.inventory.markDirty();
+                if (player.inventoryContainer != null) player.inventoryContainer.detectAndSendChanges();
+            }
+        }
+
+        private void flushRecoveryItems() {
+            if (demolitionDestination < 0) flushResourceRecovery();
             NBTTagCompound owner = recoveryOwner();
             NBTTagList stored = recoveryQueue(owner);
             long deadline = System.nanoTime() + 10_000_000L;
@@ -1096,32 +1198,52 @@ public final class HologramMaterials {
                 bytes += receipt.getLong(RECOVERY_BYTES);
                 // Advance before external ME/spawn callbacks: a failing head cannot starve the rest on retry.
                 owner.setInteger(RECOVERY_CURSOR, (index + 1) % stored.tagCount());
+                if (demolitionDestination != -2 && (demolitionDestination == -1 ? receipt.hasKey(DEMOLITION_DESTINATION)
+                    : !receipt.hasKey(DEMOLITION_DESTINATION, 3)
+                        || receipt.getInteger(DEMOLITION_DESTINATION) != demolitionDestination))
+                    continue;
                 ItemStack stack = recoveryItem(receipt);
                 if (stack == null || stack.stackSize <= 0) {
                     removeRecovery(owner, stored, index, receipt);
                     continue;
                 }
-                boolean meFirst = receipt.getBoolean(RECOVERY_ME);
-                if (meFirst) {
-                    try {
-                        returnToMe(stack);
-                    } catch (RuntimeException | LinkageError failure) {
-                        LOG.warn("Hologram ME recovery failed; preserving known remainder", failure);
+                if (receipt.hasKey(DEMOLITION_DESTINATION) && !receipt.hasKey(DEMOLITION_DESTINATION, 3))
+                    throw new IllegalStateException("Invalid persisted demolition destination; receipt retained");
+                boolean explicit = receipt.hasKey(DEMOLITION_DESTINATION, 3);
+                int destination = explicit ? receipt.getInteger(DEMOLITION_DESTINATION) : -1;
+                if (explicit && (destination < 0 || destination > 1))
+                    throw new IllegalStateException("Invalid persisted demolition destination; receipt retained");
+                long beforeBytes = receipt.getLong(RECOVERY_BYTES);
+                try {
+                    if (destination == 1) deliverDemolitionToMe(demolitionMe(), stack, receipt);
+                    else {
+                        boolean meFirst = receipt.getBoolean(RECOVERY_ME);
+                        if (!explicit && meFirst) {
+                            try {
+                                returnToMe(stack, receipt.getBoolean(RECOVERY_DROP) ? receipt : null);
+                            } catch (RuntimeException | LinkageError failure) {
+                                if (receipt.hasKey(RECOVERY_UNCERTAIN)) throw failure;
+                                LOG.warn("Hologram ME recovery failed; preserving known remainder", failure);
+                            }
+                        }
+                        HologramMaterials.insertRecovery(
+                            player.inventory.mainInventory,
+                            protectedSlot,
+                            player.inventory.getInventoryStackLimit(),
+                            stack);
                     }
+                } finally {
+                    // Only the small quarantine tag changes size; never reserialize a large existing item payload.
+                    owner.setLong(
+                        RECOVERY_BYTES,
+                        owner.getLong(RECOVERY_BYTES) + receipt.getLong(RECOVERY_BYTES) - beforeBytes);
                 }
-                HologramMaterials.insertRecovery(
-                    player.inventory.mainInventory,
-                    protectedSlot,
-                    player.inventory.getInventoryStackLimit(),
-                    stack);
                 boolean dropAtPlayer = receipt.getBoolean(RECOVERY_DROP);
                 // Persist inventory delivery before an external spawn callback can fail.
                 receipt.setInteger(RECOVERY_COUNT, stack.stackSize);
                 if (dropAtPlayer && stack.stackSize > 0) dropAtPlayer(stack, receipt, deadline);
                 if (stack.stackSize == 0) removeRecovery(owner, stored, index, receipt);
             }
-            player.inventory.markDirty();
-            if (player.inventoryContainer != null) player.inventoryContainer.detectAndSendChanges();
         }
 
         /** The existing list stays authoritative; legacy summaries are built without touching the unvisited tail. */
@@ -1435,6 +1557,63 @@ public final class HologramMaterials {
     static int recoveryRemainder(int requested, int offered, long unaccepted) {
         int bounded = Math.min(Math.max(0, requested), Math.max(0, offered));
         return Math.max(0, requested) - bounded + (int) Math.min(bounded, Math.max(0, unaccepted));
+    }
+
+    interface DemolitionItemAccess {
+
+        void requireAvailable();
+
+        IAEItemStack create(ItemStack stack);
+
+        int poweredCount(IAEItemStack stack);
+
+        IAEItemStack inject(IAEItemStack stack, Actionable mode);
+
+        void charge(int amount, int unit);
+    }
+
+    /** Only an authenticated, fully powered storage refusal authorizes dropping the capacity remainder. */
+    static void deliverDemolitionToMe(DemolitionItemAccess access, ItemStack stack, NBTTagCompound receipt) {
+        if (receipt.hasKey(RECOVERY_UNCERTAIN)) throw new IllegalStateException("AE 注入结果未确认，回收记录已保留，需核查后再交付");
+        access.requireAvailable();
+        IAEItemStack offered = access.create(stack);
+        int count = stack.stackSize;
+        if (access.poweredCount(offered) < count) throw new IllegalStateException("所选 AE 回收的传输电量不足，物品已保留");
+        IAEItemStack simulatedLeft = access.inject(offered.copy(), Actionable.SIMULATE);
+        int capacity = count - checkedItemRemainder(offered, simulatedLeft);
+        access.requireAvailable();
+        if (capacity == 0) return;
+        offered.setStackSize(capacity);
+        // A provider may accept items before throwing. Persist that uncertainty before the external mutation.
+        setRecoveryUncertain(receipt, capacity);
+        IAEItemStack left = access.inject(offered.copy(), Actionable.MODULATE);
+        int accepted = capacity - checkedItemRemainder(offered, left);
+        stack.stackSize -= accepted;
+        receipt.setInteger(RECOVERY_COUNT, stack.stackSize);
+        setRecoveryUncertain(receipt, 0);
+        if (accepted > 0) access.charge(accepted, offered.getAmountPerUnit());
+        // Permission/power loss must not turn a known unaccepted portion into an alleged full-network drop.
+        if (stack.stackSize > 0) access.requireAvailable();
+    }
+
+    private static int checkedItemRemainder(IAEItemStack offered, IAEItemStack left) {
+        if (left == null) return 0;
+        ItemStack expected = offered.getItemStack(), actual = left.getItemStack();
+        long amount = left.getStackSize();
+        if (actual == null || !expected.isItemEqual(actual)
+            || !ItemStack.areItemStackTagsEqual(expected, actual)
+            || amount < 0
+            || amount > offered.getStackSize()) throw new IllegalStateException("Invalid native AE recovery remainder");
+        return (int) amount;
+    }
+
+    private static void setRecoveryUncertain(NBTTagCompound receipt, int amount) {
+        boolean previous = receipt.hasKey(RECOVERY_UNCERTAIN);
+        if (amount > 0) receipt.setInteger(RECOVERY_UNCERTAIN, amount);
+        else receipt.removeTag(RECOVERY_UNCERTAIN);
+        if (previous != (amount > 0) && receipt.hasKey(RECOVERY_BYTES, 4)) receipt.setLong(
+            RECOVERY_BYTES,
+            receipt.getLong(RECOVERY_BYTES) + (amount > 0 ? 1 : -1) * (7 + RECOVERY_UNCERTAIN.length()));
     }
 
     static long fluidRecoveryRemainder(long requested, long offered, long unaccepted) {

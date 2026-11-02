@@ -3,8 +3,10 @@ package com.miaokatze.gtmb.client.hologram;
 import java.util.function.BiConsumer;
 import java.util.function.Supplier;
 
+import com.cleanroommc.modularui.api.drawable.IKey;
 import com.cleanroommc.modularui.screen.ModularPanel;
 import com.cleanroommc.modularui.utils.Alignment;
+import com.cleanroommc.modularui.value.IntValue;
 import com.cleanroommc.modularui.value.StringValue;
 import com.miaokatze.gtmb.hologram.HologramCutNaming;
 
@@ -44,7 +46,7 @@ final class HologramCutDialogContent {
     }
 
     static void demolitionConfirmation(ModularPanel panel, Supplier<String> title, Supplier<String> range,
-        BiConsumer<Boolean, Boolean> finish) {
+        IntValue destination, BiConsumer<Boolean, Boolean> finish) {
         HologramMuiTheme.header(panel, title, 306);
         panel.child(
             HologramMuiTheme.label(range, 14, 41, 278, 36, HologramEditorTheme.PAPER_INFORMATION)
@@ -61,10 +63,30 @@ final class HologramCutDialogContent {
                     .name("demolition_protection"))
             .child(
                 HologramMuiTheme
-                    .label(() -> text("confirmDemolitionDrops"), 14, 149, 278, 36, HologramEditorTheme.PAPER_NEXT)
+                    .label(() -> text("confirmDemolitionDestination"), 14, 149, 278, 12, HologramMuiTheme.TEXT)
+                    .name("demolition_destination_label"))
+            .child(
+                HologramMuiTheme
+                    .label(() -> text("confirmDemolitionDrops"), 14, 197, 278, 45, HologramEditorTheme.PAPER_NEXT)
                     .textAlign(Alignment.TopLeft)
                     .name("demolition_destination"));
-        confirmationActions(panel, false, 198, "confirmDemolitionAction", finish);
+        for (int value = 0; value < 2; value++) {
+            final int target = value;
+            String key = target == 0 ? "confirmDemolitionInventory" : "confirmDemolitionAe";
+            panel.child(
+                HologramMuiTheme
+                    .button(() -> text(key), 12 + target * 150, 167, 132, 22, () -> destination.setIntValue(target))
+                    .background(HologramMuiTheme.row(() -> destination.getIntValue() == target, false))
+                    .hoverBackground(HologramMuiTheme.row(() -> destination.getIntValue() == target, true))
+                    .overlay(
+                        IKey.dynamic(() -> (destination.getIntValue() == target ? "▶ " : "") + text(key))
+                            .color(
+                                () -> destination.getIntValue() == target ? HologramMuiTheme.TITLE
+                                    : HologramMuiTheme.TEXT)
+                            .shadow(false))
+                    .name(target == 0 ? "demolition_destination_inventory" : "demolition_destination_ae"));
+        }
+        confirmationActions(panel, false, 252, "confirmDemolitionAction", finish);
     }
 
     private static void confirmationActions(ModularPanel panel, boolean allowSkip, int y, String confirmKey,
