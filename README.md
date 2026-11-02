@@ -31,7 +31,7 @@
 
 *玩家提供的游戏截图，原图未修改。/ Player-provided gameplay screenshot, reproduced unchanged.*
 
-### v0.3.8 候选：星门规则模式 / Stargate rules mode
+### v0.3.8：星门规则模式 / Stargate rules mode
 
 默认关闭。启动一次后，在**服务端或单人存档所用实例**的 `config/gtmb-stargate-rules.cfg` 中设置下方选项，并重启服务器或游戏：
 
@@ -49,7 +49,7 @@ stargateRules {
 
 *Disabled by default. Enable `stargateRules.enabled` in the server's `config/gtmb-stargate-rules.cfg` and restart. All three modes remain available with normal material and permission checks, but decoration vouchers cannot waive costs. Removed ore blocks yield no drops or XP, including during replacement and obstruction removal; ore already stored inside devices is retained. World cut/paste/undo operations involving ore blocks are rejected with their original blocks and records preserved, preventing ore relocation from bypassing the removal rule. This option does not certify Stargate eligibility.*
 
-请同时替换客户端与服务端的旧 0.3.8 候选包，避免旧客户端仍保留过严的按钮限制。上方截图展示三档模式入口，不作为新规则的实机验收图。0.3.8 为开发候选；0.3.7 已合并，Release 仍为草稿，未正式发布。
+请同时替换客户端与服务端的旧 0.3.8 候选包，避免旧客户端仍保留过严的按钮限制。上方截图展示三档模式入口，不作为新规则的实机验收图。当前正式发布 v0.3.8，包含此前 0.3.7 的更新。
 
 ### v0.3.7：重复识别与原生拆除修复
 
@@ -57,7 +57,7 @@ stargateRules {
 
 区域拆除按方块声明的工具条件调用正常破坏与掉落回调，不再把 GT 仓室的完整 TileEntity 状态封装成拆除产物；原生物品 NBT、内容物及保护事件仍由方块规则决定。确认框可选择“背包”或“AE 网络”，只投所选位置，容量不足的余量才掉到脚下；AE 不可用时停止剩余拆除并保留待交付物品。既有剪切、结构改造和旧封装物品的恢复规则保持兼容。
 
-采集续批复用初始化结果，候选解析与原生材料规划分批推进，未知元素保护、配额和来源有效性检查保持。第三方单次回调仍在原线程原子执行。本轮针对已确认的通用机制修复，不代表已复现玩家现场冻结；验证与交付边界见 `plan/v037-repeat-capture-20261102/交接报告.md`。0.3.7 仍为候选，Release 保持草稿状态。
+采集续批复用初始化结果，候选解析与原生材料规划分批推进，未知元素保护、配额和来源有效性检查保持。第三方单次回调仍在原线程原子执行。本轮针对已确认的通用机制修复，不代表已复现玩家现场冻结；验证与交付边界见 `plan/v037-repeat-capture-20261102/交接报告.md`。这些改动已随 v0.3.8 发布。
 
 <details>
 <summary>历史候选变更 / Earlier candidate changes</summary>
@@ -588,7 +588,7 @@ ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继
 
 | 项目 / Requirement | 版本或说明 / Version or notes |
 | --- | --- |
-| **目标整包 / Target pack** | **GTNH2.9.0 正式版**；模组版本范围 **0.3.0 ~ +**（当前 0.3.0 为待发布草稿 / Draft） |
+| **目标整包 / Target pack** | **GTNH 2.9.0 正式版**；模组版本范围 **0.3.0 ~ +**；当前 [v0.3.8](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases/tag/v0.3.8) |
 | **游戏与加载器 / Game & loader** | Minecraft **1.7.10** · Forge **10.13.4.1614** |
 | **安装位置 / Install on** | **客户端与服务端均需安装 / Both client and server** |
 | **必需依赖 / Required mods** | GregTech、StructureLib、Applied Energistics 2、GTNHLib、ModularUI、ModularUI2 **2.3.94-1.7.10**；目标 GTNH 整包已提供。 / Included in the target GTNH pack. |
