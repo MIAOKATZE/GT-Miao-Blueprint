@@ -57,9 +57,7 @@ public final class HologramClient {
     private static final HologramStargateClientRules serverRules = new HologramStargateClientRules();
 
     static boolean stargateRulesEnabled() {
-        return serverRules.enabled(
-            Minecraft.getMinecraft()
-                .getNetHandler());
+        return serverRules.enabled();
     }
 
     static String stargateRulesMessage() {

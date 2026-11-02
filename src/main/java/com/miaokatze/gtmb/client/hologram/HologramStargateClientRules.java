@@ -30,6 +30,11 @@ final class HologramStargateClientRules {
 
     boolean enabled(Object current) {
         observeConnection(current);
+        return enabled();
+    }
+
+    /** Client lifecycle and queued receivers maintain the connection; input only reads its authority. */
+    boolean enabled() {
         return enabled;
     }
 }

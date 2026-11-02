@@ -350,8 +350,7 @@ final class HologramUiCanvas {
     }
 
     boolean stargateRulesActive() {
-        return !ui.session.isTutorial()
-            && (ui.session.state().data.getBoolean("stargateRules") || HologramClient.stargateRulesEnabled());
+        return !ui.session.isTutorial() && ui.session.state().data.getBoolean("stargateRules");
     }
 
     String controlHelp(int id) {

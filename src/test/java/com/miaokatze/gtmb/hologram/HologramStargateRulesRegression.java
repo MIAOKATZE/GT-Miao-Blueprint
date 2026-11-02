@@ -238,14 +238,23 @@ public final class HologramStargateRulesRegression {
     }
 
     private static void recognition() throws Exception {
-        Method factory = HologramBuildOrHintsRegression.class.getDeclaredMethod("controller");
-        factory.setAccessible(true);
-        MTEEnhancedMultiBlockBase<?> controller = (MTEEnhancedMultiBlockBase<?>) factory.invoke(null);
-        HologramCapture capture = HologramCapture
-            .collect(controller, new ItemStack(Blocks.stone), ExtendedFacing.DEFAULT);
-        SimpleAssert.that(
-            !capture.incomplete && !capture.cells.isEmpty(),
-            "construct(true) recognition retains normal semantics");
+        String previous = Thread.currentThread()
+            .getName();
+        Thread.currentThread()
+            .setName("Server thread");
+        try {
+            Method factory = HologramBuildOrHintsRegression.class.getDeclaredMethod("controller");
+            factory.setAccessible(true);
+            MTEEnhancedMultiBlockBase<?> controller = (MTEEnhancedMultiBlockBase<?>) factory.invoke(null);
+            HologramCapture capture = HologramCapture
+                .collect(controller, new ItemStack(Blocks.stone), ExtendedFacing.DEFAULT);
+            SimpleAssert.that(
+                !capture.incomplete && !capture.cells.isEmpty(),
+                "construct(true) recognition retains normal semantics");
+        } finally {
+            Thread.currentThread()
+                .setName(previous);
+        }
     }
 
     private static Actor actor(sun.misc.Unsafe unsafe, HologramServiceEditRegression.ReadOnlyWorld world)
