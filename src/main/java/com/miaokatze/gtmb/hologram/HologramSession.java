@@ -143,6 +143,7 @@ final class HologramSession {
     String status = "";
     NBTTagCompound channels = new NBTTagCompound();
     HologramCapture capture;
+    HologramControllerCapture.FinishWork captureWork;
     com.miaokatze.gtmb.api.StructureSources.CaptureIntent captureIntent = com.miaokatze.gtmb.api.StructureSources.CaptureIntent.NEW_TEMPLATE;
     boolean localPlanPending;
     long localPlanGeneration;
@@ -294,6 +295,7 @@ final class HologramSession {
 
         HologramVirtualStructureEditing.cancel(s);
         if (s.capturePending && s.capture != null) s.capture.cancelPending();
+        s.captureWork = null;
         s.capturePending = false;
         s.captureRetryDue = 0;
         s.retryChannels = null;

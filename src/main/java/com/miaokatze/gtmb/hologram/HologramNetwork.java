@@ -62,6 +62,9 @@ public final class HologramNetwork {
     private static int publicSnapshotCursor;
     private static final HologramRequestGate actionGate = new HologramRequestGate(16, 256);
     private static final HologramRequestGate receiptGate = new HologramRequestGate(4, 128);
+    private static final HologramRequestGate snapshotControlGate = new HologramRequestGate(2, 256);
+    private static final Map<UUID, SnapshotFlow> snapshotFlows = new LinkedHashMap<>();
+    private static final AtomicLong snapshotFlowGeneration = new AtomicLong();
 
     private HologramNetwork() {}
 
@@ -69,6 +72,8 @@ public final class HologramNetwork {
         HologramAttachmentUpload.clearServer();
         actionGate.clear();
         receiptGate.clear();
+        snapshotControlGate.clear();
+        snapshotFlows.clear();
         for (Outbox box : outgoing.values()) retire(box);
         outgoing.clear();
         HologramSnapshotEncoding.clear();
@@ -553,11 +558,12 @@ public final class HologramNetwork {
         if (channel == null) return null;
         Outbox box = outgoing.get(player.getUniqueID());
         if (box == null || box.player != player
+            || !box.flow.current(player)
             || !box.session.equals(session)
             || cancelled
             || owner != null && box.owner != owner) {
             if (box != null) retire(box);
-            box = new Outbox(player, session, owner);
+            box = new Outbox(player, session, owner, snapshotFlow(player));
             outgoing.put(player.getUniqueID(), box);
         }
         int queued = 0;
@@ -816,16 +822,120 @@ public final class HologramNetwork {
         final int dimension;
         final String session;
         final HologramSession owner;
+        final SnapshotFlow flow;
         final Deque<OutgoingSnapshot> snapshots = new ArrayDeque<>();
         long pendingBytes;
 
-        Outbox(EntityPlayerMP player, String session, HologramSession owner) {
+        Outbox(EntityPlayerMP player, String session, HologramSession owner, SnapshotFlow flow) {
             this.player = player;
             world = player.worldObj;
             dimension = player.dimension;
             this.session = session;
             this.owner = owner;
+            this.flow = flow;
         }
+    }
+
+    private static final class SnapshotFlow {
+
+        final EntityPlayerMP player;
+        final Object world, connection;
+        final int dimension;
+        final HologramSnapshotFlowControl credit;
+        String session = "";
+        String consumedSession = "";
+        long uiSequence = Long.MIN_VALUE, clientTask;
+        boolean consumedSuccess;
+
+        SnapshotFlow(EntityPlayerMP player) {
+            this.player = player;
+            world = player.worldObj;
+            connection = player.playerNetServerHandler;
+            dimension = player.dimension;
+            credit = new HologramSnapshotFlowControl(
+                snapshotFlowGeneration.incrementAndGet(),
+                player.worldObj.getTotalWorldTime());
+        }
+
+        boolean current(EntityPlayerMP player) {
+            return this.player == player && world == player.worldObj
+                && connection == player.playerNetServerHandler
+                && dimension == player.dimension;
+        }
+
+        boolean begin(Outbox box, OutgoingSnapshot snapshot) {
+            if (!current(box.player)
+                || !credit.begin(snapshot.sequence, snapshot.bytes.length, player.worldObj.getTotalWorldTime()))
+                return false;
+            session = box.session;
+            uiSequence = snapshot.uiSequence;
+            clientTask = snapshot.clientTask;
+            return true;
+        }
+    }
+
+    private static SnapshotFlow snapshotFlow(EntityPlayerMP player) {
+        SnapshotFlow flow = snapshotFlows.get(player.getUniqueID());
+        if (flow == null || !flow.current(player)) {
+            flow = new SnapshotFlow(player);
+            snapshotFlows.put(player.getUniqueID(), flow);
+            snapshotFlowReply(flow, "offer", -1, true);
+        }
+        return flow;
+    }
+
+    /** Progress with no scope/phase is explicitly ignored by older clients, rather than installed as geometry. */
+    private static void snapshotFlowReply(SnapshotFlow flow, String status, long sequence, boolean success) {
+        if (channel == null || !progressConnected(flow.player)) return;
+        NBTTagCompound event = new NBTTagCompound();
+        event.setInteger("snapshotFlowVersion", HologramSnapshotFlowControl.VERSION);
+        event.setLong("snapshotFlowGeneration", flow.credit.generation);
+        event.setString("snapshotFlowStatus", status);
+        event.setLong("transportSequence", sequence);
+        event.setBoolean("ready", flow.credit.ready());
+        event.setBoolean("success", success);
+        event.setString("session", sequence < 0 ? flow.session : flow.consumedSession);
+        NBTTagCompound packet = new NBTTagCompound();
+        packet.setBoolean("progressOnly", true);
+        packet.setTag("progress", event);
+        channel.sendTo(new State(packet), flow.player);
+    }
+
+    /** Main-thread control lane; no workspace command or edit sequence is changed by credit messages. */
+    static boolean snapshotFlowAction(EntityPlayerMP player, NBTTagCompound action) {
+        boolean control = "snapshotFlow".equals(action.getString("op"))
+            || "snapshotConsumed".equals(action.getString("op"));
+        if (!control && action.getInteger("clientSnapshotFlow") != HologramSnapshotFlowControl.VERSION) return false;
+        SnapshotFlow flow = snapshotFlow(player);
+        if (action.hasKey("clientSnapshotFlow", 3)
+            && action.getInteger("clientSnapshotFlow") == HologramSnapshotFlowControl.VERSION) flow.credit.capable();
+        if (!control) return false;
+        long generation = action.getLong("snapshotFlowGeneration");
+        if ("snapshotFlow".equals(action.getString("op"))) {
+            boolean accepted = action.hasKey("snapshotFlowGeneration", 4)
+                && flow.credit.negotiate(generation, action.getBoolean("ready"));
+            snapshotFlowReply(flow, accepted ? "accepted" : "legacy", -1, accepted);
+            return true;
+        }
+        long sequence = action.getLong("transportSequence");
+        if (!action.hasKey("snapshotFlowGeneration", 4) || !action.hasKey("transportSequence", 4)) return true;
+        if (flow.credit.consume(generation, sequence)) {
+            boolean success = action.getBoolean("success");
+            flow.consumedSession = flow.session;
+            flow.consumedSuccess = success;
+            if (!success && channel != null && progressConnected(player)) {
+                NBTTagCompound failure = new NBTTagCompound();
+                failure.setBoolean("transportError", true);
+                failure.setString("session", flow.session);
+                if (flow.uiSequence != Long.MIN_VALUE) failure.setLong("uiSequence", flow.uiSequence);
+                if (flow.clientTask > 0) failure.setLong("clientTaskToken", flow.clientTask);
+                failure.setString("errorCode", "snapshot.decode");
+                channel.sendTo(new State(failure), player);
+            }
+            snapshotFlowReply(flow, "consumed", sequence, success);
+        } else if (flow.credit.consumed(generation, sequence))
+            snapshotFlowReply(flow, "consumed", sequence, flow.consumedSuccess);
+        return true;
     }
 
     private static final class OutgoingSnapshot {
@@ -842,6 +952,7 @@ public final class HologramNetwork {
         boolean queueNotified;
         String traceSession;
         long traceRevision, traceRequest;
+        long uiSequence = Long.MIN_VALUE, clientTask;
 
         OutgoingSnapshot(long sequence) {
             this.sequence = sequence;
@@ -853,6 +964,8 @@ public final class HologramNetwork {
             this.valid = valid;
             this.ready = ready;
             libraryInitial = owned.getBoolean("libraryInitialSnapshot");
+            uiSequence = owned.hasKey("uiSequence", 4) ? owned.getLong("uiSequence") : Long.MIN_VALUE;
+            clientTask = owned.getLong("blueprintClientTaskToken");
             if (HologramRuntimeMetrics.isEnabled()) {
                 traceSession = owned.getString("session");
                 traceRevision = owned.getLong("planRevision");
@@ -882,6 +995,8 @@ public final class HologramNetwork {
         }
 
         private void tickTransfers() {
+            snapshotFlows.values()
+                .removeIf(flow -> !flow.current(flow.player) || !progressConnected(flow.player));
             HologramAttachmentUpload.tick();
             HologramSnapshotPreparation.pruneRetired();
             tickEncoding();
@@ -926,6 +1041,7 @@ public final class HologramNetwork {
                     Outbox box = initial.get((start + n) % initial.size());
                     OutgoingSnapshot first = box.snapshots.peekFirst();
                     if (!connected(box) || first == null) continue;
+                    if (first.offset == 0 && !box.flow.begin(box, first)) continue;
                     int length = Math.min(HologramLibraryProtocol.CHUNK_BYTES, first.bytes.length - first.offset);
                     if (!HologramLibraryFacade
                         .consumeDownloadAllowance(HologramLibraryFacade.actorId(box.player), length)) {
@@ -975,6 +1091,7 @@ public final class HologramNetwork {
                     continue;
                 }
                 if (snapshot.bytes == null || snapshot.libraryInitial) continue;
+                if (snapshot.offset == 0 && !box.flow.begin(box, snapshot)) continue;
                 int end = Math.min(snapshot.bytes.length, snapshot.offset + HologramSnapshotAssembly.CHUNK_BYTES);
                 if (snapshot.offset == 0 && snapshot.traceSession != null) HologramRuntimeMetrics.loadStage(
                     HologramRuntimeMetrics.LoadStage.SERVER_FRAGMENT_FIRST,
@@ -1242,6 +1359,7 @@ public final class HologramNetwork {
             super(tag);
             this.tag.setInteger("clientSnapshotProtocol", 1);
             this.tag.setInteger("clientSnapshotPalette", HologramSnapshotPalette.VERSION);
+            this.tag.setInteger("clientSnapshotFlow", HologramSnapshotFlowControl.VERSION);
         }
     }
 
@@ -1260,10 +1378,12 @@ public final class HologramNetwork {
             EntityPlayerMP player = ctx.getServerHandler().playerEntity;
             // Preserve an independent lane for disk receipts; different capabilities are never coalesced.
             boolean receipt = "ackBlueprintSaved".equals(msg.tag.getString("op"));
-            HologramRequestGate gate = receipt ? receiptGate : actionGate;
+            boolean snapshotControl = "snapshotFlow".equals(msg.tag.getString("op"))
+                || "snapshotConsumed".equals(msg.tag.getString("op"));
+            HologramRequestGate gate = snapshotControl ? snapshotControlGate : receipt ? receiptGate : actionGate;
             HologramRequestGate.Lease lease = gate.acquire(player);
             if (lease == null) {
-                HologramBusyReplies.reject(player, msg.tag, HologramBusyReplies.Kind.ACTION);
+                if (!snapshotControl) HologramBusyReplies.reject(player, msg.tag, HologramBusyReplies.Kind.ACTION);
                 return null;
             }
             HologramRuntimeMetrics.gauge(HologramRuntimeMetrics.Counter.ACTION_DEPTH, actionGate.size());
@@ -1293,6 +1413,7 @@ public final class HologramNetwork {
     }
 
     private static void dispatch(EntityPlayerMP player, NBTTagCompound tag) {
+        if (snapshotFlowAction(player, tag)) return;
         String action = tag.getString("action");
         if (HologramDemolition.active(player) && !action.isEmpty()) {
             HologramBusyReplies.reject(player, tag, HologramBusyReplies.Kind.ACTION);

@@ -23,7 +23,9 @@ final class HologramDemolitionProtocol {
             String name = String.valueOf(key);
             if (!"action".equals(name) && !"requestId".equals(name)
                 && !"id".equals(name)
-                && !("demolish".equals(action) && "areaSelection".equals(name))) throw new IOException("拆除请求包含无效字段");
+                && !("demolish".equals(action)
+                    && ("areaSelection".equals(name) || "demolitionDestination".equals(name))))
+                throw new IOException("拆除请求包含无效字段");
         }
         if (!request.hasKey("action", 8) || !request.hasKey("requestId", 8) || !request.hasKey("id", 8))
             throw new IOException("拆除请求数据不完整");
@@ -32,6 +34,10 @@ final class HologramDemolitionProtocol {
         else if (!request.getString("id")
             .isEmpty()) throw new IOException("拆除请求不使用暂存条目");
         if ("demolish".equals(action) && !request.hasKey("areaSelection", 10)) throw new IOException("请先完成拆除框选");
+        if (request.hasKey("demolitionDestination")) {
+            if (!request.hasKey("demolitionDestination", 3) || request.getInteger("demolitionDestination") < 0
+                || request.getInteger("demolitionDestination") > 1) throw new IOException("无效拆除回收目的地");
+        }
         return id;
     }
 
@@ -49,6 +55,11 @@ final class HologramDemolitionProtocol {
         result.readSnapshot(request.getCompoundTag("areaSelection"));
         result.bounds();
         return result;
+    }
+
+    /** Old clients omit the field and retain their original AE, backpack, then feet policy. */
+    static int destination(NBTTagCompound request) {
+        return request.hasKey("demolitionDestination", 3) ? request.getInteger("demolitionDestination") : -1;
     }
 
     /** Never evict a mutation nonce during a connection, including rejected or cancelled requests. */

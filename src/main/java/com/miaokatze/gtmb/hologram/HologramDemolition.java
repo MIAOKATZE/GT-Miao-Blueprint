@@ -6,13 +6,14 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 import net.minecraft.block.Block;
 import net.minecraft.entity.item.EntityItem;
+import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.item.ItemStack;
-import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.util.ChatComponentText;
 import net.minecraft.world.World;
@@ -35,13 +36,21 @@ public final class HologramDemolition {
     private static final Map<UUID, Job> JOBS = new LinkedHashMap<>();
     private static final Map<UUID, Delivery> DELIVERIES = new LinkedHashMap<>();
     private static final ThreadLocal<DropScope> CAPTURE = new ThreadLocal<>();
+    private static final ThreadLocal<ToolScope> TOOL = new ThreadLocal<>();
     private static int nextJob;
     private static int nextDelivery;
 
     private HologramDemolition() {}
 
-    /** Called on the server thread only, after the area's confirmation has been authenticated. */
+    /** Compatibility entrypoint: old callers keep AE, backpack, then feet delivery. */
     public static void start(EntityPlayerMP player, HologramAreaSelection selection) throws IOException {
+        start(player, selection, -1);
+    }
+
+    /** Called on the server thread only: -1 is legacy, 0 selects the backpack, and 1 selects AE. */
+    public static void start(EntityPlayerMP player, HologramAreaSelection selection, int destination)
+        throws IOException {
+        if (destination < -1 || destination > 1) throw new IOException("无效拆除回收目的地");
         if (!connected(player) || player.isDead
             || !(player.worldObj instanceof WorldServer)
             || !player.capabilities.allowEdit
@@ -58,7 +67,13 @@ public final class HologramDemolition {
         if (area != null && area.importing) throw new IOException("请先完成或取消区域导入");
         selection.bounds();
         Cursor cursor = new Cursor(selection.resolvedRegions(), player.worldObj.getHeight());
-        JOBS.put(player.getUniqueID(), new Job(player, cursor));
+        HologramMaterials.Context materials = recoveryContext(player, player.inventory.currentItem, destination);
+        try {
+            materials.requireDemolitionDestination(destination);
+        } catch (RuntimeException | LinkageError failure) {
+            throw new IOException("无法开始拆除：" + failure.getMessage(), failure);
+        }
+        JOBS.put(player.getUniqueID(), new Job(player, cursor, materials, destination));
     }
 
     private static boolean busy(HologramSession session) {
@@ -122,9 +137,10 @@ public final class HologramDemolition {
                 int x = job.cursor.x, y = job.cursor.y, z = job.cursor.z;
                 if (!job.world.blockExists(x, y, z)) throw new IOException("选区区块已卸载，其余方块保留");
                 if (job.world.isAirBlock(x, y, z)) continue;
+                job.materials.requireDemolitionDestination(job.destination);
                 Removal result = removeBlock(job.player, job.world, x, y, z);
                 // Once native removal has run, actual drops are committed. Delivery can never restore the source.
-                job.materials.recoverWorldAtPlayer(result.drops);
+                job.materials.recoverWorldAtPlayer(result.drops, job.destination);
                 if (result.removed) job.removed++;
                 else job.protectedCount++;
                 if (result.failure != null) {
@@ -133,6 +149,8 @@ public final class HologramDemolition {
                     stopped = "拆除已停止：原生拆除回调失败，实际已生成物品保留，其余方块未拆";
                     break;
                 }
+                // A destination failure must stop before the next native removal, even within this batch.
+                if (!result.drops.isEmpty()) job.materials.flushRecovery();
             }
         } catch (IOException | RuntimeException | LinkageError failure) {
             GTMiaoBlueprint.LOG.warn("Area demolition stopped", failure);
@@ -160,7 +178,7 @@ public final class HologramDemolition {
         JOBS.remove(job.player.getUniqueID(), job);
         boolean pending = job.materials.pendingWorldRecovery();
         if (pending && connected(job.player) && !job.player.isDead)
-            DELIVERIES.put(job.player.getUniqueID(), new Delivery(job.player, job.world, job.materials));
+            DELIVERIES.put(job.player.getUniqueID(), new Delivery(job.player, job.world, null));
         if (connected(job.player)) job.player.addChatMessage(
             new ChatComponentText(
                 reason + "：已拆除 "
@@ -168,25 +186,26 @@ public final class HologramDemolition {
                     + " 格；跳过 "
                     + job.protectedCount
                     + " 格受保护、不可破坏或拒绝拆除的方块。"
-                    + (pending ? "仍有回收物待交付，将继续尝试 AE、背包和脚下掉落。" : "回收物已依次交付 AE、背包或玩家脚下。")));
+                    + (pending ? "仍有回收物保留在玩家回收记录中，将按原目的地继续交付；AE 注入结果未确认时保留记录待核查。" : "回收物已按所选目的地交付，容量不足的余量放在玩家脚下。")));
     }
 
     /** Reattach only persisted demolition receipts after login/respawn; no world work is restored. */
     public static void resumeRecovery(EntityPlayerMP player) {
         if (!connected(player) || player.isDead || !HologramMaterials.Context.pendingWorldRecovery(player)) return;
         try {
-            HologramMaterials.Context materials = recoveryContext(player, player.inventory.currentItem);
+            HologramMaterials.Context materials = recoveryContext(player, player.inventory.currentItem, -2);
             DELIVERIES.put(player.getUniqueID(), new Delivery(player, player.worldObj, materials));
         } catch (RuntimeException | LinkageError failure) {
             GTMiaoBlueprint.LOG.warn("Cannot reattach area demolition recovery; receipts retained", failure);
         }
     }
 
-    private static HologramMaterials.Context recoveryContext(EntityPlayerMP player, int slot) {
+    private static HologramMaterials.Context recoveryContext(EntityPlayerMP player, int slot, int destination) {
         HologramMaterials.Settings settings = new HologramMaterials.Settings();
         settings.containers = false;
+        settings.me = destination != 0;
         settings.recoveryDestination = 1;
-        return new HologramMaterials.Context(player, settings, slot);
+        return new HologramMaterials.Context(player, settings, slot, destination);
     }
 
     private static boolean deliveryValid(EntityPlayerMP player, World world) {
@@ -211,11 +230,15 @@ public final class HologramDemolition {
                 continue;
             }
             try {
+                // Background recovery visits every original receipt policy independently of a finished job's filter.
+                if (delivery.materials == null)
+                    delivery.materials = recoveryContext(player, player.inventory.currentItem, -2);
                 delivery.materials.flushRecovery();
             } catch (RuntimeException | LinkageError failure) {
                 DELIVERIES.remove(player.getUniqueID(), delivery);
                 GTMiaoBlueprint.LOG.warn("Area demolition recovery delivery failed; receipts retained", failure);
                 player.addChatMessage(new ChatComponentText("拆除回收交付失败，剩余物品已保留在玩家回收记录中；重新登录后将继续尝试。"));
+                continue;
             }
             if (!delivery.materials.pendingWorldRecovery()) DELIVERIES.remove(player.getUniqueID(), delivery);
         }
@@ -226,7 +249,7 @@ public final class HologramDemolition {
 
         final EntityPlayerMP player;
         final World world;
-        final HologramMaterials.Context materials;
+        HologramMaterials.Context materials;
 
         Delivery(EntityPlayerMP player, World world, HologramMaterials.Context materials) {
             this.player = player;
@@ -254,7 +277,7 @@ public final class HologramDemolition {
         }
     }
 
-    /** No precomputed getDrops: native TE breakBlock and harvestBlock own the actual drops. */
+    /** No precomputed getDrops or sealed TE extraction: native callbacks own every actual drop. */
     static Removal removeBlock(EntityPlayerMP player, World world, int x, int y, int z) throws IOException {
         HologramCapture.Cell cell = new HologramCapture.Cell(null, x, y, z);
         Block block = world.getBlock(x, y, z);
@@ -264,45 +287,38 @@ public final class HologramDemolition {
             || !world.canMineBlock(player, x, y, z)
             || !player.canPlayerEdit(x, y, z, 1, player.getHeldItem()))
             return new Removal(false, Collections.emptyList(), null);
-        BlockEvent.BreakEvent event = new BlockEvent.BreakEvent(x, y, z, world, block, metadata, player);
-        if (MinecraftForge.EVENT_BUS.post(event)
-            || !HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile))
-            return new Removal(false, Collections.emptyList(), null);
-
-        List<ItemStack> sealed = HologramRecovery.supported(tile) ? HologramRecovery.drops(world, x, y, z) : null;
-        NBTTagCompound saved = sealed == null ? null
-            : (NBTTagCompound) sealed.get(0)
-                .getTagCompound()
-                .getCompoundTag(HologramRecovery.TAG)
-                .getCompoundTag("tile")
-                .copy();
-        try (DropScope scope = new DropScope(world)) {
-            if (sealed != null) {
-                Throwable failure = null;
-                try {
-                    if (HologramRecovery.removeWithoutDrops(world, x, y, z)) {
-                        scope.items.addAll(sealed);
-                        return new Removal(true, scope.items, null);
-                    }
-                } catch (RuntimeException | LinkageError removalFailure) {
-                    failure = removalFailure;
-                }
-                try {
-                    HologramRecovery.restore(world, x, y, z, block, metadata, saved);
-                } catch (RuntimeException | LinkageError restoreFailure) {
-                    if (failure == null) failure = restoreFailure;
-                    else if (failure != restoreFailure) failure.addSuppressed(restoreFailure);
-                }
-                // An uncertain failed restore never authorizes generating the sealed machine as a second copy.
-                return new Removal(false, scope.items, failure);
-            }
+        try (ToolScope tool = new ToolScope(player, block, metadata, x, y, z); DropScope scope = new DropScope(world)) {
             try {
+                BlockEvent.BreakEvent event = new BlockEvent.BreakEvent(x, y, z, world, block, metadata, player);
+                if (MinecraftForge.EVENT_BUS.post(event)
+                    || !HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile))
+                    return new Removal(
+                        !HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile),
+                        scope.items,
+                        null);
+                ItemStack held = player.getHeldItem();
+                if (held != null && held.getItem()
+                    .onBlockStartBreak(held, x, y, z, player)
+                    || !HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile))
+                    return new Removal(
+                        !HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile),
+                        scope.items,
+                        null);
+                // Unlike manual mining, a rejected harvest keeps the block instead of destroying it without loot.
+                if (!block.canHarvestBlock(player, metadata)) return new Removal(false, scope.items, null);
+                if (held != null) {
+                    held.func_150999_a(world, block, x, y, z, player);
+                    if (held.stackSize == 0) player.destroyCurrentEquippedItem();
+                }
+                if (!HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile))
+                    return new Removal(true, scope.items, null);
                 block.onBlockHarvested(world, x, y, z, metadata, player);
                 if (!HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile))
                     return new Removal(world.isAirBlock(x, y, z), scope.items, null);
                 if (!block.removedByPlayer(world, player, x, y, z, true)) return new Removal(false, scope.items, null);
                 block.onBlockDestroyedByPlayer(world, x, y, z, metadata);
                 block.harvestBlock(world, player, x, y, z, metadata);
+                block.dropXpOnBlockBreak(world, x, y, z, event.getExpToDrop());
                 return new Removal(
                     !HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile),
                     scope.items,
@@ -315,6 +331,60 @@ public final class HologramDemolition {
                     scope.items,
                     failure);
             }
+        }
+    }
+
+    /** The registered projector gains only the current block's declared Forge tool class during this removal. */
+    public static Set<String> toolClasses(ItemStack stack) {
+        ToolScope scope = TOOL.get();
+        return scope != null && scope.matches(stack) && scope.toolClass != null ? Collections.singleton(scope.toolClass)
+            : Collections.emptySet();
+    }
+
+    public static int toolHarvestLevel(ItemStack stack, String toolClass) {
+        ToolScope scope = TOOL.get();
+        return scope != null && scope.matches(stack) && toolClass != null && toolClass.equals(scope.toolClass)
+            ? scope.level
+            : -1;
+    }
+
+    public static boolean isNativeToolBreak(EntityPlayer player, ItemStack stack, int x, int y, int z) {
+        ToolScope scope = TOOL.get();
+        return scope != null && scope.player == player
+            && scope.matches(stack)
+            && scope.x == x
+            && scope.y == y
+            && scope.z == z;
+    }
+
+    private static final class ToolScope implements AutoCloseable {
+
+        final EntityPlayerMP player;
+        final World world;
+        final ItemStack stack;
+        final String toolClass;
+        final int level, x, y, z;
+
+        ToolScope(EntityPlayerMP player, Block block, int metadata, int x, int y, int z) {
+            if (TOOL.get() != null) throw new IllegalStateException("Nested area demolition tool scope");
+            this.player = player;
+            world = player.worldObj;
+            stack = player.getHeldItem();
+            toolClass = block.getHarvestTool(metadata);
+            level = Math.max(0, block.getHarvestLevel(metadata));
+            this.x = x;
+            this.y = y;
+            this.z = z;
+            TOOL.set(this);
+        }
+
+        boolean matches(ItemStack candidate) {
+            return candidate != null && candidate == stack && player.getHeldItem() == stack && player.worldObj == world;
+        }
+
+        @Override
+        public void close() {
+            TOOL.remove();
         }
     }
 
@@ -361,20 +431,21 @@ public final class HologramDemolition {
 
         final EntityPlayerMP player;
         final World world;
-        final int dimension, slot;
+        final int dimension, slot, destination;
         final ItemStack tool;
         final Cursor cursor;
         final HologramMaterials.Context materials;
         long removed, protectedCount;
 
-        Job(EntityPlayerMP player, Cursor cursor) {
+        Job(EntityPlayerMP player, Cursor cursor, HologramMaterials.Context materials, int destination) {
             this.player = player;
             world = player.worldObj;
             dimension = player.dimension;
             slot = player.inventory.currentItem;
             tool = player.getHeldItem();
             this.cursor = cursor;
-            materials = recoveryContext(player, slot);
+            this.materials = materials;
+            this.destination = destination;
         }
 
         String invalidReason() {

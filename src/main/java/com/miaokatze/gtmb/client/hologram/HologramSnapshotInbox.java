@@ -18,10 +18,10 @@ final class HologramSnapshotInbox<T> implements AutoCloseable {
     static final class Result<T> {
 
         final T value;
-        final Exception failure;
+        final Throwable failure;
         final long transportSequence;
 
-        Result(T value, Exception failure, long transportSequence) {
+        Result(T value, Throwable failure, long transportSequence) {
             this.value = value;
             this.failure = failure;
             this.transportSequence = transportSequence;
@@ -79,11 +79,7 @@ final class HologramSnapshotInbox<T> implements AutoCloseable {
             bytes.length);
         entries.addLast(new Entry<>(epoch, bytes, null, transportSequence));
         reservedBytes += bytes.length;
-        if (worker == null) {
-            worker = new Thread(this::decodeLoop, "GTMB snapshot decoder");
-            worker.setDaemon(true);
-            worker.start();
-        }
+        startWorker();
         notifyAll();
         return true;
     }
@@ -111,15 +107,22 @@ final class HologramSnapshotInbox<T> implements AutoCloseable {
         return first.result;
     }
 
-    /** Saturation fallback: retain every ACK in order instead of discarding or growing a queue. */
+    synchronized boolean idle() {
+        return entries.isEmpty() && active == null;
+    }
+
+    /** Blocking observation for worker tests only; client admission and publication use offer/poll. */
     synchronized Result<T> awaitNext() {
         boolean interrupted = false;
+        long deadline = System.nanoTime() + 5_000_000_000L;
         try {
             for (;;) {
                 Result<T> result = poll();
                 if (result != null || entries.isEmpty() && active == null || closed) return result;
+                long remaining = deadline - System.nanoTime();
+                if (remaining <= 0) throw new IllegalStateException("snapshot decoder observation timed out");
                 try {
-                    wait();
+                    wait(remaining / 1_000_000L, (int) (remaining % 1_000_000L));
                 } catch (InterruptedException e) {
                     interrupted = true;
                 }
@@ -144,59 +147,88 @@ final class HologramSnapshotInbox<T> implements AutoCloseable {
         notifyAll();
     }
 
+    private void startWorker() {
+        if (worker != null || closed) return;
+        for (Entry<T> entry : entries) if (entry.result == null) {
+            worker = new Thread(this::decodeLoop, "GTMB snapshot decoder");
+            worker.setDaemon(true);
+            worker.start();
+            return;
+        }
+    }
+
     private void decodeLoop() {
-        for (;;) {
-            Entry<T> entry = null;
-            synchronized (this) {
-                while (entry == null && !closed) {
-                    for (Entry<T> candidate : entries) {
-                        if (candidate.result == null) {
-                            entry = candidate;
-                            break;
+        try {
+            for (;;) {
+                Entry<T> entry = null;
+                synchronized (this) {
+                    while (entry == null && !closed) {
+                        for (Entry<T> candidate : entries) {
+                            if (candidate.result == null) {
+                                entry = candidate;
+                                break;
+                            }
+                        }
+                        if (entry == null) {
+                            try {
+                                wait();
+                            } catch (InterruptedException ignored) {
+                                // No Minecraft state or thread interrupt is used for cancellation; epoch owns
+                                // publication.
+                            }
                         }
                     }
-                    if (entry == null) {
-                        try {
-                            wait();
-                        } catch (InterruptedException ignored) {
-                            // No Minecraft state or thread interrupt is used for cancellation; epoch owns publication.
-                        }
+                    if (closed) return;
+                    active = entry;
+                }
+                Result<T> result = null;
+                try {
+                    HologramRuntimeMetrics.loadStage(
+                        HologramRuntimeMetrics.LoadStage.CLIENT_DECODE_BEGIN,
+                        "",
+                        -1,
+                        -1,
+                        entry.transportSequence,
+                        entry.cost);
+                    result = new Result<>(decoder.decode(entry.bytes), null, entry.transportSequence);
+                    if (result.value instanceof NBTTagCompound state) HologramRuntimeMetrics.loadStage(
+                        HologramRuntimeMetrics.LoadStage.CLIENT_DECODE_END,
+                        state,
+                        entry.transportSequence,
+                        entry.cost);
+                    else HologramRuntimeMetrics.loadStage(
+                        HologramRuntimeMetrics.LoadStage.CLIENT_DECODE_END,
+                        "",
+                        -1,
+                        -1,
+                        entry.transportSequence,
+                        entry.cost);
+                } catch (Throwable failure) {
+                    // This worker boundary must publish Error as a failure instead of stranding its reservation.
+                    result = new Result<>(null, failure, entry.transportSequence);
+                    HologramRuntimeMetrics.loadStage(
+                        HologramRuntimeMetrics.LoadStage.CLIENT_DECODE_FAILED,
+                        "",
+                        -1,
+                        -1,
+                        entry.transportSequence,
+                        entry.cost);
+                } finally {
+                    synchronized (this) {
+                        entry.bytes = null;
+                        if (entry.epoch == epoch) entry.result = result;
+                        else reservedBytes -= entry.cost;
+                        active = null;
+                        notifyAll();
                     }
                 }
-                if (closed) return;
-                active = entry;
+                if (result != null && result.failure instanceof Error) return;
             }
-            Result<T> result;
-            HologramRuntimeMetrics.loadStage(
-                HologramRuntimeMetrics.LoadStage.CLIENT_DECODE_BEGIN,
-                "",
-                -1,
-                -1,
-                entry.transportSequence,
-                entry.cost);
-            try {
-                result = new Result<>(decoder.decode(entry.bytes), null, entry.transportSequence);
-            } catch (Exception e) {
-                result = new Result<>(null, e, entry.transportSequence);
-            }
-            if (result.value instanceof NBTTagCompound state) HologramRuntimeMetrics.loadStage(
-                HologramRuntimeMetrics.LoadStage.CLIENT_DECODE_END,
-                state,
-                entry.transportSequence,
-                entry.cost);
-            else HologramRuntimeMetrics.loadStage(
-                result.failure == null ? HologramRuntimeMetrics.LoadStage.CLIENT_DECODE_END
-                    : HologramRuntimeMetrics.LoadStage.CLIENT_DECODE_FAILED,
-                "",
-                -1,
-                -1,
-                entry.transportSequence,
-                entry.cost);
+        } finally {
             synchronized (this) {
-                entry.bytes = null;
-                if (entry.epoch == epoch) entry.result = result;
-                else reservedBytes -= entry.cost;
-                active = null;
+                worker = null;
+                // A failed decoder is retired; queued entries keep their order on a fresh worker.
+                startWorker();
                 notifyAll();
             }
         }

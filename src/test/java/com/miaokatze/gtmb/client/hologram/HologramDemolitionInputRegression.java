@@ -3,6 +3,8 @@ package com.miaokatze.gtmb.client.hologram;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.ArrayList;
+import java.util.List;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityClientPlayerMP;
@@ -12,9 +14,19 @@ import net.minecraft.entity.player.InventoryPlayer;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 
+import com.cleanroommc.modularui.api.widget.IWidget;
+import com.cleanroommc.modularui.screen.ModularPanel;
+import com.cleanroommc.modularui.value.IntValue;
+import com.cleanroommc.modularui.widgets.ButtonWidget;
 import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 import com.miaokatze.gtmb.hologram.HologramAreaSelection;
+import com.miaokatze.gtmb.hologram.HologramNetwork;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
+
+import cpw.mods.fml.common.network.simpleimpl.IMessage;
+import cpw.mods.fml.common.network.simpleimpl.SimpleNetworkWrapper;
+import io.netty.buffer.ByteBuf;
+import io.netty.buffer.Unpooled;
 
 public final class HologramDemolitionInputRegression {
 
@@ -149,6 +161,7 @@ public final class HologramDemolitionInputRegression {
             HologramAreaSelection chosen = new HologramAreaSelection();
             chosen.point(1, 4, 70, 8);
             chosen.point(2, 5, 71, 9);
+            destinationRequests(unsafe, chosen);
             set(local, "selection", chosen);
             GuiScreen confirmation = (GuiScreen) unsafe.allocateInstance(HologramCutConfirmScreen.class);
             set(local, "demolitionConfirmation", confirmation);
@@ -223,6 +236,146 @@ public final class HologramDemolitionInputRegression {
             } catch (IllegalAccessException failure) {
                 throw new AssertionError("restore Minecraft singleton", failure);
             }
+        }
+    }
+
+    /** Native confirmation buttons drive the actual client sender; only the socket is replaced by a recorder. */
+    private static void destinationRequests(sun.misc.Unsafe unsafe, HologramAreaSelection chosen)
+        throws ReflectiveOperationException {
+        Constructor<HologramCutClient> constructor = HologramCutClient.class.getDeclaredConstructor();
+        constructor.setAccessible(true);
+        HologramCutClient local = constructor.newInstance();
+        set(local, "demolitionMode", true);
+        set(local, "cutSession", true);
+        set(local, "stage", HologramCutInput.Stage.SELECTING);
+        set(local, "selection", chosen);
+        HologramCutContinuous continuous = (HologramCutContinuous) get(local, "continuous");
+        continuous.enter();
+        Method submit = HologramCutClient.class.getDeclaredMethod("submitDemolition", NBTTagCompound.class, int.class);
+        submit.setAccessible(true);
+        Method receive = HologramCutClient.class
+            .getDeclaredMethod("receiveDemolition", NBTTagCompound.class, HologramCutRequests.Request.class);
+        receive.setAccessible(true);
+        Field channel = HologramNetwork.class.getDeclaredField("channel");
+        channel.setAccessible(true);
+        Object previous = channel.get(null);
+        RecordingChannel recorder = (RecordingChannel) unsafe.allocateInstance(RecordingChannel.class);
+        recorder.messages = new ArrayList<>();
+        int[] cancellations = { 0 };
+        try {
+            channel.set(null, recorder);
+            IntValue destination = new IntValue((Integer) get(local, "demolitionDestination"));
+            SimpleAssert.eq(0, destination.getIntValue(), "a new demolition session defaults to inventory");
+            ModularPanel cancelled = destinationPanel(local, chosen, destination, submit, cancellations);
+            SimpleAssert.eq(
+                4L,
+                cancelled.getChildren()
+                    .stream()
+                    .filter(ButtonWidget.class::isInstance)
+                    .count(),
+                "confirmation offers inventory, AE, cancel and confirm without a feet destination");
+            press(cancelled, "demolition_destination_ae", 0);
+            SimpleAssert.eq(1, destination.getIntValue(), "the actual AE button changes only the local draft");
+            SimpleAssert.that(recorder.messages.isEmpty(), "choosing AE cannot submit demolition");
+            press(cancelled, "cut_cancel", 0);
+            SimpleAssert.eq(1, cancellations[0], "the native cancel button invokes cancellation once");
+            SimpleAssert.that(
+                recorder.messages.isEmpty() && local.selecting() && get(local, "selection") == chosen,
+                "cancel sends no request and preserves the editable selection");
+            SimpleAssert.eq(0, get(local, "demolitionDestination"), "cancel does not commit a destination preference");
+
+            for (int target = 0; target < 2; target++) {
+                set(local, "selection", chosen);
+                destination = new IntValue((Integer) get(local, "demolitionDestination"));
+                ModularPanel panel = destinationPanel(local, chosen, destination, submit, cancellations);
+                String choice = target == 0 ? "demolition_destination_inventory" : "demolition_destination_ae";
+                press(panel, choice, 1);
+                press(panel, choice, 0);
+                press(panel, "cut_confirm", 1);
+                SimpleAssert.eq(target, recorder.messages.size(), "destination and secondary clicks send no request");
+                press(panel, "cut_confirm", 0);
+                SimpleAssert.eq(target + 1, recorder.messages.size(), "one separate primary confirmation sends once");
+                ByteBuf bytes = Unpooled.buffer();
+                NBTTagCompound sent;
+                try {
+                    recorder.messages.get(target)
+                        .toBytes(bytes);
+                    HologramNetwork.CutAction decoded = new HologramNetwork.CutAction();
+                    decoded.fromBytes(bytes);
+                    sent = (NBTTagCompound) get(decoded, "tag");
+                } finally {
+                    bytes.release();
+                }
+                SimpleAssert.eq("demolish", sent.getString("action"), "the real sender emits a demolition action");
+                SimpleAssert
+                    .that(sent.hasKey("demolitionDestination", 3), "every new request carries an int destination");
+                SimpleAssert.eq(
+                    target,
+                    sent.getInteger("demolitionDestination"),
+                    "the selected destination survives wire encoding");
+                SimpleAssert.eq(
+                    chosen.snapshot(),
+                    sent.getCompoundTag("areaSelection"),
+                    "destination preserves the chosen area");
+                HologramCutRequests requests = (HologramCutRequests) get(local, "requests");
+                HologramCutRequests.Request request = requests.acknowledge(sent.getString("requestId"));
+                NBTTagCompound reply = new NBTTagCompound();
+                reply.setBoolean("success", true);
+                reply.setBoolean("demolitionActive", false);
+                receive.invoke(local, reply, request);
+                SimpleAssert
+                    .that(local.selecting() && !local.busy(), "completion resumes the continuous selection session");
+                SimpleAssert.eq(
+                    target,
+                    get(local, "demolitionDestination"),
+                    "continuous selection keeps its confirmed destination");
+            }
+            local.cancel();
+            SimpleAssert
+                .eq(0, get(local, "demolitionDestination"), "leaving the session restores the inventory default");
+        } finally {
+            channel.set(null, previous);
+        }
+    }
+
+    private static ModularPanel destinationPanel(HologramCutClient local, HologramAreaSelection chosen,
+        IntValue destination, Method submit, int[] cancellations) {
+        ModularPanel panel = new ModularPanel("demolition_destination_request");
+        HologramCutDialogContent
+            .demolitionConfirmation(panel, () -> "demolition", () -> "bounds", destination, (accepted, skip) -> {
+                if (!accepted) {
+                    cancellations[0]++;
+                    return;
+                }
+                try {
+                    submit.invoke(local, chosen.snapshot(), destination.getIntValue());
+                } catch (ReflectiveOperationException failure) {
+                    throw new AssertionError("actual demolition sender", failure);
+                }
+            });
+        return panel;
+    }
+
+    private static void press(ModularPanel panel, String name, int mouseButton) {
+        for (IWidget widget : panel.getChildren()) if (name.equals(widget.getName())) {
+            ((ButtonWidget<?>) widget).playClickSound(false)
+                .onMousePressed(mouseButton);
+            return;
+        }
+        throw new AssertionError("missing native confirmation button: " + name);
+    }
+
+    private static final class RecordingChannel extends SimpleNetworkWrapper {
+
+        private List<IMessage> messages;
+
+        private RecordingChannel() {
+            super("demolition_ui_fixture");
+        }
+
+        @Override
+        public void sendToServer(IMessage message) {
+            messages.add(message);
         }
     }
 

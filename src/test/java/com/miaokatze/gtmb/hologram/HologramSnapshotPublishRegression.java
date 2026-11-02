@@ -1557,6 +1557,26 @@ public final class HologramSnapshotPublishRegression {
 
         @Override
         public void sendTo(IMessage message, EntityPlayerMP player) {
+            if (message instanceof HologramNetwork.State state && state.tag.getBoolean("progressOnly")
+                && state.tag.getCompoundTag("progress")
+                    .hasKey("snapshotFlowVersion", 3)) {
+                // These existing publication cases model a legacy peer. Advance only its negotiation clock.
+                try {
+                    Field flows = HologramNetwork.class.getDeclaredField("snapshotFlows");
+                    flows.setAccessible(true);
+                    Object flow = ((java.util.Map<?, ?>) flows.get(null)).get(player.getUniqueID());
+                    Field credit = flow.getClass()
+                        .getDeclaredField("credit");
+                    credit.setAccessible(true);
+                    ((HologramSnapshotFlowControl) credit.get(flow)).begin(
+                        0,
+                        1,
+                        player.worldObj.getTotalWorldTime() + HologramSnapshotFlowControl.LEGACY_GRACE_TICKS);
+                } catch (ReflectiveOperationException failure) {
+                    throw new AssertionError("legacy publication fixture negotiation", failure);
+                }
+                return;
+            }
             WIRE.add(message);
         }
     }

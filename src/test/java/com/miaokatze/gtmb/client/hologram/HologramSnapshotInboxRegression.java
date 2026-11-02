@@ -20,6 +20,8 @@ public final class HologramSnapshotInboxRegression {
         fifoAndBackpressure();
         epochCancellation();
         failedDecodeRetainsOrder();
+        errorDecodeRetiresWorker();
+        closeDuringDecode();
         explicitRootCloseFence();
         loadTiming();
     }
@@ -158,6 +160,90 @@ public final class HologramSnapshotInboxRegression {
             Thread.currentThread()
                 .interrupt();
             throw new IllegalStateException(e);
+        }
+    }
+
+    private static void errorDecodeRetiresWorker() {
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        AtomicReference<Thread> failedWorker = new AtomicReference<>(), recoveredWorker = new AtomicReference<>();
+        try (HologramSnapshotInbox<String> inbox = new HologramSnapshotInbox<>(2, 4, bytes -> {
+            if (bytes[0] == 1) {
+                failedWorker.set(Thread.currentThread());
+                entered.countDown();
+                waitFor(release);
+                throw new AssertionError("decoder fixture error");
+            }
+            recoveredWorker.set(Thread.currentThread());
+            return "reconnected";
+        })) {
+            inbox.offer(new byte[] { 1, 0, 0 });
+            waitFor(entered);
+            inbox.offerValue("ordered ACK");
+            release.countDown();
+            HologramSnapshotInbox.Result<String> failure = inbox.awaitNext();
+            SimpleAssert.that(failure.failure instanceof AssertionError, "Error is a visible terminal decode result");
+            SimpleAssert.eq("ordered ACK", inbox.poll().value, "Error does not swallow the following ACK");
+            SimpleAssert.that(inbox.idle(), "failed active entry and its byte reservation are released");
+            SimpleAssert.that(inbox.offer(new byte[] { 2, 0, 0, 0 }), "full byte budget is usable after Error");
+            SimpleAssert.eq("reconnected", inbox.awaitNext().value, "fresh decode proceeds after Error");
+            SimpleAssert.that(failedWorker.get() != recoveredWorker.get(), "Error retires its actual worker thread");
+        } finally {
+            release.countDown();
+        }
+
+        CountDownLatch oldEntered = new CountDownLatch(1), oldRelease = new CountDownLatch(1);
+        try (HologramSnapshotInbox<String> inbox = new HologramSnapshotInbox<>(2, 4, bytes -> {
+            if (bytes[0] == 1) {
+                oldEntered.countDown();
+                waitFor(oldRelease);
+                throw new LinkageError("old world failed after clear");
+            }
+            return "new connection";
+        })) {
+            inbox.offer(new byte[] { 1, 0, 0 });
+            waitFor(oldEntered);
+            inbox.clear();
+            SimpleAssert.that(!inbox.offer(new byte[2]), "old epoch retains its physical bytes until finally");
+            inbox.offer(new byte[] { 2 });
+            oldRelease.countDown();
+            SimpleAssert.eq("new connection", inbox.awaitNext().value, "old Error cannot leak into new epoch");
+            SimpleAssert.that(inbox.idle(), "old Error and new publication leave no stranded reservation");
+        } finally {
+            oldRelease.countDown();
+        }
+    }
+
+    private static void closeDuringDecode() {
+        CountDownLatch entered = new CountDownLatch(1), release = new CountDownLatch(1);
+        AtomicReference<Thread> worker = new AtomicReference<>();
+        HologramSnapshotInbox<String> inbox = new HologramSnapshotInbox<>(1, 4, bytes -> {
+            worker.set(Thread.currentThread());
+            entered.countDown();
+            waitFor(release);
+            return "closed world";
+        });
+        try {
+            inbox.offer(new byte[4]);
+            waitFor(entered);
+            inbox.close();
+            SimpleAssert.that(!inbox.idle(), "closing never pretends an active decode has freed its physical bytes");
+            release.countDown();
+            try {
+                worker.get()
+                    .join(5000);
+            } catch (InterruptedException failure) {
+                Thread.currentThread()
+                    .interrupt();
+                throw new AssertionError(failure);
+            }
+            SimpleAssert.that(
+                !worker.get()
+                    .isAlive() && inbox.idle(),
+                "close retires worker and reservation in finally");
+            SimpleAssert.that(inbox.poll() == null, "closed epoch never publishes its delayed result");
+        } finally {
+            release.countDown();
+            inbox.close();
         }
     }
 

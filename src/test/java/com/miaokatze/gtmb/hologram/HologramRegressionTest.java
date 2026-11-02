@@ -349,6 +349,13 @@ public final class HologramRegressionTest {
         cases.put("hatch_matching_preserves_override_and_legacy_class_rules", HologramRegressionTest::hatchMatching);
         cases.put("large_snapshots_are_atomic_ordered_and_bounded", HologramSnapshotAssemblyRegression::run);
         cases.put("incremental_capture_and_large_drafts_keep_editor_state", HologramLargeStructureRegression::run);
+        cases.put("native_capture_continuation_and_budgeted_plan_tail", HologramControllerCaptureRegression::run);
+        cases.put("snapshot_flow_credit_preserves_order_and_byte_limits", HologramSnapshotFlowControlRegression::run);
+        cases
+            .put("demolition_selected_destination_and_capacity_overflow", HologramDemolitionDestinationRegression::run);
+        cases.put(
+            "repeated_capture_sessions_and_nonblocking_snapshot_admission",
+            com.miaokatze.gtmb.client.hologram.HologramClientP0Regression::run);
         cases.put("large_snapshot_codec_rejects_hostile_lengths", HologramSnapshotCodecRegression::run);
         cases.put("large_blueprint_library_transactions_and_byte_budgets", HologramBlueprintStorageV003Regression::run);
         cases.put("blueprint_annotations_and_save_failures_remain_visible", HologramBlueprintAnnotationRegression::run);

@@ -483,7 +483,10 @@ public final class HologramCutService {
                 }
                 receipt = history.begin(id, action);
                 if ("demolish".equals(action)) {
-                    HologramDemolition.start(player, HologramDemolitionProtocol.selection(request));
+                    HologramDemolition.start(
+                        player,
+                        HologramDemolitionProtocol.selection(request),
+                        HologramDemolitionProtocol.destination(request));
                     HologramSession workspace = HologramWorkspace.find(player.getUniqueID());
                     if (workspace != null && workspace.player == player)
                         HologramProjectorWorkflow.libraryCloseUi(workspace);

@@ -1,6 +1,7 @@
 package com.miaokatze.gtmb.common.items.hologram;
 
 import java.util.List;
+import java.util.Set;
 
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.entity.Entity;
@@ -12,6 +13,7 @@ import net.minecraft.world.World;
 import com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor;
 import com.gtnewhorizon.structurelib.item.ItemConstructableTrigger;
 import com.miaokatze.gtmb.common.util.ProjectorTooltip;
+import com.miaokatze.gtmb.hologram.HologramDemolition;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
 import com.miaokatze.gtmb.hologram.HologramService;
 import com.miaokatze.gtmb.main.GTMiaoBlueprint;
@@ -43,9 +45,22 @@ public class ItemNekoHologramProjector extends ItemConstructableTrigger {
 
     @Override
     public boolean onBlockStartBreak(ItemStack stack, int x, int y, int z, EntityPlayer player) {
+        if (HologramDemolition.isNativeToolBreak(player, stack, x, y, z)) return false;
         return GTMiaoBlueprint.proxy != null && GTMiaoBlueprint.proxy.hologramTaskBusy()
             || stack.hasTagCompound() && stack.getTagCompound()
                 .getBoolean("gtitHologramAreaSelecting");
+    }
+
+    @Override
+    public Set<String> getToolClasses(ItemStack stack) {
+        Set<String> scoped = HologramDemolition.toolClasses(stack);
+        return scoped.isEmpty() ? super.getToolClasses(stack) : scoped;
+    }
+
+    @Override
+    public int getHarvestLevel(ItemStack stack, String toolClass) {
+        int scoped = HologramDemolition.toolHarvestLevel(stack, toolClass);
+        return scoped < 0 ? super.getHarvestLevel(stack, toolClass) : scoped;
     }
 
     @Override
