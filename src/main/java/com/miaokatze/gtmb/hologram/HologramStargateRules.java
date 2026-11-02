@@ -34,7 +34,8 @@ public final class HologramStargateRules {
                 + "Existing blueprints and recovery records are retained; ore-related cut journals are not replayed. "
                 + "Edit and restart the server.")
             .getBoolean(false);
-        if (config.hasChanged()) config.save();
+        // Forge does not mark comment-only updates dirty; replace the earlier candidate's obsolete rule text.
+        config.save();
     }
 
     public static boolean enabled() {

@@ -98,9 +98,14 @@ public final class HologramStargateRulesRegression {
                 config.load();
                 config.get("stargateRules", "enabled", false)
                     .set(enabled);
+                config.get("stargateRules", "enabled", false).comment = "Obsolete blanket construction restriction";
                 config.save();
                 HologramStargateRules.load(directory.toFile());
                 SimpleAssert.eq(enabled, HologramStargateRules.enabled(), "server restart reads the explicit switch");
+                String refreshed = new String(Files.readAllBytes(file), StandardCharsets.UTF_8);
+                SimpleAssert.that(
+                    refreshed.contains("Keep automatic construction") && !refreshed.contains("Obsolete blanket"),
+                    "existing config keeps its value and refreshes rule guidance");
             }
         } finally {
             Files.deleteIfExists(file);
