@@ -30,7 +30,8 @@ final class HologramAreaDeclarations {
             cell.candidates = null;
             for (String id : ids) {
                 HologramArea.Structure member = area.structures.get(id);
-                if (member != null && member != own && member.capture != null) s.capture.inheritSources(member.capture);
+                if (member != null && member != own && member.capture != null)
+                    s.capture.inheritSources(member.capture, member.id);
             }
         }
     }

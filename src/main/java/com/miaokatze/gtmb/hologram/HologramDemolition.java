@@ -116,6 +116,8 @@ public final class HologramDemolition {
                     stopped = "拆除已停止：" + invalid;
                     break;
                 }
+                // Do not advance the geometry while committed material receipts still exceed the delivery budget.
+                if (job.materials.recoveryBacklogged()) break;
                 if (!job.cursor.step((cx, sy, cz) -> emptySection(job.world, cx, sy, cz))) continue;
                 int x = job.cursor.x, y = job.cursor.y, z = job.cursor.z;
                 if (!job.world.blockExists(x, y, z)) throw new IOException("选区区块已卸载，其余方块保留");

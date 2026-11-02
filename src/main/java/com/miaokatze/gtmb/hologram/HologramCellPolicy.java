@@ -908,7 +908,10 @@ final class HologramCellPolicy {
 
     /** Frozen coordinates survive extension changes; all derived interpretation/candidate caches must not. */
     static void refreshDeclarationGeneration(HologramSession s) {
-        if (!s.declarations.invalidateIfStale()) return;
+        if (!s.declarations.invalidateIfStale()) {
+            s.declarations.replay();
+            return;
+        }
         s.hatchCandidates.clear();
         s.hatchParts.clear();
         s.hatchRequirements.clear();
@@ -1043,33 +1046,35 @@ final class HologramCellPolicy {
     static IStructureElement hatchElement(HologramSession s, HologramCapture.Cell cell, ItemStack sample,
         boolean manual, ItemStack signal) {
         refreshDeclarationGeneration(s);
-        if (hatchTier(sample) == Integer.MAX_VALUE) return null;
-        List<IStructureElement<?>> parts = s.hatchParts.get(cell.element);
-        if (parts == null) {
-            parts = new ArrayList<>();
-            for (IStructureElement<?> part : HologramElementCatalog.parts(cell.element))
-                if ("hatch".equals(HologramElementCatalog.hatchRole(part))) parts.add(part);
-            s.hatchParts.put(cell.element, parts);
-        }
-        for (IStructureElement part : parts) {
-            Declarations.PureElement<?> declaration = HologramElementCatalog.pure(part);
-            if (declaration != null) {
-                if (manual ? declaration.accepts(sample) : declaration.placementAllows(sample)) return part;
-                continue;
+        try (HologramDeclarationAdapters.Scope declarations = s.declarations.observe()) {
+            if (hatchTier(sample) == Integer.MAX_VALUE) return null;
+            List<IStructureElement<?>> parts = s.hatchParts.get(cell.element);
+            if (parts == null) {
+                parts = new ArrayList<>();
+                for (IStructureElement<?> part : HologramElementCatalog.parts(cell.element))
+                    if ("hatch".equals(HologramElementCatalog.hatchRole(part))) parts.add(part);
+                s.hatchParts.put(cell.element, parts);
             }
-            try {
-                java.util.function.Predicate<ItemStack> declared = manual
-                    ? HologramHatchPolicy.predicate(part, s.machine, signal)
-                    : null;
-                if (declared != null) {
-                    if (declared.test(sample)) return part;
+            for (IStructureElement part : parts) {
+                Declarations.PureElement<?> declaration = HologramElementCatalog.pure(part);
+                if (declaration != null) {
+                    if (manual ? declaration.accepts(sample) : declaration.placementAllows(sample)) return part;
                     continue;
                 }
-                // A missing reviewed declaration is unknown. Calling the native placement
-                // predicate here would execute arbitrary controller callbacks during reads.
-            } catch (RuntimeException | LinkageError ignored) {}
+                try {
+                    java.util.function.Predicate<ItemStack> declared = manual
+                        ? HologramHatchPolicy.predicate(part, s.machine, signal)
+                        : null;
+                    if (declared != null) {
+                        if (declared.test(sample)) return part;
+                        continue;
+                    }
+                    // A missing reviewed declaration is unknown. Calling the native placement
+                    // predicate here would execute arbitrary controller callbacks during reads.
+                } catch (RuntimeException | LinkageError ignored) {}
+            }
+            return null;
         }
-        return null;
     }
 
     static boolean recoverable(HologramSession s, HologramCapture.Cell c) {
@@ -1232,13 +1237,16 @@ final class HologramCellPolicy {
     static Map<gregtech.api.interfaces.IHatchElement<?>, Integer> hatchRequirements(HologramSession s,
         HologramCapture.Cell c) {
         refreshDeclarationGeneration(s);
-        Map<gregtech.api.interfaces.IHatchElement<?>, Integer> cached = s.hatchRequirements.get(c.element);
-        if (cached != null) return cached;
-        Map<gregtech.api.interfaces.IHatchElement<?>, Integer> result = new LinkedHashMap<>();
-        for (IStructureElement<?> part : HologramElementCatalog.parts(c.element)) HologramHatchPolicy.requirements(part)
-            .forEach((type, count) -> result.merge(type, count, Math::max));
-        s.hatchRequirements.put(c.element, result);
-        return result;
+        try (HologramDeclarationAdapters.Scope declarations = s.declarations.observe()) {
+            Map<gregtech.api.interfaces.IHatchElement<?>, Integer> cached = s.hatchRequirements.get(c.element);
+            if (cached != null) return cached;
+            Map<gregtech.api.interfaces.IHatchElement<?>, Integer> result = new LinkedHashMap<>();
+            for (IStructureElement<?> part : HologramElementCatalog.parts(c.element))
+                HologramHatchPolicy.requirements(part)
+                    .forEach((type, count) -> result.merge(type, count, Math::max));
+            s.hatchRequirements.put(c.element, result);
+            return result;
+        }
     }
 
     static String candidateRole(HologramSession s, HologramCapture.Cell c, ItemStack stack) {

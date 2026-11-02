@@ -107,11 +107,16 @@ final class HologramAreaSignalInference {
     }
 
     HologramCapture capture() {
+        if (best != null) best.sourceCurrent();
         return best;
     }
 
     boolean verifiedScope() {
-        return done && bestKnownValid && !ambiguous && best != null && !best.incomplete;
+        return done && bestKnownValid
+            && !ambiguous
+            && best != null
+            && !best.incomplete
+            && best.sourceValidityFailure() == null;
     }
 
     void cancel() {
@@ -123,7 +128,9 @@ final class HologramAreaSignalInference {
     boolean step(long deadline) throws IOException {
         long started = System.nanoTime();
         try {
-            return advance(deadline);
+            boolean complete = advance(deadline);
+            if (complete && best != null) best.sourceCurrent();
+            return complete;
         } finally {
             activeNanos += System.nanoTime() - started;
         }
@@ -231,7 +238,7 @@ final class HologramAreaSignalInference {
                 matching = true;
             }
             while (matchIndex < candidate.cells.size() && System.nanoTime() < deadline) {
-                if (!matches(candidate.cells.get(matchIndex++))) {
+                if (!matches(candidate, candidate.cells.get(matchIndex++))) {
                     nextCandidate();
                     break;
                 }
@@ -260,7 +267,10 @@ final class HologramAreaSignalInference {
         while (materialIndex < best.cells.size() && System.nanoTime() < deadline) {
             HologramCapture.Cell cell = best.cells.get(materialIndex++);
             if (cell.anchor || !scene.exists(cell.x, cell.y, cell.z)) continue;
-            cell.candidates = options(cell);
+            try (HologramDeclarationAdapters.Scope declarations = HologramDeclarationAdapters
+                .observe(best.declarationBindings)) {
+                cell.candidates = options(cell);
+            }
             ItemStack observed = scene.material(cell.x, cell.y, cell.z);
             if (observed != null) actualMaterials.put(HologramValues.position(cell), observed);
         }
@@ -321,7 +331,7 @@ final class HologramAreaSignalInference {
                 matchIndex = 0;
             }
             while (matching && matchIndex < candidate.cells.size() && System.nanoTime() < deadline)
-                matching = matches(candidate.cells.get(matchIndex++));
+                matching = matches(candidate, candidate.cells.get(matchIndex++));
             if (matching && matchIndex < candidate.cells.size()) return false;
             if (matching && candidate.sourceCurrent()) {
                 List<SceneCell> observed = new ArrayList<>(reviewedCells.values());
@@ -385,7 +395,14 @@ final class HologramAreaSignalInference {
         nextCandidate();
     }
 
-    private boolean matches(HologramCapture.Cell cell) {
+    private boolean matches(HologramCapture capture, HologramCapture.Cell cell) {
+        try (HologramDeclarationAdapters.Scope declarations = HologramDeclarationAdapters
+            .observe(capture.declarationBindings)) {
+            return matchesDeclaration(cell);
+        }
+    }
+
+    private boolean matchesDeclaration(HologramCapture.Cell cell) {
         comparedCells++;
         if (cell.anchor) return true;
         if (!scene.exists(cell.x, cell.y, cell.z)) return false;
@@ -458,11 +475,20 @@ final class HologramAreaSignalInference {
         ItemStack signal = cell.elementTrigger == null ? trigger : cell.elementTrigger;
         List<Options> cached = alternatives.computeIfAbsent(cell.element, ignored -> new ArrayList<>());
         for (Options option : cached) if (option.trigger == signal
-            || option.trigger.stackSize == signal.stackSize && HologramValues.same(option.trigger, signal))
-            return option.items;
+            || option.trigger.stackSize == signal.stackSize && HologramValues.same(option.trigger, signal)) {
+                if (option.bindings.validityFailure() != null) {
+                    cached.clear();
+                    break;
+                }
+                option.bindings.replay();
+                return option.items;
+            }
         HologramDeclarationCandidates declared = new HologramDeclarationCandidates();
-        declared.collect(cell.element, machine, actual, cell.x, cell.y, cell.z, signal, null, 0);
-        cached.add(new Options(signal, declared.stacks));
+        HologramDeclarationAdapters.Bindings bindings = new HologramDeclarationAdapters.Bindings();
+        try (HologramDeclarationAdapters.Scope declarations = HologramDeclarationAdapters.observe(bindings)) {
+            declared.collect(cell.element, machine, actual, cell.x, cell.y, cell.z, signal, null, 0);
+        }
+        cached.add(new Options(signal, declared.stacks, bindings));
         return declared.stacks;
     }
 
@@ -588,10 +614,12 @@ final class HologramAreaSignalInference {
 
         final ItemStack trigger;
         final List<ItemStack> items;
+        final HologramDeclarationAdapters.Bindings bindings;
 
-        Options(ItemStack trigger, List<ItemStack> items) {
+        Options(ItemStack trigger, List<ItemStack> items, HologramDeclarationAdapters.Bindings bindings) {
             this.trigger = trigger;
             this.items = items;
+            this.bindings = bindings;
         }
     }
 

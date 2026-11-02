@@ -68,6 +68,287 @@ public final class HologramSourceContractRegression {
         }
     }
 
+    static void runRefresh() {
+        String previous = Thread.currentThread()
+            .getName();
+        Thread.currentThread()
+            .setName("Server thread");
+        try {
+            memberProofReplacement();
+            declarationBindingFences();
+        } catch (Exception failure) {
+            throw new AssertionError("source refresh contract", failure);
+        } finally {
+            Thread.currentThread()
+                .setName(previous);
+        }
+    }
+
+    private static void memberProofReplacement() throws Exception {
+        Fixture fixture = fixture(), other = fixture();
+        fixture.controller.forbidNative = other.controller.forbidNative = true;
+        ItemStack signal = new ItemStack(Blocks.stone);
+        int controllerId = 31967;
+        IMetaTileEntity previous = GregTechAPI.METATILEENTITIES[controllerId];
+        GregTechAPI.METATILEENTITIES[controllerId] = fixture.controller;
+        fixture.tile.setMetaTileID((short) controllerId);
+        try (GTMBExtensions.Registration registration = readySource(
+            "gtmb_test:member-refresh",
+            new AtomicInteger(),
+            2)) {
+            HologramCapture initial = complete(fixture.controller, signal, StructureSources.CaptureIntent.NEW_TEMPLATE);
+            HologramCapture unrelated = complete(other.controller, signal, StructureSources.CaptureIntent.NEW_TEMPLATE);
+            HologramSession session = virtualRefreshSession(fixture, initial, controllerId, "member");
+            fixture.controller.state++;
+            SimpleAssert.that(!session.capture.sourceCurrent(), "old observation really expires before scan");
+            refreshMember(session);
+            SimpleAssert.that(session.capture.sourceCurrent(), "successful member reread replaces its expired proof");
+            for (int read = 0; read < 8; read++) {
+                refreshMember(session);
+                SimpleAssert
+                    .eq(1, guardCount(session.capture), "repeat reread replaces rather than accumulates guards");
+            }
+
+            session.capture.inheritSources(unrelated, "other");
+            other.controller.state++;
+            refreshMember(session);
+            SimpleAssert.that(!session.capture.sourceCurrent(), "rereading one member retains another expired source");
+            SimpleAssert.eq("FIXTURE_STATE_CHANGED", session.capture.failure, "unrelated rejection remains explicit");
+
+            HologramSession shared = virtualRefreshSession(fixture, initial, controllerId, "member");
+            HologramCapture.Cell retained = shared.capture.cells.get(0);
+            HologramBlueprintData.setMemberships(retained, Arrays.asList("member", "other"));
+            shared.virtualEdited.add(HologramValues.position(retained));
+            for (int read = 0; read < 8; read++) {
+                refreshMember(shared);
+                SimpleAssert
+                    .that(!shared.capture.sourceCurrent(), "shared edited cell keeps the old source dependency");
+                SimpleAssert.eq(2, guardCount(shared.capture), "retained shared proof and fresh member stay bounded");
+            }
+
+            HologramCapture unscoped = new HologramCapture(null, signal);
+            unscoped.inheritSources(initial);
+            HologramCapture replacement = new HologramCapture(null, signal);
+            replacement.inheritSourcesExcept(unscoped, "member");
+            SimpleAssert.that(
+                !replacement.sourceCurrent(),
+                "unattributed legacy proof cannot be discarded by guessing a member");
+            registration.close();
+            try (
+                GTMBExtensions.Registration updated = readySource("gtmb_test:member-refresh", new AtomicInteger(), 2)) {
+                HologramSession rebound = virtualRefreshSession(fixture, initial, controllerId, "member");
+                SimpleAssert
+                    .that(!rebound.capture.sourceCurrent(), "source unregister and re-register expires prior proof");
+                refreshMember(rebound);
+                SimpleAssert
+                    .that(rebound.capture.sourceCurrent(), "production reread recovers after source re-registration");
+            }
+        } finally {
+            fixture.controller.state = other.controller.state = 0;
+            GregTechAPI.METATILEENTITIES[controllerId] = previous;
+        }
+    }
+
+    private static HologramSession virtualRefreshSession(Fixture fixture, HologramCapture captured, int controllerId,
+        String id) throws Exception {
+        HologramSession session = session(fixture, captured);
+        session.virtual = session.virtualPlacement = session.virtualLocked = true;
+        session.virtualPreset = new HologramPresets.Preset();
+        session.virtualPreset.schema = 2;
+        session.virtualPreset.id = "refresh_" + id;
+        HologramPresets.Structure source = new HologramPresets.Structure();
+        source.id = id;
+        source.sourceClass = Controller.class.getName();
+        source.controllerId = controllerId;
+        source.main = 1;
+        source.mainExplicit = true;
+        source.semanticNbt = HologramBlueprintNbt.encodeCanonical(captured.sourceMetadata);
+        session.virtualPreset.structures.add(source);
+        session.blueprintActiveStructure = id;
+        HologramCapture projected = new HologramCapture(null, captured.trigger);
+        projected.inheritSources(captured, id);
+        for (HologramCapture.Cell old : captured.cells) {
+            HologramCapture.Cell cell = HologramBlueprintData.blueprintCell(old, old.x, old.y, old.z);
+            cell.anchor = false;
+            cell.userPosition = true;
+            cell.role = old.anchor ? "templateController" : "prefab";
+            cell.sourceClass = Controller.class.getName();
+            HologramBlueprintData.setMemberships(cell, java.util.Collections.singletonList(id));
+            ItemStack target = new ItemStack(Blocks.stone);
+            cell.block = Blocks.stone;
+            cell.meta = 0;
+            cell.blueprintBlock = "minecraft:stone";
+            cell.blueprintItem = "minecraft:stone";
+            session.pins.put(projected.cells.size(), target);
+            projected.cells.add(cell);
+            projected.positions.put(HologramValues.position(cell), cell);
+            HologramPresets.Cell saved = HologramPresets.cell(
+                target,
+                cell.x - session.x,
+                cell.y - session.y,
+                cell.z - session.z,
+                old.anchor ? ForgeDirection.NORTH.ordinal() : -1,
+                old.anchor);
+            saved.structureId = id;
+            session.virtualPreset.cells.add(saved);
+        }
+        session.capture = projected;
+        return session;
+    }
+
+    private static void refreshMember(HologramSession session) throws Exception {
+        SimpleAssert.that(
+            HologramVirtualStructureEditing.prepare(session, 1, new NBTTagCompound(), false),
+            "scan preparation admits a fresh read despite old source failure");
+        HologramVirtualStructureEditing.Task task = session.virtualStructureTask;
+        SimpleAssert.that(task != null, "production preparation creates a reread task");
+        int batches = 0;
+        while (!task.step()) if (++batches > 64) throw new AssertionError("source refresh did not finish");
+        task.publish();
+        session.virtualStructureTask = null;
+    }
+
+    private static int guardCount(HologramCapture capture) throws Exception {
+        Method method = HologramCapture.class.getDeclaredMethod("sourceGuards");
+        method.setAccessible(true);
+        int count = ((java.util.Set<?>) method.invoke(capture)).size();
+        return count - 1; // The composite's empty own guard is not an inherited source.
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void declarationBindingFences() throws Exception {
+        Fixture fixture = fixture();
+        fixture.controller.forbidNative = true;
+        ItemStack signal = new ItemStack(Blocks.stone);
+        IStructureElement<Controller> wrapper = StructureUtility
+            .defer(controller -> { throw new AssertionError("unreviewed deferred factory executed"); });
+        HologramDeclarationAdapters
+            .register(wrapper, new HologramDeclarationAdapters.Declaration(StructureUtility.ofBlock(Blocks.stone, 0)));
+        try (GTMBExtensions.Registration registration = StructureSources.registerContextual(
+            "gtmb_test:binding-source",
+            Controller.class,
+            (controller, trigger, intent) -> StructureSources.Resolution
+                .ready(plan(2, trigger, wrapper), () -> null))) {
+            HologramCapture captured = complete(
+                fixture.controller,
+                signal,
+                StructureSources.CaptureIntent.NEW_TEMPLATE);
+            HologramDeclarationCollector collector = new HologramDeclarationCollector();
+            HologramDeclarationCandidates cached = collector
+                .collect(wrapper, fixture.controller, fixture.world, 1, 100, 0, "member", signal, null);
+            long generation = HologramDeclarationAdapters.generation();
+            HologramDeclarationAdapters.register(
+                StructureUtility.defer(controller -> { throw new AssertionError("unrelated factory executed"); }),
+                new HologramDeclarationAdapters.Declaration(StructureUtility.ofBlock(Blocks.dirt, 0)));
+            SimpleAssert
+                .eq(generation, HologramDeclarationAdapters.generation(), "new key does not cool global caches");
+            SimpleAssert.that(captured.sourceCurrent(), "unrelated new element leaves the existing capture current");
+            SimpleAssert.that(!collector.invalidateIfStale(), "unrelated registration preserves the declaration cache");
+            SimpleAssert.that(
+                cached
+                    == collector.collect(wrapper, fixture.controller, fixture.world, 1, 100, 0, "member", signal, null),
+                "the same cached declaration survives unrelated construction");
+            HologramDeclarationAdapters.register(
+                wrapper,
+                new HologramDeclarationAdapters.Declaration(StructureUtility.ofBlock(Blocks.dirt, 0)));
+            SimpleAssert.eq(
+                "SOURCE_DECLARATIONS_CHANGED",
+                captured.sourceValidityFailure(),
+                "used key rebind expires old proof");
+            SimpleAssert.that(collector.invalidateIfStale(), "used key rebind expires derived candidates");
+            SimpleAssert.eq(
+                Blocks.dirt,
+                net.minecraft.block.Block.getBlockFromItem(
+                    collector
+                        .collect(wrapper, fixture.controller, fixture.world, 1, 100, 0, "member", signal, null).stacks
+                            .get(0)
+                            .getItem()),
+                "candidate refresh sees the newly bound declaration");
+            HologramCapture fresh = complete(fixture.controller, signal, StructureSources.CaptureIntent.NEW_TEMPLATE);
+            SimpleAssert.that(fresh.sourceCurrent(), "new capture accepts the current binding after rebind");
+        }
+        IStructureElement<Controller> unregistered = StructureUtility
+            .defer(controller -> { throw new AssertionError("negative-cache factory executed"); });
+        try (GTMBExtensions.Registration registration = StructureSources.registerContextual(
+            "gtmb_test:first-binding-source",
+            Controller.class,
+            (controller, trigger, intent) -> StructureSources.Resolution
+                .ready(plan(2, trigger, unregistered), () -> null))) {
+            HologramCapture captured = complete(
+                fixture.controller,
+                signal,
+                StructureSources.CaptureIntent.NEW_TEMPLATE);
+            HologramDeclarationCollector collector = new HologramDeclarationCollector();
+            SimpleAssert.that(
+                !collector.collect(
+                    unregistered,
+                    fixture.controller,
+                    fixture.world,
+                    1,
+                    100,
+                    0,
+                    "member",
+                    signal,
+                    null).complete,
+                "missing element binding is cached as incomplete");
+            HologramDeclarationAdapters.register(
+                unregistered,
+                new HologramDeclarationAdapters.Declaration(StructureUtility.ofBlock(Blocks.stone, 0)));
+            SimpleAssert.eq(
+                "SOURCE_DECLARATIONS_CHANGED",
+                captured.sourceValidityFailure(),
+                "first registration expires a capture that previously observed that key as absent");
+            SimpleAssert.that(collector.invalidateIfStale(), "first registration invalidates the used negative cache");
+        }
+        ReaderLeaf leaf = new ReaderLeaf();
+        IStructureElement<Controller> declared = (IStructureElement<Controller>) (IStructureElement<?>) leaf;
+        try (
+            AutoCloseable reader = HologramDeclarationAdapters.registerScopedReader(
+                ReaderLeaf.class,
+                element -> new HologramDeclarationAdapters.Declaration(StructureUtility.ofBlock(Blocks.stone, 0)));
+            GTMBExtensions.Registration registration = StructureSources.registerContextual(
+                "gtmb_test:reader-source",
+                Controller.class,
+                (controller, trigger, intent) -> StructureSources.Resolution
+                    .ready(plan(2, trigger, declared), () -> null))) {
+            HologramCapture captured = complete(
+                fixture.controller,
+                signal,
+                StructureSources.CaptureIntent.NEW_TEMPLATE);
+            reader.close();
+            SimpleAssert.eq(
+                "SOURCE_DECLARATIONS_CHANGED",
+                captured.sourceValidityFailure(),
+                "reader removal expires old proof");
+            HologramDeclarationAdapters.registerReader(
+                ReaderLeaf.class,
+                element -> new HologramDeclarationAdapters.Declaration(StructureUtility.ofBlock(Blocks.dirt, 0)));
+            HologramCapture fresh = complete(fixture.controller, signal, StructureSources.CaptureIntent.NEW_TEMPLATE);
+            HologramDeclarationAdapters.registerReader(
+                ReaderLeaf.class,
+                element -> new HologramDeclarationAdapters.Declaration(StructureUtility.ofBlock(Blocks.stone, 0)));
+            SimpleAssert.eq(
+                "SOURCE_DECLARATIONS_CHANGED",
+                fresh.sourceValidityFailure(),
+                "reader replacement expires old proof");
+        }
+    }
+
+    private static final class ReaderLeaf implements IStructureElement<Object> {
+
+        public boolean check(Object controller, World world, int x, int y, int z) {
+            throw new AssertionError("reader leaf check executed");
+        }
+
+        public boolean spawnHint(Object controller, World world, int x, int y, int z, ItemStack signal) {
+            throw new AssertionError("reader leaf hint executed");
+        }
+
+        public boolean placeBlock(Object controller, World world, int x, int y, int z, ItemStack signal) {
+            throw new AssertionError("reader leaf placement executed");
+        }
+    }
+
     private static void legacyAndExplicitResults() throws Exception {
         Fixture fixture = fixture();
         ItemStack trigger = new ItemStack(Blocks.stone, 3);

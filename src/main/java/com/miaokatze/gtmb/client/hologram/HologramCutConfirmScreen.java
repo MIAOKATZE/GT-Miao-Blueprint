@@ -13,6 +13,7 @@ final class HologramCutConfirmScreen extends HologramMuiScreen {
     private final Runnable confirm, cancel, confirmWithoutPrompt;
     private final Object world, connection;
     private final int dimension, slot;
+    private final boolean demolition;
     private boolean finished;
 
     HologramCutConfirmScreen(String title, String detail, Runnable confirm, Runnable cancel) {
@@ -21,12 +22,28 @@ final class HologramCutConfirmScreen extends HologramMuiScreen {
 
     HologramCutConfirmScreen(String title, String detail, Runnable confirm, Runnable cancel,
         Runnable confirmWithoutPrompt) {
-        super("cut_confirm", 306, 154);
+        this(title, detail, confirm, cancel, confirmWithoutPrompt, false);
+    }
+
+    static HologramCutConfirmScreen demolition(String range, Runnable confirm, Runnable cancel) {
+        return new HologramCutConfirmScreen(
+            HologramCutClient.text("confirmDemolition"),
+            range,
+            confirm,
+            cancel,
+            null,
+            true);
+    }
+
+    private HologramCutConfirmScreen(String title, String detail, Runnable confirm, Runnable cancel,
+        Runnable confirmWithoutPrompt, boolean demolition) {
+        super("cut_confirm", 306, demolition ? 232 : 154);
         this.title = title;
         this.detail = detail;
         this.confirm = confirm;
         this.cancel = cancel;
         this.confirmWithoutPrompt = confirmWithoutPrompt;
+        this.demolition = demolition;
         Minecraft minecraft = Minecraft.getMinecraft();
         world = minecraft.theWorld;
         connection = minecraft.getNetHandler();
@@ -36,7 +53,9 @@ final class HologramCutConfirmScreen extends HologramMuiScreen {
 
     @Override
     protected void buildPanel() {
-        HologramCutDialogContent
+        if (demolition)
+            HologramCutDialogContent.demolitionConfirmation(panel(), () -> title, () -> detail, this::finish);
+        else HologramCutDialogContent
             .confirmation(panel(), () -> title, () -> detail, confirmWithoutPrompt != null, this::finish);
     }
 

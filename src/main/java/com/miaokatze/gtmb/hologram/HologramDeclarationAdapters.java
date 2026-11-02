@@ -20,8 +20,12 @@ public final class HologramDeclarationAdapters {
 
     private static final Map<IStructureElement<?>, Declaration> DECLARATIONS = new WeakHashMap<>();
     private static final Map<IStructureElement<?>, Declaration> RESOLVED = new WeakHashMap<>();
+    private static final Map<IStructureElement<?>, Long> VERSIONS = new WeakHashMap<>();
     private static final Map<Class<?>, Function<IStructureElement<?>, Declaration>> READERS = new ConcurrentHashMap<>();
     private static final java.util.concurrent.atomic.AtomicLong GENERATION = new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong READER_GENERATION = new java.util.concurrent.atomic.AtomicLong();
+    private static final java.util.concurrent.atomic.AtomicLong MODIFICATIONS = new java.util.concurrent.atomic.AtomicLong();
+    private static final ThreadLocal<Scope> OBSERVING = new ThreadLocal<>();
 
     private HologramDeclarationAdapters() {}
 
@@ -57,8 +61,10 @@ public final class HologramDeclarationAdapters {
     public static void register(IStructureElement<?> element, Declaration declaration) {
         if (element == null || declaration == null) throw new IllegalArgumentException("Missing declaration");
         synchronized (DECLARATIONS) {
+            if (DECLARATIONS.containsKey(element)) GENERATION.incrementAndGet();
             DECLARATIONS.put(element, declaration);
-            GENERATION.incrementAndGet();
+            RESOLVED.remove(element);
+            VERSIONS.put(element, MODIFICATIONS.incrementAndGet());
         }
     }
 
@@ -71,6 +77,7 @@ public final class HologramDeclarationAdapters {
         synchronized (DECLARATIONS) {
             READERS.put(type, element -> reader.apply(type.cast(element)));
             RESOLVED.clear();
+            READER_GENERATION.incrementAndGet();
             GENERATION.incrementAndGet();
         }
     }
@@ -84,12 +91,14 @@ public final class HologramDeclarationAdapters {
             if (READERS.putIfAbsent(type, bridge) != null)
                 throw new IllegalArgumentException("Reader already registered");
             RESOLVED.clear();
+            READER_GENERATION.incrementAndGet();
             GENERATION.incrementAndGet();
         }
         return () -> {
             synchronized (DECLARATIONS) {
                 if (READERS.remove(type, bridge)) {
                     RESOLVED.clear();
+                    READER_GENERATION.incrementAndGet();
                     GENERATION.incrementAndGet();
                 }
             }
@@ -100,9 +109,76 @@ public final class HologramDeclarationAdapters {
         return GENERATION.get();
     }
 
+    /** Reader lifecycle is global; element registrations only expire interpretations that actually read that key. */
+    static final class Bindings {
+
+        private final long readers = READER_GENERATION.get();
+        private final Map<IStructureElement<?>, Long> elements = new WeakHashMap<>();
+        private long checked = MODIFICATIONS.get();
+        private boolean changed;
+
+        String validityFailure() {
+            if (changed || readers != READER_GENERATION.get()) return "SOURCE_DECLARATIONS_CHANGED";
+            long current = MODIFICATIONS.get();
+            if (checked == current) return null;
+            synchronized (DECLARATIONS) {
+                for (Map.Entry<IStructureElement<?>, Long> entry : elements.entrySet()) if (entry.getValue()
+                    .longValue() != VERSIONS.getOrDefault(entry.getKey(), 0L)) {
+                        changed = true;
+                        return "SOURCE_DECLARATIONS_CHANGED";
+                    }
+                checked = current;
+            }
+            return null;
+        }
+
+        private void read(IStructureElement<?> element, long version) {
+            Long previous = elements.putIfAbsent(element, version);
+            if (previous != null && previous.longValue() != version) changed = true;
+        }
+
+        void inherit(Bindings from) {
+            from.elements.forEach(this::read);
+            if (from.validityFailure() != null) changed = true;
+        }
+
+        void replay() {
+            for (Scope scope = OBSERVING.get(); scope != null; scope = scope.previous) {
+                if (scope.bindings == this) continue;
+                scope.bindings.inherit(this);
+            }
+        }
+    }
+
+    static Scope observe(Bindings bindings) {
+        Scope scope = new Scope(bindings, OBSERVING.get());
+        OBSERVING.set(scope);
+        return scope;
+    }
+
+    static final class Scope implements AutoCloseable {
+
+        private final Bindings bindings;
+        private final Scope previous;
+
+        private Scope(Bindings bindings, Scope previous) {
+            this.bindings = bindings;
+            this.previous = previous;
+        }
+
+        @Override
+        public void close() {
+            if (previous == null) OBSERVING.remove();
+            else OBSERVING.set(previous);
+        }
+    }
+
     static Declaration declaration(IStructureElement<?> element) {
         if (element == null) return null;
         synchronized (DECLARATIONS) {
+            long version = VERSIONS.getOrDefault(element, 0L);
+            for (Scope scope = OBSERVING.get(); scope != null; scope = scope.previous)
+                scope.bindings.read(element, version);
             Declaration known = DECLARATIONS.get(element);
             if (known != null) return known;
             known = RESOLVED.get(element);

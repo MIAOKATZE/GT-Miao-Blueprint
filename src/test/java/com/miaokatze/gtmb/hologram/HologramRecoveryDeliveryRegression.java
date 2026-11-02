@@ -107,20 +107,24 @@ final class HologramRecoveryDeliveryRegression {
         }
     }
 
-    private static final class Fixture {
+    static final class Fixture {
 
         final EntityPlayerMP player;
         final RecoveryWorld world;
         final HologramMaterials.Context context;
 
         Fixture() throws ReflectiveOperationException {
+            this(RecoveryWorld.class);
+        }
+
+        Fixture(Class<? extends RecoveryWorld> worldType) throws ReflectiveOperationException {
             Method factory = HologramRegressionTest.class.getDeclaredMethod("materialPlayer");
             factory.setAccessible(true);
             player = (EntityPlayerMP) factory.invoke(null);
             Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
             unsafeField.setAccessible(true);
             sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
-            world = (RecoveryWorld) unsafe.allocateInstance(RecoveryWorld.class);
+            world = (RecoveryWorld) unsafe.allocateInstance(worldType);
             Field players = World.class.getDeclaredField("playerEntities");
             players.setAccessible(true);
             players.set(world, new ArrayList<>());
@@ -188,13 +192,13 @@ final class HologramRecoveryDeliveryRegression {
         }
     }
 
-    private static final class RecoveryWorld extends WorldServer {
+    static class RecoveryWorld extends WorldServer {
 
         List<EntityItem> drops;
         int acceptedSpawns;
         int failAfterSpawns;
 
-        private RecoveryWorld() {
+        RecoveryWorld() {
             super(null, null, "recovery-delivery", 0, null, null);
         }
 

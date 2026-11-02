@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -51,9 +52,11 @@ public final class HologramCapture {
     net.minecraft.nbt.NBTTagCompound sourceMetadata = new net.minecraft.nbt.NBTTagCompound();
     private ExtendedFacing sourceFacing;
     private SourceBinding sourceBinding;
-    private final List<SourceBinding> inheritedSources = new ArrayList<>();
-    private final List<StructureSources.ReadSet> observations = new ArrayList<>();
-    private String sourceRejection = "";
+    private final SourceGuards ownSources = new SourceGuards();
+    private final Set<SourceGuards> inheritedSources = new LinkedHashSet<>();
+    private final Set<SourceGuards> retainedSources = new LinkedHashSet<>();
+    private final Map<String, Set<SourceGuards>> memberSources = new HashMap<>();
+    final HologramDeclarationAdapters.Bindings declarationBindings = new HologramDeclarationAdapters.Bindings();
     private boolean buildPieceCalls, buildOrHintsCalls;
     final List<Piece> pieces = new ArrayList<>();
     final List<Cell> cells = new ArrayList<>();
@@ -236,7 +239,8 @@ public final class HologramCapture {
         HologramCapture previous = ACTIVE.get();
         HologramChannelTrace.Scope scope = HologramChannelTrace.begin(machine);
         ACTIVE.set(capture);
-        try {
+        try (HologramDeclarationAdapters.Scope declarations = HologramDeclarationAdapters
+            .observe(capture.declarationBindings)) {
             if (resumed == null) {
                 try {
                     capture.sourceResolution = StructureSources.resolve(machine, trigger, intent);
@@ -329,7 +333,9 @@ public final class HologramCapture {
             facing,
             sourceResolution.policy,
             captureIntent,
-            sourceMetadata);
+            sourceMetadata,
+            declarationBindings);
+        ownSources.binding = sourceBinding;
     }
 
     /** Bind an already described, not yet walked graph used by the bounded legacy geometry search. */
@@ -344,25 +350,63 @@ public final class HologramCapture {
 
     /** Copies only source validity guards; no old cells, definition graph, or capture task is retained. */
     void inheritSources(HologramCapture from) {
-        String reason = from.sourceValidityFailure();
-        if (reason != null) invalidateSource(reason);
-        if (from.sourceBinding != null && sourceBinding != from.sourceBinding
-            && !inheritedSources.contains(from.sourceBinding)) inheritedSources.add(from.sourceBinding);
-        for (SourceBinding inherited : from.inheritedSources)
-            if (sourceBinding != inherited && !inheritedSources.contains(inherited)) inheritedSources.add(inherited);
-        for (StructureSources.ReadSet observation : from.observations)
-            if (!observations.contains(observation)) observations.add(observation);
+        inheritSources(from, null, null);
+    }
+
+    /** Preserve the member identity so a later successful read can replace exactly this member's proof. */
+    void inheritSources(HologramCapture from, String member) {
+        inheritSources(from, member, null);
+    }
+
+    void inheritSourcesExcept(HologramCapture from, String replacedMember) {
+        inheritSources(from, null, replacedMember);
+    }
+
+    private void inheritSources(HologramCapture from, String member, String replacedMember) {
+        Set<SourceGuards> destination = member == null ? inheritedSources
+            : memberSources.computeIfAbsent(member, ignored -> new LinkedHashSet<>());
+        if (!from.ownSources.empty()) destination.add(from.ownSources);
+        destination.addAll(from.inheritedSources);
+        if (replacedMember == null) retainedSources.addAll(from.retainedSources);
+        from.memberSources.forEach(
+            (id, guards) -> {
+                if (!id.equals(replacedMember)) memberSources.computeIfAbsent(id, ignored -> new LinkedHashSet<>())
+                    .addAll(guards);
+            });
+    }
+
+    /** A retained shared/user-edited cell keeps its original dependencies, even after repeated member reads. */
+    void retainCellSources(HologramCapture from, Cell cell) {
+        if (cell.sourceDependencies == null) {
+            cell.sourceDependencies = new LinkedHashSet<>();
+            for (String member : cell.memberships()) {
+                Set<SourceGuards> guards = from.memberSources.get(member);
+                if (guards != null) cell.sourceDependencies.addAll(guards);
+            }
+            for (SourceGuards guards : from.sourceGuards())
+                if (guards.binding != null && guards.binding.authority == cell.sourceAuthority)
+                    cell.sourceDependencies.add(guards);
+        }
+        retainedSources.addAll(cell.sourceDependencies);
+    }
+
+    private Set<SourceGuards> sourceGuards() {
+        Set<SourceGuards> guards = new LinkedHashSet<>(inheritedSources);
+        guards.addAll(retainedSources);
+        guards.add(ownSources);
+        for (Set<SourceGuards> member : memberSources.values()) guards.addAll(member);
+        return guards;
     }
 
     /** Attach only the world/controller facts actually read by a capture or its bounded area comparison. */
     void observe(StructureSources.ReadSet observation) {
         if (observation == null) throw new IllegalArgumentException("read set");
-        observations.add(observation);
+        ownSources.observations.add(observation);
     }
 
     boolean hasSourcePolicy() {
-        if (sourceBinding != null && sourceBinding.authority.policy != null) return true;
-        for (SourceBinding source : inheritedSources) if (source.authority.policy != null) return true;
+        for (SourceGuards guards : sourceGuards())
+            if (guards.binding != null && guards.binding.authority.policy != null) return true;
         return false;
     }
 
@@ -406,28 +450,54 @@ public final class HologramCapture {
 
     /** Pure validity check shared by continuations and operation admission; the definition is never rebuilt. */
     String sourceValidityFailure() {
-        if (!sourceRejection.isEmpty()) return sourceRejection;
+        return sourceValidityFailure(false);
+    }
+
+    private String sourceValidityFailure(boolean reject) {
+        if (!ownSources.rejection.isEmpty()) return ownSources.rejection;
         if (sourceResolution != null && sourceBinding == null) {
             String reason = sourceResolution.validityFailure();
-            return reason == null ? "SOURCE_NOT_CAPTURED" : reason;
+            reason = reason == null ? "SOURCE_NOT_CAPTURED" : reason;
+            if (reject) ownSources.rejection = reason;
+            return reason;
         }
-        if (sourceBinding != null) {
-            String reason = sourceBinding.validityFailure();
-            if (reason != null) return reason;
-        }
-        for (SourceBinding inherited : inheritedSources) {
-            String reason = inherited.validityFailure();
-            if (reason != null) return reason;
-        }
-        for (StructureSources.ReadSet observation : observations) {
-            try {
-                String reason = observation.invalidReason();
-                if (reason != null && !reason.isEmpty()) return reason;
-            } catch (RuntimeException | LinkageError failure) {
-                return "SOURCE_OBSERVATION_FAILED";
+        for (SourceGuards guards : sourceGuards()) {
+            String reason = guards.validityFailure();
+            if (reason != null) {
+                if (reject) guards.rejection = reason;
+                return reason;
             }
         }
         return null;
+    }
+
+    /** Runtime-only, graph-free guards. Identity sharing bounds repeated inheritance to live dependencies. */
+    private static final class SourceGuards {
+
+        SourceBinding binding;
+        final List<StructureSources.ReadSet> observations = new ArrayList<>();
+        String rejection = "";
+
+        boolean empty() {
+            return binding == null && observations.isEmpty() && rejection.isEmpty();
+        }
+
+        String validityFailure() {
+            if (!rejection.isEmpty()) return rejection;
+            if (binding != null) {
+                String reason = binding.validityFailure();
+                if (reason != null) return reason;
+            }
+            for (StructureSources.ReadSet observation : observations) {
+                try {
+                    String reason = observation.invalidReason();
+                    if (reason != null && !reason.isEmpty()) return reason;
+                } catch (RuntimeException | LinkageError failure) {
+                    return "SOURCE_OBSERVATION_FAILED";
+                }
+            }
+            return null;
+        }
     }
 
     private static final class SourceBinding {
@@ -442,12 +512,12 @@ public final class HologramCapture {
         final TileEntity worldTile;
         final int x, y, z, controllerId;
         final ExtendedFacing facing;
-        final long declarationGeneration;
+        final HologramDeclarationAdapters.Bindings declarationBindings;
         final SourceAuthority authority;
 
         SourceBinding(MTEEnhancedMultiBlockBase<?> machine, StructureSources.ReadSet proof, ExtendedFacing facing,
             StructureSources.PolicyBinding policy, StructureSources.CaptureIntent intent,
-            net.minecraft.nbt.NBTTagCompound metadata) {
+            net.minecraft.nbt.NBTTagCompound metadata, HologramDeclarationAdapters.Bindings declarationBindings) {
             this.machine = machine;
             this.proof = proof;
             this.tile = machine.getBaseMetaTileEntity();
@@ -461,8 +531,8 @@ public final class HologramCapture {
             this.z = tile.getZCoord();
             this.worldTile = world.getTileEntity(x, y, z);
             this.facing = facing;
-            this.declarationGeneration = HologramDeclarationAdapters.generation();
-            metadata.setLong("declarationGeneration", declarationGeneration);
+            this.declarationBindings = declarationBindings;
+            metadata.setLong("declarationGeneration", HologramDeclarationAdapters.generation());
             this.authority = new SourceAuthority(policy, intent, controllerId, metadata, this::validityFailure);
         }
 
@@ -478,8 +548,8 @@ public final class HologramCapture {
                 if (machine.getExtendedFacing() != facing) return "SOURCE_POSE_CHANGED";
                 if (!world.blockExists(x, y, z)) return "SOURCE_CHUNK_UNLOADED";
                 if (world.getTileEntity(x, y, z) != worldTile) return "SOURCE_CONTROLLER_CHANGED";
-                if (declarationGeneration != HologramDeclarationAdapters.generation())
-                    return "SOURCE_DECLARATIONS_CHANGED";
+                String declarationFailure = declarationBindings.validityFailure();
+                if (declarationFailure != null) return declarationFailure;
                 return proof.invalidReason();
             } catch (RuntimeException | LinkageError failure) {
                 return "SOURCE_STATE_UNREADABLE";
@@ -488,14 +558,18 @@ public final class HologramCapture {
     }
 
     boolean sourceCurrent() {
-        String reason = sourceValidityFailure();
+        String reason = sourceValidityFailure(true);
         if (reason == null) return true;
-        invalidateSource(reason);
+        rejectSource(reason);
         return false;
     }
 
     private void invalidateSource(String reason) {
-        sourceRejection = reason;
+        ownSources.rejection = reason;
+        rejectSource(reason);
+    }
+
+    private void rejectSource(String reason) {
         incomplete = true;
         failure = reason;
         pending = false;
@@ -846,6 +920,7 @@ public final class HologramCapture {
 
         final IStructureElement element;
         SourceAuthority sourceAuthority;
+        Set<SourceGuards> sourceDependencies;
         final int x, y, z;
         // Runtime-only hint, accepted only when the current capture still owns this exact cell at that index.
         int stableIndex = -1;

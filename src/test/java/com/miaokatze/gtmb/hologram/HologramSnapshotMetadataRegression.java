@@ -282,14 +282,14 @@ final class HologramSnapshotMetadataRegression {
             StructureUtility.ofBlock(Blocks.dirt, 0),
             new HologramDeclarationAdapters.Declaration(StructureUtility.ofBlock(Blocks.dirt, 0)));
         collector.collect(chain, null, null, 6, 64, 0, "", signal, null);
-        SimpleAssert.eq(16, first.reads + second.reads, "declaration generation invalidates the shared leaf");
+        SimpleAssert.eq(14, first.reads + second.reads, "unrelated new declaration keeps the shared leaf cache warm");
         HologramHatchPolicy.declare(builder, java.util.Collections.singletonList(HatchElement.InputHatch), false);
         HologramHatchPolicy.built(builder, hatch);
         HologramDeclarationCandidates changed = collector.collect(chain, null, null, 7, 64, 0, "", signal, null);
         SimpleAssert.that(
             changed.complete && changed.stacks.size() == 1,
             "current recorded hatch types qualify every shared lookup");
-        SimpleAssert.eq(18, first.reads + second.reads, "a redeclared leaf recomputes the exact current enum rule");
+        SimpleAssert.eq(16, first.reads + second.reads, "a redeclared leaf recomputes the exact current enum rule");
         HatchElementBuilder<Object> unknownBuilder = hatchBuilder();
         java.util.function.Function<Object, java.util.function.Predicate<ItemStack>> filter = ignored -> {
             throw new AssertionError("metadata ran an unknown hatch filter");
@@ -302,7 +302,7 @@ final class HologramSnapshotMetadataRegression {
         SimpleAssert.that(
             !rejected.complete && rejected.stacks.isEmpty(),
             "unrecorded hatch filters remain incomplete without a registry scan");
-        SimpleAssert.eq(18, first.reads + second.reads, "unknown filters do not borrow a reviewed leaf's candidates");
+        SimpleAssert.eq(16, first.reads + second.reads, "unknown filters do not borrow a reviewed leaf's candidates");
         HologramHatchPolicy.declare(builder, java.util.Collections.singletonList(HatchElement.Muffler), false);
         HologramHatchPolicy.built(builder, hatch);
         collector.clear();
@@ -403,8 +403,14 @@ final class HologramSnapshotMetadataRegression {
             new HologramDeclarationAdapters.Declaration(declared));
         HologramCellPolicy.refreshDeclarationGeneration(session);
         SimpleAssert.that(
+            cell.candidates == cached && cell.candidateComplete,
+            "unrelated new adapter preserves the existing candidate cache");
+        HologramDeclarationAdapters
+            .register(declared, new HologramDeclarationAdapters.Declaration(StructureUtility.ofBlock(Blocks.stone, 0)));
+        HologramCellPolicy.refreshDeclarationGeneration(session);
+        SimpleAssert.that(
             cell.candidates == null && !cell.candidateComplete,
-            "real unrelated adapter registration invalidates the prior candidate generation");
+            "binding a previously used declaration invalidates its prior candidate generation");
         NBTTagCompound restored = HologramSnapshots.cellRow(session, 0);
         SimpleAssert
             .eq(baseline, restored, "full row publication reinterprets the unchanged declaration after invalidation");

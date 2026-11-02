@@ -358,8 +358,8 @@ final class HologramVirtualStructureEditing {
                 null,
                 HologramSessionPolicy.trigger(s),
                 nativeCapture.captureIntent);
-            merged.inheritSources(original);
-            merged.inheritSources(nativeCapture);
+            merged.inheritSourcesExcept(original, source.id);
+            merged.inheritSources(nativeCapture, source.id);
             merged.sourceMetadata = (NBTTagCompound) nativeCapture.sourceMetadata.copy();
             if (!nativeCapture.sourceMetadata.hasNoTags())
                 source.semanticNbt = HologramBlueprintNbt.encodeCanonical(nativeCapture.sourceMetadata);
@@ -409,6 +409,7 @@ final class HologramVirtualStructureEditing {
                                 cell = HologramBlueprintData.blueprintCell(cell, cell.x, cell.y, cell.z);
                                 HologramBlueprintData.setMemberships(cell, ids);
                             }
+                            merged.retainCellSources(original, cell);
                             append(merged, cell);
                             targets.remove(key);
                         } else

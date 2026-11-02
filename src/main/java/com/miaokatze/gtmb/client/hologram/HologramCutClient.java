@@ -457,19 +457,19 @@ final class HologramCutClient {
             status.show(invalid.getMessage());
             return;
         }
-        String detail = text(demolitionMode ? "confirmDemolitionDetail" : "confirmCutDetail") + " "
-            + coordinates(new int[] { bounds[0], bounds[1], bounds[2] })
-            + " → "
-            + coordinates(new int[] { bounds[3], bounds[4], bounds[5] });
+        String from = coordinates(new int[] { bounds[0], bounds[1], bounds[2] });
+        String to = coordinates(new int[] { bounds[3], bounds[4], bounds[5] });
         if (demolitionMode) {
-            demolitionConfirmation = new HologramCutConfirmScreen(
-                text("confirmDemolition"),
-                detail,
-                () -> submitDemolition(chosen),
-                () -> demolitionConfirmation = null);
+            String range = text("confirmDemolitionRange") + "\n"
+                + String.format(java.util.Locale.ROOT, text("confirmDemolitionFrom"), from)
+                + "\n"
+                + String.format(java.util.Locale.ROOT, text("confirmDemolitionTo"), to);
+            demolitionConfirmation = HologramCutConfirmScreen
+                .demolition(range, () -> submitDemolition(chosen), () -> demolitionConfirmation = null);
             mc().displayGuiScreen(demolitionConfirmation);
             return;
         }
+        String detail = text("confirmCutDetail") + " " + from + " → " + to;
         if (skipNamePrompt) mc().displayGuiScreen(
             new HologramCutConfirmScreen(
                 text("confirmCut"),

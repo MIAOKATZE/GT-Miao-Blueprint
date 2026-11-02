@@ -261,7 +261,7 @@ final class HologramBlueprintProjection {
                 HologramArea sourceArea = HologramWorkspace.AREAS.get(s.player.getUniqueID());
                 if (sourceArea != null && sourceArea.blueprint == s.virtualPreset)
                     for (HologramArea.Structure member : sourceArea.structures.values())
-                        if (member.capture != null) s.capture.inheritSources(member.capture);
+                        if (member.capture != null) s.capture.inheritSources(member.capture, member.id);
                 s.pins.clear();
                 s.coordinatePins.clear();
                 s.facingPins.clear();

@@ -1,5 +1,8 @@
 package com.miaokatze.gtmb.hologram;
 
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.io.OutputStream;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.util.ArrayList;
@@ -17,6 +20,7 @@ import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.inventory.IInventory;
 import net.minecraft.item.ItemBlock;
 import net.minecraft.item.ItemStack;
+import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.world.World;
@@ -65,6 +69,14 @@ public final class HologramMaterials {
     private static final String RECOVERY_ME = "gtmbRecoveryMeFirst";
     private static final String RECOVERY_DROP = "gtmbRecoveryDropAtPlayer";
     private static final String RECOVERY_COUNT = "gtmbRecoveryCount";
+    private static final String RECOVERY_CURSOR = "gtmbRecoveryCursor";
+    private static final String RECOVERY_PENDING = "gtmbRecoveryPendingDrops";
+    private static final String RECOVERY_BYTES = "gtmbRecoveryBytes";
+    private static final String RECOVERY_SCAN = "gtmbRecoveryIndexCursor";
+    static final int RECOVERY_VISITS = 96;
+    static final int RECOVERY_BACKLOG_ENTRIES = 1024;
+    static final long RECOVERY_BACKLOG_BYTES = 8L * 1024 * 1024;
+    private static final long RECOVERY_BATCH_BYTES = 1024 * 1024;
     private static final String RECOVERY_FLUID = "gtmbHologramFluidRecovery";
     private static final String RECOVERY_ENERGY = "gtmbHologramEnergyRecovery";
     private static final String RECOVERY_ESSENTIA = "gtmbHologramEssentiaRecovery";
@@ -1037,10 +1049,7 @@ public final class HologramMaterials {
                 NBTTagCompound entry = itemReceipt(stack);
                 entry.setBoolean(RECOVERY_ME, true);
                 entry.setBoolean(RECOVERY_DROP, true);
-                NBTTagCompound owner = recoveryOwner();
-                NBTTagList stored = owner.getTagList(RECOVERY, 10);
-                stored.appendTag(entry);
-                owner.setTag(RECOVERY, stored);
+                enqueueRecovery(entry);
             }
         }
 
@@ -1051,33 +1060,48 @@ public final class HologramMaterials {
         static boolean pendingWorldRecovery(EntityPlayerMP player) {
             NBTTagCompound data = player.getEntityData();
             if (!data.hasKey(EntityPlayer.PERSISTED_NBT_TAG, 10)) return false;
-            NBTTagList stored = data.getCompoundTag(EntityPlayer.PERSISTED_NBT_TAG)
-                .getTagList(RECOVERY, 10);
-            for (int i = 0; i < stored.tagCount(); i++) {
-                NBTTagCompound receipt = stored.getCompoundTagAt(i);
-                if (receipt.getBoolean(RECOVERY_DROP) && receipt.getInteger(RECOVERY_COUNT) > 0) return true;
-            }
-            return false;
+            NBTTagCompound owner = data.getCompoundTag(EntityPlayer.PERSISTED_NBT_TAG);
+            // Old ledgers have no summary. Keep them attached until bounded indexing proves no drops remain.
+            if (!owner.hasKey(RECOVERY_BYTES, 4) || owner.hasKey(RECOVERY_SCAN, 3))
+                return owner.getTagList(RECOVERY, 10)
+                    .tagCount() > 0;
+            return owner.getInteger(RECOVERY_PENDING) > 0;
+        }
+
+        /** A native removal's committed drops are always retained, even if that one block exceeds the limit. */
+        boolean recoveryBacklogged() {
+            NBTTagCompound owner = recoveryOwner();
+            NBTTagList stored = recoveryQueue(owner);
+            return owner.hasKey(RECOVERY_SCAN, 3) || stored.tagCount() >= RECOVERY_BACKLOG_ENTRIES
+                || owner.getLong(RECOVERY_BYTES) >= RECOVERY_BACKLOG_BYTES;
         }
 
         /** Only demolition receipts permit world drops; other real materials remain queued when destinations fill. */
         public void flushRecovery() {
             flushResourceRecovery();
             NBTTagCompound owner = recoveryOwner();
-            NBTTagList stored = owner.getTagList(RECOVERY, 10);
-            NBTTagList remaining = new NBTTagList();
+            NBTTagList stored = recoveryQueue(owner);
             long deadline = System.nanoTime() + 10_000_000L;
-            for (int i = 0; i < stored.tagCount(); i++) {
-                if (i >= 96 || System.nanoTime() > deadline) {
-                    remaining.appendTag(
-                        stored.getCompoundTagAt(i)
-                            .copy());
+            long indexedBytes = owner.getLong(RECOVERY_BYTES);
+            int visits = indexRecovery(owner, stored, deadline);
+            if (owner.hasKey(RECOVERY_SCAN, 3)) return;
+            int available = stored.tagCount();
+            long bytes = owner.getLong(RECOVERY_BYTES) - indexedBytes;
+            while (available-- > 0 && visits < RECOVERY_VISITS
+                && bytes < RECOVERY_BATCH_BYTES
+                && System.nanoTime() < deadline) {
+                int index = Math.floorMod(owner.getInteger(RECOVERY_CURSOR), stored.tagCount());
+                NBTTagCompound receipt = stored.getCompoundTagAt(index);
+                visits++;
+                bytes += receipt.getLong(RECOVERY_BYTES);
+                // Advance before external ME/spawn callbacks: a failing head cannot starve the rest on retry.
+                owner.setInteger(RECOVERY_CURSOR, (index + 1) % stored.tagCount());
+                ItemStack stack = recoveryItem(receipt);
+                if (stack == null || stack.stackSize <= 0) {
+                    removeRecovery(owner, stored, index, receipt);
                     continue;
                 }
-                ItemStack stack = recoveryItem(stored.getCompoundTagAt(i));
-                if (stack == null || stack.stackSize <= 0) continue;
-                boolean meFirst = stored.getCompoundTagAt(i)
-                    .getBoolean(RECOVERY_ME);
+                boolean meFirst = receipt.getBoolean(RECOVERY_ME);
                 if (meFirst) {
                     try {
                         returnToMe(stack);
@@ -1090,22 +1114,79 @@ public final class HologramMaterials {
                     protectedSlot,
                     player.inventory.getInventoryStackLimit(),
                     stack);
-                boolean dropAtPlayer = stored.getCompoundTagAt(i)
-                    .getBoolean(RECOVERY_DROP);
+                boolean dropAtPlayer = receipt.getBoolean(RECOVERY_DROP);
                 // Persist inventory delivery before an external spawn callback can fail.
-                stored.getCompoundTagAt(i)
-                    .setInteger(RECOVERY_COUNT, stack.stackSize);
-                if (dropAtPlayer && stack.stackSize > 0) dropAtPlayer(stack, stored.getCompoundTagAt(i), deadline);
-                if (stack.stackSize > 0) {
-                    NBTTagCompound entry = itemReceipt(stack);
-                    entry.setBoolean(RECOVERY_ME, meFirst);
-                    if (dropAtPlayer) entry.setBoolean(RECOVERY_DROP, true);
-                    remaining.appendTag(entry);
-                }
+                receipt.setInteger(RECOVERY_COUNT, stack.stackSize);
+                if (dropAtPlayer && stack.stackSize > 0) dropAtPlayer(stack, receipt, deadline);
+                if (stack.stackSize == 0) removeRecovery(owner, stored, index, receipt);
             }
-            owner.setTag(RECOVERY, remaining);
             player.inventory.markDirty();
             if (player.inventoryContainer != null) player.inventoryContainer.detectAndSendChanges();
+        }
+
+        /** The existing list stays authoritative; legacy summaries are built without touching the unvisited tail. */
+        private int indexRecovery(NBTTagCompound owner, NBTTagList stored, long deadline) {
+            if (!owner.hasKey(RECOVERY_SCAN, 3)) return 0;
+            int index = owner.getInteger(RECOVERY_SCAN), visits = 0;
+            long bytes = 0;
+            while (index < stored.tagCount() && visits < RECOVERY_VISITS
+                && bytes < RECOVERY_BATCH_BYTES
+                && System.nanoTime() < deadline) {
+                NBTTagCompound receipt = stored.getCompoundTagAt(index++);
+                long size = recoveryBytes(receipt);
+                bytes += size;
+                visits++;
+                owner.setLong(RECOVERY_BYTES, owner.getLong(RECOVERY_BYTES) + size);
+                if (receipt.getBoolean(RECOVERY_DROP))
+                    owner.setInteger(RECOVERY_PENDING, owner.getInteger(RECOVERY_PENDING) + 1);
+                owner.setInteger(RECOVERY_SCAN, index);
+            }
+            if (index == stored.tagCount()) owner.removeTag(RECOVERY_SCAN);
+            return visits;
+        }
+
+        private static NBTTagList recoveryQueue(NBTTagCompound owner) {
+            NBTTagList stored = owner.getTagList(RECOVERY, 10);
+            owner.setTag(RECOVERY, stored);
+            if (!owner.hasKey(RECOVERY_BYTES, 4)) {
+                owner.setLong(RECOVERY_BYTES, 0L);
+                owner.setInteger(RECOVERY_PENDING, 0);
+                owner.setInteger(RECOVERY_CURSOR, 0);
+                if (stored.tagCount() > 0) owner.setInteger(RECOVERY_SCAN, 0);
+            }
+            return stored;
+        }
+
+        private static void removeRecovery(NBTTagCompound owner, NBTTagList stored, int index, NBTTagCompound receipt) {
+            int last = stored.tagCount() - 1;
+            if (index != last) stored.func_150304_a(index, stored.getCompoundTagAt(last));
+            stored.removeTag(last);
+            owner.setLong(RECOVERY_BYTES, owner.getLong(RECOVERY_BYTES) - receipt.getLong(RECOVERY_BYTES));
+            if (receipt.getBoolean(RECOVERY_DROP))
+                owner.setInteger(RECOVERY_PENDING, owner.getInteger(RECOVERY_PENDING) - 1);
+            owner.setInteger(RECOVERY_CURSOR, stored.tagCount() == 0 ? 0 : (index + 1) % stored.tagCount());
+        }
+
+        private void enqueueRecovery(NBTTagCompound entry) {
+            NBTTagCompound owner = recoveryOwner();
+            NBTTagList stored = recoveryQueue(owner);
+            // A small recent window joins exact receipts without scanning or copying a large old backlog.
+            for (int i = stored.tagCount() - 1; i >= Math.max(0, stored.tagCount() - 8); i--) {
+                NBTTagCompound previous = stored.getCompoundTagAt(i);
+                int count = previous.getInteger(RECOVERY_COUNT);
+                long total = (long) count + entry.getInteger(RECOVERY_COUNT);
+                if (count <= 0 || total > Integer.MAX_VALUE || !sameRecovery(previous, entry)) continue;
+                previous.setInteger(RECOVERY_COUNT, (int) total);
+                previous.setByte("Count", (byte) total);
+                return;
+            }
+            long size = recoveryBytes(entry);
+            stored.appendTag(entry);
+            if (!owner.hasKey(RECOVERY_SCAN, 3)) {
+                owner.setLong(RECOVERY_BYTES, owner.getLong(RECOVERY_BYTES) + size);
+                if (entry.getBoolean(RECOVERY_DROP))
+                    owner.setInteger(RECOVERY_PENDING, owner.getInteger(RECOVERY_PENDING) + 1);
+            }
         }
 
         private void dropAtPlayer(ItemStack stack, NBTTagCompound receipt, long deadline) {
@@ -1133,13 +1214,10 @@ public final class HologramMaterials {
 
         private void recover(ItemStack stack, boolean meFirst) {
             if (stack == null || stack.stackSize <= 0) return;
-            NBTTagCompound owner = recoveryOwner();
-            NBTTagList stored = owner.getTagList(RECOVERY, 10);
             NBTTagCompound entry = itemReceipt(stack);
             entry.setBoolean(RECOVERY_ME, meFirst);
-            stored.appendTag(entry);
+            enqueueRecovery(entry);
             stack.stackSize = 0;
-            owner.setTag(RECOVERY, stored);
         }
 
         private NBTTagCompound recoveryOwner() {
@@ -1453,6 +1531,54 @@ public final class HologramMaterials {
         ItemStack stack = ItemStack.loadItemStackFromNBT(receipt);
         if (stack != null && receipt.hasKey(RECOVERY_COUNT, 3)) stack.stackSize = receipt.getInteger(RECOVERY_COUNT);
         return stack;
+    }
+
+    private static boolean sameRecovery(NBTTagCompound first, NBTTagCompound second) {
+        for (Object raw : first.func_150296_c()) {
+            String key = (String) raw;
+            if (recoveryQuantityKey(key)) continue;
+            if (!first.getTag(key)
+                .equals(second.getTag(key))) return false;
+        }
+        for (Object raw : second.func_150296_c()) {
+            String key = (String) raw;
+            if (!recoveryQuantityKey(key) && !first.hasKey(key)) return false;
+        }
+        return true;
+    }
+
+    private static boolean recoveryQuantityKey(String key) {
+        return "Count".equals(key) || RECOVERY_COUNT.equals(key) || RECOVERY_BYTES.equals(key);
+    }
+
+    /** Measure each persisted receipt once, without allocating another serialized copy of a large item tag. */
+    private static long recoveryBytes(NBTTagCompound receipt) {
+        if (receipt.hasKey(RECOVERY_BYTES, 4)) return receipt.getLong(RECOVERY_BYTES);
+        ReceiptSizeOutput counter = new ReceiptSizeOutput();
+        try {
+            CompressedStreamTools.write(receipt, new DataOutputStream(counter));
+        } catch (IOException invalidReceipt) {
+            throw new IllegalStateException("Cannot measure persisted recovery receipt", invalidReceipt);
+        }
+        // The added ASCII long-tag field contributes its type, UTF key header/name and eight-byte value.
+        long size = counter.bytes + 11 + RECOVERY_BYTES.length();
+        receipt.setLong(RECOVERY_BYTES, size);
+        return size;
+    }
+
+    private static final class ReceiptSizeOutput extends OutputStream {
+
+        long bytes;
+
+        @Override
+        public void write(int value) {
+            bytes++;
+        }
+
+        @Override
+        public void write(byte[] values, int offset, int length) {
+            bytes += length;
+        }
     }
 
     private static ItemStack copy(ItemStack stack, int count) {

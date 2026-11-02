@@ -951,14 +951,11 @@ final class HologramResourcePlanner {
             if (s.pins.containsKey(i) && !(actual instanceof IGregTechTileEntity))
                 HologramValues.mergeStack(reserved, stack, 1, Integer::sum);
             gregtech.api.interfaces.metatileentity.IMetaTileEntity prototype = ItemMachines.getMetaTileEntity(stack);
-            for (Map.Entry<String, gregtech.api.interfaces.IHatchElement<?>> type : types.entrySet())
-                if (HologramHatchPolicy.matchesHatch(type.getValue(), prototype))
-                    quotas.computeIfPresent(type.getKey(), (key, n) -> Math.max(0, n - 1));
+            contributeQuotas(types, quotas, prototype);
         }
         List<String> ordered = new ArrayList<>(types.keySet());
         ordered.sort((a, b) -> Integer.compare(presetPositions(s, types.get(a)), presetPositions(s, types.get(b))));
-        int unfilled = 0;
-        for (String name : ordered) for (int remaining = quotas.get(name); remaining > 0; remaining--) {
+        for (String name : ordered) while (quotas.get(name) > 0) {
             gregtech.api.interfaces.IHatchElement<?> type = types.get(name);
             ItemStack chosen = null;
             int chosenIndex = -1;
@@ -968,7 +965,7 @@ final class HologramResourcePlanner {
                 List<ItemStack> options = new ArrayList<>();
                 for (ItemStack option : HologramCellPolicy.candidates(s, c))
                     if (HologramCellPolicy.hatchTier(option) != Integer.MAX_VALUE
-                        && HologramHatchPolicy.matchesHatch(type, ItemMachines.getMetaTileEntity(option)))
+                        && HologramHatchPolicy.contribution(type, ItemMachines.getMetaTileEntity(option)) > 0)
                         options.add(option);
                 ItemStack pick = presetCandidate(s, options, reserved);
                 if (pick == null) continue;
@@ -978,16 +975,24 @@ final class HologramResourcePlanner {
                 }
                 if (HologramCellPolicy.hatchTier(pick) == s.hatchTier) break;
             }
-            if (chosen == null) {
-                unfilled++;
-                continue;
-            }
+            if (chosen == null) break;
             s.autoTargets.put(chosenIndex, chosen.copy());
             HologramValues.mergeStack(reserved, chosen, 1, Integer::sum);
+            contributeQuotas(types, quotas, ItemMachines.getMetaTileEntity(chosen));
         }
+        int unfilled = 0;
+        for (int remaining : quotas.values()) unfilled += remaining;
         s.presetSupported = unfilled == 0;
         s.presetReason = s.presetSupported ? "已满足声明配额并生成仓室预设；已有仓室与手选目标保留，原机成型约束仍由原机判断"
             : "部分声明仓室没有可放置位置或对应等级候选（缺 " + unfilled + " 格）；原机成型约束仍由原机判断";
+    }
+
+    private static void contributeQuotas(Map<String, gregtech.api.interfaces.IHatchElement<?>> types,
+        Map<String, Integer> quotas, gregtech.api.interfaces.metatileentity.IMetaTileEntity prototype) {
+        for (Map.Entry<String, gregtech.api.interfaces.IHatchElement<?>> type : types.entrySet()) {
+            int contribution = HologramHatchPolicy.contribution(type.getValue(), prototype);
+            quotas.computeIfPresent(type.getKey(), (key, count) -> Math.max(0, count - contribution));
+        }
     }
 
     static boolean presetPosition(HologramSession s, HologramCapture.Cell c, int i,

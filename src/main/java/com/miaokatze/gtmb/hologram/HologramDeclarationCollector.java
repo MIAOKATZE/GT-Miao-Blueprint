@@ -22,35 +22,48 @@ final class HologramDeclarationCollector {
     private final IdentityHashMap<IStructureElement<?>, Map<Triple<Object, Integer, ExactKey>, HologramDeclarationCandidates>> candidates = new IdentityHashMap<>();
     private final IdentityHashMap<IStructureElement<?>, Boolean> pure = new IdentityHashMap<>();
     private int size;
-    private long generation = HologramDeclarationAdapters.generation();
+    private HologramDeclarationAdapters.Bindings bindings = new HologramDeclarationAdapters.Bindings();
 
     void clear() {
         candidates.clear();
         pure.clear();
         size = 0;
+        bindings = new HologramDeclarationAdapters.Bindings();
     }
 
     boolean invalidateIfStale() {
-        long current = HologramDeclarationAdapters.generation();
-        if (generation == current) return false;
+        if (bindings.validityFailure() == null) return false;
         clear();
-        generation = current;
         return true;
+    }
+
+    HologramDeclarationAdapters.Scope observe() {
+        return HologramDeclarationAdapters.observe(bindings);
+    }
+
+    void replay() {
+        bindings.replay();
     }
 
     HologramDeclarationCandidates collect(IStructureElement<?> element, MTEEnhancedMultiBlockBase<?> machine,
         World world, int x, int y, int z, String structureId, ItemStack signal, AutoPlaceEnvironment environment) {
         invalidateIfStale();
         if (size >= 1024) clear();
-        boolean contextFree = pure.computeIfAbsent(element, HologramDeclarationPurity::contextFree);
-        String context = contextFree ? "pure:" : x + "," + y + "," + z + ":" + structureId + ":";
-        HologramDeclarationCandidates declaration = find(element, context, signal);
-        if (declaration == null) {
-            declaration = new HologramDeclarationCandidates(this);
-            declaration.collect(element, machine, world, x, y, z, signal, environment, 0);
-            remember(element, context, signal, declaration);
+        HologramDeclarationAdapters.Bindings observed = bindings;
+        try (HologramDeclarationAdapters.Scope scope = HologramDeclarationAdapters.observe(observed)) {
+            boolean contextFree = pure.computeIfAbsent(element, HologramDeclarationPurity::contextFree);
+            String context = contextFree ? "pure:" : x + "," + y + "," + z + ":" + structureId + ":";
+            HologramDeclarationCandidates declaration = find(element, context, signal);
+            if (declaration == null) {
+                declaration = new HologramDeclarationCandidates(this);
+                declaration.collect(element, machine, world, x, y, z, signal, environment, 0);
+                remember(element, context, signal, declaration);
+            }
+            observed.replay();
+            return declaration;
+        } finally {
+            if (bindings != observed) bindings.inherit(observed);
         }
-        return declaration;
     }
 
     /** Only the recorded standard hatch enum rule is shared; contextual chains retain their own entries. */

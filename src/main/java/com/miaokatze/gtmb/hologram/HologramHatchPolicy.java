@@ -127,20 +127,31 @@ public final class HologramHatchPolicy {
     }
 
     private static boolean reviewed(IHatchElement<?> element, int depth) {
-        if (element instanceof gregtech.api.enums.HatchElement) return true;
-        if (element == null || depth >= 12) return false;
+        return contribution(element, null, depth) >= 0;
+    }
+
+    /** Native Either.count adds its branches, including repeated leaves. Never execute a custom count callback. */
+    static int contribution(IHatchElement<?> element, IMetaTileEntity tile) {
+        return Math.max(0, contribution(element, tile, 0));
+    }
+
+    private static int contribution(IHatchElement<?> element, IMetaTileEntity tile, int depth) {
+        if (element instanceof gregtech.api.enums.HatchElement)
+            return tile != null && matchesHatch(element, tile) ? 1 : 0;
+        if (element == null || depth >= 12) return -1;
         Class<?> type = element.getClass();
         if (!type.getName()
             .equals("gregtech.api.interfaces.HatchElementEither")
-            || type.getClassLoader() != IHatchElement.class.getClassLoader()) return false;
+            || type.getClassLoader() != IHatchElement.class.getClassLoader()) return -1;
         try {
             Field first = type.getDeclaredField("first"), second = type.getDeclaredField("second");
             first.setAccessible(true);
             second.setAccessible(true);
-            return reviewed((IHatchElement<?>) first.get(element), depth + 1)
-                && reviewed((IHatchElement<?>) second.get(element), depth + 1);
+            int left = contribution((IHatchElement<?>) first.get(element), tile, depth + 1);
+            int right = contribution((IHatchElement<?>) second.get(element), tile, depth + 1);
+            return left < 0 || right < 0 ? -1 : left + right;
         } catch (ReflectiveOperationException changedContract) {
-            return false;
+            return -1;
         }
     }
 
