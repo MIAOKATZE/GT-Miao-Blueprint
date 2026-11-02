@@ -227,6 +227,27 @@ public final class HologramCutProtectionRegression {
         paste.setInteger("originY", 200);
         paste.setInteger("originZ", 0);
         NBTTagCompound before = storage.load();
+        try (HologramStargateRulesRegression.Mode rules = new HologramStargateRulesRegression.Mode(true)) {
+            int permissionEvents = guard.breaks + guard.places;
+            SimpleAssert.eq(
+                HologramStargateRules.RESTRICTION_CODE,
+                HologramCutService.execute(player, paste)
+                    .getString("code"),
+                "rules reject an otherwise valid paste before any real candidate staging");
+            SimpleAssert.eq(permissionEvents, guard.breaks + guard.places, "denied paste dispatches no native events");
+            unchanged(world, target, storage, before);
+            SimpleAssert.that(
+                HologramCutService.execute(player, request("list"))
+                    .getBoolean("success"),
+                "rules still permit reading a completed clipboard entry");
+            NBTTagCompound preview = request("preview");
+            preview.setString("id", cut.getString("requestId"));
+            SimpleAssert.that(
+                HologramCutService.execute(player, preview)
+                    .getBoolean("success"),
+                "rules still permit a detached preview of a completed clipboard entry");
+            unchanged(world, target, storage, before);
+        }
         world.put(0, 200, 0, Blocks.stone, 0);
         NBTTagCompound undo = request("undo");
         undo.setString("id", cut.getString("requestId"));
@@ -415,6 +436,32 @@ public final class HologramCutProtectionRegression {
         SimpleAssert.that(world.getTileEntity(0, 200, 0) == source, "legacy pending cannot mutate the original world");
         storage.markPending(journal, "cut", id, true);
         storage.save(state);
+        try (HologramStargateRulesRegression.Mode rules = new HologramStargateRulesRegression.Mode(true)) {
+            byte[] paused = Files.readAllBytes(file);
+            for (String action : new String[] { "list", "preview", "cut", "paste", "undo" }) {
+                NBTTagCompound response = HologramCutService.execute(player, request(action));
+                SimpleAssert.that(!response.getBoolean("success"), "pending journals never expose live entries");
+                SimpleAssert.eq(
+                    HologramStargateRules.RESTRICTION_CODE,
+                    response.getString("code"),
+                    "even a read cannot bypass rules by replaying an approved journal: " + action);
+            }
+            HologramCutService.startupRecovery();
+            boolean refused = false;
+            NBTTagCompound retained = storage.load();
+            NBTTagCompound original = (NBTTagCompound) retained.copy();
+            try {
+                HologramCutService.recover(storage, retained);
+            } catch (IOException expected) {
+                refused = HologramStargateRules.restrictionMessage()
+                    .equals(expected.getMessage());
+            }
+            SimpleAssert.that(refused, "direct recovery cannot bypass server rules");
+            SimpleAssert.eq(original, retained, "blocked recovery preserves the in-memory transaction journal");
+            SimpleAssert.that(Arrays.equals(paused, Files.readAllBytes(file)), "rules preserve journal bytes exactly");
+            SimpleAssert.that(world.getTileEntity(0, 200, 0) == source, "rules preserve the original live source tile");
+            SimpleAssert.eq(0, source.invalidations, "paused recovery never runs native teardown");
+        }
         HologramCutService.recover(
             new HologramCutStorage(
                 world.save.getWorldDirectory()

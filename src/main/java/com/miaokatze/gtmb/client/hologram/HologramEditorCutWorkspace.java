@@ -164,6 +164,12 @@ final class HologramEditorCutWorkspace {
             .height(
                 "place".equals(name) ? HologramEditorNativeTheme.PRIMARY_BUTTON_HEIGHT
                     : HologramEditorNativeTheme.TEXT_BUTTON_HEIGHT)
+            .tooltipBuilder(t -> {
+                if (!isolated && HologramClient.stargateRulesEnabled()
+                    && ("place".equals(name) || "undo".equals(name) || "undo.confirm".equals(name)))
+                    t.addLine(HologramClient.stargateRulesMessage());
+            })
+            .tooltipAutoUpdate(true)
             .name("cut_storage_" + name);
         register("cut." + name, button);
         return button;

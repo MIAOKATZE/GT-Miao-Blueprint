@@ -87,9 +87,21 @@ final class HologramCutStorageScreen extends HologramMuiScreen {
         int gap = 5, bw = (panelWidth - 24 - gap * 3) / 4, y = panelHeight - 43;
         panel().child(
             HologramMuiTheme.primaryButton(() -> text("place"), 12, y, bw, 20, this::place)
+                .setEnabledIf(w -> !HologramClient.stargateRulesEnabled())
+                .tooltipBuilder(
+                    t -> {
+                        if (HologramClient.stargateRulesEnabled()) t.addLine(HologramClient.stargateRulesMessage());
+                    })
+                .tooltipAutoUpdate(true)
                 .name("cut_storage_place"));
         panel().child(
             HologramMuiTheme.button(() -> text("undo"), 12 + bw + gap, y, bw, 20, this::undo)
+                .setEnabledIf(w -> !HologramClient.stargateRulesEnabled())
+                .tooltipBuilder(
+                    t -> {
+                        if (HologramClient.stargateRulesEnabled()) t.addLine(HologramClient.stargateRulesMessage());
+                    })
+                .tooltipAutoUpdate(true)
                 .name("cut_storage_undo"));
         panel().child(HologramMuiTheme.button(() -> text("sync"), 12 + (bw + gap) * 2, y, bw, 20, () -> {
             client().refreshDirectory();

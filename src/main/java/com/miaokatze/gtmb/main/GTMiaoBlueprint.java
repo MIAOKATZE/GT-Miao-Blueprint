@@ -9,6 +9,7 @@ import com.miaokatze.gtmb.hologram.HologramCommand;
 import com.miaokatze.gtmb.hologram.HologramLibraryCommand;
 import com.miaokatze.gtmb.hologram.HologramLibraryFacade;
 import com.miaokatze.gtmb.hologram.HologramLibrarySocketServerProbe;
+import com.miaokatze.gtmb.hologram.HologramStargateRules;
 import com.miaokatze.gtmb.testlab.TestLab;
 
 import cpw.mods.fml.common.Mod;
@@ -40,6 +41,7 @@ public final class GTMiaoBlueprint {
 
     @Mod.EventHandler
     public void preInit(FMLPreInitializationEvent event) {
+        HologramStargateRules.load(event.getModConfigurationDirectory());
         TestLab.preInit(event.getModConfigurationDirectory());
         proxy.preInit();
     }

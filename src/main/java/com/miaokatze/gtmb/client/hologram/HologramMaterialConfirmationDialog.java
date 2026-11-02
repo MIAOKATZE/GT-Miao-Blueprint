@@ -354,7 +354,10 @@ final class HologramMaterialConfirmationDialog {
         panel.child(
             button(
                 55,
-                () -> lessonClose == null ? ui.review.lastConfirmationAction() : "最终确认 · 教学隔离",
+                () -> lessonClose != null ? "最终确认 · 教学隔离"
+                    : ui.canvas.stargateBlockedControl(55)
+                        ? HologramClient.text("stargateRules.disabled", "Stargate: build disabled")
+                        : ui.review.lastConfirmationAction(),
                 184,
                 402,
                 434,
@@ -417,6 +420,7 @@ final class HologramMaterialConfirmationDialog {
     }
 
     private String unavailableReason(int id) {
+        if (ui.canvas.stargateBlockedControl(id)) return HologramClient.stargateRulesMessage();
         if (id == 168 && !ui.nbt.hasPlacementNbtChoices()) return "本次蓝图没有可调整的 NBT 条目。";
         if (id == 196 && ui.bindings.networkGroups()
             .tagCount() == 0) return "本图没有需要绑定的量子网络。";
@@ -468,21 +472,22 @@ final class HologramMaterialConfirmationDialog {
 
     private ButtonWidget<?> nativeButton(int id, Supplier<String> text, int x, int y, int width, Runnable action,
         BooleanSupplier enabled, IntSupplier accent) {
-        enabledControls.put(id, enabled);
+        BooleanSupplier available = () -> enabled.getAsBoolean() && !ui.canvas.stargateBlockedControl(id);
+        enabledControls.put(id, available);
         controlAccents.put(id, accent);
         return HologramMuiTheme.button(text, x, y, width, 23, action)
-            .background(HologramMuiTheme.guidanceBackground(false, accent, enabled))
-            .hoverBackground(HologramMuiTheme.guidanceBackground(true, accent, enabled))
+            .background(HologramMuiTheme.guidanceBackground(false, accent, available))
+            .hoverBackground(HologramMuiTheme.guidanceBackground(true, accent, available))
             .overlay(
                 IKey.dynamic(text)
-                    .color(() -> HologramUiAccent.textColor(accent.getAsInt(), enabled.getAsBoolean()))
+                    .color(() -> HologramUiAccent.textColor(accent.getAsInt(), available.getAsBoolean()))
                     .shadow(false))
             .tooltipBuilder(t -> {
                 String reason = unavailableReason(id);
                 if (!reason.isEmpty()) t.addLine(reason);
             })
             .tooltipAutoUpdate(true)
-            .setEnabledIf(widget -> enabled.getAsBoolean());
+            .setEnabledIf(widget -> available.getAsBoolean());
     }
 
     private int getHoveredRow() {

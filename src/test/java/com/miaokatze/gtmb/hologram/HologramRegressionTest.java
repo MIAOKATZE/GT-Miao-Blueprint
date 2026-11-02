@@ -34,6 +34,10 @@ public final class HologramRegressionTest {
         if (!MinecraftTestBootstrap.enter(HologramRegressionTest.class, args)) return;
         Map<String, Runnable> cases = new LinkedHashMap<>();
         cases.put(
+            "stargate_rules_connection_snapshot_and_mode_selection",
+            com.miaokatze.gtmb.client.hologram.HologramStargateClientRulesRegression::run);
+        cases.put("stargate_rules_opt_in_server_admission_and_retained_returns", HologramStargateRulesRegression::run);
+        cases.put(
             "direct_world_gestures_keep_source_and_plan_revisions",
             com.miaokatze.gtmb.client.hologram.HologramSemanticRequestRegression::run);
         cases.put("contextual_sources_intent_revision_read_set_and_purity", HologramSourceContractRegression::run);

@@ -211,6 +211,7 @@ final class HologramUiCanvas {
 
     void button(int id, int x, int y, int w, int h, String label, boolean enabled, int mx, int my) {
         if (nativeScene) return;
+        if (stargateBlockedControl(id)) enabled = false;
         if (localPlanBlockedControl(id)) enabled = false;
         if (HologramBackgroundTasks.busy() && id != 990
             && id != 991
@@ -298,6 +299,7 @@ final class HologramUiCanvas {
     }
 
     String disabledReason(int id) {
+        if (stargateBlockedControl(id)) return HologramClient.stargateRulesMessage();
         if (id == 147) return ui.preview.moveHandleReason();
         if (localPlanBlockedControl(id)) return localPlanReason(ui.session.state().data);
         if (HologramBackgroundTasks.busy() && id != 990 && id != 991 && id != 992)
@@ -340,6 +342,16 @@ final class HologramUiCanvas {
         if (id == 12 || id == 13) return "已到达结构图层边界。";
         if (id == 80 || id == 82) return "已到达当前已验证目标列表边界。";
         return "此操作不支持当前目标或状态。";
+    }
+
+    boolean stargateBlockedControl(int id) {
+        return (id == 55 || id == 215 || id == 51 && ui.session.state().data.getInteger("job") == 2)
+            && stargateRulesActive();
+    }
+
+    boolean stargateRulesActive() {
+        return !ui.session.isTutorial()
+            && (ui.session.state().data.getBoolean("stargateRules") || HologramClient.stargateRulesEnabled());
     }
 
     String controlHelp(int id) {

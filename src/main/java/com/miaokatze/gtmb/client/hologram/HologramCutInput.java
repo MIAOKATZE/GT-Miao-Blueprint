@@ -124,6 +124,7 @@ final class HologramCutInput {
 
         private Mode mode;
         private boolean finished;
+        private final java.util.function.BooleanSupplier worldChangesAllowed;
 
         Switcher() {
             this(Mode.BLUEPRINT);
@@ -134,19 +135,27 @@ final class HologramCutInput {
         }
 
         Switcher(Mode mode) {
+            this(mode, () -> true);
+        }
+
+        Switcher(Mode mode, java.util.function.BooleanSupplier worldChangesAllowed) {
             this.mode = mode;
+            this.worldChangesAllowed = worldChangesAllowed;
         }
 
         Mode mode() {
+            if (!worldChangesAllowed.getAsBoolean()) mode = Mode.BLUEPRINT;
             return mode;
         }
 
         boolean cut() {
-            return mode == Mode.CUT;
+            return mode() == Mode.CUT;
         }
 
         void cycle() {
-            if (!finished) mode = Mode.values()[(mode.ordinal() + 1) % Mode.values().length];
+            if (!finished)
+                mode = worldChangesAllowed.getAsBoolean() ? Mode.values()[(mode.ordinal() + 1) % Mode.values().length]
+                    : Mode.BLUEPRINT;
         }
 
         boolean release(boolean shift) {

@@ -31,7 +31,25 @@
 
 *玩家提供的游戏截图，原图未修改。/ Player-provided gameplay screenshot, reproduced unchanged.*
 
-### v0.3.7 候选：重复识别与原生拆除修复
+### v0.3.8 候选：星门规则模式 / Stargate rules mode
+
+默认关闭。启动一次后，在**服务端或单人存档所用实例**的 `config/gtmb-stargate-rules.cfg` 中设置下方选项，并重启服务器或游戏：
+
+```cfg
+stargateRules {
+    B:enabled=true
+}
+```
+
+启用后仍可识别结构、编辑和保存蓝图、查看材料与投影预览；AE 功能继续遵守原有网络权限和材料规则。自动建造、替换、清障、剪切搬运与撤销、区域拆除均禁用，管理员也不豁免。升级到 0.3.8 的客户端会显示服务端限制；旧端请求同样会被服务端拦截，修改客户端配置不能绕过。
+
+这是依据“不得用 WorldEdit 类操作搭建功能性结构，即使支付材料也不例外”的约束提供的保守开关：装饰方块也可能组成机器结构，因此不按方块白名单放行自动施工。旧蓝图和剪切暂存仍保留，未完成的世界搬运事务暂停恢复；已经产生的待返还物品继续按原规则交付。关闭此配置并重启后恢复通常功能。它不替代服务器管理或星门资格审核。
+
+*Disabled by default. Set `stargateRules.enabled` in the server's `config/gtmb-stargate-rules.cfg` and restart. Capture, virtual editing, saved blueprints, material inspection, previews and permission-checked AE access remain available. Automatic construction, replacement, obstruction removal, cut/paste/undo and area demolition are blocked, including for operators. Existing blueprints, clipboard records and pending returns are retained; world-edit journals cannot replay while enabled. This conservative option does not certify Stargate eligibility.*
+
+上方三档截图展示默认关闭此限制时的界面。0.3.8 为开发候选；0.3.7 已合并，Release 仍为草稿，未正式发布。
+
+### v0.3.7：重复识别与原生拆除修复
 
 结构采集结果按当前会话判断，修复连续切换机器时“预览已采集”却误报失败的问题。客户端接收快照改为非阻塞准入，服务端与客户端协商后按实际处理进度发送，保留施工和 AE 回执顺序；完整流控需要两端均升级到 0.3.7。未协商流控的连接发生过载时会明确终止，避免丢失操作回执。
 

@@ -50,6 +50,7 @@ public final class HologramDemolition {
     /** Called on the server thread only: -1 is legacy, 0 selects the backpack, and 1 selects AE. */
     public static void start(EntityPlayerMP player, HologramAreaSelection selection, int destination)
         throws IOException {
+        if (HologramStargateRules.enabled()) throw new IOException(HologramStargateRules.restrictionMessage());
         if (destination < -1 || destination > 1) throw new IOException("无效拆除回收目的地");
         if (!connected(player) || player.isDead
             || !(player.worldObj instanceof WorldServer)
@@ -279,6 +280,7 @@ public final class HologramDemolition {
 
     /** No precomputed getDrops or sealed TE extraction: native callbacks own every actual drop. */
     static Removal removeBlock(EntityPlayerMP player, World world, int x, int y, int z) throws IOException {
+        if (HologramStargateRules.enabled()) throw new IOException(HologramStargateRules.restrictionMessage());
         HologramCapture.Cell cell = new HologramCapture.Cell(null, x, y, z);
         Block block = world.getBlock(x, y, z);
         int metadata = world.getBlockMetadata(x, y, z);
@@ -449,6 +451,7 @@ public final class HologramDemolition {
         }
 
         String invalidReason() {
+            if (HologramStargateRules.enabled()) return HologramStargateRules.restrictionMessage();
             if (!connected(player)) return "玩家已离线";
             if (player.isDead) return "玩家已死亡";
             if (player.worldObj != world || player.dimension != dimension) return "玩家已切换维度";

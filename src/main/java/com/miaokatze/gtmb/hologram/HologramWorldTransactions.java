@@ -61,6 +61,11 @@ final class HologramWorldTransactions {
 
     @SuppressWarnings("unchecked")
     static boolean operateChecked(HologramSession s, HologramCapture.Cell c, int index) {
+        if (HologramStargateRules.enabled()) {
+            c.status = "protected";
+            s.status = HologramStargateRules.restrictionMessage();
+            return false;
+        }
         if (s.capture != null && !s.capture.sourceCurrent()) {
             c.status = "unsupported";
             s.status = "结构来源或现场状态已变化，未扣除材料，请重新采集";
@@ -751,6 +756,7 @@ final class HologramWorldTransactions {
 
     /** The reviewed target cells are the complete destructive scope; client coordinates are never accepted. */
     static void removeBlueprintObstructions(HologramSession s, NBTTagCompound action) throws java.io.IOException {
+        if (HologramStargateRules.enabled()) throw new java.io.IOException(HologramStargateRules.restrictionMessage());
         if (!s.virtual || s.capture == null
             || !s.virtualPlacement
             || !s.virtualLocked

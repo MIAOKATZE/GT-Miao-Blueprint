@@ -54,6 +54,19 @@ public final class HologramClient {
     private static boolean localAreaAwaitingBegin, localAreaFinishing, localAreaCancelling;
 
     static volatile HologramState state;
+    private static final HologramStargateClientRules serverRules = new HologramStargateClientRules();
+
+    static boolean stargateRulesEnabled() {
+        return serverRules.enabled(
+            Minecraft.getMinecraft()
+                .getNetHandler());
+    }
+
+    static String stargateRulesMessage() {
+        return text(
+            "stargateRules.restricted",
+            "Stargate rules disable automatic building, replacement, clearing, cut, paste, undo and demolition. Preview, editing and materials remain available.");
+    }
 
     /** Direct world gestures carry the same revision evidence as window commands. */
     static void stampSemanticRevision(NBTTagCompound request) {
@@ -170,6 +183,7 @@ public final class HologramClient {
             if (world == null || connection == null) return;
             minecraft.func_152344_a(() -> {
                 if (world != minecraft.theWorld || connection != minecraft.getNetHandler()) return;
+                serverRules.receive(connection, nbt);
                 if (receiveSnapshotFlow(nbt)) return;
                 if (retiredSessions.contains(nbt.getString("session"))) return;
                 HologramLibraryClient.INSTANCE.preparationProgress(nbt);
@@ -256,9 +270,12 @@ public final class HologramClient {
         HologramNetwork.setClientReceiver(nbt -> {
             Minecraft minecraft = Minecraft.getMinecraft();
             Object world = minecraft.theWorld, connection = minecraft.getNetHandler();
-            if (world == null || connection == null) return;
-            minecraft.func_152344_a(
-                () -> { if (world == minecraft.theWorld && connection == minecraft.getNetHandler()) receive(nbt); });
+            if (connection == null) return;
+            minecraft.func_152344_a(() -> {
+                if (connection != minecraft.getNetHandler()) return;
+                serverRules.receive(connection, nbt);
+                if (!nbt.getBoolean("serverRulesOnly") && world != null && world == minecraft.theWorld) receive(nbt);
+            });
         });
         HologramNetwork.setClientInteractionSender(HologramClient::use);
         HologramClient listener = new HologramClient();
@@ -970,6 +987,8 @@ public final class HologramClient {
             && toolId.equals(state.data.getString("toolId"));
         lines.add(text("worldGuideHeld", "Neko Blueprint Hologram Projector · Blueprint mode"));
         lines.add(text("worldGuideOpen", "Right-click: workspace / import a constructable controller"));
+        if (stargateRulesEnabled())
+            lines.add(text("stargateRules.worldHint", "Stargate rules: automatic world changes disabled"));
         // Capture owns ordinary gestures until its authoritative result arrives.
         if (state != null && state.data.getBoolean("capturePending")) return;
         lines.add(text("worldGuideChoose", "Shift+right-click: choose Blueprint / Cut selection"));
@@ -994,6 +1013,14 @@ public final class HologramClient {
         if (event.phase != TickEvent.Phase.END) return;
         HologramIsometricCamera.INSTANCE.tick();
         syncSnapshotWorld();
+        Minecraft rulesClient = Minecraft.getMinecraft();
+        if (serverRules.requestNeeded(
+            rulesClient.getNetHandler(),
+            rulesClient.theWorld != null && rulesClient.thePlayer != null)) {
+            NBTTagCompound request = new NBTTagCompound();
+            request.setString("action", "serverRules");
+            HologramNetwork.sendAction(request);
+        }
         HologramBackgroundTasks.tick();
         installDecoded(snapshotInbox.poll());
         prepareSnapshotStep();
@@ -1793,6 +1820,7 @@ public final class HologramClient {
         net.minecraft.world.World world = Minecraft.getMinecraft().theWorld;
         Object connection = Minecraft.getMinecraft()
             .getNetHandler();
+        serverRules.observeConnection(connection);
         if (world == assemblyWorld && connection == assemblyConnection) return;
         boolean connectionChanged = connection != assemblyConnection;
         previewDistance.sync(false, null, "");
@@ -1834,6 +1862,10 @@ public final class HologramClient {
             return;
         }
         NBTTagCompound nbt = result.value;
+        serverRules.receive(
+            Minecraft.getMinecraft()
+                .getNetHandler(),
+            nbt);
         if (!validSnapshotIdentity(nbt)) {
             snapshotHandled(result, true);
             return;

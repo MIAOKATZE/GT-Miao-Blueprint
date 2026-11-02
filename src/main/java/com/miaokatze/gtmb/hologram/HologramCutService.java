@@ -43,6 +43,7 @@ public final class HologramCutService {
 
     /** Redo interrupted edits before the first normal world tick after restart. */
     static void startupRecovery() {
+        if (HologramStargateRules.enabled()) return;
         MinecraftServer server = MinecraftServer.getServer();
         if (server == null || server == recoveredServer || server.worldServerForDimension(0) == null) return;
         recoveredServer = server;
@@ -132,6 +133,18 @@ public final class HologramCutService {
     }
 
     static NBTTagCompound execute(EntityPlayerMP player, NBTTagCompound request) {
+        String requestedAction = request.getString("action");
+        if (HologramStargateRules.enabled() && ("cut".equals(requestedAction) || "paste".equals(requestedAction)
+            || "undo".equals(requestedAction)
+            || "demolish".equals(requestedAction))) {
+            NBTTagCompound rejected = new NBTTagCompound();
+            rejected.setString("action", "state");
+            rejected.setString("requestId", request.getString("requestId"));
+            rejected.setBoolean("success", false);
+            rejected.setString("code", HologramStargateRules.RESTRICTION_CODE);
+            rejected.setString("message", HologramStargateRules.restrictionMessage());
+            return rejected;
+        }
         if (HologramDemolitionProtocol.handles(request.getString("action"))) return executeDemolition(player, request);
         NBTTagCompound response = new NBTTagCompound();
         response.setString("action", "state");
@@ -200,6 +213,12 @@ public final class HologramCutService {
             }
             storage = new HologramCutStorage(saveRoot(), HologramLibraryFacade.actorId(player));
             state = storage.load();
+            if (HologramStargateRules.enabled() && state.hasKey("pending", 10)) {
+                response.setBoolean("success", false);
+                response.setString("code", HologramStargateRules.RESTRICTION_CODE);
+                response.setString("message", HologramStargateRules.restrictionMessage() + "；旧剪切恢复记录已保留，未重放世界修改");
+                return response;
+            }
             recover(storage, state);
             String action = request.getString("action");
             if ("list".equals(action)) {
@@ -405,6 +424,7 @@ public final class HologramCutService {
     /** Forge PlaceEvent observes the real installed target. Until every event accepts, only rollback is durable. */
     private static void authorizePlacement(EntityPlayerMP player, HologramCutWorld.Edit edit, NBTTagCompound entry,
         HologramCutStorage storage, NBTTagCompound state, String action, String requestId) throws Exception {
+        if (HologramStargateRules.enabled()) throw new IOException(HologramStargateRules.restrictionMessage());
         NBTTagCompound rollback = new NBTTagCompound();
         rollback.setTag("entry", edit.before.copy());
         rollback.setTag("candidate", entry.copy());
@@ -518,6 +538,7 @@ public final class HologramCutService {
 
     static void recover(HologramCutStorage storage, NBTTagCompound state) throws Exception {
         if (!state.hasKey("pending", 10)) return;
+        if (HologramStargateRules.enabled()) throw new IOException(HologramStargateRules.restrictionMessage());
         NBTTagCompound pending = state.getCompoundTag("pending");
         boolean approved = storage.approvedPending(pending);
         if (approved && !seen(
