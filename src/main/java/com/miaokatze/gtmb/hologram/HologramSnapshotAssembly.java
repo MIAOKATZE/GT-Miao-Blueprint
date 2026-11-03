@@ -1,13 +1,13 @@
 package com.miaokatze.gtmb.hologram;
 
-/** One bounded, ordered transport snapshot. Allocation follows received bytes, never declared cell counts. */
+/** One bounded, ordered snapshot; timeout measures inactivity and allocation follows received bytes. */
 public final class HologramSnapshotAssembly {
 
     public static final int CHUNK_BYTES = 512 * 1024;
     public static final int MAX_BYTES = 128 * 1024 * 1024;
     private static final long TIMEOUT_NS = 30_000_000_000L;
     private long newest = -1;
-    private long started;
+    private long activity;
     private int total, next, received;
     private byte[][] chunks;
 
@@ -25,16 +25,17 @@ public final class HologramSnapshotAssembly {
             if (index != 0) return null;
             clear();
             newest = sequence;
-            started = now;
+            activity = now;
             total = size;
             chunks = new byte[count][];
         }
-        if (chunks == null || now - started > TIMEOUT_NS || size != total || index != next) {
+        if (chunks == null || now - activity > TIMEOUT_NS || size != total || index != next) {
             clear();
             return null;
         }
         chunks[next++] = bytes;
         received += bytes.length;
+        activity = now;
         if (next != chunks.length) return null;
         if (received != total) {
             clear();
@@ -51,7 +52,7 @@ public final class HologramSnapshotAssembly {
     }
 
     public void expire(long now) {
-        if (chunks != null && now - started > TIMEOUT_NS) clear();
+        if (chunks != null && now - activity > TIMEOUT_NS) clear();
     }
 
     public void clear() {
