@@ -348,10 +348,17 @@ public final class HologramSnapshotPublishRegression {
                 SimpleAssert.that(
                     session.snapshotPaletteProtocol == capable,
                     "legacy absence and explicit v1 negotiate independently");
+                HologramArea area = new HologramArea();
+                HologramSession staged = HologramAreaWorkflow.importStaging(session, area);
+                SimpleAssert.eq(session.id, staged.id, "ordinary area import retains the wire session nonce");
+                SimpleAssert.that(
+                    staged.snapshotPaletteProtocol == capable,
+                    "ordinary area staging retains the same client's negotiated snapshot format");
+                HologramWorkspace.activate(player.getUniqueID(), staged);
                 NBTTagCompound full = HologramSnapshotCodecRegression.paletteFixture();
                 full.setString("session", session.id);
                 full.setString("generation", session.id);
-                HologramNetwork.SnapshotTicket ticket = HologramNetwork.reserveOwnedState(session);
+                HologramNetwork.SnapshotTicket ticket = HologramNetwork.reserveOwnedState(staged);
                 HologramNetwork.completeOwnedState(ticket, full, () -> true, () -> {});
                 tick();
                 work.remove()
@@ -360,8 +367,9 @@ public final class HologramSnapshotPublishRegression {
                 SimpleAssert.eq(1, WIRE.size(), "real outbox publishes the negotiated small fixture once");
                 SimpleAssert.that(
                     HologramSnapshotPalette.isPacked(decode(WIRE.get(0))) == capable,
-                    "only an advertised owner receives the new wire format through the actual encoder");
+                    "the imported area's actual encoder retains exactly the original owner's wire format");
                 WIRE.clear();
+                HologramWorkspace.activate(player.getUniqueID(), session);
             }
             HologramSession replacement = new HologramSession(player, 0, 64, 0, false, 2);
             new HologramWorkspace.PresentationTransition(session, replacement);
