@@ -300,7 +300,7 @@ final class HologramAuthoringWorkflow {
                 .get((s.x + saved.x) + "," + (s.y + saved.y) + "," + (s.z + saved.z));
             if (cell == null) continue;
             if (saved.item != null && (!saved.item.equals(cell.blueprintItem) || saved.damage != cell.blueprintDamage)
-                && HologramNativePlacement.supported(cell.block)
+                && HologramNativePlacement.supportedBlueprint(cell.block, saved.tileNbt)
                 && !saved.excluded) rebindAeShell(s, cell, indices.get(cell), saved.stack());
             cell.tileNbt = saved.tileNbt == null ? "" : saved.tileNbt;
             cell.itemNbt = saved.itemNbt == null ? "" : saved.itemNbt;
@@ -1305,7 +1305,7 @@ final class HologramAuthoringWorkflow {
                 .get((s.x + saved.x) + "," + (s.y + saved.y) + "," + (s.z + saved.z));
             if (cell == null) continue;
             if (saved.item != null && (!saved.item.equals(cell.blueprintItem) || saved.damage != cell.blueprintDamage)
-                && HologramNativePlacement.supported(cell.block)
+                && HologramNativePlacement.supportedBlueprint(cell.block, saved.tileNbt)
                 && !saved.excluded) rebindAeShell(s, cell, HologramSessionPolicy.cellIndex(s, cell), saved.stack());
             cell.tileNbt = saved.tileNbt == null ? "" : saved.tileNbt;
             cell.itemNbt = saved.itemNbt == null ? "" : saved.itemNbt;

@@ -425,7 +425,11 @@ final class HologramBlueprintProcessing {
                     HologramDecorMaterials.carpenterAttributeCosts(HologramBlueprintNbt.nativePayload(tag))
                         .values())
                 : java.util.Collections.emptyList();
-        return HologramBlueprintResources.plan(tag, components);
+        HologramNativePlacement.Adapter adapter = HologramNativePlacement.adapter(cell.block());
+        return HologramBlueprintResources.plan(
+            tag,
+            components,
+            "tile".equals(scope) && adapter != null && adapter.includesInventoryDrops(cell.block()));
     }
 
     private static final class ScopeReviews {
@@ -872,6 +876,9 @@ final class HologramBlueprintProcessing {
         } else tag = HologramBlueprintNbt.filterSelection(block, tag, null, covers);
         for (String path : override == null ? policy.ignoredNbtPaths : override.ignoredPaths)
             if (path.startsWith(kind + ":")) removePath(tag, path.substring(kind.length() + 1), block);
+        java.util.Set<String> retainedRoots = new java.util.HashSet<>();
+        for (Object root : tag.func_150296_c()) retainedRoots.add((String) root);
+        com.miaokatze.gtmb.api.ResourceContainers.validateSelection(before, retainedRoots);
         HologramBlueprintNbt.normalizeResourceSelection(tag);
         if (block == gregtech.api.GregTechAPI.sBlockMachines) {
             HologramBlueprintNbt.normalizeTransportItems(tag);

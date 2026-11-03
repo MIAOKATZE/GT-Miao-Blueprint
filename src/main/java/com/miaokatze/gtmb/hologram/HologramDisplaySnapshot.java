@@ -262,8 +262,7 @@ final class HologramDisplaySnapshot {
     }
 
     private static boolean nativeClass(String name) {
-        return name.startsWith("com.carpentersblocks.") || name.startsWith("codechicken.multipart.")
-            || name.startsWith("codechicken.microblock.")
+        return name.startsWith("codechicken.multipart.") || name.startsWith("codechicken.microblock.")
             || name.startsWith("com.creativemd.littletiles.")
             || name.startsWith("gcewing.architecture.")
             || name.startsWith("crazypants.enderio.conduit.")

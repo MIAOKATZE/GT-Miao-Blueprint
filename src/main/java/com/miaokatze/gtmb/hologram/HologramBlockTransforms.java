@@ -245,7 +245,7 @@ final class HologramBlockTransforms {
 
     /** Native drop tags can encode dimensions and part geometry; choose a payable sample from the turned payload. */
     static ItemStack nativeSample(Block block, int metadata, String tileNbt, ItemStack previous) throws IOException {
-        if (!HologramNativePlacement.supported(block)) return null;
+        if (!HologramNativePlacement.supportedBlueprint(block, tileNbt)) return null;
         List<ItemStack> costs = HologramNativePlacement
             .materials(block, metadata, HologramBlueprintNbt.decode(tileNbt));
         if (costs.isEmpty())

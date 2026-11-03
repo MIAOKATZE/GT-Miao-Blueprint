@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 
 import net.minecraft.block.Block;
+import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.init.Items;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
@@ -23,8 +24,19 @@ public final class HologramNativePlacement {
 
         boolean supports(Block block);
 
+        /** New optional families keep their former ordinary ItemBlock path when no tile payload was retained. */
+        default boolean requiresPayload() {
+            return false;
+        }
+
         /** Must return a new tile, preserve every selected component, and never touch a real world. */
         TileEntity create(Block block, int metadata, NBTTagCompound tag, World detachedWorld) throws Exception;
+
+        /** Engine-owned original-state recovery is distinct from restoring a reusable, resource-checked template. */
+        default TileEntity createRollback(Block block, int metadata, NBTTagCompound tag, World detachedWorld)
+            throws Exception {
+            return create(block, metadata, tag, detachedWorld);
+        }
 
         /** Complete physical part/cover costs, including exact material tags; never remove live contents. */
         List<ItemStack> materials(Block block, int metadata, TileEntity detachedTile) throws Exception;
@@ -33,6 +45,39 @@ public final class HologramNativePlacement {
         default boolean includesInventoryDrops(Block block) {
             return false;
         }
+
+        /** Internal installation policy; only the newly decoded, detached tile may be changed. */
+        default void prepareActor(Block block, TileEntity detachedTile, EntityPlayerMP actor) throws Exception {
+            FamilyPolicy policy = builtinPolicy(block);
+            if (policy != null && policy != this) policy.prepareActor(block, detachedTile, actor);
+        }
+
+        /** Exact physical identity unless an audited native item has equivalent shell variants. */
+        default boolean matchesMaterial(Block block, ItemStack cost, ItemStack sample) {
+            if (cost.isItemEqual(sample) && ItemStack.areItemStackTagsEqual(cost, sample)) return true;
+            FamilyPolicy policy = builtinPolicy(block);
+            return policy != null && policy != this && policy.matchesMaterial(block, cost, sample);
+        }
+
+        /** Some native writers allocate global identities; reviewed modules provide a pure detached projection. */
+        default NBTTagCompound captureExpected(TileEntity detachedTile) throws Exception {
+            NBTTagCompound tag = new NBTTagCompound();
+            detachedTile.writeToNBT(tag);
+            return tag;
+        }
+
+        /** Normalize only documented runtime identities after both complete persistence views have been captured. */
+        default void normalizeComparison(Block block, NBTTagCompound tag) {}
+    }
+
+    /** Explicit built-in family policy also retained when a legacy adapter overrides its factory or bill. */
+    public interface FamilyPolicy extends Adapter {
+
+        @Override
+        void prepareActor(Block block, TileEntity detachedTile, EntityPlayerMP actor) throws Exception;
+
+        @Override
+        boolean matchesMaterial(Block block, ItemStack cost, ItemStack sample);
     }
 
     private static final Map<String, Adapter> ADAPTERS = new LinkedHashMap<>();
@@ -51,6 +96,19 @@ public final class HologramNativePlacement {
         ADAPTERS.put(id, adapter);
     }
 
+    /** Internal built-ins precede every community registration, including registrations made before mod post-init. */
+    public static synchronized void registerBuiltin(String id, Adapter adapter) {
+        if (id == null || id.isEmpty() || adapter == null || ADAPTERS.containsKey(id))
+            throw new IllegalArgumentException("native placement adapter");
+        Map<String, Adapter> previous = new LinkedHashMap<>(ADAPTERS);
+        ADAPTERS.clear();
+        for (Map.Entry<String, Adapter> entry : previous.entrySet()) {
+            ADAPTERS.put(entry.getKey(), entry.getValue());
+            if (entry.getKey()
+                .equals("gtmb:native")) ADAPTERS.put(id, adapter);
+        }
+    }
+
     /** Remove only the expected registration; legacy replacement/other adapters remain untouched. */
     public static synchronized boolean unregister(String id, Adapter expected) {
         return ADAPTERS.remove(id, expected);
@@ -64,8 +122,30 @@ public final class HologramNativePlacement {
         return null;
     }
 
+    private static synchronized FamilyPolicy builtinPolicy(Block block) {
+        for (Map.Entry<String, Adapter> entry : ADAPTERS.entrySet()) {
+            if (entry.getValue() instanceof FamilyPolicy && entry.getValue()
+                .supports(block)) return (FamilyPolicy) entry.getValue();
+            if (entry.getKey()
+                .equals("gtmb:ae")) break;
+        }
+        return null;
+    }
+
     public static boolean supported(Block block) {
         return adapter(block) != null;
+    }
+
+    /** Provider selection only; this does not grant permissions, resource payment or source authority. */
+    public static boolean supported(Block block, NBTTagCompound retainedPayload) {
+        Adapter adapter = adapter(block);
+        return adapter != null && (!adapter.requiresPayload() || retainedPayload != null);
+    }
+
+    /** Presence check for not-yet-decoded blueprint rows; malformed nonempty data still reaches native validation. */
+    static boolean supportedBlueprint(Block block, String retainedTileNbt) {
+        Adapter adapter = adapter(block);
+        return adapter != null && (!adapter.requiresPayload() || retainedTileNbt != null && !retainedTileNbt.isEmpty());
     }
 
     public static ItemStack sample(Block block, int metadata, TileEntity tile) throws IOException {
@@ -158,8 +238,7 @@ public final class HologramNativePlacement {
         if (costs.isEmpty()) return costs;
         for (int i = 0; i < costs.size(); i++) {
             ItemStack cost = costs.get(i);
-            if (main != null && (cost.isItemEqual(main) && ItemStack.areItemStackTagsEqual(cost, main)
-                || sameCarpenterShell(block, cost, main))) {
+            if (main != null && matchesMaterial(block, cost, main)) {
                 if (--cost.stackSize == 0) costs.remove(i);
                 return costs;
             }
@@ -183,31 +262,24 @@ public final class HologramNativePlacement {
                     && identity.isItemEqual(sample)
                     && ItemStack.areItemStackTagsEqual(identity, sample);
             }
-            for (ItemStack cost : costs)
-                if (sample != null && (cost.isItemEqual(sample) && ItemStack.areItemStackTagsEqual(cost, sample)
-                    || sameCarpenterShell(block, cost, sample))) return true;
+            for (ItemStack cost : costs) if (sample != null && matchesMaterial(block, cost, sample)) return true;
         } catch (IOException failure) {
             return false;
         }
         return false;
     }
 
-    private static boolean sameCarpenterShell(Block block, ItemStack cost, ItemStack sample) {
-        return block.getClass()
-            .getName()
-            .equals("com.carpentersblocks.block.BlockCarpentersSlope") && cost.getItem() == Item.getItemFromBlock(block)
-            && sample.getItem() == cost.getItem()
-            && cost.getItemDamage() == 0
-            && sample.getItemDamage() >= 0
-            && sample.getItemDamage() < 5
-            && ItemStack.areItemStackTagsEqual(cost, sample);
+    private static boolean matchesMaterial(Block block, ItemStack cost, ItemStack sample) {
+        Adapter adapter = adapter(block);
+        return adapter == null ? cost.isItemEqual(sample) && ItemStack.areItemStackTagsEqual(cost, sample)
+            : adapter.matchesMaterial(block, cost, sample);
     }
 
     public static boolean matchesPlaced(Block block, int metadata, TileEntity actual, NBTTagCompound payload) {
         return matchesPlaced(block, metadata, actual, payload, null);
     }
 
-    /** A newly placed Carpenter belongs to its installer, matching native onBlockPlacedBy. */
+    /** Compare the selected persistence after applying the provider's detached actor policy. */
     public static boolean matchesPlaced(Block block, int metadata, TileEntity actual, NBTTagCompound payload,
         net.minecraft.entity.player.EntityPlayerMP actor) {
         if (actual == null || payload == null) return false;
@@ -215,22 +287,25 @@ public final class HologramNativePlacement {
             return HologramAeBlueprint.matchesPlaced(block, metadata, actual, payload);
         try {
             HologramResourceWorld detached = HologramResourceWorld.create(block, metadata);
-            TileEntity expected = adapter(block).create(
+            Adapter adapter = adapter(block);
+            TileEntity expected = adapter.create(
                 block,
                 metadata,
                 HologramEnergyPayload.withoutBuffers(HologramBlueprintNbt.nativePayload(payload)),
                 detached);
             if (expected == null || !actual.getClass()
                 .equals(expected.getClass())) return false;
-            bindCarpenterOwner(block, expected, actor);
-            NBTTagCompound actualTag = HologramNativeCapture.capture(actual), expectedTag = new NBTTagCompound();
-            expected.writeToNBT(expectedTag);
+            adapter.prepareActor(block, expected, actor);
+            NBTTagCompound actualTag = HologramNativeCapture.capture(actual),
+                expectedTag = adapter.captureExpected(expected);
             actualTag = HologramEnergyPayload.withoutBuffers(actualTag);
             expectedTag = HologramEnergyPayload.withoutBuffers(expectedTag);
             // Capture adds this project-owned display hint, while native writeToNBT deliberately does not.
             // Compare native persistence symmetrically; never omit arbitrary data using this field name.
             omitPreviewFlag(actualTag);
             omitPreviewFlag(expectedTag);
+            adapter.normalizeComparison(block, actualTag);
+            adapter.normalizeComparison(block, expectedTag);
             for (String key : new String[] { "x", "y", "z", HologramNetworkBindings.GROUP, HologramNetworkBindings.ROLE,
                 HologramNetworkBindings.HINT, HologramNetworkBindings.CAPTURE_ANCHOR, "GTSWN_IncorporationIdentity" }) {
                 actualTag.removeTag(key);
@@ -301,29 +376,30 @@ public final class HologramNativePlacement {
                     HologramNetworkBindings.bindNode(tile, tag, actor, bindings);
                 }
             } else if (actor != null) {
-                int playerId = appeng.core.worlddata.WorldData.instance()
-                    .playerData()
-                    .getPlayerID(actor.getGameProfile());
                 boolean changed = false;
                 if (block.getClass()
                     .getName()
-                    .equals("appeng.block.networking.BlockCableBus")) changed = rewriteCableOwners(tile, tag, playerId);
+                    .equals("appeng.block.networking.BlockCableBus"))
+                    changed = rewriteCableOwners(tile, tag, aePlayerId(actor));
                 if (block.getClass()
                     .getName()
                     .equals("codechicken.multipart.BlockMultipart")) {
                     List<?> parts = (List<?>) call(tile, "jPartList", new Class<?>[0]);
+                    Integer playerId = null;
                     for (int i = 0; i < parts.size(); i++) {
                         Object part = parts.get(i);
                         NBTTagCompound row = tag.getTagList("parts", 10)
                             .getCompoundTagAt(i);
                         if (row.getString("id")
-                            .equals("ae2_cablebus"))
+                            .equals("ae2_cablebus")) {
+                            if (playerId == null) playerId = aePlayerId(actor);
                             changed |= rewriteCableOwners(call(part, "getCableBus", new Class<?>[0]), row, playerId);
+                        }
                     }
                 }
                 if (changed) tile = adapter.create(block, metadata, tag, detached);
             }
-            bindCarpenterOwner(block, tile, actor);
+            adapter.prepareActor(block, tile, actor);
             world.removeTileEntity(x, y, z);
             tile.setWorldObj(world);
             tile.xCoord = x;
@@ -389,23 +465,68 @@ public final class HologramNativePlacement {
         try {
             if (adapter(block) instanceof HologramAeBlueprint.NativeAdapter) return HologramAeBlueprint
                 .createRollbackNative(block, metadata, tag, HologramResourceWorld.create(block, metadata));
-            return adapter(block).create(block, metadata, tag, HologramResourceWorld.create(block, metadata));
+            return adapter(block).createRollback(block, metadata, tag, HologramResourceWorld.create(block, metadata));
         } catch (Exception | LinkageError failure) {
             throw new IllegalStateException("Native recovery tile failed", failure);
         }
     }
 
-    private static void bindCarpenterOwner(Block block, TileEntity tile,
-        net.minecraft.entity.player.EntityPlayerMP actor) throws Exception {
-        if (actor == null || !HologramDeidentification.carpenterBlock(block)) return;
-        // The copied source stays intact. Only the new native TE gets the installer's online UUID/offline name.
-        Class<?> owner = Class.forName("com.carpentersblocks.util.protection.ProtectedObject");
-        call(
-            tile,
-            "setOwner",
-            new Class<?>[] { owner },
-            owner.getConstructor(net.minecraft.entity.player.EntityPlayer.class)
-                .newInstance(actor));
+    private static int aePlayerId(EntityPlayerMP actor) {
+        return appeng.core.worlddata.WorldData.instance()
+            .playerData()
+            .getPlayerID(actor.getGameProfile());
+    }
+
+    /** Pure base persistence for reviewed modules whose native writer mutates global state. */
+    public static NBTTagCompound captureBase(TileEntity tile) throws IOException {
+        try {
+            java.lang.reflect.Field names = ReflectionHelper
+                .findField(TileEntity.class, "classToNameMap", "field_145853_j");
+            @SuppressWarnings("unchecked")
+            Map<Class<?>, String> registered = (Map<Class<?>, String>) names.get(null);
+            String id = registered.get(tile.getClass());
+            if (id == null) throw unsupported("unregistered native tile identity");
+            NBTTagCompound tag = new NBTTagCompound();
+            tag.setString("id", id);
+            tag.setInteger("x", tile.xCoord);
+            tag.setInteger("y", tile.yCoord);
+            tag.setInteger("z", tile.zCoord);
+            try {
+                java.lang.reflect.Field data = TileEntity.class.getDeclaredField("customTileData");
+                data.setAccessible(true);
+                NBTTagCompound custom = (NBTTagCompound) data.get(tile);
+                if (custom != null) tag.setTag("ForgeData", custom.copy());
+            } catch (NoSuchFieldException absentInThisMinecraftVersion) {}
+            return tag;
+        } catch (IllegalAccessException failure) {
+            throw new IOException("Cannot capture native base persistence", failure);
+        }
+    }
+
+    /** Bind only an isolated factory result, before reviewed local decoding; never installs into a server world. */
+    public static void bindDetached(TileEntity tile, World world, NBTTagCompound tag) throws IOException {
+        if (!(world instanceof HologramResourceWorld)) throw unsupported("native factory requires a detached world");
+        tile.setWorldObj(world);
+        tile.xCoord = tag.getInteger("x");
+        tile.yCoord = tag.getInteger("y");
+        tile.zCoord = tag.getInteger("z");
+        ((HologramResourceWorld) world).tile = tile;
+    }
+
+    /** Internal audited factory helper; supplied NBT never selects an arbitrary tile class. */
+    public static TileEntity createDetached(Block block, int metadata, NBTTagCompound tag, World world)
+        throws IOException {
+        if (!(world instanceof HologramResourceWorld)) throw unsupported("native factory requires a detached world");
+        TileEntity tile = block.createTileEntity(world, metadata);
+        if (tile == null) throw unsupported("missing native tile factory");
+        validateFactoryId(tag, tile);
+        tile.setWorldObj(world);
+        tile.xCoord = tag.getInteger("x");
+        tile.yCoord = tag.getInteger("y");
+        tile.zCoord = tag.getInteger("z");
+        ((HologramResourceWorld) world).tile = tile;
+        tile.readFromNBT((NBTTagCompound) tag.copy());
+        return tile;
     }
 
     private static boolean rewriteCableOwners(Object host, NBTTagCompound rootTag, int playerId) throws Exception {
@@ -493,7 +614,6 @@ public final class HologramNativePlacement {
             String type = block.getClass()
                 .getName();
             return HologramBlockIdentity.vanillaSign(block) || type.equals("codechicken.multipart.BlockMultipart")
-                || type.startsWith("com.carpentersblocks.block.")
                 || type.equals("com.creativemd.littletiles.common.blocks.BlockTile")
                 || type.equals("gcewing.architecture.common.block.BlockShape")
                 || type.equals("crazypants.enderio.conduit.BlockConduitBundle")
@@ -561,19 +681,9 @@ public final class HologramNativePlacement {
                             throw unsupported("unregistered ArchitectureCraft material");
                     }
                 }
-                if (type.equals("com.carpentersblocks.block.BlockCarpentersSlope")) {
-                    java.lang.reflect.Field registered = Class.forName("com.carpentersblocks.data.Slope")
-                        .getDeclaredField("slopesList");
-                    registered.setAccessible(true);
-                    Object[] shapes = (Object[]) registered.get(null);
-                    int shape = tag.getInteger("cbMetadata");
-                    if (!tag.hasKey("cbMetadata", 99) || shape < 0 || shape >= shapes.length || shapes[shape] == null)
-                        throw unsupported("unregistered Carpenter slope shape");
-                }
                 tile = block.createTileEntity(world, metadata);
                 if (tile == null) throw unsupported("missing native tile factory");
-                if (type.startsWith("com.carpentersblocks.block.")
-                    || type.equals("gcewing.architecture.common.block.BlockShape")
+                if (type.equals("gcewing.architecture.common.block.BlockShape")
                     || type.equals("com.creativemd.littletiles.common.blocks.BlockTile")) validateFactoryId(tag, tile);
                 tile.setWorldObj(world);
                 tile.xCoord = tag.getInteger("x");
@@ -584,21 +694,6 @@ public final class HologramNativePlacement {
                 if (type.equals("com.creativemd.littletiles.common.blocks.BlockTile")
                     && ((List<?>) call(tile, "getTiles", new Class<?>[0])).size() != tag.getInteger("tilesCount"))
                     throw unsupported("unregistered LittleTiles component");
-                if (type.startsWith("com.carpentersblocks.block.")) {
-                    if (tag.hasKey("cbOwner") && !tag.hasKey("cbOwner", 8))
-                        throw unsupported("invalid Carpenter ownership type");
-                    java.util.Set<Byte> retained = new java.util.HashSet<>();
-                    for (int i = 0; i < tag.getTagList("cbAttrList", 10)
-                        .tagCount(); i++) {
-                        byte attr = tag.getTagList("cbAttrList", 10)
-                            .getCompoundTagAt(i)
-                            .getByte("cbAttribute");
-                        if (attr < 0 || attr > 25 || !retained.add(attr))
-                            throw unsupported("unregistered or duplicate Carpenter attribute");
-                        if (!(Boolean) call(tile, "hasAttribute", new Class<?>[] { byte.class }, attr))
-                            throw unsupported("unregistered Carpenter material");
-                    }
-                }
                 if (type.equals("crazypants.enderio.conduit.BlockConduitBundle")
                     && ((java.util.Collection<?>) call(tile, "getConduits", new Class<?>[0])).size()
                         != tag.getTagList("conduits", 10)
@@ -655,19 +750,6 @@ public final class HologramNativePlacement {
                         costs.add((ItemStack) call(drops, "next", new Class<?>[0]));
                     if (costs.size() == count) throw unsupported("multipart part has no material");
                 }
-            } else if (type.startsWith("com.carpentersblocks.block.")) {
-                Item base = Item.getItemFromBlock(block);
-                if (base == null) throw unsupported("Carpenter block item is missing");
-                costs.add(new ItemStack(base, 1, block.damageDropped(metadata)));
-                for (byte attr = 0; attr < 26; attr++)
-                    if ((Boolean) call(tile, "hasAttribute", new Class<?>[] { byte.class }, attr)) {
-                        ItemStack cost = (ItemStack) call(
-                            tile,
-                            "getAttributeForDrop",
-                            new Class<?>[] { byte.class },
-                            attr);
-                        costs.add(cost);
-                    }
             } else if (type.equals("appeng.block.networking.BlockCableBus")) {
                 Object container = call(tile, "getCableBus", new Class<?>[0]);
                 call(container, "getDrops", new Class<?>[] { List.class }, costs);

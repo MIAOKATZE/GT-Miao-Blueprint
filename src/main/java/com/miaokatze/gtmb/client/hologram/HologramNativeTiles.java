@@ -18,7 +18,7 @@ final class HologramNativeTiles {
         if (HologramNativeRenderRegistry.adapter(block) != null) return true;
         String name = block.getClass()
             .getName();
-        return name.startsWith("com.carpentersblocks.block.") || name.equals("codechicken.multipart.BlockMultipart")
+        return name.equals("codechicken.multipart.BlockMultipart")
             || name.equals("com.creativemd.littletiles.common.blocks.BlockTile")
             || name.equals("gcewing.architecture.common.block.BlockShape")
             || name.equals("gcewing.architecture.common.block.BlockSawbench")
@@ -47,9 +47,7 @@ final class HologramNativeTiles {
         boolean conduitBundle = block.getClass()
             .getName()
             .equals("crazypants.enderio.conduit.BlockConduitBundle");
-        boolean carpenters = block.getClass()
-            .getName()
-            .startsWith("com.carpentersblocks.block.");
+        boolean detachedRead = conduitBundle || HologramNativeRenderRegistry.detachedRead(block, adapter);
         boolean littleTiles = block.getClass()
             .getName()
             .equals("com.creativemd.littletiles.common.blocks.BlockTile");
@@ -65,17 +63,14 @@ final class HologramNativeTiles {
         // EnderIO's client NBT reader scans Minecraft.theWorld.playerEntities
         // when worldObj is remote. Its static renderer needs only the decoded
         // local conduit state; leave the new tile detached during that reader.
-        // TEBase.readFromNBT calls updateWorldAndLighting. Keep Carpenter tiles
-        // detached until decoding completes: the bounded access cannot publish a
-        // half-decoded tile during that lighting query. Its renderer still gets
-        // the isolated world afterwards, including neighbors and light covers.
-        tile.setWorldObj(conduitBundle || carpenters ? null : world);
+        // Family policies can also defer world binding until a complete visual payload has been decoded.
+        tile.setWorldObj(detachedRead ? null : world);
         tile.xCoord = x;
         tile.yCoord = y;
         tile.zCoord = z;
         if (adapter == null) tile.readFromNBT(tag);
         else adapter.loadTile(tile, tag);
-        if (conduitBundle || carpenters) tile.setWorldObj(world);
+        if (detachedRead) tile.setWorldObj(world);
         if (littleTiles && adapter == null) {
             java.util.List<?> loaded = (java.util.List<?>) tile.getClass()
                 .getMethod("getTiles")

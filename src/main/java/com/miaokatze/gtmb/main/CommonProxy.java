@@ -50,6 +50,10 @@ public class CommonProxy {
         engineReady = true;
     }
 
+    public void postInit() {
+        com.miaokatze.gtmb.compat.BlueprintCompatibility.initialize();
+    }
+
     /** Called after local testlab provider setup; dedicated servers never link client event classes. */
     public void testLabClientReady() {}
 

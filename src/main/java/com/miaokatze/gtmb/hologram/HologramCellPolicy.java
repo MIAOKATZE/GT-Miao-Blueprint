@@ -40,6 +40,11 @@ final class HologramCellPolicy {
 
     private HologramCellPolicy() {}
 
+    static boolean nativePlacement(HologramSession s, HologramCapture.Cell cell) {
+        return HologramNativePlacement
+            .supportedBlueprint(cell.block, s.virtualPreset == null || s.virtualPreset.retainNbt ? cell.tileNbt : null);
+    }
+
     static ExtendedFacing virtualControllerFacing(HologramSession s) {
         ExtendedFacing facing = HologramVirtualTransform.controller(s.virtualPreset);
         Integer front = s.facingPins.get(s.x + "," + s.y + "," + s.z);
@@ -287,7 +292,7 @@ final class HologramCellPolicy {
         if (s.virtual && s.virtualPreset != null
             && s.virtualPreset.schema >= 2
             && !HologramRecovery.hasSeal(wanted)
-            && (HologramNativePlacement.supported(c.block) && old != c.block
+            && (nativePlacement(s, c) && old != c.block
                 || wanted.getItem() instanceof ItemMachines && old != Block.getBlockFromItem(wanted.getItem())
                 || old == Blocks.air && wanted.getItem() instanceof ItemBlock
                     && Block.getBlockFromItem(wanted.getItem()) != Blocks.air))
@@ -314,7 +319,7 @@ final class HologramCellPolicy {
                 return false;
             }
         }
-        if (s.virtual && s.virtualPreset.schema >= 2 && HologramNativePlacement.supported(c.block)) {
+        if (s.virtual && s.virtualPreset.schema >= 2 && nativePlacement(s, c)) {
             // A multipart/conduit material item often has no ItemBlock and maps to air.
             // Only the captured native block can satisfy this target, never that item's block mapping.
             if (old != c.block || meta != c.meta && !HologramEnergyPayload.volatileEnergyMetadata(c.block))
@@ -497,6 +502,7 @@ final class HologramCellPolicy {
                 if (prepared != null) prepared[0] = cache;
                 NBTTagCompound tile = cache.tileEmpty;
                 NBTTagCompound item = cache.itemEmpty;
+                if (!HologramNativePlacement.supported(cell.block, tile)) adapter = null;
                 Block finalBlock = targetPreviewBlock(s, cell, finalTarget);
                 int finalMeta = targetPreviewMeta(s, cell, finalTarget);
                 HologramEssentia.validatePlacement(finalBlock, finalMeta, tile);
@@ -506,7 +512,8 @@ final class HologramCellPolicy {
                     List<ItemStack> nativeComponents = adapter != null
                         ? HologramNativePlacement.materials(cell.block, cell.meta, tile)
                         : Collections.emptyList();
-                    cell.resourcePlan = HologramBlueprintResources.plan(tile, nativeComponents)
+                    cell.resourcePlan = HologramBlueprintResources
+                        .plan(tile, nativeComponents, adapter != null && adapter.includesInventoryDrops(cell.block))
                         .merge(HologramBlueprintResources.plan(item));
                     if (adapter != null && decoration(s, cell) == null) {
                         if (!s.virtualPreset.retainNbt)
@@ -589,7 +596,7 @@ final class HologramCellPolicy {
         if (!s.virtual || s.virtualPreset == null || s.virtualPreset.schema < 2) return nativeMetadata;
         validateOrdinarySourceVariant(s, cell);
         Block material = Block.getBlockFromItem(target.getItem());
-        if (HologramNativePlacement.supported(cell.block)) return cell.meta;
+        if (nativePlacement(s, cell)) return cell.meta;
         if (target.getItem() instanceof ItemMachines) return cell.block == material ? cell.meta : nativeMetadata;
         if (!(target.getItem() instanceof ItemBlock)) return nativeMetadata;
         try {
@@ -604,7 +611,7 @@ final class HologramCellPolicy {
     static void validateOrdinarySourceVariant(HologramSession s, HologramCapture.Cell cell) throws java.io.IOException {
         if (!s.virtual || s.virtualPreset == null
             || s.virtualPreset.schema < 2
-            || HologramNativePlacement.supported(cell.block)
+            || nativePlacement(s, cell)
             || cell.blueprintItem.isEmpty()) return;
         Object original = Item.itemRegistry.getObject(cell.blueprintItem);
         if (original instanceof ItemBlock && !(original instanceof ItemMachines)) HologramPresets
@@ -612,9 +619,9 @@ final class HologramCellPolicy {
     }
 
     static Block targetPreviewBlock(HologramSession s, HologramCapture.Cell cell, ItemStack target) {
-        if (target == null || s.virtual && s.virtualPreset != null
-            && s.virtualPreset.schema >= 2
-            && HologramNativePlacement.supported(cell.block)) return cell.block;
+        if (target == null
+            || s.virtual && s.virtualPreset != null && s.virtualPreset.schema >= 2 && nativePlacement(s, cell))
+            return cell.block;
         Block material = Block.getBlockFromItem(target.getItem());
         if (s.virtual && s.virtualPreset != null
             && s.virtualPreset.schema >= 2
@@ -634,7 +641,7 @@ final class HologramCellPolicy {
         throws java.io.IOException {
         if (paid == null || !(paid.getItem() instanceof ItemBlock)
             || paid.getItem() instanceof ItemMachines
-            || HologramNativePlacement.supported(cell.block)) return;
+            || HologramNativePlacement.supported(cell.block, null)) return;
         Block actual = world.getBlock(cell.x, cell.y, cell.z);
         HologramPresets.validateMaterialVariant(actual, world.getBlockMetadata(cell.x, cell.y, cell.z), paid);
         try {
@@ -1112,7 +1119,7 @@ final class HologramCellPolicy {
     static void setBlueprintTarget(HologramSession s, HologramCapture.Cell cell, ItemStack target) {
         if (!s.virtual || s.virtualPreset == null || s.virtualPreset.schema < 2 || target == null) return;
         Block block = Block.getBlockFromItem(target.getItem());
-        if (HologramNativePlacement.supported(cell.block)) {
+        if (nativePlacement(s, cell)) {
             try {
                 if (HologramNativePlacement
                     .matchesSample(cell.block, cell.meta, HologramBlueprintNbt.decode(cell.tileNbt), target))
@@ -1124,8 +1131,7 @@ final class HologramCellPolicy {
         int metadata = target.getItem()
             .getMetadata(target.getItemDamage());
         try {
-            if (!HologramNativePlacement.supported(cell.block) || block == cell.block)
-                metadata = targetPreviewMeta(s, cell, target);
+            if (!nativePlacement(s, cell) || block == cell.block) metadata = targetPreviewMeta(s, cell, target);
         } catch (java.io.IOException invalidSource) {
             // This explicit user choice repairs its source identity using the chosen native material.
         }
@@ -1150,7 +1156,7 @@ final class HologramCellPolicy {
 
     /** Saved declarations contain identities, while native cuts require the exact retained shape NBT. */
     private static ItemStack declaredSample(HologramSession s, HologramCapture.Cell cell, ItemStack identity) {
-        if (s.virtual && s.virtualPreset.schema >= 2 && HologramNativePlacement.supported(cell.block)) {
+        if (s.virtual && s.virtualPreset.schema >= 2 && nativePlacement(s, cell)) {
             try {
                 ItemStack nativeSample = HologramNativePlacement
                     .sample(cell.block, cell.meta, HologramBlueprintNbt.decode(cell.tileNbt));
@@ -1208,7 +1214,7 @@ final class HologramCellPolicy {
             int id = sample.getItemDamage();
             return id >= 0 && id < GregTechAPI.METATILEENTITIES.length && GregTechAPI.METATILEENTITIES[id] != null;
         }
-        if (s.virtual && s.virtualPreset.schema >= 2 && HologramNativePlacement.supported(cell.block)) {
+        if (s.virtual && s.virtualPreset.schema >= 2 && nativePlacement(s, cell)) {
             try {
                 return HologramNativePlacement
                     .matchesSample(cell.block, cell.meta, HologramBlueprintNbt.decode(cell.tileNbt), sample);

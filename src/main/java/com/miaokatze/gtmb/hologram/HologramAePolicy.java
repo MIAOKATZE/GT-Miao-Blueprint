@@ -383,13 +383,17 @@ final class HologramAePolicy {
                     total.merge(HologramAeBlueprint.resourcePlan(block, cell.metadata, payload, null));
                 } else {
                     payload = HologramBlueprintNbt.nativePayload(payload);
-                    boolean nativePlacement = HologramNativePlacement.supported(block);
+                    boolean nativePlacement = HologramNativePlacement.supported(block, payload);
                     List<ItemStack> nativeCosts = nativePlacement
                         ? HologramNativePlacement.materials(block, cell.metadata, payload)
                         : java.util.Collections.emptyList();
-                    List<ItemStack> attributeCredits = new ArrayList<>();
+                    HologramNativePlacement.Adapter adapter = nativePlacement ? HologramNativePlacement.adapter(block)
+                        : null;
+                    boolean inventoryDrops = adapter != null && adapter.includesInventoryDrops(block);
+                    List<ItemStack> credits = inventoryDrops ? nativeCosts : new ArrayList<>();
                     String blockId = block == null ? null : Block.blockRegistry.getNameForObject(block);
-                    if (blockId != null && Block.getBlockFromName(blockId) == block
+                    if (!inventoryDrops && blockId != null
+                        && Block.getBlockFromName(blockId) == block
                         && block.getClass()
                             .getName()
                             .startsWith("com.carpentersblocks.block.")) {
@@ -408,12 +412,11 @@ final class HologramAePolicy {
                             }
                             if (remaining != 0)
                                 throw new IOException("Native Carpenter attribute has no complete material bill");
-                            attributeCredits.add(attribute.copy());
+                            credits.add(attribute.copy());
                         }
                     }
-                    // Only audited cbAttrList rows receive credit. The shell and unrelated native costs cannot
-                    // exempt an independent unknown item record elsewhere in this payload.
-                    HologramBlueprintResources.Plan extra = HologramBlueprintResources.plan(payload, attributeCredits)
+                    HologramBlueprintResources.Plan extra = HologramBlueprintResources
+                        .plan(payload, credits, inventoryDrops)
                         .merge(
                             HologramBlueprintResources
                                 .plan(HologramBlueprintNbt.nativePayload(HologramBlueprintNbt.decode(cell.itemNbt))));

@@ -1,12 +1,17 @@
 package com.miaokatze.gtmb.api;
 
 import java.io.IOException;
+import java.math.BigInteger;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
+import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraftforge.fluids.Fluid;
 import net.minecraftforge.fluids.FluidRegistry;
@@ -17,6 +22,7 @@ public final class ResourceContainers {
 
     private static final int MAX_SLOTS = 512;
     private static final Map<String, FluidCodec> CODECS = new LinkedHashMap<>();
+    private static final Map<String, RootCodec> ROOT_CODECS = new LinkedHashMap<>();
     private static long generation;
 
     private ResourceContainers() {}
@@ -79,6 +85,200 @@ public final class ResourceContainers {
          * callbacks must not access worlds, mutate live storage, tick devices, perform I/O or authorize placement.
          */
         List<FluidAmount> decode(Context context) throws IOException;
+    }
+
+    /** Complete source payload and its selected root fields. No world or inventory access is supplied. */
+    public static final class RootContext {
+
+        public final String nativeTileId;
+        public final int machineId;
+        public final Set<String> selectedRoots;
+        private final NBTTagCompound root;
+        private final Set<Set<String>> groups = new LinkedHashSet<>();
+
+        private RootContext(NBTTagCompound root, Set<String> selectedRoots) {
+            this.root = (NBTTagCompound) root.copy();
+            nativeTileId = root.getString("id");
+            machineId = root.hasKey("mID", 99) ? root.getInteger("mID") : -1;
+            this.selectedRoots = Collections.unmodifiableSet(new LinkedHashSet<>(selectedRoots));
+        }
+
+        public NBTTagCompound root() {
+            return (NBTTagCompound) root.copy();
+        }
+
+        /**
+         * Check before decoding an atomic group. Absent optional fields do not need selection. False means the
+         * complete group is unselected; a partially selected group is rejected instead of losing its identity/tag.
+         */
+        public boolean selectedGroup(String... roots) throws IOException {
+            Set<String> group = new LinkedHashSet<>(java.util.Arrays.asList(roots));
+            groups.add(group);
+            return ResourceContainers.selectedGroup(root, selectedRoots, group);
+        }
+    }
+
+    /**
+     * One atomic root-field group and its retained-content bill. Items are physical retained contents, not free
+     * templates: native component payment covers them only when the adapter explicitly includes inventory drops.
+     */
+    public static final class RootClaim {
+
+        public final Set<String> roots;
+        /** Exact EU, using the existing blueprint resource Plan unit. */
+        public final BigInteger energy;
+        private final List<ItemStack> items;
+        private final List<FluidAmount> fluids;
+
+        public RootClaim(Iterable<String> roots, List<ItemStack> items, List<FluidAmount> fluids, BigInteger energy) {
+            if (roots == null || items == null || fluids == null || energy == null || energy.signum() < 0)
+                throw new IllegalArgumentException("Complete root resource group and nonnegative bill required");
+            Set<String> names = new LinkedHashSet<>();
+            for (String key : roots) {
+                if (key == null || key.isEmpty() || key.length() > 256 || !names.add(key))
+                    throw new IllegalArgumentException("Invalid or duplicate claimed root field");
+            }
+            if (names.isEmpty() || names.size() > MAX_SLOTS || items.size() > MAX_SLOTS || fluids.size() > MAX_SLOTS)
+                throw new IllegalArgumentException("Root resource group exceeds capacity");
+            this.roots = Collections.unmodifiableSet(names);
+            this.items = new ArrayList<>();
+            for (ItemStack item : items) {
+                if (item == null || item.getItem() == null
+                    || item.stackSize <= 0
+                    || item.getItemDamage() < 0
+                    || Item.getItemById(Item.getIdFromItem(item.getItem())) != item.getItem())
+                    throw new IllegalArgumentException(
+                        "Root resource item requires a registered identity and positive count");
+                this.items.add(item.copy());
+            }
+            this.fluids = new ArrayList<>();
+            for (FluidAmount fluid : fluids) {
+                if (fluid == null) throw new IllegalArgumentException("Root resource fluid is null");
+                this.fluids.add(new FluidAmount(fluid.identity(), fluid.amount));
+            }
+            this.energy = energy;
+        }
+
+        public List<ItemStack> items() {
+            List<ItemStack> copy = new ArrayList<>();
+            for (ItemStack item : items) copy.add(item.copy());
+            return Collections.unmodifiableList(copy);
+        }
+
+        public List<FluidAmount> fluids() {
+            return Collections.unmodifiableList(fluids);
+        }
+    }
+
+    public interface RootCodec {
+
+        /**
+         * Match an exact reviewed native schema before reading its root. Return null for unrelated/unselected
+         * groups. Declare the group with selectedGroup before decoding quantities, including when unselected. A
+         * claim owns every named root subtree completely, including configuration fields inside it:
+         * validate all types, quantities and fields, or throw IOException. decodeRoots never falls back after a
+         * rejection; declaration-only review does not approve resources.
+         */
+        RootClaim decode(RootContext context) throws IOException;
+    }
+
+    /** Additive root-group codec; shares the existing registration catalog and material-cache generation. */
+    public static GTMBExtensions.Registration registerRoot(String id, RootCodec codec) {
+        if (codec == null) throw new IllegalArgumentException("codec");
+        return GTMBExtensions.install(id, "resource-root-group", () -> {
+            synchronized (CODECS) {
+                ROOT_CODECS.put(id, codec);
+                generation++;
+            }
+            return () -> {
+                synchronized (CODECS) {
+                    if (ROOT_CODECS.remove(id, codec)) generation++;
+                }
+            };
+        });
+    }
+
+    /** Field-group closure only; full schema/quantity approval remains the resource planner's responsibility. */
+    public static void validateSelection(NBTTagCompound root, Set<String> selectedRoots) throws IOException {
+        if (root == null || selectedRoots == null) throw new IllegalArgumentException("root and selection required");
+        for (Set<String> group : declaredGroups(root)) selectedGroup(root, selectedRoots, group);
+    }
+
+    /** Read-only, root-isolated review must retain every present companion of the requested atomic group. */
+    public static Set<String> resourceCompanions(NBTTagCompound root, String rootKey) {
+        if (root == null || rootKey == null) throw new IllegalArgumentException("root and requested field required");
+        Set<String> result = new LinkedHashSet<>();
+        for (Set<String> group : declaredGroups(root)) if (group.contains(rootKey)) result.addAll(group);
+        return Collections.unmodifiableSet(result);
+    }
+
+    private static Set<Set<String>> declaredGroups(NBTTagCompound root) {
+        List<RootCodec> codecs;
+        synchronized (CODECS) {
+            if (ROOT_CODECS.isEmpty()) return Collections.emptySet();
+            codecs = new ArrayList<>(ROOT_CODECS.values());
+        }
+        RootContext context = new RootContext(root, Collections.emptySet());
+        for (RootCodec codec : codecs) {
+            try {
+                RootClaim claim = codec.decode(context);
+                if (claim != null) context.groups.add(claim.roots);
+            } catch (IOException | RuntimeException | LinkageError rejectedSchema) {
+                // Inspection must still expose removal controls for malformed native data. Groups declared before
+                // decoding remain available; decodeRoots separately preserves every actual resource rejection.
+            }
+        }
+        return context.groups;
+    }
+
+    private static boolean selectedGroup(NBTTagCompound root, Set<String> selectedRoots, Set<String> group)
+        throws IOException {
+        int present = 0, selected = 0;
+        for (String key : group) if (root.hasKey(key)) {
+            present++;
+            if (selectedRoots.contains(key)) selected++;
+        }
+        if (selected != 0 && selected != present)
+            throw new IOException("Root resource field selection is incomplete: " + group);
+        return selected != 0;
+    }
+
+    /** Plan a payload whose remaining root fields have already been selected. */
+    public static List<RootClaim> decodeRoots(NBTTagCompound root) throws IOException {
+        if (root == null) throw new IllegalArgumentException("root required");
+        synchronized (CODECS) {
+            if (ROOT_CODECS.isEmpty()) return Collections.emptyList();
+        }
+        Set<String> selected = new LinkedHashSet<>();
+        for (Object key : root.func_150296_c()) selected.add((String) key);
+        return decodeRoots(root, selected);
+    }
+
+    public static List<RootClaim> decodeRoots(NBTTagCompound root, Set<String> selectedRoots) throws IOException {
+        if (root == null || selectedRoots == null) throw new IllegalArgumentException("root and selection required");
+        Map<String, RootCodec> entries;
+        synchronized (CODECS) {
+            if (ROOT_CODECS.isEmpty()) return Collections.emptyList();
+            entries = new LinkedHashMap<>(ROOT_CODECS);
+        }
+        RootContext context = new RootContext(root, selectedRoots);
+        List<RootClaim> result = new ArrayList<>();
+        Set<String> claimed = new LinkedHashSet<>();
+        for (Map.Entry<String, RootCodec> entry : entries.entrySet()) {
+            try {
+                RootClaim claim = entry.getValue()
+                    .decode(context);
+                if (claim == null || !context.selectedGroup(claim.roots.toArray(new String[0]))) continue;
+                // Absent optional names are reserved too: two selected groups must never disagree about an
+                // optional field's owner when that field appears in another valid payload of the same schema.
+                for (String key : claim.roots)
+                    if (!claimed.add(key)) throw new IOException("Overlapping root resource claim: " + key);
+                result.add(claim);
+            } catch (IOException | RuntimeException | LinkageError failure) {
+                throw new IOException("Root resource codec rejected: " + entry.getKey(), failure);
+            }
+        }
+        return Collections.unmodifiableList(result);
     }
 
     /** Register a trusted codec in declaration order. Closing its handle invalidates cached material plans. */

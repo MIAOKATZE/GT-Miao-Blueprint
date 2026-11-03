@@ -14,6 +14,8 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.server.dedicated.DedicatedServer;
 import net.minecraft.tileentity.TileEntity;
 
+import com.miaokatze.gtmb.api.GTMBExtensions;
+import com.miaokatze.gtmb.compat.carpenters.common.CarpentersCompatibility;
 import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
@@ -41,40 +43,81 @@ public final class HologramCarpenterOwnerRegression {
         Block block = (Block) Class.forName("com.carpentersblocks.block.BlockCoverable")
             .getConstructor(Material.class)
             .newInstance(Material.wood);
-        Method bind = HologramNativePlacement.class
-            .getDeclaredMethod("bindCarpenterOwner", Block.class, TileEntity.class, EntityPlayerMP.class);
-        bind.setAccessible(true);
-        for (boolean online : new boolean[] { false, true }) {
-            DedicatedServer server = allocate(DedicatedServer.class);
-            server.setOnlineMode(online);
-            Actor actor = allocate(Actor.class);
-            actor.identity = new UUID(333, 444);
-            actor.name = "NewCarpenterOwner";
-            field(EntityPlayerMP.class, "mcServer").set(actor, server);
-            TileEntity source = prepared(base), target = prepared(base);
-            NBTTagCompound before = snapshot(source);
+        HologramNativePlacement.Adapter external = new HologramNativePlacement.Adapter() {
+
+            public boolean supports(Block candidate) {
+                return candidate.getClass()
+                    .getName()
+                    .startsWith("com.carpentersblocks.block.");
+            }
+
+            public TileEntity create(Block candidate, int metadata, NBTTagCompound tag,
+                net.minecraft.world.World world) {
+                throw new AssertionError("precedence fixture must not invoke factories");
+            }
+
+            public java.util.List<ItemStack> materials(Block candidate, int metadata, TileEntity tile) {
+                throw new AssertionError("precedence fixture must not invoke material callbacks");
+            }
+        };
+        HologramNativePlacement.register("gtmb_test:carpenter_override", external);
+        try (GTMBExtensions.Registration registration = CarpentersCompatibility.install()) {
             SimpleAssert.that(
-                !HologramDeidentification.foreignOwner(block, before, actor.identity, actor.name),
-                "actual Carpenter root ownership does not block level-zero import");
+                HologramNativePlacement.adapter(block) == external,
+                "a community adapter installed before optional built-ins retains precedence");
+            HologramNativePlacement.unregister("gtmb_test:carpenter_override", external);
+            HologramNativePlacement.Adapter carpenter = HologramNativePlacement.adapter(block);
+            SimpleAssert.that(carpenter != null, "explicit module installation registers native Carpenter placement");
+            HologramNativePlacement.register("gtmb_test:carpenter_override", external);
+            for (boolean online : new boolean[] { false, true }) {
+                DedicatedServer server = allocate(DedicatedServer.class);
+                server.setOnlineMode(online);
+                Actor actor = allocate(Actor.class);
+                actor.identity = new UUID(333, 444);
+                actor.name = "NewCarpenterOwner";
+                field(EntityPlayerMP.class, "mcServer").set(actor, server);
+                TileEntity source = prepared(base), target = prepared(base);
+                NBTTagCompound before = snapshot(source);
+                SimpleAssert.that(
+                    !HologramDeidentification.foreignOwner(block, before, actor.identity, actor.name),
+                    "actual Carpenter root ownership does not block level-zero import");
+                SimpleAssert.that(
+                    !HologramDeidentification.foreignOwner(before, actor.identity, actor.name),
+                    "registered native alias has the same nonblocking ownership semantics");
+                carpenter.prepareActor(block, target, actor);
+                NBTTagCompound after = snapshot(target);
+                TileEntity overriddenTarget = prepared(base);
+                HologramNativePlacement.adapter(block)
+                    .prepareActor(block, overriddenTarget, actor);
+                SimpleAssert.eq(
+                    after,
+                    snapshot(overriddenTarget),
+                    "legacy external adapters retain the installed native family ownership policy");
+                SimpleAssert.eq(
+                    online ? actor.identity.toString() : actor.name,
+                    after.getString("cbOwner"),
+                    "real ProtectedObject chooses native online UUID or offline name");
+                NBTTagCompound expected = (NBTTagCompound) before.copy();
+                expected.setString("cbOwner", after.getString("cbOwner"));
+                SimpleAssert.eq(expected, after, "native binding preserves all skin, shape, design and chisel data");
+                SimpleAssert.eq(before, snapshot(source), "source tile is never changed by new placement ownership");
+                before.setString("mOwnerUUID", new UUID(55, 66).toString());
+                SimpleAssert.that(
+                    HologramDeidentification.foreignOwner(block, before, actor.identity, actor.name),
+                    "unrelated device identity still blocks even on a native Carpenter root");
+            }
+            HologramNativePlacement.unregister("gtmb_test:carpenter_override", external);
+            HologramCarpentersCompatibilityRegression.run(base);
+            Block slope = Block.getBlockFromName("CarpentersBlocks:blockCarpentersSlope");
             SimpleAssert.that(
-                !HologramDeidentification.foreignOwner(before, actor.identity, actor.name),
-                "registered native alias has the same nonblocking ownership semantics");
-            bind.invoke(null, block, target, actor);
-            NBTTagCompound after = snapshot(target);
-            SimpleAssert.eq(
-                online ? actor.identity.toString() : actor.name,
-                after.getString("cbOwner"),
-                "real ProtectedObject chooses native online UUID or offline name");
-            NBTTagCompound expected = (NBTTagCompound) before.copy();
-            expected.setString("cbOwner", after.getString("cbOwner"));
-            SimpleAssert.eq(expected, after, "native binding preserves all skin, shape, design and chisel data");
-            SimpleAssert.eq(before, snapshot(source), "source tile is never changed by new placement ownership");
-            before.setString("mOwnerUUID", new UUID(55, 66).toString());
-            SimpleAssert.that(
-                HologramDeidentification.foreignOwner(block, before, actor.identity, actor.name),
-                "unrelated device identity still blocks even on a native Carpenter root");
+                external.matchesMaterial(slope, new ItemStack(slope), new ItemStack(slope, 1, 4)),
+                "legacy external adapters retain equivalent native slope shell identities");
+        } finally {
+            HologramNativePlacement.unregister("gtmb_test:carpenter_override", external);
         }
-        HologramCarpentersCompatibilityRegression.run(base);
+        SimpleAssert.that(
+            !HologramNativePlacement.supported(block),
+            "closing the optional module removes only its placement registration");
         System.out.println(
             "GTMB_CARPENTER_OWNER PASS native 3.7.3 online/offline binding and exact nonowner persistence; no world/GUI claim");
     }

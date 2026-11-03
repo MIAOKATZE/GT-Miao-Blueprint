@@ -45,7 +45,7 @@ final class HologramPlanPolicy {
         boolean resourceChecked = s.mode != 2 && s.virtual
             && s.virtualPreset != null
             && s.virtualPreset.schema >= 2
-            && HologramNativePlacement.supported(c.block);
+            && HologramCellPolicy.nativePlacement(s, c);
         if (resourceChecked && !HologramCellPolicy.resourcePlanValid(s, c)) return "unsupported";
         boolean approvedNativePrimary = false;
         boolean sampleApproved = false;
@@ -59,7 +59,7 @@ final class HologramPlanPolicy {
                 && s.virtualPreset.schema >= 2
                 && !(proposed.getItem() instanceof ItemMachines)
                 && !c.tileNbt.isEmpty()
-                && HologramNativePlacement.adapter(c.block) != null;
+                && HologramCellPolicy.nativePlacement(s, c);
         }
         if (c.unknown && HologramCellPolicy.targetFor(s, c, index) == null) return "unsupported";
         if (!c.sourceWarning.isEmpty() && "templateController".equals(c.role)) return "unsupported";

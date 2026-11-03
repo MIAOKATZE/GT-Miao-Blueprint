@@ -42,8 +42,9 @@ public final class GTMBExtensions {
         return ACTIVE.snapshot();
     }
 
-    /** Internal bridge shared by the versioned API modules; installation must return an exact removal action. */
-    static synchronized Registration install(String id, String kind, java.util.function.Supplier<Runnable> install) {
+    /** Internal bridge for API and built-in modules; installation must return an exact removal action. */
+    public static synchronized Registration install(String id, String kind,
+        java.util.function.Supplier<Runnable> install) {
         Descriptor descriptor = new Descriptor(id, kind);
         ExtensionCatalog.Handle<Descriptor> handle = ACTIVE.install(id, descriptor, install);
         return new Registration() {

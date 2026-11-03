@@ -111,7 +111,7 @@ final class HologramBlueprintProjection {
                     .getOrDefault(HologramValues.position(cell), s.planFacings.getOrDefault(i, cell.actualFacing)),
                 cell.anchor || "templateController".equals(cell.role));
             Block block = HologramCellPolicy.targetPreviewBlock(s, cell, target);
-            if (HologramNativePlacement.supported(cell.block) || HologramAePolicy.handles(cell.block, cell.tileNbt)
+            if (HologramCellPolicy.nativePlacement(s, cell) || HologramAePolicy.handles(cell.block, cell.tileNbt)
                 || cell.block == Blocks.lit_redstone_lamp
                     && target.getItem() == Item.getItemFromBlock(Blocks.redstone_lamp))
                 block = cell.block;
@@ -320,14 +320,14 @@ final class HologramBlueprintProjection {
             boolean controllerMatches = controllerMatches(saved, savedWarning);
             ItemStack target = saved.missing() || !controllerMatches ? null
                 : HologramEssentia.shellMaterial(saved.stack());
-            boolean nativeTarget = target != null && HologramNativePlacement.supported(saved.block());
+            boolean nativeTarget = target != null && HologramNativePlacement
+                .supportedBlueprint(saved.block(), s.virtualPreset.retainNbt ? saved.tileNbt : null);
             if (target != null && (nativeTarget || saved.itemNbt != null && !saved.itemNbt.isEmpty())) {
                 try {
                     if (nativeTarget || !validation.knownUnsealedItem(saved.itemNbt)) {
                         NBTTagCompound payload = HologramBlueprintNbt.decode(saved.itemNbt);
                         boolean sealed = payload != null && payload.hasKey(HologramRecovery.TAG);
-                        if (HologramNativePlacement.supported(saved.block()) || sealed)
-                            target.setTagCompound(HologramBlueprintNbt.nativePayload(payload));
+                        if (nativeTarget || sealed) target.setTagCompound(HologramBlueprintNbt.nativePayload(payload));
                         else if (!nativeTarget) validation.rememberUnsealedItem(saved.itemNbt);
                     }
                 } catch (java.io.IOException invalid) {
@@ -336,7 +336,7 @@ final class HologramBlueprintProjection {
             }
             HologramCapture.Cell cell = new HologramCapture.Cell(null, s.x + saved.x, s.y + saved.y, s.z + saved.z);
             cell.block = s.virtualPreset.schema >= 2 && saved.block != null || target == null
-                || HologramNativePlacement.supported(saved.block())
+                || nativeTarget
                 || saved.block() == Blocks.lit_redstone_lamp ? saved.block() : Block.getBlockFromItem(target.getItem());
             cell.meta = s.virtualPreset.schema >= 2 ? saved.metadata
                 : target == null ? saved.metadata

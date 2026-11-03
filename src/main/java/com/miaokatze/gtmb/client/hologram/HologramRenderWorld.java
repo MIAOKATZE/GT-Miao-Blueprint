@@ -20,7 +20,7 @@ import net.minecraftforge.common.util.ForgeDirection;
 final class HologramRenderWorld extends World {
 
     private IBlockAccess access;
-    private CarpenterContext carpenterContext;
+    private MetadataOverride metadataOverride;
 
     HologramRenderWorld(HologramBlockAccess access) {
         this((IBlockAccess) access);
@@ -59,8 +59,8 @@ final class HologramRenderWorld extends World {
 
     @Override
     public int getBlockMetadata(int x, int y, int z) {
-        if (carpenterContext != null && carpenterContext.matches(x, y, z) && carpenterContext.metadata != null)
-            return carpenterContext.metadata;
+        if (metadataOverride != null && metadataOverride.matches(x, y, z) && metadataOverride.metadata != null)
+            return metadataOverride.metadata;
         return access == null ? 0 : access.getBlockMetadata(x, y, z);
     }
 
@@ -110,27 +110,29 @@ final class HologramRenderWorld extends World {
 
     @Override
     public boolean setBlockMetadataWithNotify(int x, int y, int z, int meta, int flags) {
-        if (flags == 4 && carpenterContext != null && carpenterContext.matches(x, y, z)) {
-            carpenterContext.metadata = meta;
+        if (flags == 4 && metadataOverride != null && metadataOverride.matches(x, y, z)) {
+            metadataOverride.metadata = meta;
             return true;
         }
         return false;
     }
 
-    /** TEBase temporarily impersonates cover metadata for native color/light queries. */
-    CarpenterContext carpenterRender(TileEntity tile) {
-        if (tile == null || tile.getWorldObj() != this || carpenterContext != null)
-            throw new IllegalArgumentException("Carpenter render context requires one detached tile");
-        carpenterContext = new CarpenterContext(tile.xCoord, tile.yCoord, tile.zCoord);
-        return carpenterContext;
+    /** A reviewed renderer can impersonate material metadata only at its own detached tile position. */
+    MetadataOverride metadataOverride(TileEntity tile) {
+        if (tile == null || tile.getWorldObj() != this
+            || metadataOverride != null
+            || getTileEntity(tile.xCoord, tile.yCoord, tile.zCoord) != tile)
+            throw new IllegalArgumentException("Metadata override requires one matching detached tile");
+        metadataOverride = new MetadataOverride(tile.xCoord, tile.yCoord, tile.zCoord);
+        return metadataOverride;
     }
 
-    final class CarpenterContext implements AutoCloseable {
+    final class MetadataOverride implements HologramNativeRenderRegistry.RenderScope {
 
         final int x, y, z;
         Integer metadata;
 
-        CarpenterContext(int x, int y, int z) {
+        MetadataOverride(int x, int y, int z) {
             this.x = x;
             this.y = y;
             this.z = z;
@@ -141,9 +143,14 @@ final class HologramRenderWorld extends World {
         }
 
         @Override
+        public IBlockAccess access() {
+            return HologramRenderWorld.this;
+        }
+
+        @Override
         public void close() {
             metadata = null;
-            if (carpenterContext == this) carpenterContext = null;
+            if (metadataOverride == this) metadataOverride = null;
         }
     }
 

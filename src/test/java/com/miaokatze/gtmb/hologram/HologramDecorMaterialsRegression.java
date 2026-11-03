@@ -247,6 +247,9 @@ final class HologramDecorMaterialsRegression {
         SimpleAssert.that(
             HologramBlueprintResources.plan(captured, nativeBill).items.isEmpty(),
             "construction resource inspection never charges the paid native attributes twice");
+        SimpleAssert.that(
+            HologramBlueprintResources.plan(captured, nativeBill, false).items.isEmpty(),
+            "native attributes still consume their exact component credits when inventory is excluded");
         HologramPresets.Preset preset = carpenterPreset(slope, captured);
         carpenterAuthoringRetainsPaidDecor(slope, captured, nativeBill);
         HologramBlueprintResources.Plan review = HologramAePolicy.materials(preset);

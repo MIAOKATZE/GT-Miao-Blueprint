@@ -1,10 +1,12 @@
-# GTMB 社区 API（0.1.5 / contract 1）
+# GTMB 社区 API（0.3.10 / contract 1）
 
 新集成应依赖 `com.miaokatze.gtmb.api`。`GTMBApi.getExtensionContractVersion()` 返回扩展契约版本；原有投影仪身份和 legacy mapping 契约保持兼容。API 使用宿主的 Minecraft、GTNH 和 StructureLib 类型。
 
 API 开放结构来源、声明解释、旋转、原生持久化与材料核算、显示、静态渲染，以及快照检查和处理报告。它不暴露 `HologramSession`、可变内部 Cell 或服务器世界操作入口。第三方代码是受信任的进程内 Java 代码，这些契约不构成代码沙箱。
 
 ## 注册与生命周期
+
+0.3.10 的新增接口保持旧注册及适配器行为。客户端和服务端最低 Core 均为 0.2.5。
 
 ```java
 GTMBExtensions.Registration registration = Declarations.registerReader(
@@ -102,6 +104,46 @@ piece 名、main/channel、负数 offset 和 Controller 坐标规则须来自声
 剪切预览直接复用 Forge 正式注册的 `ISimpleBlockRenderingHandler`，不通过反射构造通用 renderer 副本。构造器可能分配或改写全局 render ID；未注册的新 ID 会同时破坏世界几何和物品的 3D 判定。renderer 应在 Mod 客户端初始化阶段注册，渲染回调中不得注册或替换全局 handler。
 
 ## 流体容器材料解码
+
+### 原子根字段组（0.3.10）
+
+`ResourceContainers.registerRoot(id, RootCodec)` 补充现有完整流体子树接口，旧 `FluidCodec` 不变。
+`RootContext` 提供 `nativeTileId`、`machineId`、不可修改的 `selectedRoots` 和完整独立的 `root()` 副本；不提供世界或库存对象。
+codec 应先检查精确原生身份，再调用 `selectedGroup(...)` 声明其原子字段组，最后解码数量。
+全组未选返回不适用，部分选择明确失败；过滤前使用完整原始 NBT 检查闭合，移除路径后再复核实际保留根。
+当前不存在的可选字段也属于声明，两个 claim 不得共享同一个根字段。
+
+`RootClaim(roots, items, fluids, energy)` 分别提供声明根、真实物品数量、流体及 BigInteger EU。
+物品和流体身份复制隔离，数量须合法；没有计价的未知数据不能被 codec 声明为完整资源。
+claimed 根不再重复进入普通字段扫描，其余字段继续原有检查。
+只有声明发现/资源审阅可收集字段同伴；实际资源解码的错误始终拒绝，不会退回普通扫描。
+
+原生材料账单与 RootClaim 的保留内容分开核算。只有原生适配器声明 `includesInventoryDrops=true` 时，
+保留内容才可抵扣已收取的原生库存费用；壳和装饰组件不因此变成免费内部物品。旧两参资源计划接口保持原语义。
+注册和关闭 root codec 均更新现有 `generation()`，使材料缓存失效；该状态不写入蓝图作为授权。
+
+### 原生空壳与多格静态模型（0.3.10）
+
+`NativePlacement.Adapter.requiresPayload()` 默认 false，旧适配器不变；只负责恢复保留数据的新适配器可返回 true，
+使无 payload 的普通蓝图继续走原生 ItemBlock 空壳流程。
+
+`ClientRendering.Adapter.allowsEmptyGeometry(block, metadata, isolatedAccess, x, y, z)` 默认 false。
+只有适配器明确声明邻格已提供本格几何，且实际输出零顶点时，才可成为有效空模型；不接受退化面冒充几何。
+CFB 双高冰箱的上格使用这一合同。回调只能查询独立快照，不访问真实世界或授予材料/施工能力。
+
+### 内置专项模块边界
+
+- Carpenter 的原生工厂、物料、owner 与客户端上下文移至独立模块；保留第三方注册优先级及旧默认策略。
+- CookingForBlockheads 使用本地持久化库存，水槽根流体精确计价；烤箱保留的燃烧/加工中状态明确拒绝安全克隆。
+  十种厨房壳体采用独立静态客户端模型，不执行任意 TESR；不绘制书、工具、吐司等物品实体陈列。
+- JABBA 支持有限本地桶，纯采集不更新 BSpace；Ender/共享/无限状态不成为可重复蓝图。
+- Storage Drawers 支持普通非压缩抽屉及个人 UUID 归属重绑；框架、压缩、无限与外部安全 provider 仍需专项合同。
+  原生 Controller 自行刷新引用；不承诺即时刷新。避开全局 population 事件的恢复路径暂不生成 Thaumcraft aspect 辅助缓存。
+
+RAW 剪切、可信前图恢复与安全蓝图策略保持分离；未改变旧磁盘记录、网络协议或稳定注册名格式。
+稳定物品身份现复用 Core `NativeItemIds`，处理 `idExt` 的原生优先级与重映射残留；不改变 RAW 原始头。
+
+### 既有流体子树接口
 
 ```java
 GTMBExtensions.Registration fluids = ResourceContainers.register("my_mod:contents", context -> {

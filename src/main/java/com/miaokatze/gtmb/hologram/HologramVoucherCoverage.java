@@ -77,9 +77,11 @@ final class HologramVoucherCoverage {
         java.util.List<ItemStack> nativeItems = new java.util.ArrayList<>();
         if (descriptor != null) {
             for (HologramDecorMaterials.Cost cost : descriptor.costs) nativeItems.add(cost.prebuilt.copy());
-        } else if (HologramNativePlacement.supported(block))
+        } else if (HologramNativePlacement.supported(block, tile))
             nativeItems = HologramNativePlacement.materials(block, cell.metadata, tile);
-        HologramBlueprintResources.Plan resources = HologramBlueprintResources.plan(tile, nativeItems)
+        HologramNativePlacement.Adapter adapter = HologramNativePlacement.adapter(block);
+        HologramBlueprintResources.Plan resources = HologramBlueprintResources
+            .plan(tile, nativeItems, adapter != null && adapter.includesInventoryDrops(block))
             .merge(HologramBlueprintResources.plan(item));
         if (!resources.items.isEmpty() || !resources.fluids.isEmpty()
             || !resources.essentia.isEmpty()
@@ -95,7 +97,7 @@ final class HologramVoucherCoverage {
         }
         if (!HologramGtswnPlacementMaterials.extraMaterials(block, tile)
             .isEmpty()) return false;
-        if (HologramNativePlacement.supported(block)) {
+        if (HologramNativePlacement.supported(block, tile)) {
             if (!HologramNativePlacement.additionalMaterials(block, nativeItems, shell)
                 .isEmpty()) return false;
         }

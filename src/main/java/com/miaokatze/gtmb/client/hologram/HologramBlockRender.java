@@ -102,7 +102,7 @@ final class HologramBlockRender {
         Model[] pair = MODELS.computeIfAbsent(cell, unused -> new Model[2]);
         int side = current ? 1 : 0;
         if (pair[side] == null) pair[side] = compile(cell, current);
-        return pair[side].list != 0;
+        return pair[side].list != 0 || pair[side].acceptedEmpty;
     }
 
     static void draw(HologramState.Cell cell, boolean current) {
@@ -118,13 +118,7 @@ final class HologramBlockRender {
             Minecraft.getMinecraft()
                 .getTextureManager()
                 .bindTexture(TextureMap.locationBlocksTexture);
-            // A world hologram enables back-face culling for ordinary solid cube meshes.
-            // Carpenter slopes include open triangular faces: their material remains visible
-            // from either side in the translucent preview, including mirrored/negative slopes.
-            if (cell.block(current)
-                .getClass()
-                .getName()
-                .equals("com.carpentersblocks.block.BlockCarpentersSlope")) GL11.glDisable(GL11.GL_CULL_FACE);
+            if (HologramNativeRenderRegistry.doubleSided(cell.block(current))) GL11.glDisable(GL11.GL_CULL_FACE);
             GL11.glCallList(model.list);
         } finally {
             popMatrices(originalMode);
@@ -225,7 +219,7 @@ final class HologramBlockRender {
         boolean opened = false;
         boolean invokedNative = false;
         HologramAeNativeRender.CableContext aeCableContext = null;
-        HologramRenderWorld.CarpenterContext carpenterContext = null;
+        HologramNativeRenderRegistry.RenderScope renderScope = null;
         Set<String> positions = new HashSet<>();
         List<double[]> points = new ArrayList<>();
         List<double[]> textureCenters = new ArrayList<>();
@@ -251,28 +245,17 @@ final class HologramBlockRender {
             if (DRAWING.getBoolean(tess)) return failed(cell, current, "caller tessellator is active");
             ISimpleBlockRenderingHandler handler = ((Map<Integer, ISimpleBlockRenderingHandler>) HANDLERS
                 .get(RenderingRegistry.instance())).get(block.getRenderType());
-            if (handler == null && !sourceReference) return failed(cell, current, "native ISBRH unavailable");
-            if (adapter != null) handler = adapter.renderer(block, handler);
+            HologramNativeRenderRegistry.Adapter rendererAdapter = adapter == null
+                ? HologramNativeRenderRegistry.builtin(block)
+                : adapter;
+            if (handler == null && rendererAdapter == null && !sourceReference)
+                return failed(cell, current, "native ISBRH unavailable");
+            if (rendererAdapter != null) handler = rendererAdapter.renderer(block, handler);
             if (handler == null && !sourceReference) return failed(cell, current, "adapter renderer unavailable");
             aeCableContext = HologramAeNativeRender.cableContext(block, tile);
-            // Carpenter's registered renderer stores the current TE in mutable fields.
-            // Use a fresh handler so a detached preview never replaces its live-world context.
-            if (adapter == null && handler != null
-                && handler.getClass()
-                    .getName()
-                    .startsWith("com.carpentersblocks.renderer."))
-                handler = (ISimpleBlockRenderingHandler) handler.getClass()
-                    .getConstructor()
-                    .newInstance();
-            if (adapter == null && handler != null
-                && handler.getClass()
-                    .getName()
-                    .startsWith("com.carpentersblocks.renderer.")
-                && tile != null
-                && tile.getWorldObj() instanceof HologramRenderWorld) {
-                HologramRenderWorld world = (HologramRenderWorld) tile.getWorldObj();
-                carpenterContext = world.carpenterRender(tile);
-                access = world;
+            if (rendererAdapter != null) {
+                renderScope = rendererAdapter.renderScope(block, tile, handler);
+                if (renderScope != null) access = renderScope.access();
             }
             list = GL11.glGenLists(1);
             if (list == 0) return failed(cell, current, "display list allocation failed");
@@ -348,6 +331,18 @@ final class HologramBlockRender {
             // That sentinel alone is not a usable native preview model.
             if (count == 0 || positions.size() < 3) {
                 GL11.glDeleteLists(list, 1);
+                if (!sourceReference && count == 0
+                    && adapter != null
+                    && adapter.allowsEmptyGeometry(
+                        block,
+                        current ? cell.meta : cell.wantMeta,
+                        access,
+                        cell.x,
+                        cell.y,
+                        cell.z)) {
+                    compiled++;
+                    return new Model(0, 0, 0, points, textureCenters, missing, attributes, true);
+                }
                 if (sourceReference) return new Model(0, 0, 0, points, textureCenters, missing, attributes);
                 return failed(cell, current, "native renderer produced no usable geometry");
             }
@@ -377,7 +372,7 @@ final class HologramBlockRender {
             if (opened) GL11.glEndList();
             if (invokedNative && adapter == null) releaseNativeContext(block);
             if (aeCableContext != null) aeCableContext.close();
-            if (carpenterContext != null) carpenterContext.close();
+            if (renderScope != null) renderScope.close();
             callerTess.setTranslation(ox, oy, oz);
             if (capturedTessState) for (int i = 0; i < TESS_STATE.length; i++) {
                 try {
@@ -494,6 +489,7 @@ final class HologramBlockRender {
         final List<double[]> points, textureCenters;
         final List<double[]> attributes;
         final boolean missingTexture;
+        final boolean acceptedEmpty;
 
         Model(int list, int vertices, int positions, List<double[]> points, List<double[]> textureCenters,
             boolean missingTexture) {
@@ -502,6 +498,11 @@ final class HologramBlockRender {
 
         Model(int list, int vertices, int positions, List<double[]> points, List<double[]> textureCenters,
             boolean missingTexture, List<double[]> attributes) {
+            this(list, vertices, positions, points, textureCenters, missingTexture, attributes, false);
+        }
+
+        Model(int list, int vertices, int positions, List<double[]> points, List<double[]> textureCenters,
+            boolean missingTexture, List<double[]> attributes, boolean acceptedEmpty) {
             this.list = list;
             this.vertices = vertices;
             this.positions = positions;
@@ -509,6 +510,7 @@ final class HologramBlockRender {
             this.textureCenters = textureCenters;
             this.attributes = attributes;
             this.missingTexture = missingTexture;
+            this.acceptedEmpty = acceptedEmpty;
         }
     }
 }

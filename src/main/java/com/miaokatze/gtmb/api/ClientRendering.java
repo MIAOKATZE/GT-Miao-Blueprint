@@ -3,6 +3,7 @@ package com.miaokatze.gtmb.api;
 import net.minecraft.block.Block;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.tileentity.TileEntity;
+import net.minecraft.world.IBlockAccess;
 import net.minecraft.world.World;
 
 import com.miaokatze.gtmb.client.hologram.HologramNativeRenderRegistry;
@@ -38,6 +39,11 @@ public final class ClientRendering {
         default ISimpleBlockRenderingHandler renderer(Block block, ISimpleBlockRenderingHandler registered) {
             return registered;
         }
+
+        /** Explicitly accepts a cell whose geometry is supplied by another cell in the same isolated access. */
+        default boolean allowsEmptyGeometry(Block block, int metadata, IBlockAccess access, int x, int y, int z) {
+            return false;
+        }
     }
 
     public interface MultipartAdapter {
@@ -72,6 +78,11 @@ public final class ClientRendering {
 
                 public ISimpleBlockRenderingHandler renderer(Block block, ISimpleBlockRenderingHandler renderer) {
                     return adapter.renderer(block, renderer);
+                }
+
+                public boolean allowsEmptyGeometry(Block block, int metadata, IBlockAccess access, int x, int y,
+                    int z) {
+                    return adapter.allowsEmptyGeometry(block, metadata, access, x, y, z);
                 }
             };
             HologramNativeRenderRegistry.register(bridge);

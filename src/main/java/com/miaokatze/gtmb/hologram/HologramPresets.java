@@ -1172,7 +1172,7 @@ final class HologramPresets {
             else if (!materialBlockAlias(actual, declared)) {
                 // Composite adapters derive their complete materials from the actual reviewed native factory.
                 if (gt || declared == null
-                    || !HologramNativePlacement.supported(declared)
+                    || !HologramNativePlacement.supported(declared, HologramBlueprintNbt.decode(cell.tileNbt))
                     || !HologramNativePlacement
                         .matchesSample(declared, cell.metadata, HologramBlueprintNbt.decode(cell.tileNbt), material))
                     throw new IOException("蓝图方块与实际付款物品对应的方块不一致");
@@ -1249,7 +1249,7 @@ final class HologramPresets {
     static void validateMaterialVariant(Block block, int metadata, ItemStack paid,
         HologramBlueprintValidationCache validation) throws IOException {
         if (paid == null || paid.getItem() == null) throw new IOException("方块没有可核验的实际付款材料");
-        if (paid.getItem() instanceof ItemMachines || HologramNativePlacement.supported(block)) return;
+        if (paid.getItem() instanceof ItemMachines || HologramNativePlacement.supported(block, null)) return;
         if (!(paid.getItem() instanceof ItemBlock)) return; // Non-block native carriers have their own audited planner.
         Block material = Block.getBlockFromItem(paid.getItem());
         if (!materialBlockAlias(material, block)) throw new IOException("实际方块与付款物品的原生方块不一致");

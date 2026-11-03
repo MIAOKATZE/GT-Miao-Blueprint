@@ -302,8 +302,8 @@ final class HologramDecorationPreviewSmoke {
         require(
             !world.setBlockMetadataWithNotify(cell.x, cell.y, cell.z, 9, 4),
             "cover metadata writes outside render must fail");
-        try (HologramRenderWorld.CarpenterContext ignored = world
-            .carpenterRender(world.getTileEntity(cell.x, cell.y, cell.z))) {
+        try (HologramRenderWorld.MetadataOverride ignored = world
+            .metadataOverride(world.getTileEntity(cell.x, cell.y, cell.z))) {
             require(
                 !world.setBlockMetadataWithNotify(cell.x, cell.y, cell.z, 9, 3),
                 "cover metadata writes with notification flags must fail");

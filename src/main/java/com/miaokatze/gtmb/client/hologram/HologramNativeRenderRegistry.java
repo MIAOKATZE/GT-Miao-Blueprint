@@ -6,6 +6,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import net.minecraft.block.Block;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.tileentity.TileEntity;
+import net.minecraft.world.IBlockAccess;
 import net.minecraft.world.World;
 
 import cpw.mods.fml.client.registry.ISimpleBlockRenderingHandler;
@@ -39,6 +40,30 @@ public final class HologramNativeRenderRegistry {
         default ISimpleBlockRenderingHandler renderer(Block block, ISimpleBlockRenderingHandler registered) {
             return registered;
         }
+
+        default boolean allowsEmptyGeometry(Block block, int metadata, IBlockAccess access, int x, int y, int z) {
+            return false;
+        }
+
+        default boolean detachedRead(Block block) {
+            return false;
+        }
+
+        default boolean doubleSided(Block block) {
+            return false;
+        }
+
+        default RenderScope renderScope(Block block, TileEntity tile, ISimpleBlockRenderingHandler renderer) {
+            return null;
+        }
+    }
+
+    public interface RenderScope extends AutoCloseable {
+
+        IBlockAccess access();
+
+        @Override
+        void close();
     }
 
     /**
@@ -56,6 +81,7 @@ public final class HologramNativeRenderRegistry {
     }
 
     private static final List<Adapter> ADAPTERS = new CopyOnWriteArrayList<>();
+    private static final List<Adapter> BUILTINS = new CopyOnWriteArrayList<>();
     private static final List<MultipartAdapter> MULTIPART_ADAPTERS = new CopyOnWriteArrayList<>();
 
     private HologramNativeRenderRegistry() {}
@@ -68,6 +94,41 @@ public final class HologramNativeRenderRegistry {
     /** Remove an adapter when its client integration is disabled or replaced. */
     public static boolean unregister(Adapter adapter) {
         return ADAPTERS.remove(adapter);
+    }
+
+    /** Built-in family modules remain below every registered community adapter. */
+    public static void registerBuiltin(Adapter adapter) {
+        if (adapter == null) throw new IllegalArgumentException("native renderer adapter is required");
+        BUILTINS.add(adapter);
+    }
+
+    public static boolean unregisterBuiltin(Adapter adapter) {
+        return BUILTINS.remove(adapter);
+    }
+
+    static Adapter builtin(Block block) {
+        for (Adapter adapter : BUILTINS) if (adapter.supports(block)) return adapter;
+        return null;
+    }
+
+    static boolean detachedRead(Block block, Adapter selected) {
+        if (selected != null && selected.detachedRead(block)) return true;
+        Adapter family = builtin(block);
+        return family != null && family.detachedRead(block);
+    }
+
+    static boolean doubleSided(Block block) {
+        Adapter selected = adapter(block);
+        if (selected != null && selected.doubleSided(block)) return true;
+        Adapter family = builtin(block);
+        return family != null && family.doubleSided(block);
+    }
+
+    /** Only the detached snapshot world's matching tile can acquire a temporary metadata override. */
+    public static RenderScope metadataOverride(TileEntity tile) {
+        return tile != null && tile.getWorldObj() instanceof HologramRenderWorld
+            ? ((HologramRenderWorld) tile.getWorldObj()).metadataOverride(tile)
+            : null;
     }
 
     public static void registerMultipart(MultipartAdapter adapter) {
@@ -93,6 +154,6 @@ public final class HologramNativeRenderRegistry {
             || family.equals("appeng.block.networking.BlockCableBus"))
             && HologramAeNativeRender.INSTANCE.supports(block)) return HologramAeNativeRender.INSTANCE;
         for (Adapter adapter : ADAPTERS) if (adapter.supports(block)) return adapter;
-        return null;
+        return builtin(block);
     }
 }

@@ -45,6 +45,7 @@ public final class HologramStaticMaterials {
             NBTTagCompound selectedTile = cache.tileEmpty, selectedItem = cache.itemEmpty;
             HologramEssentia.validatePlacement(block, metadata, selectedTile);
             HologramNativePlacement.Adapter adapter = HologramNativePlacement.adapter(block);
+            if (!HologramNativePlacement.supported(block, selectedTile)) adapter = null;
             HologramBlueprintResources.Plan plan;
             List<ItemStack> nativeComponents = Collections.emptyList();
             boolean decoration = HologramDecorMaterials.supports(block, selectedTile);
@@ -53,7 +54,8 @@ public final class HologramStaticMaterials {
             } else {
                 if (adapter != null)
                     nativeComponents = HologramNativePlacement.materials(block, metadata, selectedTile);
-                plan = HologramBlueprintResources.plan(selectedTile, nativeComponents)
+                plan = HologramBlueprintResources
+                    .plan(selectedTile, nativeComponents, adapter != null && adapter.includesInventoryDrops(block))
                     .merge(HologramBlueprintResources.plan(selectedItem));
                 if (adapter != null) {
                     if (adapter.includesInventoryDrops(block)) plan.removeItemsIncludedByNativeDrops(nativeComponents);

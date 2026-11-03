@@ -339,7 +339,7 @@ final class HologramArea extends HologramAreaSelection {
                 return null;
             }
         }
-        if (HologramNativePlacement.supported(block)) {
+        if (HologramNativePlacement.supported(block, data)) {
             try {
                 return HologramNativePlacement.sample(block, metadata, tile);
             } catch (IOException unsupported) {

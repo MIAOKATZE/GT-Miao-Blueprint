@@ -42,6 +42,22 @@ tasks.register<JavaExec>("runHologramTest") {
 
 tasks.named("check") { dependsOn("runHologramTest") }
 
+mapOf(
+    "runCookingCompatibilityTest" to "com.miaokatze.gtmb.compat.cookingforblockheads.CookingForBlockheadsRegression",
+    "runCookingModelTest" to "com.miaokatze.gtmb.client.compat.cookingforblockheads.CookingForBlockheadsModelRegression",
+    "runStorageCompatibilityTest" to "com.miaokatze.gtmb.hologram.StorageContainerCompatibilityRegression"
+).forEach { (taskName, entryPoint) ->
+    tasks.register<JavaExec>(taskName) {
+        group = "verification"
+        mainClass = entryPoint
+        classpath = tasks.named<JavaExec>("runHologramTest").get().classpath
+        val scratchDir = layout.buildDirectory.dir(taskName)
+        workingDir(scratchDir)
+        doFirst { scratchDir.get().asFile.mkdirs() }
+    }
+    tasks.named("check") { dependsOn(taskName) }
+}
+
 tasks.register<JavaExec>("runSnapshotAeTaskRegression") {
     group = "verification"
     description = "Checks P0a complete AE reports and real test-instrumented decoder calls in an isolated JVM."

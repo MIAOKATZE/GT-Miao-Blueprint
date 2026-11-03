@@ -53,6 +53,8 @@ public final class HologramBlueprintResourcesRegression {
             splitNativeHubFluids();
             numberedFluidContainers();
             registeredFluidContainerCodec();
+            HologramRootResourceRegression.run();
+            HologramNativeItemIdsRegression.run();
             rejectionBeforePayment();
             bulkPayment();
             exactBulkContext();
@@ -809,6 +811,9 @@ public final class HologramBlueprintResourcesRegression {
             .plan(unknown, Arrays.asList(physical.copy()));
         SimpleAssert
             .that(nativePaid.items.isEmpty(), "an exact separately quoted native component is not charged twice");
+        SimpleAssert.that(
+            HologramBlueprintResources.plan(unknown, Arrays.asList(physical.copy()), false).items.isEmpty(),
+            "legacy native component credits remain valid independently of the inventory-drop declaration");
         unknown.setTag("secondAsset", physical.writeToNBT(new NBTTagCompound()));
         try {
             HologramBlueprintResources.plan(unknown, Arrays.asList(physical.copy()));

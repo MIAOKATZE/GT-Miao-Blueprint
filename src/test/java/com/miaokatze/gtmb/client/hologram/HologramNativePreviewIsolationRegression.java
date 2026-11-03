@@ -17,6 +17,7 @@ public final class HologramNativePreviewIsolationRegression {
         try {
             isolatedHydration();
             boundedNeighborHydration();
+            HologramNativeFamilyPolicyRegression.run();
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("native preview isolation fixture", failure);
         }

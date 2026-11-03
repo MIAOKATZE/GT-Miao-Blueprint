@@ -19,6 +19,11 @@ public final class NativePlacement {
 
         boolean supports(Block block);
 
+        /** Retains ordinary ItemBlock shell placement when this provider only restores retained native payloads. */
+        default boolean requiresPayload() {
+            return false;
+        }
+
         TileEntity create(Block block, int metadata, NBTTagCompound tag, World detachedWorld) throws Exception;
 
         List<ItemStack> materials(Block block, int metadata, TileEntity detachedTile) throws Exception;
@@ -35,6 +40,10 @@ public final class NativePlacement {
 
                 public boolean supports(Block block) {
                     return adapter.supports(block);
+                }
+
+                public boolean requiresPayload() {
+                    return adapter.requiresPayload();
                 }
 
                 public TileEntity create(Block block, int meta, NBTTagCompound tag, World world) throws Exception {

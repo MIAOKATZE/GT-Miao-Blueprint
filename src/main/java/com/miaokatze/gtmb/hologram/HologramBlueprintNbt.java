@@ -31,6 +31,9 @@ import net.minecraft.tileentity.TileEntity;
 import net.minecraftforge.fluids.Fluid;
 import net.minecraftforge.fluids.FluidRegistry;
 
+import com.miaokatze.gtmb.api.ResourceContainers;
+import com.miaokatze.miaokatzecore.api.items.NativeItemIds;
+
 import cpw.mods.fml.relauncher.ReflectionHelper;
 
 /** Bounded binary NBT transport and detached ownership rewriting for shared blueprints. */
@@ -357,7 +360,7 @@ final class HologramBlueprintNbt {
     }
 
     private static NBTTagCompound forPlacement(NBTTagCompound result, UUID ownerUuid, String ownerName, int x, int y,
-        int z, boolean retainNbt, boolean retainCovers, List<String> keys) {
+        int z, boolean retainNbt, boolean retainCovers, List<String> keys) throws IOException {
         if (result == null) return null;
         if (!retainNbt && !retainCovers && !result.hasKey(HologramNetworkBindings.GROUP)) return null;
         result = filter(result, retainNbt ? keys : java.util.Collections.emptyList(), retainCovers);
@@ -422,11 +425,13 @@ final class HologramBlueprintNbt {
         return canonical;
     }
 
-    static NBTTagCompound filterSelection(NBTTagCompound source, List<String> keys, boolean retainCovers) {
+    static NBTTagCompound filterSelection(NBTTagCompound source, List<String> keys, boolean retainCovers)
+        throws IOException {
         return filter((NBTTagCompound) source.copy(), keys, retainCovers);
     }
 
-    static NBTTagCompound filterSelection(Block block, NBTTagCompound source, List<String> keys, boolean retainCovers) {
+    static NBTTagCompound filterSelection(Block block, NBTTagCompound source, List<String> keys, boolean retainCovers)
+        throws IOException {
         return filter((NBTTagCompound) source.copy(), keys, retainCovers, block);
     }
 
@@ -464,32 +469,41 @@ final class HologramBlueprintNbt {
 
     /** Root-isolated reviews still need the complete declared native quantity/type pair. */
     static void includeResourceCompanions(NBTTagCompound source, NBTTagCompound selected, String root) {
-        if (!HologramNativeHubData.fluidKey(root)) return;
-        for (String key : new String[] { "mSteamStored", "mWaterStored", HologramNativeHubData.TYPE })
-            if (source.hasKey(key)) selected.setTag(
-                key,
-                source.getTag(key)
-                    .copy());
+        Set<String> companions = new HashSet<>(ResourceContainers.resourceCompanions(source, root));
+        if (HologramNativeHubData.fluidKey(root))
+            java.util.Collections.addAll(companions, "mSteamStored", "mWaterStored", HologramNativeHubData.TYPE);
+        for (String key : companions) if (source.hasKey(key)) selected.setTag(
+            key,
+            source.getTag(key)
+                .copy());
     }
 
-    private static NBTTagCompound filter(NBTTagCompound source, List<String> keys, boolean retainCovers) {
+    private static NBTTagCompound filter(NBTTagCompound source, List<String> keys, boolean retainCovers)
+        throws IOException {
         return filter(source, keys, retainCovers, null);
     }
 
-    private static NBTTagCompound filter(NBTTagCompound source, List<String> keys, boolean retainCovers, Block block) {
-        if (keys == null && retainCovers) return source;
+    private static NBTTagCompound filter(NBTTagCompound source, List<String> keys, boolean retainCovers, Block block)
+        throws IOException {
         Set<String> selected = keys == null ? null : new HashSet<>(keys);
-        NBTTagCompound result = new NBTTagCompound();
+        Set<String> retained = new HashSet<>();
         for (Object raw : source.func_150296_c()) {
             String key = (String) raw;
             String normalized = key.toLowerCase(Locale.ROOT);
             boolean cover = coverKey(normalized);
             if ((cover && retainCovers)
                 || (!cover && (selected == null || selected.contains(key) || protectedKey(block, source, key))))
-                result.setTag(
-                    key,
-                    source.getTag(key)
-                        .copy());
+                retained.add(key);
+        }
+        ResourceContainers.validateSelection(source, retained);
+        if (keys == null && retainCovers) return source;
+        NBTTagCompound result = new NBTTagCompound();
+        for (Object raw : source.func_150296_c()) {
+            String key = (String) raw;
+            if (retained.contains(key)) result.setTag(
+                key,
+                source.getTag(key)
+                    .copy());
         }
         normalizeResourceSelection(result);
         return result;
@@ -509,7 +523,14 @@ final class HologramBlueprintNbt {
 
     /** ItemStack.writeToNBT in local MCP writes numeric id, Count and Damage; tile/cover ids do not have this shape. */
     private static boolean itemCompound(NBTTagCompound tag) {
-        return tag.hasKey("id", 99) && tag.hasKey("Count", 99) && tag.hasKey("Damage", 99);
+        return (tag.hasKey("id", 99) || tag.hasKey("idExt", 3)) && tag.hasKey("Count", 99) && tag.hasKey("Damage", 99);
+    }
+
+    /** Native header priority, retaining the previous blueprint reader's byte/long integer compatibility. */
+    static int numericItemId(NBTTagCompound stack) {
+        if (stack.hasKey("idExt", 3) || stack.hasKey("id", 3) || stack.hasKey("id", 2))
+            return NativeItemIds.read(stack);
+        return stack.getInteger("id");
     }
 
     static Item stableItem(NBTTagCompound stack) {
@@ -517,7 +538,7 @@ final class HologramBlueprintNbt {
             Object found = Item.itemRegistry.getObject(stack.getString(ITEM_REGISTRY));
             return found instanceof Item ? (Item) found : null;
         }
-        return stack.hasKey("id", 99) ? Item.getItemById(stack.getInteger("id")) : null;
+        return stack.hasKey("id", 99) || stack.hasKey("idExt", 3) ? Item.getItemById(numericItemId(stack)) : null;
     }
 
     static boolean hasMissingItems(NBTBase tag) {
@@ -595,14 +616,15 @@ final class HologramBlueprintNbt {
             }
             if (itemCompound(compound)) {
                 if (capture && !compound.hasKey(ITEM_REGISTRY, 8)) {
-                    Item item = Item.getItemById(compound.getInteger("id"));
-                    String registry = item == null ? "unresolved:" + compound.getInteger("id")
+                    int sourceId = numericItemId(compound);
+                    Item item = Item.getItemById(sourceId);
+                    String registry = item == null ? "unresolved:" + sourceId
                         : String.valueOf(Item.itemRegistry.getNameForObject(item));
                     compound.setString(ITEM_REGISTRY, registry);
                 }
                 if (compound.hasKey(ITEM_REGISTRY, 8)) {
                     Integer id = stableItemId(compound.getString(ITEM_REGISTRY), itemIds, freeze);
-                    compound.setShort("id", (short) (id == null ? -1 : id));
+                    NativeItemIds.write(compound, id == null ? -1 : id);
                     if (id == null) compound.setBoolean(MISSING_ITEM, true);
                     else compound.removeTag(MISSING_ITEM);
                 }

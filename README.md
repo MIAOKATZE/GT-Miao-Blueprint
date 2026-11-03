@@ -13,9 +13,9 @@
   <a href="https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases"><img alt="Releases" src="https://img.shields.io/badge/Downloads-Releases-green.svg"></a>
 </p>
 
-**必需前置：客户端与服务端均需 [MIAOKATZE Core 0.2.0 ~ +](https://github.com/MIAOKATZE/MIAOKATZE-Core)**（最低版本 0.2.0，不设版本上限）。FalsePatternLib 可在缺失时补下载；已有旧版请手动更新。
+**必需前置：客户端与服务端均需 [MIAOKATZE Core 0.2.5 ~ +](https://github.com/MIAOKATZE/MIAOKATZE-Core)**（最低版本 0.2.5，不设版本上限）。FalsePatternLib 可在缺失时补下载；已有旧版请手动更新。
 
-默认构建与缺包下载使用已分发的 **Core 0.2.4**；现有兼容版本的安装下限保持不变。
+默认构建与缺包下载使用 **Core 0.2.5**；客户端与服务端均需更新至该版本或更新版本。
 
 <p align="center">
   <a href="https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases">下载 / Download</a> ·

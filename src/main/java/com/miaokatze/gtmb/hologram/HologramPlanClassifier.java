@@ -69,9 +69,9 @@ final class HologramPlanClassifier {
                 target.getItem()
                     .getMetadata(target.getItemDamage()))
             && target.getItem() == Item.getItemFromBlock(Block.getBlockFromItem(target.getItem()))
-            && !HologramNativePlacement.supported(cell.block)
+            && !HologramNativePlacement.supported(cell.block, null)
             && (cell.block == Block.getBlockFromItem(target.getItem())
-                || !HologramNativePlacement.supported(Block.getBlockFromItem(target.getItem())))
+                || !HologramNativePlacement.supported(Block.getBlockFromItem(target.getItem()), null))
             && !s.facingPins.containsKey(HologramValues.position(cell))
             && (s.areaStructureId.isEmpty() || cell.structureTargets != null
                 || cell.memberships()

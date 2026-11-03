@@ -409,8 +409,10 @@ final class HologramWorldTransactions {
                     source = new HologramMaterialSources.ShellSource(source);
                 PlaceResult result;
                 boolean nativeCancelled;
+                NBTTagCompound selectedCacheTile = cachedPayload == null ? null
+                    : cachePaid ? cachedPayload.tilePaid : cachedPayload.tileEmpty;
                 boolean nativePlacement = s.virtual && s.virtualPreset.schema >= 2
-                    && HologramNativePlacement.supported(c.block);
+                    && HologramNativePlacement.supported(c.block, selectedCacheTile);
                 try (HologramNativePlacementEvents.Scope events = HologramNativePlacementEvents
                     .open(w, s.player, c.x, c.y, c.z)) {
                     if (nativePlacement) {
@@ -515,8 +517,6 @@ final class HologramWorldTransactions {
                 }
                 boolean blueprintTileDataApplied = false;
                 boolean emptyAeNativeShell = nativePlacement && HologramAeBlueprint.supportsEmptyNativeShell(c.block);
-                NBTTagCompound selectedCacheTile = cachedPayload == null ? null
-                    : cachePaid ? cachedPayload.tilePaid : cachedPayload.tileEmpty;
                 boolean requiredNetworkBinding = selectedCacheTile != null
                     && selectedCacheTile.hasKey(HologramNetworkBindings.GROUP);
                 boolean restoreBlueprintTileData = s.virtual && s.virtualPreset.schema >= 2

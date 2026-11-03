@@ -1138,7 +1138,8 @@ final class HologramSnapshots {
             if (!s.virtual || s.virtualPreset == null || s.virtualPreset.schema < 2) return new TargetPreview(
                 HologramCellPolicy.targetPreviewBlock(s, cell, target),
                 HologramCellPolicy.targetPreviewMeta(s, cell, target));
-            boolean nativeBlock = HologramNativePlacement.supported(cell.block);
+            boolean nativeBlock = HologramNativePlacement
+                .supportedBlueprint(cell.block, retainNbt ? cell.tileNbt : null);
             if (!nativeBlock && !cell.blueprintItem.isEmpty()) {
                 ItemStack original = validation.stack(cell.blueprintItem, cell.blueprintDamage);
                 if (original != null && original.getItem() instanceof net.minecraft.item.ItemBlock
