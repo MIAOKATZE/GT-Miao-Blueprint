@@ -37,6 +37,34 @@ public final class HologramSnapshotAssemblyRegression {
         assembly.clear();
         check(assembly.accept(5, total, 1, tail, 13) == null, "cancelled assembly cannot resume");
         check(assembly.accept(6, tail.length, 0, tail, 14) != null, "next snapshot after cancellation");
+
+        assembly = new HologramSnapshotAssembly();
+        total = 2 * first.length + tail.length;
+        check(assembly.accept(1, total, 0, first, 0) == null, "slow snapshot starts");
+        assembly.expire(25_000_000_000L);
+        check(assembly.accept(1, total, 1, first, 25_000_000_000L) == null, "slow snapshot makes progress");
+        assembly.expire(50_000_000_000L);
+        completed = assembly.accept(1, total, 2, tail, 50_000_000_000L);
+        check(completed != null && completed.length == total, "active snapshot survives beyond thirty seconds");
+        check(completed[first.length] == 7 && completed[total - 1] == 13, "slow snapshot byte order");
+
+        check(assembly.accept(2, total, 0, first, 60_000_000_000L) == null, "idle snapshot starts");
+        check(assembly.accept(2, total, 1, first, 85_000_000_000L) == null, "idle snapshot last progress");
+        assembly.expire(115_000_000_001L);
+        check(
+            assembly.accept(2, total, 2, tail, 115_000_000_001L) == null,
+            "snapshot expires after thirty seconds without progress");
+        check(assembly.accept(3, tail.length, 0, tail, 115_000_000_002L) != null, "next snapshot after idle expiry");
+
+        check(assembly.accept(4, total, 0, first, 120_000_000_000L) == null, "invalid activity fixture starts");
+        check(assembly.accept(3, total, 1, first, 149_000_000_000L) == null, "stale fragment is ignored");
+        check(assembly.accept(4, total, 1, tail, 149_000_000_000L) == null, "invalid fragment is ignored");
+        check(
+            assembly.accept(4, total, 1, first, 150_000_000_001L) == null,
+            "invalid fragments do not prolong inactivity timeout");
+        check(
+            assembly.accept(4, total, 2, tail, 150_000_000_002L) == null,
+            "expired sequence cannot publish after invalid activity");
     }
 
     private static void check(boolean value, String message) {

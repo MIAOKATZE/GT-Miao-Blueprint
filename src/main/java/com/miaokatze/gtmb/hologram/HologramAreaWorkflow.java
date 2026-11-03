@@ -511,6 +511,7 @@ final class HologramAreaWorkflow {
         if (!HologramEditorWorkspaceRegistry.physicalProjection(source) && !source.emptyProjection)
             staged.id = source.id;
         staged.uiSequence = source.uiSequence;
+        staged.snapshotPaletteProtocol = source.snapshotPaletteProtocol;
         staged.areaSelectionSequence = source.areaSelectionSequence;
         staged.planRevision = source.planRevision
             + (HologramEditorWorkspaceRegistry.physicalProjection(source) || source.emptyProjection ? 1 : 0);
