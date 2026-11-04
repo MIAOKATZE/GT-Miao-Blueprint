@@ -655,6 +655,7 @@ final class HologramAreaWorkflow {
         } catch (java.io.IOException | RuntimeException | LinkageError failure) {
             s.projectionAreaImportDiscard = false;
             area.cancelImportWork();
+            HologramSnapshotPreparation.cancel(s);
             s.status = "区域导入失败：" + failure.getMessage();
             s.open = true;
             HologramSnapshots.send(s);

@@ -299,6 +299,7 @@ public final class HologramSnapshotPublishRegression {
             declarationGenerationRestartsPreparation(player, work);
             provisionalPresetFailureRestoresRoute(player, work, unsafe);
             areaStagingHandoff(player, work);
+            areaFailureReplacesFrozenProgress(player, work);
             lightweightAreaSelection(player, work);
             for (int i = 0; i < 8; i++) SimpleAssert.that(
                 HologramNetwork.reserveState(player, "fixture", false) != null,
@@ -1282,6 +1283,113 @@ public final class HologramSnapshotPublishRegression {
             if (oldStructures == null) HologramWorkspace.AREA_STRUCTURES.remove(id);
             else HologramWorkspace.AREA_STRUCTURES.put(id, oldStructures);
             WIRE.clear();
+        }
+    }
+
+    /** A native capture failure must replace a frozen import ACK even when the old editor stays unchanged. */
+    @SuppressWarnings("unchecked")
+    private static void areaFailureReplacesFrozenProgress(EntityPlayerMP player, Queue<Runnable> work)
+        throws ReflectiveOperationException, java.io.IOException {
+        UUID id = player.getUniqueID();
+        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
+        sessionsField.setAccessible(true);
+        java.util.Map<UUID, HologramSession> sessions = (java.util.Map<UUID, HologramSession>) sessionsField.get(null);
+        HologramSession before = sessions.get(id);
+        HologramArea oldArea = HologramWorkspace.AREAS.get(id);
+        HologramServiceEditRegression.ReadOnlyWorld world = (HologramServiceEditRegression.ReadOnlyWorld) player.worldObj;
+        net.minecraft.block.Block occupied = world.occupied;
+        int occupiedX = world.occupiedX;
+        net.minecraft.tileentity.TileEntity occupant = world.occupant;
+        Field providerField = net.minecraft.world.World.class.getDeclaredField("chunkProvider");
+        providerField.setAccessible(true);
+        Object oldProvider = providerField.get(world);
+        HologramSession current = null;
+        try {
+            HologramNetwork.clearServerQueues();
+            work.clear();
+            WIRE.clear();
+            current = presentationOrigin(player);
+            HologramCapture originalCapture = current.capture;
+            net.minecraft.item.ItemStack originalPin = new net.minecraft.item.ItemStack(
+                net.minecraft.init.Blocks.stone);
+            current.pins.put(0, originalPin);
+            world.occupied = net.minecraft.init.Blocks.stone;
+            world.occupiedX = 0;
+            world.occupant = null;
+            providerField.set(world, areaScanChunks(world));
+            HologramArea area = new HologramArea();
+            area.point(1, 0, 64, 0);
+            area.point(2, 0, 64, 1);
+            area.begin(world);
+            HologramWorkspace.AREAS.put(id, area);
+            HologramWorkBudget.begin(System.nanoTime());
+            try {
+                HologramAreaWorkflow.tickImport(current, area);
+                HologramSnapshots.send(current);
+                HologramSnapshotPreparation.tick(current);
+            } finally {
+                HologramWorkBudget.end();
+            }
+            Field tasksField = HologramSnapshotPreparation.class.getDeclaredField("TASKS");
+            tasksField.setAccessible(true);
+            Object oldTask = ((java.util.Map<?, ?>) tasksField.get(null)).get(current);
+            Field metadataField = oldTask.getClass().getDeclaredField("metadata");
+            metadataField.setAccessible(true);
+            ((HologramSnapshotMetadataTask) metadataField.get(oldTask)).step(1, Long.MAX_VALUE);
+            Field stateField = oldTask.getClass().getDeclaredField("state");
+            stateField.setAccessible(true);
+            NBTTagCompound frozen = (NBTTagCompound) stateField.get(oldTask);
+            SimpleAssert.that(
+                frozen.getBoolean("areaImporting") && frozen.getLong("areaImportDone") == 1,
+                "a real pending snapshot freezes progress after the first of two source cells");
+            HologramNetwork.SnapshotTicket oldTicket = preparationTicket(current);
+            world.occupant = new FailingCaptureTile();
+            HologramAreaWorkflow.tickImport(current, area);
+            SimpleAssert.that(
+                !area.importing && area.staging == null && !current.capturePending,
+                "native serializer failure clears the import without leaving pending capture work");
+            SimpleAssert.that(
+                HologramWorkspace.find(id) == current && current.capture == originalCapture
+                    && current.pins.get(0) == originalPin,
+                "native capture failure preserves the prior editor and its exact pin");
+            SimpleAssert.that(
+                !oldTicket.current() && stateField.get(oldTask) == null
+                    && HologramSnapshotPreparation.pending(current)
+                    && preparationTicket(current).sequence() > oldTicket.sequence(),
+                "failure retires the frozen import ACK and reserves a fresh terminal snapshot");
+            String failure = "区域导入失败：Native capture failed for " + FailingCaptureTile.class.getName();
+            SimpleAssert.eq(failure, current.status, "the actual native capture boundary reports its failure");
+            world.occupant = null;
+            WIRE.clear();
+            drainPublication(current, work);
+            NBTTagCompound complete = latestFull();
+            SimpleAssert.that(
+                !complete.getBoolean("areaImporting") && !complete.getBoolean("capturePending")
+                    && complete.getIntArray("pending").length == 0
+                    && !HologramSnapshotPreparation.pending(current),
+                "the fresh complete snapshot publishes the terminal import state through transport");
+            SimpleAssert.eq(failure, complete.getString("status"), "the failure reaches the actual encoded wire");
+        } finally {
+            if (current != null) HologramSnapshotPreparation.cancel(current);
+            HologramNetwork.clearServerQueues();
+            work.clear();
+            WIRE.clear();
+            providerField.set(world, oldProvider);
+            world.occupied = occupied;
+            world.occupiedX = occupiedX;
+            world.occupant = occupant;
+            if (before == null) sessions.remove(id);
+            else sessions.put(id, before);
+            if (oldArea == null) HologramWorkspace.AREAS.remove(id);
+            else HologramWorkspace.AREAS.put(id, oldArea);
+        }
+    }
+
+    private static final class FailingCaptureTile extends net.minecraft.tileentity.TileEntity {
+
+        @Override
+        public void writeToNBT(NBTTagCompound tag) {
+            throw new IllegalStateException("fixture native serializer failed");
         }
     }
 
