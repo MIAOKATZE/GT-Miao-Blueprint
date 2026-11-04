@@ -151,8 +151,117 @@ final class HologramDecorationPreviewSmoke {
         verifyUnsupportedNestedTile(state);
         verifyCarpenterContext(reference, state.cells.get(1));
         verifySlopeFamilies(state, current, result);
+        verifyCarpenterBlocks(state, current, result);
         require(before.equals(state.fullData()), "native source/control/render must preserve snapshot NBT");
         return result.toString();
+    }
+
+    /** Plain blocks rely on RenderBlocks' entry-point bounds; their ISBRH never initializes those bounds itself. */
+    private static void verifyCarpenterBlocks(HologramState source, boolean current, StringBuilder receipt) {
+        Block block = find("com.carpentersblocks.block.BlockCarpentersBlock");
+        double[] originalBounds = bounds(block);
+        try {
+            for (int shape = 0; shape <= 6; shape++) {
+                NBTTagCompound data = new NBTTagCompound();
+                NBTTagList cells = new NBTTagList();
+                NBTTagCompound payload = new NBTTagCompound();
+                payload.setInteger("cbMetadata", shape);
+                add(cells, block, 1, payload, "carp-plain-shape-" + shape);
+                data.setTag("cells", cells);
+                HologramState state = new HologramState(data);
+                ReferenceAccess reference = new ReferenceAccess(state, current);
+                HologramState.Cell cell = state.cells.get(0);
+                TileEntity nativeTile = reference.getTileEntity(cell.x, cell.y, cell.z);
+                NBTTagCompound nativeBefore = new NBTTagCompound();
+                nativeTile.writeToNBT(nativeBefore);
+                NBTTagCompound snapshotBefore = state.fullData();
+                // Independent native state lookup supplies the expected full/half-block dimensions.
+                block.setBlockBoundsBasedOnState(reference.world, cell.x, cell.y, cell.z);
+                double[] expected = bounds(block);
+                restoreBounds(block, originalBounds);
+                HologramBlockRender.begin(state);
+                require(
+                    HologramBlockRender.ready(cell, current),
+                    "ordinary Carpenter native block " + shape + ": " + HologramBlockRender.failure(cell, current));
+                require(
+                    java.util.Arrays.equals(originalBounds, bounds(block)),
+                    "native compile restores block bounds " + shape);
+                require(!HologramBlockRender.missingTexture(cell, current), "ordinary Carpenter skin " + shape);
+                List<double[]> vertices = HologramBlockRender.attributes(cell, current);
+                require(vertices.size() == 24, "ordinary Carpenter emits six nondegenerate native faces " + shape);
+                double[] actual = { Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY,
+                    Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY };
+                for (double[] vertex : vertices) for (int axis = 0; axis < 3; axis++) {
+                    actual[axis] = Math.min(actual[axis], vertex[axis]);
+                    actual[axis + 3] = Math.max(actual[axis + 3], vertex[axis]);
+                }
+                for (int axis = 0; axis < 6; axis++) require(
+                    Math.abs(expected[axis] - actual[axis]) < .00002,
+                    "ordinary Carpenter retains native shape bounds " + shape + ": " + axis);
+                List<double[]> control = HologramBlockRender.nativeControl(cell, current, reference.world);
+                require(control.size() == vertices.size(), "ordinary Carpenter original handler vertex count " + shape);
+                for (int v = 0; v < control.size(); v++) for (int field = 0; field < 6; field++) require(
+                    Math.abs(control.get(v)[field] - vertices.get(v)[field]) < .00002,
+                    "ordinary Carpenter original handler geometry/UV/color " + shape);
+                require(
+                    java.util.Arrays.equals(originalBounds, bounds(block)),
+                    "native control restores block bounds " + shape);
+                NBTTagCompound nativeAfter = new NBTTagCompound();
+                nativeTile.writeToNBT(nativeAfter);
+                require(nativeBefore.equals(nativeAfter), "ordinary Carpenter original tile NBT is unchanged " + shape);
+                require(
+                    snapshotBefore.equals(state.fullData()),
+                    "ordinary Carpenter snapshot NBT is unchanged " + shape);
+                receipt.append("carp-plain-shape=")
+                    .append(shape)
+                    .append(" originalVertices=")
+                    .append(control.size())
+                    .append(" previewVertices=")
+                    .append(vertices.size())
+                    .append(" nativeBoundsUvColor=equal sourceNbtAndGlobalBounds=unchanged\n");
+            }
+            // The original renderer intentionally emits nothing for a lone half-bed; keep strict rejection.
+            Block bed = find("com.carpentersblocks.block.BlockCarpentersBed");
+            double[] bedBounds = bounds(bed);
+            try {
+                NBTTagCompound incomplete = new NBTTagCompound();
+                NBTTagList cells = new NBTTagList();
+                add(cells, bed, 0, new NBTTagCompound(), "carp-incomplete-bed");
+                incomplete.setTag("cells", cells);
+                HologramState state = new HologramState(incomplete);
+                NBTTagCompound before = state.fullData();
+                HologramState.Cell cell = state.cells.get(0);
+                HologramBlockRender.begin(state);
+                require(!HologramBlockRender.ready(cell, current), "native zero-geometry half-bed is rejected");
+                require(
+                    HologramBlockRender.failure(cell, current)
+                        .equals("native renderer produced no usable geometry"),
+                    "half-bed must fail for native empty geometry, not an unrelated factory/material failure");
+                require(java.util.Arrays.equals(bedBounds, bounds(bed)), "rejected half-bed restores block bounds");
+                require(before.equals(state.fullData()), "rejected half-bed preserves source NBT");
+                receipt.append("carp-incomplete-bed nativeZeroGeometry=rejected sourceNbtAndGlobalBounds=unchanged\n");
+            } finally {
+                restoreBounds(bed, bedBounds);
+            }
+        } finally {
+            restoreBounds(block, originalBounds);
+            HologramBlockRender.begin(source);
+        }
+    }
+
+    private static double[] bounds(Block block) {
+        return new double[] { block.getBlockBoundsMinX(), block.getBlockBoundsMinY(), block.getBlockBoundsMinZ(),
+            block.getBlockBoundsMaxX(), block.getBlockBoundsMaxY(), block.getBlockBoundsMaxZ() };
+    }
+
+    private static void restoreBounds(Block block, double[] bounds) {
+        block.setBlockBounds(
+            (float) bounds[0],
+            (float) bounds[1],
+            (float) bounds[2],
+            (float) bounds[3],
+            (float) bounds[4],
+            (float) bounds[5]);
     }
 
     /** Complex triangular skins must survive the same native path as a simple covered wedge. */

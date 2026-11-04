@@ -279,7 +279,12 @@ final class HologramBlockRender {
                 tess.setColorOpaque_F(1, 1, 1);
                 invokedNative = true;
                 if (handler == null) renderer.renderBlockByRenderType(block, cell.x, cell.y, cell.z);
-                else handler.renderWorldBlock(access, cell.x, cell.y, cell.z, block, block.getRenderType(), renderer);
+                else {
+                    // Match RenderBlocks' native entry point before invoking the selected snapshot handler.
+                    block.setBlockBoundsBasedOnState(access, cell.x, cell.y, cell.z);
+                    renderer.setRenderBoundsFromBlock(block);
+                    handler.renderWorldBlock(access, cell.x, cell.y, cell.z, block, block.getRenderType(), renderer);
+                }
                 int emitted = VERTEX_COUNT.getInt(tess);
                 count += emitted;
                 if (emitted > 0) {
