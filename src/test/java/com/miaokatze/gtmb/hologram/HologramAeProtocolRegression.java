@@ -663,15 +663,14 @@ public final class HologramAeProtocolRegression {
     private static void staticBlockMaterialIdentity() throws Exception {
         Block block = new appeng.block.GtmbAeStaticFixture(1);
         int free = 4095;
-        while (free > 0 && (net.minecraft.item.Item.getItemById(free) != null
-            || Block.getBlockById(free) != Blocks.air)) free--;
+        while (free > 0
+            && (net.minecraft.item.Item.getItemById(free) != null || Block.getBlockById(free) != Blocks.air)) free--;
         if (free == 0) throw new AssertionError("No free static material fixture registry ID");
         Block.blockRegistry.addObject(free, "gtmb:ae_drop_damage_fixture", block);
         net.minecraft.item.ItemBlock item = new net.minecraft.item.ItemBlock(block);
         net.minecraft.item.Item.itemRegistry.addObject(free, "gtmb:ae_drop_damage_fixture", item);
-        SimpleAssert.that(
-            !item.getHasSubtypes() && block.damageDropped(0) == 1,
-            "isolated fixture has a distinct drop damage");
+        SimpleAssert
+            .that(!item.getHasSubtypes() && block.damageDropped(0) == 1, "isolated fixture has a distinct drop damage");
         net.minecraft.item.ItemStack sample = HologramAeBlueprint.sampleIdentity(block, 0, null);
         SimpleAssert.that(
             sample.getItem() == item && sample.getItemDamage() == 0,
@@ -681,10 +680,8 @@ public final class HologramAeProtocolRegression {
             () -> HologramPresets.validateMaterialVariant(block, 0, new net.minecraft.item.ItemStack(item, 1, 1)),
             "the drop damage cannot become an unpaid block item variant");
         rejects(
-            () -> HologramPresets.validateMaterialVariant(
-                Blocks.stone,
-                0,
-                new net.minecraft.item.ItemStack(Blocks.stone, 1, 1)),
+            () -> HologramPresets
+                .validateMaterialVariant(Blocks.stone, 0, new net.minecraft.item.ItemStack(Blocks.stone, 1, 1)),
             "ordinary stone still rejects its invalid item variant");
         rejects(
             () -> HologramPresets.validateMaterialVariant(

@@ -111,7 +111,8 @@ public final class HologramAeBlueprintCoreRegression {
     private static void nativeStaticMaterialIdentity() throws Exception {
         Block ore = registeredBlock("appeng.block.solids.OreQuartzCharged");
         check(
-            !Item.getItemFromBlock(ore).getHasSubtypes() && ore.damageDropped(0) == 1,
+            !Item.getItemFromBlock(ore)
+                .getHasSubtypes() && ore.damageDropped(0) == 1,
             "registered charged ore drops a different item variant from its physical block item");
         ItemStack sample = HologramAeBlueprint.sampleIdentity(ore, 0, null);
         check(
