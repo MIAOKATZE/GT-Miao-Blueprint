@@ -1450,13 +1450,16 @@ public final class HologramAeBlueprint {
             if (type.equals(TILE + "storage.TileChest")) known.add("terminalSettings");
             if (type.equals(TILE + "misc.TileAdvancedInscriber"))
                 known.addAll(Arrays.asList("topLocked", "bottomLocked", "output"));
-            if (nativeInventoryAlias(type) != null || type.equals(TILE + "networking.TileEnergyAcceptor"))
+            if (nativeInventoryAlias(type) != null || type.equals(TILE + "networking.TileEnergyAcceptor")
+                || type.equals(TILE + "networking.TileController")
+                || type.equals(TILE + "networking.TileCreativeEnergyController"))
                 known.add("inv");
             if (type.equals(TILE + "misc.TileCondenser")) known.add("storedPower");
             if (type.equals(TILE + "misc.TileVibrationChamber")) known.addAll(Arrays.asList("burnTime", "maxBurnTime"));
             if (type.equals(TILE + "networking.TileWirelessHub")
                 || type.equals(TILE + "networking.TileWirelessConnector")) known.add("Color");
-            if (type.equals(TILE + "networking.TileController")) known.add("controllerAnimation");
+            if (type.equals(TILE + "networking.TileController")
+                || type.equals(TILE + "networking.TileCreativeEnergyController")) known.add("controllerAnimation");
             if (type.startsWith(TILE + "crafting.TileCrafting")) known.addAll(
                 Arrays.asList(
                     "core",
@@ -1631,7 +1634,9 @@ public final class HologramAeBlueprint {
             if (prefix.length == 0 && type.equals(TILE + "misc.TileStorageReshuffle"))
                 idleReshuffle(work, data, (appeng.tile.misc.TileStorageReshuffle) host);
             if (prefix.length == 0 && host instanceof TileEntity) gtswnTileConfiguration(work, data);
-            if (prefix.length == 0 && type.equals(TILE + "networking.TileEnergyAcceptor") && data.hasKey("inv")) {
+            if (prefix.length == 0 && (type.equals(TILE + "networking.TileEnergyAcceptor")
+                || type.equals(TILE + "networking.TileController")
+                || type.equals(TILE + "networking.TileCreativeEnergyController")) && data.hasKey("inv")) {
                 work.roots.add("inv");
                 if (!data.hasKey("inv", 10) || !data.getCompoundTag("inv")
                     .hasNoTags())
@@ -1639,7 +1644,7 @@ public final class HologramAeBlueprint {
                         "unknown_inventory_slot",
                         "blocker",
                         "inv",
-                        "Native energy acceptor inventory has zero slots");
+                        "Native host inventory has zero slots");
                 data.setTag("inv", new NBTTagCompound());
             }
             if (prefix.length == 0) data.removeTag("GTSWN_IncorporationIdentity");

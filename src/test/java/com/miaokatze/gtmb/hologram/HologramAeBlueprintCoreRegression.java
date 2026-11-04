@@ -60,6 +60,7 @@ public final class HologramAeBlueprintCoreRegression {
         discardedField(drive);
         interfaceStorageAliases();
         nativeTileWriterCompatibility();
+        nativeControllerWriterCompatibility();
         idleCpuWriterCompatibility();
         previewCacheSchema();
         quantumDisplayTransport(actor);
@@ -104,6 +105,54 @@ public final class HologramAeBlueprintCoreRegression {
                 && !HologramAeBlueprint.supports(net.minecraft.init.Blocks.stone, payload),
             "the same serialized parts do not turn an ordinary host into AE");
         check(HologramAeBlueprint.supports(drive), "registered AE blocks retain identity-based full analysis");
+    }
+
+    private static void nativeControllerWriterCompatibility() throws Exception {
+        for (String type : Arrays.asList("BlockController", "BlockCreativeEnergyController")) {
+            Block block = registeredBlock("appeng.block.networking." + type);
+            TileEntity tile = block.createTileEntity(null, 0);
+            check(
+                tile.getClass().getName().equals("appeng.tile.networking.Tile" + type.substring("Block".length())),
+                "controller fixture uses the exact registered native tile " + type);
+            check(
+                ((AEBaseInvTile) tile).getInternalInventory().getSizeInventory() == 0,
+                "native controller inventory has zero slots " + type);
+            NBTTagCompound raw = new NBTTagCompound();
+            tile.writeToNBT(raw);
+            check(
+                raw.hasKey("inv", 10) && raw.getCompoundTag("inv").hasNoTags(),
+                "native controller writer emits an empty compound inventory " + type);
+            check(
+                raw.hasKey("controllerAnimation", 8)
+                    && raw.getString("controllerAnimation").equals("ORIGINAL_RAINBOW"),
+                "native controller writer emits its inherited animation enum name " + type);
+            NBTTagCompound original = (NBTTagCompound) raw.copy();
+            HologramAeBlueprint.Analysis checked = HologramAeBlueprint.analyze(block, 0, raw);
+            check(
+                !checked.blocking && checked.payload().hasKey("inv", 10)
+                    && checked.payload().getCompoundTag("inv").hasNoTags()
+                    && checked.payload().getString("controllerAnimation").equals("ORIGINAL_RAINBOW"),
+                "default controller inventory and animation survive schema review " + type);
+            check(raw.equals(original), "native controller analysis preserves complete source NBT " + type);
+            NBTTagCompound absent = (NBTTagCompound) raw.copy();
+            absent.removeTag("inv");
+            check(!HologramAeBlueprint.analyze(block, 0, absent).blocking, "absent zero-slot inventory is valid " + type);
+            for (boolean wrongType : new boolean[] { false, true }) {
+                NBTTagCompound invalid = (NBTTagCompound) raw.copy();
+                if (wrongType) invalid.setString("inv", "not a compound");
+                else {
+                    NBTTagCompound inventory = new NBTTagCompound();
+                    inventory.setTag("item0", new ItemStack(Items.diamond).writeToNBT(new NBTTagCompound()));
+                    invalid.setTag("inv", inventory);
+                }
+                NBTTagCompound before = (NBTTagCompound) invalid.copy();
+                HologramAeBlueprint.Analysis rejected = HologramAeBlueprint.analyze(block, 0, invalid);
+                check(
+                    rejected.blocking && issue(rejected, "unknown_inventory_slot", "inv"),
+                    "zero-slot controller still rejects nonempty or wrong-type inventory " + type);
+                check(invalid.equals(before), "rejected controller source NBT remains exact " + type);
+            }
+        }
     }
 
     private static void nativeTileWriterCompatibility() throws Exception {
