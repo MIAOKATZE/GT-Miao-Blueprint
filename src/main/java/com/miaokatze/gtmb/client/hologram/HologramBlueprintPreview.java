@@ -334,6 +334,8 @@ public final class HologramBlueprintPreview {
 
         private void fail(Throwable cause) {
             if (!completed.compareAndSet(false, true)) return;
+            if (!(cause instanceof CancellationException))
+                com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Blueprint preview capture failed", cause);
             try {
                 failure.accept(cause);
             } catch (RuntimeException callbackFailure) {

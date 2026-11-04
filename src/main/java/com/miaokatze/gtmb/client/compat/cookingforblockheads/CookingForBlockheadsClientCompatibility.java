@@ -1,23 +1,14 @@
 package com.miaokatze.gtmb.client.compat.cookingforblockheads;
 
-import java.awt.Graphics2D;
-import java.awt.image.BufferedImage;
-import java.io.IOException;
-import java.io.InputStream;
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-
-import javax.imageio.ImageIO;
 
 import net.minecraft.block.Block;
 import net.minecraft.client.model.ModelRenderer;
 import net.minecraft.client.renderer.RenderBlocks;
 import net.minecraft.client.renderer.Tessellator;
-import net.minecraft.client.renderer.texture.TextureAtlasSprite;
-import net.minecraft.client.resources.IResourceManager;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.util.ResourceLocation;
@@ -29,6 +20,7 @@ import net.minecraftforge.common.MinecraftForge;
 
 import com.miaokatze.gtmb.api.ClientRendering;
 import com.miaokatze.gtmb.api.GTMBExtensions;
+import com.miaokatze.gtmb.client.compat.NativeModelTexture;
 import com.miaokatze.gtmb.compat.cookingforblockheads.CookingForBlockheadsCompatibility;
 import com.miaokatze.miaokatzecore.client.preview.ModelRendererMesh;
 
@@ -191,59 +183,21 @@ public final class CookingForBlockheadsClientCompatibility implements ClientRend
 
     private static final class Model {
 
-        final AtlasTexture sprite;
+        final NativeModelTexture sprite;
         final List<Part> parts = new ArrayList<>();
         final ModelRenderer burningDoor;
 
         Model(Object model, String type, String plain, String colored) throws ReflectiveOperationException {
-            sprite = new AtlasTexture(type);
+            sprite = new NativeModelTexture(
+                "gtmb:cfb/Model" + type,
+                new ResourceLocation(
+                    "cookingforblockheads",
+                    "textures/entity/Model" + type + (type.equals("ToolRack") ? "-texture" : "") + ".png"));
             burningDoor = type.equals("Oven") ? (ModelRenderer) model.getClass()
                 .getField("OvenDoorBurning")
                 .get(model) : null;
             for (String name : plain.split(" ")) if (!name.isEmpty()) parts.add(new Part(model, name, false));
             for (String name : colored.split(" ")) if (!name.isEmpty()) parts.add(new Part(model, name, true));
-        }
-    }
-
-    /** Entity textures are padded, never rescaled, into square atlas entries; original UV fractions are retained. */
-    private static final class AtlasTexture extends TextureAtlasSprite {
-
-        final ResourceLocation source;
-        float uScale, vScale;
-
-        AtlasTexture(String type) {
-            super("gtmb:cfb/Model" + type);
-            source = new ResourceLocation(
-                "cookingforblockheads",
-                "textures/entity/Model" + type + (type.equals("ToolRack") ? "-texture" : "") + ".png");
-        }
-
-        public boolean hasCustomLoader(IResourceManager manager, ResourceLocation location) {
-            return true;
-        }
-
-        public boolean load(IResourceManager manager, ResourceLocation location) {
-            try (InputStream input = manager.getResource(source)
-                .getInputStream()) {
-                BufferedImage image = ImageIO.read(input);
-                if (image == null) throw new IOException("Unsupported CFB model texture: " + source);
-                int size = 1;
-                while (size < Math.max(image.getWidth(), image.getHeight())) size *= 2;
-                BufferedImage padded = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
-                Graphics2D graphics = padded.createGraphics();
-                graphics.drawImage(image, 0, 0, null);
-                graphics.dispose();
-                uScale = (float) image.getWidth() / size;
-                vScale = (float) image.getHeight() / size;
-                setIconWidth(size);
-                setIconHeight(size);
-                int[][] frame = new int[1][];
-                frame[0] = padded.getRGB(0, 0, size, size, null, 0, size);
-                setFramesTextureData(Collections.singletonList(frame));
-                return false;
-            } catch (IOException failure) {
-                throw new IllegalStateException("CFB static model texture unavailable: " + source, failure);
-            }
         }
     }
 
@@ -315,8 +269,8 @@ public final class CookingForBlockheadsClientCompatibility implements ClientRend
                         x + .5 + mx * cos + mz * sin,
                         y + baseY + my,
                         z + .5 - mx * sin + mz * cos,
-                        model.sprite.getInterpolatedU(u * model.sprite.uScale * 16),
-                        model.sprite.getInterpolatedV(v * model.sprite.vScale * 16));
+                        model.sprite.u(u),
+                        model.sprite.v(v));
                 });
             }
             tess.setColorOpaque_F(1, 1, 1);

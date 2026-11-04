@@ -12,6 +12,7 @@ dependencies {
     // GT's native BlockMachines implements this interface; only the real demolition regression needs it here.
     testImplementation("com.github.GTNewHorizons:Chisel:2.17.34-GTNH:dev") { transitive = false }
     testImplementation("com.github.GTNewHorizons:CookingForBlockheads:1.4.14-GTNH:dev") { transitive = false }
+    testImplementation("com.github.GTNewHorizons:Botania:1.13.42-GTNH:dev") { transitive = false }
     testImplementation("com.github.GTNewHorizons:Jabba:1.5.24:dev") { transitive = false }
     testImplementation("com.github.GTNewHorizons:StorageDrawers:2.2.31-GTNH:dev") { transitive = false }
     compileOnly rfg.deobf("curse.maven:neverenoughanimation-1062347:7664003-sources-7663978")

@@ -33,6 +33,7 @@ public final class ClientProxy extends CommonProxy {
             carpentersRenderer = com.miaokatze.gtmb.client.compat.carpenters.CarpentersClientCompatibility.install();
         if (cpw.mods.fml.common.Loader.isModLoaded("cookingforblockheads"))
             com.miaokatze.gtmb.client.compat.cookingforblockheads.CookingForBlockheadsClientCompatibility.initialize();
+        com.miaokatze.gtmb.client.compat.botania.BotaniaClientCompatibility.initialize();
         com.miaokatze.gtmb.client.hologram.HologramV010GuiSmoke.install();
         HologramInteractionClientSmoke.install();
         com.miaokatze.gtmb.client.hologram.HologramV011AreaClientSmoke.install();

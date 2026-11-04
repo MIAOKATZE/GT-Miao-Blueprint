@@ -45,6 +45,7 @@ tasks.named("check") { dependsOn("runHologramTest") }
 mapOf(
     "runCookingCompatibilityTest" to "com.miaokatze.gtmb.compat.cookingforblockheads.CookingForBlockheadsRegression",
     "runCookingModelTest" to "com.miaokatze.gtmb.client.compat.cookingforblockheads.CookingForBlockheadsModelRegression",
+    "runBotaniaModelTest" to "com.miaokatze.gtmb.client.compat.botania.BotaniaModelRegression",
     "runStorageCompatibilityTest" to "com.miaokatze.gtmb.hologram.StorageContainerCompatibilityRegression"
 ).forEach { (taskName, entryPoint) ->
     tasks.register<JavaExec>(taskName) {
