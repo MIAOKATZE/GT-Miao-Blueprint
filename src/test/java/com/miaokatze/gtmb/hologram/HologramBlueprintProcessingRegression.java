@@ -4,6 +4,7 @@ import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -55,6 +56,7 @@ public final class HologramBlueprintProcessingRegression {
         sensorNativeStateBoundary();
         importedMaterialIdentityBoundary();
         ordinaryMaterialVariantBoundary();
+        legacyRegistryNamesSurviveProcessing();
         automaticHintsFollowActualProcessing();
         atomicPolicyLibrary();
     }
@@ -985,6 +987,95 @@ public final class HologramBlueprintProcessingRegression {
             candidate.stack()
                 .getItemDamage(),
             "palette candidate carries its exact material without a fictitious world state");
+    }
+
+    private static void legacyRegistryNamesSurviveProcessing() throws Exception {
+        Block stand = registeredVariantBlock("Armor Stand", new Block(Material.wood) {}, false);
+        Block leaves = registeredVariantBlock("Dark Leaves", new Block(Material.leaves) {}, false);
+        HologramPresets.Preset raw = new HologramPresets.Preset();
+        raw.id = "legacy-registry-names";
+        raw.name = "literal legacy names";
+        raw.schema = 2;
+        raw.nativeBlueprint = HologramBlueprintVersions.current("2.9.0-SH");
+        Block[] blocks = { stand, leaves, Blocks.stone };
+        String[] expectedBlockNames = new String[blocks.length], expectedItemNames = new String[blocks.length];
+        for (int i = 0; i < blocks.length; i++) {
+            expectedBlockNames[i] = Block.blockRegistry.getNameForObject(blocks[i]);
+            expectedItemNames[i] = Item.itemRegistry.getNameForObject(Item.getItemFromBlock(blocks[i]));
+            if (i < 2) {
+                SimpleAssert.that(expectedBlockNames[i].contains(" "), "native block fixture contains ASCII spaces");
+                SimpleAssert.that(expectedItemNames[i].contains(" "), "native item fixture contains ASCII spaces");
+            }
+            HologramPresets.Cell cell = HologramPresets.cell(new ItemStack(blocks[i]), i, 0, 0, -1, false);
+            cell.block = expectedBlockNames[i];
+            SimpleAssert.eq(expectedItemNames[i], cell.item, "capture uses the complete native item registry key");
+            raw.cells.add(cell);
+        }
+        ItemStack nested = new ItemStack(leaves, 3);
+        net.minecraft.nbt.NBTTagList inventory = new net.minecraft.nbt.NBTTagList();
+        inventory.appendTag(nested.writeToNBT(new NBTTagCompound()));
+        inventory.appendTag(new ItemStack(Items.diamond, 2).writeToNBT(new NBTTagCompound()));
+        NBTTagCompound payload = new NBTTagCompound();
+        payload.setTag("Inventory", inventory);
+        raw.cells.get(0).tileNbt = HologramBlueprintNbt.encodeCaptured(payload);
+        SimpleAssert.eq(
+            expectedItemNames[1],
+            HologramBlueprintNbt.decode(raw.cells.get(0).tileNbt)
+                .getTagList("Inventory", 10)
+                .getCompoundTagAt(0)
+                .getString(HologramBlueprintNbt.ITEM_REGISTRY),
+            "native item capture retains the literal legacy registry marker");
+        HologramBlueprintProcessing.Policy policy = completed("self");
+        HologramBlueprintProcessing.ResourceDecision keep = new HologramBlueprintProcessing.ResourceDecision();
+        keep.path = "tile:/Inventory";
+        keep.action = "preserve";
+        policy.resourceDecisions.add(keep);
+        HologramPresets.Preset processed = HologramBlueprintProcessing.process(raw, policy, 0, 0, 64, 0);
+        HologramPresets.validate(processed);
+        byte[] json = HologramBlueprintCompactCodec.encode(processed, (done, total) -> {});
+        HologramPresets.Preset loaded = HologramBlueprintSharing.decode(new String(json, StandardCharsets.UTF_8));
+        SimpleAssert.that(HologramBlueprintProcessing.complete(loaded), "legacy names survive the processing receipt");
+        for (int i = 0; i < blocks.length; i++) {
+            HologramPresets.Cell cell = loaded.cells.get(i);
+            SimpleAssert.eq(expectedBlockNames[i], cell.block, "compact JSON preserves the literal native block name");
+            SimpleAssert.eq(expectedItemNames[i], cell.item, "compact JSON preserves the literal native material name");
+            SimpleAssert.that(cell.block() == blocks[i], "literal block lookup resolves the original native object");
+            SimpleAssert.that(
+                cell.stack()
+                    .getItem() == Item.getItemFromBlock(blocks[i]),
+                "literal item lookup resolves the original native object");
+        }
+        NBTTagCompound restored = HologramBlueprintNbt.decode(loaded.cells.get(0).tileNbt);
+        NBTTagCompound restoredItem = restored.getTagList("Inventory", 10)
+            .getCompoundTagAt(0);
+        SimpleAssert.eq(
+            expectedItemNames[1],
+            restoredItem.getString(HologramBlueprintNbt.ITEM_REGISTRY),
+            "processed compact transport preserves nested literal registry markers");
+        SimpleAssert.that(
+            ItemStack.areItemStacksEqual(nested, ItemStack.loadItemStackFromNBT(restoredItem)),
+            "native NBT resolves the exact nested item and quantity");
+        HologramBlueprintResources.Plan bill = HologramBlueprintResources.plan(restored);
+        SimpleAssert.eq(2, bill.items.size(), "legacy and ordinary inventory materials remain payable");
+        SimpleAssert.that(
+            ItemStack.areItemStacksEqual(nested, bill.items.get(0)),
+            "the preserved inventory charges the native legacy material");
+
+        HologramPresets.registryText(null, true);
+        HologramPresets.registryText(" gtmb:Armor Stand ", false);
+        for (String nativeName : new String[] { "BiblioCraft:Armor Stand", "BiblioCraft:Printing Press",
+            "BiblioCraft:Typesetting Machine", "Natura:Dark Leaves", "Natura:Dark Tree", "Natura:N Crops",
+            "Natura:Rare Leaves", "Natura:Rare Sapling", "Natura:Rare Tree" }) {
+            HologramPresets.registryText(nativeName, false);
+        }
+        String maxName = "gtmb:" + new String(new char[251]).replace('\0', 'a');
+        HologramPresets.registryText(maxName, false);
+        expectIo(() -> HologramPresets.registryText(null, false));
+        for (String invalid : new String[] { "", " ", "   ", "gtmb:Dark\tLeaves", "gtmb:Dark\nLeaves",
+            "gtmb:Dark\rLeaves", "gtmb:Dark\u007fLeaves", "gtmb:Dark\u00a0Leaves", "gtmb:Dark?Leaves",
+            maxName + "a" }) {
+            expectIo(() -> HologramPresets.registryText(invalid, true));
+        }
     }
 
     private static Block registeredVariantBlock(String name, Block prototype, boolean casing) throws Exception {

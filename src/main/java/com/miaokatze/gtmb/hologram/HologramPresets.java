@@ -1278,8 +1278,12 @@ final class HologramPresets {
 
     static void registryText(String value, boolean optional) throws IOException {
         if (value == null && optional) return;
-        if (value == null || !REGISTRY_NAME.matcher(value)
-            .matches()) throw new IOException("蓝图注册名无效");
+        // Legacy Forge names may contain ASCII spaces; validate without changing their literal identity.
+        if (value == null || value.trim()
+            .isEmpty()
+            || !REGISTRY_NAME.matcher(value.replace(' ', '_'))
+                .matches())
+            throw new IOException("蓝图注册名无效");
     }
 
     private static void text(String value, int limit) throws IOException {
