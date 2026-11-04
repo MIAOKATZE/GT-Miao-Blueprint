@@ -1254,10 +1254,19 @@ final class HologramPresets {
         Block material = Block.getBlockFromItem(paid.getItem());
         if (!materialBlockAlias(material, block)) throw new IOException("实际方块与付款物品的原生方块不一致");
         int damage = validation == null ? materialDamage(block, metadata) : validation.materialDamage(block, metadata);
-        // Non-subtype item damage may describe durability or NBT state, rather than a physical material variant.
-        int paidDamage = paid.getItem()
-            .getHasSubtypes() ? paid.getItemDamage() : 0;
-        if (damage != paidDamage) throw new IOException("实际方块材料变种与付款物品 damage 不一致");
+        ItemStack paidVariant = paid;
+        if (!paid.getItem()
+            .getHasSubtypes()) {
+            // Apply the native getter to a canonical raw variant with the same independently owned item state.
+            ItemStack canonical = new ItemStack(paid.getItem(), 1, damage);
+            if (paid.hasTagCompound()) {
+                NBTTagCompound itemState = paid.getTagCompound();
+                canonical.setTagCompound((NBTTagCompound) itemState.copy());
+            }
+            damage = canonical.getItemDamage();
+            paidVariant = paid.copy();
+        }
+        if (damage != paidVariant.getItemDamage()) throw new IOException("实际方块材料变种与付款物品 damage 不一致");
     }
 
     /** Shared pure boundary: world metadata is not the machine material damage/MetaTile ID. */

@@ -217,14 +217,12 @@ public final class HologramMaterialVariantsRegression {
         validation.validateMaterialVariant(block, 2, saved.stack());
         net.minecraft.nbt.NBTTagCompound tag = new net.minecraft.nbt.NBTTagCompound();
         tag.setInteger("amount", 23);
+        tag.setString("opaque", "preserve exact item state");
         captured.setTagCompound(tag);
         SimpleAssert.eq(7, captured.getItemDamage(), "the same item's NBT changes durability without adding subtypes");
+        net.minecraft.nbt.NBTTagCompound original = (net.minecraft.nbt.NBTTagCompound) tag.copy();
         validation.validateMaterialVariant(block, 2, captured);
-        SimpleAssert.eq(
-            23,
-            captured.getTagCompound()
-                .getInteger("amount"),
-            "variant validation preserves item NBT");
+        SimpleAssert.eq(original, captured.getTagCompound(), "variant validation preserves complete item NBT");
         expectMaterialFailure(() -> validation.validateMaterialVariant(block, 2, new ItemStack(Blocks.dirt)));
         HologramPresets.validateMaterialVariant(Blocks.wool, 3, new ItemStack(Blocks.wool, 1, 3));
         expectMaterialFailure(
