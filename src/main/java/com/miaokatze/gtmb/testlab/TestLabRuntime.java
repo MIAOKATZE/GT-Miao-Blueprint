@@ -81,6 +81,9 @@ public final class TestLabRuntime {
         if (active()) throw new IOException("Another lab run is active; stop it first");
         if ("composite".equals(requestedKind) && !config.composite)
             throw new IOException("Composite suite requires local compositeEnabled configuration");
+        boolean nativeRun = "native-build".equals(requestedKind) || "native-test".equals(requestedKind);
+        if (nativeRun && !config.nativePlatforms)
+            throw new IOException("Native platforms require local nativePlatformsEnabled configuration");
         if (hasWorldResources()) {
             cleanupResources();
             if (cleanupPending)
@@ -114,8 +117,38 @@ public final class TestLabRuntime {
         lastActor = new NBTTagCompound();
         report = new TestLabReport(runId, kind, config);
         try {
-            lease = new TestLabLease(world, config, ownership, runId);
-            actor = new TestLabActor(world, ownership, config, runId, "composite".equals(kind));
+            lease = new TestLabLease(
+                world,
+                config,
+                ownership,
+                runId,
+                nativeRun ? config.nativeMaxChunks : config.maxChunks);
+            TestLabZone nativeEntrance = null;
+            if ("native-test".equals(kind)) {
+                NBTTagCompound index = ownership.nativeIndex();
+                if (index == null || !"READY".equals(index.getString("state"))
+                    || index.getTagList("pages", 10)
+                        .tagCount() == 0)
+                    throw new IOException("Build persistent native platforms first");
+                NBTTagCompound first = index.getTagList("pages", 10)
+                    .getCompoundTagAt(0)
+                    .getCompoundTag("source");
+                nativeEntrance = new TestLabZone(
+                    first.getString("id"),
+                    first.getInteger("x"),
+                    first.getInteger("y"),
+                    first.getInteger("z"),
+                    first.getInteger("sizeX"),
+                    first.getInteger("sizeY"),
+                    first.getInteger("sizeZ"));
+            }
+            actor = new TestLabActor(
+                world,
+                ownership,
+                config,
+                runId,
+                "composite".equals(kind) || "native-test".equals(kind),
+                nativeEntrance);
             report.data.setTag("actor", actor.tag());
             backend = new TestLabBackend(this);
             if (config.performance) report.data.setTag("metricsStart", HologramRuntimeMetrics.snapshot());
@@ -134,7 +167,8 @@ public final class TestLabRuntime {
         Deadline deadline = Deadline.startingAt(start, config.tickMillis * 1000000L);
         ticks++;
         try {
-            if (start - report.started > config.runSeconds * 1000000000L) throw new IOException("Bounded run timeout");
+            int timeout = kind.startsWith("native-") ? config.nativeSeconds : config.runSeconds;
+            if (start - report.started > timeout * 1000000000L) throw new IOException("Bounded run timeout");
             for (int operations = 0; operations < config.operations && deadline.hasTimeRemaining(); operations++) {
                 requireActor();
                 report.count("ops", 1);
@@ -175,7 +209,23 @@ public final class TestLabRuntime {
     void requireOwned(int x, int y, int z, int sx, int sy, int sz) throws IOException {
         if (world == null || world.provider.dimensionId != config.dimension
             || !(world.provider instanceof TestLabWorldProvider)
-            || !config.contains(x, y, z, sx, sy, sz)) throw new IOException("Operation outside owned lab facilities");
+            || !(config.contains(x, y, z, sx, sy, sz)
+                || (task instanceof TestLabNativeTask && ((TestLabNativeTask) task).contains(x, y, z, sx, sy, sz))))
+            throw new IOException("Operation outside owned lab facilities");
+        if (task instanceof TestLabNativeTask && (lease == null || !lease.covers(x, z, sx, sz)))
+            throw new IOException("Native operation outside the currently leased facilities");
+    }
+
+    void useNativeZones(TestLabZone actorSource, TestLabZone... zones) throws IOException {
+        requireActor();
+        if (!(task instanceof TestLabNativeTask)) throw new IOException("Native session is not active");
+        TestLabNativeTask nativeTask = (TestLabNativeTask) task;
+        if (!nativeTask.owns(actorSource)) throw new IOException("Unknown native actor facility");
+        for (TestLabZone zone : zones) if (!nativeTask.owns(zone)) throw new IOException("Unknown native facility");
+        lease.acquire(zones);
+        leasedZone = actorSource;
+        actor.atNative(actorSource);
+        if (report != null) report.data.setTag("actor", actor.tag());
     }
 
     void useContainingZone(int x, int y, int z) throws IOException {
@@ -211,7 +261,8 @@ public final class TestLabRuntime {
             || !(leasedZone.contains(x, y, z, sx, sy, sz) || ("composite".equals(kind) && (config.zone("composite-bank")
                 .contains(x, y, z, sx, sy, sz)
                 || config.zone("composite-source")
-                    .contains(x, y, z, sx, sy, sz)))))
+                    .contains(x, y, z, sx, sy, sz)))
+                || (task instanceof TestLabNativeTask && ((TestLabNativeTask) task).contains(x, y, z, sx, sy, sz))))
             return false;
         try {
             requireActor();
@@ -222,6 +273,7 @@ public final class TestLabRuntime {
             .getTagCompound();
         if (tag == null || !ownership.owner.toString()
             .equals(tag.getString("testLabOwner")) || !runId.equals(tag.getString("testLabRun"))) return false;
+        if (!lease.covers(x, z, sx, sz)) return false;
         for (int cx = x >> 4; cx <= (x + sx - 1) >> 4; cx++) for (int cz = z >> 4; cz <= (z + sz - 1) >> 4; cz++)
             if (!world.theChunkProviderServer.chunkExists(cx, cz)) return false;
         return true;
@@ -244,6 +296,23 @@ public final class TestLabRuntime {
                 .toString());
         manifest.setInteger("dimension", config.dimension);
         return manifest;
+    }
+
+    NBTTagCompound nativeManifest() {
+        return task instanceof TestLabNativeTask ? ((TestLabNativeTask) task).manifest() : new NBTTagCompound();
+    }
+
+    NBTTagCompound nativePageManifest(String id) throws IOException {
+        if (!(task instanceof TestLabNativeTask)) throw new IOException("Native session is not active");
+        return ((TestLabNativeTask) task).pageManifest(id);
+    }
+
+    void useNativeFacility(World target, EntityPlayerMP user, String id) throws IOException {
+        requireActor();
+        if (!(task instanceof TestLabNativeTask) || !"native-test".equals(kind)
+            || target != world
+            || user != actor.player) throw new IOException("Native facility switch refused");
+        ((TestLabNativeTask) task).useFacility(id);
     }
 
     void useCompositeFacility(World target, EntityPlayerMP user, String facility) throws IOException {

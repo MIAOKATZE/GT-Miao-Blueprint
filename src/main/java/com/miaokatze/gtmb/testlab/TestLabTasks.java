@@ -15,12 +15,14 @@ final class TestLabTasks {
 
     private TestLabTasks() {}
 
-    static Task create(TestLabRuntime runtime, String kind) throws IOException {
+    static Task create(TestLabRuntime runtime, String kind) throws Exception {
         if ("reset".equals(kind) || "refresh".equals(kind))
             return new TestLabResetTask(runtime, "refresh".equals(kind));
         if ("minimal".equals(kind)) return new TestLabMinimalTask(runtime);
         if ("stress".equals(kind)) return new TestLabStressTask(runtime);
         if ("composite".equals(kind) && runtime.config().composite) return new TestLabCompositeTask(runtime);
+        if (("native-build".equals(kind) || "native-test".equals(kind)) && runtime.config().nativePlatforms)
+            return new TestLabNativeTask(runtime, "native-build".equals(kind));
         throw new IOException("Unknown bounded lab task");
     }
 

@@ -6,7 +6,10 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
+import java.util.TreeSet;
 
 import net.minecraftforge.common.config.Configuration;
 
@@ -20,6 +23,13 @@ final class TestLabConfig {
     final boolean composite;
     final int compositeMachines;
     String compositeActorUuid = "";
+    boolean nativePlatforms;
+    String nativeActorUuid = "";
+    Set<String> nativeMods = Collections.emptySet();
+    int nativeSeconds = 3600;
+    int nativeMaxChunks = 128;
+    Set<String> nativeMachines = Collections.emptySet();
+    Path nativeCatalogFile;
 
     TestLabConfig(boolean enabled, boolean performance, int dimension, int provider, int baseX, int baseZ, int spacing,
         int y, int maxChunks, int operations, int tickMillis, int runSeconds, int iterations, int payloadKiB) {
@@ -165,6 +175,75 @@ final class TestLabConfig {
                 .getString()
                 .trim();
             if (!value.compositeActorUuid.isEmpty()) java.util.UUID.fromString(value.compositeActorUuid);
+            value.nativePlatforms = cfg
+                .get(
+                    c,
+                    "nativePlatformsEnabled",
+                    false,
+                    "Opt in to persistent, separately owned native mod catalog platforms.")
+                .getBoolean(false);
+            value.nativeActorUuid = cfg
+                .get(
+                    c,
+                    "nativePlatformActorUuid",
+                    "",
+                    "Exact connected survival test-client UUID for native-test sessions.")
+                .getString()
+                .trim();
+            if (!value.nativeActorUuid.isEmpty()) java.util.UUID.fromString(value.nativeActorUuid);
+            String[] nativeMods = cfg
+                .get(
+                    c,
+                    "nativePlatformMods",
+                    new String[0],
+                    "Exact registry mod IDs to enumerate, including decorative mods. Empty builds no platforms.")
+                .getStringList();
+            Set<String> selectedMods = new TreeSet<>();
+            for (String mod : nativeMods) {
+                if (!mod.matches("[A-Za-z0-9_.-]+"))
+                    throw new IllegalArgumentException("Invalid native registry mod ID");
+                selectedMods.add(mod);
+            }
+            value.nativeMods = Collections.unmodifiableSet(new LinkedHashSet<>(selectedMods));
+            value.nativeSeconds = cfg
+                .get(
+                    c,
+                    "nativePlatformTimeoutSeconds",
+                    3600,
+                    "Bounded catalog build or connected native-test session duration; 10..3600 seconds.")
+                .getInt(3600);
+            if (value.nativeSeconds < 10 || value.nativeSeconds > 3600)
+                throw new IllegalArgumentException("Native platform timeout must be 10..3600 seconds");
+            value.nativeMaxChunks = cfg
+                .get(
+                    c,
+                    "nativePlatformMaxOwnedChunks",
+                    128,
+                    "Native session only: simultaneously leased chunks, 4..256; still limited by Forge ticket depth.")
+                .getInt(128);
+            if (value.nativeMaxChunks < 4 || value.nativeMaxChunks > 256)
+                throw new IllegalArgumentException("Native platform chunk budget must be 4..256");
+            Set<String> selectedMachines = new TreeSet<>();
+            Collections.addAll(
+                selectedMachines,
+                cfg.get(
+                    c,
+                    "nativePlatformMachines",
+                    new String[0],
+                    "Explicit fixed GT machine IDs; empty constructs no large machines.")
+                    .getStringList());
+            value.nativeMachines = Collections.unmodifiableSet(selectedMachines);
+            String catalogFile = cfg.get(
+                c,
+                "nativePlatformCatalogFile",
+                "",
+                "Optional local CLIENT-exported compressed NBT catalog; relative paths resolve below config directory.")
+                .getString()
+                .trim();
+            if (!catalogFile.isEmpty()) value.nativeCatalogFile = file.getParent()
+                .resolve(catalogFile)
+                .toAbsolutePath()
+                .normalize();
             if (!Files.exists(file)) {
                 cfg.save();
                 if (!Files.isRegularFile(copy) || Files.size(copy) == 0)
@@ -219,5 +298,30 @@ final class TestLabConfig {
             .append(zone.z)
             .append(';');
         return out.toString();
+    }
+
+    TestLabZone nativeZone(int page, boolean target) {
+        if (!nativePlatforms || page < 0 || page >= TestLabNativeCatalog.MAX_PAGES)
+            throw new IllegalArgumentException("Native platform page outside configured ownership");
+        TestLabZone base = zones.get(0);
+        // One region per persistent page. Keep all native regions beyond every original/composite facility.
+        int x = ((base.x + 6 * (zones.get(1).x - base.x) + 511) >> 9) * 512 + (page % 64) * 512;
+        int z = ((base.z + 511) >> 9) * 512 + (page / 64) * 512;
+        return new TestLabZone("native-" + page + (target ? "-target" : "-source"), x + (target ? 32 : 0), base.y, z);
+    }
+
+    String nativeLayout() {
+        TestLabZone source = nativeZone(0, false);
+        return "native-platforms-v1;" + source.x
+            + ","
+            + source.y
+            + ","
+            + source.z
+            + ";64x64;region512;source32x16x32;target32;page128;mods="
+            + nativeMods;
+    }
+
+    int nativeMachineBaseX() {
+        return nativeZone(0, false).x + 64 * 512;
     }
 }

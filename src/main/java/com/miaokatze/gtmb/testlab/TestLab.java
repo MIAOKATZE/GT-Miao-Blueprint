@@ -185,6 +185,13 @@ public final class TestLab {
         n.setInteger("dimensionId", config == null ? TestLabConfig.DEFAULT_DIMENSION : config.dimension);
         n.setInteger("providerId", config == null ? TestLabConfig.DEFAULT_DIMENSION : config.provider);
         n.setInteger("maxOwnedChunks", config == null ? 0 : config.maxChunks);
+        n.setBoolean("nativePlatformsConfigured", config != null && config.nativePlatforms);
+        n.setInteger("nativePlatformMaxOwnedChunks", config == null ? 0 : config.nativeMaxChunks);
+        n.setInteger(
+            "activeMaxOwnedChunks",
+            config == null ? 0
+                : n.getString("runKind")
+                    .startsWith("native-") ? config.nativeMaxChunks : config.maxChunks);
         if (runtime == null) {
             n.setString("state", isEnabled() ? "IDLE" : "DISABLED");
             n.setString("runId", "");
@@ -205,6 +212,22 @@ public final class TestLab {
     /** Detached coordinates for the current configured composite run; never enables or loads the lab. */
     public static NBTTagCompound compositeManifest() {
         return runtime == null ? new NBTTagCompound() : runtime.compositeManifest();
+    }
+
+    /** Detached current native catalog/session evidence. Reading never loads a dimension or selects a facility. */
+    public static NBTTagCompound nativeManifest() {
+        return runtime == null ? new NBTTagCompound() : runtime.nativeManifest();
+    }
+
+    public static NBTTagCompound nativePageManifest(String id) throws IOException {
+        if (!isEnabled() || runtime == null) throw new IOException("Native platform session is not active");
+        return runtime.nativePageManifest(id);
+    }
+
+    /** Fixed owned page only, for the admitted connected survival actor of the active native-test session. */
+    public static void useNativeFacility(World world, EntityPlayerMP actor, String id) throws IOException {
+        if (!isEnabled() || runtime == null) throw new IOException("Native platform session is not active");
+        runtime.useNativeFacility(world, actor, id);
     }
 
     /** Fixed owned facility switch for the active configured actor. No arbitrary coordinates or world authority. */

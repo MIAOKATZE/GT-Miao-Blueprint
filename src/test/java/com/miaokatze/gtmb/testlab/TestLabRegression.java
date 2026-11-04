@@ -22,6 +22,7 @@ public final class TestLabRegression {
     private TestLabRegression() {}
 
     public static void run() {
+        TestLabNativeRegression.run();
         TestLabConfig defaults = config(4096);
         SimpleAssert.that(!defaults.enabled, "lab opt-in defaults off");
         SimpleAssert.eq(1048578, defaults.dimension, "high ID avoids referenced GTSR/Outpost defaults");

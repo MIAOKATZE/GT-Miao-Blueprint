@@ -42,21 +42,30 @@ final class TestLabActor {
     private final TestLabConfig config;
     private int supplies;
     private final ItemStack tool;
+    private TestLabZone connectedBank;
+    private final boolean nativePlatforms;
 
     TestLabActor(WorldServer world, TestLabOwnership ownership, TestLabConfig config, String run) {
         this(world, ownership, config, run, false);
     }
 
     TestLabActor(WorldServer world, TestLabOwnership ownership, TestLabConfig config, String run, boolean connected) {
+        this(world, ownership, config, run, connected, null);
+    }
+
+    TestLabActor(WorldServer world, TestLabOwnership ownership, TestLabConfig config, String run, boolean connected,
+        TestLabZone nativeEntrance) {
         this.world = world;
         this.config = config;
         this.owner = ownership.owner.toString();
         this.run = run;
+        nativePlatforms = nativeEntrance != null;
         if (ProjectorRegistry.projector == null) throw new IllegalStateException("Projector registry is unavailable");
         if (connected) {
-            if (config.compositeActorUuid.isEmpty())
-                throw new IllegalStateException("Composite requires configured test client UUID");
-            id = UUID.fromString(config.compositeActorUuid);
+            String configuredActor = nativePlatforms ? config.nativeActorUuid : config.compositeActorUuid;
+            if (configuredActor.isEmpty())
+                throw new IllegalStateException("Native/composite workflow requires configured test client UUID");
+            id = UUID.fromString(configuredActor);
             EntityPlayerMP selected = null;
             for (Object online : MinecraftServer.getServer()
                 .getConfigurationManager().playerEntityList) {
@@ -79,10 +88,12 @@ final class TestLabActor {
             originalZ = player.posZ;
             originalYaw = player.rotationYaw;
             originalPitch = player.rotationPitch;
-            TestLabZone bank = config.zone("composite-bank");
+            TestLabZone bank = nativePlatforms ? nativeEntrance : config.zone("composite-bank");
+            connectedBank = bank;
+            int actorZ = nativePlatforms ? 29 : 20;
             // Actor admission precedes the facility lease; ordinary provideChunk may return EmptyChunk here.
             for (int cx = (bank.x + 1) >> 4; cx <= (bank.x + 3) >> 4; cx++)
-                for (int cz = (bank.z + 19) >> 4; cz <= (bank.z + 21) >> 4; cz++) {
+                for (int cz = (bank.z + actorZ - 1) >> 4; cz <= (bank.z + actorZ + 1) >> 4; cz++) {
                     Chunk chunk = world.theChunkProviderServer.loadChunk(cx, cz);
                     if (chunk == null || chunk instanceof EmptyChunk
                         || !chunk.isChunkLoaded
@@ -90,23 +101,24 @@ final class TestLabActor {
                         || chunk.zPosition != cz)
                         throw new IllegalStateException("Composite actor platform chunk did not load natively");
                 }
-            for (int dx = 1; dx <= 3; dx++)
+            if (!nativePlatforms) for (int dx = 1; dx <= 3; dx++)
                 for (int dz = 19; dz <= 21; dz++) world.setBlock(bank.x + dx, bank.y, bank.z + dz, Blocks.glass, 0, 3);
             // EmptyChunk accepts writes without storing blocks, so check the actual world before transferring.
-            for (int dx = 1; dx <= 3; dx++)
-                for (int dz = 19; dz <= 21; dz++) if (world.getBlock(bank.x + dx, bank.y, bank.z + dz) != Blocks.glass)
+            for (int dx = 1; dx <= 3; dx++) for (int dz = actorZ - 1; dz <= actorZ + 1; dz++)
+                if (nativePlatforms ? world.isAirBlock(bank.x + dx, bank.y, bank.z + dz)
+                    : world.getBlock(bank.x + dx, bank.y, bank.z + dz) != Blocks.glass)
                     throw new IllegalStateException("Composite actor platform glass did not persist");
             if (world
                 .func_147461_a(
                     AxisAlignedBB.getBoundingBox(
                         bank.x + 2.2,
                         bank.y + 0.99,
-                        bank.z + 20.2,
+                        bank.z + actorZ + 0.2,
                         bank.x + 2.8,
                         bank.y + 1.01,
-                        bank.z + 20.8))
+                        bank.z + actorZ + 0.8))
                 .isEmpty()) throw new IllegalStateException("Composite actor platform has no supporting collision");
-            transfer(world, bank.x + 2.5, bank.y + 1, bank.z + 20.5);
+            transfer(world, bank.x + 2.5, bank.y + 1, bank.z + actorZ + 0.5);
         } else {
             id = UUID.nameUUIDFromBytes(("gtmb-testlab-agent:" + owner).getBytes(StandardCharsets.UTF_8));
             for (Object online : MinecraftServer.getServer()
@@ -135,10 +147,19 @@ final class TestLabActor {
     void at(TestLabZone zone) {
         if (player instanceof FakePlayer) player.setPosition(zone.x + 8.5, zone.y + 1, zone.z + 8.5);
         else {
-            TestLabZone bank = config.zone("composite-bank");
-            player.playerNetServerHandler
-                .setPlayerLocation(bank.x + 2.5, bank.y + 1, bank.z + 20.5, player.rotationYaw, player.rotationPitch);
+            TestLabZone bank = connectedBank;
+            player.playerNetServerHandler.setPlayerLocation(
+                bank.x + 2.5,
+                bank.y + 1,
+                bank.z + (nativePlatforms ? 29.5 : 20.5),
+                player.rotationYaw,
+                player.rotationPitch);
         }
+    }
+
+    void atNative(TestLabZone source) {
+        connectedBank = source;
+        at(source);
     }
 
     ItemStack tool() {

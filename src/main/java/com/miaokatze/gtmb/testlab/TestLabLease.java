@@ -21,12 +21,18 @@ final class TestLabLease {
     private final TestLabConfig config;
     private final TestLabOwnership ownership;
     private final String run;
+    private final int maxChunks;
 
     TestLabLease(WorldServer world, TestLabConfig config, TestLabOwnership ownership, String run) {
+        this(world, config, ownership, run, config.maxChunks);
+    }
+
+    TestLabLease(WorldServer world, TestLabConfig config, TestLabOwnership ownership, String run, int maxChunks) {
         this.world = world;
         this.config = config;
         this.ownership = ownership;
         this.run = run;
+        this.maxChunks = maxChunks;
     }
 
     void acquire(TestLabZone... zones) throws IOException {
@@ -39,8 +45,7 @@ final class TestLabLease {
             .setString("labOwner", ownership.owner.toString());
         ticket.getModData()
             .setString("run", run);
-        int limit = ticket.getChunkListDepth() <= 0 ? config.maxChunks
-            : Math.min(config.maxChunks, ticket.getChunkListDepth());
+        int limit = ticket.getChunkListDepth() <= 0 ? maxChunks : Math.min(maxChunks, ticket.getChunkListDepth());
         try {
             for (TestLabZone zone : zones) for (int x = zone.x >> 4; x <= (zone.x + zone.sizeX - 1) >> 4; x++)
                 for (int z = zone.z >> 4; z <= (zone.z + zone.sizeZ - 1) >> 4; z++) {
@@ -60,6 +65,12 @@ final class TestLabLease {
 
     int size() {
         return chunks.size();
+    }
+
+    boolean covers(int x, int z, int sx, int sz) {
+        for (int cx = x >> 4; cx <= (x + sx - 1) >> 4; cx++) for (int cz = z >> 4; cz <= (z + sz - 1) >> 4; cz++)
+            if (!chunks.contains(new ChunkCoordIntPair(cx, cz))) return false;
+        return true;
     }
 
     void release() {

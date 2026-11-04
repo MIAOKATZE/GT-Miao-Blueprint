@@ -1,5 +1,79 @@
 # GTMB agent test laboratory
 
+## 持久原生 Mod 平台（显式选择）
+
+本地 `testlab.enabled=true` 之外，还需明确设置 `nativePlatformsEnabled=true`。
+`nativePlatformMods` 默认空，填写实际 Item 注册表的 namespace（区分大小写）；
+`nativePlatformMachines` 默认空，只接受 `forge-of-gods`、`bec-observation`、
+`electric-blast-furnace`、`large-chemical-reactor`。装饰类与设备类使用同一真实注册表目录，
+不会因为没有 TileEntity 而被排除。候选 namespace 如 `chisel`、`Ztones`、
+`ArchitectureCraft`、`CarpentersBlocks`、`StorageDrawers`、`appliedenergistics2`、
+`EnderIO`、`ExtraUtilities`、`BiblioCraft`、`malisisdoors`、`OpenBlocks`、`Botania`、
+`Thaumcraft`、`Forestry`；这些候选需由当前实例的真实注册表确认。请求的 namespace
+没有任何原生目录条目时会记录原因并拒绝构建，不把不存在或大小写错误的 Mod 算作通过。
+
+| 本地设置 | 默认值与范围 |
+| --- | --- |
+| `nativePlatformsEnabled` | `false`；命令不能启用 |
+| `nativePlatformMods` | 空列表；实际注册 namespace |
+| `nativePlatformMachines` | 空列表；上述四种固定机器 ID |
+| `nativePlatformActorUuid` | 空；`native-test` 必须指定已连接、存活的生存模式真实测试客户端 |
+| `nativePlatformCatalogFile` | 空；可指定真实客户端导出的压缩 NBT；相对路径从 config 目录解析，常规文件最多 16 MiB |
+| `nativePlatformMaxOwnedChunks` | `128`，4..256；仅原生任务有效，仍受 Forge 单票深度限制；普通页同时需要 8，诸神之锻炉源区需要 117 |
+| `nativePlatformTimeoutSeconds` | `3600`，10..3600；原生构建或测试会话的有限总时长 |
+
+Forge 1.7.10 的部分 creative/subitems 回调只有客户端保留。Dedicated server 要使用
+同一 GTNH 实例真实客户端导出的目录，不能把服务端缺失回调或 metadata 0 当作全部变种。
+测试辅助程序在客户端线程创建 `new TestLabNativeCatalogExport(String[] registryMods)`，
+每个客户端 tick 在有限步数与时间预算内调用 `step()`；返回 `true` 后读取 `snapshot()`，用
+`CompressedStreamTools.writeCompressed` 写入该辅助程序自己的受管目录。此接口要求
+客户端本地启用 testlab，调用的是真实 Item 的 `getCreativeTabs/getSubItems`。
+它不写产品蓝图、不发送新游戏协议，也不接收远程启用参数。导出 schema 1 包含
+选中 namespace、Mod 版本、实际 registry 名称、damage、完整原生 ItemStack NBT 与枚举问题。
+服务端导入会校验 namespace 和双方已安装 Mod 的版本，按服务端真实注册表重映射 item 数字 ID，
+保留 damage 与物品 NBT。枚举异常、输入声明不完整或注册物品不存在都会明确失败。
+无客户端输入时仍可直接调用当前运行侧的原生 creative API，但出现客户端方法缺失时必须改用导出输入。
+
+管理员命令与生产探针分离：
+
+- `/gtmbtestlab run native-build`：枚举或导入已选择 Mod 的所有真实 subitems，按物品实际所属 Mod
+  排序并持久构建全部分页，然后结束。此处 PASS 仅证明展示平台准备完成，蓝图结果保持 `NOT_RUN`。
+- `/gtmbtestlab run native-test`：复用现有平台，准入指定真实客户端并保持活动，供后续探针逐页调用
+  GTMB 生产选择、处理、保存和重载。准备完成不会自行产生蓝图 PASS。
+- `/gtmbtestlab stop`：结束会话，恢复真实客户端原位置和完整背包，释放本次票据；持久平台保留。
+- 原有 `reset/refresh` 只处理原有五区及其原 composite 扩展，不清除或重新扫描这些新平台。
+
+每个 Mod 每页最多 128 个精确物品变种。源区与目标区各为 32×16×32，同页位于独立
+512×512 region 内，相邻页相隔一个 region。平台源区有玻璃地面；每个 ItemBlock 用实际物品
+调用原生放置路径，等待 40 个实际实验室 tick 后复核；回调拒绝、异常或检查时已变化会逐项记录，
+不以直接 setBlock 代替成功。流动液体只保留精确原生物品展示，标记 `ITEM_ONLY_DYNAMIC_FLUID`，
+不向共享展示页释放会流动、起火或改写邻块的液体，也不把它记成已放置。
+所有变种（包括不能独立放置的物品）还会以准确 ItemStack 放入真实原生箱子，manifest
+保留箱子坐标和 slot。非 ItemBlock 只展示库存，不把它当空手激活方块。
+没有 Item 的注册方块和没有原生 subitems 的变种物品也会明确记录，未猜造其 metadata。
+
+新平台有独立 `native-ownership-<dimension>.nbt` 及逐页指纹归属，原五区与 composite marker
+字节协议不变。第一次认领一页或机器源区时拒绝已存在的未归属 region，不接管旧世界。
+已完成且目录一致的页直接复用；只有未完成的已归属普通页需要有限分片重建。
+每次只持有当前页源区/目标区或一台大型机器源区的一组票据，切换会释放旧组。
+普通玩家在测试维度的自动变更禁入规则保留；测试客户端使用已有 composite 的生存模式准入、
+背包保护与退出恢复路径。平台不会在退出时全部拆除。
+
+只读文件位于 `<save>/gtmb-testlab/native-platforms/`：`index.json/nbt` 为全量页清单，
+`page-<index>.json/nbt` 为精确条目与位置，`machine-<id>.json/nbt` 为独立机器证据。
+活动会话还提供分离 NBT 副本 `TestLab.nativeManifest()` 与
+`TestLab.nativePageManifest(String id)`。当前准入 actor 可调用
+`TestLab.useNativeFacility(world, actor, "<page-id>:source")` 或 `:target` 切页，不必重启会话。
+这些接口不接受任意坐标，也不替代普通 GTMB 权限或客户端 focus 保护。
+`sourceFingerprint` 对 Mod 展示页是原生目录堆栈指纹，不能据此声称运行中 TileEntity NBT
+从未变化；探针应实扫 `first/second`、`expectedSolid`、箱子原始 slot 和摆放记录。
+
+四个 GT 机器使用单独源平台和真实注册控制器/原生 construct 路径。大型结构只提供
+`sourceOnly=true` 的源选择、处理、保存和重载场景，本轮不把目标施工标成通过。
+诸神之锻炉采用 trigger stackSize 1 的主结构，玻色爱因斯坦凝聚态观测阵列使用
+`MTEBECAssembler`，并与 EBF/LCR 各自隔离。manifest 区分原子 construct 耗时和后续
+蓝图阶段，记录自然形成状态、实际非空气块数与结构指纹；构建外壳不等于机器已自然成型或运行。
+
 The agent laboratory is an administrator tool for repeatable, common-side tests. It is disabled by default. It uses an isolated, save-local dimension and a survival Forge FakePlayer for the small suites; the separately opted-in composite suite uses one explicitly configured, connected survival test client. It is not a claim that every installed mod, client renderer, GUI or network connection has passed testing.
 
 ## Enable locally
