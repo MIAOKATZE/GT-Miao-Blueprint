@@ -47,6 +47,7 @@ mapOf(
     "runCookingModelTest" to "com.miaokatze.gtmb.client.compat.cookingforblockheads.CookingForBlockheadsModelRegression",
     "runBotaniaModelTest" to "com.miaokatze.gtmb.client.compat.botania.BotaniaModelRegression",
     "runFloodLightsModelTest" to "com.miaokatze.gtmb.client.compat.floodlights.FloodLightsModelRegression",
+    "runStorageDrawersModelTest" to "com.miaokatze.gtmb.client.compat.storagedrawers.StorageDrawersModelRegression",
     "runInvisibleModelTest" to "com.miaokatze.gtmb.client.hologram.NativeInvisibleRegression",
     "runStorageCompatibilityTest" to "com.miaokatze.gtmb.hologram.StorageContainerCompatibilityRegression"
 ).forEach { (taskName, entryPoint) ->
