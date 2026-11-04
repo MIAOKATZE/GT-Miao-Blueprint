@@ -430,25 +430,34 @@ public final class HologramControllerCaptureRegression {
         HologramServiceEditRegression.ReadOnlyWorld world = (HologramServiceEditRegression.ReadOnlyWorld) player.worldObj;
         controller(unsafe, world, 0);
         try {
+            WIRE.clear();
             HologramProjectorWorkflow.open(player, 0, 64, 0, 2);
             HologramSession s = HologramWorkspace.find(player.getUniqueID());
             SimpleAssert.that(s.capturePending, "large native controller starts with a pending capture receipt");
-            s.uiSequence = 72;
-            WIRE.clear();
-            HologramSnapshots.sendProgress(s);
+            SimpleAssert.eq(1, WIRE.size(), "world entry sends its actual initial capture progress receipt");
             SimpleAssert.that(
                 WIRE.get(0)
                     .getBoolean("progressOnly"),
                 "capture publishes pending progress before invalidation");
+            NBTTagCompound progress = WIRE.get(0)
+                .getCompoundTag("progress");
+            SimpleAssert.eq("capture", progress.getString("phase"), "world entry reports the native capture phase");
+            SimpleAssert.eq(s.id, progress.getString("session"), "initial progress owns the controller session");
+            SimpleAssert
+                .eq(s.uiSequence, progress.getLong("uiSequence"), "initial progress owns the world entry command");
             world.occupants.remove("0,64,0");
             HologramBuildPreparation.tickPending(s);
+            SimpleAssert.eq(2, WIRE.size(), "invalidation sends exactly one terminal after the initial progress");
             NBTTagCompound terminal = WIRE.get(WIRE.size() - 1);
             SimpleAssert.that(
                 terminal.getBoolean("transportError"),
                 "invalid target sends a terminal receipt without a valid world snapshot");
             SimpleAssert
                 .eq(s.id, terminal.getString("session"), "invalidated terminal owns the old controller session");
-            SimpleAssert.eq(72L, terminal.getLong("uiSequence"), "invalidated terminal owns the pending command");
+            SimpleAssert.eq(
+                progress.getLong("uiSequence"),
+                terminal.getLong("uiSequence"),
+                "invalidated terminal owns the pending command");
             SimpleAssert.that(
                 !s.capturePending && !HologramSnapshotPreparation.pending(s),
                 "invalidated capture has no stranded continuation or baseline");
@@ -467,13 +476,25 @@ public final class HologramControllerCaptureRegression {
 
         @Override
         public void sendTo(cpw.mods.fml.common.network.simpleimpl.IMessage message, EntityPlayerMP player) {
-            if (message instanceof HologramNetwork.State) WIRE.add(((HologramNetwork.State) message).tag);
+            if (message instanceof HologramNetwork.State) {
+                NBTTagCompound state = ((HologramNetwork.State) message).tag;
+                if (state.getBoolean("transportError")) SimpleAssert.eq(
+                    HologramWorkspace.find(player.getUniqueID()).id,
+                    state.getString("session"),
+                    "capture terminal is sent while its exact session still owns the workspace");
+                WIRE.add(state);
+            }
         }
     }
 
     private static void replacedCapture(sun.misc.Unsafe unsafe) throws ReflectiveOperationException {
         EntityPlayerMP player = player(unsafe);
+        connect(player);
         HologramSession previous = session(player), replacement = session(player);
+        previous.uiSequence = 73;
+        previous.blueprintClientTaskToken = 901;
+        replacement.uiSequence = 74;
+        replacement.blueprintClientTaskToken = 902;
         previous.captureWork = new HologramControllerCapture.FinishWork(new HashMap<>());
         previous.capturePending = previous.capture.pending = true;
         HologramExtensionSnapshots.CaptureTask extension = new HologramExtensionSnapshots.CaptureTask(previous.capture);
@@ -484,18 +505,48 @@ public final class HologramControllerCaptureRegression {
         result.set(extension, future);
         previous.capture.extensionTask = extension;
         replacement.captureWork = new HologramControllerCapture.FinishWork(new HashMap<>());
-        replacement.capturePending = true;
+        HologramControllerCapture.FinishWork replacementWork = replacement.captureWork;
+        replacement.capturePending = replacement.capture.pending = true;
+        replacement.capture.extensionTask = new HologramExtensionSnapshots.CaptureTask(replacement.capture);
+        java.util.concurrent.FutureTask<com.miaokatze.gtmb.api.BlueprintSnapshots.Snapshot> replacementFuture = new java.util.concurrent.FutureTask<>(
+            () -> null);
+        result.set(replacement.capture.extensionTask, replacementFuture);
         HologramWorkspace.activate(player.getUniqueID(), previous);
         try {
+            WIRE.clear();
             HologramWorkspace.activate(player.getUniqueID(), replacement);
+            SimpleAssert.eq(1, WIRE.size(), "replacing a pending capture sends exactly one old terminal receipt");
+            NBTTagCompound terminal = WIRE.get(0);
+            SimpleAssert
+                .that(terminal.getBoolean("transportError"), "replacement retires the old client task explicitly");
+            SimpleAssert.eq(previous.id, terminal.getString("session"), "replacement terminal owns the old session");
+            SimpleAssert.eq(73L, terminal.getLong("uiSequence"), "replacement terminal owns the old command");
+            SimpleAssert.eq(901L, terminal.getLong("clientTaskToken"), "replacement terminal owns the old task token");
             SimpleAssert.that(
                 !previous.capturePending && previous.captureWork == null && future.isCancelled(),
                 "replacing a controller session retires the old native task and its queued extension work");
             SimpleAssert.that(
-                replacement.capturePending && replacement.captureWork != null,
+                replacement.capturePending && replacement.captureWork == replacementWork
+                    && !replacementFuture.isCancelled(),
                 "retirement never cancels the replacement controller's task");
+            HologramControllerCapture.stop(previous, "late old capture stop", null);
+            SimpleAssert.eq(1, WIRE.size(), "a late old stop cannot send another terminal for the new owner");
+            SimpleAssert.that(
+                replacement.capturePending && replacement.captureWork == replacementWork
+                    && !replacementFuture.isCancelled(),
+                "a late old stop cannot cancel the new continuation or extension future");
+            HologramSnapshots.sendProgress(replacement);
+            SimpleAssert.eq(2, WIRE.size(), "the new capture can publish progress after the old terminal");
+            NBTTagCompound progress = WIRE.get(1)
+                .getCompoundTag("progress");
+            SimpleAssert.eq("capture", progress.getString("phase"), "replacement progress reports native capture");
+            SimpleAssert.eq(replacement.id, progress.getString("session"), "replacement progress owns the new session");
+            SimpleAssert.eq(74L, progress.getLong("uiSequence"), "replacement progress owns the new command");
         } finally {
+            HologramSession.cancelCaptureRetry(replacement);
             HologramWorkspace.clear();
+            player.playerNetServerHandler.netManager.channel()
+                .close();
         }
     }
 
