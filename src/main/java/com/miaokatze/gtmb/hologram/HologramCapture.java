@@ -573,7 +573,7 @@ public final class HologramCapture {
         return sourceCurrent();
     }
 
-    private void invalidateSource(String reason) {
+    void invalidateSource(String reason) {
         ownSources.rejection = reason;
         rejectSource(reason);
     }
@@ -609,7 +609,10 @@ public final class HologramCapture {
     }
 
     void cancelPending() {
-        if (extensionTask != null) extensionTask.cancel();
+        if (extensionTask != null) {
+            extensionTask.cancel();
+            extensionTask = null;
+        }
     }
 
     /** Resumable traversal of declared pieces; collection scope owns hint interception and completion. */
@@ -754,7 +757,7 @@ public final class HologramCapture {
         else if ("TIME_LIMIT".equals(reason) && !failure.startsWith("TIME_LIMIT")) failure = reason + ": " + failure;
     }
 
-    private void noteFailure(Throwable failure) {
+    void noteFailure(Throwable failure) {
         if (!failureOrigin.isEmpty()) return;
         StackTraceElement[] trace = failure.getStackTrace();
         failureOrigin = failure.getClass()

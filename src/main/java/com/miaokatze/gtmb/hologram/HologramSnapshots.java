@@ -834,6 +834,8 @@ final class HologramSnapshots {
     }
 
     static void send(HologramSession s) {
+        // The failed native task already sent its small terminal receipt; its declarations may still be broken.
+        if (!s.captureError.isEmpty()) return;
         // Partial batches are server-only. Keep the original open intent until a complete snapshot exists.
         if (s.capturePending) {
             sendProgress(s);

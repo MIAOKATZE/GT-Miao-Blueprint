@@ -164,6 +164,41 @@ final class HologramControllerCapture {
             else HologramResourcePlanner.refreshPlan(s);
             return;
         }
+        if (resetAttempts) s.captureError = "";
+        else if (!s.captureError.isEmpty()) return;
+        try {
+            collectNative(s, resetAttempts);
+        } catch (RuntimeException | LinkageError failure) {
+            stop(s, "结构采集失败，请重新读取控制器", failure);
+        }
+    }
+
+    /** A failed native continuation cannot publish a partial plan or leave the client's task pending. */
+    static void stop(HologramSession s, String reason, Throwable failure) {
+        s.captureError = reason;
+        if (s.capture != null) {
+            if (failure != null) s.capture.noteFailure(failure);
+            s.capture.invalidateSource(
+                failure == null ? "CAPTURE_STOPPED"
+                    : "CAPTURE_FAILED " + failure.getClass()
+                        .getSimpleName());
+        }
+        HologramSession.cancelCaptureRetry(s);
+        HologramSession.clearPending(s);
+        HologramSnapshotPreparation.cancel(s);
+        s.job = 4;
+        s.phase = "STOPPED";
+        s.status = reason;
+        if (HologramWorkspace.find(s.player.getUniqueID()) == s) HologramNetwork.transportFailure(
+            s.player,
+            s.id,
+            s.uiSequence,
+            "capture.prepare",
+            s.blueprintClientTaskToken,
+            new IllegalStateException(reason, failure));
+    }
+
+    private static void collectNative(HologramSession s, boolean resetAttempts) {
         FinishWork work = !resetAttempts ? s.captureWork : null;
         HologramCapture resumed = !resetAttempts && (work == null || !work.finalizing())
             && s.capture != null

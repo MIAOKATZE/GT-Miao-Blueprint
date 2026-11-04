@@ -717,6 +717,7 @@ public final class HologramNetwork {
     }
 
     private static String transportErrorMessage(String code) {
+        if ("capture.prepare".equals(code)) return "结构采集未完成；保留上次完整预览，请重新读取控制器。";
         if ("snapshot.prepare".equals(code)) return "Snapshot preparation failed; the previous preview was retained.";
         if ("snapshot.encode".equals(code)) return "Snapshot encoding failed; the previous preview was retained.";
         if ("snapshot.queue".equals(code)) return "Snapshot queue is full; the previous preview was retained.";

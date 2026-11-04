@@ -74,7 +74,10 @@ final class HologramExtensionSnapshots {
         }
 
         void cancel() {
-            if (result != null) HologramAreaPreparation.cancel(result);
+            if (result != null) {
+                HologramAreaPreparation.cancel(result);
+                result = null;
+            }
         }
     }
 

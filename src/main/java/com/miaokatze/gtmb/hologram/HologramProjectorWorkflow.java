@@ -25,6 +25,7 @@ final class HologramProjectorWorkflow {
         if (previous != null && previous.player == player
             && !previous.virtual
             && !previous.cancelled
+            && previous.captureError.isEmpty()
             && previous.x == x
             && previous.y == y
             && previous.z == z
@@ -43,6 +44,8 @@ final class HologramProjectorWorkflow {
         }
         if (previous != null && previous.player == player
             && HologramWorkspace.areaSessionOwned(previous)
+            && (!HologramEditorWorkspaceRegistry.physicalProjection(previous)
+                || previous.captureError.isEmpty() && HologramSessionPolicy.valid(previous))
             && HologramAuthoringWorkflow.blueprintHasUnsavedChanges(previous)) {
             if (!HologramWorldFlow.worldPosition(x, y, z, player.worldObj.getHeight())
                 || !HologramSessionPolicy.previewReach(player, x, y, z)

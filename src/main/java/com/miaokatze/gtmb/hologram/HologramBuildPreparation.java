@@ -126,11 +126,7 @@ final class HologramBuildPreparation {
             || s.machine.getExtendedFacing()
                 .ordinal() != s.retryFacing
             || !HologramControllerCapture.captureConfigurationCurrent(s)) {
-            HologramSession.cancelCaptureRetry(s);
-            HologramSession.clearPending(s);
-            s.job = 4;
-            s.status = "工具、目标、控制器朝向或配置已变化，自动采集已停止";
-            HologramSnapshots.send(s);
+            HologramControllerCapture.stop(s, "工具、目标、控制器朝向或配置已变化，自动采集已停止", null);
         } else if (s.player.worldObj.getTotalWorldTime() >= s.captureRetryDue) {
             scan(s, false);
             HologramSnapshots.send(s);

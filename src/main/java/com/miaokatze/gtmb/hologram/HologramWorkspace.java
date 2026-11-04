@@ -30,6 +30,12 @@ final class HologramWorkspace {
         if (previous != null && previous != session) {
             previous.presentationTransition = null;
             HologramDeferredPlanRefresh.cancel(previous);
+            if (previous.capturePending) {
+                HologramSnapshotPreparation.cancel(previous);
+                previous.captureError = "结构采集已停止：已切换目标";
+                if (previous.capture != null) previous.capture.invalidateSource("CAPTURE_REPLACED");
+            }
+            HologramSession.cancelCaptureRetry(previous);
         }
         SESSIONS.put(player, session);
         HologramEditorWorkspaceRegistry.activated(session);

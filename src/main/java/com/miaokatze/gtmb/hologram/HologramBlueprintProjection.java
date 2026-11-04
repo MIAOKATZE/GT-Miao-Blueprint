@@ -249,6 +249,7 @@ final class HologramBlueprintProjection {
 
         boolean step(int maxWork, long deadline) {
             if (!initialized) {
+                s.captureError = "";
                 s.capture = new HologramCapture(null, HologramSessionPolicy.trigger(s));
                 if (s.virtualPreset.semanticNbt != null) {
                     try {

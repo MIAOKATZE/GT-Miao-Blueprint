@@ -713,6 +713,7 @@ final class HologramServiceEditRegression {
         Block occupied;
         int occupiedX;
         TileEntity occupant;
+        Map<String, TileEntity> occupants;
         boolean unloaded, denyMine;
         long loadReads, blockReads, metaReads, tileReads, permissionReads;
 
@@ -741,6 +742,7 @@ final class HologramServiceEditRegression {
         @Override
         public TileEntity getTileEntity(int x, int y, int z) {
             tileReads++;
+            if (occupants != null) return occupants.get(x + "," + y + "," + z);
             return x == occupiedX ? occupant : null;
         }
 
