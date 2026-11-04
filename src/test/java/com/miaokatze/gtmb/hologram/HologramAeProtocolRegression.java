@@ -40,6 +40,7 @@ public final class HologramAeProtocolRegression {
             changedTileRotationPreservesRecipe();
             selectiveMixedTransport();
             serviceShellRebind();
+            staticBlockMaterialIdentity();
         } catch (Exception failure) {
             throw new AssertionError("AE protocol/canonical persistence regression", failure);
         }
@@ -657,6 +658,40 @@ public final class HologramAeProtocolRegression {
         Field field = type.getDeclaredField(name);
         field.setAccessible(true);
         field.set(instance, value);
+    }
+
+    private static void staticBlockMaterialIdentity() throws Exception {
+        Block block = new appeng.block.GtmbAeStaticFixture(1);
+        int free = 4095;
+        while (free > 0 && (net.minecraft.item.Item.getItemById(free) != null
+            || Block.getBlockById(free) != Blocks.air)) free--;
+        if (free == 0) throw new AssertionError("No free static material fixture registry ID");
+        Block.blockRegistry.addObject(free, "gtmb:ae_drop_damage_fixture", block);
+        net.minecraft.item.ItemBlock item = new net.minecraft.item.ItemBlock(block);
+        net.minecraft.item.Item.itemRegistry.addObject(free, "gtmb:ae_drop_damage_fixture", item);
+        SimpleAssert.that(
+            !item.getHasSubtypes() && block.damageDropped(0) == 1,
+            "isolated fixture has a distinct drop damage");
+        net.minecraft.item.ItemStack sample = HologramAeBlueprint.sampleIdentity(block, 0, null);
+        SimpleAssert.that(
+            sample.getItem() == item && sample.getItemDamage() == 0,
+            "static AE capture uses its physical block item variant rather than its different drop damage");
+        HologramPresets.validateMaterialVariant(block, 0, sample);
+        rejects(
+            () -> HologramPresets.validateMaterialVariant(block, 0, new net.minecraft.item.ItemStack(item, 1, 1)),
+            "the drop damage cannot become an unpaid block item variant");
+        rejects(
+            () -> HologramPresets.validateMaterialVariant(
+                Blocks.stone,
+                0,
+                new net.minecraft.item.ItemStack(Blocks.stone, 1, 1)),
+            "ordinary stone still rejects its invalid item variant");
+        rejects(
+            () -> HologramPresets.validateMaterialVariant(
+                Blocks.oak_stairs,
+                7,
+                new net.minecraft.item.ItemStack(Blocks.oak_stairs, 1, 1)),
+            "stair orientation does not authorize an invalid item variant");
     }
 
     private static Block fixture() {

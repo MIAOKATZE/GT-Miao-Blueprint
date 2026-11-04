@@ -61,6 +61,7 @@ public final class HologramAeBlueprintCoreRegression {
         interfaceStorageAliases();
         nativeTileWriterCompatibility();
         nativeControllerWriterCompatibility();
+        nativeStaticMaterialIdentity();
         idleCpuWriterCompatibility();
         previewCacheSchema();
         quantumDisplayTransport(actor);
@@ -105,6 +106,18 @@ public final class HologramAeBlueprintCoreRegression {
                 && !HologramAeBlueprint.supports(net.minecraft.init.Blocks.stone, payload),
             "the same serialized parts do not turn an ordinary host into AE");
         check(HologramAeBlueprint.supports(drive), "registered AE blocks retain identity-based full analysis");
+    }
+
+    private static void nativeStaticMaterialIdentity() throws Exception {
+        Block ore = registeredBlock("appeng.block.solids.OreQuartzCharged");
+        check(
+            !Item.getItemFromBlock(ore).getHasSubtypes() && ore.damageDropped(0) == 1,
+            "registered charged ore drops a different item variant from its physical block item");
+        ItemStack sample = HologramAeBlueprint.sampleIdentity(ore, 0, null);
+        check(
+            sample.getItem() == Item.getItemFromBlock(ore) && sample.getItemDamage() == 0,
+            "registered charged ore capture retains the native ore block item at damage zero");
+        HologramPresets.validateMaterialVariant(ore, 0, sample);
     }
 
     private static void nativeControllerWriterCompatibility() throws Exception {

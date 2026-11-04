@@ -476,7 +476,10 @@ public final class HologramAeBlueprint {
         }
         Item item = Item.getItemFromBlock(block);
         if (item == null) throw new IOException("AE block has no registered material");
-        return new ItemStack(item, 1, block.damageDropped(metadata));
+        // Ordinary ore drops can have a different item damage from the block's construction material.
+        int damage = staticBlockShell(block, metadata) ? HologramPresets.materialDamage(block, metadata)
+            : block.damageDropped(metadata);
+        return new ItemStack(item, 1, damage);
     }
 
     /** Editable draft identity only. This never treats unresolved contents as payable or installable. */
