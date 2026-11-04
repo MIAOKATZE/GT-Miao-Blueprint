@@ -246,7 +246,8 @@ final class HologramEditorLegacyDialogs {
             background(HologramEditorTheme.PANEL);
             heading = HologramMuiTheme.label(() -> domain.title, 10, 8, domain.width, 16, HologramEditorTheme.TITLE);
             child(heading);
-            content.size(domain.width, domain.height)
+            content.pos(0, 0)
+                .size(domain.width, domain.height)
                 .background(IDrawable.NONE);
             content.child(
                 new LegacyPaint().size(domain.width, domain.height)
