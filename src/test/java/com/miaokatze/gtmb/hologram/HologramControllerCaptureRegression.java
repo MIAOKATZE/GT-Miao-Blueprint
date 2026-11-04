@@ -55,7 +55,8 @@ public final class HologramControllerCaptureRegression {
             finishSlices(unsafe);
             changedSignal(unsafe);
             lifecycle(unsafe);
-        } catch (ReflectiveOperationException | InterruptedException failure) {
+            HologramDynamicDefinitionRegression.virtualMemberRebuild(unsafe);
+        } catch (ReflectiveOperationException | InterruptedException | java.io.IOException failure) {
             throw new AssertionError("controller capture continuation", failure);
         } finally {
             Thread.currentThread()

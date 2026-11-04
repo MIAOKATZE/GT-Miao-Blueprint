@@ -175,13 +175,15 @@ final class HologramControllerCapture {
 
     /** A failed native continuation cannot publish a partial plan or leave the client's task pending. */
     static void stop(HologramSession s, String reason, Throwable failure) {
-        s.captureError = reason;
-        if (s.capture != null) {
-            if (failure != null) s.capture.noteFailure(failure);
-            s.capture.invalidateSource(
-                failure == null ? "CAPTURE_STOPPED"
-                    : "CAPTURE_FAILED " + failure.getClass()
-                        .getSimpleName());
+        if (!s.virtual) {
+            s.captureError = reason;
+            if (s.capture != null) {
+                if (failure != null) s.capture.noteFailure(failure);
+                s.capture.invalidateSource(
+                    failure == null ? "CAPTURE_STOPPED"
+                        : "CAPTURE_FAILED " + failure.getClass()
+                            .getSimpleName());
+            }
         }
         HologramSession.cancelCaptureRetry(s);
         HologramSession.clearPending(s);
