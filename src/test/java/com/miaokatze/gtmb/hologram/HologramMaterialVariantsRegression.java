@@ -34,6 +34,7 @@ public final class HologramMaterialVariantsRegression {
             .size();
         exactLifecycle();
         vanillaCacheGeneration();
+        nonSubtypeDerivedDamage();
         SimpleAssert.eq(
             before,
             GTMBExtensions.descriptors()
@@ -205,6 +206,29 @@ public final class HologramMaterialVariantsRegression {
             .that(validation.ordinaryMaterial(block, metadata), "retirement restores the original vanilla proof");
     }
 
+    private static void nonSubtypeDerivedDamage() throws Exception {
+        Block block = fixture("material_variants_derived_damage", new NativeBlock(), DerivedDamageItem::new);
+        ItemStack captured = HologramArea.serverSample(block, 2, null);
+        SimpleAssert.eq(30, captured.getItemDamage(), "a non-subtype item may derive damage from absent NBT");
+        HologramPresets.Cell saved = HologramPresets.cell(captured, 0, 0, 0, -1, false);
+        HologramBlueprintValidationCache validation = new HologramBlueprintValidationCache(
+            new HologramPresets.Preset());
+        HologramPresets.validateMaterialVariant(block, 2, saved.stack());
+        validation.validateMaterialVariant(block, 2, saved.stack());
+        net.minecraft.nbt.NBTTagCompound tag = new net.minecraft.nbt.NBTTagCompound();
+        tag.setInteger("amount", 23);
+        captured.setTagCompound(tag);
+        SimpleAssert.eq(7, captured.getItemDamage(), "the same item's NBT changes durability without adding subtypes");
+        validation.validateMaterialVariant(block, 2, captured);
+        SimpleAssert.eq(23, captured.getTagCompound().getInteger("amount"), "variant validation preserves item NBT");
+        expectMaterialFailure(() -> validation.validateMaterialVariant(block, 2, new ItemStack(Blocks.dirt)));
+        HologramPresets.validateMaterialVariant(Blocks.wool, 3, new ItemStack(Blocks.wool, 1, 3));
+        expectMaterialFailure(
+            () -> HologramPresets.validateMaterialVariant(Blocks.wool, 3, new ItemStack(Blocks.wool, 1, 4)));
+        expectMaterialFailure(
+            () -> validation.validateMaterialVariant(Blocks.wool, 3, new ItemStack(Blocks.wool, 1, 4)));
+    }
+
     private static void rejectedRegistration(Runnable attempt, String message) {
         int before = GTMBExtensions.descriptors()
             .size();
@@ -287,6 +311,20 @@ public final class HologramMaterialVariantsRegression {
 
         UnreviewedItem(Block block) {
             super(block);
+        }
+    }
+
+    private static final class DerivedDamageItem extends ItemBlock {
+
+        DerivedDamageItem(Block block) {
+            super(block);
+            setHasSubtypes(false);
+            setMaxDamage(30);
+        }
+
+        @Override
+        public int getDamage(ItemStack stack) {
+            return 30 - (stack.hasTagCompound() ? stack.getTagCompound().getInteger("amount") : 0);
         }
     }
 

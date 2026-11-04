@@ -383,6 +383,12 @@ final class HologramAreaPreparationRegression {
             area.importing = true;
             SimpleAssert
                 .that(HologramAreaWorkflow.importOwned(previous, area), "only the live current import may publish");
+            HologramArea failed = new HologramArea();
+            failed.minY = 64;
+            failed.importing = true;
+            HologramWorkspace.AREAS.put(identity, failed);
+            failedProjectionRetainsEditor(previous, failed);
+            HologramWorkspace.AREAS.put(identity, area);
             HologramWorkspace.activate(identity, staged);
             SimpleAssert.that(
                 !HologramAreaWorkflow.importOwned(previous, area),
@@ -403,6 +409,7 @@ final class HologramAreaPreparationRegression {
                 !HologramAreaWorkflow.importOwned(previous, area),
                 "disconnect cannot activate a completed worker result");
         } finally {
+            HologramSnapshotPreparation.cancel(previous);
             embedded.close();
             if (oldArea == null) HologramWorkspace.AREAS.remove(identity);
             else HologramWorkspace.AREAS.put(identity, oldArea);
@@ -418,6 +425,39 @@ final class HologramAreaPreparationRegression {
         SimpleAssert.that(
             area.staging == null && previous.pins.size() == 1,
             "cancelling the staged tail discards only unfinished work");
+    }
+
+    private static void failedProjectionRetainsEditor(HologramSession previous, HologramArea area) {
+        HologramCapture originalCapture = previous.capture;
+        ItemStack originalPin = previous.pins.get(0);
+        area.blueprint = new HologramPresets.Preset();
+        area.blueprint.schema = 2;
+        area.blueprint.cells.add(HologramPresets.cell(new ItemStack(Blocks.stone), 0, 0, 0, -1, false));
+        HologramPresets.Cell invalid = HologramPresets.cell(new ItemStack(Blocks.wool, 1, 4), 1, 0, 0, -1, false);
+        invalid.block = "minecraft:wool";
+        invalid.metadata = 3;
+        area.blueprint.cells.add(invalid);
+        HologramSession rejected = HologramAreaWorkflow.importStaging(previous, area);
+        area.staging = rejected;
+        area.population = new HologramBlueprintProjection.Population(rejected);
+        area.imported = true;
+        area.importPhase = "projection";
+        for (int tick = 0; tick < 16 && area.importing; tick++) HologramAreaWorkflow.tickImport(previous, area);
+        SimpleAssert.that(
+            rejected.capture.incomplete && "INVALID_PREFAB_VARIANT".equals(rejected.capture.failure)
+                && rejected.capture.cells.size() == 1,
+            "the real projection rejects a mismatched subtype after staging one valid cell");
+        SimpleAssert.that(
+            !area.importing && area.staging == null && area.population == null && area.planTask == null,
+            "failed projection discards staging before planning or publication");
+        SimpleAssert.that(
+            HologramWorkspace.find(previous.player.getUniqueID()) == previous && previous.capture == originalCapture
+                && previous.pins.get(0) == originalPin,
+            "failed projection preserves the current editor, capture and exact coordinate choice");
+        SimpleAssert.eq(
+            "区域导入失败：INVALID_PREFAB_VARIANT",
+            previous.status,
+            "the original editor exposes the projection failure instead of a completed import");
     }
 
     private static final class CountedStructures extends ArrayList<HologramPresets.Structure> {
