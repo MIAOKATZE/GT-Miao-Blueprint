@@ -45,9 +45,8 @@ public final class StorageDrawersModelRegression {
         SimpleAssert.that(!module.supports(Blocks.crafting_table), "ordinary workbenches are outside this adapter");
         SimpleAssert.that(!module.requiresTile(block, 2), "the table body does not require tile inventory");
         SimpleAssert.that(module.createTile(block, 2, null) == null, "no native tile or NBT reader is created");
-        SimpleAssert.that(
-            module.renderer(block, nativeRenderer) == nativeRenderer,
-            "original registered ISBRH retained");
+        SimpleAssert
+            .that(module.renderer(block, nativeRenderer) == nativeRenderer, "original registered ISBRH retained");
         Method supported = Class.forName("com.miaokatze.gtmb.client.hologram.HologramNativeTiles")
             .getDeclaredMethod("supported", net.minecraft.block.Block.class);
         supported.setAccessible(true);
@@ -72,9 +71,12 @@ public final class StorageDrawersModelRegression {
         SimpleAssert.eq(4, icons.size(), "four original native atlas materials");
         for (String name : icons.keySet()) {
             ResourceLocation location = new ResourceLocation(name);
-            String path = "assets/" + location.getResourceDomain() + "/textures/blocks/"
-                + location.getResourcePath() + ".png";
-            try (InputStream input = StorageDrawersModelRegression.class.getClassLoader().getResourceAsStream(path)) {
+            String path = "assets/" + location.getResourceDomain()
+                + "/textures/blocks/"
+                + location.getResourcePath()
+                + ".png";
+            try (InputStream input = StorageDrawersModelRegression.class.getClassLoader()
+                .getResourceAsStream(path)) {
                 SimpleAssert.that(input != null && ImageIO.read(input) != null, "native atlas image exists: " + path);
             }
         }
@@ -132,10 +134,8 @@ public final class StorageDrawersModelRegression {
                             SimpleAssert.eq(24, baseFaces, "original tabletop, feet, legs and braces");
                             SimpleAssert.eq(17, trimFaces, "original tabletop trim");
                         }
-                        SimpleAssert.eq(
-                            0,
-                            RenderHelper.instances.get().state.rotateTransform,
-                            "native orientation cleared");
+                        SimpleAssert
+                            .eq(0, RenderHelper.instances.get().state.rotateTransform, "native orientation cleared");
                         for (int rotation : RenderHelper.instances.get().state.uvRotate)
                             SimpleAssert.eq(0, rotation, "native UV rotation cleared");
                     } finally {

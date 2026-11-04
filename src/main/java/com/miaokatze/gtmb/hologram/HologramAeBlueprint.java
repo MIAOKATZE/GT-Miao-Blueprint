@@ -1452,8 +1452,7 @@ public final class HologramAeBlueprint {
                 known.addAll(Arrays.asList("topLocked", "bottomLocked", "output"));
             if (nativeInventoryAlias(type) != null || type.equals(TILE + "networking.TileEnergyAcceptor")
                 || type.equals(TILE + "networking.TileController")
-                || type.equals(TILE + "networking.TileCreativeEnergyController"))
-                known.add("inv");
+                || type.equals(TILE + "networking.TileCreativeEnergyController")) known.add("inv");
             if (type.equals(TILE + "misc.TileCondenser")) known.add("storedPower");
             if (type.equals(TILE + "misc.TileVibrationChamber")) known.addAll(Arrays.asList("burnTime", "maxBurnTime"));
             if (type.equals(TILE + "networking.TileWirelessHub")
@@ -1634,17 +1633,15 @@ public final class HologramAeBlueprint {
             if (prefix.length == 0 && type.equals(TILE + "misc.TileStorageReshuffle"))
                 idleReshuffle(work, data, (appeng.tile.misc.TileStorageReshuffle) host);
             if (prefix.length == 0 && host instanceof TileEntity) gtswnTileConfiguration(work, data);
-            if (prefix.length == 0 && (type.equals(TILE + "networking.TileEnergyAcceptor")
-                || type.equals(TILE + "networking.TileController")
-                || type.equals(TILE + "networking.TileCreativeEnergyController")) && data.hasKey("inv")) {
+            if (prefix.length == 0
+                && (type.equals(TILE + "networking.TileEnergyAcceptor")
+                    || type.equals(TILE + "networking.TileController")
+                    || type.equals(TILE + "networking.TileCreativeEnergyController"))
+                && data.hasKey("inv")) {
                 work.roots.add("inv");
                 if (!data.hasKey("inv", 10) || !data.getCompoundTag("inv")
                     .hasNoTags())
-                    work.issue(
-                        "unknown_inventory_slot",
-                        "blocker",
-                        "inv",
-                        "Native host inventory has zero slots");
+                    work.issue("unknown_inventory_slot", "blocker", "inv", "Native host inventory has zero slots");
                 data.setTag("inv", new NBTTagCompound());
             }
             if (prefix.length == 0) data.removeTag("GTSWN_IncorporationIdentity");
