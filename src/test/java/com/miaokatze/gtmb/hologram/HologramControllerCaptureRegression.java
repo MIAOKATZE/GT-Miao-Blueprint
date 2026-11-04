@@ -299,6 +299,7 @@ public final class HologramControllerCaptureRegression {
         s.virtual = true;
         s.virtualPreset = new HologramPresets.Preset();
         s.virtualPreset.schema = 2;
+        s.virtualPreset.name = "Capture recovery fixture";
         s.virtualPreset.cells.add(HologramPresets.cell(new ItemStack(Blocks.stone), 0, 0, 0, -1, false));
         HologramBlueprintProjection.populateVirtual(s);
         SimpleAssert.that(s.captureError.isEmpty(), "explicit virtual reconstruction clears the previous native error");
