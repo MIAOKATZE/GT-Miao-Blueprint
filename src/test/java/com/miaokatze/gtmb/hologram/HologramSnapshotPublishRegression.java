@@ -1333,10 +1333,12 @@ public final class HologramSnapshotPublishRegression {
             Field tasksField = HologramSnapshotPreparation.class.getDeclaredField("TASKS");
             tasksField.setAccessible(true);
             Object oldTask = ((java.util.Map<?, ?>) tasksField.get(null)).get(current);
-            Field metadataField = oldTask.getClass().getDeclaredField("metadata");
+            Field metadataField = oldTask.getClass()
+                .getDeclaredField("metadata");
             metadataField.setAccessible(true);
             ((HologramSnapshotMetadataTask) metadataField.get(oldTask)).step(1, Long.MAX_VALUE);
-            Field stateField = oldTask.getClass().getDeclaredField("state");
+            Field stateField = oldTask.getClass()
+                .getDeclaredField("state");
             stateField.setAccessible(true);
             NBTTagCompound frozen = (NBTTagCompound) stateField.get(oldTask);
             SimpleAssert.that(

@@ -220,7 +220,11 @@ public final class HologramMaterialVariantsRegression {
         captured.setTagCompound(tag);
         SimpleAssert.eq(7, captured.getItemDamage(), "the same item's NBT changes durability without adding subtypes");
         validation.validateMaterialVariant(block, 2, captured);
-        SimpleAssert.eq(23, captured.getTagCompound().getInteger("amount"), "variant validation preserves item NBT");
+        SimpleAssert.eq(
+            23,
+            captured.getTagCompound()
+                .getInteger("amount"),
+            "variant validation preserves item NBT");
         expectMaterialFailure(() -> validation.validateMaterialVariant(block, 2, new ItemStack(Blocks.dirt)));
         HologramPresets.validateMaterialVariant(Blocks.wool, 3, new ItemStack(Blocks.wool, 1, 3));
         expectMaterialFailure(
@@ -324,7 +328,8 @@ public final class HologramMaterialVariantsRegression {
 
         @Override
         public int getDamage(ItemStack stack) {
-            return 30 - (stack.hasTagCompound() ? stack.getTagCompound().getInteger("amount") : 0);
+            return 30 - (stack.hasTagCompound() ? stack.getTagCompound()
+                .getInteger("amount") : 0);
         }
     }
 

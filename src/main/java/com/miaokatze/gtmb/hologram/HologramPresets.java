@@ -1255,7 +1255,8 @@ final class HologramPresets {
         if (!materialBlockAlias(material, block)) throw new IOException("实际方块与付款物品的原生方块不一致");
         int damage = validation == null ? materialDamage(block, metadata) : validation.materialDamage(block, metadata);
         // Non-subtype item damage may describe durability or NBT state, rather than a physical material variant.
-        int paidDamage = paid.getItem().getHasSubtypes() ? paid.getItemDamage() : 0;
+        int paidDamage = paid.getItem()
+            .getHasSubtypes() ? paid.getItemDamage() : 0;
         if (damage != paidDamage) throw new IOException("实际方块材料变种与付款物品 damage 不一致");
     }
 

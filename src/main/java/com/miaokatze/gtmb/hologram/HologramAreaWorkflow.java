@@ -640,8 +640,7 @@ final class HologramAreaWorkflow {
                 }
             } else if ("projection".equals(area.importPhase)) {
                 if (area.population.step()) {
-                    if (area.staging.capture.incomplete)
-                        throw new java.io.IOException(area.staging.capture.failure);
+                    if (area.staging.capture.incomplete) throw new java.io.IOException(area.staging.capture.failure);
                     area.planTask = HologramResourcePlanner.beginPlan(area.staging);
                     area.importPhase = "plan";
                 }
