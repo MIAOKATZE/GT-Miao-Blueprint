@@ -24,6 +24,11 @@ public final class ClientRendering {
 
         boolean supports(Block block);
 
+        /** Audited data carriers whose native representation intentionally has no visible model or material. */
+        default boolean invisible(Block block, int metadata) {
+            return false;
+        }
+
         default boolean requiresTile(Block block, int metadata) {
             return block.hasTileEntity(metadata);
         }
@@ -62,6 +67,10 @@ public final class ClientRendering {
 
                 public boolean supports(Block block) {
                     return adapter.supports(block);
+                }
+
+                public boolean invisible(Block block, int meta) {
+                    return adapter.invisible(block, meta);
                 }
 
                 public boolean requiresTile(Block block, int meta) {

@@ -26,5 +26,7 @@ public final class BlueprintCompatibility {
         if (Loader.isModLoaded("cookingforblockheads")) CookingForBlockheadsCompatibility.initialize();
         if (Loader.isModLoaded("JABBA")) COMMON.addAll(JabbaCompatibility.install());
         if (Loader.isModLoaded("StorageDrawers")) COMMON.addAll(StorageDrawersCompatibility.install());
+        if (Loader.isModLoaded("FloodLights"))
+            COMMON.add(com.miaokatze.gtmb.compat.floodlights.FloodLightsCompatibility.installDisplay());
     }
 }

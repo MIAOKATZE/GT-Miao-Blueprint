@@ -156,6 +156,7 @@ public final class HologramClientSmoke {
                                         current));
                 }
                 if (Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke")) {
+                    com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.info(HologramFloodLightsPreviewSmoke.verify());
                     nativeCompatibilitySnapshot = HologramNativeCompatibilitySmoke.fixture(false);
                     nativeCompatibilityRotated = HologramNativeCompatibilitySmoke
                         .rotate(nativeCompatibilitySnapshot, false, 1);

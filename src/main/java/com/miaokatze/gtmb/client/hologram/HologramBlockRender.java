@@ -95,6 +95,24 @@ final class HologramBlockRender {
         return FAILURES.getOrDefault((current ? cell.id : cell.wantId), "");
     }
 
+    static boolean invisible(HologramState.Cell cell, boolean current) {
+        current = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
+        HologramNativeRenderRegistry.Adapter adapter = HologramNativeRenderRegistry.adapter(cell.block(current));
+        return adapter != null && adapter.invisible(cell.block(current), current ? cell.meta : cell.wantMeta);
+    }
+
+    /** An empty/air-only or partly unsupported snapshot is never inferred to be an intentional data-only model. */
+    static boolean dataOnly(HologramState state, boolean current) {
+        boolean declared = false;
+        for (HologramState.Cell cell : state.cells) {
+            boolean actual = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
+            if ((actual ? cell.id : cell.wantId).equals("minecraft:air") || cell.status.equals("removed")) continue;
+            if (!invisible(cell, actual)) return false;
+            declared = true;
+        }
+        return declared;
+    }
+
     static boolean ready(HologramState.Cell cell, boolean current) {
         if (snapshot == null) return false;
         current = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
@@ -102,7 +120,7 @@ final class HologramBlockRender {
         Model[] pair = MODELS.computeIfAbsent(cell, unused -> new Model[2]);
         int side = current ? 1 : 0;
         if (pair[side] == null) pair[side] = compile(cell, current);
-        return pair[side].list != 0 || pair[side].acceptedEmpty;
+        return pair[side].list != 0 || pair[side].acceptedEmpty || pair[side].invisible;
     }
 
     static void draw(HologramState.Cell cell, boolean current) {
@@ -169,8 +187,19 @@ final class HologramBlockRender {
     private static Model compile(HologramState.Cell cell, boolean current) {
         Block block = cell.block(current);
         HologramBlockAccess access = current ? actual : target;
-        TileEntity tile = access.getTileEntity(cell.x, cell.y, cell.z);
         HologramNativeRenderRegistry.Adapter adapter = HologramNativeRenderRegistry.adapter(block);
+        if (adapter != null && adapter.invisible(block, access.getBlockMetadata(cell.x, cell.y, cell.z)))
+            return new Model(
+                0,
+                0,
+                0,
+                java.util.Collections.emptyList(),
+                java.util.Collections.emptyList(),
+                false,
+                java.util.Collections.emptyList(),
+                false,
+                true);
+        TileEntity tile = access.getTileEntity(cell.x, cell.y, cell.z);
         if (tile == null
             && (adapter == null || adapter.requiresTile(block, access.getBlockMetadata(cell.x, cell.y, cell.z))))
             return failed(cell, current, "native tile unavailable: " + access.failure(cell.x, cell.y, cell.z));
@@ -495,6 +524,7 @@ final class HologramBlockRender {
         final List<double[]> attributes;
         final boolean missingTexture;
         final boolean acceptedEmpty;
+        final boolean invisible;
 
         Model(int list, int vertices, int positions, List<double[]> points, List<double[]> textureCenters,
             boolean missingTexture) {
@@ -508,6 +538,11 @@ final class HologramBlockRender {
 
         Model(int list, int vertices, int positions, List<double[]> points, List<double[]> textureCenters,
             boolean missingTexture, List<double[]> attributes, boolean acceptedEmpty) {
+            this(list, vertices, positions, points, textureCenters, missingTexture, attributes, acceptedEmpty, false);
+        }
+
+        Model(int list, int vertices, int positions, List<double[]> points, List<double[]> textureCenters,
+            boolean missingTexture, List<double[]> attributes, boolean acceptedEmpty, boolean invisible) {
             this.list = list;
             this.vertices = vertices;
             this.positions = positions;
@@ -516,6 +551,7 @@ final class HologramBlockRender {
             this.attributes = attributes;
             this.missingTexture = missingTexture;
             this.acceptedEmpty = acceptedEmpty;
+            this.invisible = invisible;
         }
     }
 }

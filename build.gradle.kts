@@ -46,6 +46,8 @@ mapOf(
     "runCookingCompatibilityTest" to "com.miaokatze.gtmb.compat.cookingforblockheads.CookingForBlockheadsRegression",
     "runCookingModelTest" to "com.miaokatze.gtmb.client.compat.cookingforblockheads.CookingForBlockheadsModelRegression",
     "runBotaniaModelTest" to "com.miaokatze.gtmb.client.compat.botania.BotaniaModelRegression",
+    "runFloodLightsModelTest" to "com.miaokatze.gtmb.client.compat.floodlights.FloodLightsModelRegression",
+    "runInvisibleModelTest" to "com.miaokatze.gtmb.client.hologram.NativeInvisibleRegression",
     "runStorageCompatibilityTest" to "com.miaokatze.gtmb.hologram.StorageContainerCompatibilityRegression"
 ).forEach { (taskName, entryPoint) ->
     tasks.register<JavaExec>(taskName) {

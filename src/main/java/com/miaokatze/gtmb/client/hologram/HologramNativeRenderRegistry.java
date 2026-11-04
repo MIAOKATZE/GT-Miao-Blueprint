@@ -23,6 +23,11 @@ public final class HologramNativeRenderRegistry {
 
         boolean supports(Block block);
 
+        /** Explicit native data-carrier policy; independent of missing/empty models and neighbor-owned geometry. */
+        default boolean invisible(Block block, int metadata) {
+            return false;
+        }
+
         default boolean requiresTile(Block block, int metadata) {
             return block.hasTileEntity(metadata);
         }

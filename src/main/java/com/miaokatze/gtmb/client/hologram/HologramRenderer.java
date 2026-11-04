@@ -913,6 +913,7 @@ final class HologramRenderer {
         presentedRequest = projectedRequest;
         displayedState = !cachedFaces.isEmpty() || !cachedOutlines.isEmpty()
             || !structureBoxes.isEmpty()
+            || HologramBlockRender.dataOnly(state, currentView)
             || previewPreparation != null && previewPreparation.boundary != null
                 && previewPreparation.boundary.presented ? state : null;
         previewSubmitted = !budgeted || previewPreparation.projection.published == state.cells.size();
@@ -1309,6 +1310,7 @@ final class HologramRenderer {
 
     private static boolean previewVisible(HologramState.Cell c, int layer, int view, boolean current) {
         if (c.status.equals("removed") || view == 2 && (c.completed() || c.status.equals("satisfied"))) return false;
+        if (HologramBlockRender.invisible(c, current)) return false;
         boolean empty = !c.anchor && !c.iconOnly && (current ? c.id : c.wantId).equals("minecraft:air");
         return (!empty || showEmptyCells) && (c.anchor || c.dy == layer || layer == Integer.MAX_VALUE);
     }
