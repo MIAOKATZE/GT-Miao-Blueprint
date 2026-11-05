@@ -394,7 +394,7 @@ final class HologramEditorShell {
 
     private boolean launcherAvailable(int page) {
         return switch (page) {
-            case 1, 4, 5, 6 -> ui.workspaces.blueprint() && !ui.session.state().data.getBoolean("structureProjection");
+            case 1, 5, 6 -> ui.workspaces.blueprint() && !ui.session.state().data.getBoolean("structureProjection");
             case 8 -> ui.workspaces.projection() || ui.session.state().data.getBoolean("virtualPlacement");
             default -> true;
         };

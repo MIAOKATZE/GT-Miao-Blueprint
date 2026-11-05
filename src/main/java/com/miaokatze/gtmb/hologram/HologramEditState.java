@@ -253,7 +253,7 @@ final class HologramEditState {
             s.hatchDowngrade = hatchDowngrade;
             s.noHatches = noHatches;
             s.hatchTier = hatchTier;
-            s.allocationsFrozen = !HologramStructureProjection.showing(s);
+            s.allocationsFrozen = true;
             return;
         }
         if (s.virtualPreset != null) {
@@ -278,7 +278,7 @@ final class HologramEditState {
             s.selectedIndices.clear();
         }
         // History restores exact positions, never reruns quota allocation.
-        s.allocationsFrozen = !HologramStructureProjection.showing(s);
+        s.allocationsFrozen = true;
         s.frozenAutoTargets.clear();
         for (Map.Entry<String, ItemStack> entry : automatic.entrySet()) s.frozenAutoTargets.put(
             entry.getKey(),

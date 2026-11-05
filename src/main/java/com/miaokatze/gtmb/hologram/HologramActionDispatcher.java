@@ -621,10 +621,6 @@ final class HologramActionDispatcher {
                 s.scope = 0;
                 s.noHatches = false;
                 s.suppressedAuto.clear();
-                if (!HologramStructureProjection.prepareOperation(s)) {
-                    HologramSnapshots.send(s);
-                    return;
-                }
                 for (HologramCapture.Cell cell : s.capture.cells) cell.candidates = null;
                 HologramResourcePlanner.refreshPlan(s);
                 s.status = s.presetReason;
@@ -647,7 +643,7 @@ final class HologramActionDispatcher {
                     if (allowed == direction) legal = true;
                 if (cell.anchor || !legal) s.status = "控制器受保护，或该仓室不支持所选方向";
                 else {
-                    if (!HologramStructureProjection.showing(s)) HologramResourcePlanner.freezeAllocations(s);
+                    HologramResourcePlanner.freezeAllocations(s);
                     if (direction == -1) s.facingPins.remove(HologramValues.position(cell));
                     else s.facingPins.put(HologramValues.position(cell), direction);
                     HologramBlueprintEditor.refreshEdited(s, java.util.Collections.singleton(index));
@@ -681,8 +677,7 @@ final class HologramActionDispatcher {
             }
         } else if (s.job == 2 && ("scan".equals(op) || "configure".equals(op) || "native".equals(op)))
             s.status = "暂停任务保留进度；请先取消再改变配置或重新扫描";
-        if (!HologramStructureProjection.showing(s) && s.job != 1
-            && s.job != 2
+        if (s.job != 1 && s.job != 2
             && ("configure".equals(op) || "customPin".equals(
                 op) || "sourcePin".equals(op) || "pin".equals(op) || "addPosition".equals(op) || "clearPin".equals(op)))
             HologramMaterialAccess.refreshMaterialChoices(s);
@@ -739,11 +734,6 @@ final class HologramActionDispatcher {
             if (tier < 0 || tier >= gregtech.api.enums.GTValues.VN.length || s.virtual || s.mode == 2) {
                 s.status = "此模式或仓室等级不能应用预设";
                 return false;
-            }
-            if (HologramStructureProjection.showing(s)) {
-                s.projectionHatchConfiguration = (NBTTagCompound) action.copy();
-                HologramStructureProjection.prepareOperation(s);
-                return true;
             }
             if (action.hasKey("hatchProfile", 10)) {
                 try {

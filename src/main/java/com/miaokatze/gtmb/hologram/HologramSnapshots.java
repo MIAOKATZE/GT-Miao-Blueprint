@@ -1189,6 +1189,9 @@ final class HologramSnapshots {
     }
 
     static CellRow cellRowData(HologramSession s, int index, boolean draftOnly, CellRows context) {
+        if (HologramStructureProjection.showing(s))
+            return HologramStructureProjection.rowData(s, s.capture.cells.get(index), index);
+
         long measured = HologramRuntimeMetrics.start();
         try {
             return cellRowCurrent(s, index, draftOnly || context.authoring, context);

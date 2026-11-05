@@ -721,7 +721,7 @@ final class HologramState {
             this(index, n, positions, owned, false);
         }
 
-        /** Structure hints carry render identity directly; Blueprint planning metadata stays opaque in raw. */
+        /** Structure projections retain native target choices as well as their cached render identity. */
         private Cell(int index, NBTTagCompound n, NBTTagCompound positions, boolean owned, boolean projection) {
             raw = owned ? n : (NBTTagCompound) n.copy();
             coordinates = positions;
@@ -742,38 +742,37 @@ final class HologramState {
             actualBlock = projection ? Block.getBlockFromName(id) : null;
             targetBlock = projection ? id.equals(wantId) ? actualBlock : Block.getBlockFromName(wantId) : null;
             status = n.getString("status");
-            chosenChoice = !projection && n.hasKey("chosenChoice") ? n.getInteger("chosenChoice") : -1;
+            chosenChoice = n.hasKey("chosenChoice") ? n.getInteger("chosenChoice") : -1;
             hatchFacing = n.hasKey("hatchFacing") ? n.getInteger("hatchFacing") : -1;
             actualFacing = n.hasKey("actualFacing") ? n.getInteger("actualFacing") : -1;
             targetFacing = n.hasKey("targetFacing") ? n.getInteger("targetFacing") : hatchFacing;
-            candidateComplete = !projection && n.getBoolean("candidateComplete");
+            candidateComplete = n.getBoolean("candidateComplete");
             candidateBoundary = n.getString("candidateBoundary");
-            pinScope = projection ? "" : n.getString("pinScope");
+            pinScope = n.getString("pinScope");
             role = n.getString("role");
-            family = projection ? "" : n.getString("family");
-            exactIdentity = projection ? "" : n.getString("exactIdentity");
+            family = n.getString("family");
+            exactIdentity = n.getString("exactIdentity");
             renderKind = n.getString("renderKind");
             operation = n.getString("operation");
             inScope = n.getBoolean("inScope");
             prompt = n.getString("prompt");
-            networkGroup = projection ? "" : n.getString("networkGroup");
-            specialHint = projection ? new NBTTagCompound()
-                : owned ? n.getCompoundTag("specialHint")
-                    : (NBTTagCompound) n.getCompoundTag("specialHint")
-                        .copy();
+            networkGroup = n.getString("networkGroup");
+            specialHint = owned ? n.getCompoundTag("specialHint")
+                : (NBTTagCompound) n.getCompoundTag("specialHint")
+                    .copy();
             structureId = n.getString("structureId");
             List<String> memberships = new ArrayList<>();
-            NBTTagList membershipTags = projection ? new NBTTagList() : n.getTagList("structureIds", 8);
+            NBTTagList membershipTags = n.getTagList("structureIds", 8);
             for (int i = 0; i < membershipTags.tagCount(); i++) {
                 String member = membershipTags.getStringTagAt(i);
                 if (!member.isEmpty() && !memberships.contains(member)) memberships.add(member);
             }
             if (memberships.isEmpty() && !structureId.isEmpty()) memberships.add(structureId);
             structureIds = Collections.unmodifiableList(memberships);
-            sourceMod = projection ? "" : n.getString("sourceMod");
-            sourceVersion = projection ? "" : n.getString("sourceVersion");
-            sourceClass = projection ? "" : n.getString("sourceClass");
-            sourceWarning = projection ? "" : n.getString("sourceWarning");
+            sourceMod = n.getString("sourceMod");
+            sourceVersion = n.getString("sourceVersion");
+            sourceClass = n.getString("sourceClass");
+            sourceWarning = n.getString("sourceWarning");
             sourceMissing = n.getBoolean("sourceMissing");
             excluded = n.getBoolean("excluded");
             missingBlock = n.getBoolean("missingBlock") || !wantId.isEmpty() && !"minecraft:air".equals(wantId)
@@ -793,12 +792,10 @@ final class HologramState {
             hintTint = tint.length == 0 ? tint : tint.clone();
             NBTTagList icons = n.getTagList("hintIcons", 8);
             for (int i = 0; i < 6; i++) hintIcons[i] = i < icons.tagCount() ? icons.getStringTagAt(i) : "";
-            if (!projection) {
-                NBTTagList list = n.getTagList("candidates", 10);
-                for (int i = 0; i < list.tagCount(); i++) {
-                    ItemStack stack = readStack(list.getCompoundTagAt(i));
-                    if (stack != null) candidates.add(stack);
-                }
+            NBTTagList list = n.getTagList("candidates", 10);
+            for (int i = 0; i < list.tagCount(); i++) {
+                ItemStack stack = readStack(list.getCompoundTagAt(i));
+                if (stack != null) candidates.add(stack);
             }
         }
 

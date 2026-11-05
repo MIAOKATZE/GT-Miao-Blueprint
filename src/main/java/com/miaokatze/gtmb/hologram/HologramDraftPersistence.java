@@ -23,6 +23,7 @@ final class HologramDraftPersistence {
     static void persist(HologramSession s) {
         ItemStack held = HologramSessionPolicy.jobTool(s);
         if (held == null) return;
+        if (s.capture != null && s.capture.projectionOnly && s.capturePending) s.projectionPersistPending = true;
         writeSettings(s, held);
         List<String> existing = new ArrayList<>();
         ChannelDataAccessor.iterateChannelData(held)
@@ -333,6 +334,7 @@ final class HologramDraftPersistence {
     }
 
     static void clearDraft(HologramSession s) {
+        s.projectionPersistPending = false;
         s.calibratePending = false;
         s.buildAfterCapture = false;
         s.pins.clear();

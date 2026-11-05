@@ -3,6 +3,7 @@ package com.miaokatze.gtmb.client.hologram;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
+import com.miaokatze.gtmb.hologram.HologramMaterialQuote;
 import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
 import com.miaokatze.gtmb.hologram.HologramSnapshotPalette;
@@ -517,6 +518,10 @@ public final class HologramLargeStateRegression {
         NBTTagCompound source = new NBTTagCompound();
         source.setString("session", "structure-hints");
         source.setBoolean("structureProjection", true);
+        source.setString("editorWorkspace", "projection");
+        source.setBoolean("target", true);
+        source.setBoolean("supported", true);
+        source.setInteger("hatchTierMax", 4);
         NBTTagCompound descriptor = new NBTTagCompound();
         descriptor.setString("id", "minecraft:glass");
         descriptor.setString("wantId", "minecraft:glass");
@@ -529,13 +534,45 @@ public final class HologramLargeStateRegression {
         NBTTagList icons = new NBTTagList();
         icons.appendTag(new net.minecraft.nbt.NBTTagString("fixture:typed-hint"));
         descriptor.setTag("hintIcons", icons);
-        descriptor.setString("family", "blueprint-only-family");
-        descriptor.setString("exactIdentity", "blueprint-only-identity");
+        descriptor.setString("family", "coil");
+        descriptor.setString("exactIdentity", "native-material-identity");
+        descriptor.setInteger("chosenChoice", 0);
+        descriptor.setString("pinScope", "cell");
         descriptor.setBoolean("candidateComplete", true);
         NBTTagList candidates = new NBTTagList();
         candidates.appendTag(
-            new net.minecraft.item.ItemStack(net.minecraft.init.Items.stick).writeToNBT(new NBTTagCompound()));
+            new net.minecraft.item.ItemStack(net.minecraft.init.Items.stick, 1, 1769)
+                .writeToNBT(new NBTTagCompound()));
+        candidates.appendTag(
+            new net.minecraft.item.ItemStack(net.minecraft.init.Items.stick, 1, 1770)
+                .writeToNBT(new NBTTagCompound()));
         descriptor.setTag("candidates", candidates);
+        NBTTagList candidateRoles = new NBTTagList();
+        candidateRoles.appendTag(new net.minecraft.nbt.NBTTagString("input"));
+        candidateRoles.appendTag(new net.minecraft.nbt.NBTTagString("energy"));
+        descriptor.setTag("candidateRoles", candidateRoles);
+        descriptor.setIntArray("candidateTiers", new int[] { 2, 4 });
+        descriptor.setIntArray("candidateAvailable", new int[] { 3, 7 });
+        descriptor.setBoolean("hasTargetOverride", true);
+        descriptor.setBoolean("hasFacingPin", true);
+        descriptor.setTag("targetStack", candidates.getCompoundTagAt(0).copy());
+        descriptor.setInteger("targetFacing", 5);
+        descriptor.setIntArray("hatchFacings", new int[] { 2, 5 });
+        NBTTagCompound targetDisplay = new NBTTagCompound();
+        NBTTagCompound nativeTile = new NBTTagCompound();
+        nativeTile.setShort("mID", (short) 1769);
+        nativeTile.setByte("mFacing", (byte) 5);
+        targetDisplay.setTag("nativeTile", nativeTile);
+        descriptor.setTag("targetDisplay", targetDisplay);
+        NBTTagCompound quote = new NBTTagCompound();
+        quote.setBoolean("complete", true);
+        NBTTagList materialRows = new NBTTagList();
+        materialRows.appendTag(
+            HologramMaterialQuote.itemRow(new net.minecraft.item.ItemStack(net.minecraft.init.Items.stick, 1, 1769), 32, 0));
+        quote.setTag("rows", materialRows);
+        source.setTag("materialQuote", quote);
+        source.setBoolean("presetAvailable", true);
+        source.setBoolean("presetSupported", true);
         NBTTagList rows = new NBTTagList();
         for (int i = 0; i < 32; i++) {
             NBTTagCompound row = (NBTTagCompound) descriptor.copy();
@@ -573,10 +610,32 @@ public final class HologramLargeStateRegression {
                     hint.block(false) == net.minecraft.init.Blocks.glass && hint.block(true) == hint.block(false),
                     "typed render identity resolves the same actual and target block");
                 SimpleAssert.that(
-                    hint.candidates.isEmpty() && !hint.candidateComplete
-                        && hint.family.isEmpty()
-                        && hint.exactIdentity.isEmpty(),
-                    "structure rendering never interprets Blueprint choices or planning identity");
+                    hint.candidates.size() == 2 && hint.candidateComplete
+                        && hint.family.equals("coil")
+                        && hint.exactIdentity.equals("native-material-identity")
+                        && hint.chosenChoice == 0
+                        && hint.pinScope.equals("cell"),
+                    "structure projection keeps native material candidates, type and selected target editable");
+                SimpleAssert
+                    .eq(1769, hint.targetStack.getItemDamage(), "target item retains its native device identity");
+                SimpleAssert.eq(
+                    3,
+                    new HologramBlockAccess(state).getBlockMetadata(hint.x, hint.y, hint.z),
+                    "render access uses world metadata independently of target item damage");
+                SimpleAssert.eq(5, hint.targetFacing, "target facing survives structure preparation");
+                SimpleAssert.eq(targetDisplay, hint.targetDisplay, "native target display payload survives preparation");
+                SimpleAssert.eq(
+                    2,
+                    hint.tag().getIntArray("hatchFacings").length,
+                    "legal hatch facings remain available to the editor");
+                SimpleAssert.that(
+                    state.data.getBoolean("presetAvailable") && state.data.getBoolean("presetSupported"),
+                    "structure header keeps preset availability before construction preparation");
+                HologramMaterialReview review = new HologramMaterialReview();
+                review.update(state.data);
+                SimpleAssert.that(
+                    review.ready() && review.size() == 1 && "32".equals(review.row(0).required),
+                    "structure quote shows native material quantities without construction preparation");
                 SimpleAssert.eq("fixture:typed-hint", hint.hintIcons[0], "typed icon hints survive preparation");
                 SimpleAssert.eq(40, hint.hintTint[1], "typed tint survives preparation");
                 SimpleAssert.eq(-2, hint.dy, "hint geometry retains relative coordinates");
@@ -588,6 +647,7 @@ public final class HologramLargeStateRegression {
                 SimpleAssert
                     .eq("kept", anchor.actualDisplay.getString("nativeAnchorField"), "anchor keeps display NBT");
                 SimpleAssert.eq("kept annotation", hint.prompt, "projection annotations remain visible");
+                projectionUi(state);
             }
             NBTTagCompound blueprint = (NBTTagCompound) source.copy();
             blueprint.removeTag("structureProjection");
@@ -595,12 +655,68 @@ public final class HologramLargeStateRegression {
             while (!task.step(3, Long.MAX_VALUE)) {}
             HologramState.Cell ordinary = task.result().cells.get(0);
             SimpleAssert.that(
-                ordinary.candidates.size() == 1 && ordinary.candidateComplete
-                    && ordinary.family.equals("blueprint-only-family")
-                    && ordinary.exactIdentity.equals("blueprint-only-identity"),
+                ordinary.candidates.size() == 2 && ordinary.candidateComplete
+                    && ordinary.family.equals("coil")
+                    && ordinary.exactIdentity.equals("native-material-identity"),
                 "the same legacy Blueprint retains full choice and planning metadata interpretation");
         } catch (java.io.IOException failure) {
             throw new AssertionError("projection hint preparation", failure);
+        }
+    }
+
+    private static void projectionUi(HologramState snapshot) {
+        try {
+            HologramUiModules ui = new HologramUiModules(null);
+            java.lang.reflect.Field state = HologramUiSession.class.getDeclaredField("state");
+            state.setAccessible(true);
+            state.set(ui.session, snapshot);
+            ui.preview.selected(0);
+            java.lang.reflect.Method available = HologramEditorShell.class
+                .getDeclaredMethod("launcherAvailable", int.class);
+            available.setAccessible(true);
+            SimpleAssert.that(
+                (Boolean) available.invoke(ui.shell, 4) && (Boolean) available.invoke(ui.shell, 8),
+                "production material-source and construction launchers remain reachable in structure mode");
+            HologramEditorPropertiesPane properties = new HologramEditorPropertiesPane(ui);
+            java.lang.reflect.Method preset = HologramEditorPropertiesPane.class.getDeclaredMethod("canHatchPreset");
+            preset.setAccessible(true);
+            SimpleAssert.that(
+                (Boolean) preset.invoke(properties) && ui.preview.canInventoryPin() && ui.preview.hasSelectedPin(),
+                "production preset-open, candidate-choice and restore-default predicates admit structure targets");
+            SimpleAssert.eq(java.util.Arrays.asList("全部类型", "input", "energy"), ui.config.hatchRoles(),
+                "native role selector reads the complete server role table");
+            SimpleAssert.eq(java.util.Arrays.asList(2, 4), ui.config.availableTiers(),
+                "native tier selector reads server tiers before operation preparation");
+            SimpleAssert.eq(java.util.Arrays.asList(0, 1), ui.config.filteredHatches(),
+                "native candidate window contains the actual parsed targets");
+            SimpleAssert.eq(5, ui.config.nativePresetCount(), "basic preset tiers use the server-declared maximum");
+            NBTTagCompound view = ui.config.backgroundUiState();
+            view.setBoolean("hatchDrawer", true);
+            view.setBoolean("presetDrawer", true);
+            view.setInteger("hatchRole", 2);
+            view.setInteger("hatchFilterTier", 4);
+            view.setInteger("presetTier", 3);
+            ui.config.restoreBackgroundUiState(view);
+            ui.config.normalizeNativeViewState();
+            SimpleAssert.eq(java.util.Collections.singletonList(1), ui.config.filteredHatches(),
+                "native role and tier filters select the matching device rather than an empty projection list");
+            NBTTagCompound retained = ui.config.backgroundUiState();
+            ui.config.restoreBackgroundUiState(retained);
+            ui.config.normalizeNativeViewState();
+            SimpleAssert.that(ui.config.hatchDrawer() && ui.config.presetDrawer()
+                && ui.config.nativePresetRow(3).startsWith("✓ ")
+                && ui.config.filteredHatches().equals(java.util.Collections.singletonList(1)),
+                "restored structure presentation retains open editors, selected preset tier and device filters");
+            NBTTagCompound demolition = snapshot.fullData();
+            demolition.setInteger("mode", 2);
+            state.set(ui.session, new HologramState(demolition));
+            SimpleAssert.that(!(Boolean) preset.invoke(properties) && !ui.preview.canInventoryPin(),
+                "the same production predicates still reject target edits during demolition");
+            state.set(ui.session, snapshot);
+            SimpleAssert.that((Boolean) preset.invoke(properties) && ui.preview.canInventoryPin(),
+                "returning to the structure plan restores preset and candidate editing");
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("structure production UI predicates", failure);
         }
     }
 

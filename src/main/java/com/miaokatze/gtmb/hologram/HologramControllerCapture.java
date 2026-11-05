@@ -192,12 +192,28 @@ final class HologramControllerCapture {
     static void collectProjection(HologramSession s, boolean resetAttempts) {
         boolean requestBudget = HologramWorkBudget.beginCaptureRequest();
         try {
-            HologramStructureProjection.collect(s, resetAttempts);
+            collectNative(s, resetAttempts, true);
         } catch (RuntimeException | LinkageError failure) {
             stop(s, "结构投影读取失败，请重新读取控制器", failure);
         } finally {
             if (requestBudget) HologramWorkBudget.end();
         }
+    }
+
+    /** Reuse native candidates and the bounded planner after a physical structure configuration edit. */
+    static void replanProjection(HologramSession s) {
+        Map<String, ItemStack> pins = new HashMap<>(s.coordinatePins);
+        for (Map.Entry<Integer, ItemStack> entry : s.pins.entrySet())
+            pins.put(HologramValues.position(s.capture.cells.get(entry.getKey())), entry.getValue().copy());
+        if (s.selected >= 0 && s.selected < s.capture.cells.size())
+            s.scanSelectedPosition = HologramValues.position(s.capture.cells.get(s.selected));
+        s.scanSelectedPositions.clear();
+        for (int index : s.selectedIndices)
+            s.scanSelectedPositions.add(HologramValues.position(s.capture.cells.get(index)));
+        HologramSession.cancelCaptureRetry(s);
+        s.captureWork = new FinishWork(pins);
+        s.captureWork.beginFinish();
+        collectProjection(s, false);
     }
 
     static void stopRejectedSource(HologramSession s) {
@@ -210,6 +226,7 @@ final class HologramControllerCapture {
     }
 
     private static void stop(HologramSession s, String reason, Throwable failure, boolean sourceRejected) {
+        s.projectionPersistPending = false;
         s.structureSavePreparation = null;
         s.projectionHatchConfiguration = null;
         if (!s.virtual) {
@@ -238,6 +255,10 @@ final class HologramControllerCapture {
     }
 
     private static void collectNative(HologramSession s, boolean resetAttempts) {
+        collectNative(s, resetAttempts, false);
+    }
+
+    private static void collectNative(HologramSession s, boolean resetAttempts, boolean projection) {
         FinishWork work = !resetAttempts ? s.captureWork : null;
         HologramCapture resumed = !resetAttempts && (work == null || !work.finalizing())
             && s.capture != null
@@ -299,8 +320,9 @@ final class HologramControllerCapture {
         if (!work.finalizing()) {
             if (resumed == null) s.captureAttempts++;
             ItemStack initialTrigger = HologramSessionPolicy.trigger(s);
-            s.capture = HologramCapture
-                .collect(s.machine, initialTrigger, s.machine.getExtendedFacing(), s.captureIntent, resumed);
+            s.capture = projection
+                ? HologramCapture.collectProjection(s.machine, initialTrigger, s.machine.getExtendedFacing(), s.captureIntent, resumed)
+                : HologramCapture.collect(s.machine, initialTrigger, s.machine.getExtendedFacing(), s.captureIntent, resumed);
             if (s.capture.pending) {
                 scheduleCaptureRetry(s);
                 return;
@@ -309,8 +331,9 @@ final class HologramControllerCapture {
                 .withSavedChannels(s.channels);
             ItemStack observedTrigger = HologramSessionPolicy.trigger(s);
             if (!s.capture.incomplete && !ItemStack.areItemStackTagsEqual(initialTrigger, observedTrigger)) {
-                s.capture = HologramCapture
-                    .collect(s.machine, observedTrigger, s.machine.getExtendedFacing(), s.captureIntent);
+                s.capture = projection
+                    ? HologramCapture.collectProjection(s.machine, observedTrigger, s.machine.getExtendedFacing(), s.captureIntent, null)
+                    : HologramCapture.collect(s.machine, observedTrigger, s.machine.getExtendedFacing(), s.captureIntent);
                 if (s.capture.pending) {
                     scheduleCaptureRetry(s);
                     return;
@@ -340,6 +363,10 @@ final class HologramControllerCapture {
             else s.status = "采集失败，当前规划已保留，未校准现场目标";
         }
         if (!s.capturePending && !s.capture.incomplete) {
+            if (s.capture.projectionOnly && s.projectionPersistPending) {
+                s.projectionPersistPending = false;
+                HologramDraftPersistence.persist(s);
+            }
             HologramStructureProjection.finishHatchConfiguration(s);
             HologramStructureProjection.finishSave(s);
         }

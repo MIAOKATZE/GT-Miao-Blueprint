@@ -106,9 +106,9 @@ final class HologramProjectionChainRegression {
                             && capture.current.renderHint.metadata == (filtered ? 2 : 1),
                         "chain projection retains the native marker as render data");
                     SimpleAssert.that(
-                        capture.current.block == null && !capture.current.candidateComplete
+                        capture.current.block == Blocks.glass && !capture.current.candidateComplete
                             && capture.current.candidates == null,
-                        "render data supplies no material authority");
+                        "the intermediate marker supplies no candidate or material authority before native fallback resolution");
                     SimpleAssert.eq(1, capture.nativeHintCalls, "only the reviewed native marker hint executes");
                     IStructureElementChain<Object> unknown = () -> {
                         throw new AssertionError("projection ran arbitrary chain fallbacks");

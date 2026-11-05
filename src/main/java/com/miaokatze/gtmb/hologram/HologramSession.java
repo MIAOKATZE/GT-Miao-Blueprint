@@ -71,8 +71,8 @@ final class HologramSession {
     String blueprintEnergyNotice = "";
     String blueprintResourceMissing = "";
     HologramCapture nbtKeysCapture;
-    HologramStructureProjection.Frame structureProjectionFrame;
     HologramStructureProjection.SavePreparation structureSavePreparation;
+    boolean projectionPersistPending;
     NBTTagCompound projectionHatchConfiguration;
     HologramCapture projectionHatchCapture;
     long projectionHatchUi, projectionHatchEpoch;

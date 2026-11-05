@@ -76,6 +76,7 @@ final class HologramResourcePlanner {
             HologramCapture.Cell c = s.capture.cells.get(i);
             if (observeIgnoredAir(s, c, i)) continue;
             boolean loaded = w.blockExists(c.x, c.y, c.z);
+            c.planLoaded = loaded;
             net.minecraft.block.Block actual = loaded ? w.getBlock(c.x, c.y, c.z) : Blocks.air;
             int actualMeta = loaded ? w.getBlockMetadata(c.x, c.y, c.z) : 0;
             s.expectedBlocks.add(actual);
@@ -99,6 +100,7 @@ final class HologramResourcePlanner {
         s.expectedTiles.add(null);
         s.expectedFacings.add(-1);
         cell.status = "satisfied";
+        cell.planLoaded = true;
         s.planStatus.add(cell.status);
         if (s.localPlanPending) HologramLocalPlanRefresh.classified(s, index);
         return true;
@@ -266,7 +268,8 @@ final class HologramResourcePlanner {
                 }
                 if (!HologramSessionPolicy.authoring(s)) classifier = new HologramPlanClassifier(s);
                 s.cellIndices.clear();
-                stage = !s.virtual && s.machine != null && s.target != null && !capture.pending && !capture.incomplete
+                stage = (!capture.projectionOnly || s.mode == 1) && !s.virtual && s.machine != null
+                    && s.target != null && !capture.pending && !capture.incomplete
                     ? 12
                     : 10;
             } else if (stage == 12) {
@@ -401,6 +404,7 @@ final class HologramResourcePlanner {
             if (observeIgnoredAir(s, c, i)) return;
             World world = s.player.worldObj;
             boolean loaded = world.blockExists(c.x, c.y, c.z);
+            c.planLoaded = loaded;
             net.minecraft.block.Block actual = loaded ? world.getBlock(c.x, c.y, c.z) : Blocks.air;
             int actualMeta = loaded ? world.getBlockMetadata(c.x, c.y, c.z) : 0;
             s.expectedBlocks.add(actual);

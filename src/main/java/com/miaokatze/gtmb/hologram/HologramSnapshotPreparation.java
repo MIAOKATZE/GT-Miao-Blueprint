@@ -93,7 +93,9 @@ final class HologramSnapshotPreparation {
         if (ticket == null) return;
         Task task = new Task(s, ticket);
         TASKS.put(s, task);
-        task.progress("snapshot.prepare", "metadata", 0, 0, true);
+        boolean projection = s.capture != null && s.capture.projectionOnly;
+        task.progress("snapshot.prepare", projection ? "cells" : "metadata", 0,
+            projection ? s.capture.cells.size() : 0, true);
     }
 
     static boolean tick(HologramSession s) {
@@ -227,7 +229,7 @@ final class HologramSnapshotPreparation {
         final HologramMaterialQuote.StockSnapshot inventory;
         Iterator<NBTTagCompound> materialIterator;
         HologramMaterialQuote.Preparation materialQuote;
-        int stage, index, protectedCount, total, workTotal, recoveryRows, recoveryItems;
+        int stage, index, protectedCount, total, workTotal, recoveryRows, recoveryItems, renderUnknown;
         boolean encoding;
         long lastTick = Long.MIN_VALUE;
         long lastDone = -1, lastTotal = -1;
@@ -291,6 +293,8 @@ final class HologramSnapshotPreparation {
                 && layer == s.layer
                 && selected == s.selected
                 && !s.cancelled
+                && (capture == null || !capture.projectionOnly || !s.capturePending
+                    && capture.sourceCurrent(HologramSessionPolicy.trigger(s)))
                 && HologramSessionPolicy.tickValid(s);
         }
 
@@ -309,11 +313,18 @@ final class HologramSnapshotPreparation {
                     progress("snapshot.prepare", "queued", 0, 0, false);
                     return;
                 }
-                state = HologramSnapshots.basicState(s);
-                HologramRuntimeMetrics
-                    .loadStage(HologramRuntimeMetrics.LoadStage.SERVER_METADATA_BEGIN, s, ticket.sequence(), size);
-                metadata = new HologramSnapshotMetadataTask(s, state, ticket.sequence());
-                stage = 1;
+                if (capture != null && capture.projectionOnly) {
+                    state = HologramStructureProjection.header(s);
+                    stage = 5; // Native material rows and quotes; no blueprint metadata/NBT processing.
+                    HologramRuntimeMetrics.loadStage(
+                        HologramRuntimeMetrics.LoadStage.SERVER_ROWS_BEGIN, s, ticket.sequence(), size);
+                } else {
+                    state = HologramSnapshots.basicState(s);
+                    HologramRuntimeMetrics
+                        .loadStage(HologramRuntimeMetrics.LoadStage.SERVER_METADATA_BEGIN, s, ticket.sequence(), size);
+                    metadata = new HologramSnapshotMetadataTask(s, state, ticket.sequence());
+                    stage = 1;
+                }
                 if (clock.getAsLong() >= deadline) return;
             }
             if (stage == 1) {
@@ -442,16 +453,16 @@ final class HologramSnapshotPreparation {
 
         void addCell(int index) {
             HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.FULL_CELLS_VISITED, 1);
-            HologramLocalPlanRefresh.snapshotSeedCapture(s, index);
+            if (!capture.projectionOnly) HologramLocalPlanRefresh.snapshotSeedCapture(s, index);
             HologramCapture.Cell c = s.capture.cells.get(index);
             if (!draftOnly && HologramSessionPolicy.ignoredPlacementAir(s, c, index)) {
                 HologramSnapshots.CellRow air = HologramSnapshots.cellRowData(s, index, false, rowContext);
                 cells.appendTag(air.row);
-                HologramLocalPlanRefresh.snapshotCell(s, index, air.row, null, air.inScope);
+                if (!capture.projectionOnly) HologramLocalPlanRefresh.snapshotCell(s, index, air.row, null, air.inScope);
                 return;
             }
             if (!draftOnly) HologramHatchProfiles.captureCell(s, index, hatchEntries);
-            if (!draftOnly && !s.virtual && s.machine != null && !s.machine.mMachine && structureValid) {
+            if (!capture.projectionOnly && !draftOnly && !s.virtual && s.machine != null && !s.machine.mMachine && structureValid) {
                 int built = HologramPlanPolicy.replacementCellBuilt(s, c);
                 if (built < 0) structureValid = false;
                 if (built > 0) structureFound = true;
@@ -459,12 +470,13 @@ final class HologramSnapshotPreparation {
             HologramSnapshots.CellRow observed = HologramSnapshots.cellRowData(s, index, draftOnly, rowContext);
             NBTTagCompound row = observed.row;
             cells.appendTag(row);
+            if (capture.projectionOnly && row.getBoolean("missingBlock")) renderUnknown++;
             if (draftOnly) {
-                HologramLocalPlanRefresh.snapshotDraftCell(s, index, row);
+                if (!capture.projectionOnly) HologramLocalPlanRefresh.snapshotDraftCell(s, index, row);
                 if (observed.inScope) total++;
                 return;
             }
-            HologramLocalPlanRefresh.snapshotCell(s, index, row, observed.target, observed.inScope);
+            if (!capture.projectionOnly) HologramLocalPlanRefresh.snapshotCell(s, index, row, observed.target, observed.inScope);
             World world = s.player.worldObj;
             boolean loaded = observed.loaded;
             Block current = observed.current;
@@ -621,6 +633,7 @@ final class HologramSnapshotPreparation {
                         && structureValid
                         && structureFound));
             state.setInteger("cellCount", cells.tagCount());
+            if (capture != null && capture.projectionOnly) state.setInteger("renderUnknown", renderUnknown);
             state.setTag("cells", cells);
             state.setBoolean("planIncomplete", s.localPlanPending);
             state.setBoolean("quotesIncomplete", draftOnly);
@@ -647,7 +660,12 @@ final class HologramSnapshotPreparation {
             progress("snapshot.prepare", "cells", cells.tagCount(), size, true);
             progress("snapshot.encode", "gzip", 0, 0, true);
             HologramNetwork.completeOwnedState(ticket, state, this::valid, () -> {
-                HologramLocalPlanRefresh.snapshotComplete(s, state);
+                if (capture != null && capture.projectionOnly) {
+                    s.open = false;
+                    s.openPurpose = "";
+                    s.scanSelectedPosition = null;
+                    s.scanSelectedPositions.clear();
+                } else HologramLocalPlanRefresh.snapshotComplete(s, state);
                 s.jobPublication.published(s.player.worldObj.getTotalWorldTime(), s.planRevision, s.uiSequence);
                 progress("snapshot.encode", "gzip", ticket.encodingBytes(), ticket.encodingBytes(), true);
                 TASKS.remove(s);
