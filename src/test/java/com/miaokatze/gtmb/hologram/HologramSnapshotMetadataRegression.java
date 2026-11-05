@@ -127,11 +127,8 @@ final class HologramSnapshotMetadataRegression {
             }
             SimpleAssert.that(
                 "metadata.complete".equals(task.phase()) && batches > 100 && captureChecked,
-                "full metadata finishes through many bounded main-thread continuations: phase=" + task.phase()
-                    + " batches="
-                    + batches
-                    + " captureChecked="
-                    + captureChecked);
+                "full metadata finishes through many bounded main-thread continuations: phase=" + task
+                    .phase() + " batches=" + batches + " captureChecked=" + captureChecked);
             NBTTagCompound expected = new NBTTagCompound();
             HologramSnapshots.writeBlueprintState(session, expected);
             HologramSnapshots.aeSnapshot(session, expected);
