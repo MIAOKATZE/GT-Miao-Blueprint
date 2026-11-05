@@ -17,8 +17,8 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.world.World;
 import net.minecraftforge.common.util.ForgeDirection;
 
-import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
 import com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor;
+import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
 import com.gtnewhorizon.structurelib.structure.IStructureDefinition;
 import com.gtnewhorizon.structurelib.structure.IStructureElement;
 import com.gtnewhorizon.structurelib.structure.StructureDefinition;
@@ -645,24 +645,34 @@ public final class HologramSourceContractRegression {
         unrelated.setLong("nativeLong", Long.MAX_VALUE);
         unrelated.setByteArray("nativeBytes", new byte[] { 1, -7, 3 });
         unrelated.setIntArray("nativeInts", new int[] { 1, 8192, -4 });
-        held.getTagCompound().setTag("fixtureUnrelated", unrelated);
-        held.getTagCompound().setTag(HologramSessionKeys.DRAFT, new NBTTagCompound());
+        held.getTagCompound()
+            .setTag("fixtureUnrelated", unrelated);
+        held.getTagCompound()
+            .setTag(HologramSessionKeys.DRAFT, new NBTTagCompound());
         ItemStack piece = new ItemStack(Blocks.dirt, 7);
         piece.setTagCompound(new NBTTagCompound());
-        piece.getTagCompound().setString("pieceOnly", "not an inventory-tool setting");
+        piece.getTagCompound()
+            .setString("pieceOnly", "not an inventory-tool setting");
         HologramCapture.Cell cell = new HologramCapture.Cell(null, 1, 100, 0, piece);
         ItemStack inputBefore = held.copy(), pieceBefore = cell.elementTrigger.copy();
         ItemStack result = HologramCellPolicy.elementTrigger(s, cell);
         SimpleAssert.eq(held.getItem(), result.getItem(), "piece signal retains the current tool identity");
         SimpleAssert.eq(7, result.stackSize, "empty-channel piece still replaces the main signal");
         SimpleAssert.that(
-            unrelated.equals(result.getTagCompound().getCompoundTag("fixtureUnrelated"))
-                && !result.getTagCompound().hasKey("pieceOnly")
-                && !result.getTagCompound().hasKey(HologramSessionKeys.DRAFT),
+            unrelated.equals(
+                result.getTagCompound()
+                    .getCompoundTag("fixtureUnrelated"))
+                && !result.getTagCompound()
+                    .hasKey("pieceOnly")
+                && !result.getTagCompound()
+                    .hasKey(HologramSessionKeys.DRAFT),
             "full unrelated typed tool NBT is retained; piece-only data and stored draft are not native signals");
-        result.getTagCompound().getCompoundTag("fixtureUnrelated").setLong("nativeLong", 0);
+        result.getTagCompound()
+            .getCompoundTag("fixtureUnrelated")
+            .setLong("nativeLong", 0);
         SimpleAssert.that(
-            ItemStack.areItemStacksEqual(inputBefore, held) && ItemStack.areItemStacksEqual(pieceBefore, cell.elementTrigger),
+            ItemStack.areItemStacksEqual(inputBefore, held)
+                && ItemStack.areItemStacksEqual(pieceBefore, cell.elementTrigger),
             "detached signal changes cannot mutate the held tool or retained piece signal");
 
         ChannelDataAccessor.setChannelData(held, "old", 3);
@@ -671,43 +681,56 @@ public final class HologramSourceContractRegression {
         cell = new HologramCapture.Cell(null, 1, 100, 0, piece);
         result = HologramCellPolicy.elementTrigger(s, cell);
         SimpleAssert.that(
-            ChannelDataAccessor.countChannelData(result) == 1 && ChannelDataAccessor.getChannelData(result, "piece") == 8
-                && !ChannelDataAccessor.hasSubChannel(result, "old") && !ChannelDataAccessor.hasSubChannel(result, "active"),
+            ChannelDataAccessor.countChannelData(result) == 1
+                && ChannelDataAccessor.getChannelData(result, "piece") == 8
+                && !ChannelDataAccessor.hasSubChannel(result, "old")
+                && !ChannelDataAccessor.hasSubChannel(result, "active"),
             "real piece channels replace current sanitized session channels rather than merging them");
         SimpleAssert.that(
             ChannelDataAccessor.getChannelData(held, "old") == 3 && s.channels.getInteger("active") == 4,
             "overlay leaves inventory and session channels unchanged");
 
         s.channels = new NBTTagCompound();
-        held.getTagCompound().setString("channels", "legacy wrong-type value");
+        held.getTagCompound()
+            .setString("channels", "legacy wrong-type value");
         result = HologramSessionPolicy.trigger(s);
         SimpleAssert.eq(
-            "legacy wrong-type value", result.getTagCompound().getString("channels"),
+            "legacy wrong-type value",
+            result.getTagCompound()
+                .getString("channels"),
             "wrong-type channels retain the old no-subchannel behavior instead of being wiped");
         ItemStack wrongCompound = piece.copy();
-        wrongCompound.getTagCompound().setString("channels", "not a compound");
+        wrongCompound.getTagCompound()
+            .setString("channels", "not a compound");
         result = HologramCellPolicy.elementTrigger(s, new HologramCapture.Cell(null, 1, 100, 0, wrongCompound));
         SimpleAssert.eq(
-            "legacy wrong-type value", result.getTagCompound().getString("channels"),
+            "legacy wrong-type value",
+            result.getTagCompound()
+                .getString("channels"),
             "wrong-type piece channels do not overwrite unrelated current tool NBT");
-        held.getTagCompound().removeTag("channels");
+        held.getTagCompound()
+            .removeTag("channels");
         for (int bad : new int[] { 0, -1 }) {
             ItemStack invalid = piece.copy();
             NBTTagCompound channels = new NBTTagCompound();
             channels.setInteger("piece", bad);
-            invalid.getTagCompound().setTag("channels", channels);
+            invalid.getTagCompound()
+                .setTag("channels", channels);
             requireInvalidPiece(s, invalid, "nonpositive piece signal keeps the original setter rejection");
         }
         ItemStack wrongValue = piece.copy();
         NBTTagCompound channels = new NBTTagCompound();
         channels.setString("piece", "not an integer");
-        wrongValue.getTagCompound().setTag("channels", channels);
+        wrongValue.getTagCompound()
+            .setTag("channels", channels);
         requireInvalidPiece(s, wrongValue, "wrong-type channel value still reaches the original positive-value check");
         channels = new NBTTagCompound();
         channels.setInteger("", 1);
-        wrongValue.getTagCompound().setTag("channels", channels);
+        wrongValue.getTagCompound()
+            .setTag("channels", channels);
         requireInvalidPiece(s, wrongValue, "empty channel key keeps the original accessor rejection");
-        held.getTagCompound().setTag("channels", channels.copy());
+        held.getTagCompound()
+            .setTag("channels", channels.copy());
         boolean rejected = false;
         try {
             HologramSessionPolicy.trigger(s);

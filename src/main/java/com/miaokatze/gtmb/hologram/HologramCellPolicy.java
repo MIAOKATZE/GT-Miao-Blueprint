@@ -394,9 +394,9 @@ final class HologramCellPolicy {
                     .forEach(entry -> existing.add(entry.getKey()));
                 for (String name : existing) ChannelDataAccessor.unsetChannelData(result, name);
             }
-            if (ChannelDataAccessor.hasSubChannel(c.elementTrigger)) ChannelDataAccessor
-                .iterateChannelData(c.elementTrigger)
-                .forEach(entry -> ChannelDataAccessor.setChannelData(result, entry.getKey(), entry.getValue()));
+            if (ChannelDataAccessor.hasSubChannel(c.elementTrigger))
+                ChannelDataAccessor.iterateChannelData(c.elementTrigger)
+                    .forEach(entry -> ChannelDataAccessor.setChannelData(result, entry.getKey(), entry.getValue()));
         }
         // A concrete new hatch pin authorizes that item even when the automatic hatch toggle is off.
         if (!s.noHatches && "hatch".equals(c.role)) {

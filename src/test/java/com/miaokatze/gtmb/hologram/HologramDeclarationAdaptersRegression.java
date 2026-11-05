@@ -118,16 +118,16 @@ final class HologramDeclarationAdaptersRegression {
             HologramDeclarationWrappers.backing(first) == stone && HologramDeclarationWrappers.backing(second) == dirt,
             "class metadata never caches another instance's backing declaration");
         SimpleAssert.eq("first", HologramDeclarationWrappers.channel(first), "first wrapper retains its own channel");
-        SimpleAssert.eq("second", HologramDeclarationWrappers.channel(second), "same-class wrapper keeps another channel");
+        SimpleAssert
+            .eq("second", HologramDeclarationWrappers.channel(second), "same-class wrapper keeps another channel");
 
         DifferentWrapper dynamic = new DifferentWrapper(stone);
         SimpleAssert.that(
             HologramDeclarationWrappers.factory(dynamic.getClass()) == null
                 && HologramDeclarationWrappers.backing(dynamic) == null,
             "legitimate no-factory metadata does not invent backing authority");
-        AutoCloseable reader = HologramDeclarationAdapters.registerScopedReader(
-            DifferentWrapper.class,
-            ignored -> new HologramDeclarationAdapters.Declaration(dirt));
+        AutoCloseable reader = HologramDeclarationAdapters
+            .registerScopedReader(DifferentWrapper.class, ignored -> new HologramDeclarationAdapters.Declaration(dirt));
         try {
             SimpleAssert.that(
                 HologramDeclarationWrappers.backing(dynamic) == dirt,
@@ -159,21 +159,25 @@ final class HologramDeclarationAdaptersRegression {
         }
         incomplete.missingAvailable = true;
         Method recovered = HologramDeclarationWrappers.factory(child);
-        SimpleAssert.eq("factory", recovered.getName(), "failed metadata resolves after its dependency becomes available");
+        SimpleAssert
+            .eq("factory", recovered.getName(), "failed metadata resolves after its dependency becomes available");
         FactoryLoader other = new FactoryLoader();
         other.missingAvailable = true;
         Class<?> otherChild = other.loadClass(FactoryLoader.CHILD.replace('/', '.'));
         Method otherFactory = HologramDeclarationWrappers.factory(otherChild);
         SimpleAssert.that(
-            child != otherChild && recovered.getDeclaringClass().getClassLoader() == incomplete
-                && otherFactory.getDeclaringClass().getClassLoader() == other,
+            child != otherChild && recovered.getDeclaringClass()
+                .getClassLoader() == incomplete
+                && otherFactory.getDeclaringClass()
+                    .getClassLoader() == other,
             "same binary names from distinct classloaders never share factory metadata");
     }
 
     /** JVM signature resolution fixture, without native game objects or forced GC. */
     private static final class FactoryLoader extends ClassLoader {
 
-        static final String OWNER = "gtmb0314/factory/Owner", CHILD = OWNER + "$Element", MISSING = "gtmb0314/factory/Missing";
+        static final String OWNER = "gtmb0314/factory/Owner", CHILD = OWNER + "$Element",
+            MISSING = "gtmb0314/factory/Missing";
         boolean missingAvailable;
         int missingAttempts;
 
@@ -200,7 +204,8 @@ final class HologramDeclarationAdaptersRegression {
             init.visitMaxs(1, 1);
             init.visitEnd();
             if (OWNER.equals(internal)) {
-                MethodVisitor factory = writer.visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "factory", signature, null, null);
+                MethodVisitor factory = writer
+                    .visitMethod(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "factory", signature, null, null);
                 factory.visitCode();
                 factory.visitInsn(Opcodes.ACONST_NULL);
                 factory.visitInsn(Opcodes.ARETURN);
