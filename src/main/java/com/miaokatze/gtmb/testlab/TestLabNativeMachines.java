@@ -378,12 +378,16 @@ final class TestLabNativeMachines {
         NBTTagCompound claim, data;
 
         Machine(Spec spec, int x, int y, int z) {
+            this(spec, x, y, z, spec.zoneX / 2, spec.zoneY > 16 ? 32 : 6, 8);
+        }
+
+        private Machine(Spec spec, int x, int y, int z, int controllerX, int controllerY, int controllerZ) {
             this.spec = spec;
             id = PREFIX + spec.id;
             zone = new TestLabZone(id, x, y, z, spec.zoneX, spec.zoneY, spec.zoneZ);
             if (y < 0 || (long) y + spec.zoneY > 256)
                 throw new IllegalArgumentException("Native machine platform exceeds the actual world height");
-            controller = new int[] { x + spec.zoneX / 2, y + (spec.zoneY > 16 ? 32 : 6), z + 8 };
+            controller = new int[] { x + controllerX, y + controllerY, z + controllerZ };
             java.util.Arrays.fill(first, Integer.MAX_VALUE);
             java.util.Arrays.fill(second, Integer.MIN_VALUE);
             for (int a : new int[] { -spec.a, spec.width - 1 - spec.a })
@@ -396,7 +400,7 @@ final class TestLabNativeMachines {
                             second[i] = Math.max(second[i], controller[i] + offset[i]);
                         }
                     }
-            if (!zone.contains(
+            if (!zone.contains(controller[0], controller[1], controller[2], 1, 1, 1) || !zone.contains(
                 first[0],
                 first[1],
                 first[2],
@@ -430,7 +434,11 @@ final class TestLabNativeMachines {
                 + zone.sizeY
                 + ","
                 + zone.sizeZ
-                + ":north:trigger=1";
+                + ":north:trigger=1"
+                + (controller[0] == zone.x + spec.zoneX / 2 && controller[1] == zone.y + (spec.zoneY > 16 ? 32 : 6)
+                    && controller[2] == zone.z + 8 ? ""
+                        : ":controller-offset=" + (controller[0] - zone.x) + "," + (controller[1] - zone.y) + ","
+                            + (controller[2] - zone.z));
         }
 
         NBTTagCompound tag() {
