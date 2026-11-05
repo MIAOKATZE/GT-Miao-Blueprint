@@ -132,7 +132,8 @@ public final class HologramUiModuleRegression {
             setUiField(ui.session, "state", new HologramState(data));
             setUiField(ui.diagnostics, "captureRenderSmokeAction", true);
             ui.preview.selected(0);
-            ui.preview.selection().click(0, false);
+            ui.preview.selection()
+                .click(0, false);
 
             ui.router.activate(10001);
             NBTTagCompound candidate = (NBTTagCompound) uiField(ui.diagnostics, "capturedRenderSmokeAction");
