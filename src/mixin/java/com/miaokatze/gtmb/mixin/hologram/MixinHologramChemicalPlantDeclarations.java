@@ -15,7 +15,9 @@ import com.gtnewhorizon.structurelib.structure.IStructureElement;
 import com.miaokatze.gtmb.hologram.HologramGtppChemicalDeclarations;
 
 /** The native private factory is the provenance boundary; no controller class is guessed during traversal. */
-@Mixin(targets = "gtPlusPlus.xmod.gregtech.common.tileentities.machines.multi.production.chemplant.MTEChemicalPlant", remap = false)
+@Mixin(
+    targets = "gtPlusPlus.xmod.gregtech.common.tileentities.machines.multi.production.chemplant.MTEChemicalPlant",
+    remap = false)
 public abstract class MixinHologramChemicalPlantDeclarations {
 
     @Shadow(remap = false)

@@ -52,6 +52,18 @@ final class HologramWorkBudget {
         quotaDeadline = Math.min(deadline, tickDeadline);
     }
 
+    /** The first controller request shares a tick too; detached/native API calls keep their original budget. */
+    static boolean beginCaptureRequest() {
+        return beginCaptureRequest(System::nanoTime);
+    }
+
+    static boolean beginCaptureRequest(java.util.function.LongSupplier time) {
+        if (owner == Thread.currentThread() || serverTickOwner != Thread.currentThread()) return false;
+        long now = time.getAsLong();
+        begin(now + Math.min(SLICE_NANOS, tickNanos(serverTickStarted, now)), time);
+        return true;
+    }
+
     /** Budgeted continuations share their assigned quota; standalone callers retain their original slice. */
     static long remainingNanos(long fallback) {
         return owner == Thread.currentThread() ? Math.max(0L, quotaDeadline - clock.getAsLong()) : fallback;
@@ -64,7 +76,7 @@ final class HologramWorkBudget {
     }
 
     /**
-     * Standalone/native callers retain capture's original callback budget; only scheduled continuation shares a tick.
+     * Standalone/native callers retain capture's original callback budget; game requests and continuations share a tick.
      */
     static long captureDeadline(long originalDeadline) {
         return owner == Thread.currentThread() ? Math.min(originalDeadline, deadline(SLICE_NANOS)) : originalDeadline;

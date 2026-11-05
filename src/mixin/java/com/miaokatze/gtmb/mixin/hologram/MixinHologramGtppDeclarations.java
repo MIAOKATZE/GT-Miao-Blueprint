@@ -22,8 +22,8 @@ public abstract class MixinHologramGtppDeclarations {
         at = @At("RETURN"),
         require = 1,
         remap = false)
-    private static void gtmb$tieredBlock(Block block, BiPredicate<?, ?> setter, Function<?, ?> getter,
-        int minMeta, int maxMeta, CallbackInfoReturnable<IStructureElement<?>> cir) {
+    private static void gtmb$tieredBlock(Block block, BiPredicate<?, ?> setter, Function<?, ?> getter, int minMeta,
+        int maxMeta, CallbackInfoReturnable<IStructureElement<?>> cir) {
         HologramGregTechDeclarations.tieredBlock(cir.getReturnValue(), block, minMeta, maxMeta);
     }
 }

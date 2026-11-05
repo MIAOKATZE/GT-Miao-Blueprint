@@ -108,9 +108,18 @@ public final class HologramControllerCaptureRegression {
         s.selected = 4001;
         s.selectedIndices.add(4002);
         CountingCells previous = count(s.capture);
-        HologramControllerCapture.collect(s);
+        HologramWorkBudget.startServerTick();
+        try {
+            HologramControllerCapture.collect(s);
+        } finally {
+            HologramWorkBudget.endServerTick();
+        }
         SimpleAssert.eq(3, previous.reads, "new capture reads only pinned and selected cells from the old plan");
         SimpleAssert.that(s.capture.pending && s.capturePending, "large native capture yields before finalization");
+        SimpleAssert.that(
+            s.capture.deadline <= s.capture.started + HologramWorkBudget.SLICE_NANOS,
+            "real first game capture uses a cooperative slice rather than the standalone 100 ms walk");
+        SimpleAssert.eq(123L, HologramWorkBudget.captureDeadline(123L), "request releases its budget before returning");
         HologramControllerCapture.FinishWork work = s.captureWork;
         CountingCells cells = count(s.capture);
         int constructs = controller.constructions, definitions = controller.definitionBuilds;
@@ -162,6 +171,7 @@ public final class HologramControllerCaptureRegression {
         work.beginFinish();
         CountingCells cells = count(staged.capture);
         SimpleAssert.that(!work.step(staged, 0, Long.MAX_VALUE), "zero work cannot begin candidate restoration");
+        SimpleAssert.that(!work.step(staged, 1, 0), "consumed capture time defers the finish/planning tail");
         SimpleAssert.eq(0, cells.reads, "zero budget performs no candidate or plan reads");
         Throwable[] wrongThread = { null };
         Thread worker = new Thread(() -> {

@@ -63,13 +63,18 @@ final class HologramElementCatalog {
                 : HologramDeclarationAdapters.declaration(element);
             if (includeAdvisoryBacking || projection == null || projection.backingAuthority) {
                 visit(HologramDeclarationWrappers.backing(element), depth + 1, seen, result, includeAdvisoryBacking);
-                visit(HologramDeclarationWrappers.alternativesBacking(element), depth + 1, seen, result, includeAdvisoryBacking);
+                visit(
+                    HologramDeclarationWrappers.alternativesBacking(element),
+                    depth + 1,
+                    seen,
+                    result,
+                    includeAdvisoryBacking);
             }
         } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {}
         if (element instanceof IStructureElementChain) {
             IStructureElement<?>[] children = ((IStructureElementChain<?>) element).fallbacks();
-            if (children != null && children.length <= 64)
-                for (IStructureElement<?> child : children) visit(child, depth + 1, seen, result, includeAdvisoryBacking);
+            if (children != null && children.length <= 64) for (IStructureElement<?> child : children)
+                visit(child, depth + 1, seen, result, includeAdvisoryBacking);
         }
     }
 }

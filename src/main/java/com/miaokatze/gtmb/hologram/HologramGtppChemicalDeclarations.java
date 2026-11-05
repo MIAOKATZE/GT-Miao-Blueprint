@@ -30,7 +30,8 @@ public final class HologramGtppChemicalDeclarations {
             // Tier consistency/count checks remain native; this advisory twin grants no placement contract.
             return HologramGregTechDeclarations.tiered(hints);
         }, signal -> {
-            if (signal.stackSize <= 0) throw new IllegalArgumentException("Chemical casing hint requires a positive tier");
+            if (signal.stackSize <= 0)
+                throw new IllegalArgumentException("Chemical casing hint requires a positive tier");
             signal.stackSize = Math.min(signal.stackSize, 8);
             return signal;
         }, false));

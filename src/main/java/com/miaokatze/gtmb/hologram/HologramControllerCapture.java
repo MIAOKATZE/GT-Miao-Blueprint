@@ -166,10 +166,13 @@ final class HologramControllerCapture {
         }
         if (resetAttempts) s.captureError = "";
         else if (!s.captureError.isEmpty()) return;
+        boolean requestBudget = HologramWorkBudget.beginCaptureRequest();
         try {
             collectNative(s, resetAttempts);
         } catch (RuntimeException | LinkageError failure) {
             stop(s, "结构采集失败，请重新读取控制器", failure);
+        } finally {
+            if (requestBudget) HologramWorkBudget.end();
         }
     }
 

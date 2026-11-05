@@ -11,12 +11,12 @@ import net.minecraft.world.World;
 
 import com.gtnewhorizon.structurelib.CommonProxy;
 import com.gtnewhorizon.structurelib.StructureLib;
+import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
+import com.gtnewhorizon.structurelib.structure.IStructureDefinition;
 import com.gtnewhorizon.structurelib.structure.IStructureElement;
 import com.gtnewhorizon.structurelib.structure.IStructureElementNoPlacement;
-import com.gtnewhorizon.structurelib.structure.IStructureDefinition;
 import com.gtnewhorizon.structurelib.structure.StructureDefinition;
 import com.gtnewhorizon.structurelib.structure.StructureUtility;
-import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
 import gregtech.api.util.HatchElementBuilder;
@@ -115,41 +115,60 @@ final class HologramHatchHintCaptureRegression {
             .adder((controller, tile, texture) -> { throw new AssertionError("mandatory hatch adder executed"); })
             .casingIndex(11)
             .hint(2);
-        HologramHatchPolicy.declare(builder, java.util.Collections.singletonList(gregtech.api.enums.HatchElement.Muffler), false);
+        HologramHatchPolicy
+            .declare(builder, java.util.Collections.singletonList(gregtech.api.enums.HatchElement.Muffler), false);
         IStructureElement<Object> declared = builder.build();
         HologramHatchPolicy.built(builder, declared);
         HologramCapture.Cell known = marker(unsafe, active, declared);
-        SimpleAssert.that(!known.unknown && "hatch".equals(known.role), "a complete mandatory hatch declaration is not an unknown block");
-        SimpleAssert.that(known.block == Blocks.glass && known.hintIndex == 1, "mandatory hatch keeps its native hint marker");
-        SimpleAssert.that(!known.candidateComplete && known.candidates == null, "known hatch appearance does not preapprove candidate enumeration");
-        SimpleAssert.that(!HologramCellPolicy.placeableSample(null, known, new ItemStack(Blocks.glass)), "a known marker is still not a payable placement item");
+        SimpleAssert.that(
+            !known.unknown && "hatch".equals(known.role),
+            "a complete mandatory hatch declaration is not an unknown block");
+        SimpleAssert
+            .that(known.block == Blocks.glass && known.hintIndex == 1, "mandatory hatch keeps its native hint marker");
+        SimpleAssert.that(
+            !known.candidateComplete && known.candidates == null,
+            "known hatch appearance does not preapprove candidate enumeration");
+        SimpleAssert.that(
+            !HologramCellPolicy.placeableSample(null, known, new ItemStack(Blocks.glass)),
+            "a known marker is still not a payable placement item");
         IStructureElement<Object> wrapped = StructureUtility.withDescription(
-            java.util.Collections.singletonList("mandatory hatch"), StructureUtility.withChannel("marker", declared));
-        SimpleAssert.that(!marker(unsafe, active, wrapped).unknown, "transparent wrappers retain a complete hatch declaration");
+            java.util.Collections.singletonList("mandatory hatch"),
+            StructureUtility.withChannel("marker", declared));
+        SimpleAssert
+            .that(!marker(unsafe, active, wrapped).unknown, "transparent wrappers retain a complete hatch declaration");
         IStructureElement<Object> unknown = new IStructureElementNoPlacement<Object>() {
+
             public boolean check(Object controller, World world, int x, int y, int z) {
                 throw new AssertionError("unreviewed marker check executed");
             }
+
             public boolean spawnHint(Object controller, World world, int x, int y, int z, ItemStack trigger) {
                 throw new AssertionError("unreviewed marker hint executed");
             }
         };
         SimpleAssert.that(marker(unsafe, active, unknown).unknown, "an arbitrary leaf remains unknown");
-        SimpleAssert.that(marker(unsafe, active, StructureUtility.ofChain(declared, unknown)).unknown, "a trusted hatch branch cannot certify an unknown fallback chain");
+        SimpleAssert.that(
+            marker(unsafe, active, StructureUtility.ofChain(declared, unknown)).unknown,
+            "a trusted hatch branch cannot certify an unknown fallback chain");
         HatchElementBuilder<Object> filtered = HatchElementBuilder.<Object>builder()
             .adder((controller, tile, texture) -> { throw new AssertionError("filtered hatch adder executed"); })
             .casingIndex(11)
             .hint(2);
-        HologramHatchPolicy.declare(filtered, java.util.Collections.singletonList(gregtech.api.enums.HatchElement.Muffler), false);
-        HologramHatchPolicy.andFunction(filtered, context -> { throw new AssertionError("arbitrary hatch filter executed"); });
+        HologramHatchPolicy
+            .declare(filtered, java.util.Collections.singletonList(gregtech.api.enums.HatchElement.Muffler), false);
+        HologramHatchPolicy
+            .andFunction(filtered, context -> { throw new AssertionError("arbitrary hatch filter executed"); });
         IStructureElement<Object> filteredLeaf = filtered.build();
         HologramHatchPolicy.built(filtered, filteredLeaf);
-        SimpleAssert.that(marker(unsafe, active, filteredLeaf).unknown, "an unrecoverable filter keeps its marker unknown");
+        SimpleAssert
+            .that(marker(unsafe, active, filteredLeaf).unknown, "an unrecoverable filter keeps its marker unknown");
         HatchElementBuilder<Object> unrecorded = HatchElementBuilder.<Object>builder()
             .adder((controller, tile, texture) -> { throw new AssertionError("unrecorded hatch adder executed"); })
             .casingIndex(11)
             .hint(2);
-        SimpleAssert.that(marker(unsafe, active, unrecorded.build()).unknown, "a marker with no recorded declaration stays unknown");
+        SimpleAssert.that(
+            marker(unsafe, active, unrecorded.build()).unknown,
+            "a marker with no recorded declaration stays unknown");
     }
 
     private static HologramCapture.Cell marker(sun.misc.Unsafe unsafe, ThreadLocal<HologramCapture> active,
@@ -159,10 +178,18 @@ final class HologramHatchHintCaptureRegression {
         capture.pieces.add(new HologramCapture.Piece("main", 0, 0, 0, signal));
         IStructureDefinition<Object> definition = StructureDefinition.<Object>builder()
             .addShape("main", new String[][] { { "X" } })
-            .addElement('X', element).build();
+            .addElement('X', element)
+            .build();
         World world = (World) unsafe.allocateInstance(HologramServiceEditRegression.ReadOnlyWorld.class);
-        Method walk = HologramCapture.class.getDeclaredMethod("walkPieces", HologramCapture.class,
-            IStructureDefinition.class, World.class, ExtendedFacing.class, int.class, int.class, int.class);
+        Method walk = HologramCapture.class.getDeclaredMethod(
+            "walkPieces",
+            HologramCapture.class,
+            IStructureDefinition.class,
+            World.class,
+            ExtendedFacing.class,
+            int.class,
+            int.class,
+            int.class);
         walk.setAccessible(true);
         active.set(capture);
         walk.invoke(null, capture, definition, world, ExtendedFacing.DEFAULT, 0, 64, 0);
@@ -175,36 +202,49 @@ final class HologramHatchHintCaptureRegression {
         try {
             // The native factory fixes its real delegate at creation; this fixture needs no block registration.
             gregtech.api.GregTechAPI.sBlockSheetmetalGT = Blocks.stone;
-            IStructureElement<Object> sheet = gregtech.api.util.GTStructureUtility.ofSheetMetal(gregtech.api.enums.Materials.Tungsten);
+            IStructureElement<Object> sheet = gregtech.api.util.GTStructureUtility
+                .ofSheetMetal(gregtech.api.enums.Materials.Tungsten);
             IStructureElement<?> delegate = HologramDeclarationWrappers.backing(sheet);
-            SimpleAssert.that(delegate == ((gregtech.api.util.GTStructureUtility.ProxyStructureElement<?, ?>) sheet).proxiedElement,
+            SimpleAssert.that(
+                delegate == ((gregtech.api.util.GTStructureUtility.ProxyStructureElement<?, ?>) sheet).proxiedElement,
                 "sheet metal unwraps only its real native fixed-block delegate");
             int metadata = gregtech.api.enums.Materials.Tungsten.mMetaItemSubID;
             SimpleAssert.that(metadata > 15, "the native sheet-metal material uses extended metadata");
             HologramCapture.Cell cell = marker(unsafe, active, sheet);
-            SimpleAssert.that(!cell.unknown && cell.block == Blocks.stone, "a reviewed sheet-metal proxy has known native appearance");
+            SimpleAssert.that(
+                !cell.unknown && cell.block == Blocks.stone,
+                "a reviewed sheet-metal proxy has known native appearance");
             SimpleAssert.eq(metadata, cell.meta, "sheet-metal hint metadata is not truncated to four bits");
             ItemStack material = HologramBlockIdentity.materialStack(cell.block, cell.meta);
-            SimpleAssert.eq(metadata, material.getItemDamage(), "sheet-metal payment identity retains its complete material metadata");
+            SimpleAssert.eq(
+                metadata,
+                material.getItemDamage(),
+                "sheet-metal payment identity retains its complete material metadata");
             HologramDeclarationCandidates candidates = new HologramDeclarationCandidates();
             candidates.collect(sheet, null, null, 0, 0, 0, new ItemStack(Items.feather), null, 0);
-            SimpleAssert.that(candidates.complete && candidates.stacks.size() == 1
-                && candidates.allows(material, false) && candidates.allows(material, true),
+            SimpleAssert.that(
+                candidates.complete && candidates.stacks.size() == 1
+                    && candidates.allows(material, false)
+                    && candidates.allows(material, true),
                 "the exact sheet-metal contract is the native delegate's single fixed material");
-            SimpleAssert.that(HologramCasingFallback.resolve(sheet, new ItemStack(Items.feather)) == null,
+            SimpleAssert.that(
+                HologramCasingFallback.resolve(sheet, new ItemStack(Items.feather)) == null,
                 "sheet-metal support does not widen the ordinary casing fallback metadata boundary");
             IStructureElement<Object> custom = new gregtech.api.util.GTStructureUtility.ProxyStructureElement<Object, IStructureElement<Object>>(
                 StructureUtility.ofBlock(Blocks.stone, metadata)) {
+
                 @Override
                 public boolean check(Object controller, World world, int x, int y, int z) {
                     throw new AssertionError("custom proxy check executed");
                 }
+
                 @Override
                 public boolean spawnHint(Object controller, World world, int x, int y, int z, ItemStack trigger) {
                     throw new AssertionError("custom proxy hint executed");
                 }
             };
-            SimpleAssert.that(HologramDeclarationWrappers.backing(custom) == null && marker(unsafe, active, custom).unknown,
+            SimpleAssert.that(
+                HologramDeclarationWrappers.backing(custom) == null && marker(unsafe, active, custom).unknown,
                 "an arbitrary proxy cannot borrow the reviewed sheet-metal factory's authority");
         } finally {
             gregtech.api.GregTechAPI.sBlockSheetmetalGT = original;

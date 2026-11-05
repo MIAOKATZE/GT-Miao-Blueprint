@@ -51,11 +51,14 @@ public final class HologramHatchPolicy {
     }
 
     private static synchronized boolean completeMarkerLeaf(IStructureElement<?> element) {
-        Method factory = element.getClass().getEnclosingMethod();
+        Method factory = element.getClass()
+            .getEnclosingMethod();
         List<IHatchElement<?>> types = ELEMENT_DECLARED.get(element);
         return factory != null && factory.getDeclaringClass() == gregtech.api.util.HatchElementBuilder.class
             && "build".equals(factory.getName())
-            && types != null && !types.isEmpty() && ELEMENTS.containsKey(element);
+            && types != null
+            && !types.isEmpty()
+            && ELEMENTS.containsKey(element);
     }
 
     public static synchronized void directions(IStructureElement<?> element,

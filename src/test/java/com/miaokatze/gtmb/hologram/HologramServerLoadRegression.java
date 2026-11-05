@@ -32,6 +32,7 @@ public final class HologramServerLoadRegression {
             publication();
             productionJobDeltas();
             fairRounds();
+            controllerRequestBudget();
             adaptiveTickSlack();
             taskScheduling();
             callbackPendingCapacity();
@@ -278,6 +279,61 @@ public final class HologramServerLoadRegression {
         } finally {
             cursor.setInt(null, previous);
         }
+    }
+
+    private static void controllerRequestBudget() throws ReflectiveOperationException {
+        final long ms = 1_000_000L;
+        AtomicLong clock = new AtomicLong(10 * ms);
+        SimpleAssert.that(
+            !HologramWorkBudget.beginCaptureRequest(clock::get),
+            "detached controller calls cannot acquire a game tick quota");
+        Field started = HologramWorkBudget.class.getDeclaredField("serverTickStarted");
+        started.setAccessible(true);
+        HologramWorkBudget.startServerTick();
+        started.setLong(null, 0L);
+        try {
+            SimpleAssert.that(
+                HologramWorkBudget.beginCaptureRequest(clock::get),
+                "first game controller request acquires the existing cooperative budget");
+            try {
+                SimpleAssert.eq(5 * ms, HologramWorkBudget.remainingNanos(100 * ms), "first request gets one slice");
+                SimpleAssert.eq(
+                    15 * ms,
+                    HologramWorkBudget.captureDeadline(110 * ms),
+                    "resumable walking clips the original native deadline after discovery");
+                clock.set(16 * ms);
+                SimpleAssert.eq(
+                    0L,
+                    HologramWorkBudget.remainingNanos(5 * ms),
+                    "atomic discovery consuming the slice leaves no new finish/planning budget");
+                SimpleAssert.that(
+                    !HologramWorkBudget.beginCaptureRequest(clock::get),
+                    "nested controller work cannot reset an existing request or continuation quota");
+                SimpleAssert.eq(0L, HologramWorkBudget.remainingNanos(5 * ms), "nested admission grants no extra work");
+            } finally {
+                HologramWorkBudget.end();
+            }
+            clock.set(39 * ms);
+            SimpleAssert.that(HologramWorkBudget.beginCaptureRequest(clock::get), "later request acquires its own scope");
+            try {
+                SimpleAssert.eq(ms, HologramWorkBudget.remainingNanos(100 * ms), "request honors existing tick slack");
+            } finally {
+                HologramWorkBudget.end();
+            }
+            HologramWorkBudget.begin(42 * ms, clock::get);
+            try {
+                SimpleAssert.that(
+                    !HologramWorkBudget.beginCaptureRequest(clock::get),
+                    "workspace continuation keeps its previously assigned quota");
+                SimpleAssert.eq(3 * ms, HologramWorkBudget.remainingNanos(100 * ms), "workspace quota remains intact");
+            } finally {
+                HologramWorkBudget.end();
+            }
+        } finally {
+            HologramWorkBudget.endServerTick();
+        }
+        SimpleAssert.that(!HologramWorkBudget.beginCaptureRequest(clock::get), "game scope ends with the server tick");
+        SimpleAssert.eq(100 * ms, HologramWorkBudget.captureDeadline(100 * ms), "standalone callback contract remains 100 ms");
     }
 
     private static void adaptiveTickSlack() throws ReflectiveOperationException {
