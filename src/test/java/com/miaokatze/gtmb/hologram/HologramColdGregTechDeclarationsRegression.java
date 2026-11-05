@@ -87,10 +87,12 @@ final class HologramColdGregTechDeclarationsRegression {
             ores.put(titanium, new ItemStack(frame, 1, 82));
             GregTechAPI.sGeneratedMaterials[81] = Materials.Steel;
             GregTechAPI.sGeneratedMaterials[82] = Materials.Titanium;
-            GregTechAPI.sBlockMachines = Block.getBlockFromName("gtmb:preset_action_fixture");
+            GregTechAPI.sBlockMachines = machines();
             SimpleAssert.that(
-                GregTechAPI.sBlockMachines != null,
-                "cold native factories share the existing registered GT item fixture");
+                GregTechAPI.sBlockMachines != null
+                    && Item.getItemFromBlock(GregTechAPI.sBlockMachines) instanceof gregtech.common.blocks.ItemMachines
+                    && Block.getBlockFromItem(Item.getItemFromBlock(GregTechAPI.sBlockMachines)) == GregTechAPI.sBlockMachines,
+                "cold native factories own a registered GT item fixture with an exact native block mapping");
             IMetaTileEntity hatch = (IMetaTileEntity) unsafe.allocateInstance(MTEHatchInput.class);
             BaseMetaTileEntity hatchBase = (BaseMetaTileEntity) unsafe.allocateInstance(BaseMetaTileEntity.class);
             hatchBase.setMetaTileID((short) hatchId);
@@ -299,8 +301,8 @@ final class HologramColdGregTechDeclarationsRegression {
 
     private static Block frame(sun.misc.Unsafe unsafe) throws ReflectiveOperationException {
         String key = "gtmb:cold_native_frame";
-        Block existing = Block.getBlockFromName(key);
-        if (existing != null) return existing;
+        Object existing = Block.blockRegistry.getObject(key);
+        if (existing instanceof Block && existing != Blocks.air) return (Block) existing;
         BlockFrameBox frame = (BlockFrameBox) unsafe.allocateInstance(BlockFrameBox.class);
         Field delegate = Block.class.getDeclaredField("delegate");
         delegate.setAccessible(true);
@@ -321,6 +323,19 @@ final class HologramColdGregTechDeclarationsRegression {
             }
         });
         return frame;
+    }
+
+    private static Block machines() {
+        String key = "gtmb:cold_native_machines";
+        Object existing = Block.blockRegistry.getObject(key);
+        if (existing instanceof Block && existing != Blocks.air) return (Block) existing;
+        Block block = new Block(net.minecraft.block.material.Material.iron) {};
+        int id = 3897;
+        while (Block.getBlockById(id) != null && Block.getBlockById(id) != Blocks.air
+            || Item.getItemById(id) != null) id--;
+        Block.blockRegistry.addObject(id, key, block);
+        Item.itemRegistry.addObject(id, key, new gregtech.common.blocks.ItemMachines(block));
+        return block;
     }
 
     private static final AtomicInteger unknownGetterCalls = new AtomicInteger();
