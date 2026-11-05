@@ -173,6 +173,12 @@ final class HologramHatchHintCaptureRegression {
 
     private static HologramCapture.Cell marker(sun.misc.Unsafe unsafe, ThreadLocal<HologramCapture> active,
         IStructureElement<Object> element) throws ReflectiveOperationException {
+        World world = (World) unsafe.allocateInstance(HologramServiceEditRegression.ReadOnlyWorld.class);
+        return marker(active, element, world);
+    }
+
+    private static HologramCapture.Cell marker(ThreadLocal<HologramCapture> active,
+        IStructureElement<Object> element, World world) throws ReflectiveOperationException {
         ItemStack signal = new ItemStack(Items.feather);
         HologramCapture capture = new HologramCapture(new Object(), signal);
         capture.pieces.add(new HologramCapture.Piece("main", 0, 0, 0, signal));
@@ -180,7 +186,6 @@ final class HologramHatchHintCaptureRegression {
             .addShape("main", new String[][] { { "X" } })
             .addElement('X', element)
             .build();
-        World world = (World) unsafe.allocateInstance(HologramServiceEditRegression.ReadOnlyWorld.class);
         Method walk = HologramCapture.class.getDeclaredMethod(
             "walkPieces",
             HologramCapture.class,
@@ -199,9 +204,13 @@ final class HologramHatchHintCaptureRegression {
     private static void sheetMetal(sun.misc.Unsafe unsafe, ThreadLocal<HologramCapture> active)
         throws ReflectiveOperationException {
         Block original = gregtech.api.GregTechAPI.sBlockSheetmetalGT;
+        int originalMaterialId = gregtech.api.enums.Materials.Tungsten.mMetaItemSubID;
         try {
-            // The native factory fixes its real delegate at creation; this fixture needs no block registration.
-            gregtech.api.GregTechAPI.sBlockSheetmetalGT = Blocks.stone;
+            // Vanilla bootstrap does not run Materials.init()/MaterialsIDMap.register(). This serial test owns
+            // its material ID and registered metadata-preserving block/item pair, and restores the native inputs.
+            Block sheetBlock = sheetBlock();
+            gregtech.api.enums.Materials.Tungsten.mMetaItemSubID = 81;
+            gregtech.api.GregTechAPI.sBlockSheetmetalGT = sheetBlock;
             IStructureElement<Object> sheet = gregtech.api.util.GTStructureUtility
                 .ofSheetMetal(gregtech.api.enums.Materials.Tungsten);
             IStructureElement<?> delegate = HologramDeclarationWrappers.backing(sheet);
@@ -210,12 +219,17 @@ final class HologramHatchHintCaptureRegression {
                 "sheet metal unwraps only its real native fixed-block delegate");
             int metadata = gregtech.api.enums.Materials.Tungsten.mMetaItemSubID;
             SimpleAssert.that(metadata > 15, "the native sheet-metal material uses extended metadata");
-            HologramCapture.Cell cell = marker(unsafe, active, sheet);
+            SheetWorld world = (SheetWorld) unsafe.allocateInstance(SheetWorld.class);
+            world.sheet = sheetBlock;
+            world.metadata = metadata;
+            HologramCapture.Cell cell = marker(active, sheet, world);
             SimpleAssert.that(
-                !cell.unknown && cell.block == Blocks.stone,
+                !cell.unknown && cell.block == sheetBlock,
                 "a reviewed sheet-metal proxy has known native appearance");
             SimpleAssert.eq(metadata, cell.meta, "sheet-metal hint metadata is not truncated to four bits");
             ItemStack material = HologramBlockIdentity.materialStack(cell.block, cell.meta);
+            SimpleAssert.eq(metadata, sheetBlock.getDamageValue(world, 0, 64, 0), "the controlled sheet world preserves extended material metadata");
+            SimpleAssert.eq(metadata, material.getItem().getMetadata(material.getItemDamage()), "the registered sheet item maps the complete metadata back to the world");
             SimpleAssert.eq(
                 metadata,
                 material.getItemDamage(),
@@ -231,7 +245,7 @@ final class HologramHatchHintCaptureRegression {
                 HologramCasingFallback.resolve(sheet, new ItemStack(Items.feather)) == null,
                 "sheet-metal support does not widen the ordinary casing fallback metadata boundary");
             IStructureElement<Object> custom = new gregtech.api.util.GTStructureUtility.ProxyStructureElement<Object, IStructureElement<Object>>(
-                StructureUtility.ofBlock(Blocks.stone, metadata)) {
+                StructureUtility.ofBlock(sheetBlock, metadata)) {
 
                 @Override
                 public boolean check(Object controller, World world, int x, int y, int z) {
@@ -248,6 +262,71 @@ final class HologramHatchHintCaptureRegression {
                 "an arbitrary proxy cannot borrow the reviewed sheet-metal factory's authority");
         } finally {
             gregtech.api.GregTechAPI.sBlockSheetmetalGT = original;
+            gregtech.api.enums.Materials.Tungsten.mMetaItemSubID = originalMaterialId;
+        }
+    }
+
+    private static Block sheetBlock() {
+        String name = "gtmb:sheetmetal_hint_fixture";
+        Object existing = Block.blockRegistry.getObject(name);
+        if (existing instanceof SheetBlock) return (Block) existing;
+        int slot = 3960;
+        while (slot > 0 && (net.minecraft.item.Item.getItemById(slot) != null || Block.getBlockById(slot) != Blocks.air)) slot--;
+        if (slot == 0) throw new AssertionError("No isolated sheet-metal fixture registry slot");
+        SheetBlock block = new SheetBlock();
+        Block.blockRegistry.addObject(slot, name, block);
+        net.minecraft.item.Item.itemRegistry.addObject(slot, name, new net.minecraft.item.ItemBlock(block) {
+            @Override
+            public int getMetadata(int metadata) {
+                return metadata;
+            }
+        }.setHasSubtypes(true));
+        return block;
+    }
+
+    private static final class SheetBlock extends Block {
+        private SheetBlock() {
+            super(net.minecraft.block.material.Material.iron);
+            setBlockName("gtmb_sheetmetal_hint_fixture");
+        }
+
+        @Override
+        public int damageDropped(int metadata) {
+            return metadata;
+        }
+    }
+
+    private static final class SheetWorld extends net.minecraft.world.WorldServer {
+        Block sheet;
+        int metadata;
+
+        private SheetWorld() {
+            super(null, null, "sheet_fixture", 0, null, null);
+        }
+
+        @Override
+        public boolean blockExists(int x, int y, int z) {
+            return true;
+        }
+
+        @Override
+        public Block getBlock(int x, int y, int z) {
+            return sheet;
+        }
+
+        @Override
+        public int getBlockMetadata(int x, int y, int z) {
+            return metadata;
+        }
+
+        @Override
+        public net.minecraft.tileentity.TileEntity getTileEntity(int x, int y, int z) {
+            return null;
+        }
+
+        @Override
+        public boolean setBlock(int x, int y, int z, Block block, int metadata, int flags) {
+            throw new AssertionError("sheet-metal declaration capture must not write the world");
         }
     }
 
