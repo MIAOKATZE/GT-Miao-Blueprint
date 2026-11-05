@@ -551,14 +551,18 @@ public final class HologramLargeStateRegression {
                 NBTTagCompound display = new NBTTagCompound();
                 display.setString("nativeAnchorField", "kept");
                 row.setTag("actualDisplay", display);
-                row.setTag("actualStack", candidates.getCompoundTagAt(0).copy());
+                row.setTag(
+                    "actualStack",
+                    candidates.getCompoundTagAt(0)
+                        .copy());
             }
             rows.appendTag(row);
         }
         source.setTag("cells", rows);
         try {
             NBTTagCompound packed = HologramSnapshotCodec.decode(HologramSnapshotCodec.compressPacked(source));
-            SimpleAssert.that(HologramSnapshotPalette.isPacked(packed), "projection fixture exercises negotiated hints");
+            SimpleAssert
+                .that(HologramSnapshotPalette.isPacked(packed), "projection fixture exercises negotiated hints");
             for (NBTTagCompound input : new NBTTagCompound[] { (NBTTagCompound) source.copy(), packed }) {
                 HologramState.Preparation task = new HologramState.Preparation(input);
                 while (!task.step(3, Long.MAX_VALUE)) {}
@@ -569,7 +573,8 @@ public final class HologramLargeStateRegression {
                     hint.block(false) == net.minecraft.init.Blocks.glass && hint.block(true) == hint.block(false),
                     "typed render identity resolves the same actual and target block");
                 SimpleAssert.that(
-                    hint.candidates.isEmpty() && !hint.candidateComplete && hint.family.isEmpty()
+                    hint.candidates.isEmpty() && !hint.candidateComplete
+                        && hint.family.isEmpty()
                         && hint.exactIdentity.isEmpty(),
                     "structure rendering never interprets Blueprint choices or planning identity");
                 SimpleAssert.eq("fixture:typed-hint", hint.hintIcons[0], "typed icon hints survive preparation");
@@ -580,7 +585,8 @@ public final class HologramLargeStateRegression {
                     "direct geometry retains negative and positive region indices");
                 SimpleAssert.that(anchor.anchor && anchor.actualStack != null, "anchor keeps its native item identity");
                 SimpleAssert.eq(4, anchor.actualFacing, "anchor keeps its native facing");
-                SimpleAssert.eq("kept", anchor.actualDisplay.getString("nativeAnchorField"), "anchor keeps display NBT");
+                SimpleAssert
+                    .eq("kept", anchor.actualDisplay.getString("nativeAnchorField"), "anchor keeps display NBT");
                 SimpleAssert.eq("kept annotation", hint.prompt, "projection annotations remain visible");
             }
             NBTTagCompound blueprint = (NBTTagCompound) source.copy();

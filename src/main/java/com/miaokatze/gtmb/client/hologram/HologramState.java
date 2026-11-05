@@ -757,9 +757,10 @@ final class HologramState {
             inScope = n.getBoolean("inScope");
             prompt = n.getString("prompt");
             networkGroup = projection ? "" : n.getString("networkGroup");
-            specialHint = projection ? new NBTTagCompound() : owned ? n.getCompoundTag("specialHint")
-                : (NBTTagCompound) n.getCompoundTag("specialHint")
-                    .copy();
+            specialHint = projection ? new NBTTagCompound()
+                : owned ? n.getCompoundTag("specialHint")
+                    : (NBTTagCompound) n.getCompoundTag("specialHint")
+                        .copy();
             structureId = n.getString("structureId");
             List<String> memberships = new ArrayList<>();
             NBTTagList membershipTags = projection ? new NBTTagList() : n.getTagList("structureIds", 8);
@@ -775,9 +776,8 @@ final class HologramState {
             sourceWarning = projection ? "" : n.getString("sourceWarning");
             sourceMissing = n.getBoolean("sourceMissing");
             excluded = n.getBoolean("excluded");
-            missingBlock = n.getBoolean("missingBlock")
-                || !wantId.isEmpty() && !"minecraft:air".equals(wantId)
-                    && (projection ? targetBlock : Block.getBlockFromName(wantId)) == null;
+            missingBlock = n.getBoolean("missingBlock") || !wantId.isEmpty() && !"minecraft:air".equals(wantId)
+                && (projection ? targetBlock : Block.getBlockFromName(wantId)) == null;
             anchor = n.getBoolean("anchor");
             iconOnly = n.getBoolean("iconOnly");
             actualStack = n.hasKey("actualStack", 10) ? readStack(n.getCompoundTag("actualStack")) : null;

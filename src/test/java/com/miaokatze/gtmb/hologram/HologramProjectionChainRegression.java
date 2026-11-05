@@ -60,7 +60,8 @@ final class HologramProjectionChainRegression {
                 ItemStack signal = new ItemStack(Blocks.stone);
                 for (boolean filtered : new boolean[] { false, true }) {
                     HatchElementBuilder<Object> builder = HatchElementBuilder.<Object>builder()
-                        .adder((controller, tile, texture) -> { throw new AssertionError("projection ran hatch adder"); })
+                        .adder(
+                            (controller, tile, texture) -> { throw new AssertionError("projection ran hatch adder"); })
                         .casingIndex(1)
                         .hint(filtered ? 3 : 2)
                         .hint(() -> { throw new AssertionError("projection ran hatch label supplier"); })
@@ -87,14 +88,11 @@ final class HologramProjectionChainRegression {
                     SimpleAssert.that(
                         children != null && children.length == (filtered ? 3 : 2)
                             && (!filtered || children[2] == unsafeChild)
-                            && HologramDeclarationWrappers.factory(children[0].getClass()).getDeclaringClass()
-                                == HatchElementBuilder.class,
+                            && HologramDeclarationWrappers.factory(children[0].getClass())
+                                .getDeclaringClass() == HatchElementBuilder.class,
                         "real buildAndChain exposes its captured native children");
-                    HologramCapture capture = constructor.newInstance(
-                        new Object(),
-                        signal,
-                        StructureSources.CaptureIntent.NEW_TEMPLATE,
-                        true);
+                    HologramCapture capture = constructor
+                        .newInstance(new Object(), signal, StructureSources.CaptureIntent.NEW_TEMPLATE, true);
                     capture.current = new HologramCapture.Cell(chain, 0, 64, 0, signal, true);
                     active.set(capture);
                     SimpleAssert.eq(
