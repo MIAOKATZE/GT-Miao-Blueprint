@@ -51,7 +51,8 @@ final class HologramDeclarationWrappers {
             || factory.getDeclaringClass() == GTStructureUtility.class && "activeCoils".equals(name))
             field = "val$element";
         else if (factory.getDeclaringClass() == GTStructureUtility.class
-            && ("chainAllGlassesImpl".equals(name) || "noSurvivalAutoplace".equals(name))
+            && ("chainAllGlassesImpl".equals(name) || "noSurvivalAutoplace".equals(name)
+                || "ofSheetMetal".equals(name))
             && element instanceof GTStructureUtility.ProxyStructureElement)
             return ((GTStructureUtility.ProxyStructureElement<?, ?>) element).proxiedElement;
         else return null;

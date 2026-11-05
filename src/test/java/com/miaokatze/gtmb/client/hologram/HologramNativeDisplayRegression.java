@@ -34,6 +34,7 @@ public final class HologramNativeDisplayRegression {
             pipeOverload();
             nativePipeClass();
             hatchCasing();
+            hatchSnapshotFields();
             coverCallbacks();
             pipeGeometry();
             detachedMetadata();
@@ -143,6 +144,46 @@ public final class HologramNativeDisplayRegression {
         SimpleAssert.eq(null, pipe.getBaseMetaTileEntity(), "unregistered native class probe attaches no base tile");
     }
 
+    private static void hatchSnapshotFields() throws ReflectiveOperationException {
+        java.lang.reflect.Method capture = Class.forName("com.miaokatze.gtmb.hologram.HologramDisplaySnapshot")
+            .getDeclaredMethod("captureHatchTextures", Object.class, NBTTagCompound.class);
+        capture.setAccessible(true);
+        NBTTagCompound nonHatch = new NBTTagCompound();
+        nonHatch.setInteger("facing", 2);
+        nonHatch.setInteger("color", 7);
+        nonHatch.setBoolean("active", true);
+        NBTTagCompound original = (NBTTagCompound) nonHatch.copy();
+        capture.invoke(null, new TextureNamesOnly(), nonHatch);
+        SimpleAssert.eq(original, nonHatch, "non-hatch lookalike fields are not probed or published");
+
+        Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        unsafeField.setAccessible(true);
+        sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
+        ProbeHatch hatch = (ProbeHatch) unsafe.allocateInstance(ProbeHatch.class);
+        hatch.texturePage = 9;
+        hatch.textureIndex = 99;
+        Field page = gregtech.api.metatileentity.implementations.MTEHatch.class.getDeclaredField("texturePage");
+        Field index = gregtech.api.metatileentity.implementations.MTEHatch.class.getDeclaredField("textureIndex");
+        page.setAccessible(true);
+        index.setAccessible(true);
+        page.setInt(hatch, 1);
+        index.setInt(hatch, 19);
+        NBTTagCompound display = new NBTTagCompound();
+        capture.invoke(null, hatch, display);
+        SimpleAssert.eq(1, display.getInteger("texturePage"), "snapshot uses the native hatch declaring field");
+        SimpleAssert.eq(19, display.getInteger("textureIndex"), "native hatch index ignores a subclass shadow");
+        SimpleAssert.eq(1, page.getInt(hatch), "snapshot leaves native hatch texture page unchanged");
+        SimpleAssert.eq(19, index.getInt(hatch), "snapshot leaves native hatch texture index unchanged");
+        SimpleAssert.eq(9, hatch.texturePage, "snapshot leaves a subclass shadow unchanged");
+        SimpleAssert.eq(99, hatch.textureIndex, "snapshot does not rewrite unrelated subclass state");
+    }
+
+    private static final class TextureNamesOnly {
+
+        @SuppressWarnings("unused")
+        private int texturePage = 4, textureIndex = 33;
+    }
+
     @SuppressWarnings({ "rawtypes", "unchecked" })
     private static void coverCallbacks() throws ReflectiveOperationException {
         Field field = CoverRegistry.class.getDeclaredField("covers");
@@ -228,6 +269,7 @@ public final class HologramNativeDisplayRegression {
 
     public static final class ProbeHatch extends MTEHatchInput {
 
+        private int texturePage, textureIndex;
         ITexture[] inactive, active;
         ITexture received;
 

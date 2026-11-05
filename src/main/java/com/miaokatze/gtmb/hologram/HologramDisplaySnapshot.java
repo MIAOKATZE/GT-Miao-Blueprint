@@ -13,6 +13,7 @@ import com.gtnewhorizon.structurelib.structure.IStructureElement;
 import gregtech.api.covers.CoverRegistry;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.api.metatileentity.BaseMetaPipeEntity;
+import gregtech.api.metatileentity.implementations.MTEHatch;
 import gregtech.common.covers.Cover;
 
 /** Detached native render payloads and GT visual data; no load/tick hook or shared prototype mutation. */
@@ -75,12 +76,17 @@ final class HologramDisplaySnapshot {
         if (covers.tagCount() > 0) display.setTag("gt.covers", covers);
         if (tile instanceof BaseMetaPipeEntity)
             display.setInteger("connections", ((BaseMetaPipeEntity) tile).getConnections() & 63);
-        Object machine = gt.getMetaTileEntity();
-        Integer page = integerField(machine, "texturePage", "mTexturePage");
-        Integer index = integerField(machine, "textureIndex", "mTextureIndex");
+        captureHatchTextures(gt.getMetaTileEntity(), display);
+        return display;
+    }
+
+    /** These fields are native hatch skin state, not arbitrary controller-class metadata. */
+    static void captureHatchTextures(Object machine, NBTTagCompound display) {
+        if (!(machine instanceof MTEHatch)) return;
+        Integer page = integerField(machine, HatchTextureFields.PAGE);
+        Integer index = integerField(machine, HatchTextureFields.INDEX);
         if (page != null) display.setInteger("texturePage", page);
         if (index != null) display.setInteger("textureIndex", index);
-        return display;
     }
 
     static NBTTagCompound target(ItemStack stack, int facing, IStructureElement<?> element, String tileNbt,
@@ -271,16 +277,26 @@ final class HologramDisplaySnapshot {
             || name.equals("com.miaokatze.gtswn.common.tile.TileEntityNetworkQuantumNode");
     }
 
-    private static Integer integerField(Object value, String... names) {
-        if (value == null) return null;
-        for (Class<?> type = value.getClass(); type != null; type = type.getSuperclass()) for (String name : names) {
-            try {
-                Field field = type.getDeclaredField(name);
-                if (field.getType() != int.class && field.getType() != byte.class) continue;
-                field.setAccessible(true);
-                return ((Number) field.get(value)).intValue();
-            } catch (ReflectiveOperationException | RuntimeException ignored) {}
+    private static Integer integerField(Object value, Field field) {
+        try {
+            return field.getInt(value);
+        } catch (IllegalAccessException | RuntimeException unavailableVisual) {
+            return null;
         }
-        return null;
+    }
+
+    private static final class HatchTextureFields {
+
+        static final Field PAGE = field("texturePage"), INDEX = field("textureIndex");
+
+        private static Field field(String name) {
+            try {
+                Field field = MTEHatch.class.getDeclaredField(name);
+                field.setAccessible(true);
+                return field;
+            } catch (NoSuchFieldException unavailableNativeSchema) {
+                throw new ExceptionInInitializerError(unavailableNativeSchema);
+            }
+        }
     }
 }

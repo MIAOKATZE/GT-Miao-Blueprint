@@ -97,6 +97,7 @@ final class HologramHatchHintCaptureRegression {
                         .eq(1, capture.nativeHintCalls, "the exact factory exception does not admit unknown hints");
                 }
                 requiredMarkers((sun.misc.Unsafe) unsafeField.get(null), active);
+                sheetMetal((sun.misc.Unsafe) unsafeField.get(null), active);
             } finally {
                 if (previousCapture == null) active.remove();
                 else active.set(previousCapture);
@@ -166,6 +167,48 @@ final class HologramHatchHintCaptureRegression {
         active.set(capture);
         walk.invoke(null, capture, definition, world, ExtendedFacing.DEFAULT, 0, 64, 0);
         return capture.cells.get(0);
+    }
+
+    private static void sheetMetal(sun.misc.Unsafe unsafe, ThreadLocal<HologramCapture> active)
+        throws ReflectiveOperationException {
+        Block original = gregtech.api.GregTechAPI.sBlockSheetmetalGT;
+        try {
+            // The native factory fixes its real delegate at creation; this fixture needs no block registration.
+            gregtech.api.GregTechAPI.sBlockSheetmetalGT = Blocks.stone;
+            IStructureElement<Object> sheet = gregtech.api.util.GTStructureUtility.ofSheetMetal(gregtech.api.enums.Materials.Tungsten);
+            IStructureElement<?> delegate = HologramDeclarationWrappers.backing(sheet);
+            SimpleAssert.that(delegate == ((gregtech.api.util.GTStructureUtility.ProxyStructureElement<?, ?>) sheet).proxiedElement,
+                "sheet metal unwraps only its real native fixed-block delegate");
+            int metadata = gregtech.api.enums.Materials.Tungsten.mMetaItemSubID;
+            SimpleAssert.that(metadata > 15, "the native sheet-metal material uses extended metadata");
+            HologramCapture.Cell cell = marker(unsafe, active, sheet);
+            SimpleAssert.that(!cell.unknown && cell.block == Blocks.stone, "a reviewed sheet-metal proxy has known native appearance");
+            SimpleAssert.eq(metadata, cell.meta, "sheet-metal hint metadata is not truncated to four bits");
+            ItemStack material = HologramBlockIdentity.materialStack(cell.block, cell.meta);
+            SimpleAssert.eq(metadata, material.getItemDamage(), "sheet-metal payment identity retains its complete material metadata");
+            HologramDeclarationCandidates candidates = new HologramDeclarationCandidates();
+            candidates.collect(sheet, null, null, 0, 0, 0, new ItemStack(Items.feather), null, 0);
+            SimpleAssert.that(candidates.complete && candidates.stacks.size() == 1
+                && candidates.allows(material, false) && candidates.allows(material, true),
+                "the exact sheet-metal contract is the native delegate's single fixed material");
+            SimpleAssert.that(HologramCasingFallback.resolve(sheet, new ItemStack(Items.feather)) == null,
+                "sheet-metal support does not widen the ordinary casing fallback metadata boundary");
+            IStructureElement<Object> custom = new gregtech.api.util.GTStructureUtility.ProxyStructureElement<Object, IStructureElement<Object>>(
+                StructureUtility.ofBlock(Blocks.stone, metadata)) {
+                @Override
+                public boolean check(Object controller, World world, int x, int y, int z) {
+                    throw new AssertionError("custom proxy check executed");
+                }
+                @Override
+                public boolean spawnHint(Object controller, World world, int x, int y, int z, ItemStack trigger) {
+                    throw new AssertionError("custom proxy hint executed");
+                }
+            };
+            SimpleAssert.that(HologramDeclarationWrappers.backing(custom) == null && marker(unsafe, active, custom).unknown,
+                "an arbitrary proxy cannot borrow the reviewed sheet-metal factory's authority");
+        } finally {
+            gregtech.api.GregTechAPI.sBlockSheetmetalGT = original;
+        }
     }
 
     private static final class CaptureProxy extends CommonProxy {
