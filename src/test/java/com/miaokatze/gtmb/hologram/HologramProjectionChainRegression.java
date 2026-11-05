@@ -3,6 +3,8 @@ package com.miaokatze.gtmb.hologram;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.util.Arrays;
+import java.util.Collections;
 
 import net.minecraft.block.Block;
 import net.minecraft.init.Blocks;
@@ -118,9 +120,27 @@ final class HologramProjectionChainRegression {
                         false,
                         hint.invoke(capture, unknown, null, 0, 64, 0, signal, 0),
                         "projection rejects arbitrary fallbacks without invoking them");
-                    SimpleAssert.that(
-                        HologramDeclarationWrappers.nativeChainChildren(StructureUtility.ofChain(chain)).length == 1,
-                        "the existing standard ofChain declaration remains supported");
+                    for (IStructureElementChain<Object> wrapped : Arrays.asList(
+                        StructureUtility.ofChain(chain),
+                        StructureUtility.<Object>ofChain(Collections.singletonList(chain)))) {
+                        IStructureElement<?>[] wrappedChildren = HologramDeclarationWrappers.nativeChainChildren(wrapped);
+                        SimpleAssert.that(
+                            wrappedChildren != null && wrappedChildren.length == 1 && wrappedChildren[0] == chain,
+                            "both standard ofChain overloads expose their exact captured children");
+                        capture.current.renderHint = null;
+                        SimpleAssert.eq(
+                            true,
+                            hint.invoke(capture, wrapped, null, 0, 64, 0, signal, 0),
+                            "projection reads nested standard and hatch chains without controller callbacks");
+                        SimpleAssert.that(
+                            capture.current.renderHint != null && capture.current.renderHint.block == Blocks.glass
+                                && capture.current.renderHint.metadata == (filtered ? 2 : 1),
+                            "nested standard chains retain the native visual marker");
+                    }
+                    SimpleAssert.eq(
+                        false,
+                        hint.invoke(capture, StructureUtility.ofChain(unknown), null, 0, 64, 0, signal, 0),
+                        "a standard wrapper does not admit an arbitrary child fallbacks callback");
                 }
             } finally {
                 if (previousCapture == null) active.remove();

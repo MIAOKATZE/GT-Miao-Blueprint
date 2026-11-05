@@ -92,11 +92,15 @@ final class HologramDeclarationWrappers {
         Method factory = factory(type);
         if (factory != null && factory.getDeclaringClass() == StructureUtility.class
             && "ofChain".equals(factory.getName())) return element.fallbacks();
-        String owner = HatchElementBuilder.class.getName() + "$$Lambda";
         String name = type.getName();
-        if (!type.isSynthetic() || type.getClassLoader() != HatchElementBuilder.class.getClassLoader()
-            || !(name.startsWith(owner + "$") || name.startsWith(owner + "/"))) return null;
-        // buildAndChain captures one array; its native lambda body is only `return array`.
+        String hatchOwner = HatchElementBuilder.class.getName() + "$$Lambda";
+        String chainOwner = StructureUtility.class.getName() + "$$Lambda";
+        boolean hatchChain = type.getClassLoader() == HatchElementBuilder.class.getClassLoader()
+            && (name.startsWith(hatchOwner + "$") || name.startsWith(hatchOwner + "/"));
+        boolean standardChain = type.getClassLoader() == StructureUtility.class.getClassLoader()
+            && (name.startsWith(chainOwner + "$") || name.startsWith(chainOwner + "/"));
+        if (!type.isSynthetic() || !(hatchChain || standardChain)) return null;
+        // buildAndChain and ofChain capture one array; both native lambda bodies are only `return array`.
         Field array = null;
         for (Field field : type.getDeclaredFields()) {
             if (Modifier.isStatic(field.getModifiers())) continue;
