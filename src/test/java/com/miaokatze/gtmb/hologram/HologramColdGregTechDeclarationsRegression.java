@@ -50,26 +50,29 @@ final class HologramColdGregTechDeclarationsRegression {
     static void run(sun.misc.Unsafe unsafe) throws ReflectiveOperationException {
         Field cachedBlock = Casings.class.getDeclaredField("block");
         cachedBlock.setAccessible(true);
-        Casings[] casings = { Casings.MVSolenoidSuperconductorCoil, Casings.SteelPipeCasing,
-            Casings.TitaniumPipeCasing, Casings.TurbineShaft, Casings.ReinforcedSteamTurbineCasing,
-            Casings.ReinforcedHPSteamTurbineCasing };
+        Casings[] casings = { Casings.MVSolenoidSuperconductorCoil, Casings.SteelPipeCasing, Casings.TitaniumPipeCasing,
+            Casings.TurbineShaft, Casings.ReinforcedSteamTurbineCasing, Casings.ReinforcedHPSteamTurbineCasing };
         Map<Casings, Object> previousCasings = new LinkedHashMap<>();
         Map<String, ItemStack> ores = GTOreDictUnificator.getName2StackMap();
-        String steel = OrePrefixes.frameGt.get(Materials.Steel).toString(),
-            titanium = OrePrefixes.frameGt.get(Materials.Titanium).toString();
+        String steel = OrePrefixes.frameGt.get(Materials.Steel)
+            .toString(),
+            titanium = OrePrefixes.frameGt.get(Materials.Titanium)
+                .toString();
         ItemStack previousSteel = ores.get(steel), previousTitanium = ores.get(titanium);
         Materials previous81 = GregTechAPI.sGeneratedMaterials[81], previous82 = GregTechAPI.sGeneratedMaterials[82];
         Block previousMachines = GregTechAPI.sBlockMachines;
         int hatchId = 32690;
         IMetaTileEntity previousHatch = GregTechAPI.METATILEENTITIES[hatchId];
-        Field proxy = StructureLib.class.getDeclaredField("proxy"), marker = StructureLib.class.getDeclaredField("blockHint");
+        Field proxy = StructureLib.class.getDeclaredField("proxy"),
+            marker = StructureLib.class.getDeclaredField("blockHint");
         proxy.setAccessible(true);
         marker.setAccessible(true);
         Object previousProxy = proxy.get(null), previousMarker = marker.get(null);
         Field lazyCache = HologramDeclarationWrappers.class.getDeclaredField("FIXED_LAZY");
         lazyCache.setAccessible(true);
         @SuppressWarnings("unchecked")
-        Map<IStructureElement<?>, IStructureElement<?>> fixed = (Map<IStructureElement<?>, IStructureElement<?>>) lazyCache.get(null);
+        Map<IStructureElement<?>, IStructureElement<?>> fixed = (Map<IStructureElement<?>, IStructureElement<?>>) lazyCache
+            .get(null);
         Map<IStructureElement<?>, IStructureElement<?>> previousFixed = new IdentityHashMap<>(fixed);
         Field casingCount = MTEXLTurbineBase.class.getDeclaredField("casingAmount");
         casingCount.setAccessible(true);
@@ -85,7 +88,8 @@ final class HologramColdGregTechDeclarationsRegression {
             GregTechAPI.sGeneratedMaterials[81] = Materials.Steel;
             GregTechAPI.sGeneratedMaterials[82] = Materials.Titanium;
             GregTechAPI.sBlockMachines = Block.getBlockFromName("gtmb:preset_action_fixture");
-            SimpleAssert.that(GregTechAPI.sBlockMachines != null,
+            SimpleAssert.that(
+                GregTechAPI.sBlockMachines != null,
                 "cold native factories share the existing registered GT item fixture");
             IMetaTileEntity hatch = (IMetaTileEntity) unsafe.allocateInstance(MTEHatchInput.class);
             BaseMetaTileEntity hatchBase = (BaseMetaTileEntity) unsafe.allocateInstance(BaseMetaTileEntity.class);
@@ -96,8 +100,8 @@ final class HologramColdGregTechDeclarationsRegression {
             marker.set(null, Blocks.glass);
             MTEXLTurbineSteam steam = new MTEXLTurbineSteam("cold_native_steam");
             @SuppressWarnings("unchecked")
-            Map<Character, IStructureElement<MTEXLTurbineBase>> nativeElements = ((StructureDefinition<MTEXLTurbineBase>) steam.getStructureDefinition())
-                .getElements();
+            Map<Character, IStructureElement<MTEXLTurbineBase>> nativeElements = ((StructureDefinition<MTEXLTurbineBase>) steam
+                .getStructureDefinition()).getElements();
             AtomicInteger unknownCalls = new AtomicInteger();
             IStructureElement<MTEXLTurbineBase> unknown = StructureUtility.lazy(context -> {
                 unknownCalls.incrementAndGet();
@@ -114,29 +118,49 @@ final class HologramColdGregTechDeclarationsRegression {
             }
             builder.addElement('U', unknown);
             IStructureDefinition<MTEXLTurbineBase> definition = builder.build();
-            HologramSession first = capture(unsafe, steam, definition,
-                Casings.SteelPipeCasing, Materials.Steel, Casings.ReinforcedSteamTurbineCasing, hatchId);
-            HologramSession second = capture(unsafe, new MTEXLTurbineHPSteam("cold_native_hp"), definition,
-                Casings.TitaniumPipeCasing, Materials.Titanium, Casings.ReinforcedHPSteamTurbineCasing, hatchId);
-            SimpleAssert.that(first.capture.cells.get(4).element != second.capture.cells.get(4).element,
+            HologramSession first = capture(
+                unsafe,
+                steam,
+                definition,
+                Casings.SteelPipeCasing,
+                Materials.Steel,
+                Casings.ReinforcedSteamTurbineCasing,
+                hatchId);
+            HologramSession second = capture(
+                unsafe,
+                new MTEXLTurbineHPSteam("cold_native_hp"),
+                definition,
+                Casings.TitaniumPipeCasing,
+                Materials.Titanium,
+                Casings.ReinforcedHPSteamTurbineCasing,
+                hatchId);
+            SimpleAssert.that(
+                first.capture.cells.get(4).element != second.capture.cells.get(4).element,
                 "one shared cold source gets a separate native hatch delegate for each controller context");
             unknownGetterCalls.set(0);
             HologramSession rejected = capture(unsafe, new UnknownGetterSteam(), definition, null, null, null, hatchId);
-            SimpleAssert.that(HologramCellPolicy.targetFor(rejected, rejected.capture.cells.get(1), 1) == null,
+            SimpleAssert.that(
+                HologramCellPolicy.targetFor(rejected, rejected.capture.cells.get(1), 1) == null,
                 "an unknown virtual getter override cannot inherit the official cold factory's target authority");
             SimpleAssert.eq(0, unknownGetterCalls.get(), "unknown context getters are rejected before invocation");
             SimpleAssert.eq(0, unknownCalls.get(), "unreviewed deferred factories remain outside native capture");
-            SimpleAssert.eq(previousCount, casingCount.getInt(null),
+            SimpleAssert.eq(
+                previousCount,
+                casingCount.getInt(null),
                 "cold metadata reconstruction never executes the native onElementPass casing counter");
             for (Map.Entry<IStructureElement<?>, Object[]> entry : originals.entrySet()) {
                 Object[] after = lazyState(entry.getKey());
-                SimpleAssert.that(after[0] == null && after[1] == entry.getValue()[1],
+                SimpleAssert.that(
+                    after[0] == null && after[1] == entry.getValue()[1],
                     "read-only cold capture leaves the original lazy elem and to untouched");
             }
         } finally {
-            for (Map.Entry<Casings, Object> entry : previousCasings.entrySet()) cachedBlock.set(entry.getKey(), entry.getValue());
-            if (previousSteel == null) ores.remove(steel); else ores.put(steel, previousSteel);
-            if (previousTitanium == null) ores.remove(titanium); else ores.put(titanium, previousTitanium);
+            for (Map.Entry<Casings, Object> entry : previousCasings.entrySet())
+                cachedBlock.set(entry.getKey(), entry.getValue());
+            if (previousSteel == null) ores.remove(steel);
+            else ores.put(steel, previousSteel);
+            if (previousTitanium == null) ores.remove(titanium);
+            else ores.put(titanium, previousTitanium);
             GregTechAPI.sGeneratedMaterials[81] = previous81;
             GregTechAPI.sGeneratedMaterials[82] = previous82;
             GregTechAPI.sBlockMachines = previousMachines;
@@ -150,8 +174,8 @@ final class HologramColdGregTechDeclarationsRegression {
     }
 
     private static HologramSession capture(sun.misc.Unsafe unsafe, MTEXLTurbineBase machine,
-        IStructureDefinition<MTEXLTurbineBase> definition, Casings rotor, Materials material, Casings casing, int hatchId)
-        throws ReflectiveOperationException {
+        IStructureDefinition<MTEXLTurbineBase> definition, Casings rotor, Materials material, Casings casing,
+        int hatchId) throws ReflectiveOperationException {
         Method players = HologramControllerCaptureRegression.class.getDeclaredMethod("player", sun.misc.Unsafe.class);
         players.setAccessible(true);
         EntityPlayerMP player = (EntityPlayerMP) players.invoke(null, unsafe);
@@ -171,15 +195,19 @@ final class HologramColdGregTechDeclarationsRegression {
         s.facing = machine.getExtendedFacing()
             .ordinal();
         s.materialSettings.containers = s.materialSettings.me = false;
-        try (GTMBExtensions.Registration source = StructureSources.register("gtmb_test:cold_native", machine.getClass(),
-            (controller, signal) -> new StructureSources.Plan(definition,
+        try (GTMBExtensions.Registration source = StructureSources.register(
+            "gtmb_test:cold_native",
+            machine.getClass(),
+            (controller, signal) -> new StructureSources.Plan(
+                definition,
                 Collections.singletonList(new StructureSources.Piece("cold", -1, 0, 0, signal))))) {
             ItemStack signal = HologramSessionPolicy.trigger(s);
             do {
-                s.capture = HologramCapture.collectProjection(machine, signal, machine.getExtendedFacing(),
-                    s.captureIntent, s.capture);
+                s.capture = HologramCapture
+                    .collectProjection(machine, signal, machine.getExtendedFacing(), s.captureIntent, s.capture);
             } while (s.capture.pending);
-            SimpleAssert.that(!s.capture.incomplete && s.capture.projectionOnly,
+            SimpleAssert.that(
+                !s.capture.incomplete && s.capture.projectionOnly,
                 "real cold native declaration traversal completes without operation preparation");
             for (HologramCapture.Cell cell : s.capture.cells) mirrorHatchMixin(cell.element);
             HologramControllerCapture.FinishWork finish = new HologramControllerCapture.FinishWork(new HashMap<>());
@@ -194,34 +222,46 @@ final class HologramColdGregTechDeclarationsRegression {
 
     private static void verify(HologramSession s, Casings rotor, Materials material, Casings casing, int hatchId) {
         ItemStack[] expected = { Casings.MVSolenoidSuperconductorCoil.toStack(1), rotor.toStack(1),
-            GTOreDictUnificator.get(OrePrefixes.frameGt, material, 1), Casings.TurbineShaft.toStack(1), casing.toStack(1) };
+            GTOreDictUnificator.get(OrePrefixes.frameGt, material, 1), Casings.TurbineShaft.toStack(1),
+            casing.toStack(1) };
         for (int index = 0; index < expected.length; index++) {
             HologramCapture.Cell cell = s.capture.cells.get(index);
             ItemStack target = HologramCellPolicy.targetFor(s, cell, index);
-            SimpleAssert.that(HologramValues.same(expected[index], target),
+            SimpleAssert.that(
+                HologramValues.same(expected[index], target),
                 "cold native factory resolves its exact official material at position " + index);
             s.selected = index;
             NBTTagCompound row = HologramStructureProjection.row(s, cell, index);
-            SimpleAssert.that(!row.getBoolean("missingBlock") && HologramValues.same(expected[index],
-                ItemStack.loadItemStackFromNBT(row.getCompoundTag("targetStack"))),
+            SimpleAssert.that(
+                !row.getBoolean("missingBlock") && HologramValues
+                    .same(expected[index], ItemStack.loadItemStackFromNBT(row.getCompoundTag("targetStack"))),
                 "the projection row retains the cold native material and metadata " + index);
             SimpleAssert.that(!cell.candidates.isEmpty(), "native cold candidates remain available " + index);
         }
         HologramCapture.Cell hatch = s.capture.cells.get(4);
-        SimpleAssert.that("hatch".equals(hatch.role) && !HologramCellPolicy.hatchRequirements(s, hatch).isEmpty()
-            && s.presetAvailable, "the cold native hatch chain retains its role and declared quotas");
+        SimpleAssert.that(
+            "hatch".equals(hatch.role) && !HologramCellPolicy.hatchRequirements(s, hatch)
+                .isEmpty() && s.presetAvailable,
+            "the cold native hatch chain retains its role and declared quotas");
         ItemStack input = new ItemStack(GregTechAPI.sBlockMachines, 1, hatchId);
-        SimpleAssert.that(HologramCellPolicy.declaredTarget(s, hatch, input, false),
+        SimpleAssert.that(
+            HologramCellPolicy.declaredTarget(s, hatch, input, false),
             "the native hatch candidate retains positive declaration authority");
         s.pins.put(4, input);
         HologramResourcePlanner.PlanTask planner = HologramResourcePlanner.beginCapturePlan(s);
         while (!planner.step(3, Long.MAX_VALUE)) {}
-        SimpleAssert.that(HologramHatchProfiles.capture(s).getTagList("entries", 10).tagCount() == 1,
+        SimpleAssert.that(
+            HologramHatchProfiles.capture(s)
+                .getTagList("entries", 10)
+                .tagCount() == 1,
             "a native hatch pin produces a real role-bearing profile entry");
     }
 
     private static Object[] lazyState(IStructureElement<?> element) throws ReflectiveOperationException {
-        Field initialized = element.getClass().getDeclaredField("elem"), deferred = element.getClass().getDeclaredField("to");
+        Field initialized = element.getClass()
+            .getDeclaredField("elem"),
+            deferred = element.getClass()
+                .getDeclaredField("to");
         initialized.setAccessible(true);
         deferred.setAccessible(true);
         Object[] state = { initialized.get(element), deferred.get(element) };
@@ -235,14 +275,18 @@ final class HologramColdGregTechDeclarationsRegression {
         for (IStructureElement<?> part : HologramElementCatalog.parts(element)) {
             Method method = HologramDeclarationWrappers.factory(part.getClass());
             if (method == null || method.getDeclaringClass() != HatchElementBuilder.class
-                || !method.getName().equals("build")) continue;
-            Field enclosing = part.getClass().getDeclaredField("this$0");
+                || !method.getName()
+                    .equals("build"))
+                continue;
+            Field enclosing = part.getClass()
+                .getDeclaredField("this$0");
             enclosing.setAccessible(true);
             Object builder = enclosing.get(part);
             Field description = HatchElementBuilder.class.getDeclaredField("mDescriptionNames");
             description.setAccessible(true);
             Object supplier = description.get(builder);
-            for (Field field : supplier.getClass().getDeclaredFields()) {
+            for (Field field : supplier.getClass()
+                .getDeclaredFields()) {
                 if (!Map.class.isAssignableFrom(field.getType())) continue;
                 field.setAccessible(true);
                 Map<IHatchElement<?>, Number> requirements = (Map<IHatchElement<?>, Number>) field.get(supplier);
@@ -260,11 +304,14 @@ final class HologramColdGregTechDeclarationsRegression {
         BlockFrameBox frame = (BlockFrameBox) unsafe.allocateInstance(BlockFrameBox.class);
         Field delegate = Block.class.getDeclaredField("delegate");
         delegate.setAccessible(true);
-        delegate.set(frame, ((cpw.mods.fml.common.registry.FMLControlledNamespacedRegistry) Block.blockRegistry)
-            .getDelegate(frame, Block.class));
+        delegate.set(
+            frame,
+            ((cpw.mods.fml.common.registry.FMLControlledNamespacedRegistry) Block.blockRegistry)
+                .getDelegate(frame, Block.class));
         frame.stepSound = Blocks.iron_block.stepSound;
         int id = 3898;
-        while (Block.getBlockById(id) != null && Block.getBlockById(id) != Blocks.air || Item.getItemById(id) != null) id--;
+        while (Block.getBlockById(id) != null && Block.getBlockById(id) != Blocks.air || Item.getItemById(id) != null)
+            id--;
         Block.blockRegistry.addObject(id, key, frame);
         Item.itemRegistry.addObject(id, key, new ItemBlock(frame) {
 

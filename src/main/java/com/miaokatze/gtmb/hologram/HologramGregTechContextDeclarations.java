@@ -30,8 +30,7 @@ final class HologramGregTechContextDeclarations {
         @Override
         protected Boolean computeValue(Class<?> type) {
             try {
-                return getter(type, "getCasing", Casings.class)
-                    && getter(type, "getFrameMaterial", Materials.class)
+                return getter(type, "getCasing", Casings.class) && getter(type, "getFrameMaterial", Materials.class)
                     && getter(type, "getRotorCasing", Casings.class)
                     && getter(type, "getAllowedHatches", java.util.List.class)
                     && getter(type, "requiresOutputHatch", boolean.class)
@@ -49,11 +48,19 @@ final class HologramGregTechContextDeclarations {
     static IStructureElement<?> resolve(IStructureElement<?> element, Object context)
         throws ReflectiveOperationException {
         if (!(context instanceof MTEXLTurbineBase) || !CONTEXTS.get(context.getClass())
-            || !element.getClass().getName().equals("com.gtnewhorizon.structurelib.structure.LazyStructureElement")
-            || element.getClass().getClassLoader() != StructureUtility.class.getClassLoader()) return null;
-        Field initialized = element.getClass().getDeclaredField("elem"), deferred = element.getClass().getDeclaredField("to");
+            || !element.getClass()
+                .getName()
+                .equals("com.gtnewhorizon.structurelib.structure.LazyStructureElement")
+            || element.getClass()
+                .getClassLoader() != StructureUtility.class.getClassLoader())
+            return null;
+        Field initialized = element.getClass()
+            .getDeclaredField("elem"),
+            deferred = element.getClass()
+                .getDeclaredField("to");
         if (initialized.getType() != IStructureElement.class || deferred.getType() != Function.class
-            || Modifier.isStatic(initialized.getModifiers()) || Modifier.isStatic(deferred.getModifiers())) return null;
+            || Modifier.isStatic(initialized.getModifiers())
+            || Modifier.isStatic(deferred.getModifiers())) return null;
         initialized.setAccessible(true);
         if (initialized.get(element) != null) return null;
         deferred.setAccessible(true);
@@ -77,7 +84,8 @@ final class HologramGregTechContextDeclarations {
                 expected.add("lambda$computeValue$2");
             } else expected.add("lambda$getStructureDefinition$0");
             for (Method method : enclosing.getDeclaredMethods()) {
-                if (!method.getName().startsWith("lambda$") || method.getReturnType() == void.class) continue;
+                if (!method.getName()
+                    .startsWith("lambda$") || method.getReturnType() == void.class) continue;
                 if (!method.isSynthetic() || !Modifier.isStatic(method.getModifiers())
                     || method.getReturnType() != IStructureElement.class
                     || method.getParameterTypes().length != 1
@@ -101,15 +109,19 @@ final class HologramGregTechContextDeclarations {
         }
         if (method == null) throw new NoSuchMethodException(name);
         if (method.getReturnType() != result || Modifier.isStatic(method.getModifiers())
-            || method.getDeclaringClass().getClassLoader() != MTEXLTurbineBase.class.getClassLoader()) return false;
-        String owner = method.getDeclaringClass().getName();
+            || method.getDeclaringClass()
+                .getClassLoader() != MTEXLTurbineBase.class.getClassLoader())
+            return false;
+        String owner = method.getDeclaringClass()
+            .getName();
         if (name.equals("getAllowedHatches")) return method.getDeclaringClass() == MTEXLTurbineBase.class;
         if (name.equals("getPollutionPerSecond"))
             return method.getDeclaringClass() == MTEMultiBlockBase.class || owner.equals(PACKAGE + "MTEXLTurbineGas");
         if (name.equals("requiresOutputHatch"))
             return method.getDeclaringClass() == MTEXLTurbineBase.class || owner.equals(PACKAGE + "MTEXLTurbineGas");
         return owner.equals(PACKAGE + "MTEXLTurbineBase") || owner.equals(PACKAGE + "MTEXLTurbineHPSteam")
-            || owner.equals(PACKAGE + "MTEXLTurbineSCSteam") || owner.equals(PACKAGE + "MTEXLTurbinePlasma")
+            || owner.equals(PACKAGE + "MTEXLTurbineSCSteam")
+            || owner.equals(PACKAGE + "MTEXLTurbinePlasma")
             || owner.equals(PACKAGE + "MTEXLTurbineGas");
     }
 }
