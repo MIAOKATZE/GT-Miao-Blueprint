@@ -827,6 +827,10 @@ public final class HologramControllerCaptureRegression {
 
     private static EntityPlayerMP controllerPlayer(sun.misc.Unsafe unsafe) throws ReflectiveOperationException {
         EntityPlayerMP player = player(unsafe);
+        // Unsafe bypasses World's constructor; the production open/finish path owns a real draft store.
+        Field storage = net.minecraft.world.World.class.getDeclaredField("perWorldStorage");
+        storage.setAccessible(true);
+        storage.set(player.worldObj, new net.minecraft.world.storage.MapStorage(null));
         player.posY = 64;
         connect(player);
         HologramMaterials.Settings settings = new HologramMaterials.Settings();
@@ -851,6 +855,13 @@ public final class HologramControllerCaptureRegression {
             HologramProjectorWorkflow.open(player, 0, 64, 0, 2);
             HologramSession old = HologramWorkspace.find(player.getUniqueID());
             complete(old);
+            SimpleAssert.that(
+                !old.projectionPersistPending && HologramSessionPolicy.controllerType(old)
+                    .equals(
+                        HologramDraftStorage.get(world)
+                            .read(HologramDraftPersistence.draftKey(old))
+                            .getString("controllerType")),
+                "completing the real native entry fulfills its deferred draft write for the current controller");
             SimpleAssert.that(old.context == first, "first controller is read through the production world entry");
             SimpleAssert
                 .that(HologramAuthoringWorkflow.blueprintHasUnsavedChanges(old), "old live projection has content");

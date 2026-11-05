@@ -65,7 +65,7 @@ final class HologramStructureProjectionRegression {
                 .adder((machine, hatch, texture) -> { throw new AssertionError("projection invoked hatch adder"); })
                 .casingIndex(1)
                 .hint(2)
-                .buildAndChain(Blocks.stone, 4);
+                .buildAndChain(Blocks.wool, 4);
             String row = new String(new char[4093]).replace('\0', 'A') + "BCU";
             try (
                 GTMBExtensions.Registration source = StructureSources.register(
@@ -111,14 +111,20 @@ final class HologramStructureProjectionRegression {
                             "native material cells retain a shared piece signal without native-NBT payload copies");
                         if (cell.element == casing) {
                             SimpleAssert.that(
-                                cell.block == Blocks.stone && cell.meta == 4 && !cell.unknown,
+                                cell.block == Blocks.wool && cell.meta == 4 && !cell.unknown,
                                 "native hatch-first chain resolves its real casing rather than its numeric hint");
                             SimpleAssert.that(
-                                "hatch".equals(cell.role) && cell.renderHint.block == Blocks.stone
+                                "hatch".equals(cell.role) && cell.renderHint.block == Blocks.wool
                                     && cell.renderHint.metadata == 4,
                                 "native hatch role survives while the final projection renders the payable casing");
+                            ItemStack material = new ItemStack(Blocks.wool, 1, 4);
+                            SimpleAssert.eq(
+                                4,
+                                material.getItem()
+                                    .getMetadata(material.getItemDamage()),
+                                "the casing fixture's native item mapping preserves its declared world metadata");
                             SimpleAssert.that(
-                                HologramCasingFallback.matches(cell, new ItemStack(Blocks.stone, 1, 4)),
+                                HologramCasingFallback.matches(cell, material),
                                 "the native fixed fallback remains the declaration's actual material");
                         }
                         if (cell.renderHint == null) unknowns++;
