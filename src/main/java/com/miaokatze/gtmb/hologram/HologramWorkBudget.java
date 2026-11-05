@@ -76,7 +76,8 @@ final class HologramWorkBudget {
     }
 
     /**
-     * Standalone/native callers retain capture's original callback budget; game requests and continuations share a tick.
+     * Standalone/native callers retain capture's original callback budget; game requests and continuations share a
+     * tick.
      */
     static long captureDeadline(long originalDeadline) {
         return owner == Thread.currentThread() ? Math.min(originalDeadline, deadline(SLICE_NANOS)) : originalDeadline;

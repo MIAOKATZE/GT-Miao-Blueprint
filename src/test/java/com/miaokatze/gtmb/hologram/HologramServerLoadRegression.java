@@ -314,7 +314,8 @@ public final class HologramServerLoadRegression {
                 HologramWorkBudget.end();
             }
             clock.set(39 * ms);
-            SimpleAssert.that(HologramWorkBudget.beginCaptureRequest(clock::get), "later request acquires its own scope");
+            SimpleAssert
+                .that(HologramWorkBudget.beginCaptureRequest(clock::get), "later request acquires its own scope");
             try {
                 SimpleAssert.eq(ms, HologramWorkBudget.remainingNanos(100 * ms), "request honors existing tick slack");
             } finally {
@@ -333,7 +334,8 @@ public final class HologramServerLoadRegression {
             HologramWorkBudget.endServerTick();
         }
         SimpleAssert.that(!HologramWorkBudget.beginCaptureRequest(clock::get), "game scope ends with the server tick");
-        SimpleAssert.eq(100 * ms, HologramWorkBudget.captureDeadline(100 * ms), "standalone callback contract remains 100 ms");
+        SimpleAssert
+            .eq(100 * ms, HologramWorkBudget.captureDeadline(100 * ms), "standalone callback contract remains 100 ms");
     }
 
     private static void adaptiveTickSlack() throws ReflectiveOperationException {
