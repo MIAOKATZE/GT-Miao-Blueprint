@@ -581,6 +581,7 @@ public final class HologramControllerCaptureRegression {
         }
     }
 
+    @SuppressWarnings("unchecked")
     private static void presetActions(sun.misc.Unsafe unsafe) throws ReflectiveOperationException {
         int energyId = 32740, mufflerId = 32741;
         net.minecraft.block.Block previousBlock = GregTechAPI.sBlockMachines;
@@ -589,8 +590,16 @@ public final class HologramControllerCaptureRegression {
         Field channel = HologramNetwork.class.getDeclaredField("channel");
         channel.setAccessible(true);
         Object previousChannel = channel.get(null);
+        Field proxy = com.gtnewhorizon.structurelib.StructureLib.class.getDeclaredField("proxy"),
+            marker = com.gtnewhorizon.structurelib.StructureLib.class.getDeclaredField("blockHint");
+        proxy.setAccessible(true);
+        marker.setAccessible(true);
+        Object previousProxy = proxy.get(null), previousMarker = marker.get(null);
+        com.miaokatze.gtmb.api.GTMBExtensions.Registration source = null;
         try {
             channel.set(null, null);
+            proxy.set(null, unsafe.allocateInstance(ProjectionProxy.class));
+            marker.set(null, Blocks.glass);
             net.minecraft.block.Block machines = net.minecraft.block.Block
                 .getBlockFromName("gtmb:preset_action_fixture");
             if (machines == null) {
@@ -624,27 +633,70 @@ public final class HologramControllerCaptureRegression {
             HologramSession s = (HologramSession) fixture
                 .invoke(null, unsafe, quotas, new ItemStack[] { energy, muffler });
             s.player.posY = 64;
+            s.player.capabilities.allowEdit = true;
+            HologramServiceEditRegression.ReadOnlyWorld world = (HologramServiceEditRegression.ReadOnlyWorld) s.player.worldObj;
+            Field storage = net.minecraft.world.World.class.getDeclaredField("perWorldStorage");
+            storage.setAccessible(true);
+            storage.set(world, new net.minecraft.world.storage.MapStorage(null));
             HologramDynamicDefinitionRegression.DynamicController machine = new HologramDynamicDefinitionRegression.DynamicController();
             HologramDynamicDefinitionRegression.NativeTile base = (HologramDynamicDefinitionRegression.NativeTile) unsafe
                 .allocateInstance(HologramDynamicDefinitionRegression.NativeTile.class);
-            base.setWorldObj(s.player.worldObj);
+            base.setWorldObj(world);
+            base.xCoord = -1;
+            base.yCoord = 64;
             machine.setBaseMetaTileEntity(base);
+            world.occupiedX = -1;
+            world.occupied = machines;
+            world.occupant = base;
+            world.occupants = new HashMap<>();
+            world.occupants.put("-1,64,0", base);
+            s.x = -1;
+            s.target = base;
             s.machine = machine;
             s.context = machine;
-            for (HologramCapture.Cell cell : s.capture.cells)
-                s.capture.positions.put(HologramValues.position(cell), cell);
+            s.facing = machine.getExtendedFacing()
+                .ordinal();
+            com.gtnewhorizon.structurelib.structure.IStructureElement<Object> element = s.capture.cells.get(0).element;
+            com.gtnewhorizon.structurelib.structure.IStructureDefinition<Object> definition = com.gtnewhorizon.structurelib.structure.StructureDefinition
+                .<Object>builder()
+                .addShape("preset", new String[][] { { "XXX" } })
+                .addElement('X', element)
+                .build();
+            source = com.miaokatze.gtmb.api.StructureSources.register(
+                "gtmb_test:preset_actions",
+                HologramDynamicDefinitionRegression.DynamicController.class,
+                (controller, signal) -> new com.miaokatze.gtmb.api.StructureSources.Plan(
+                    definition,
+                    java.util.Collections.singletonList(
+                        new com.miaokatze.gtmb.api.StructureSources.Piece("preset", -1, 0, 0, signal))));
+            s.capture = null;
+            ItemStack signal = HologramSessionPolicy.trigger(s);
+            do {
+                s.capture = HologramCapture.collectProjection(
+                    machine,
+                    signal,
+                    machine.getExtendedFacing(),
+                    s.captureIntent,
+                    s.capture);
+            } while (s.capture.pending);
+            SimpleAssert.that(
+                !s.capture.incomplete && s.capture.cells.size() == 4
+                    && HologramStructureProjection.showing(s)
+                    && HologramSessionPolicy.valid(s),
+                "preset actions use a real native projection bound to its live controller, world and tool");
             s.pins.put(2, energy.copy());
             s.coordinatePins.put(HologramValues.position(s.capture.cells.get(2)), energy.copy());
+            HologramWorkspace.activate(s.player.getUniqueID(), s);
             HologramResourcePlanner.refreshPlan(s);
+            complete(s);
             SimpleAssert.that(
                 s.presetSupported && s.autoTargets.size() == 2,
                 "native action fixture starts with two autos alongside the manual energy target");
-            HologramWorkspace.activate(s.player.getUniqueID(), s);
             int facing = HologramCellPolicy.legalFacings(s, s.capture.cells.get(0), energy)[0];
             NBTTagCompound action = presetAction(s, "hatchFacing");
             action.setInteger("selected", 0);
             action.setInteger("facing", facing);
-            HologramActionDispatcher.handle(s.player, action);
+            dispatchPresetAction(s, action);
             SimpleAssert.that(
                 s.allocationsFrozen && s.frozenAutoTargets.size() == 2,
                 "the real facing edit freezes the current native allocation");
@@ -652,18 +704,18 @@ public final class HologramControllerCaptureRegression {
             Map<String, Integer> facings = new HashMap<>(s.facingPins);
             action = presetAction(s, "hatchPreset");
             action.setInteger("tier", -1);
-            HologramActionDispatcher.handle(s.player, action);
+            dispatchPresetAction(s, action);
             SimpleAssert.that(
                 s.allocationsFrozen && s.frozenAutoTargets.size() == 2,
                 "an invalid preset tier cannot retire the user's frozen allocation");
-            HologramActionDispatcher.handle(s.player, presetAction(s, "clearHatchPreset"));
+            dispatchPresetAction(s, presetAction(s, "clearHatchPreset"));
             SimpleAssert.that(
                 !s.allocationsFrozen && s.frozenAutoTargets.isEmpty() && s.autoTargets.isEmpty(),
                 "the clear action cannot refill automatic targets from the old frozen allocation");
             SimpleAssert.that(
                 HologramValues.same(s.pins.get(2), energy) && s.facingPins.equals(facings),
                 "clearing the preset retains manual targets and facing pins");
-            HologramActionDispatcher.handle(s.player, presetAction(s, "editUndo"));
+            dispatchPresetAction(s, presetAction(s, "editUndo"));
             SimpleAssert.eq(before.keySet(), s.autoTargets.keySet(), "undo restores exact automatic positions");
             for (int index : before.keySet()) SimpleAssert.that(
                 HologramValues.same(before.get(index), s.autoTargets.get(index)),
@@ -678,12 +730,12 @@ public final class HologramControllerCaptureRegression {
             action = presetAction(s, "pin");
             action.setInteger("selected", 0);
             action.setInteger("choiceindex", choice);
-            HologramActionDispatcher.handle(s.player, action);
+            dispatchPresetAction(s, action);
             SimpleAssert
                 .that(HologramValues.same(s.pins.get(0), muffler), "the real pin action owns the former auto slot");
             action = presetAction(s, "hatchPreset");
             action.setInteger("tier", 0);
-            HologramActionDispatcher.handle(s.player, action);
+            dispatchPresetAction(s, action);
             SimpleAssert.that(
                 s.presetSupported && !s.allocationsFrozen
                     && s.frozenAutoTargets.isEmpty()
@@ -696,6 +748,9 @@ public final class HologramControllerCaptureRegression {
                 "regeneration preserves manual ownership and facing selections");
         } finally {
             HologramWorkspace.clear();
+            if (source != null) source.close();
+            proxy.set(null, previousProxy);
+            marker.set(null, previousMarker);
             channel.set(null, previousChannel);
             GregTechAPI.sBlockMachines = previousBlock;
             GregTechAPI.METATILEENTITIES[energyId] = previousEnergy;
@@ -708,8 +763,21 @@ public final class HologramControllerCaptureRegression {
         action.setString("session", s.id);
         action.setString("op", operation);
         action.setLong("planRevision", s.planRevision);
+        action.setLong("semanticPlanRevision", s.planRevision);
+        action.setLong("sourceRevision", com.miaokatze.gtmb.api.StructureSources.revision());
         action.setLong("uiSequence", s.uiSequence + 1);
         return action;
+    }
+
+    private static void dispatchPresetAction(HologramSession s, NBTTagCompound action) {
+        HologramActionDispatcher.handle(s.player, action);
+        if (s.capturePending) SimpleAssert.that(
+            s.captureWork != null && s.captureWork.finalizing(),
+            "native preset actions resume through the bounded semantic FinishWork continuation");
+        complete(s);
+        SimpleAssert.that(
+            HologramStructureProjection.showing(s),
+            "native preset edits retain the physical projection workflow");
     }
 
     private static final class ProjectionProxy extends com.gtnewhorizon.structurelib.CommonProxy {
