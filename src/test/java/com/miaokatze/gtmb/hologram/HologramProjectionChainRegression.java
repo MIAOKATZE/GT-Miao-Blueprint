@@ -123,7 +123,8 @@ final class HologramProjectionChainRegression {
                     for (IStructureElementChain<Object> wrapped : Arrays.asList(
                         StructureUtility.ofChain(chain),
                         StructureUtility.<Object>ofChain(Collections.singletonList(chain)))) {
-                        IStructureElement<?>[] wrappedChildren = HologramDeclarationWrappers.nativeChainChildren(wrapped);
+                        IStructureElement<?>[] wrappedChildren = HologramDeclarationWrappers
+                            .nativeChainChildren(wrapped);
                         SimpleAssert.that(
                             wrappedChildren != null && wrappedChildren.length == 1 && wrappedChildren[0] == chain,
                             "both standard ofChain overloads expose their exact captured children");
