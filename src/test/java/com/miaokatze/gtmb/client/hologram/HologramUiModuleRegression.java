@@ -201,6 +201,29 @@ public final class HologramUiModuleRegression {
                         && emitted.getLong("placementReviewNonce") == 7,
                     "an explicitly reviewed older " + operation + " remains stale for server rejection");
             }
+            // A previous per-cell edit leaves the server at scope 2 until the next review request is accepted.
+            ui.session.state().data.setInteger("scope", 2);
+            ui.session.state().data.setInteger("selected", 0);
+            ui.session.state().data.setIntArray("selectedIndices", new int[] { 0 });
+            ui.router.activate(69);
+            SimpleAssert.that(
+                ui.preview.selected() == -1 && ui.preview.selection().size() == 0
+                    && ui.session.state().data.getInteger("scope") == 2,
+                "the real clear-selection control clears local scope without rewriting the last server plan");
+            ui.router.activate(50);
+            NBTTagCompound review = (NBTTagCompound) uiField(ui.diagnostics, "capturedRenderSmokeAction");
+            SimpleAssert.that(
+                "scan".equals(review.getString("op")) && ui.session.awaitingScan()
+                    && review.hasKey("scope", 3) && review.getInteger("scope") == 0
+                    && review.hasKey("layer", 3) && review.getInteger("layer") == ui.preview.layer()
+                    && review.getInteger("selected") == -1 && review.hasKey("selectedIndices", 11)
+                    && review.getIntArray("selectedIndices").length == 0
+                    && review.hasKey("planRevision", 4) && review.getLong("planRevision") == 42,
+                "real construction review 50 sends the current whole-structure scope through scan after clearing selection");
+            SimpleAssert.eq(
+                "施工范围：全部结构",
+                ui.review.constructionScopeLabel(false),
+                "the pre-review scope label agrees with the actual whole-structure scan request");
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("actual editor sender plan revision", failure);
         } finally {

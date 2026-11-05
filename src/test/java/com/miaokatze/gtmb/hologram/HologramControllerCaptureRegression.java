@@ -756,6 +756,7 @@ public final class HologramControllerCaptureRegression {
                 HologramValues.same(s.pins.get(0), muffler) && HologramValues.same(s.pins.get(2), energy)
                     && s.facingPins.equals(facings),
                 "regeneration preserves manual ownership and facing selections");
+            scanScopes(s, energy, muffler);
         } finally {
             HologramWorkspace.clear();
             if (source != null) source.close();
@@ -777,6 +778,101 @@ public final class HologramControllerCaptureRegression {
         action.setLong("sourceRevision", com.miaokatze.gtmb.api.StructureSources.revision());
         action.setLong("uiSequence", s.uiSequence + 1);
         return action;
+    }
+
+    private static void scanScopes(HologramSession s, ItemStack energy, ItemStack muffler)
+        throws ReflectiveOperationException {
+        // The read-only world's clock is fixed. Admit this separate scan scenario in a fresh tick window.
+        s.actionTick = Long.MIN_VALUE;
+        NBTTagCompound action = presetAction(s, "scan");
+        action.setInteger("scope", 2);
+        action.setInteger("layer", 0);
+        action.setInteger("selected", 0);
+        action.setIntArray("selectedIndices", new int[] { 0 });
+        dispatchPresetAction(s, action);
+        SimpleAssert.that(s.scope == 2 && s.selected == 0 && s.selectedIndices.contains(0),
+            "a scoped native scan adopts its explicit current selection");
+        NBTTagCompound selected = nativeDemand(s);
+        SimpleAssert.eq(1L, quotedDemand(selected, muffler), "selected scan quotes the one selected native hatch");
+        SimpleAssert.eq(0L, quotedDemand(selected, energy), "selected scan excludes unselected native materials");
+        long revision = s.planRevision;
+        for (int invalid = 0; invalid < 4; invalid++) {
+            action = presetAction(s, "scan");
+            action.setInteger("scope", invalid == 0 ? 4 : 0);
+            action.setInteger("layer", invalid == 1 ? 129 : 0);
+            action.setInteger("selected", -1);
+            action.setIntArray("selectedIndices", new int[0]);
+            if (invalid == 2) action.removeTag("planRevision");
+            if (invalid == 3) action.setLong("planRevision", revision - 1);
+            dispatchPresetAction(s, action);
+            SimpleAssert.that(s.planRevision == revision && s.scope == 2 && s.layer == 0
+                && s.selected == 0 && s.selectedIndices.contains(0),
+                "invalid scope, layer or planning revision cannot clear selection before scan validation " + invalid);
+        }
+        int mode = s.mode, main = s.main;
+        NBTTagCompound channels = (NBTTagCompound) s.channels.copy();
+        action = presetAction(s, "scan");
+        action.setInteger("scope", 0);
+        action.setInteger("layer", 2);
+        action.setInteger("selected", -1);
+        action.setIntArray("selectedIndices", new int[0]);
+        action.setInteger("mode", 2);
+        action.setInteger("main", main + 1);
+        NBTTagCompound requestChannels = (NBTTagCompound) channels.copy();
+        requestChannels.setInteger("unapplied_scan_channel", 2);
+        action.setTag("channels", requestChannels);
+        dispatchPresetAction(s, action);
+        SimpleAssert.that(s.scope == 0 && s.layer == 2 && s.selected == -1 && s.selectedIndices.isEmpty(),
+            "cleared UI selection plus explicit all-scope scan changes the authoritative material scope");
+        SimpleAssert.that(s.mode == mode && s.main == main && s.channels.equals(channels),
+            "scan scope does not apply mode, main signal or channel configuration");
+        NBTTagCompound all = nativeDemand(s);
+        SimpleAssert.eq(2L, quotedDemand(all, energy), "all-scope native scan quotes both required energy hatches");
+        SimpleAssert.eq(1L, quotedDemand(all, muffler), "all-scope native scan retains the manual muffler demand");
+        action = presetAction(s, "scan");
+        action.removeTag("planRevision");
+        dispatchPresetAction(s, action);
+        SimpleAssert.that(s.scope == 0 && s.layer == 2,
+            "a legacy plain scan without scope or layer preserves the current scope and layer");
+        revision = s.planRevision;
+        action = presetAction(s, "scan");
+        action.setString("scope", "0");
+        dispatchPresetAction(s, action);
+        SimpleAssert.that(s.planRevision == revision && s.scope == 0 && s.layer == 2,
+            "a malformed typed scope cannot be interpreted as an accepted all-scope request");
+    }
+
+    /** Reuse the real native DTO shell collector and quote preparation; no alternate material calculation. */
+    private static NBTTagCompound nativeDemand(HologramSession s) throws ReflectiveOperationException {
+        Class<?> type = Class.forName("com.miaokatze.gtmb.hologram.HologramSnapshotPreparation$Task");
+        java.lang.reflect.Constructor<?> constructor = type
+            .getDeclaredConstructor(HologramSession.class, HologramNetwork.SnapshotTicket.class);
+        constructor.setAccessible(true);
+        Object collector = constructor.newInstance(s, null);
+        java.lang.reflect.Method cell = type.getDeclaredMethod("addCell", int.class);
+        cell.setAccessible(true);
+        for (int index = 0; index < s.capture.cells.size(); index++) cell.invoke(collector, index);
+        Field requirements = type.getDeclaredField("requirements");
+        requirements.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        Map<HologramBlueprintResources.ExactKey, NBTTagCompound> rows = (Map<HologramBlueprintResources.ExactKey, NBTTagCompound>) requirements
+            .get(collector);
+        net.minecraft.nbt.NBTTagList materials = new net.minecraft.nbt.NBTTagList();
+        for (NBTTagCompound row : rows.values()) materials.appendTag(row);
+        NBTTagCompound quote = HologramMaterialQuote.snapshot(s, materials, new net.minecraft.nbt.NBTTagList());
+        SimpleAssert.that(quote.getBoolean("complete") && quote.getLong("planRevision") == s.planRevision,
+            "native scan material demand is published for the actual current plan");
+        return quote;
+    }
+
+    private static long quotedDemand(NBTTagCompound quote, ItemStack material) {
+        net.minecraft.nbt.NBTTagList rows = quote.getTagList("rows", 10);
+        long required = 0;
+        for (int index = 0; index < rows.tagCount(); index++) {
+            NBTTagCompound row = rows.getCompoundTagAt(index);
+            if (HologramValues.same(material, HologramMaterialQuote.readItem(row))) required += row.getLong("required");
+        }
+        return required;
     }
 
     private static void dispatchPresetAction(HologramSession s, NBTTagCompound action) {

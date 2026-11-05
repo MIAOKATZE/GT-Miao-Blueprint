@@ -213,9 +213,19 @@ final class HologramActionDispatcher {
             return;
         }
         // Geometry can compact indices. Never interpret an old client selection in the new index domain.
-        if (("editMove".equals(op) || HologramBlueprintEditor.isPlanningEdit(op))
+        boolean scanScope = "scan".equals(op) && s.job != 1 && s.job != 2
+            && (action.hasKey("scope") || action.hasKey("layer"));
+        if (("editMove".equals(op) || HologramBlueprintEditor.isPlanningEdit(op) || scanScope)
             && (!action.hasKey("planRevision", 4) || action.getLong("planRevision") != s.planRevision)) {
             s.status = "蓝图计划已更新，请重新选择编辑目标";
+            HologramSnapshots.send(s);
+            return;
+        }
+        if (scanScope && (action.hasKey("scope") && (!action.hasKey("scope", 3)
+            || action.getInteger("scope") < 0 || action.getInteger("scope") > 3)
+            || action.hasKey("layer") && (!action.hasKey("layer", 3)
+                || action.getInteger("layer") < -128 || action.getInteger("layer") > 128))) {
+            s.status = "扫描范围参数无效，当前范围未修改";
             HologramSnapshots.send(s);
             return;
         }
@@ -325,6 +335,10 @@ final class HologramActionDispatcher {
                 s.selectedIndices.clear();
                 for (int index : action.getIntArray("selectedIndices"))
                     if (s.capture != null && index >= 0 && index < s.capture.cells.size()) s.selectedIndices.add(index);
+            }
+            if (scanScope) {
+                if (action.hasKey("scope", 3)) s.scope = action.getInteger("scope");
+                if (action.hasKey("layer", 3)) s.layer = action.getInteger("layer");
             }
         }
         if (construction && s.job != 1 && s.job != 2 && !HologramStructureProjection.prepareOperation(s)) {
