@@ -19,6 +19,8 @@ public final class GtmbHologramLateMixinLoader implements ILateMixinLoader {
             "hologram.MixinHologramBuildPiece",
             "hologram.MixinHologramBuildOrHints",
             "hologram.MixinHologramGregTechDeclarations",
+            "hologram.MixinHologramGtppDeclarations",
+            "hologram.MixinHologramChemicalPlantDeclarations",
             "hologram.MixinHologramHints",
             "hologram.MixinHologramChannels",
             "hologram.MixinHologramRecoveryMachines",

@@ -16,6 +16,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraftforge.common.util.ForgeDirection;
 
 import com.gtnewhorizon.structurelib.structure.IStructureElement;
+import com.gtnewhorizon.structurelib.structure.IStructureElementChain;
 
 import gregtech.api.interfaces.IHatchElement;
 import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
@@ -36,6 +37,25 @@ public final class HologramHatchPolicy {
     public static synchronized List<IHatchElement<?>> declared(IStructureElement<?> element) {
         List<IHatchElement<?>> types = ELEMENT_DECLARED.get(element);
         return types == null ? java.util.Collections.emptyList() : new ArrayList<>(types);
+    }
+
+    /** A mandatory hatch marker is understood only through its complete, source-reviewed builder declaration. */
+    static boolean completeMarker(IStructureElement<?> element) throws ReflectiveOperationException {
+        for (int depth = 0; element != null && depth <= 12; depth++) {
+            // A known branch cannot certify another arbitrary fallback in the same structural alternative.
+            if (element instanceof IStructureElementChain) return false;
+            if (completeMarkerLeaf(element)) return true;
+            element = HologramDeclarationWrappers.backing(element);
+        }
+        return false;
+    }
+
+    private static synchronized boolean completeMarkerLeaf(IStructureElement<?> element) {
+        Method factory = element.getClass().getEnclosingMethod();
+        List<IHatchElement<?>> types = ELEMENT_DECLARED.get(element);
+        return factory != null && factory.getDeclaringClass() == gregtech.api.util.HatchElementBuilder.class
+            && "build".equals(factory.getName())
+            && types != null && !types.isEmpty() && ELEMENTS.containsKey(element);
     }
 
     public static synchronized void directions(IStructureElement<?> element,

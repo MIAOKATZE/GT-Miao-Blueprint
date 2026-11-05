@@ -226,7 +226,7 @@ final class HologramDeclarationWrappers {
 
     private static List<ItemStack> materials(IStructureElement<?> root) throws ReflectiveOperationException {
         List<ItemStack> result = new ArrayList<>();
-        for (IStructureElement<?> part : HologramElementCatalog.parts(root)) {
+        for (IStructureElement<?> part : HologramElementCatalog.parts(root, false)) {
             Method factory = part.getClass()
                 .getEnclosingMethod();
             if (factory == null) continue;

@@ -44,13 +44,38 @@ public final class HologramGregTechDeclarations {
         }, null));
     }
 
+    /** GT++'s common factory fixes the block/range; its getter/setter still enforce machine-wide tier consistency. */
+    public static void tieredBlock(IStructureElement<?> element, Block block, int minMeta, int maxMeta) {
+        if (block == null || maxMeta <= minMeta || (long) maxMeta - minMeta > 128) return;
+        HologramDeclarationAdapters.register(element, new HologramDeclarationAdapters.Declaration(() -> {
+            List<Pair<Block, Integer>> hints = new ArrayList<>();
+            for (int meta = minMeta; meta < maxMeta; meta++) hints.add(Pair.of(block, meta));
+            return tiered(hints);
+        }, signal -> {
+            // Preserve the reviewed native getMeta's exact integer branches, including its nonzero minimum.
+            int meta = signal.stackSize;
+            if (meta <= 0) meta = minMeta;
+            if (meta + minMeta >= maxMeta) meta = maxMeta - 1 - minMeta;
+            meta += minMeta;
+            if (meta < minMeta || meta >= maxMeta)
+                throw new IllegalArgumentException("GT++ tiered block hint is outside its declared metadata range");
+            signal.stackSize = meta - minMeta + 1;
+            return signal;
+        }, false));
+    }
+
     private static IStructureElement<?> tiered(String channel, List<Pair<Block, Integer>> declared) {
+        IStructureElement<?> backing = tiered(declared);
+        return backing == null ? null : StructureUtility.withChannel(channel, backing);
+    }
+
+    static IStructureElement<?> tiered(List<Pair<Block, Integer>> declared) {
         if (declared == null || declared.isEmpty()) return null;
         List<Pair<Block, Integer>> snapshot = new ArrayList<>(declared);
         // The declaration twin contains no live controller setter/getter. Its hints/candidates are the factory's
         // actual declared alternatives; arbitrary tier extractors are never evaluated by capture.
         IStructureElement<Object> backing = StructureUtility
             .<Object, Integer>ofBlocksTiered((block, meta) -> null, snapshot, -1, (context, tier) -> {}, context -> -1);
-        return StructureUtility.withChannel(channel, backing);
+        return backing;
     }
 }

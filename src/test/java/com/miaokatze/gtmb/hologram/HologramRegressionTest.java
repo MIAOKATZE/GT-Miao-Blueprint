@@ -46,6 +46,7 @@ public final class HologramRegressionTest {
             HologramSourceContractRegression::runRefresh);
         cases.put("public_pure_elements_world_identity_and_reader_lifecycle", HologramPureElementsRegression::run);
         cases.put("fixed_hatch_markers_do_not_execute_controller_callbacks", HologramHatchHintCaptureRegression::run);
+        cases.put("gtpp_tiered_hint_projection_keeps_native_authority_boundaries", HologramGtppDeclarationsRegression::run);
         cases.put("unknown_hatch_callbacks_and_semantic_metadata_boundary", HologramSemanticSafetyRegression::run);
         cases.put("overlapping_hatch_presets_share_native_contribution", HologramSemanticSafetyRegression::runPreset);
         cases.put("blueprint_actual_cell_limits_and_sparse_area_scanning", HologramBlueprintLimitsRegression::run);

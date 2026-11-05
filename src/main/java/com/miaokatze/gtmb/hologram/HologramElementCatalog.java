@@ -44,23 +44,32 @@ final class HologramElementCatalog {
     }
 
     static List<IStructureElement<?>> parts(IStructureElement<?> root) {
+        return parts(root, true);
+    }
+
+    /** Material-channel facts may omit advisory backing edges while retaining the native chain's own children. */
+    static List<IStructureElement<?>> parts(IStructureElement<?> root, boolean includeAdvisoryBacking) {
         List<IStructureElement<?>> result = new ArrayList<>();
-        visit(root, 0, new IdentityHashMap<>(), result);
+        visit(root, 0, new IdentityHashMap<>(), result, includeAdvisoryBacking);
         return result;
     }
 
     private static void visit(IStructureElement<?> element, int depth, IdentityHashMap<Object, Boolean> seen,
-        List<IStructureElement<?>> result) {
+        List<IStructureElement<?>> result, boolean includeAdvisoryBacking) {
         if (element == null || depth > 12 || seen.size() >= 128 || seen.put(element, Boolean.TRUE) != null) return;
         result.add(element);
         try {
-            visit(HologramDeclarationWrappers.backing(element), depth + 1, seen, result);
-            visit(HologramDeclarationWrappers.alternativesBacking(element), depth + 1, seen, result);
+            HologramDeclarationAdapters.Declaration projection = includeAdvisoryBacking ? null
+                : HologramDeclarationAdapters.declaration(element);
+            if (includeAdvisoryBacking || projection == null || projection.backingAuthority) {
+                visit(HologramDeclarationWrappers.backing(element), depth + 1, seen, result, includeAdvisoryBacking);
+                visit(HologramDeclarationWrappers.alternativesBacking(element), depth + 1, seen, result, includeAdvisoryBacking);
+            }
         } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {}
         if (element instanceof IStructureElementChain) {
             IStructureElement<?>[] children = ((IStructureElementChain<?>) element).fallbacks();
             if (children != null && children.length <= 64)
-                for (IStructureElement<?> child : children) visit(child, depth + 1, seen, result);
+                for (IStructureElement<?> child : children) visit(child, depth + 1, seen, result, includeAdvisoryBacking);
         }
     }
 }

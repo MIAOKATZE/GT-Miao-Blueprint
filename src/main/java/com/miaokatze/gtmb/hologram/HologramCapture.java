@@ -661,7 +661,8 @@ public final class HologramCapture {
                         if (observeDeclaration) HologramDeclarationWrappers.observeMaterials(element);
                         if (cell.block == null || cell.block == StructureLibAPI.getBlockHint()) {
                             HologramCasingFallback.Target casing = capture.casing(element, piece.trigger);
-                            if (casing == null) cell.unknown = true;
+                            if (casing == null) cell.unknown = cell.block != StructureLibAPI.getBlockHint()
+                                || !HologramHatchPolicy.completeMarker(element);
                             else {
                                 cell.block = casing.block;
                                 cell.meta = casing.meta;

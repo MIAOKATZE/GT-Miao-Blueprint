@@ -75,6 +75,7 @@ final class HologramDeclarationCandidates {
             }
             IStructureElement<?> backing = HologramDeclarationWrappers.backing(element);
             if (backing != null) {
+                HologramDeclarationAdapters.Declaration projection = HologramDeclarationAdapters.declaration(element);
                 collect(
                     backing,
                     context,
@@ -85,7 +86,7 @@ final class HologramDeclarationCandidates {
                     HologramDeclarationWrappers.trigger(element, trigger),
                     environment,
                     depth + 1,
-                    placement);
+                    placement && (projection == null || projection.backingAuthority));
                 return;
             }
             IStructureElement<?> alternative = HologramDeclarationWrappers.alternativesBacking(element);

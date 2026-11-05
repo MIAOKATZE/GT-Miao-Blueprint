@@ -34,6 +34,8 @@ public final class HologramDeclarationAdapters {
 
         private final Supplier<IStructureElement<?>> source;
         private final Function<ItemStack, ItemStack> signal;
+        /** Whether the backing can establish placement/material-channel facts, beyond an advisory preview. */
+        final boolean backingAuthority;
         private IStructureElement<?> backing;
 
         public Declaration(IStructureElement<?> backing) {
@@ -41,9 +43,15 @@ public final class HologramDeclarationAdapters {
         }
 
         public Declaration(Supplier<IStructureElement<?>> source, Function<ItemStack, ItemStack> signal) {
+            this(source, signal, true);
+        }
+
+        Declaration(Supplier<IStructureElement<?>> source, Function<ItemStack, ItemStack> signal,
+            boolean backingAuthority) {
             if (source == null) throw new IllegalArgumentException("Missing declaration reader");
             this.source = source;
             this.signal = signal;
+            this.backingAuthority = backingAuthority;
         }
 
         synchronized IStructureElement<?> backing() {
