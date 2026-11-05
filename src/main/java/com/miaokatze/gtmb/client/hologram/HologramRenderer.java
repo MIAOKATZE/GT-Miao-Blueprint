@@ -764,6 +764,7 @@ final class HologramRenderer {
             float outlineDensity = HologramBlueprintPreview.cleanCapture() || cachedOutlines.isEmpty() ? 1
                 : previewOutlineDensity();
             int lineVertices = 0, lineLimit = 0;
+            boolean outlineDrawn = false;
             boolean streamedLines = false;
             if (!HologramBlueprintPreview.cleanCapture()
                 && state != HologramLibraryClient.INSTANCE.browsePreviewState()) {
@@ -785,6 +786,7 @@ final class HologramRenderer {
                         face.fadeDefault,
                         outlineDensity);
                     if (alpha == 0) continue;
+                    outlineDrawn = true;
                     if (lineLimit > 0 && lineVertices + 24 > lineLimit) {
                         if (streamedLines) previewLineStream.flush();
                         else {
@@ -814,6 +816,14 @@ final class HologramRenderer {
                 if (!streamedLines) t.draw();
             } finally {
                 if (streamedLines) previewLineStream.end();
+            }
+            if (budgeted && outlineDrawn && !previewPreparation.outlineObserved) {
+                previewPreparation.outlineObserved = true;
+                com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.loadStage(
+                    com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.LoadStage.CLIENT_OUTLINE_READY,
+                    state.data,
+                    -1,
+                    cachedOutlines.size());
             }
             GL11.glDisable(GL11.GL_DEPTH_TEST);
             GL11.glLineWidth(2.5f);
@@ -1438,7 +1448,9 @@ final class HologramRenderer {
             this.state = state;
             regions = state.regions.regions.entrySet()
                 .iterator();
-            boundary = outline ? new PreviewBoundary(state) : null;
+            // Structure hints already enter the progressive mesh directly. A second all-cell occupancy/edge pass
+            // would gate their first material on a separate preview that the mesh replaces immediately afterwards.
+            boundary = outline && !state.data.getBoolean("structureProjection") ? new PreviewBoundary(state) : null;
         }
 
         void advance(int layer, int view, boolean current, String key) {

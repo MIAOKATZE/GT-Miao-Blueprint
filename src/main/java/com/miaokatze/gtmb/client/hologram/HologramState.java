@@ -177,6 +177,7 @@ final class HologramState {
         private final boolean displayRows;
         private final NBTTagCompound source;
         private final boolean packed;
+        private final boolean projection;
         private final java.util.IdentityHashMap<NBTTagCompound, DescriptorTemplate> descriptors;
         private final boolean fullBaseline;
         int lastStepWork;
@@ -189,6 +190,7 @@ final class HologramState {
         Preparation(NBTTagCompound source, boolean displayRows) {
             this.source = source;
             packed = HologramSnapshotPalette.isPacked(source);
+            projection = source.getBoolean("structureProjection");
             descriptors = packed ? new java.util.IdentityHashMap<>() : null;
             this.displayRows = displayRows;
             fullBaseline = fullBaseline(source);
@@ -221,7 +223,7 @@ final class HologramState {
                         throw new IllegalArgumentException(invalid.getMessage(), invalid);
                     }
                     Cell cell = packed ? new Cell(cellPosition, descriptor(row), row)
-                        : new Cell(cellPosition, row, true);
+                        : new Cell(cellPosition, row, null, true, projection);
                     if ((cellPosition & 255) == 0) pages.add(new Cell[Math.min(256, rows.tagCount() - cellPosition)]);
                     pages.get(cellPosition >> 8)[cellPosition & 255] = cell;
                     regions.add(cell);
@@ -268,7 +270,7 @@ final class HologramState {
             NBTTagCompound raw = HologramSnapshotPalette.descriptor(source, row);
             DescriptorTemplate template = descriptors.get(raw);
             if (template == null) {
-                template = new DescriptorTemplate(raw);
+                template = new DescriptorTemplate(raw, projection);
                 descriptors.put(raw, template);
             }
             return template;
@@ -674,8 +676,8 @@ final class HologramState {
         private final Cell values;
         private final ItemStack actualStack, targetStack;
 
-        DescriptorTemplate(NBTTagCompound raw) {
-            values = new Cell(-1, raw, true);
+        DescriptorTemplate(NBTTagCompound raw, boolean projection) {
+            values = new Cell(-1, raw, null, true, projection);
             actualStack = values.actualStack;
             targetStack = values.targetStack;
         }
@@ -686,6 +688,8 @@ final class HologramState {
         private final NBTTagCompound raw;
         private final NBTTagCompound coordinates;
         private final DescriptorTemplate descriptorTemplate;
+        private final boolean projection;
+        private final Block actualBlock, targetBlock;
 
         final int index, x, y, z, dx, dy, dz, meta, wantMeta, chosenChoice, hatchFacing, actualFacing, targetFacing;
         final String id, wantId, status, pinScope, role, family, renderKind, operation, exactIdentity;
@@ -714,9 +718,15 @@ final class HologramState {
 
         /** Packed snapshots retain one read-only descriptor and a small coordinate row, never a merged row. */
         private Cell(int index, NBTTagCompound n, NBTTagCompound positions, boolean owned) {
+            this(index, n, positions, owned, false);
+        }
+
+        /** Structure hints carry render identity directly; Blueprint planning metadata stays opaque in raw. */
+        private Cell(int index, NBTTagCompound n, NBTTagCompound positions, boolean owned, boolean projection) {
             raw = owned ? n : (NBTTagCompound) n.copy();
             coordinates = positions;
             descriptorTemplate = null;
+            this.projection = projection;
             this.index = index;
             NBTTagCompound location = positions == null ? n : positions;
             x = location.getInteger("x");
@@ -729,42 +739,45 @@ final class HologramState {
             wantMeta = n.getInteger("wantMeta");
             id = n.getString("id");
             wantId = n.getString("wantId");
+            actualBlock = projection ? Block.getBlockFromName(id) : null;
+            targetBlock = projection ? id.equals(wantId) ? actualBlock : Block.getBlockFromName(wantId) : null;
             status = n.getString("status");
-            chosenChoice = n.hasKey("chosenChoice") ? n.getInteger("chosenChoice") : -1;
+            chosenChoice = !projection && n.hasKey("chosenChoice") ? n.getInteger("chosenChoice") : -1;
             hatchFacing = n.hasKey("hatchFacing") ? n.getInteger("hatchFacing") : -1;
             actualFacing = n.hasKey("actualFacing") ? n.getInteger("actualFacing") : -1;
             targetFacing = n.hasKey("targetFacing") ? n.getInteger("targetFacing") : hatchFacing;
-            candidateComplete = n.getBoolean("candidateComplete");
+            candidateComplete = !projection && n.getBoolean("candidateComplete");
             candidateBoundary = n.getString("candidateBoundary");
-            pinScope = n.getString("pinScope");
+            pinScope = projection ? "" : n.getString("pinScope");
             role = n.getString("role");
-            family = n.getString("family");
-            exactIdentity = n.getString("exactIdentity");
+            family = projection ? "" : n.getString("family");
+            exactIdentity = projection ? "" : n.getString("exactIdentity");
             renderKind = n.getString("renderKind");
             operation = n.getString("operation");
             inScope = n.getBoolean("inScope");
             prompt = n.getString("prompt");
-            networkGroup = n.getString("networkGroup");
-            specialHint = owned ? n.getCompoundTag("specialHint")
+            networkGroup = projection ? "" : n.getString("networkGroup");
+            specialHint = projection ? new NBTTagCompound() : owned ? n.getCompoundTag("specialHint")
                 : (NBTTagCompound) n.getCompoundTag("specialHint")
                     .copy();
             structureId = n.getString("structureId");
             List<String> memberships = new ArrayList<>();
-            NBTTagList membershipTags = n.getTagList("structureIds", 8);
+            NBTTagList membershipTags = projection ? new NBTTagList() : n.getTagList("structureIds", 8);
             for (int i = 0; i < membershipTags.tagCount(); i++) {
                 String member = membershipTags.getStringTagAt(i);
                 if (!member.isEmpty() && !memberships.contains(member)) memberships.add(member);
             }
             if (memberships.isEmpty() && !structureId.isEmpty()) memberships.add(structureId);
             structureIds = Collections.unmodifiableList(memberships);
-            sourceMod = n.getString("sourceMod");
-            sourceVersion = n.getString("sourceVersion");
-            sourceClass = n.getString("sourceClass");
-            sourceWarning = n.getString("sourceWarning");
+            sourceMod = projection ? "" : n.getString("sourceMod");
+            sourceVersion = projection ? "" : n.getString("sourceVersion");
+            sourceClass = projection ? "" : n.getString("sourceClass");
+            sourceWarning = projection ? "" : n.getString("sourceWarning");
             sourceMissing = n.getBoolean("sourceMissing");
             excluded = n.getBoolean("excluded");
             missingBlock = n.getBoolean("missingBlock")
-                || !wantId.isEmpty() && !"minecraft:air".equals(wantId) && Block.getBlockFromName(wantId) == null;
+                || !wantId.isEmpty() && !"minecraft:air".equals(wantId)
+                    && (projection ? targetBlock : Block.getBlockFromName(wantId)) == null;
             anchor = n.getBoolean("anchor");
             iconOnly = n.getBoolean("iconOnly");
             actualStack = n.hasKey("actualStack", 10) ? readStack(n.getCompoundTag("actualStack")) : null;
@@ -780,10 +793,12 @@ final class HologramState {
             hintTint = tint.length == 0 ? tint : tint.clone();
             NBTTagList icons = n.getTagList("hintIcons", 8);
             for (int i = 0; i < 6; i++) hintIcons[i] = i < icons.tagCount() ? icons.getStringTagAt(i) : "";
-            NBTTagList list = n.getTagList("candidates", 10);
-            for (int i = 0; i < list.tagCount(); i++) {
-                ItemStack stack = readStack(list.getCompoundTagAt(i));
-                if (stack != null) candidates.add(stack);
+            if (!projection) {
+                NBTTagList list = n.getTagList("candidates", 10);
+                for (int i = 0; i < list.tagCount(); i++) {
+                    ItemStack stack = readStack(list.getCompoundTagAt(i));
+                    if (stack != null) candidates.add(stack);
+                }
             }
         }
 
@@ -793,6 +808,9 @@ final class HologramState {
             raw = value.raw;
             coordinates = positions;
             descriptorTemplate = template;
+            projection = value.projection;
+            actualBlock = value.actualBlock;
+            targetBlock = value.targetBlock;
             this.index = index;
             x = positions.getInteger("x");
             y = positions.getInteger("y");
@@ -857,7 +875,7 @@ final class HologramState {
         }
 
         Block block(boolean current) {
-            return Block.getBlockFromName(current ? id : wantId);
+            return projection ? current ? actualBlock : targetBlock : Block.getBlockFromName(current ? id : wantId);
         }
 
         NBTTagCompound tag() {

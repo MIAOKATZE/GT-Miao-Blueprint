@@ -36,6 +36,7 @@ public final class HologramRegressionTest {
         cases.put(
             "native_structure_projection_reads_geometry_without_operation_authority",
             HologramStructureProjectionRegression::run);
+        cases.put("native_structure_projection_reads_hatch_chain_without_callbacks", HologramProjectionChainRegression::run);
         cases.put(
             "stargate_rules_connection_snapshot_and_mode_selection",
             com.miaokatze.gtmb.client.hologram.HologramStargateClientRulesRegression::run);

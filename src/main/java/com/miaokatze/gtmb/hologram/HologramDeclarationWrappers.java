@@ -26,6 +26,7 @@ import gregtech.api.GregTechAPI;
 import gregtech.api.casing.Casings;
 import gregtech.api.enums.HeatingCoilLevel;
 import gregtech.api.util.GTStructureUtility;
+import gregtech.api.util.HatchElementBuilder;
 import gregtech.common.blocks.BlockCasings5;
 import gtPlusPlus.core.material.Material;
 
@@ -82,6 +83,29 @@ final class HologramDeclarationWrappers {
             return ((GTStructureUtility.ProxyStructureElement<?, ?>) element).proxiedElement;
         else return null;
         return (IStructureElement<?>) captured(element, field);
+    }
+
+    /** Reviewed native chains expose declaration data without invoking an arbitrary fallbacks callback. */
+    static IStructureElement<?>[] nativeChainChildren(IStructureElementChain<?> element)
+        throws ReflectiveOperationException {
+        Class<?> type = element.getClass();
+        Method factory = factory(type);
+        if (factory != null && factory.getDeclaringClass() == StructureUtility.class
+            && "ofChain".equals(factory.getName())) return element.fallbacks();
+        String owner = HatchElementBuilder.class.getName() + "$$Lambda";
+        String name = type.getName();
+        if (!type.isSynthetic() || type.getClassLoader() != HatchElementBuilder.class.getClassLoader()
+            || !(name.startsWith(owner + "$") || name.startsWith(owner + "/"))) return null;
+        // buildAndChain captures one array; its native lambda body is only `return array`.
+        Field array = null;
+        for (Field field : type.getDeclaredFields()) {
+            if (Modifier.isStatic(field.getModifiers())) continue;
+            if (array != null || field.getType() != IStructureElement[].class) return null;
+            array = field;
+        }
+        if (array == null) return null;
+        array.setAccessible(true);
+        return (IStructureElement<?>[]) array.get(element);
     }
 
     static boolean isLazy(IStructureElement<?> element) {

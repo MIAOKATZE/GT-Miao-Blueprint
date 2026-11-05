@@ -26,6 +26,7 @@ import com.gtnewhorizon.structurelib.alignment.constructable.IConstructable;
 import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
 import com.gtnewhorizon.structurelib.structure.IStructureDefinition;
 import com.gtnewhorizon.structurelib.structure.IStructureElement;
+import com.gtnewhorizon.structurelib.structure.IStructureElementChain;
 import com.gtnewhorizon.structurelib.structure.IStructureWalker;
 import com.gtnewhorizon.structurelib.structure.StructureUtility;
 import com.miaokatze.gtmb.api.Declarations;
@@ -842,12 +843,10 @@ public final class HologramCapture {
             projectionOnly ? signal : HologramDeclarationWrappers.trigger(element, signal),
             depth + 1);
         if (!projectionOnly && HologramDeclarationWrappers.requiresAdapter(element)) return false;
-        if (element instanceof com.gtnewhorizon.structurelib.structure.IStructureElementChain) {
-            java.lang.reflect.Method factory = HologramDeclarationWrappers.factory(element.getClass());
-            if (projectionOnly && (factory == null || factory.getDeclaringClass() != StructureUtility.class
-                || !"ofChain".equals(factory.getName()))) return false;
-            IStructureElement[] fallbacks = ((com.gtnewhorizon.structurelib.structure.IStructureElementChain) element)
-                .fallbacks();
+        if (element instanceof IStructureElementChain) {
+            IStructureElementChain chain = (IStructureElementChain) element;
+            IStructureElement[] fallbacks = projectionOnly ? HologramDeclarationWrappers.nativeChainChildren(chain)
+                : chain.fallbacks();
             if (fallbacks == null || fallbacks.length > 64) return false;
             for (IStructureElement fallback : fallbacks)
                 if (spawnHint(fallback, world, x, y, z, signal, depth + 1)) return true;

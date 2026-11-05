@@ -807,6 +807,40 @@ public final class HologramRenderingRegression {
                     previousProjection = projection;
                 }
             }
+            Object blueprintPreparation = preparationConstructor.newInstance(state, true);
+            SimpleAssert.that(
+                field(preparationType, "boundary").get(blueprintPreparation) != null,
+                "ordinary Blueprint keeps its independent early occupancy outline");
+            List<double[]> expected = new java.util.ArrayList<>();
+            for (Object face : (List<?>) field(HologramRenderer.class, "cachedFaces").get(null))
+                expected.add(faceSnapshot(face));
+            state.data.setBoolean("structureProjection", true);
+            Object direct = preparationConstructor.newInstance(state, true);
+            SimpleAssert.that(
+                field(preparationType, "boundary").get(direct) == null,
+                "typed structure geometry needs no second all-cell occupancy pass");
+            for (String name : new String[] { "cachedFaces", "cachedOutlines", "cachedMarkers" })
+                field(HologramRenderer.class, name).set(null, new java.util.ArrayList<>());
+            for (String name : listNames) ((List<?>) field(HologramRenderer.class, name).get(null)).clear();
+            published.clear();
+            Object directProjection = reusedProjectionConstructor.newInstance(state, "direct-structure", null);
+            field(preparationType, "projection").set(direct, directProjection);
+            field(HologramRenderer.class, "previewPreparation").set(null, direct);
+            java.lang.reflect.Method advancePreparation = preparationType
+                .getDeclaredMethod("advance", int.class, int.class, boolean.class, String.class);
+            advancePreparation.setAccessible(true);
+            int steps = 0;
+            while (field(projectionType, "published").getInt(directProjection) < state.cells.size() && steps++ < 1000)
+                advancePreparation.invoke(direct, Integer.MAX_VALUE, 0, false, "direct-structure");
+            SimpleAssert.eq(
+                state.cells.size(),
+                field(projectionType, "published").getInt(directProjection),
+                "structure preparation reaches complete publication without awaiting an occupancy draw");
+            List<?> directFaces = (List<?>) field(HologramRenderer.class, "cachedFaces").get(null);
+            SimpleAssert.eq(expected.size(), directFaces.size(), "direct structure path keeps full geometry coverage");
+            for (int i = 0; i < expected.size(); i++) SimpleAssert.that(
+                java.util.Arrays.equals(expected.get(i), faceSnapshot(directFaces.get(i))),
+                "direct structure mesh preserves the ordinary cell, surface, depth and vertex oracle");
         } finally {
             for (HologramState.Cell cell : state.cells) materials.remove(cell);
             regions.clear();

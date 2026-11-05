@@ -36,6 +36,7 @@ public final class HologramLargeStateRegression {
         preparation(state);
         preparationOwnership();
         packedPreparation();
+        projectionPreparation();
         regionInvalidation();
         areaSelectionReceipts(state);
         localCatalogReceipts();
@@ -510,6 +511,91 @@ public final class HologramLargeStateRegression {
             "kept",
             copied.cells.get(0).targetDisplay.getString("unknownNativeField"),
             "public construction copies display compounds");
+    }
+
+    private static void projectionPreparation() {
+        NBTTagCompound source = new NBTTagCompound();
+        source.setString("session", "structure-hints");
+        source.setBoolean("structureProjection", true);
+        NBTTagCompound descriptor = new NBTTagCompound();
+        descriptor.setString("id", "minecraft:glass");
+        descriptor.setString("wantId", "minecraft:glass");
+        descriptor.setString("role", "projection");
+        descriptor.setString("status", "preview");
+        descriptor.setInteger("meta", 3);
+        descriptor.setInteger("wantMeta", 3);
+        descriptor.setBoolean("iconOnly", true);
+        descriptor.setIntArray("hintTint", new int[] { 20, 40, 60 });
+        NBTTagList icons = new NBTTagList();
+        icons.appendTag(new net.minecraft.nbt.NBTTagString("fixture:typed-hint"));
+        descriptor.setTag("hintIcons", icons);
+        descriptor.setString("family", "blueprint-only-family");
+        descriptor.setString("exactIdentity", "blueprint-only-identity");
+        descriptor.setBoolean("candidateComplete", true);
+        NBTTagList candidates = new NBTTagList();
+        candidates.appendTag(
+            new net.minecraft.item.ItemStack(net.minecraft.init.Items.stick).writeToNBT(new NBTTagCompound()));
+        descriptor.setTag("candidates", candidates);
+        NBTTagList rows = new NBTTagList();
+        for (int i = 0; i < 32; i++) {
+            NBTTagCompound row = (NBTTagCompound) descriptor.copy();
+            row.setInteger("x", i - 16);
+            row.setInteger("dx", i - 16);
+            row.setInteger("y", 64);
+            row.setInteger("dy", -2);
+            row.setString("prompt", "kept annotation");
+            if (i == 31) {
+                row.setBoolean("anchor", true);
+                row.setBoolean("iconOnly", false);
+                row.setInteger("actualFacing", 4);
+                NBTTagCompound display = new NBTTagCompound();
+                display.setString("nativeAnchorField", "kept");
+                row.setTag("actualDisplay", display);
+                row.setTag("actualStack", candidates.getCompoundTagAt(0).copy());
+            }
+            rows.appendTag(row);
+        }
+        source.setTag("cells", rows);
+        try {
+            NBTTagCompound packed = HologramSnapshotCodec.decode(HologramSnapshotCodec.compressPacked(source));
+            SimpleAssert.that(HologramSnapshotPalette.isPacked(packed), "projection fixture exercises negotiated hints");
+            for (NBTTagCompound input : new NBTTagCompound[] { (NBTTagCompound) source.copy(), packed }) {
+                HologramState.Preparation task = new HologramState.Preparation(input);
+                while (!task.step(3, Long.MAX_VALUE)) {}
+                HologramState state = task.result();
+                SimpleAssert.eq(source, state.fullData(), "projection retains opaque Blueprint NBT on export");
+                HologramState.Cell hint = state.cells.get(0), anchor = state.cells.get(31);
+                SimpleAssert.that(
+                    hint.block(false) == net.minecraft.init.Blocks.glass && hint.block(true) == hint.block(false),
+                    "typed render identity resolves the same actual and target block");
+                SimpleAssert.that(
+                    hint.candidates.isEmpty() && !hint.candidateComplete && hint.family.isEmpty()
+                        && hint.exactIdentity.isEmpty(),
+                    "structure rendering never interprets Blueprint choices or planning identity");
+                SimpleAssert.eq("fixture:typed-hint", hint.hintIcons[0], "typed icon hints survive preparation");
+                SimpleAssert.eq(40, hint.hintTint[1], "typed tint survives preparation");
+                SimpleAssert.eq(-2, hint.dy, "hint geometry retains relative coordinates");
+                SimpleAssert.that(
+                    state.regions.at(-16, 64, 0) == hint && state.regions.at(15, 64, 0) == anchor,
+                    "direct geometry retains negative and positive region indices");
+                SimpleAssert.that(anchor.anchor && anchor.actualStack != null, "anchor keeps its native item identity");
+                SimpleAssert.eq(4, anchor.actualFacing, "anchor keeps its native facing");
+                SimpleAssert.eq("kept", anchor.actualDisplay.getString("nativeAnchorField"), "anchor keeps display NBT");
+                SimpleAssert.eq("kept annotation", hint.prompt, "projection annotations remain visible");
+            }
+            NBTTagCompound blueprint = (NBTTagCompound) source.copy();
+            blueprint.removeTag("structureProjection");
+            HologramState.Preparation task = new HologramState.Preparation(blueprint);
+            while (!task.step(3, Long.MAX_VALUE)) {}
+            HologramState.Cell ordinary = task.result().cells.get(0);
+            SimpleAssert.that(
+                ordinary.candidates.size() == 1 && ordinary.candidateComplete
+                    && ordinary.family.equals("blueprint-only-family")
+                    && ordinary.exactIdentity.equals("blueprint-only-identity"),
+                "the same legacy Blueprint retains full choice and planning metadata interpretation");
+        } catch (java.io.IOException failure) {
+            throw new AssertionError("projection hint preparation", failure);
+        }
     }
 
     private static void packedPreparation() {
