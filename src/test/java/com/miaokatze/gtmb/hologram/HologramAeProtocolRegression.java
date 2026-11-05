@@ -49,7 +49,9 @@ public final class HologramAeProtocolRegression {
 
     private static void nativeRecognitionBoundary() throws Exception {
         HologramAeBlueprint.NativeAdapter adapter = new HologramAeBlueprint.NativeAdapter();
-        SimpleAssert.that(!adapter.supports(Blocks.stone) && !adapter.supports(null), "native AE adapter rejects ordinary and absent hosts");
+        SimpleAssert.that(
+            !adapter.supports(Blocks.stone) && !adapter.supports(null),
+            "native AE adapter rejects ordinary and absent hosts");
         Block ae = fixture(), multipart = HologramSnapshotAeTaskRegression.host("codechicken.multipart.BlockMultipart");
         NBTTagCompound payload = new NBTTagCompound(), part = new NBTTagCompound();
         part.setString("id", "ae2_cablebus");
@@ -68,18 +70,21 @@ public final class HologramAeProtocolRegression {
                 && !HologramAeBlueprint.NativeAdapter.recognizes(multipart, new NBTTagCompound()),
             "ordinary, absent and empty multipart hosts do not acquire AE recognition");
         for (Block block : new Block[] { null, Blocks.stone, ae, multipart })
-            for (NBTTagCompound data : new NBTTagCompound[] { null, new NBTTagCompound(), payload })
-                SimpleAssert.eq(
-                    HologramAeBlueprint.supports(block, data),
-                    HologramAeBlueprint.NativeAdapter.recognizes(block, data),
-                    "pure native gate retains the public AE recognition contract");
+            for (NBTTagCompound data : new NBTTagCompound[] { null, new NBTTagCompound(), payload }) SimpleAssert.eq(
+                HologramAeBlueprint.supports(block, data),
+                HologramAeBlueprint.NativeAdapter.recognizes(block, data),
+                "pure native gate retains the public AE recognition contract");
         SimpleAssert.that(
             HologramAePolicy.handles(multipart, HologramBlueprintNbt.encodeCanonical(payload))
                 && !HologramAePolicy.handles(Blocks.stone, HologramBlueprintNbt.encodeCanonical(payload))
                 && !HologramAePolicy.handles(multipart, ""),
             "encoded policy keeps multipart recognition and ordinary/empty rejection");
-        rejects(() -> HologramAePolicy.handles(Blocks.stone, "%%%not-base64%%%"), "ordinary host still validates malformed retained NBT before rejection");
-        rejects(() -> HologramAePolicy.handles(null, "%%%not-base64%%%"), "absent host still validates malformed retained NBT before rejection");
+        rejects(
+            () -> HologramAePolicy.handles(Blocks.stone, "%%%not-base64%%%"),
+            "ordinary host still validates malformed retained NBT before rejection");
+        rejects(
+            () -> HologramAePolicy.handles(null, "%%%not-base64%%%"),
+            "absent host still validates malformed retained NBT before rejection");
         SimpleAssert.that(payload.equals(before), "recognition never changes retained multipart contents");
     }
 

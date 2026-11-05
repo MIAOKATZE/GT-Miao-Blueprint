@@ -429,10 +429,9 @@ public final class HologramAeBlueprint {
             if (recognizes(block)) return true;
             if (payload == null || !payloadHost(block)) return false;
             NBTTagList parts = payload.getTagList("parts", 10);
-            for (int i = 0; i < parts.tagCount(); i++)
-                if (parts.getCompoundTagAt(i)
-                    .getString("id")
-                    .equals("ae2_cablebus")) return true;
+            for (int i = 0; i < parts.tagCount(); i++) if (parts.getCompoundTagAt(i)
+                .getString("id")
+                .equals("ae2_cablebus")) return true;
             return false;
         }
 

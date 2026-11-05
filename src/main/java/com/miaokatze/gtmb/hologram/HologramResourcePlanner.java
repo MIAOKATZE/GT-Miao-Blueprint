@@ -262,8 +262,9 @@ final class HologramResourcePlanner {
                 }
                 if (!HologramSessionPolicy.authoring(s)) classifier = new HologramPlanClassifier(s);
                 s.cellIndices.clear();
-                stage = !s.virtual && s.machine != null && s.target != null && !capture.pending
-                    && !capture.incomplete ? 12 : 10;
+                stage = !s.virtual && s.machine != null && s.target != null && !capture.pending && !capture.incomplete
+                    ? 12
+                    : 10;
             } else if (stage == 12) {
                 // The synchronous preflight keeps its whole-structure contract; this task proves one cell per unit.
                 if (cursor < capture.cells.size()) {

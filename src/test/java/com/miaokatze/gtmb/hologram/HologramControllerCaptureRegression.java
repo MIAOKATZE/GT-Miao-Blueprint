@@ -281,7 +281,8 @@ public final class HologramControllerCaptureRegression {
         SimpleAssert.that(!task.step(1, Long.MAX_VALUE), "initialization cannot finish a native plan");
         SimpleAssert.eq(0, leaf.calls, "initial plan unit does not scan the complete original structure");
         SimpleAssert.eq("plan.structure", task.phase(), "native built proof has an explicit continuation phase");
-        SimpleAssert.that(!s.replacementReady && !s.replacementAuthorized, "partial proof grants no replacement authority");
+        SimpleAssert
+            .that(!s.replacementReady && !s.replacementAuthorized, "partial proof grants no replacement authority");
         SimpleAssert.that(!task.step(7, 0), "zero time cannot advance native built proof");
         SimpleAssert.eq(0, leaf.calls, "zero proof time performs no native declaration reads");
         int slices = 0;
@@ -298,7 +299,8 @@ public final class HologramControllerCaptureRegression {
             HologramPlanPolicy.replacementStructureBuilt(s),
             s.replacementReady,
             "incremental proof equals the unchanged synchronous replacement preflight");
-        SimpleAssert.that(s.replacementReady && !s.replacementAuthorized, "complete proof does not authorize replacement");
+        SimpleAssert
+            .that(s.replacementReady && !s.replacementAuthorized, "complete proof does not authorize replacement");
 
         ProofLeaf rejected = new ProofLeaf();
         rejected.failAt = 11;
@@ -334,10 +336,12 @@ public final class HologramControllerCaptureRegression {
         } catch (IllegalStateException expected) {
             sourceRejected = true;
         }
-        SimpleAssert.that(sourceRejected && !invalid.replacementReady, "invalidated source cannot finish a partial proof");
+        SimpleAssert
+            .that(sourceRejected && !invalid.replacementReady, "invalidated source cannot finish a partial proof");
     }
 
     private static final class ProofLeaf extends HologramPureElementsRegression.Leaf {
+
         int calls, failAt;
 
         ProofLeaf() {
