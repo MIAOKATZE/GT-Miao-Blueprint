@@ -111,7 +111,22 @@ public final class HologramUiModuleRegression {
     }
 
     private static void outgoingPlanningRevision() {
+        java.lang.reflect.Field singleton = null;
+        Object previous = null;
         try {
+            for (java.lang.reflect.Field field : net.minecraft.client.Minecraft.class.getDeclaredFields())
+                if (field.getType() == net.minecraft.client.Minecraft.class
+                    && java.lang.reflect.Modifier.isStatic(field.getModifiers())) singleton = field;
+            if (singleton == null) throw new NoSuchFieldException("Minecraft singleton");
+            singleton.setAccessible(true);
+            previous = singleton.get(null);
+            java.lang.reflect.Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+            unsafeField.setAccessible(true);
+            // The real router checks local/dedicated library availability before reaching candidate controls.
+            // A detached client with no world satisfies that query without a renderer, network or fake world.
+            singleton.set(
+                null,
+                ((sun.misc.Unsafe) unsafeField.get(null)).allocateInstance(net.minecraft.client.Minecraft.class));
             HologramUiModules ui = headlessUi();
             NBTTagCompound data = new NBTTagCompound();
             data.setString("session", "native-candidate-revision");
@@ -188,6 +203,12 @@ public final class HologramUiModuleRegression {
             }
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("actual editor sender plan revision", failure);
+        } finally {
+            if (singleton != null) try {
+                singleton.set(null, previous);
+            } catch (IllegalAccessException failure) {
+                throw new AssertionError("cannot restore detached Minecraft singleton", failure);
+            }
         }
     }
 
