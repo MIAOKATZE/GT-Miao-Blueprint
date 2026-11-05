@@ -33,6 +33,8 @@ public final class HologramRegressionTest {
     private static void run(String[] args) throws Exception {
         if (!MinecraftTestBootstrap.enter(HologramRegressionTest.class, args)) return;
         Map<String, Runnable> cases = new LinkedHashMap<>();
+        cases.put("native_structure_projection_reads_geometry_without_operation_authority",
+            HologramStructureProjectionRegression::run);
         cases.put(
             "stargate_rules_connection_snapshot_and_mode_selection",
             com.miaokatze.gtmb.client.hologram.HologramStargateClientRulesRegression::run);

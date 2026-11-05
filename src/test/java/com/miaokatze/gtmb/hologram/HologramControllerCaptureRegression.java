@@ -52,6 +52,7 @@ public final class HologramControllerCaptureRegression {
             Field field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
             field.setAccessible(true);
             sun.misc.Unsafe unsafe = (sun.misc.Unsafe) field.get(null);
+            retryCadence(unsafe);
             nativePrefix(unsafe);
             finishSlices(unsafe);
             builtProofSlices(unsafe);
@@ -124,14 +125,68 @@ public final class HologramControllerCaptureRegression {
         HologramControllerCapture.FinishWork work = s.captureWork;
         CountingCells cells = count(s.capture);
         int constructs = controller.constructions, definitions = controller.definitionBuilds;
+        int attempts = s.captureAttempts;
         HologramControllerCapture.collect(s, false);
         SimpleAssert.that(s.capture.pending, "second native slice still precedes the candidate tail");
         SimpleAssert.eq(0, cells.reads, "native continuation never reads the previously captured prefix for pins");
         SimpleAssert.that(s.captureWork == work, "one edit/selection snapshot is retained across native slices");
         SimpleAssert.eq(constructs, controller.constructions, "continuation never repeats native construct");
         SimpleAssert.eq(definitions, controller.definitionBuilds, "continuation keeps its frozen definition");
+        SimpleAssert.eq(attempts, s.captureAttempts, "normal budget yields are not new failed attempts");
         HologramSession.cancelCaptureRetry(s);
         SimpleAssert.that(s.captureWork == null && !s.capturePending, "cancellation releases the retained tail");
+    }
+
+    private static void retryCadence(sun.misc.Unsafe unsafe) throws ReflectiveOperationException {
+        EntityPlayerMP player = player(unsafe);
+        HologramSession s = new HologramSession(player, 0, 64, 0, false, 2);
+        s.capture = new HologramCapture(null, HologramSessionPolicy.trigger(s));
+        s.capture.pending = true;
+        HologramControllerCapture.scheduleCaptureRetry(s);
+        SimpleAssert.eq(0L, s.captureRetryDue, "a normal yield is ready within the current world tick");
+        SimpleAssert.that(HologramControllerCapture.canContinue(s), "normal capture participates in spare-time work");
+        s.cancelled = true;
+        SimpleAssert.that(!HologramControllerCapture.canContinue(s), "cancelled work cannot resume in spare time");
+        s.cancelled = false;
+        s.capture.pending = false;
+        s.capture.incomplete = true;
+        s.capture.failure = "TIME_LIMIT";
+        HologramControllerCapture.scheduleCaptureRetry(s);
+        SimpleAssert.eq(2L, s.captureRetryDue, "a genuine failed attempt retains two-tick backoff");
+        SimpleAssert.that(!HologramControllerCapture.canContinue(s), "failed attempts never enter the spare round");
+        s.capturePending = false;
+        s.capture.failure = "TIME_LIMIT: SOURCE_TRIGGER_CHANGED";
+        HologramControllerCapture.scheduleCaptureRetry(s);
+        SimpleAssert.that(!s.capturePending, "a mixed source failure is not revived as a timeout retry");
+        s.capture.incomplete = false;
+        s.capture.failure = "";
+        s.capture.pending = true;
+        HologramControllerCapture.scheduleCaptureRetry(s);
+        java.util.concurrent.atomic.AtomicLong clock = new java.util.concurrent.atomic.AtomicLong();
+        List<String> order = new ArrayList<>();
+        int[] continuations = { 0 };
+        Field nextSession = HologramWorkspaceScheduler.class.getDeclaredField("nextSession");
+        nextSession.setAccessible(true);
+        int previousSession = nextSession.getInt(null);
+        try {
+            nextSession.setInt(null, 0);
+            HologramWorkspaceScheduler.runRound(java.util.Arrays.asList("capture", "peer"), name -> {
+                order.add(name);
+                clock.incrementAndGet();
+            }, name -> {
+                order.add(name + ".continue");
+                continuations[0]++;
+                clock.incrementAndGet();
+            }, name -> "capture".equals(name) && HologramControllerCapture.canContinue(s), clock::get, 6);
+        } finally {
+            nextSession.setInt(null, previousSession);
+        }
+        SimpleAssert.eq("capture", order.get(0), "first peer receives its first slice");
+        SimpleAssert.eq("peer", order.get(1), "every peer runs before capture receives spare time");
+        SimpleAssert.eq(4, continuations[0], "ready capture uses spare budget without waiting another world tick");
+        SimpleAssert.eq(6L, clock.get(), "capture cannot extend the shared deadline");
+        HologramSession.cancelCaptureRetry(s);
+        SimpleAssert.that(!HologramControllerCapture.canContinue(s), "released capture is no longer runnable");
     }
 
     private static HologramSession session(EntityPlayerMP player) {

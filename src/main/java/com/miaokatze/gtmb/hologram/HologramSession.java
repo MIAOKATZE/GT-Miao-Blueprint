@@ -71,6 +71,12 @@ final class HologramSession {
     String blueprintEnergyNotice = "";
     String blueprintResourceMissing = "";
     HologramCapture nbtKeysCapture;
+    HologramStructureProjection.Frame structureProjectionFrame;
+    HologramStructureProjection.SavePreparation structureSavePreparation;
+    NBTTagCompound projectionHatchConfiguration;
+    HologramCapture projectionHatchCapture;
+    long projectionHatchUi, projectionHatchEpoch;
+    final Map<String, HologramCapture.Cell> projectionEdits = new HashMap<>();
     final java.util.Set<String> availableNbtKeys = new java.util.TreeSet<>();
     List<String> retainedNbtKeys, placementNbtKeys;
     boolean placementNbtCustomized;
@@ -293,7 +299,10 @@ final class HologramSession {
     }
 
     static void cancelCaptureRetry(HologramSession s) {
-
+        s.structureSavePreparation = null;
+        s.projectionHatchConfiguration = null;
+        s.projectionHatchCapture = null;
+        HologramStructureProjection.cancel(s);
         HologramVirtualStructureEditing.cancel(s);
         if (s.capturePending && s.capture != null) s.capture.cancelPending();
         s.captureWork = null;

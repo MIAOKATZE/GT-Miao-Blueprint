@@ -61,6 +61,11 @@ final class HologramDeclarationWrappers {
     static IStructureElement<?> backing(IStructureElement<?> element) throws ReflectiveOperationException {
         HologramDeclarationAdapters.Declaration registered = HologramDeclarationAdapters.declaration(element);
         if (registered != null) return registered.backing();
+        return nativeBacking(element);
+    }
+
+    /** Native transparent data only; projection does not enter extension declaration callbacks. */
+    static IStructureElement<?> nativeBacking(IStructureElement<?> element) throws ReflectiveOperationException {
         if (isLazy(element)) return lazyBacking(element);
         Method factory = factory(element.getClass());
         if (factory == null) return null;

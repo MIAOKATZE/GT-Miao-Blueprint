@@ -157,6 +157,10 @@ final class HologramPlacementJobs {
     }
 
     static void start(HologramSession s, net.minecraft.nbt.NBTTagCompound reviewedAction) {
+        if (s.capture != null && s.capture.projectionOnly) {
+            s.status = "结构投影不包含施工授权；请先核对当前材料与现场";
+            return;
+        }
         if (HologramDeferredPlanRefresh.blocked(s)) return;
         if (!HologramSessionPolicy.wholeBlueprintPlacement(s) && (s.scope == 2 || s.scope == 3)
             && (s.selected < 0 || s.selected >= s.capture.cells.size())) {

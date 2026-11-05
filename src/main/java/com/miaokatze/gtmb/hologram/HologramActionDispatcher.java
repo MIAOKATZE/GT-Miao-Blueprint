@@ -309,8 +309,7 @@ final class HologramActionDispatcher {
         if (s.job != 1 && s.job != 2
             && !"selectStructure".equals(op)
             && !"configure".equals(op)
-            && (HologramBlueprintEditor.isPlanningEdit(op) || "build".equals(op)
-                || "start".equals(op)
+            && (HologramBlueprintEditor.isPlanningEdit(op) || construction
                 || "scan".equals(op))) {
             String active = s.virtual ? s.blueprintActiveStructure : s.areaStructureId;
             if (action.hasKey("structureId", 8) && !active.equals(action.getString("structureId"))) {
@@ -328,6 +327,10 @@ final class HologramActionDispatcher {
                 for (int index : action.getIntArray("selectedIndices"))
                     if (s.capture != null && index >= 0 && index < s.capture.cells.size()) s.selectedIndices.add(index);
             }
+        }
+        if (construction && s.job != 1 && s.job != 2 && !HologramStructureProjection.prepareOperation(s)) {
+            HologramSnapshots.send(s);
+            return;
         }
         if (s.job != 1 && s.job != 2 && HologramAuthoringWorkflow.unchangedBlueprintAction(s, action, op)) {
             HologramSnapshots.sendUi(s);
@@ -619,6 +622,10 @@ final class HologramActionDispatcher {
                 s.scope = 0;
                 s.noHatches = false;
                 s.suppressedAuto.clear();
+                if (!HologramStructureProjection.prepareOperation(s)) {
+                    HologramSnapshots.send(s);
+                    return;
+                }
                 for (HologramCapture.Cell cell : s.capture.cells) cell.candidates = null;
                 HologramResourcePlanner.refreshPlan(s);
                 s.status = s.presetReason;
@@ -641,7 +648,7 @@ final class HologramActionDispatcher {
                     if (allowed == direction) legal = true;
                 if (cell.anchor || !legal) s.status = "控制器受保护，或该仓室不支持所选方向";
                 else {
-                    HologramResourcePlanner.freezeAllocations(s);
+                    if (!HologramStructureProjection.showing(s)) HologramResourcePlanner.freezeAllocations(s);
                     if (direction == -1) s.facingPins.remove(HologramValues.position(cell));
                     else s.facingPins.put(HologramValues.position(cell), direction);
                     HologramBlueprintEditor.refreshEdited(s, java.util.Collections.singleton(index));
@@ -675,14 +682,16 @@ final class HologramActionDispatcher {
             }
         } else if (s.job == 2 && ("scan".equals(op) || "configure".equals(op) || "native".equals(op)))
             s.status = "暂停任务保留进度；请先取消再改变配置或重新扫描";
-        if (s.job != 1 && s.job != 2
+        if (!HologramStructureProjection.showing(s) && s.job != 1 && s.job != 2
             && ("configure".equals(op) || "customPin".equals(
                 op) || "sourcePin".equals(op) || "pin".equals(op) || "addPosition".equals(op) || "clearPin".equals(op)))
             HologramMaterialAccess.refreshMaterialChoices(s);
         if (beforeEdit != null && !beforeEdit.sameAs(beforeEdit.current(s))) {
             HologramBlueprintEditor.remember(s.undoEdits, beforeEdit);
             s.redoEdits.clear();
-            if (beforeEdit.sparseIndices == null || !HologramLocalPlanRefresh.editedSource(s, beforeEdit.sparseIndices))
+            if (!HologramStructureProjection.showing(s)
+                && (beforeEdit.sparseIndices == null
+                    || !HologramLocalPlanRefresh.editedSource(s, beforeEdit.sparseIndices)))
                 HologramAuthoringWorkflow.blueprintEdited(s, "geometry");
         }
         HologramDraftPersistence.persist(s);
@@ -731,6 +740,11 @@ final class HologramActionDispatcher {
             if (tier < 0 || tier >= gregtech.api.enums.GTValues.VN.length || s.virtual || s.mode == 2) {
                 s.status = "此模式或仓室等级不能应用预设";
                 return false;
+            }
+            if (HologramStructureProjection.showing(s)) {
+                s.projectionHatchConfiguration = (NBTTagCompound) action.copy();
+                HologramStructureProjection.prepareOperation(s);
+                return true;
             }
             if (action.hasKey("hatchProfile", 10)) {
                 try {

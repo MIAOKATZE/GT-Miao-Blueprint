@@ -38,7 +38,8 @@ final class HologramBlueprintEditor {
             if (cell.anchor || !HologramCellPolicy.acceptableSample(s, cell, target))
                 throw new java.io.IOException("选中格的结构声明不接受该候选，目标未修改");
         }
-        if (indices.length > 1) HologramResourcePlanner.freezeAllocations(s);
+        if (indices.length > 1 && !HologramStructureProjection.showing(s))
+            HologramResourcePlanner.freezeAllocations(s);
         for (int index : indices) {
             HologramCapture.Cell cell = s.capture.cells.get(index);
             HologramCellPolicy.setBlueprintTarget(s, cell, target);
@@ -54,6 +55,11 @@ final class HologramBlueprintEditor {
     }
 
     static void refreshEdited(HologramSession s, java.util.Set<Integer> dirty) {
+        if (HologramStructureProjection.showing(s)) {
+            HologramStructureProjection.rememberEdits(s, dirty);
+            HologramStructureProjection.refresh(s);
+            return;
+        }
         if (HologramSessionPolicy.authoring(s) && s.geometryEdits.validationPending) {
             s.geometryEdits.changed(s, dirty);
             HologramGeometryEdits.refresh(s);
@@ -108,7 +114,8 @@ final class HologramBlueprintEditor {
             if (previous.sparseIndices == null && HologramSessionPolicy.authoring(s)) HologramGeometryEdits.refresh(s);
             else if (previous.sparseIndices == null) HologramResourcePlanner.refreshPlan(s);
             else refreshEdited(s, previous.sparseIndices);
-            if (previous.sparseIndices == null || !HologramLocalPlanRefresh.editedSource(s, previous.sparseIndices))
+            if (!HologramStructureProjection.showing(s)
+                && (previous.sparseIndices == null || !HologramLocalPlanRefresh.editedSource(s, previous.sparseIndices)))
                 HologramAuthoringWorkflow.blueprintEdited(s, "geometry");
             s.status = undo ? "已撤销规划编辑；已施工的世界保持现状" : "已重做规划编辑；点击施工才改变世界";
             return;
@@ -180,7 +187,8 @@ final class HologramBlueprintEditor {
             return;
         }
         if ("restoreCell".equals(op)) {
-            if (restoreCell(s, cell, index)) s.status = "本格已设为原结构默认外壳；施工时安全回收旧设备";
+            if (restoreCell(s, cell, index)) s.status = HologramStructureProjection.showing(s)
+                ? "本格覆盖已清除，恢复结构默认投影；现场方块保持原状" : "本格已设为原结构默认外壳；施工时安全回收旧设备";
             return;
         }
         if ("editPaste".equals(op)) {
@@ -203,7 +211,7 @@ final class HologramBlueprintEditor {
                     return;
                 }
             }
-            HologramResourcePlanner.freezeAllocations(s);
+            if (!HologramStructureProjection.showing(s)) HologramResourcePlanner.freezeAllocations(s);
             if (s.virtual) s.virtualEdited.add(HologramValues.position(cell));
             s.pins.put(index, sample.copy());
             s.coordinatePins.put(HologramValues.position(cell), sample.copy());
@@ -263,7 +271,7 @@ final class HologramBlueprintEditor {
             s.status = "本格目标没有可轮换的合法朝向";
             return;
         }
-        HologramResourcePlanner.freezeAllocations(s);
+        if (!HologramStructureProjection.showing(s)) HologramResourcePlanner.freezeAllocations(s);
         if (s.virtual) s.virtualEdited.add(HologramValues.position(cell));
         s.facingPins.put(HologramValues.position(cell), next);
         s.selected = index;
@@ -272,6 +280,17 @@ final class HologramBlueprintEditor {
     }
 
     static boolean restoreCell(HologramSession s, HologramCapture.Cell cell, int index) {
+        if (HologramStructureProjection.showing(s)) {
+            String key = HologramValues.position(cell);
+            s.pins.remove(index);
+            s.coordinatePins.remove(key);
+            s.facingPins.remove(key);
+            s.suppressedAuto.remove(key);
+            s.selected = index;
+            s.scope = 2;
+            refreshEdited(s, java.util.Collections.singleton(index));
+            return true;
+        }
         if ("templateController".equals(cell.role)) {
             s.status = "模板控制器不能恢复外壳";
             return false;

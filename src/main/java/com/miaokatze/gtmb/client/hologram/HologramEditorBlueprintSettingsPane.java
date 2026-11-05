@@ -28,6 +28,7 @@ final class HologramEditorBlueprintSettingsPane {
             .coverChildrenHeight()
             .childPadding(3)
             .padding(6);
+        content.setEnabledIf(w -> blueprintWorkspace());
         content.child(
             Flow.row()
                 .widthRel(1f)
@@ -97,7 +98,11 @@ final class HologramEditorBlueprintSettingsPane {
     void refresh() {}
 
     private boolean editable() {
-        return ui.session.editable() && !ui.library.browsePreviewActive();
+        return blueprintWorkspace() && ui.session.editable() && !ui.library.browsePreviewActive();
+    }
+
+    private boolean blueprintWorkspace() {
+        return ui.workspaces.blueprint() && !ui.session.state().data.getBoolean("structureProjection");
     }
 
     private boolean author() {

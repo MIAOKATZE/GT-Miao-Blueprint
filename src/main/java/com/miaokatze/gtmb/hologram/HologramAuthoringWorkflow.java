@@ -500,6 +500,10 @@ final class HologramAuthoringWorkflow {
                 } else if ("saveBlueprint".equals(op) || "saveBlueprintAs".equals(op)
                     || "updatePreset".equals(op)
                     || "saveBlueprintReplace".equals(op)) {
+                        if (HologramStructureProjection.showing(s)) {
+                            HologramStructureProjection.prepareSave(s, action, op);
+                            return true;
+                        }
                         s.blueprintOperation = op;
                         s.blueprintOperationSuccess = false;
                         validateProcessedSaveOptions(s, action);
@@ -572,7 +576,10 @@ final class HologramAuthoringWorkflow {
                             if ("editCellFlags".equals(op) && action.hasKey("prompt")) cell.prompt = prompt;
                             if ("editCellFlags".equals(op) || action.hasKey("excluded")) dirty.add(index);
                         }
-                        indexedAnnotations = HologramLocalPlanRefresh.annotations(s, dirty);
+                        if (HologramStructureProjection.showing(s))
+                            HologramStructureProjection.rememberEdits(s, dirty);
+                        indexedAnnotations = !HologramStructureProjection.showing(s)
+                            && HologramLocalPlanRefresh.annotations(s, dirty);
                         if (!indexedAnnotations && !dirty.isEmpty() && s.virtualPreset != null) {
                             for (HologramPresets.Cell saved : s.virtualPreset.cells) {
                                 HologramCapture.Cell cell = s.capture.positions
@@ -888,6 +895,13 @@ final class HologramAuthoringWorkflow {
     }
 
     private static void blueprintEdited(HologramSession s, String dependency, boolean indexedAnnotations) {
+        if (HologramStructureProjection.showing(s)) {
+            s.blueprintDirty = true;
+            s.forcePlacementReady = false;
+            s.placementReviewNonce++;
+            s.ae.invalidateReviews();
+            return;
+        }
         if (HologramSessionPolicy.authoring(s)
             && ("geometry".equals(dependency) || s.geometryEdits.validationPending)) {
             HologramGeometryEdits.invalidateSource(s);

@@ -41,7 +41,16 @@ final class HologramUiNbtEditor {
     private boolean openedPlacementAll, openedPlacementCovers;
     private final LinkedHashSet<String> openedPlacementKeys = new LinkedHashSet<>();
 
+    /** A retained drawer must not outlive the blueprint mode that admitted it. */
+    private boolean available() {
+        if (!ui.workspaces.projection() && !ui.session.state().data.getBoolean("structureProjection")) return true;
+        this.nbtDrawer = false;
+        if (this.nbtValueField != null && this.nbtValueField.isFocused()) this.nbtValueField.setFocused(false);
+        return false;
+    }
+
     boolean hasPlacementNbtChoices() {
+        if (!available()) return false;
         NBTTagCompound state = ui.session.state().data;
         if (state.hasKey("processingNbtKeys", 9)) return state.getTagList("processingNbtKeys", 8)
             .tagCount() > 0;
@@ -72,6 +81,7 @@ final class HologramUiNbtEditor {
     }
 
     void openNbtEditor(boolean placement) {
+        if (!available()) return;
         this.nbtDrawer = true;
         this.nbtPlacement = placement;
         this.nbtOffset = 0;
@@ -111,6 +121,7 @@ final class HologramUiNbtEditor {
     }
 
     NBTTagCompound cellNbtRow() {
+        if (!available()) return new NBTTagCompound();
         NBTTagList rows = ui.session.state().data.getTagList("cellNbtEntries", 10);
         for (int i = 0; i < rows.tagCount(); i++) if (rows.getCompoundTagAt(i)
             .getInteger("index") == ui.preview.selected()) return rows.getCompoundTagAt(i);
@@ -118,6 +129,7 @@ final class HologramUiNbtEditor {
     }
 
     NBTTagList editorNbtEntries() {
+        if (!available()) return new NBTTagList();
         return this.nbtCellScope && !this.nbtPlacement ? ui.nbt.cellNbtRow()
             .getTagList("entries", 10) : ui.session.state().data.getTagList("nbtEntries", 10);
     }
@@ -140,6 +152,7 @@ final class HologramUiNbtEditor {
     }
 
     void drawNbtEditor(int mx, int my) {
+        if (!available()) return;
         drawRect(50, 58, 548, 304, 0xff172f36);
         ui.canvas.text(
             this.nbtPlacement ? "本次放置的 NBT 匹配条目"
@@ -270,6 +283,7 @@ final class HologramUiNbtEditor {
 
     boolean resetNetworksControl(int id) {
         if (id == 195) {
+            if (!available()) return true;
             ui.session.send("resetBlueprintNetworks", new NBTTagCompound(), true);
             this.nbtDrawer = false;
             return true;
@@ -278,6 +292,7 @@ final class HologramUiNbtEditor {
     }
 
     boolean selectEntryControl(int id) {
+        if (!available()) return id >= 17000 && id < 18000;
         if (this.nbtDrawer && id >= 17000 && id < 18000) {
             if (this.nbtPathsView) {
                 List<String> paths = editorNbtPaths();
@@ -309,6 +324,10 @@ final class HologramUiNbtEditor {
     }
 
     boolean activateControl(int id) {
+        if (!available()) return switch (id) {
+            case 168, 170, 171, 172, 173, 174, 217, 228, 229 -> true;
+            default -> false;
+        };
         switch (id) {
             case 217:
                 if (this.nbtCellScope && this.nbtValueIndex >= 0
@@ -404,6 +423,7 @@ final class HologramUiNbtEditor {
     }
 
     boolean consumeEditorMouse(int mx, int my, int button) {
+        if (!available()) return false;
         if (this.nbtDrawer) {
             if (this.nbtCellScope && this.nbtValueIndex >= 0 && this.nbtValueField != null) {
                 this.nbtValueField.mouseClicked(mx, my, button);
@@ -419,6 +439,7 @@ final class HologramUiNbtEditor {
     }
 
     boolean consumeEditorKey(char c, int key) {
+        if (!available()) return false;
         if (this.nbtDrawer) {
             if (key == Keyboard.KEY_ESCAPE) this.nbtDrawer = false;
             else if (this.nbtCellScope && this.nbtValueIndex >= 0 && this.nbtValueField != null) {
@@ -431,6 +452,7 @@ final class HologramUiNbtEditor {
     }
 
     boolean consumeEditorWheel(int wheel) {
+        if (!available()) return false;
         if (this.nbtDrawer) {
             this.nbtOffset = Math.max(
                 0,
@@ -452,12 +474,12 @@ final class HologramUiNbtEditor {
     }
 
     boolean nbtDrawer() {
-        return this.nbtDrawer;
+        return available() && this.nbtDrawer;
     }
 
     boolean nbtDrawer(boolean value) {
-        this.nbtDrawer = value;
-        return value;
+        this.nbtDrawer = value && available();
+        return this.nbtDrawer;
     }
 
     boolean nbtPlacement() {

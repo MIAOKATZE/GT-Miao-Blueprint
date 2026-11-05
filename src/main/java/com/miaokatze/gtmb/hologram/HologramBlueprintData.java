@@ -75,6 +75,7 @@ final class HologramBlueprintData {
     /** Detach a physical capture using the metadata produced by its actual schema2 projection. */
     static HologramCapture projectedCapture(HologramCapture original, HologramPresets.Preset projected, int originX,
         int originY, int originZ) throws java.io.IOException {
+        if (original.projectionOnly) throw new java.io.IOException("独立蓝图转换需要完整操作数据");
         java.util.Map<String, HologramPresets.Cell> saved = new java.util.HashMap<>();
         for (HologramPresets.Cell cell : projected.cells) {
             String key = (originX + cell.x) + "," + (originY + cell.y) + "," + (originZ + cell.z);

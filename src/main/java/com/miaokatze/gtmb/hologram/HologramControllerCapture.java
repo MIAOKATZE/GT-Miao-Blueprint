@@ -127,6 +127,16 @@ final class HologramControllerCapture {
             && (s.capture == null || s.capture.captureIntent == s.captureIntent);
     }
 
+    private static boolean normalContinuation(HologramSession s) {
+        return !s.virtual && s.capture != null && !s.capture.incomplete && (s.capture.pending || s.captureWork != null);
+    }
+
+    /** Budget yields are ready work; failed attempts keep their existing delayed retry lane. */
+    static boolean canContinue(HologramSession s) {
+        return s.capturePending && !s.cancelled && s.captureError.isEmpty() && normalContinuation(s)
+            && s.player.worldObj.getTotalWorldTime() >= s.captureRetryDue;
+    }
+
     static void scheduleCaptureRetry(HologramSession s) {
         // A timeout mixed with another failure is not treated as a transient cold-load timeout.
         boolean continuing = s.capture != null && (s.capture.pending || s.captureWork != null);
@@ -139,7 +149,7 @@ final class HologramControllerCapture {
         }
         if (s.captureWork != null) s.captureWork.retainPins(s);
         s.capturePending = true;
-        s.captureRetryDue = s.player.worldObj.getTotalWorldTime() + 2;
+        s.captureRetryDue = s.player.worldObj.getTotalWorldTime() + (normalContinuation(s) ? 0 : 2);
         s.retryFacing = s.facing;
         s.retryMain = s.main;
         s.retryChannels = (NBTTagCompound) s.channels.copy();
@@ -166,6 +176,7 @@ final class HologramControllerCapture {
         }
         if (resetAttempts) s.captureError = "";
         else if (!s.captureError.isEmpty()) return;
+        if (resetAttempts) s.structureSavePreparation = null;
         boolean requestBudget = HologramWorkBudget.beginCaptureRequest();
         try {
             collectNative(s, resetAttempts);
@@ -176,12 +187,29 @@ final class HologramControllerCapture {
         }
     }
 
+    static void collectProjection(HologramSession s, boolean resetAttempts) {
+        boolean requestBudget = HologramWorkBudget.beginCaptureRequest();
+        try {
+            HologramStructureProjection.collect(s, resetAttempts);
+        } catch (RuntimeException | LinkageError failure) {
+            stop(s, "结构投影读取失败，请重新读取控制器", failure);
+        } finally {
+            if (requestBudget) HologramWorkBudget.end();
+        }
+    }
+
+    static void stopRejectedSource(HologramSession s) {
+        stop(s, "结构采集已停止：" + s.capture.failure + "；请重新读取控制器", null, true);
+    }
+
     /** A failed native continuation cannot publish a partial plan or leave the client's task pending. */
     static void stop(HologramSession s, String reason, Throwable failure) {
         stop(s, reason, failure, false);
     }
 
     private static void stop(HologramSession s, String reason, Throwable failure, boolean sourceRejected) {
+        s.structureSavePreparation = null;
+        s.projectionHatchConfiguration = null;
         if (!s.virtual) {
             s.captureError = reason;
             if (s.capture != null && !sourceRejected) {
@@ -267,7 +295,7 @@ final class HologramControllerCapture {
         s.captureRetryDue = 0;
         s.retryChannels = null;
         if (!work.finalizing()) {
-            s.captureAttempts++;
+            if (resumed == null) s.captureAttempts++;
             ItemStack initialTrigger = HologramSessionPolicy.trigger(s);
             s.capture = HologramCapture
                 .collect(s.machine, initialTrigger, s.machine.getExtendedFacing(), s.captureIntent, resumed);
@@ -308,6 +336,10 @@ final class HologramControllerCapture {
             s.calibratePending = false;
             if (!s.capture.incomplete) applyCurrentCalibration(s);
             else s.status = "采集失败，当前规划已保留，未校准现场目标";
+        }
+        if (!s.capturePending && !s.capture.incomplete) {
+            HologramStructureProjection.finishHatchConfiguration(s);
+            HologramStructureProjection.finishSave(s);
         }
     }
 
@@ -438,6 +470,13 @@ final class HologramControllerCapture {
                 s.scanSelectedPosition = null;
                 s.scanSelectedPositions.clear();
                 HologramDraftPersistence.restoreBlueprintAnnotations(s);
+                for (Map.Entry<String, HologramCapture.Cell> edit : s.projectionEdits.entrySet()) {
+                    HologramCapture.Cell cell = s.capture.positions.get(edit.getKey());
+                    if (cell != null) {
+                        cell.prompt = edit.getValue().prompt;
+                        cell.excluded = edit.getValue().excluded;
+                    }
+                }
                 planner = HologramResourcePlanner.beginCapturePlan(s);
                 stage = 6;
             }

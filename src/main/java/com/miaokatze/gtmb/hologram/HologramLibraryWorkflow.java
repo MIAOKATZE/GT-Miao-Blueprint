@@ -307,6 +307,11 @@ final class HologramLibraryWorkflow {
             throw new java.io.IOException("蓝图会话已更新，请重新保存");
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
         boolean current = request.getBoolean("saveCurrent");
+        if (HologramStructureProjection.showing(s)) {
+            HologramStructureProjection.prepareSave(s, request, "exportDraft");
+            HologramSnapshots.send(s);
+            return;
+        }
         s.blueprintOperation = current ? "saveBlueprint" : "exportDraft";
         s.blueprintOperationSuccess = false;
         captureClientTaskToken(s, request);

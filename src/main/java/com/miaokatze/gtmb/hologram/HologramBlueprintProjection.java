@@ -23,7 +23,8 @@ final class HologramBlueprintProjection {
     private HologramBlueprintProjection() {}
 
     static HologramPresets.Preset blueprint(HologramSession s, String name) throws java.io.IOException {
-        if (s.capture == null || s.capture.incomplete || s.capturePending) throw new java.io.IOException("需要完整结构或区域");
+        if (s.capture == null || s.capture.incomplete || s.capturePending || s.capture.projectionOnly)
+            throw new java.io.IOException("需要完整结构或区域；请先为明确操作准备数据");
         HologramPresets.Preset result = s.virtualPreset == null ? new HologramPresets.Preset()
             : HologramSnapshotMetadataSource.copyMetadata(s.virtualPreset);
         result.schema = 2;

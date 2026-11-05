@@ -343,6 +343,7 @@ final class HologramDraftPersistence {
         s.frozenAutoTargets.clear();
         s.allocationsFrozen = false;
         s.manualPositions.clear();
+        s.projectionEdits.clear();
         s.undoEdits.clear();
         s.redoEdits.clear();
         s.presetEnabled = false;

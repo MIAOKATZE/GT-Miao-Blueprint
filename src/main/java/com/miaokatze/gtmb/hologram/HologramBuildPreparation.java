@@ -34,12 +34,13 @@ final class HologramBuildPreparation {
     private static void directBuild(HologramSession s, boolean rescan, NBTTagCompound reviewedAction) {
         if (HologramDeferredPlanRefresh.blocked(s)) return;
         if (HologramSessionPolicy.blockedByAreaImport(s)) return;
+        if (HologramStructureProjection.showing(s) && !HologramStructureProjection.prepareOperation(s)) return;
         if (!HologramBuildPreparation.aeReady(s)) return;
         if (s.virtual && (!s.virtualPlacement || !s.virtualLocked || s.mode == 2)) {
             s.status = s.mode == 2 ? "虚拟预设不支持拆除" : !s.virtualPlacement ? "请在蓝图库点击放置，再右击确定位置并核对材料" : "请先右击确定位置，再在界面确认施工";
             return;
         }
-        if (rescan) HologramBuildPreparation.scan(s);
+        if (rescan || s.capture != null && s.capture.projectionOnly) HologramControllerCapture.collect(s);
         if (s.capturePending) {
             s.buildAfterCapture = true;
             s.status = "正在采集完整结构，完成后将按当前规划施工";
@@ -57,6 +58,10 @@ final class HologramBuildPreparation {
     static void reviewedBuild(HologramSession s, NBTTagCompound action) {
         if (HologramDeferredPlanRefresh.blocked(s)) return;
         if (s.job == 1 || s.job == 2) return;
+        if (s.capture != null && s.capture.projectionOnly) {
+            HologramStructureProjection.prepareOperation(s);
+            return;
+        }
         if (!action.hasKey("planRevision", 4) || action.getLong("planRevision") != s.planRevision) {
             s.forcePlacementReady = false;
             s.status = "确认计划已更新，请重新核对材料与位置";
@@ -90,6 +95,10 @@ final class HologramBuildPreparation {
             return;
         }
         s.calibratePending = true;
+        if (HologramStructureProjection.showing(s)) {
+            HologramStructureProjection.prepareOperation(s);
+            return;
+        }
         scan(s);
     }
 
@@ -107,7 +116,10 @@ final class HologramBuildPreparation {
                 if (!HologramVirtualStructureEditing.prepare(s, s.main, s.channels, s.noHatches)) return;
             }
         }
-        HologramControllerCapture.collect(s, resetAttempts);
+        if (HologramEditorWorkspaceRegistry.physicalProjection(s)
+            && (resetAttempts || s.capture != null && s.capture.projectionOnly))
+            HologramControllerCapture.collectProjection(s, resetAttempts);
+        else HologramControllerCapture.collect(s, resetAttempts);
         if (s.buildAfterCapture && !s.capturePending && s.capture != null) {
             s.buildAfterCapture = false;
             if (!s.capture.incomplete) HologramBuildPreparation.directBuild(s, false);

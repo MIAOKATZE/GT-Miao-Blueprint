@@ -48,6 +48,7 @@ public final class HologramCapture {
     final Object context;
     final ItemStack trigger;
     final StructureSources.CaptureIntent captureIntent;
+    final boolean projectionOnly;
     StructureSources.Resolution sourceResolution;
     net.minecraft.nbt.NBTTagCompound sourceMetadata = new net.minecraft.nbt.NBTTagCompound();
     private ExtendedFacing sourceFacing;
@@ -90,9 +91,15 @@ public final class HologramCapture {
     }
 
     HologramCapture(Object context, ItemStack trigger, StructureSources.CaptureIntent intent) {
+        this(context, trigger, intent, false);
+    }
+
+    private HologramCapture(Object context, ItemStack trigger, StructureSources.CaptureIntent intent,
+        boolean projectionOnly) {
         this.context = context;
         this.trigger = trigger == null ? null : trigger.copy();
         this.captureIntent = intent;
+        this.projectionOnly = projectionOnly;
     }
 
     /** Test/diagnostic declaration capture on a detached native controller; no structure/world traversal. */
@@ -172,8 +179,11 @@ public final class HologramCapture {
         if (capture == null) return false;
         Cell cell = capture.current;
         if (cell != null && cell.x == x && cell.y == y && cell.z == z && block != null) {
-            cell.block = block;
-            cell.meta = meta;
+            if (capture.projectionOnly) cell.renderHint = new HologramStructureHintData.Hint(block, meta);
+            else {
+                cell.block = block;
+                cell.meta = meta;
+            }
             if (block == StructureLibAPI.getBlockHint()) cell.hintIndex = meta;
         }
         return true;
@@ -192,6 +202,8 @@ public final class HologramCapture {
                 if (icons[side] != null) cell.hintIcons[side] = icons[side].getIconName();
             }
             cell.hintTint = tint == null ? null : tint.clone();
+            if (capture.projectionOnly)
+                cell.renderHint = new HologramStructureHintData.Hint(cell.hintIcons, cell.hintTint);
         }
         return true;
     }
@@ -226,7 +238,22 @@ public final class HologramCapture {
     @SuppressWarnings({ "rawtypes", "unchecked" })
     static HologramCapture collect(MTEEnhancedMultiBlockBase<?> machine, ItemStack trigger, ExtendedFacing facing,
         StructureSources.CaptureIntent intent, HologramCapture resumed) {
-        HologramCapture capture = resumed == null ? new HologramCapture(machine, trigger, intent) : resumed;
+        return collect(machine, trigger, facing, intent, resumed, false);
+    }
+
+    static HologramCapture collectProjection(MTEEnhancedMultiBlockBase<?> machine, ItemStack trigger,
+        ExtendedFacing facing, StructureSources.CaptureIntent intent, HologramCapture resumed) {
+        return collect(machine, trigger, facing, intent, resumed, true);
+    }
+
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    private static HologramCapture collect(MTEEnhancedMultiBlockBase<?> machine, ItemStack trigger,
+        ExtendedFacing facing, StructureSources.CaptureIntent intent, HologramCapture resumed, boolean projectionOnly) {
+        HologramCapture capture = resumed == null ? new HologramCapture(machine, trigger, intent, projectionOnly) : resumed;
+        if (capture.projectionOnly != projectionOnly) {
+            capture.invalidateSource("SOURCE_CAPTURE_MODE_CHANGED");
+            return capture;
+        }
         capture.deadline = System.nanoTime() + CAPTURE_TIME_NS;
         capture.pending = false;
         if (resumed != null && !capture.resumeCurrent(machine, trigger, facing, intent)) return capture;
@@ -587,6 +614,7 @@ public final class HologramCapture {
     }
 
     private void finishExtensions() {
+        if (projectionOnly) return;
         if (incomplete || !com.miaokatze.gtmb.api.BlueprintSnapshots
             .hasProcessors(com.miaokatze.gtmb.api.BlueprintSnapshots.Stage.CAPTURE_COMPLETE)) {
             cancelPending();
@@ -629,7 +657,9 @@ public final class HologramCapture {
                     Cell existing = capture.positions.get(position);
                     if (existing != null) {
                         if (existing.element == element
-                            && ItemStack.areItemStacksEqual(existing.elementTrigger, piece.trigger)) return true;
+                            && ItemStack.areItemStacksEqual(capture.projectionOnly
+                                ? capture.pieces.get(existing.projectionPiece).trigger : existing.elementTrigger,
+                                piece.trigger)) return true;
                         capture.fail("CONFLICTING_CELL " + position);
                         return false;
                     }
@@ -637,13 +667,22 @@ public final class HologramCapture {
                         capture.fail("CELL_LIMIT: 蓝图实际记录格数须小于一百万");
                         return false;
                     }
-                    Cell cell = new Cell(element, xx, yy, zz, piece.trigger);
+                    Cell cell = new Cell(element, xx, yy, zz, piece.trigger, capture.projectionOnly);
+                    if (capture.projectionOnly) cell.projectionPiece = capture.pieceCursor;
                     cell.sourceAuthority = capture.sourceBinding == null ? null : capture.sourceBinding.authority;
                     if (xx == x && yy == y && zz == z) capture.declaredAnchorIndex = capture.cells.size();
                     capture.cells.add(cell);
                     capture.positions.put(position, cell);
                     capture.current = cell;
                     try {
+                        if (capture.projectionOnly) {
+                            if (element == StructureUtility.isAir())
+                                cell.renderHint = new HologramStructureHintData.Hint(Blocks.air, 0);
+                            else capture.spawnHint(element, w, xx, yy, zz, piece.trigger, 0);
+                            cell.unknown = cell.renderHint == null;
+                            if (cell.unknown) cell.renderBoundary = "NO_READ_ONLY_HINT_DATA";
+                            return true;
+                        }
                         Set<Pair<Integer, ExactKey>> signals = capture.declarationTrace
                             .computeIfAbsent(element, ignored -> new HashSet<>());
                         boolean observeDeclaration = !signals
@@ -695,7 +734,7 @@ public final class HologramCapture {
                             .getSimpleName();
                     } finally {
                         try {
-                            capture.describeActual(cell, w);
+                            if (!capture.projectionOnly) capture.describeActual(cell, w);
                         } catch (RuntimeException | LinkageError e) {
                             cell.unknown = true;
                         }
@@ -770,17 +809,35 @@ public final class HologramCapture {
     private boolean spawnHint(IStructureElement element, World world, int x, int y, int z, ItemStack signal, int depth)
         throws ReflectiveOperationException {
         if (element == null || depth > 12) return false;
-        Declarations.PureElement<?> declaration = HologramElementCatalog.pure(element);
+        if (projectionOnly) {
+            HologramStructureHintData.Hint hint = HologramStructureHintData.read(element);
+            if (hint != null) {
+                current.renderHint = hint;
+                return true;
+            }
+        }
+        Declarations.PureElement<?> declaration = projectionOnly
+            ? element instanceof Declarations.PureElement ? (Declarations.PureElement<?>) element : null
+            : HologramElementCatalog.pure(element);
         if (declaration != null) {
             if (current == null) return false;
-            describePure(current, declaration);
+            if (projectionOnly) {
+                ItemStack sample = declaration.primary();
+                current.renderHint = sample == null || sample.getItem() == null ? null
+                    : new HologramStructureHintData.Hint(Block.getBlockFromItem(sample.getItem()), declaration.targetMeta(sample));
+            } else describePure(current, declaration);
             return true;
         }
-        IStructureElement backing = HologramDeclarationWrappers.backing(element);
+        IStructureElement backing = projectionOnly ? HologramDeclarationWrappers.nativeBacking(element)
+            : HologramDeclarationWrappers.backing(element);
         if (backing != null)
-            return spawnHint(backing, world, x, y, z, HologramDeclarationWrappers.trigger(element, signal), depth + 1);
-        if (HologramDeclarationWrappers.requiresAdapter(element)) return false;
+            return spawnHint(backing, world, x, y, z,
+                projectionOnly ? signal : HologramDeclarationWrappers.trigger(element, signal), depth + 1);
+        if (!projectionOnly && HologramDeclarationWrappers.requiresAdapter(element)) return false;
         if (element instanceof com.gtnewhorizon.structurelib.structure.IStructureElementChain) {
+            java.lang.reflect.Method factory = HologramDeclarationWrappers.factory(element.getClass());
+            if (projectionOnly && (factory == null || factory.getDeclaringClass() != StructureUtility.class
+                || !"ofChain".equals(factory.getName()))) return false;
             IStructureElement[] fallbacks = ((com.gtnewhorizon.structurelib.structure.IStructureElementChain) element)
                 .fallbacks();
             if (fallbacks == null || fallbacks.length > 64) return false;
@@ -877,7 +934,7 @@ public final class HologramCapture {
             .getYCoord();
         int z = machine.getBaseMetaTileEntity()
             .getZCoord();
-        Cell anchor = new Cell(null, x, y, z);
+        Cell anchor = new Cell(null, x, y, z, null, projectionOnly);
         anchor.sourceAuthority = sourceBinding == null ? null : sourceBinding.authority;
         anchor.anchor = true;
         anchor.role = "controller";
@@ -885,8 +942,13 @@ public final class HologramCapture {
         anchor.status = "protected";
         anchor.block = world.getBlock(x, y, z);
         anchor.meta = world.getBlockMetadata(x, y, z);
-        anchor.actualStack = machine.getStackForm(1);
-        anchor.actualDisplay = HologramDisplaySnapshot.capture((TileEntity) machine.getBaseMetaTileEntity());
+        anchor.actualStack = projectionOnly
+            ? new ItemStack(gregtech.api.GregTechAPI.sBlockMachines, 1, machine.getBaseMetaTileEntity().getMetaTileID())
+            : machine.getStackForm(1);
+        anchor.actualDisplay = projectionOnly
+            ? HologramDisplaySnapshot.projection((TileEntity) machine.getBaseMetaTileEntity())
+            : HologramDisplaySnapshot.capture((TileEntity) machine.getBaseMetaTileEntity());
+        if (projectionOnly) anchor.renderHint = new HologramStructureHintData.Hint(anchor.block, anchor.meta);
         anchor.actualFacing = machine.getBaseMetaTileEntity()
             .getFrontFacing()
             .ordinal();
@@ -955,6 +1017,9 @@ public final class HologramCapture {
         String status = "pending";
         List<ItemStack> candidates;
         List<ItemStack> structureTargets;
+        HologramStructureHintData.Hint renderHint;
+        int projectionPiece = -1;
+        String renderBoundary = "";
         boolean candidateComplete;
         String candidateBoundary = "尚未解析结构声明";
         final ItemStack elementTrigger;
@@ -965,8 +1030,8 @@ public final class HologramCapture {
         String family = "";
         String renderKind = "block";
         ItemStack actualStack;
-        net.minecraft.nbt.NBTTagCompound actualDisplay = new net.minecraft.nbt.NBTTagCompound();
-        net.minecraft.nbt.NBTTagCompound targetDisplay = new net.minecraft.nbt.NBTTagCompound();
+        net.minecraft.nbt.NBTTagCompound actualDisplay;
+        net.minecraft.nbt.NBTTagCompound targetDisplay;
         int actualFacing = -1;
         String[] hintIcons;
         short[] hintTint;
@@ -987,11 +1052,17 @@ public final class HologramCapture {
         }
 
         Cell(IStructureElement element, int x, int y, int z, ItemStack elementTrigger) {
+            this(element, x, y, z, elementTrigger, false);
+        }
+
+        Cell(IStructureElement element, int x, int y, int z, ItemStack elementTrigger, boolean projectionOnly) {
             this.element = element;
             this.x = x;
             this.y = y;
             this.z = z;
-            this.elementTrigger = elementTrigger == null ? null : elementTrigger.copy();
+            this.elementTrigger = projectionOnly || elementTrigger == null ? null : elementTrigger.copy();
+            actualDisplay = projectionOnly ? null : new net.minecraft.nbt.NBTTagCompound();
+            targetDisplay = projectionOnly ? null : new net.minecraft.nbt.NBTTagCompound();
         }
     }
 

@@ -50,7 +50,7 @@ final class HologramWorkspaceScheduler {
             }
             nextSession = (start + visited) % sessions.size();
             // Give every peer its first slice before sharing idle tick time among actual continuations.
-            // Jobs and capture retries are intentionally absent from this pass.
+            // Normal capture yields share spare time; failed retries and jobs remain once-per-tick work.
             while (visited == sessions.size() && clock.getAsLong() < deadline) {
                 int active = 0;
                 for (T session : sessions) if (canContinue.test(session)) active++;
@@ -81,10 +81,11 @@ final class HologramWorkspaceScheduler {
     }
 
     private static boolean canContinue(HologramSession s) {
-        if (HologramWorkspace.find(s.player.getUniqueID()) != s || s.capturePending
-            || s.cancelled
+        if (HologramWorkspace.find(s.player.getUniqueID()) != s || s.cancelled
             || !HologramSessionPolicy.tickValid(s)
             || s.libraryWorld != s.player.worldObj) return false;
+        if (s.capturePending) return HologramControllerCapture.canContinue(s);
+        if (HologramStructureProjection.canAdvance(s)) return true;
         HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
         if (area != null && area.importing) return canAdvanceImport(area) || HologramSnapshotPreparation.canAdvance(s);
         return s.voucherCoverageTask != null || s.attachmentTask != null && s.attachmentTask.ready()
@@ -99,6 +100,14 @@ final class HologramWorkspaceScheduler {
         }
         if (s.attachmentTask != null) {
             s.attachmentTask.tick();
+            return;
+        }
+        if (s.capturePending) {
+            HologramBuildPreparation.tickPending(s);
+            return;
+        }
+        if (HologramStructureProjection.pending(s)) {
+            HologramStructureProjection.tick(s);
             return;
         }
         HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
@@ -145,6 +154,7 @@ final class HologramWorkspaceScheduler {
             HologramDeferredPlanRefresh.tick(s);
             return;
         }
+        if (HologramStructureProjection.tick(s)) return;
         if (HologramSnapshotPreparation.tick(s)) return;
         HologramPlacementJobs.tickJob(s);
     }

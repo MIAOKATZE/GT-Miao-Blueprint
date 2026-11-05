@@ -49,6 +49,10 @@ final class HologramResourcePlanner {
     }
 
     static void refreshPlan(HologramSession s) {
+        if (HologramStructureProjection.showing(s)) {
+            HologramStructureProjection.refresh(s);
+            return;
+        }
         if (!HologramGeometryEdits.requirePlan(s)) return;
         HologramDeferredPlanRefresh.cancel(s);
         resetPlan(s);

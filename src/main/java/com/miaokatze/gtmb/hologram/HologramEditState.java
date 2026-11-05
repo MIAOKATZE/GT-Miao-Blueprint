@@ -18,6 +18,8 @@ final class HologramEditState {
     final List<HologramAePolicy.Issue> aeIssues;
     final Map<String, ItemStack> targets = new HashMap<>();
     final Map<String, ItemStack> automatic = new HashMap<>();
+    final Map<String, String> projectionPrompts = new HashMap<>();
+    final java.util.Set<String> projectionExcluded = new java.util.HashSet<>();
     final java.util.Set<String> selectedPositions = new java.util.LinkedHashSet<>();
     final int mode, scope, selected;
     final boolean presetSupported, presetAvailable;
@@ -55,6 +57,12 @@ final class HologramEditState {
         sparseIndices = indices == null ? null : new java.util.LinkedHashSet<>(indices);
         sparseCapture = indices == null ? null : s.capture;
         selectionIndices = new java.util.LinkedHashSet<>(s.selectedIndices);
+        if (HologramStructureProjection.showing(s) && indices != null) for (int index : indices) {
+            HologramCapture.Cell cell = s.capture.cells.get(index);
+            String key = HologramValues.position(cell);
+            projectionPrompts.put(key, cell.prompt);
+            if (cell.excluded) projectionExcluded.add(key);
+        }
         aeIssues = indices == null
             ? HologramAePolicy.copyIssues(s.virtualPreset == null ? null : s.virtualPreset.aeIssues)
             : null;
@@ -123,6 +131,8 @@ final class HologramEditState {
     }
 
     boolean sameAs(HologramEditState other) {
+        if (!projectionPrompts.equals(other.projectionPrompts)
+            || !projectionExcluded.equals(other.projectionExcluded)) return false;
         if (geometry.size() != other.geometry.size()) return false;
         for (int i = 0; i < geometry.size(); i++) {
             HologramCapture.Cell a = geometry.get(i), b = other.geometry.get(i);
@@ -164,6 +174,14 @@ final class HologramEditState {
     }
 
     void apply(HologramSession s) {
+        if (HologramStructureProjection.showing(s)) for (Map.Entry<String, String> entry : projectionPrompts.entrySet()) {
+            HologramCapture.Cell cell = s.capture.positions.get(entry.getKey());
+            if (cell != null) {
+                cell.prompt = entry.getValue();
+                cell.excluded = projectionExcluded.contains(entry.getKey());
+                s.projectionEdits.put(entry.getKey(), cell);
+            }
+        }
         // The disk baseline does not travel through undo. Only this draft's orientation does.
         if (rotationProofEpoch == s.rotationProofEpoch) s.rotationTurns = rotationTurns;
         if (presetPose != null) {
@@ -234,7 +252,7 @@ final class HologramEditState {
             s.hatchDowngrade = hatchDowngrade;
             s.noHatches = noHatches;
             s.hatchTier = hatchTier;
-            s.allocationsFrozen = true;
+            s.allocationsFrozen = !HologramStructureProjection.showing(s);
             return;
         }
         if (s.virtualPreset != null) {
@@ -259,7 +277,7 @@ final class HologramEditState {
             s.selectedIndices.clear();
         }
         // History restores exact positions, never reruns quota allocation.
-        s.allocationsFrozen = true;
+        s.allocationsFrozen = !HologramStructureProjection.showing(s);
         s.frozenAutoTargets.clear();
         for (Map.Entry<String, ItemStack> entry : automatic.entrySet()) s.frozenAutoTargets.put(
             entry.getKey(),

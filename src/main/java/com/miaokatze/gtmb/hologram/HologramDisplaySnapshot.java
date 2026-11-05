@@ -40,6 +40,20 @@ final class HologramDisplaySnapshot {
         }
     }
 
+    /** Visual GT scalars only. Does not serialize a native tile, cover data, inventories or editable NBT. */
+    static NBTTagCompound projection(TileEntity tile) {
+        NBTTagCompound display = new NBTTagCompound();
+        if (!(tile instanceof IGregTechTileEntity)) return display;
+        IGregTechTileEntity gt = (IGregTechTileEntity) tile;
+        display.setInteger("facing", gt.getFrontFacing().ordinal());
+        display.setInteger("color", gt.getColorization());
+        display.setBoolean("active", gt.isActive());
+        if (tile instanceof BaseMetaPipeEntity)
+            display.setInteger("connections", ((BaseMetaPipeEntity) tile).getConnections() & 63);
+        captureHatchTextures(gt.getMetaTileEntity(), display);
+        return display;
+    }
+
     private static NBTTagCompound captureChecked(TileEntity tile) {
         NBTTagCompound display = new NBTTagCompound();
         if (HologramAeNativePreview.supports(tile)) {

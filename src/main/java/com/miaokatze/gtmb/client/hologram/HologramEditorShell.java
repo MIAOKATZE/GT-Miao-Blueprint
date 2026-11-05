@@ -361,12 +361,7 @@ final class HologramEditorShell {
             ParentWidget<?> slot = new ParentWidget<>().widthRel(1f)
                 .height(22)
                 .child(button);
-            if (index == 1 || index == 6) slot.setEnabledIf(w -> ui.workspaces.blueprint());
-            if (index == 5) slot.setEnabledIf(
-                w -> ui.workspaces.blueprint() || ui.bindings.networkGroups()
-                    .tagCount() > 0);
-            if (index == 8) slot.setEnabledIf(
-                w -> ui.workspaces.projection() || ui.session.state().data.getBoolean("virtualPlacement"));
+            slot.setEnabledIf(w -> launcherAvailable(index));
             list.child(slot);
             registerTarget("launcher." + index, button);
         }
@@ -399,9 +394,8 @@ final class HologramEditorShell {
 
     private boolean launcherAvailable(int page) {
         return switch (page) {
-            case 1, 6 -> ui.workspaces.blueprint();
-            case 5 -> ui.workspaces.blueprint() || ui.bindings.networkGroups()
-                .tagCount() > 0;
+            case 1, 4, 5, 6 -> ui.workspaces.blueprint()
+                && !ui.session.state().data.getBoolean("structureProjection");
             case 8 -> ui.workspaces.projection() || ui.session.state().data.getBoolean("virtualPlacement");
             default -> true;
         };
@@ -513,10 +507,10 @@ final class HologramEditorShell {
             .sizeRel(1f)
             .childPadding(7)
             .child(
-                nativeAction(196, () -> "已有量子类群绑定", () -> ui.session.editable(), () -> "当前蓝图登记的真实量子类群与网络").widthRel(1f)
+                nativeAction(196, () -> "已有量子类群绑定", () -> launcherAvailable(5) && ui.session.editable(), () -> "当前蓝图登记的真实量子类群与网络").widthRel(1f)
                     .height(18))
             .child(
-                nativeAction(179, () -> "AE 容器与资源标记", () -> ui.session.editable(), () -> "原容器标记与资源审查").widthRel(1f)
+                nativeAction(179, () -> "AE 容器与资源标记", () -> launcherAvailable(5) && ui.session.editable(), () -> "原容器标记与资源审查").widthRel(1f)
                     .height(18));
     }
 
@@ -528,14 +522,14 @@ final class HologramEditorShell {
                 nativeAction(
                     146,
                     () -> "所选格提示词",
-                    () -> ui.session.editable() && ui.session.selectedCell() != null,
+                    () -> launcherAvailable(6) && ui.session.editable() && ui.session.selectedCell() != null,
                     () -> "编辑当前格的施工提示").widthRel(1f)
                         .height(18))
             .child(
-                nativeAction(227, () -> "全局提示词", () -> ui.session.editable(), () -> "整份蓝图的说明").widthRel(1f)
+                nativeAction(227, () -> "全局提示词", () -> launcherAvailable(6) && ui.session.editable(), () -> "整份蓝图的说明").widthRel(1f)
                     .height(18))
             .child(
-                nativeAction(166, () -> "所选格 NBT", () -> ui.processing.canEditBlueprintNbt(), () -> "审阅当前格的真实NBT")
+                nativeAction(166, () -> "所选格 NBT", () -> launcherAvailable(6) && ui.processing.canEditBlueprintNbt(), () -> "审阅当前格的真实NBT")
                     .widthRel(1f)
                     .height(18));
     }
@@ -607,6 +601,7 @@ final class HologramEditorShell {
             cut.tick();
             return;
         }
+        if (!launcherAvailable(pages.getCurrentPageIndex())) pages.setPage(0);
         layoutSidebars();
         layoutInspector();
         properties.refresh();
@@ -743,7 +738,7 @@ final class HologramEditorShell {
     }
 
     void selectDockPage(int page) {
-        if (pages == null) return;
+        if (pages == null || !launcherAvailable(page)) return;
         if (page == 2) {
             if (ui.session.isTutorial()) setDockExpanded(false);
             if (libraryDrawer != null) libraryDrawer.expanded(true);

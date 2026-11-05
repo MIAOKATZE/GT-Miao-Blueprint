@@ -21,6 +21,13 @@ final class HologramPresetWorkflow {
 
     static void savePreset(HologramSession s, String name) {
         if (HologramDeferredPlanRefresh.blocked(s)) return;
+        if (HologramStructureProjection.showing(s)) {
+            net.minecraft.nbt.NBTTagCompound request = new net.minecraft.nbt.NBTTagCompound();
+            request.setString("name", name == null ? "" : name);
+            request.setLong("planRevision", s.planRevision);
+            HologramStructureProjection.prepareSave(s, request, "savePreset");
+            return;
+        }
         HologramPresets.Preset directSource = null;
         if (!s.processingReviewed) {
             try {

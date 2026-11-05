@@ -150,6 +150,7 @@ final class HologramPlanPolicy {
     }
 
     static boolean planCurrent(HologramSession s) {
+        if (s.capture != null && s.capture.projectionOnly) return false;
         if (s.capture == null || s.expectedBlocks.size() != s.capture.cells.size()) return false;
         if (!s.capture.sourceCurrent()) return false;
         for (int i = 0; i < s.capture.cells.size(); i++)
