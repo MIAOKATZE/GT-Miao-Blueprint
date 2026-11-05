@@ -667,17 +667,13 @@ public final class HologramControllerCaptureRegression {
                 HologramDynamicDefinitionRegression.DynamicController.class,
                 (controller, signal) -> new com.miaokatze.gtmb.api.StructureSources.Plan(
                     definition,
-                    java.util.Collections.singletonList(
-                        new com.miaokatze.gtmb.api.StructureSources.Piece("preset", -1, 0, 0, signal))));
+                    java.util.Collections
+                        .singletonList(new com.miaokatze.gtmb.api.StructureSources.Piece("preset", -1, 0, 0, signal))));
             s.capture = null;
             ItemStack signal = HologramSessionPolicy.trigger(s);
             do {
-                s.capture = HologramCapture.collectProjection(
-                    machine,
-                    signal,
-                    machine.getExtendedFacing(),
-                    s.captureIntent,
-                    s.capture);
+                s.capture = HologramCapture
+                    .collectProjection(machine, signal, machine.getExtendedFacing(), s.captureIntent, s.capture);
             } while (s.capture.pending);
             SimpleAssert.that(
                 !s.capture.incomplete && s.capture.cells.size() == 4
