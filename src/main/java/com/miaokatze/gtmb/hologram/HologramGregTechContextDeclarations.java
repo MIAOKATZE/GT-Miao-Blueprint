@@ -1,9 +1,12 @@
 package com.miaokatze.gtmb.hologram;
 
+import java.io.IOException;
+import java.io.InputStream;
 import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.function.Function;
 
@@ -11,6 +14,12 @@ import net.minecraft.item.ItemStack;
 
 import com.gtnewhorizon.structurelib.structure.IStructureElement;
 import com.gtnewhorizon.structurelib.structure.StructureUtility;
+
+import org.objectweb.asm.ClassReader;
+import org.objectweb.asm.ClassVisitor;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.Type;
 
 import gregtech.api.casing.Casings;
 import gregtech.api.enums.Materials;
@@ -25,6 +34,48 @@ import gregtech.common.tileentities.machines.multi.xlturbines.MTEXLTurbineBase;
 final class HologramGregTechContextDeclarations {
 
     private static final String PACKAGE = "gregtech.common.tileentities.machines.multi.xlturbines.";
+    /** Method headers do not resolve unrelated client-only signature classes on the dedicated server. */
+    private static final ClassValue<List<Member>> MEMBERS = new ClassValue<List<Member>>() {
+
+        @Override
+        protected List<Member> computeValue(Class<?> type) {
+            String owner = type.getName().replace('.', '/');
+            try (InputStream source = type.getResourceAsStream("/" + owner + ".class")) {
+                if (source == null) return null;
+                ClassReader reader = new ClassReader(source);
+                if (!reader.getClassName().equals(owner)) return null;
+                List<Member> members = new ArrayList<>();
+                reader.accept(new ClassVisitor(Opcodes.ASM5) {
+
+                    public void visitNestHost(String owner) {}
+
+                    public void visitNestMember(String member) {}
+
+                    @Override
+                    public MethodVisitor visitMethod(int access, String name, String descriptor, String signature,
+                        String[] exceptions) {
+                        members.add(new Member(name, descriptor, access));
+                        return null;
+                    }
+                }, ClassReader.SKIP_CODE | ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+                return members;
+            } catch (IOException | IllegalArgumentException | UnsupportedOperationException unreadableMetadata) {
+                return null;
+            }
+        }
+    };
+
+    private static final class Member {
+
+        final String name, descriptor;
+        final int access;
+
+        Member(String name, String descriptor, int access) {
+            this.name = name;
+            this.descriptor = descriptor;
+            this.access = access;
+        }
+    }
     private static final ClassValue<Boolean> CONTEXTS = new ClassValue<Boolean>() {
 
         @Override
@@ -83,14 +134,14 @@ final class HologramGregTechContextDeclarations {
                 expected.add("lambda$computeValue$1");
                 expected.add("lambda$computeValue$2");
             } else expected.add("lambda$getStructureDefinition$0");
-            for (Method method : enclosing.getDeclaredMethods()) {
-                if (!method.getName()
-                    .startsWith("lambda$") || method.getReturnType() == void.class) continue;
-                if (!method.isSynthetic() || !Modifier.isStatic(method.getModifiers())
-                    || method.getReturnType() != IStructureElement.class
-                    || method.getParameterTypes().length != 1
-                    || method.getParameterTypes()[0] != MTEXLTurbineBase.class
-                    || !expected.remove(method.getName())) return false;
+            List<Member> members = MEMBERS.get(enclosing);
+            if (members == null) return false;
+            String descriptor = Type.getMethodDescriptor(Type.getType(IStructureElement.class),
+                Type.getType(MTEXLTurbineBase.class));
+            for (Member method : members) {
+                if (!method.name.startsWith("lambda$") || method.descriptor.endsWith(")V")) continue;
+                if ((method.access & Opcodes.ACC_SYNTHETIC) == 0 || !Modifier.isStatic(method.access)
+                    || !method.descriptor.equals(descriptor) || !expected.remove(method.name)) return false;
             }
             return expected.isEmpty();
         }
@@ -100,25 +151,31 @@ final class HologramGregTechContextDeclarations {
     /** Check the actual virtual dispatch target before the known native factory can call any context getter. */
     private static boolean getter(Class<?> type, String name, Class<?> result, Class<?>... parameters)
         throws NoSuchMethodException {
-        Method method = null;
+        Member method = null;
+        Class<?> declaring = null;
+        Type[] arguments = new Type[parameters.length];
+        for (int index = 0; index < parameters.length; index++) arguments[index] = Type.getType(parameters[index]);
+        String descriptor = Type.getMethodDescriptor(Type.getType(result), arguments);
         for (Class<?> current = type; current != null; current = current.getSuperclass()) {
-            try {
-                method = current.getDeclaredMethod(name, parameters);
+            List<Member> members = MEMBERS.get(current);
+            if (members == null) throw new NoSuchMethodException(name);
+            for (Member member : members) if (member.name.equals(name) && member.descriptor.equals(descriptor)) {
+                method = member;
+                declaring = current;
                 break;
-            } catch (NoSuchMethodException inherited) {}
+            }
+            if (method != null) break;
         }
         if (method == null) throw new NoSuchMethodException(name);
-        if (method.getReturnType() != result || Modifier.isStatic(method.getModifiers())
-            || method.getDeclaringClass()
-                .getClassLoader() != MTEXLTurbineBase.class.getClassLoader())
+        if (Modifier.isStatic(method.access)
+            || declaring.getClassLoader() != MTEXLTurbineBase.class.getClassLoader())
             return false;
-        String owner = method.getDeclaringClass()
-            .getName();
-        if (name.equals("getAllowedHatches")) return method.getDeclaringClass() == MTEXLTurbineBase.class;
+        String owner = declaring.getName();
+        if (name.equals("getAllowedHatches")) return declaring == MTEXLTurbineBase.class;
         if (name.equals("getPollutionPerSecond"))
-            return method.getDeclaringClass() == MTEMultiBlockBase.class || owner.equals(PACKAGE + "MTEXLTurbineGas");
+            return declaring == MTEMultiBlockBase.class || owner.equals(PACKAGE + "MTEXLTurbineGas");
         if (name.equals("requiresOutputHatch"))
-            return method.getDeclaringClass() == MTEXLTurbineBase.class || owner.equals(PACKAGE + "MTEXLTurbineGas");
+            return declaring == MTEXLTurbineBase.class || owner.equals(PACKAGE + "MTEXLTurbineGas");
         return owner.equals(PACKAGE + "MTEXLTurbineBase") || owner.equals(PACKAGE + "MTEXLTurbineHPSteam")
             || owner.equals(PACKAGE + "MTEXLTurbineSCSteam")
             || owner.equals(PACKAGE + "MTEXLTurbinePlasma")

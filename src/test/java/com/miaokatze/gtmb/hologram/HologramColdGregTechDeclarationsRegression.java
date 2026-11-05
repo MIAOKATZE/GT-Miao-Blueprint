@@ -1,5 +1,7 @@
 package com.miaokatze.gtmb.hologram;
 
+import java.io.ByteArrayInputStream;
+import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Collections;
@@ -8,6 +10,11 @@ import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
+
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.Type;
 
 import net.minecraft.block.Block;
 import net.minecraft.entity.player.EntityPlayerMP;
@@ -142,6 +149,15 @@ final class HologramColdGregTechDeclarationsRegression {
             SimpleAssert.that(
                 first.capture.cells.get(4).element != second.capture.cells.get(4).element,
                 "one shared cold source gets a separate native hatch delegate for each controller context");
+            MTEXLTurbineBase missingClient = signatureContext(false);
+            capture(unsafe, missingClient, definition,
+                Casings.SteelPipeCasing, Materials.Steel, Casings.ReinforcedSteamTurbineCasing, hatchId);
+            MTEXLTurbineBase missingClientOverride = signatureContext(true);
+            HologramSession deniedSignature = capture(unsafe, missingClientOverride, definition,
+                null, null, null, hatchId);
+            SimpleAssert.that(HologramCellPolicy.targetFor(deniedSignature, deniedSignature.capture.cells.get(1), 1) == null
+                && missingClientOverride.getClass().getDeclaredField("unknownCalls").getInt(null) == 0,
+                "a missing client-only signature cannot hide an unknown metadata getter override");
             unknownGetterCalls.set(0);
             HologramSession rejected = capture(unsafe, new UnknownGetterSteam(), definition, null, null, null, hatchId);
             SimpleAssert.that(
@@ -339,6 +355,80 @@ final class HologramColdGregTechDeclarationsRegression {
         Block.blockRegistry.addObject(id, key, block);
         Item.itemRegistry.addObject(id, key, new gregtech.common.blocks.ItemMachines(block));
         return block;
+    }
+
+    /** A real missing-client signature reproduces Class.getDeclaredMethod's unrelated signature resolution. */
+    private static MTEXLTurbineBase signatureContext(boolean override) throws ReflectiveOperationException {
+        String name = "gtmb_test/cold/" + (override ? "UnknownSignatureSteam" : "InheritedSignatureSteam");
+        ClassWriter writer = new ClassWriter(0);
+        writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER, name, null,
+            Type.getInternalName(MTEXLTurbineSteam.class), null);
+        MethodVisitor constructor = writer.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
+        constructor.visitCode();
+        constructor.visitVarInsn(Opcodes.ALOAD, 0);
+        constructor.visitLdcInsn("missing_client_signature");
+        constructor.visitMethodInsn(Opcodes.INVOKESPECIAL, Type.getInternalName(MTEXLTurbineSteam.class),
+            "<init>", "(Ljava/lang/String;)V", false);
+        constructor.visitInsn(Opcodes.RETURN);
+        constructor.visitMaxs(2, 1);
+        constructor.visitEnd();
+        MethodVisitor client = writer.visitMethod(Opcodes.ACC_PUBLIC, "unusedClientHook",
+            "(Lnet/minecraft/client/resources/IResourceManager;)V", null, null);
+        client.visitCode();
+        client.visitInsn(Opcodes.RETURN);
+        client.visitMaxs(0, 2);
+        client.visitEnd();
+        if (override) {
+            writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "unknownCalls", "I", null, null).visitEnd();
+            MethodVisitor getter = writer.visitMethod(Opcodes.ACC_PROTECTED, "getFrameMaterial",
+                "()Lgregtech/api/enums/Materials;", null, null);
+            getter.visitCode();
+            getter.visitFieldInsn(Opcodes.GETSTATIC, name, "unknownCalls", "I");
+            getter.visitInsn(Opcodes.ICONST_1);
+            getter.visitInsn(Opcodes.IADD);
+            getter.visitFieldInsn(Opcodes.PUTSTATIC, name, "unknownCalls", "I");
+            getter.visitTypeInsn(Opcodes.NEW, "java/lang/AssertionError");
+            getter.visitInsn(Opcodes.DUP);
+            getter.visitLdcInsn("unknown metadata override executed");
+            getter.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/AssertionError", "<init>",
+                "(Ljava/lang/Object;)V", false);
+            getter.visitInsn(Opcodes.ATHROW);
+            getter.visitMaxs(3, 1);
+            getter.visitEnd();
+        }
+        writer.visitEnd();
+        byte[] bytes = writer.toByteArray();
+        class SignatureLoader extends ClassLoader {
+
+            SignatureLoader() {
+                super(MTEXLTurbineSteam.class.getClassLoader());
+            }
+
+            @Override
+            protected Class<?> loadClass(String type, boolean resolve) throws ClassNotFoundException {
+                if (type.equals("net.minecraft.client.resources.IResourceManager")) throw new ClassNotFoundException(type);
+                return super.loadClass(type, resolve);
+            }
+
+            @Override
+            public InputStream getResourceAsStream(String resource) {
+                return resource.equals(name + ".class") ? new ByteArrayInputStream(bytes)
+                    : super.getResourceAsStream(resource);
+            }
+
+            Class<?> define() {
+                return defineClass(name.replace('/', '.'), bytes, 0, bytes.length);
+            }
+        }
+        Class<?> type = new SignatureLoader().define();
+        try {
+            type.getDeclaredMethod("getCasing");
+            throw new AssertionError("reflective getter search did not resolve the missing client signature");
+        } catch (NoClassDefFoundError expected) {
+            SimpleAssert.that(expected.getMessage().contains("IResourceManager"),
+                "the former reflective path loads an unrelated unavailable client resource signature");
+        }
+        return (MTEXLTurbineBase) type.getDeclaredConstructor().newInstance();
     }
 
     private static final AtomicInteger unknownGetterCalls = new AtomicInteger();
