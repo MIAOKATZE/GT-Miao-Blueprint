@@ -30,8 +30,7 @@ final class HologramFrameSupport {
 
     static Materials material(IStructureElement<?> element) {
         for (IStructureElement<?> part : HologramElementCatalog.parts(element)) {
-            Method method = part.getClass()
-                .getEnclosingMethod();
+            Method method = HologramDeclarationWrappers.factory(part.getClass());
             if (method == null || method.getDeclaringClass() != GTStructureUtility.class
                 || !"ofFrame".equals(method.getName())) continue;
             try {

@@ -97,7 +97,8 @@ final class HologramSnapshotDataContext {
         summary(cell.itemNbt);
         if (frozen == null) {
             HologramCoordinatePolicies.freezeSensorSlots(cell, payload);
-            boolean boundary = HologramAeBlueprint.supports(block, payload) || HologramNetworkBindings.node(block)
+            boolean boundary = HologramAeBlueprint.NativeAdapter.recognizes(block, payload)
+                || HologramNetworkBindings.node(block)
                 || payload != null && (payload.hasKey(HologramNetworkBindings.GROUP)
                     || payload.hasKey(HologramNetworkBindings.CAPTURE_ANCHOR))
                 || HologramNetworkSchemas.removeExternalReferences(
