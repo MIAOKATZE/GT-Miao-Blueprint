@@ -68,6 +68,7 @@ public final class HologramCapture {
     final IdentityHashMap<IStructureElement<?>, String> roleCache = new IdentityHashMap<>();
     final IdentityHashMap<IStructureElement<?>, Set<Pair<Integer, ExactKey>>> declarationTrace = new IdentityHashMap<>();
     private final IdentityHashMap<IStructureElement<?>, Map<Pair<Integer, ExactKey>, Cell>> projectionTargets = new IdentityHashMap<>();
+    private final IdentityHashMap<IStructureElement<?>, IStructureElement<?>> contextDeclarations = new IdentityHashMap<>();
     /** One declaration identity graph per capture, retained across server tick continuations. */
     IStructureDefinition<?> definition;
     private long interpretationGeneration = HologramDeclarationAdapters.generation();
@@ -654,6 +655,15 @@ public final class HologramCapture {
             IStructureWalker walker = new IStructureWalker() {
 
                 public boolean visit(IStructureElement element, World w, int xx, int yy, int zz, int a, int b, int c) {
+                    try {
+                        if (!capture.contextDeclarations.containsKey(element)) capture.contextDeclarations
+                            .put(element, HologramDeclarationAdapters.captureDeclaration(element, capture.context));
+                        element = capture.contextDeclarations.get(element);
+                    } catch (ReflectiveOperationException failure) {
+                        capture.noteFailure(failure);
+                        capture.fail("SOURCE_DECLARATION_FAILED");
+                        return false;
+                    }
                     String position = xx + "," + yy + "," + zz;
                     Cell existing = capture.positions.get(position);
                     if (existing != null) {
@@ -814,6 +824,7 @@ public final class HologramCapture {
     }
 
     void clearInterpretationCaches() {
+        contextDeclarations.clear();
         casingCache.clear();
         familyCache.clear();
         roleCache.clear();

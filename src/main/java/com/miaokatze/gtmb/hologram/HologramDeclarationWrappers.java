@@ -24,6 +24,7 @@ import com.gtnewhorizon.structurelib.structure.StructureUtility;
 
 import gregtech.api.GregTechAPI;
 import gregtech.api.casing.Casings;
+import gregtech.api.casing.ICasing;
 import gregtech.api.enums.HeatingCoilLevel;
 import gregtech.api.util.GTStructureUtility;
 import gregtech.api.util.HatchElementBuilder;
@@ -148,9 +149,9 @@ final class HologramDeclarationWrappers {
                 .getDeclaredField("to");
             deferred.setAccessible(true);
             Object factory = deferred.get(element);
-            Object source = lambdaCapture(factory, GTStructureUtility.class.getName());
+            Object source = lambdaCapture(factory, GTStructureUtility.class);
             if (source != null) {
-                Object material = lambdaCapture(source, GTStructureUtility.class.getName());
+                Object material = lambdaCapture(source, GTStructureUtility.class);
                 if (material instanceof Material) {
                     ItemStack frame = ((Material) material).getFrameBox(1);
                     if (frame != null && frame.getItem() != null) {
@@ -159,8 +160,8 @@ final class HologramDeclarationWrappers {
                     }
                 }
             } else {
-                Object supplier = lambdaCapture(factory, StructureUtility.class.getName());
-                Object casing = lambdaCapture(supplier, "gregtech.api.casing.ICasing");
+                Object supplier = lambdaCapture(factory, StructureUtility.class);
+                Object casing = lambdaCapture(supplier, ICasing.class);
                 if (casing instanceof Casings) {
                     Casings fixed = (Casings) casing;
                     Block block = fixed.getBlock();
@@ -173,13 +174,12 @@ final class HologramDeclarationWrappers {
     }
 
     /** A lambda's captured constant is data; invoking its implementation is deliberately avoided. */
-    private static Object lambdaCapture(Object lambda, String owner) throws ReflectiveOperationException {
-        if (lambda == null || !lambda.getClass()
-            .isSynthetic()
-            || !lambda.getClass()
-                .getName()
-                .startsWith(owner + "$$Lambda$"))
-            return null;
+    private static Object lambdaCapture(Object lambda, Class<?> owner) throws ReflectiveOperationException {
+        if (lambda == null) return null;
+        Class<?> type = lambda.getClass();
+        String name = type.getName(), prefix = owner.getName() + "$$Lambda";
+        if (!type.isSynthetic() || type.getClassLoader() != owner.getClassLoader()
+            || !(name.startsWith(prefix + "$") || name.startsWith(prefix + "/"))) return null;
         Field captured = null;
         for (Field field : lambda.getClass()
             .getDeclaredFields()) {

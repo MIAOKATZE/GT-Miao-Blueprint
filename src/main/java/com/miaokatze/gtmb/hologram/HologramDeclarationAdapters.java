@@ -29,6 +29,14 @@ public final class HologramDeclarationAdapters {
 
     private HologramDeclarationAdapters() {}
 
+    /** Vendor factories are resolved by the capture owner, not memoized globally against a shared lazy element. */
+    static IStructureElement<?> captureDeclaration(IStructureElement<?> element, Object context)
+        throws ReflectiveOperationException {
+        if (declaration(element) != null) return element;
+        IStructureElement<?> nativeDeclaration = HologramGregTechContextDeclarations.resolve(element, context);
+        return nativeDeclaration == null ? element : nativeDeclaration;
+    }
+
     /** A backing declaration and an optional reviewed, context-free trigger projection. */
     public static final class Declaration {
 

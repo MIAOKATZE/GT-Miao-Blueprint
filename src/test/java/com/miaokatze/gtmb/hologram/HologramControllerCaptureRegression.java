@@ -59,6 +59,7 @@ public final class HologramControllerCaptureRegression {
             finishSlices(unsafe);
             projectionFactories(unsafe);
             presetActions(unsafe);
+            HologramColdGregTechDeclarationsRegression.run(unsafe);
             builtProofSlices(unsafe);
             lifecycle(unsafe);
             HologramDynamicDefinitionRegression.virtualMemberRebuild(unsafe);
