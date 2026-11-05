@@ -12,14 +12,14 @@ import java.util.function.Function;
 
 import net.minecraft.item.ItemStack;
 
-import com.gtnewhorizon.structurelib.structure.IStructureElement;
-import com.gtnewhorizon.structurelib.structure.StructureUtility;
-
 import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 import org.objectweb.asm.Type;
+
+import com.gtnewhorizon.structurelib.structure.IStructureElement;
+import com.gtnewhorizon.structurelib.structure.StructureUtility;
 
 import gregtech.api.casing.Casings;
 import gregtech.api.enums.Materials;
@@ -39,11 +39,13 @@ final class HologramGregTechContextDeclarations {
 
         @Override
         protected List<Member> computeValue(Class<?> type) {
-            String owner = type.getName().replace('.', '/');
+            String owner = type.getName()
+                .replace('.', '/');
             try (InputStream source = type.getResourceAsStream("/" + owner + ".class")) {
                 if (source == null) return null;
                 ClassReader reader = new ClassReader(source);
-                if (!reader.getClassName().equals(owner)) return null;
+                if (!reader.getClassName()
+                    .equals(owner)) return null;
                 List<Member> members = new ArrayList<>();
                 reader.accept(new ClassVisitor(Opcodes.ASM5) {
 
@@ -76,6 +78,7 @@ final class HologramGregTechContextDeclarations {
             this.access = access;
         }
     }
+
     private static final ClassValue<Boolean> CONTEXTS = new ClassValue<Boolean>() {
 
         @Override
@@ -136,12 +139,13 @@ final class HologramGregTechContextDeclarations {
             } else expected.add("lambda$getStructureDefinition$0");
             List<Member> members = MEMBERS.get(enclosing);
             if (members == null) return false;
-            String descriptor = Type.getMethodDescriptor(Type.getType(IStructureElement.class),
-                Type.getType(MTEXLTurbineBase.class));
+            String descriptor = Type
+                .getMethodDescriptor(Type.getType(IStructureElement.class), Type.getType(MTEXLTurbineBase.class));
             for (Member method : members) {
                 if (!method.name.startsWith("lambda$") || method.descriptor.endsWith(")V")) continue;
                 if ((method.access & Opcodes.ACC_SYNTHETIC) == 0 || !Modifier.isStatic(method.access)
-                    || !method.descriptor.equals(descriptor) || !expected.remove(method.name)) return false;
+                    || !method.descriptor.equals(descriptor)
+                    || !expected.remove(method.name)) return false;
             }
             return expected.isEmpty();
         }
@@ -167,8 +171,7 @@ final class HologramGregTechContextDeclarations {
             if (method != null) break;
         }
         if (method == null) throw new NoSuchMethodException(name);
-        if (Modifier.isStatic(method.access)
-            || declaring.getClassLoader() != MTEXLTurbineBase.class.getClassLoader())
+        if (Modifier.isStatic(method.access) || declaring.getClassLoader() != MTEXLTurbineBase.class.getClassLoader())
             return false;
         String owner = declaring.getName();
         if (name.equals("getAllowedHatches")) return declaring == MTEXLTurbineBase.class;

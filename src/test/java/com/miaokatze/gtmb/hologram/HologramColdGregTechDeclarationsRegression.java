@@ -11,11 +11,6 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.concurrent.atomic.AtomicInteger;
 
-import org.objectweb.asm.ClassWriter;
-import org.objectweb.asm.MethodVisitor;
-import org.objectweb.asm.Opcodes;
-import org.objectweb.asm.Type;
-
 import net.minecraft.block.Block;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.init.Blocks;
@@ -23,6 +18,11 @@ import net.minecraft.item.Item;
 import net.minecraft.item.ItemBlock;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
+
+import org.objectweb.asm.ClassWriter;
+import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
+import org.objectweb.asm.Type;
 
 import com.gtnewhorizon.structurelib.CommonProxy;
 import com.gtnewhorizon.structurelib.StructureLib;
@@ -150,13 +150,28 @@ final class HologramColdGregTechDeclarationsRegression {
                 first.capture.cells.get(4).element != second.capture.cells.get(4).element,
                 "one shared cold source gets a separate native hatch delegate for each controller context");
             MTEXLTurbineBase missingClient = signatureContext(false);
-            capture(unsafe, missingClient, definition,
-                Casings.SteelPipeCasing, Materials.Steel, Casings.ReinforcedSteamTurbineCasing, hatchId);
+            capture(
+                unsafe,
+                missingClient,
+                definition,
+                Casings.SteelPipeCasing,
+                Materials.Steel,
+                Casings.ReinforcedSteamTurbineCasing,
+                hatchId);
             MTEXLTurbineBase missingClientOverride = signatureContext(true);
-            HologramSession deniedSignature = capture(unsafe, missingClientOverride, definition,
-                null, null, null, hatchId);
-            SimpleAssert.that(HologramCellPolicy.targetFor(deniedSignature, deniedSignature.capture.cells.get(1), 1) == null
-                && missingClientOverride.getClass().getDeclaredField("unknownCalls").getInt(null) == 0,
+            HologramSession deniedSignature = capture(
+                unsafe,
+                missingClientOverride,
+                definition,
+                null,
+                null,
+                null,
+                hatchId);
+            SimpleAssert.that(
+                HologramCellPolicy.targetFor(deniedSignature, deniedSignature.capture.cells.get(1), 1) == null
+                    && missingClientOverride.getClass()
+                        .getDeclaredField("unknownCalls")
+                        .getInt(null) == 0,
                 "a missing client-only signature cannot hide an unknown metadata getter override");
             unknownGetterCalls.set(0);
             HologramSession rejected = capture(unsafe, new UnknownGetterSteam(), definition, null, null, null, hatchId);
@@ -361,27 +376,41 @@ final class HologramColdGregTechDeclarationsRegression {
     private static MTEXLTurbineBase signatureContext(boolean override) throws ReflectiveOperationException {
         String name = "gtmb_test/cold/" + (override ? "UnknownSignatureSteam" : "InheritedSignatureSteam");
         ClassWriter writer = new ClassWriter(0);
-        writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER, name, null,
-            Type.getInternalName(MTEXLTurbineSteam.class), null);
+        writer.visit(
+            Opcodes.V1_8,
+            Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER,
+            name,
+            null,
+            Type.getInternalName(MTEXLTurbineSteam.class),
+            null);
         MethodVisitor constructor = writer.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
         constructor.visitCode();
         constructor.visitVarInsn(Opcodes.ALOAD, 0);
         constructor.visitLdcInsn("missing_client_signature");
-        constructor.visitMethodInsn(Opcodes.INVOKESPECIAL, Type.getInternalName(MTEXLTurbineSteam.class),
-            "<init>", "(Ljava/lang/String;)V", false);
+        constructor.visitMethodInsn(
+            Opcodes.INVOKESPECIAL,
+            Type.getInternalName(MTEXLTurbineSteam.class),
+            "<init>",
+            "(Ljava/lang/String;)V",
+            false);
         constructor.visitInsn(Opcodes.RETURN);
         constructor.visitMaxs(2, 1);
         constructor.visitEnd();
-        MethodVisitor client = writer.visitMethod(Opcodes.ACC_PUBLIC, "unusedClientHook",
-            "(Lnet/minecraft/client/resources/IResourceManager;)V", null, null);
+        MethodVisitor client = writer.visitMethod(
+            Opcodes.ACC_PUBLIC,
+            "unusedClientHook",
+            "(Lnet/minecraft/client/resources/IResourceManager;)V",
+            null,
+            null);
         client.visitCode();
         client.visitInsn(Opcodes.RETURN);
         client.visitMaxs(0, 2);
         client.visitEnd();
         if (override) {
-            writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "unknownCalls", "I", null, null).visitEnd();
-            MethodVisitor getter = writer.visitMethod(Opcodes.ACC_PROTECTED, "getFrameMaterial",
-                "()Lgregtech/api/enums/Materials;", null, null);
+            writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "unknownCalls", "I", null, null)
+                .visitEnd();
+            MethodVisitor getter = writer
+                .visitMethod(Opcodes.ACC_PROTECTED, "getFrameMaterial", "()Lgregtech/api/enums/Materials;", null, null);
             getter.visitCode();
             getter.visitFieldInsn(Opcodes.GETSTATIC, name, "unknownCalls", "I");
             getter.visitInsn(Opcodes.ICONST_1);
@@ -390,8 +419,12 @@ final class HologramColdGregTechDeclarationsRegression {
             getter.visitTypeInsn(Opcodes.NEW, "java/lang/AssertionError");
             getter.visitInsn(Opcodes.DUP);
             getter.visitLdcInsn("unknown metadata override executed");
-            getter.visitMethodInsn(Opcodes.INVOKESPECIAL, "java/lang/AssertionError", "<init>",
-                "(Ljava/lang/Object;)V", false);
+            getter.visitMethodInsn(
+                Opcodes.INVOKESPECIAL,
+                "java/lang/AssertionError",
+                "<init>",
+                "(Ljava/lang/Object;)V",
+                false);
             getter.visitInsn(Opcodes.ATHROW);
             getter.visitMaxs(3, 1);
             getter.visitEnd();
@@ -406,7 +439,8 @@ final class HologramColdGregTechDeclarationsRegression {
 
             @Override
             protected Class<?> loadClass(String type, boolean resolve) throws ClassNotFoundException {
-                if (type.equals("net.minecraft.client.resources.IResourceManager")) throw new ClassNotFoundException(type);
+                if (type.equals("net.minecraft.client.resources.IResourceManager"))
+                    throw new ClassNotFoundException(type);
                 return super.loadClass(type, resolve);
             }
 
@@ -425,10 +459,13 @@ final class HologramColdGregTechDeclarationsRegression {
             type.getDeclaredMethod("getCasing");
             throw new AssertionError("reflective getter search did not resolve the missing client signature");
         } catch (NoClassDefFoundError expected) {
-            SimpleAssert.that(expected.getMessage().contains("IResourceManager"),
+            SimpleAssert.that(
+                expected.getMessage()
+                    .contains("IResourceManager"),
                 "the former reflective path loads an unrelated unavailable client resource signature");
         }
-        return (MTEXLTurbineBase) type.getDeclaredConstructor().newInstance();
+        return (MTEXLTurbineBase) type.getDeclaredConstructor()
+            .newInstance();
     }
 
     private static final AtomicInteger unknownGetterCalls = new AtomicInteger();
