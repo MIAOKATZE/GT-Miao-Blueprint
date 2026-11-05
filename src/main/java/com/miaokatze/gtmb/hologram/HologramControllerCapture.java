@@ -133,7 +133,9 @@ final class HologramControllerCapture {
 
     /** Budget yields are ready work; failed attempts keep their existing delayed retry lane. */
     static boolean canContinue(HologramSession s) {
-        return s.capturePending && !s.cancelled && s.captureError.isEmpty() && normalContinuation(s)
+        return s.capturePending && !s.cancelled
+            && s.captureError.isEmpty()
+            && normalContinuation(s)
             && s.player.worldObj.getTotalWorldTime() >= s.captureRetryDue;
     }
 

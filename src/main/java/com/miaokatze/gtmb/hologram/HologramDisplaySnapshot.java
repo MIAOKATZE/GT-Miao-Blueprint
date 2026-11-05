@@ -45,7 +45,10 @@ final class HologramDisplaySnapshot {
         NBTTagCompound display = new NBTTagCompound();
         if (!(tile instanceof IGregTechTileEntity)) return display;
         IGregTechTileEntity gt = (IGregTechTileEntity) tile;
-        display.setInteger("facing", gt.getFrontFacing().ordinal());
+        display.setInteger(
+            "facing",
+            gt.getFrontFacing()
+                .ordinal());
         display.setInteger("color", gt.getColorization());
         display.setBoolean("active", gt.isActive());
         if (tile instanceof BaseMetaPipeEntity)

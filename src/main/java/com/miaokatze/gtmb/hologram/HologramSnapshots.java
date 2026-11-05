@@ -879,8 +879,13 @@ final class HologramSnapshots {
         if (s.open && !s.cancelled && s.libraryWorld == s.player.worldObj && HologramSessionPolicy.valid(s))
             s.libraryUiActive = true;
         NBTTagCompound state = new NBTTagCompound();
-        state.setBoolean("operationPrepared", s.capture != null && !s.capture.projectionOnly
-            && !s.capture.pending && !s.capture.incomplete && !s.capturePending && s.captureWork == null);
+        state.setBoolean(
+            "operationPrepared",
+            s.capture != null && !s.capture.projectionOnly
+                && !s.capture.pending
+                && !s.capture.incomplete
+                && !s.capturePending
+                && s.captureWork == null);
         writeServerRules(state);
         state.setString("captureIntent", s.captureIntent.name());
         if (s.capture != null) {

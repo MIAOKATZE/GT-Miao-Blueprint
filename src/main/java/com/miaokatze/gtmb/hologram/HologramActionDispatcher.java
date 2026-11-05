@@ -309,8 +309,7 @@ final class HologramActionDispatcher {
         if (s.job != 1 && s.job != 2
             && !"selectStructure".equals(op)
             && !"configure".equals(op)
-            && (HologramBlueprintEditor.isPlanningEdit(op) || construction
-                || "scan".equals(op))) {
+            && (HologramBlueprintEditor.isPlanningEdit(op) || construction || "scan".equals(op))) {
             String active = s.virtual ? s.blueprintActiveStructure : s.areaStructureId;
             if (action.hasKey("structureId", 8) && !active.equals(action.getString("structureId"))) {
                 s.status = "结构选择已变化，请重新选择编辑目标";
@@ -682,16 +681,16 @@ final class HologramActionDispatcher {
             }
         } else if (s.job == 2 && ("scan".equals(op) || "configure".equals(op) || "native".equals(op)))
             s.status = "暂停任务保留进度；请先取消再改变配置或重新扫描";
-        if (!HologramStructureProjection.showing(s) && s.job != 1 && s.job != 2
+        if (!HologramStructureProjection.showing(s) && s.job != 1
+            && s.job != 2
             && ("configure".equals(op) || "customPin".equals(
                 op) || "sourcePin".equals(op) || "pin".equals(op) || "addPosition".equals(op) || "clearPin".equals(op)))
             HologramMaterialAccess.refreshMaterialChoices(s);
         if (beforeEdit != null && !beforeEdit.sameAs(beforeEdit.current(s))) {
             HologramBlueprintEditor.remember(s.undoEdits, beforeEdit);
             s.redoEdits.clear();
-            if (!HologramStructureProjection.showing(s)
-                && (beforeEdit.sparseIndices == null
-                    || !HologramLocalPlanRefresh.editedSource(s, beforeEdit.sparseIndices)))
+            if (!HologramStructureProjection.showing(s) && (beforeEdit.sparseIndices == null
+                || !HologramLocalPlanRefresh.editedSource(s, beforeEdit.sparseIndices)))
                 HologramAuthoringWorkflow.blueprintEdited(s, "geometry");
         }
         HologramDraftPersistence.persist(s);

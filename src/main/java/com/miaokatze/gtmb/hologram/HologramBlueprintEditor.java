@@ -38,8 +38,7 @@ final class HologramBlueprintEditor {
             if (cell.anchor || !HologramCellPolicy.acceptableSample(s, cell, target))
                 throw new java.io.IOException("选中格的结构声明不接受该候选，目标未修改");
         }
-        if (indices.length > 1 && !HologramStructureProjection.showing(s))
-            HologramResourcePlanner.freezeAllocations(s);
+        if (indices.length > 1 && !HologramStructureProjection.showing(s)) HologramResourcePlanner.freezeAllocations(s);
         for (int index : indices) {
             HologramCapture.Cell cell = s.capture.cells.get(index);
             HologramCellPolicy.setBlueprintTarget(s, cell, target);
@@ -114,8 +113,8 @@ final class HologramBlueprintEditor {
             if (previous.sparseIndices == null && HologramSessionPolicy.authoring(s)) HologramGeometryEdits.refresh(s);
             else if (previous.sparseIndices == null) HologramResourcePlanner.refreshPlan(s);
             else refreshEdited(s, previous.sparseIndices);
-            if (!HologramStructureProjection.showing(s)
-                && (previous.sparseIndices == null || !HologramLocalPlanRefresh.editedSource(s, previous.sparseIndices)))
+            if (!HologramStructureProjection.showing(s) && (previous.sparseIndices == null
+                || !HologramLocalPlanRefresh.editedSource(s, previous.sparseIndices)))
                 HologramAuthoringWorkflow.blueprintEdited(s, "geometry");
             s.status = undo ? "已撤销规划编辑；已施工的世界保持现状" : "已重做规划编辑；点击施工才改变世界";
             return;
@@ -187,8 +186,9 @@ final class HologramBlueprintEditor {
             return;
         }
         if ("restoreCell".equals(op)) {
-            if (restoreCell(s, cell, index)) s.status = HologramStructureProjection.showing(s)
-                ? "本格覆盖已清除，恢复结构默认投影；现场方块保持原状" : "本格已设为原结构默认外壳；施工时安全回收旧设备";
+            if (restoreCell(s, cell, index))
+                s.status = HologramStructureProjection.showing(s) ? "本格覆盖已清除，恢复结构默认投影；现场方块保持原状"
+                    : "本格已设为原结构默认外壳；施工时安全回收旧设备";
             return;
         }
         if ("editPaste".equals(op)) {

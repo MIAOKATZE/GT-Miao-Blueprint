@@ -249,7 +249,8 @@ public final class HologramCapture {
     @SuppressWarnings({ "rawtypes", "unchecked" })
     private static HologramCapture collect(MTEEnhancedMultiBlockBase<?> machine, ItemStack trigger,
         ExtendedFacing facing, StructureSources.CaptureIntent intent, HologramCapture resumed, boolean projectionOnly) {
-        HologramCapture capture = resumed == null ? new HologramCapture(machine, trigger, intent, projectionOnly) : resumed;
+        HologramCapture capture = resumed == null ? new HologramCapture(machine, trigger, intent, projectionOnly)
+            : resumed;
         if (capture.projectionOnly != projectionOnly) {
             capture.invalidateSource("SOURCE_CAPTURE_MODE_CHANGED");
             return capture;
@@ -656,10 +657,10 @@ public final class HologramCapture {
                     String position = xx + "," + yy + "," + zz;
                     Cell existing = capture.positions.get(position);
                     if (existing != null) {
-                        if (existing.element == element
-                            && ItemStack.areItemStacksEqual(capture.projectionOnly
-                                ? capture.pieces.get(existing.projectionPiece).trigger : existing.elementTrigger,
-                                piece.trigger)) return true;
+                        if (existing.element == element && ItemStack.areItemStacksEqual(
+                            capture.projectionOnly ? capture.pieces.get(existing.projectionPiece).trigger
+                                : existing.elementTrigger,
+                            piece.trigger)) return true;
                         capture.fail("CONFLICTING_CELL " + position);
                         return false;
                     }
@@ -824,15 +825,22 @@ public final class HologramCapture {
             if (projectionOnly) {
                 ItemStack sample = declaration.primary();
                 current.renderHint = sample == null || sample.getItem() == null ? null
-                    : new HologramStructureHintData.Hint(Block.getBlockFromItem(sample.getItem()), declaration.targetMeta(sample));
+                    : new HologramStructureHintData.Hint(
+                        Block.getBlockFromItem(sample.getItem()),
+                        declaration.targetMeta(sample));
             } else describePure(current, declaration);
             return true;
         }
         IStructureElement backing = projectionOnly ? HologramDeclarationWrappers.nativeBacking(element)
             : HologramDeclarationWrappers.backing(element);
-        if (backing != null)
-            return spawnHint(backing, world, x, y, z,
-                projectionOnly ? signal : HologramDeclarationWrappers.trigger(element, signal), depth + 1);
+        if (backing != null) return spawnHint(
+            backing,
+            world,
+            x,
+            y,
+            z,
+            projectionOnly ? signal : HologramDeclarationWrappers.trigger(element, signal),
+            depth + 1);
         if (!projectionOnly && HologramDeclarationWrappers.requiresAdapter(element)) return false;
         if (element instanceof com.gtnewhorizon.structurelib.structure.IStructureElementChain) {
             java.lang.reflect.Method factory = HologramDeclarationWrappers.factory(element.getClass());
@@ -943,7 +951,11 @@ public final class HologramCapture {
         anchor.block = world.getBlock(x, y, z);
         anchor.meta = world.getBlockMetadata(x, y, z);
         anchor.actualStack = projectionOnly
-            ? new ItemStack(gregtech.api.GregTechAPI.sBlockMachines, 1, machine.getBaseMetaTileEntity().getMetaTileID())
+            ? new ItemStack(
+                gregtech.api.GregTechAPI.sBlockMachines,
+                1,
+                machine.getBaseMetaTileEntity()
+                    .getMetaTileID())
             : machine.getStackForm(1);
         anchor.actualDisplay = projectionOnly
             ? HologramDisplaySnapshot.projection((TileEntity) machine.getBaseMetaTileEntity())

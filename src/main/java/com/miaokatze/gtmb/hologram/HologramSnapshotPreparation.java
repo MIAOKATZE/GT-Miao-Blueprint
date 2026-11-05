@@ -47,7 +47,8 @@ final class HologramSnapshotPreparation {
         HologramStructureProjection.SavePreparation save = session == null ? null : session.structureSavePreparation;
         if (save != null && save.request.getLong("clientTaskToken") > 0
             && save.request.getLong("clientTaskToken") == request.getLong("clientTaskToken")
-            && save.session.equals(request.getString("session")) && request.hasKey("uiSequence", 4)
+            && save.session.equals(request.getString("session"))
+            && request.hasKey("uiSequence", 4)
             && save.ui == request.getLong("uiSequence")) {
             HologramSession.cancelCaptureRetry(session);
             NBTTagCompound reply = HologramLibraryProtocol.reply("sourceCancelled");

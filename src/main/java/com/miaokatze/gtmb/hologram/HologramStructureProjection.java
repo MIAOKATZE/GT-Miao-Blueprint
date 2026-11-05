@@ -34,7 +34,8 @@ final class HologramStructureProjection {
     /** Full operation preparation uses the native source/owner-checked continuation, never a preview plan. */
     static boolean prepareOperation(HologramSession s) {
         if (!showing(s)) return !s.capturePending;
-        if (s.capturePending || s.capture.incomplete || !HologramSessionPolicy.valid(s)
+        if (s.capturePending || s.capture.incomplete
+            || !HologramSessionPolicy.valid(s)
             || HologramWorkspace.find(s.player.getUniqueID()) != s
             || !s.capture.sourceCurrent(HologramSessionPolicy.trigger(s))) {
             s.projectionHatchConfiguration = null;
@@ -58,8 +59,7 @@ final class HologramStructureProjection {
         s.projectionHatchConfiguration = null;
         HologramControllerCapture.collect(s);
         if (s.capture == null || s.capture.incomplete) return false;
-        s.status = s.capturePending ? "正在准备完整操作数据；施工需重新确认当前计划"
-            : "完整操作数据已准备；请核对当前计划";
+        s.status = s.capturePending ? "正在准备完整操作数据；施工需重新确认当前计划" : "完整操作数据已准备；请核对当前计划";
         if (hatchConfiguration != null && s.capture != null && !s.capture.projectionOnly && !s.capture.incomplete) {
             s.projectionHatchConfiguration = hatchConfiguration;
             s.projectionHatchCapture = s.capture;
@@ -75,10 +75,16 @@ final class HologramStructureProjection {
         HologramCapture capture = s.projectionHatchCapture;
         s.projectionHatchConfiguration = null;
         s.projectionHatchCapture = null;
-        if (request != null && capture == s.capture && capture != null && !capture.incomplete && !capture.pending
-            && !s.capturePending && s.projectionHatchUi == s.uiSequence
-            && s.projectionHatchEpoch == s.editorWorkspaceEpoch && !s.cancelled
-            && HologramWorkspace.find(s.player.getUniqueID()) == s && HologramSessionPolicy.valid(s)
+        if (request != null && capture == s.capture
+            && capture != null
+            && !capture.incomplete
+            && !capture.pending
+            && !s.capturePending
+            && s.projectionHatchUi == s.uiSequence
+            && s.projectionHatchEpoch == s.editorWorkspaceEpoch
+            && !s.cancelled
+            && HologramWorkspace.find(s.player.getUniqueID()) == s
+            && HologramSessionPolicy.valid(s)
             && capture.sourceCurrent(HologramSessionPolicy.trigger(s))) HologramActionDispatcher.configure(s, request);
     }
 
@@ -107,7 +113,8 @@ final class HologramStructureProjection {
         request.setLong("uiSequence", s.uiSequence);
         try {
             if ("savePreset".equals(save.operation)) HologramPresetWorkflow.savePreset(s, request.getString("name"));
-            else if ("exportDraft".equals(save.operation)) HologramLibraryWorkflow.libraryExportDraft(s.player, request);
+            else if ("exportDraft".equals(save.operation))
+                HologramLibraryWorkflow.libraryExportDraft(s.player, request);
             else HologramAuthoringWorkflow.blueprintAction(s, request, save.operation);
         } catch (java.io.IOException failure) {
             s.status = "保存准备失败：" + failure.getMessage();
@@ -115,6 +122,7 @@ final class HologramStructureProjection {
     }
 
     static final class SavePreparation {
+
         final NBTTagCompound request;
         final String operation, session;
         final Object target, machine;
@@ -141,18 +149,30 @@ final class HologramStructureProjection {
         }
 
         boolean current(HologramSession s) {
-            return !s.cancelled && session.equals(s.id) && target == s.target && machine == s.machine
-                && world == s.player.worldObj && epoch == s.editorWorkspaceEpoch && ui == s.uiSequence
-                && main == s.main && facing == s.facing && noHatches == s.noHatches && channels.equals(s.channels)
-                && HologramWorkspace.find(s.player.getUniqueID()) == s && HologramSessionPolicy.valid(s)
-                && !s.capturePending && s.capture == capture && !capture.incomplete && !capture.projectionOnly
+            return !s.cancelled && session.equals(s.id)
+                && target == s.target
+                && machine == s.machine
+                && world == s.player.worldObj
+                && epoch == s.editorWorkspaceEpoch
+                && ui == s.uiSequence
+                && main == s.main
+                && facing == s.facing
+                && noHatches == s.noHatches
+                && channels.equals(s.channels)
+                && HologramWorkspace.find(s.player.getUniqueID()) == s
+                && HologramSessionPolicy.valid(s)
+                && !s.capturePending
+                && s.capture == capture
+                && !capture.incomplete
+                && !capture.projectionOnly
                 && s.capture.sourceCurrent(HologramSessionPolicy.trigger(s));
         }
     }
 
     static void collect(HologramSession s, boolean reset) {
         HologramCapture resumed = !reset && s.capture != null && s.capture.projectionOnly && s.capture.pending
-            ? s.capture : null;
+            ? s.capture
+            : null;
         if (resumed == null) {
             s.structureSavePreparation = null;
             s.projectionHatchConfiguration = null;
@@ -160,8 +180,10 @@ final class HologramStructureProjection {
             HologramSnapshotPreparation.cancel(s);
             if (s.capture != null) {
                 for (java.util.Map.Entry<Integer, ItemStack> pin : s.pins.entrySet()) {
-                    if (pin.getKey() >= 0 && pin.getKey() < s.capture.cells.size())
-                        s.coordinatePins.put(HologramValues.position(s.capture.cells.get(pin.getKey())), pin.getValue().copy());
+                    if (pin.getKey() >= 0 && pin.getKey() < s.capture.cells.size()) s.coordinatePins.put(
+                        HologramValues.position(s.capture.cells.get(pin.getKey())),
+                        pin.getValue()
+                            .copy());
                 }
                 if (reset && s.selected >= 0 && s.selected < s.capture.cells.size())
                     s.scanSelectedPosition = HologramValues.position(s.capture.cells.get(s.selected));
@@ -189,12 +211,13 @@ final class HologramStructureProjection {
             s.indexedCapture = null;
             s.selected = -1;
             s.selectedIndices.clear();
-            s.facing = s.machine.getExtendedFacing().ordinal();
+            s.facing = s.machine.getExtendedFacing()
+                .ordinal();
         }
         ItemStack trigger = HologramSessionPolicy.trigger(s);
         s.capturePending = false;
-        s.capture = HologramCapture.collectProjection(s.machine, trigger, s.machine.getExtendedFacing(),
-            s.captureIntent, resumed);
+        s.capture = HologramCapture
+            .collectProjection(s.machine, trigger, s.machine.getExtendedFacing(), s.captureIntent, resumed);
         if (resumed == null) s.captureAttempts++;
         if (s.capture.pending) {
             HologramControllerCapture.scheduleCaptureRetry(s);
@@ -369,8 +392,9 @@ final class HologramStructureProjection {
             row.setTag("actualStack", identity.writeToNBT(new NBTTagCompound()));
             row.setTag("targetStack", identity.writeToNBT(new NBTTagCompound()));
         }
-        if (!cell.anchor && pin != null)
-            row.setTag("targetStack", new ItemStack(pin.getItem(), 1, pin.getItemDamage()).writeToNBT(new NBTTagCompound()));
+        if (!cell.anchor && pin != null) row.setTag(
+            "targetStack",
+            new ItemStack(pin.getItem(), 1, pin.getItemDamage()).writeToNBT(new NBTTagCompound()));
         return row;
     }
 
@@ -398,20 +422,32 @@ final class HologramStructureProjection {
             ui = s.uiSequence;
             epoch = s.editorWorkspaceEpoch;
             state = header(s);
-            manual = s.manualPositions.values().iterator();
+            manual = s.manualPositions.values()
+                .iterator();
             ItemStack held = HologramSessionPolicy.currentTool(s);
             annotations = (NBTTagList) (s.blueprintDraftAnnotations.tagCount() > 0 ? s.blueprintDraftAnnotations
                 : held == null ? new NBTTagList()
-                    : HologramDraftPersistence.storedDraft(s, held).getTagList("blueprintAnnotations", 10)).copy();
-            HologramRuntimeMetrics.loadStage(HologramRuntimeMetrics.LoadStage.SERVER_ROWS_BEGIN,
-                s, ticket.sequence(), capture.cells.size());
+                    : HologramDraftPersistence.storedDraft(s, held)
+                        .getTagList("blueprintAnnotations", 10)).copy();
+            HologramRuntimeMetrics.loadStage(
+                HologramRuntimeMetrics.LoadStage.SERVER_ROWS_BEGIN,
+                s,
+                ticket.sequence(),
+                capture.cells.size());
         }
 
         boolean valid() {
             if (!(ticket.current() && HologramWorkspace.find(s.player.getUniqueID()) == s
-                && s.player.worldObj == world && s.libraryWorld == world && !s.cancelled
-                && s.capture == capture && showing(s) && !s.capturePending && !capture.incomplete
-                && revision == s.planRevision && ui == s.uiSequence && epoch == s.editorWorkspaceEpoch)) return false;
+                && s.player.worldObj == world
+                && s.libraryWorld == world
+                && !s.cancelled
+                && s.capture == capture
+                && showing(s)
+                && !s.capturePending
+                && !capture.incomplete
+                && revision == s.planRevision
+                && ui == s.uiSequence
+                && epoch == s.editorWorkspaceEpoch)) return false;
             return capture.sourceCurrent(HologramSessionPolicy.trigger(s)) && HologramSessionPolicy.tickValid(s);
         }
 
@@ -437,8 +473,8 @@ final class HologramStructureProjection {
                 int[] position = saved.getIntArray("position");
                 if (position.length != 3
                     || !HologramSessionPolicy.validRelativePosition(s, position[0], position[1], position[2])) continue;
-                HologramCapture.Cell cell = capture.positions.get((s.x + position[0]) + "," + (s.y + position[1])
-                    + "," + (s.z + position[2]));
+                HologramCapture.Cell cell = capture.positions
+                    .get((s.x + position[0]) + "," + (s.y + position[1]) + "," + (s.z + position[2]));
                 if (cell != null) {
                     cell.prompt = HologramSessionPolicy.boundedPrompt(saved.getString("prompt"));
                     cell.excluded = saved.getBoolean("excluded");
@@ -452,7 +488,8 @@ final class HologramStructureProjection {
                     cell.prompt = edited.prompt;
                     cell.excluded = edited.excluded;
                 }
-                if (!s.coordinatePins.isEmpty() || s.scanSelectedPosition != null || !s.scanSelectedPositions.isEmpty()) {
+                if (!s.coordinatePins.isEmpty() || s.scanSelectedPosition != null
+                    || !s.scanSelectedPositions.isEmpty()) {
                     String key = HologramValues.position(cell);
                     ItemStack pin = s.coordinatePins.get(key);
                     if (pin != null && !cell.anchor) s.pins.put(cursor - 1, pin.copy());
@@ -468,8 +505,8 @@ final class HologramStructureProjection {
             state.setInteger("selected", s.selected);
             state.setTag("cells", rows);
             encoding = true;
-            HologramRuntimeMetrics.loadStage(HologramRuntimeMetrics.LoadStage.SERVER_ROWS_END,
-                s, ticket.sequence(), rows.tagCount());
+            HologramRuntimeMetrics
+                .loadStage(HologramRuntimeMetrics.LoadStage.SERVER_ROWS_END, s, ticket.sequence(), rows.tagCount());
             HologramNetwork.completeOwnedState(ticket, state, this::valid, () -> {
                 if (s.structureProjectionFrame != this) return;
                 s.structureProjectionFrame = null;

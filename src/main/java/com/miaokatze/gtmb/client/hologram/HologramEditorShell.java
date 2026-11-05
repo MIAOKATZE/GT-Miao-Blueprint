@@ -394,8 +394,7 @@ final class HologramEditorShell {
 
     private boolean launcherAvailable(int page) {
         return switch (page) {
-            case 1, 4, 5, 6 -> ui.workspaces.blueprint()
-                && !ui.session.state().data.getBoolean("structureProjection");
+            case 1, 4, 5, 6 -> ui.workspaces.blueprint() && !ui.session.state().data.getBoolean("structureProjection");
             case 8 -> ui.workspaces.projection() || ui.session.state().data.getBoolean("virtualPlacement");
             default -> true;
         };
@@ -507,11 +506,19 @@ final class HologramEditorShell {
             .sizeRel(1f)
             .childPadding(7)
             .child(
-                nativeAction(196, () -> "已有量子类群绑定", () -> launcherAvailable(5) && ui.session.editable(), () -> "当前蓝图登记的真实量子类群与网络").widthRel(1f)
-                    .height(18))
+                nativeAction(
+                    196,
+                    () -> "已有量子类群绑定",
+                    () -> launcherAvailable(5) && ui.session.editable(),
+                    () -> "当前蓝图登记的真实量子类群与网络").widthRel(1f)
+                        .height(18))
             .child(
-                nativeAction(179, () -> "AE 容器与资源标记", () -> launcherAvailable(5) && ui.session.editable(), () -> "原容器标记与资源审查").widthRel(1f)
-                    .height(18));
+                nativeAction(
+                    179,
+                    () -> "AE 容器与资源标记",
+                    () -> launcherAvailable(5) && ui.session.editable(),
+                    () -> "原容器标记与资源审查").widthRel(1f)
+                        .height(18));
     }
 
     private IWidget buildAnnotationPane() {
@@ -526,12 +533,16 @@ final class HologramEditorShell {
                     () -> "编辑当前格的施工提示").widthRel(1f)
                         .height(18))
             .child(
-                nativeAction(227, () -> "全局提示词", () -> launcherAvailable(6) && ui.session.editable(), () -> "整份蓝图的说明").widthRel(1f)
+                nativeAction(227, () -> "全局提示词", () -> launcherAvailable(6) && ui.session.editable(), () -> "整份蓝图的说明")
+                    .widthRel(1f)
                     .height(18))
             .child(
-                nativeAction(166, () -> "所选格 NBT", () -> launcherAvailable(6) && ui.processing.canEditBlueprintNbt(), () -> "审阅当前格的真实NBT")
-                    .widthRel(1f)
-                    .height(18));
+                nativeAction(
+                    166,
+                    () -> "所选格 NBT",
+                    () -> launcherAvailable(6) && ui.processing.canEditBlueprintNbt(),
+                    () -> "审阅当前格的真实NBT").widthRel(1f)
+                        .height(18));
     }
 
     private IWidget buildLibraryDrawer() {

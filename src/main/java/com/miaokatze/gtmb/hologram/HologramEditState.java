@@ -131,8 +131,8 @@ final class HologramEditState {
     }
 
     boolean sameAs(HologramEditState other) {
-        if (!projectionPrompts.equals(other.projectionPrompts)
-            || !projectionExcluded.equals(other.projectionExcluded)) return false;
+        if (!projectionPrompts.equals(other.projectionPrompts) || !projectionExcluded.equals(other.projectionExcluded))
+            return false;
         if (geometry.size() != other.geometry.size()) return false;
         for (int i = 0; i < geometry.size(); i++) {
             HologramCapture.Cell a = geometry.get(i), b = other.geometry.get(i);
@@ -174,14 +174,15 @@ final class HologramEditState {
     }
 
     void apply(HologramSession s) {
-        if (HologramStructureProjection.showing(s)) for (Map.Entry<String, String> entry : projectionPrompts.entrySet()) {
-            HologramCapture.Cell cell = s.capture.positions.get(entry.getKey());
-            if (cell != null) {
-                cell.prompt = entry.getValue();
-                cell.excluded = projectionExcluded.contains(entry.getKey());
-                s.projectionEdits.put(entry.getKey(), cell);
+        if (HologramStructureProjection.showing(s))
+            for (Map.Entry<String, String> entry : projectionPrompts.entrySet()) {
+                HologramCapture.Cell cell = s.capture.positions.get(entry.getKey());
+                if (cell != null) {
+                    cell.prompt = entry.getValue();
+                    cell.excluded = projectionExcluded.contains(entry.getKey());
+                    s.projectionEdits.put(entry.getKey(), cell);
+                }
             }
-        }
         // The disk baseline does not travel through undo. Only this draft's orientation does.
         if (rotationProofEpoch == s.rotationProofEpoch) s.rotationTurns = rotationTurns;
         if (presetPose != null) {

@@ -576,8 +576,7 @@ final class HologramAuthoringWorkflow {
                             if ("editCellFlags".equals(op) && action.hasKey("prompt")) cell.prompt = prompt;
                             if ("editCellFlags".equals(op) || action.hasKey("excluded")) dirty.add(index);
                         }
-                        if (HologramStructureProjection.showing(s))
-                            HologramStructureProjection.rememberEdits(s, dirty);
+                        if (HologramStructureProjection.showing(s)) HologramStructureProjection.rememberEdits(s, dirty);
                         indexedAnnotations = !HologramStructureProjection.showing(s)
                             && HologramLocalPlanRefresh.annotations(s, dirty);
                         if (!indexedAnnotations && !dirty.isEmpty() && s.virtualPreset != null) {

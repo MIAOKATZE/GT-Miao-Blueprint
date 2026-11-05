@@ -386,8 +386,10 @@ final class HologramCellPolicy {
     static ItemStack elementTrigger(HologramSession s, HologramCapture.Cell c) {
         ItemStack result = HologramSessionPolicy.trigger(s);
         ItemStack pieceTrigger = c.elementTrigger;
-        if (pieceTrigger == null && s.capture != null && s.capture.projectionOnly
-            && c.projectionPiece >= 0 && c.projectionPiece < s.capture.pieces.size())
+        if (pieceTrigger == null && s.capture != null
+            && s.capture.projectionOnly
+            && c.projectionPiece >= 0
+            && c.projectionPiece < s.capture.pieces.size())
             pieceTrigger = s.capture.pieces.get(c.projectionPiece).trigger;
         if (pieceTrigger != null) {
             // Preserve the current inventory tool's identity/unrelated NBT while retaining the real piece signal.
@@ -398,9 +400,8 @@ final class HologramCellPolicy {
                     .forEach(entry -> existing.add(entry.getKey()));
                 for (String name : existing) ChannelDataAccessor.unsetChannelData(result, name);
             }
-            if (ChannelDataAccessor.hasSubChannel(pieceTrigger))
-                ChannelDataAccessor.iterateChannelData(pieceTrigger)
-                    .forEach(entry -> ChannelDataAccessor.setChannelData(result, entry.getKey(), entry.getValue()));
+            if (ChannelDataAccessor.hasSubChannel(pieceTrigger)) ChannelDataAccessor.iterateChannelData(pieceTrigger)
+                .forEach(entry -> ChannelDataAccessor.setChannelData(result, entry.getKey(), entry.getValue()));
         }
         // A concrete new hatch pin authorizes that item even when the automatic hatch toggle is off.
         if (!s.noHatches && "hatch".equals(c.role)) {

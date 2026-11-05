@@ -58,7 +58,8 @@ final class HologramStructureHintData {
 
         @Override
         protected Reader computeValue(Class<?> type) {
-            String owner = type.getName().replace('.', '/');
+            String owner = type.getName()
+                .replace('.', '/');
             try (InputStream stream = type.getResourceAsStream("/" + owner + ".class")) {
                 if (stream == null) return NONE;
                 Reader[] result = { NONE };
@@ -81,10 +82,14 @@ final class HologramStructureHintData {
                             boolean invalid;
 
                             @Override
-                            public void visitVarInsn(int opcode, int var) { code.add("v" + opcode + ":" + var); }
+                            public void visitVarInsn(int opcode, int var) {
+                                code.add("v" + opcode + ":" + var);
+                            }
 
                             @Override
-                            public void visitInsn(int opcode) { if (opcode != Opcodes.NOP) code.add("i" + opcode); }
+                            public void visitInsn(int opcode) {
+                                if (opcode != Opcodes.NOP) code.add("i" + opcode);
+                            }
 
                             @Override
                             public void visitIntInsn(int opcode, int operand) {
@@ -111,19 +116,26 @@ final class HologramStructureHintData {
                                 if (opcode != Opcodes.INVOKESTATIC
                                     || !"com/gtnewhorizon/structurelib/StructureLibAPI".equals(methodOwner)
                                     || !"hintParticle".equals(name)
-                                    || !"(Lnet/minecraft/world/World;IIILnet/minecraft/block/Block;I)V".equals(descriptor))
+                                    || !"(Lnet/minecraft/world/World;IIILnet/minecraft/block/Block;I)V"
+                                        .equals(descriptor))
                                     invalid = true;
                                 code.add("hint");
                             }
 
                             @Override
-                            public void visitJumpInsn(int opcode, Label label) { invalid = true; }
+                            public void visitJumpInsn(int opcode, Label label) {
+                                invalid = true;
+                            }
 
                             @Override
-                            public void visitTypeInsn(int opcode, String type) { invalid = true; }
+                            public void visitTypeInsn(int opcode, String type) {
+                                invalid = true;
+                            }
 
                             @Override
-                            public void visitIincInsn(int var, int increment) { invalid = true; }
+                            public void visitIincInsn(int var, int increment) {
+                                invalid = true;
+                            }
 
                             @Override
                             public void visitTryCatchBlock(Label start, Label end, Label handler, String type) {
@@ -132,7 +144,9 @@ final class HologramStructureHintData {
 
                             @Override
                             public void visitInvokeDynamicInsn(String name, String descriptor, Handle bootstrap,
-                                Object... arguments) { invalid = true; }
+                                Object... arguments) {
+                                invalid = true;
+                            }
 
                             @Override
                             public void visitTableSwitchInsn(int min, int max, Label dflt, Label... labels) {
@@ -140,16 +154,28 @@ final class HologramStructureHintData {
                             }
 
                             @Override
-                            public void visitLookupSwitchInsn(Label dflt, int[] keys, Label[] labels) { invalid = true; }
+                            public void visitLookupSwitchInsn(Label dflt, int[] keys, Label[] labels) {
+                                invalid = true;
+                            }
 
                             @Override
-                            public void visitMultiANewArrayInsn(String descriptor, int dimensions) { invalid = true; }
+                            public void visitMultiANewArrayInsn(String descriptor, int dimensions) {
+                                invalid = true;
+                            }
 
                             @Override
                             public void visitEnd() {
                                 if (invalid || code.size() < 10 || code.size() > 11) return;
-                                if (!code.subList(0, 6).equals(java.util.Arrays.asList("v25:2", "v21:3", "v21:4",
-                                    "v21:5", "v25:0", "fLnet/minecraft/block/Block;:0"))) return;
+                                if (!code.subList(0, 6)
+                                    .equals(
+                                        java.util.Arrays.asList(
+                                            "v25:2",
+                                            "v21:3",
+                                            "v21:4",
+                                            "v21:5",
+                                            "v25:0",
+                                            "fLnet/minecraft/block/Block;:0")))
+                                    return;
                                 int call = code.size() - 3;
                                 if (!"hint".equals(code.get(call)) || !"i4".equals(code.get(call + 1))
                                     || !"i172".equals(code.get(call + 2))) return;
@@ -197,6 +223,7 @@ final class HologramStructureHintData {
         Reader reader = READERS.get(element.getClass());
         if (reader == NONE) return null;
         Block block = (Block) reader.block.get(element);
-        return block == null ? null : new Hint(block, reader.meta == null ? reader.fixedMeta : reader.meta.getInt(element));
+        return block == null ? null
+            : new Hint(block, reader.meta == null ? reader.fixedMeta : reader.meta.getInt(element));
     }
 }
