@@ -213,7 +213,8 @@ final class HologramActionDispatcher {
             return;
         }
         // Geometry can compact indices. Never interpret an old client selection in the new index domain.
-        boolean scanScope = "scan".equals(op) && s.job != 1 && s.job != 2
+        boolean scanScope = "scan".equals(op) && s.job != 1
+            && s.job != 2
             && (action.hasKey("scope") || action.hasKey("layer"));
         if (("editMove".equals(op) || HologramBlueprintEditor.isPlanningEdit(op) || scanScope)
             && (!action.hasKey("planRevision", 4) || action.getLong("planRevision") != s.planRevision)) {
@@ -221,10 +222,10 @@ final class HologramActionDispatcher {
             HologramSnapshots.send(s);
             return;
         }
-        if (scanScope && (action.hasKey("scope") && (!action.hasKey("scope", 3)
-            || action.getInteger("scope") < 0 || action.getInteger("scope") > 3)
-            || action.hasKey("layer") && (!action.hasKey("layer", 3)
-                || action.getInteger("layer") < -128 || action.getInteger("layer") > 128))) {
+        if (scanScope && (action.hasKey("scope")
+            && (!action.hasKey("scope", 3) || action.getInteger("scope") < 0 || action.getInteger("scope") > 3)
+            || action.hasKey("layer") && (!action.hasKey("layer", 3) || action.getInteger("layer") < -128
+                || action.getInteger("layer") > 128))) {
             s.status = "扫描范围参数无效，当前范围未修改";
             HologramSnapshots.send(s);
             return;

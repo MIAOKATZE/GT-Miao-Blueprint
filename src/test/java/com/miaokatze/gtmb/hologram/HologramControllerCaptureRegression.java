@@ -790,7 +790,8 @@ public final class HologramControllerCaptureRegression {
         action.setInteger("selected", 0);
         action.setIntArray("selectedIndices", new int[] { 0 });
         dispatchPresetAction(s, action);
-        SimpleAssert.that(s.scope == 2 && s.selected == 0 && s.selectedIndices.contains(0),
+        SimpleAssert.that(
+            s.scope == 2 && s.selected == 0 && s.selectedIndices.contains(0),
             "a scoped native scan adopts its explicit current selection");
         NBTTagCompound selected = nativeDemand(s);
         SimpleAssert.eq(1L, quotedDemand(selected, muffler), "selected scan quotes the one selected native hatch");
@@ -805,8 +806,11 @@ public final class HologramControllerCaptureRegression {
             if (invalid == 2) action.removeTag("planRevision");
             if (invalid == 3) action.setLong("planRevision", revision - 1);
             dispatchPresetAction(s, action);
-            SimpleAssert.that(s.planRevision == revision && s.scope == 2 && s.layer == 0
-                && s.selected == 0 && s.selectedIndices.contains(0),
+            SimpleAssert.that(
+                s.planRevision == revision && s.scope == 2
+                    && s.layer == 0
+                    && s.selected == 0
+                    && s.selectedIndices.contains(0),
                 "invalid scope, layer or planning revision cannot clear selection before scan validation " + invalid);
         }
         int mode = s.mode, main = s.main;
@@ -822,9 +826,11 @@ public final class HologramControllerCaptureRegression {
         requestChannels.setInteger("unapplied_scan_channel", 2);
         action.setTag("channels", requestChannels);
         dispatchPresetAction(s, action);
-        SimpleAssert.that(s.scope == 0 && s.layer == 2 && s.selected == -1 && s.selectedIndices.isEmpty(),
+        SimpleAssert.that(
+            s.scope == 0 && s.layer == 2 && s.selected == -1 && s.selectedIndices.isEmpty(),
             "cleared UI selection plus explicit all-scope scan changes the authoritative material scope");
-        SimpleAssert.that(s.mode == mode && s.main == main && s.channels.equals(channels),
+        SimpleAssert.that(
+            s.mode == mode && s.main == main && s.channels.equals(channels),
             "scan scope does not apply mode, main signal or channel configuration");
         NBTTagCompound all = nativeDemand(s);
         SimpleAssert.eq(2L, quotedDemand(all, energy), "all-scope native scan quotes both required energy hatches");
@@ -832,13 +838,15 @@ public final class HologramControllerCaptureRegression {
         action = presetAction(s, "scan");
         action.removeTag("planRevision");
         dispatchPresetAction(s, action);
-        SimpleAssert.that(s.scope == 0 && s.layer == 2,
+        SimpleAssert.that(
+            s.scope == 0 && s.layer == 2,
             "a legacy plain scan without scope or layer preserves the current scope and layer");
         revision = s.planRevision;
         action = presetAction(s, "scan");
         action.setString("scope", "0");
         dispatchPresetAction(s, action);
-        SimpleAssert.that(s.planRevision == revision && s.scope == 0 && s.layer == 2,
+        SimpleAssert.that(
+            s.planRevision == revision && s.scope == 0 && s.layer == 2,
             "a malformed typed scope cannot be interpreted as an accepted all-scope request");
     }
 
@@ -860,7 +868,8 @@ public final class HologramControllerCaptureRegression {
         net.minecraft.nbt.NBTTagList materials = new net.minecraft.nbt.NBTTagList();
         for (NBTTagCompound row : rows.values()) materials.appendTag(row);
         NBTTagCompound quote = HologramMaterialQuote.snapshot(s, materials, new net.minecraft.nbt.NBTTagList());
-        SimpleAssert.that(quote.getBoolean("complete") && quote.getLong("planRevision") == s.planRevision,
+        SimpleAssert.that(
+            quote.getBoolean("complete") && quote.getLong("planRevision") == s.planRevision,
             "native scan material demand is published for the actual current plan");
         return quote;
     }
