@@ -678,12 +678,12 @@ public final class HologramCapture {
                     try {
                         Map<Pair<Integer, ExactKey>, Cell> targets = null;
                         if (capture.projectionOnly) {
-                            if (!capture.projectionTargets.containsKey(element)) capture.projectionTargets.put(
-                                element,
-                                HologramDeclarationPurity.contextFree(element) ? new HashMap<>() : null);
+                            if (!capture.projectionTargets.containsKey(element)) capture.projectionTargets
+                                .put(element, HologramDeclarationPurity.contextFree(element) ? new HashMap<>() : null);
                             targets = capture.projectionTargets.get(element);
                         }
-                        Pair<Integer, ExactKey> signal = Pair.of(piece.trigger.stackSize, HologramValues.lookupKey(piece.trigger));
+                        Pair<Integer, ExactKey> signal = Pair
+                            .of(piece.trigger.stackSize, HologramValues.lookupKey(piece.trigger));
                         Cell cached = targets == null ? null : targets.get(signal);
                         if (cached != null) {
                             copyTarget(cached, cell);
@@ -733,8 +733,8 @@ public final class HologramCapture {
                             if (cell.iconOnly) cell.role = "interface";
                         }
                         if (cell.unknown && "block".equals(cell.role)) cell.role = "interface";
-                        if (targets != null) targets.put(
-                            Pair.of(piece.trigger.stackSize, HologramValues.stackKey(piece.trigger)), cell);
+                        if (targets != null)
+                            targets.put(Pair.of(piece.trigger.stackSize, HologramValues.stackKey(piece.trigger)), cell);
                     } catch (ReflectiveOperationException | RuntimeException | LinkageError e) {
                         capture.noteFailure(e);
                         cell.unknown = true;
@@ -851,8 +851,8 @@ public final class HologramCapture {
             return true;
         }
         IStructureElement backing = HologramDeclarationWrappers.backing(element);
-        if (backing != null) return spawnHint(
-            backing, world, x, y, z, HologramDeclarationWrappers.trigger(element, signal), depth + 1);
+        if (backing != null)
+            return spawnHint(backing, world, x, y, z, HologramDeclarationWrappers.trigger(element, signal), depth + 1);
         if (HologramDeclarationWrappers.requiresAdapter(element)) return false;
         if (element instanceof IStructureElementChain) {
             IStructureElementChain chain = (IStructureElementChain) element;
@@ -1084,7 +1084,8 @@ public final class HologramCapture {
             this.y = y;
             this.z = z;
             // Piece triggers are capture-owned immutable signals; projection cells share them.
-            this.elementTrigger = elementTrigger == null ? null : projectionOnly ? elementTrigger : elementTrigger.copy();
+            this.elementTrigger = elementTrigger == null ? null
+                : projectionOnly ? elementTrigger : elementTrigger.copy();
             actualDisplay = projectionOnly ? null : new net.minecraft.nbt.NBTTagCompound();
             targetDisplay = projectionOnly ? null : new net.minecraft.nbt.NBTTagCompound();
         }

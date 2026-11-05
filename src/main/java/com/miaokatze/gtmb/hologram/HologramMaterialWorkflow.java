@@ -151,23 +151,27 @@ final class HologramMaterialWorkflow {
 
     /** Inventory-only refresh of an already published native plan; no order, voucher or placement permission. */
     static void requireProjectionRefresh(HologramSession s, NBTTagCompound action) throws IOException {
-        if (!HologramStructureProjection.showing(s) || s.capture.pending || s.capture.incomplete
-            || s.capturePending || s.captureWork != null || s.job == 1 || s.job == 2
-            || HologramWorkspace.find(s.player.getUniqueID()) != s || !HologramSessionPolicy.valid(s)
-            || !s.id.equals(action.getString("session")))
-            throw new IOException("请等待完整结构材料清单后重新核验库存");
+        if (!HologramStructureProjection.showing(s) || s.capture.pending
+            || s.capture.incomplete
+            || s.capturePending
+            || s.captureWork != null
+            || s.job == 1
+            || s.job == 2
+            || HologramWorkspace.find(s.player.getUniqueID()) != s
+            || !HologramSessionPolicy.valid(s)
+            || !s.id.equals(action.getString("session"))) throw new IOException("请等待完整结构材料清单后重新核验库存");
         if (!action.hasKey("planRevision", 4) || action.getLong("planRevision") != s.planRevision
             || !action.hasKey("placementReviewNonce", 4)
             || action.getLong("placementReviewNonce") != s.placementReviewNonce)
             throw new IOException("结构材料清单已更新，请重新打开材料核验");
         if (!s.capture.sourceCurrent(HologramSessionPolicy.trigger(s)) || !HologramMaterialQuote.cached(s)
-            || s.materialQuote == null || !s.materialQuote.getBoolean("complete")
+            || s.materialQuote == null
+            || !s.materialQuote.getBoolean("complete")
             || !s.materialQuote.hasKey("rows", 9)
             || !s.id.equals(s.materialQuote.getString("session"))
             || s.materialQuote.getLong("planRevision") != s.planRevision
             || s.materialQuote.getLong("placementReviewNonce") != s.placementReviewNonce
-            || !HologramMaterialQuote.rulesCurrent(s.materialQuote))
-            throw new IOException("结构来源或材料需求已变化，请重新读取并核对当前结构");
+            || !HologramMaterialQuote.rulesCurrent(s.materialQuote)) throw new IOException("结构来源或材料需求已变化，请重新读取并核对当前结构");
     }
 
     private static void requireReview(HologramSession s, NBTTagCompound action) throws IOException {

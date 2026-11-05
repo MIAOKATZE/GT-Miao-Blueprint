@@ -181,8 +181,10 @@ final class HologramHatchHintCaptureRegression {
         World world) throws ReflectiveOperationException {
         HologramCapture.Cell full = marker(active, element, world, false);
         HologramCapture.Cell projection = marker(active, element, world, true);
-        SimpleAssert.that(full.block == projection.block && full.meta == projection.meta
-            && full.unknown == projection.unknown && full.role.equals(projection.role),
+        SimpleAssert.that(
+            full.block == projection.block && full.meta == projection.meta
+                && full.unknown == projection.unknown
+                && full.role.equals(projection.role),
             "required/optional hatch and extended sheet-metal declarations survive both native capture paths");
         return projection;
     }
@@ -191,10 +193,16 @@ final class HologramHatchHintCaptureRegression {
         World world, boolean projection) throws ReflectiveOperationException {
         ItemStack signal = new ItemStack(Items.feather);
         java.lang.reflect.Constructor<HologramCapture> constructor = HologramCapture.class.getDeclaredConstructor(
-            Object.class, ItemStack.class, com.miaokatze.gtmb.api.StructureSources.CaptureIntent.class, boolean.class);
+            Object.class,
+            ItemStack.class,
+            com.miaokatze.gtmb.api.StructureSources.CaptureIntent.class,
+            boolean.class);
         constructor.setAccessible(true);
-        HologramCapture capture = constructor.newInstance(new Object(), signal,
-            com.miaokatze.gtmb.api.StructureSources.CaptureIntent.NEW_TEMPLATE, projection);
+        HologramCapture capture = constructor.newInstance(
+            new Object(),
+            signal,
+            com.miaokatze.gtmb.api.StructureSources.CaptureIntent.NEW_TEMPLATE,
+            projection);
         capture.pieces.add(new HologramCapture.Piece("main", 0, 0, 0, signal));
         IStructureDefinition<Object> definition = StructureDefinition.<Object>builder()
             .addShape("main", new String[][] { { "X" } })

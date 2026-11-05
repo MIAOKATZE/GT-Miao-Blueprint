@@ -53,7 +53,8 @@ final class HologramStructureProjectionRegression {
                 HologramStructureHintData.read(unknown) == null,
                 "a callback with side effects is not interpreted as fixed hint data");
             AtomicInteger processors = new AtomicInteger();
-            Field proxy = StructureLib.class.getDeclaredField("proxy"), marker = StructureLib.class.getDeclaredField("blockHint");
+            Field proxy = StructureLib.class.getDeclaredField("proxy"),
+                marker = StructureLib.class.getDeclaredField("blockHint");
             proxy.setAccessible(true);
             marker.setAccessible(true);
             Object oldProxy = proxy.get(null), oldMarker = marker.get(null);
@@ -76,7 +77,9 @@ final class HologramStructureProjectionRegression {
                             .addElement('A', fixed)
                             .addElement('U', unknown)
                             .addElement('B', casing)
-                            .addElement('C', StructureUtility.withChannel("casing", StructureUtility.ofBlock(Blocks.dirt, 2)))
+                            .addElement(
+                                'C',
+                                StructureUtility.withChannel("casing", StructureUtility.ofBlock(Blocks.dirt, 2)))
                             .build(),
                         Arrays.asList(new StructureSources.Piece("projection", -1, 0, 0, trigger))));
                 GTMBExtensions.Registration processor = BlueprintSnapshots
@@ -107,12 +110,15 @@ final class HologramStructureProjectionRegression {
                                 && cell.elementTrigger == capture.pieces.get(cell.projectionPiece).trigger,
                             "native material cells retain a shared piece signal without native-NBT payload copies");
                         if (cell.element == casing) {
-                            SimpleAssert.that(cell.block == Blocks.stone && cell.meta == 4 && !cell.unknown,
+                            SimpleAssert.that(
+                                cell.block == Blocks.stone && cell.meta == 4 && !cell.unknown,
                                 "native hatch-first chain resolves its real casing rather than its numeric hint");
-                            SimpleAssert.that("hatch".equals(cell.role)
-                                && cell.renderHint.block == Blocks.stone && cell.renderHint.metadata == 4,
+                            SimpleAssert.that(
+                                "hatch".equals(cell.role) && cell.renderHint.block == Blocks.stone
+                                    && cell.renderHint.metadata == 4,
                                 "native hatch role survives while the final projection renders the payable casing");
-                            SimpleAssert.that(HologramCasingFallback.matches(cell, new ItemStack(Blocks.stone, 1, 4)),
+                            SimpleAssert.that(
+                                HologramCasingFallback.matches(cell, new ItemStack(Blocks.stone, 1, 4)),
                                 "the native fixed fallback remains the declaration's actual material");
                         }
                         if (cell.renderHint == null) unknowns++;
@@ -155,8 +161,8 @@ final class HologramStructureProjectionRegression {
         accepted.put(Blocks.dirt, java.util.Collections.singletonList(0));
         com.gtnewhorizon.structurelib.structure.IStructureElement<Object> contextual = StructureUtility
             .ofBlocksMap(accepted, Blocks.dirt, 0);
-        SimpleAssert.that(HologramDeclarationPurity.contextFree(stable)
-            && !HologramDeclarationPurity.contextFree(contextual),
+        SimpleAssert.that(
+            HologramDeclarationPurity.contextFree(stable) && !HologramDeclarationPurity.contextFree(contextual),
             "projection uses the existing declaration stability boundary");
         Field proxy = StructureLib.class.getDeclaredField("proxy");
         proxy.setAccessible(true);
@@ -176,8 +182,12 @@ final class HologramStructureProjectionRegression {
             HologramCapture capture = null;
             ItemStack signal = new ItemStack(Blocks.stone);
             do {
-                capture = HologramCapture.collectProjection(controller, signal, controller.getExtendedFacing(),
-                    StructureSources.CaptureIntent.NEW_TEMPLATE, capture);
+                capture = HologramCapture.collectProjection(
+                    controller,
+                    signal,
+                    controller.getExtendedFacing(),
+                    StructureSources.CaptureIntent.NEW_TEMPLATE,
+                    capture);
             } while (capture.pending);
             SimpleAssert.that(!capture.incomplete, "context-bound native projection completes");
             java.util.Set<Block> observed = new java.util.HashSet<>();
@@ -185,12 +195,15 @@ final class HologramStructureProjectionRegression {
             for (HologramCapture.Cell cell : capture.cells) {
                 if (cell.element == stable) {
                     stableCells++;
-                    SimpleAssert.that(cell.block == Blocks.wool && cell.meta == 5,
+                    SimpleAssert.that(
+                        cell.block == Blocks.wool && cell.meta == 5,
                         "stable native target identity survives shared interpretation");
                 } else if (cell.element == contextual) {
                     contextualCells++;
                     Block expected = ((cell.x + cell.y + cell.z) & 1) == 0 ? Blocks.stone : Blocks.dirt;
-                    SimpleAssert.eq(expected, cell.block,
+                    SimpleAssert.eq(
+                        expected,
+                        cell.block,
                         "a contextual declaration retains the target observed at its own coordinate");
                     observed.add(cell.block);
                 }

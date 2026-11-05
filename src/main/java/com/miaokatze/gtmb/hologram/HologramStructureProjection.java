@@ -266,7 +266,11 @@ final class HologramStructureProjection {
         state.setInteger("scope", s.scope);
         state.setInteger("layer", s.layer);
         state.setInteger("selected", s.selected);
-        state.setIntArray("selectedIndices", s.selectedIndices.stream().mapToInt(Integer::intValue).toArray());
+        state.setIntArray(
+            "selectedIndices",
+            s.selectedIndices.stream()
+                .mapToInt(Integer::intValue)
+                .toArray());
         state.setInteger("job", 0);
         state.setString("status", s.status);
         state.setBoolean("editCanUndo", !s.undoEdits.isEmpty());
@@ -318,8 +322,10 @@ final class HologramStructureProjection {
         row.setString("wantId", wanted == null ? "" : String.valueOf(Block.blockRegistry.getNameForObject(wanted)));
         row.setInteger("wantMeta", wantedMeta);
         row.setBoolean("missingBlock", wanted == null);
-        row.setString("renderKind", target != null && target.getItem() instanceof gregtech.common.blocks.ItemMachines
-            || cell.anchor ? "item" : cell.renderKind);
+        row.setString(
+            "renderKind",
+            target != null && target.getItem() instanceof gregtech.common.blocks.ItemMachines || cell.anchor ? "item"
+                : cell.renderKind);
         row.setInteger("hintIndex", cell.hintIndex);
         row.setBoolean("iconOnly", cell.iconOnly && wanted == null);
         NBTTagList icons = new NBTTagList();
@@ -341,12 +347,14 @@ final class HologramStructureProjection {
         row.setString("family", cell.family);
         row.setString("structureId", cell.structureId);
         row.setTag("structureIds", HologramSessionPolicy.nbtKeys(cell.memberships()));
-        row.setString("exactIdentity", target == null ? HologramBlockIdentity.key(cell.block, cell.meta)
-            : HologramBlockIdentity.key(target));
+        row.setString(
+            "exactIdentity",
+            target == null ? HologramBlockIdentity.key(cell.block, cell.meta) : HologramBlockIdentity.key(target));
         row.setBoolean("hasPin", s.pins.containsKey(index));
         row.setBoolean("hasTargetOverride", s.pins.containsKey(index) || s.autoTargets.containsKey(index));
-        row.setBoolean("explicitTarget", HologramCellPolicy.explicitTarget(s, cell, index)
-            || HologramCellPolicy.explicitGrade(s, cell));
+        row.setBoolean(
+            "explicitTarget",
+            HologramCellPolicy.explicitTarget(s, cell, index) || HologramCellPolicy.explicitGrade(s, cell));
         row.setBoolean("autoTarget", s.autoTargets.containsKey(index));
         row.setBoolean("hasFacingPin", s.facingPins.containsKey(position));
         row.setInteger("targetFacing", facing);
@@ -356,7 +364,9 @@ final class HologramStructureProjection {
         NBTTagCompound display = HologramDisplaySnapshot.projection(tile);
         row.setTag("actualDisplay", display);
         if (tile instanceof gregtech.api.interfaces.tileentity.IGregTechTileEntity) {
-            ItemStack actualStack = new ItemStack(gregtech.api.GregTechAPI.sBlockMachines, 1,
+            ItemStack actualStack = new ItemStack(
+                gregtech.api.GregTechAPI.sBlockMachines,
+                1,
                 ((gregtech.api.interfaces.tileentity.IGregTechTileEntity) tile).getMetaTileID());
             row.setTag("actualStack", actualStack.writeToNBT(new NBTTagCompound()));
         }
@@ -365,12 +375,17 @@ final class HologramStructureProjection {
             : HologramDisplaySnapshot.targetPayload(wanted, target, facing, cell.element, null, false);
         row.setTag("targetDisplay", targetDisplay);
         row.setString("reason", HologramPlanPolicy.reason(s, cell, index, loaded, tile));
-        row.setString("operation", !inScope ? "OUTSIDE" : "satisfied".equals(cell.status) ? "KEEP"
-            : "protected".equals(cell.status) || "unsupported".equals(cell.status) || "blocked".equals(cell.status)
-                ? "PROTECT" : s.mode == 2 ? "REMOVE"
-                    : loaded && (actual == net.minecraft.init.Blocks.air
-                        || actual instanceof net.minecraft.block.BlockBush && tile == null
-                            && actual.isReplaceable(world, cell.x, cell.y, cell.z)) ? "PLACE" : "REPLACE");
+        row.setString(
+            "operation",
+            !inScope ? "OUTSIDE"
+                : "satisfied".equals(cell.status) ? "KEEP"
+                    : "protected".equals(cell.status) || "unsupported".equals(cell.status)
+                        || "blocked".equals(cell.status)
+                            ? "PROTECT"
+                            : s.mode == 2 ? "REMOVE"
+                                : loaded && (actual == net.minecraft.init.Blocks.air
+                                    || actual instanceof net.minecraft.block.BlockBush && tile == null
+                                        && actual.isReplaceable(world, cell.x, cell.y, cell.z)) ? "PLACE" : "REPLACE");
         java.util.List<ItemStack> options = HologramCellPolicy.snapshotCandidates(s, cell, index == s.selected);
         NBTTagList candidates = new NBTTagList(), roles = new NBTTagList();
         int[] tiers = new int[options.size()], available = new int[options.size()];

@@ -203,8 +203,10 @@ final class HologramControllerCapture {
     /** Reuse native candidates and the bounded planner after a physical structure configuration edit. */
     static void replanProjection(HologramSession s) {
         Map<String, ItemStack> pins = new HashMap<>(s.coordinatePins);
-        for (Map.Entry<Integer, ItemStack> entry : s.pins.entrySet())
-            pins.put(HologramValues.position(s.capture.cells.get(entry.getKey())), entry.getValue().copy());
+        for (Map.Entry<Integer, ItemStack> entry : s.pins.entrySet()) pins.put(
+            HologramValues.position(s.capture.cells.get(entry.getKey())),
+            entry.getValue()
+                .copy());
         if (s.selected >= 0 && s.selected < s.capture.cells.size())
             s.scanSelectedPosition = HologramValues.position(s.capture.cells.get(s.selected));
         s.scanSelectedPositions.clear();
@@ -320,9 +322,10 @@ final class HologramControllerCapture {
         if (!work.finalizing()) {
             if (resumed == null) s.captureAttempts++;
             ItemStack initialTrigger = HologramSessionPolicy.trigger(s);
-            s.capture = projection
-                ? HologramCapture.collectProjection(s.machine, initialTrigger, s.machine.getExtendedFacing(), s.captureIntent, resumed)
-                : HologramCapture.collect(s.machine, initialTrigger, s.machine.getExtendedFacing(), s.captureIntent, resumed);
+            s.capture = projection ? HologramCapture
+                .collectProjection(s.machine, initialTrigger, s.machine.getExtendedFacing(), s.captureIntent, resumed)
+                : HologramCapture
+                    .collect(s.machine, initialTrigger, s.machine.getExtendedFacing(), s.captureIntent, resumed);
             if (s.capture.pending) {
                 scheduleCaptureRetry(s);
                 return;
@@ -331,9 +334,10 @@ final class HologramControllerCapture {
                 .withSavedChannels(s.channels);
             ItemStack observedTrigger = HologramSessionPolicy.trigger(s);
             if (!s.capture.incomplete && !ItemStack.areItemStackTagsEqual(initialTrigger, observedTrigger)) {
-                s.capture = projection
-                    ? HologramCapture.collectProjection(s.machine, observedTrigger, s.machine.getExtendedFacing(), s.captureIntent, null)
-                    : HologramCapture.collect(s.machine, observedTrigger, s.machine.getExtendedFacing(), s.captureIntent);
+                s.capture = projection ? HologramCapture
+                    .collectProjection(s.machine, observedTrigger, s.machine.getExtendedFacing(), s.captureIntent, null)
+                    : HologramCapture
+                        .collect(s.machine, observedTrigger, s.machine.getExtendedFacing(), s.captureIntent);
                 if (s.capture.pending) {
                     scheduleCaptureRetry(s);
                     return;

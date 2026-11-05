@@ -300,7 +300,8 @@ public final class HologramControllerCaptureRegression {
     }
 
     /** The same native factory fixtures must survive the actual lightweight entry and its candidate/row tail. */
-    private static void projectionFactories(sun.misc.Unsafe unsafe) throws ReflectiveOperationException, java.io.IOException {
+    private static void projectionFactories(sun.misc.Unsafe unsafe)
+        throws ReflectiveOperationException, java.io.IOException {
         EntityPlayerMP player = player(unsafe);
         HologramServiceEditRegression.ReadOnlyWorld world = (HologramServiceEditRegression.ReadOnlyWorld) player.worldObj;
         HologramDynamicDefinitionRegression.DynamicController machine = new HologramDynamicDefinitionRegression.DynamicController();
@@ -324,55 +325,73 @@ public final class HologramControllerCaptureRegression {
         variants.put(Blocks.wool, java.util.Arrays.asList(2, 4));
         com.gtnewhorizon.structurelib.structure.IStructureElement<Object> tiered = StructureUtility.ofBlocksTiered(
             (block, meta) -> { throw new AssertionError("projection ran tier converter"); },
-            java.util.Arrays.asList(org.apache.commons.lang3.tuple.Pair.of(Blocks.stone, 0),
-                org.apache.commons.lang3.tuple.Pair.of(Blocks.dirt, 0)), -1,
+            java.util.Arrays.asList(
+                org.apache.commons.lang3.tuple.Pair.of(Blocks.stone, 0),
+                org.apache.commons.lang3.tuple.Pair.of(Blocks.dirt, 0)),
+            -1,
             (controller, tier) -> { throw new AssertionError("projection ran tier setter"); },
             controller -> { throw new AssertionError("projection ran tier getter"); });
-        com.gtnewhorizon.structurelib.structure.IStructureElement<Object> deferred = StructureUtility.defer(
-            controller -> { throw new AssertionError("projection ran deferred factory"); });
-        HologramDeclarationAdapters.register(deferred, new HologramDeclarationAdapters.Declaration(
-            () -> tiered, original -> { original.stackSize = 2; return original; }));
-        com.gtnewhorizon.structurelib.structure.IStructureElement<Object> lazy = StructureUtility.lazy(
-            controller -> { throw new AssertionError("projection ran lazy factory"); });
-        Field initialized = lazy.getClass().getDeclaredField("elem");
+        com.gtnewhorizon.structurelib.structure.IStructureElement<Object> deferred = StructureUtility
+            .defer(controller -> { throw new AssertionError("projection ran deferred factory"); });
+        HologramDeclarationAdapters
+            .register(deferred, new HologramDeclarationAdapters.Declaration(() -> tiered, original -> {
+                original.stackSize = 2;
+                return original;
+            }));
+        com.gtnewhorizon.structurelib.structure.IStructureElement<Object> lazy = StructureUtility
+            .lazy(controller -> { throw new AssertionError("projection ran lazy factory"); });
+        Field initialized = lazy.getClass()
+            .getDeclaredField("elem");
         initialized.setAccessible(true);
         initialized.set(lazy, StructureUtility.ofBlock(Blocks.wool, 8));
-        com.gtnewhorizon.structurelib.structure.IStructureElement<Object> uninitialized = StructureUtility.lazy(
-            controller -> { throw new AssertionError("projection ran uninitialized lazy factory"); });
-        java.util.List<com.gtnewhorizon.structurelib.structure.IStructureElement<Object>> elements = java.util.Arrays.asList(
-            StructureUtility.ofBlock(Blocks.wool, 5),
-            StructureUtility.ofBlockAnyMeta(Blocks.wool, Blocks.wool, 7),
-            StructureUtility.ofBlocksFlat(flat, Blocks.dirt, 0),
-            StructureUtility.ofBlocksMap(variants, Blocks.wool, 4),
-            tiered,
-            StructureUtility.withDescription(java.util.Collections.singletonList("native grade"),
-                StructureUtility.onElementPass(controller -> { throw new AssertionError("projection ran pass callback"); },
-                    StructureUtility.withChannel("fixture_grade", tiered))),
-            deferred,
-            new HologramPureElementsRegression.Leaf(false),
-            lazy,
-            uninitialized);
-        net.minecraft.block.Block[] expected = { Blocks.wool, Blocks.wool, Blocks.dirt, Blocks.wool,
-            Blocks.dirt, Blocks.stone, Blocks.dirt, Blocks.stone, Blocks.wool, null };
+        com.gtnewhorizon.structurelib.structure.IStructureElement<Object> uninitialized = StructureUtility
+            .lazy(controller -> { throw new AssertionError("projection ran uninitialized lazy factory"); });
+        java.util.List<com.gtnewhorizon.structurelib.structure.IStructureElement<Object>> elements = java.util.Arrays
+            .asList(
+                StructureUtility.ofBlock(Blocks.wool, 5),
+                StructureUtility.ofBlockAnyMeta(Blocks.wool, Blocks.wool, 7),
+                StructureUtility.ofBlocksFlat(flat, Blocks.dirt, 0),
+                StructureUtility.ofBlocksMap(variants, Blocks.wool, 4),
+                tiered,
+                StructureUtility.withDescription(
+                    java.util.Collections.singletonList("native grade"),
+                    StructureUtility.onElementPass(
+                        controller -> { throw new AssertionError("projection ran pass callback"); },
+                        StructureUtility.withChannel("fixture_grade", tiered))),
+                deferred,
+                new HologramPureElementsRegression.Leaf(false),
+                lazy,
+                uninitialized);
+        net.minecraft.block.Block[] expected = { Blocks.wool, Blocks.wool, Blocks.dirt, Blocks.wool, Blocks.dirt,
+            Blocks.stone, Blocks.dirt, Blocks.stone, Blocks.wool, null };
         int[] metadata = { 5, 7, 0, 4, 0, 0, 0, 0, 8, 0 };
         int[] counts = { 1, 16, 2, 0, 2, 2, 2, 2, 1, 0 };
         boolean[] complete = { true, false, true, false, false, false, false, false, true, false };
         com.gtnewhorizon.structurelib.structure.StructureDefinition.Builder<Object> definition = com.gtnewhorizon.structurelib.structure.StructureDefinition
-            .<Object>builder().addShape("factories", new String[][] { { "ABCDEFGHIJ" } });
+            .<Object>builder()
+            .addShape("factories", new String[][] { { "ABCDEFGHIJ" } });
         for (int i = 0; i < elements.size(); i++) definition.addElement((char) ('A' + i), elements.get(i));
         com.gtnewhorizon.structurelib.structure.IStructureDefinition<Object> frozen = definition.build();
         Field proxy = com.gtnewhorizon.structurelib.StructureLib.class.getDeclaredField("proxy");
         proxy.setAccessible(true);
         Object oldProxy = proxy.get(null);
         proxy.set(null, unsafe.allocateInstance(ProjectionProxy.class));
-        try (com.miaokatze.gtmb.api.GTMBExtensions.Registration source = com.miaokatze.gtmb.api.StructureSources.register(
-            "gtmb_test:projection_factory_matrix", HologramDynamicDefinitionRegression.DynamicController.class,
-            (controller, trigger) -> new com.miaokatze.gtmb.api.StructureSources.Plan(frozen,
-                java.util.Collections.singletonList(new com.miaokatze.gtmb.api.StructureSources.Piece("factories", -1, 0, 0, trigger))))) {
+        try (com.miaokatze.gtmb.api.GTMBExtensions.Registration source = com.miaokatze.gtmb.api.StructureSources
+            .register(
+                "gtmb_test:projection_factory_matrix",
+                HologramDynamicDefinitionRegression.DynamicController.class,
+                (controller, trigger) -> new com.miaokatze.gtmb.api.StructureSources.Plan(
+                    frozen,
+                    java.util.Collections.singletonList(
+                        new com.miaokatze.gtmb.api.StructureSources.Piece("factories", -1, 0, 0, trigger))))) {
             ItemStack trigger = HologramSessionPolicy.trigger(s);
             do {
-                s.capture = HologramCapture.collectProjection(machine, trigger, machine.getExtendedFacing(),
-                    com.miaokatze.gtmb.api.StructureSources.CaptureIntent.NEW_TEMPLATE, s.capture);
+                s.capture = HologramCapture.collectProjection(
+                    machine,
+                    trigger,
+                    machine.getExtendedFacing(),
+                    com.miaokatze.gtmb.api.StructureSources.CaptureIntent.NEW_TEMPLATE,
+                    s.capture);
             } while (s.capture.pending);
             SimpleAssert.that(!s.capture.incomplete && s.capture.projectionOnly, "native factory projection completes");
             HologramControllerCapture.FinishWork finish = new HologramControllerCapture.FinishWork(new HashMap<>());
@@ -383,7 +402,8 @@ public final class HologramControllerCaptureRegression {
                 phases.add(finish.phase());
                 SimpleAssert.that(++slices < 10000, "projection semantic finish makes bounded progress");
             } while (!finish.step(s, 3, Long.MAX_VALUE));
-            SimpleAssert.that(!phases.contains("plan.structure") && !s.replacementReady,
+            SimpleAssert.that(
+                !phases.contains("plan.structure") && !s.replacementReady,
                 "projection material planning never performs or grants whole-structure replacement proof");
             int verified = 0;
             for (int index = 0; index < s.capture.cells.size(); index++) {
@@ -391,21 +411,35 @@ public final class HologramControllerCaptureRegression {
                 if (cell.anchor) continue;
                 int fixture = elements.indexOf(cell.element);
                 SimpleAssert.that(fixture >= 0, "projection retains actual declared factory identity");
-                SimpleAssert.eq(expected[fixture], cell.block, "factory matrix retains the native target block " + fixture);
-                SimpleAssert.eq(metadata[fixture], cell.meta, "factory matrix retains the native target metadata " + fixture);
-                SimpleAssert.eq(counts[fixture], cell.candidates.size(), "factory matrix enumerates real candidates " + fixture);
-                SimpleAssert.eq(complete[fixture], cell.candidateComplete, "factory matrix retains actual completeness " + fixture);
+                SimpleAssert
+                    .eq(expected[fixture], cell.block, "factory matrix retains the native target block " + fixture);
+                SimpleAssert
+                    .eq(metadata[fixture], cell.meta, "factory matrix retains the native target metadata " + fixture);
+                SimpleAssert.eq(
+                    counts[fixture],
+                    cell.candidates.size(),
+                    "factory matrix enumerates real candidates " + fixture);
+                SimpleAssert.eq(
+                    complete[fixture],
+                    cell.candidateComplete,
+                    "factory matrix retains actual completeness " + fixture);
                 s.selected = index;
                 long observed = world.blockReads + world.metaReads + world.tileReads;
                 NBTTagCompound row = HologramStructureProjection.row(s, cell, index);
-                SimpleAssert.eq(observed, world.blockReads + world.metaReads + world.tileReads,
+                SimpleAssert.eq(
+                    observed,
+                    world.blockReads + world.metaReads + world.tileReads,
                     "native material rows reuse the bounded planner's primary world observations");
-                SimpleAssert.eq(counts[fixture], row.getTagList("candidates", 10).tagCount(),
+                SimpleAssert.eq(
+                    counts[fixture],
+                    row.getTagList("candidates", 10)
+                        .tagCount(),
                     "actual projection row publishes the candidate declarations " + fixture);
                 SimpleAssert.eq(cell.family, row.getString("family"), "actual projection row retains material family");
                 ItemStack target = HologramCellPolicy.targetFor(s, cell, index);
                 if (target != null) {
-                    SimpleAssert.that(HologramValues.same(target, ItemStack.loadItemStackFromNBT(row.getCompoundTag("targetStack"))),
+                    SimpleAssert.that(
+                        HologramValues.same(target, ItemStack.loadItemStackFromNBT(row.getCompoundTag("targetStack"))),
                         "actual projection row retains its exact payable target");
                 }
                 verified++;
@@ -414,12 +448,15 @@ public final class HologramControllerCaptureRegression {
             s.mode = 1;
             HologramResourcePlanner.PlanTask replacement = HologramResourcePlanner.beginCapturePlan(s);
             replacement.step(1, Long.MAX_VALUE);
-            SimpleAssert.eq("plan.structure", replacement.phase(),
+            SimpleAssert.eq(
+                "plan.structure",
+                replacement.phase(),
                 "explicit replacement mode retains the existing bounded original-structure proof");
             int proofSlices = 0;
             while (!replacement.step(1, Long.MAX_VALUE))
                 SimpleAssert.that(++proofSlices < 10000, "replacement material planning makes bounded progress");
-            SimpleAssert.that(!s.replacementReady && !s.replacementAuthorized,
+            SimpleAssert.that(
+                !s.replacementReady && !s.replacementAuthorized,
                 "an unbuilt projection cannot acquire replacement permission from its real target hints");
             s.mode = 0;
             HologramResourcePlanner.PlanTask normal = HologramResourcePlanner.beginCapturePlan(s);
@@ -430,7 +467,8 @@ public final class HologramControllerCaptureRegression {
         }
     }
 
-    private static void projectionRefreshGuards(HologramSession s) throws java.io.IOException, ReflectiveOperationException {
+    private static void projectionRefreshGuards(HologramSession s)
+        throws java.io.IOException, ReflectiveOperationException {
         s.player.posY = s.y;
         s.player.capabilities.isCreativeMode = false;
         s.player.inventory.mainInventory[1] = new ItemStack(Blocks.stone, 2);
@@ -449,7 +487,8 @@ public final class HologramControllerCaptureRegression {
             HologramMaterialWorkflow.requireProjectionRefresh(s, action);
             s.player.inventory.mainInventory[1].stackSize = 5;
             HologramMaterialQuote.recheck(s);
-            NBTTagCompound row = s.materialQuote.getTagList("rows", 10).getCompoundTagAt(0);
+            NBTTagCompound row = s.materialQuote.getTagList("rows", 10)
+                .getCompoundTagAt(0);
             SimpleAssert.eq(3L, row.getLong("required"), "physical refresh retains the reviewed exact material demand");
             SimpleAssert.eq(0L, row.getLong("missing"), "physical refresh observes newly available inventory");
             NBTTagCompound stale = (NBTTagCompound) action.copy();
@@ -468,7 +507,10 @@ public final class HologramControllerCaptureRegression {
             rejectedProjectionRefresh(s, action, "inventory refresh cannot enter a running construction job");
             s.job = 0;
             java.lang.reflect.Constructor<HologramCapture> constructor = HologramCapture.class.getDeclaredConstructor(
-                Object.class, ItemStack.class, com.miaokatze.gtmb.api.StructureSources.CaptureIntent.class, boolean.class);
+                Object.class,
+                ItemStack.class,
+                com.miaokatze.gtmb.api.StructureSources.CaptureIntent.class,
+                boolean.class);
             constructor.setAccessible(true);
             HologramCapture saved = s.capture;
             s.capture = constructor.newInstance(s.context, HologramSessionPolicy.trigger(s), s.captureIntent, true);
@@ -498,7 +540,8 @@ public final class HologramControllerCaptureRegression {
     private static final class ProjectionProxy extends com.gtnewhorizon.structurelib.CommonProxy {
 
         @Override
-        public void hintParticle(net.minecraft.world.World world, int x, int y, int z, net.minecraft.block.Block block, int metadata) {
+        public void hintParticle(net.minecraft.world.World world, int x, int y, int z, net.minecraft.block.Block block,
+            int metadata) {
             HologramCapture.hint(world, x, y, z, block, metadata);
         }
     }
