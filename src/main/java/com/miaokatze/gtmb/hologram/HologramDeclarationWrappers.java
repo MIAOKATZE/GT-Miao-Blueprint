@@ -33,15 +33,36 @@ import gtPlusPlus.core.material.Material;
 final class HologramDeclarationWrappers {
 
     private static final Map<IStructureElement<?>, IStructureElement<?>> FIXED_LAZY = new WeakHashMap<>();
+    private static final ClassValue<Factory> FACTORIES = new ClassValue<Factory>() {
+
+        @Override
+        protected Factory computeValue(Class<?> type) {
+            // A legitimate null is immutable metadata too. Failed resolution escapes and is retried later.
+            return new Factory(type.getEnclosingMethod());
+        }
+    };
+
+    private static final class Factory {
+
+        final Method method;
+
+        Factory(Method method) {
+            this.method = method;
+        }
+    }
 
     private HologramDeclarationWrappers() {}
+
+    /** ClassValue follows the actual loader/class lifetime; no instance backing or adapter result is retained. */
+    static Method factory(Class<?> type) {
+        return FACTORIES.get(type).method;
+    }
 
     static IStructureElement<?> backing(IStructureElement<?> element) throws ReflectiveOperationException {
         HologramDeclarationAdapters.Declaration registered = HologramDeclarationAdapters.declaration(element);
         if (registered != null) return registered.backing();
         if (isLazy(element)) return lazyBacking(element);
-        Method factory = element.getClass()
-            .getEnclosingMethod();
+        Method factory = factory(element.getClass());
         if (factory == null) return null;
         String name = factory.getName();
         String field;
@@ -68,8 +89,7 @@ final class HologramDeclarationWrappers {
     static boolean requiresAdapter(IStructureElement<?> element) {
         if (element instanceof IStructureElementDeferred || HologramDeclarationAdapters.declaration(element) != null)
             return true;
-        Method factory = element.getClass()
-            .getEnclosingMethod();
+        Method factory = factory(element.getClass());
         if (factory == null) return false;
         return factory.getDeclaringClass() == StructureUtility.class
             && ("onlyIf".equals(factory.getName()) || "withContext".equals(factory.getName()))
@@ -142,8 +162,7 @@ final class HologramDeclarationWrappers {
     static IStructureElement<?> alternativesBacking(IStructureElement<?> element) throws ReflectiveOperationException {
         IStructureElement<?> reviewed = backing(element);
         if (reviewed != null) return reviewed;
-        Method factory = element.getClass()
-            .getEnclosingMethod();
+        Method factory = factory(element.getClass());
         if (factory != null && factory.getDeclaringClass() == GTStructureUtility.class
             && "triggerItemTransform".equals(factory.getName()))
             return (IStructureElement<?>) captured(element, "val$backing");
@@ -164,8 +183,7 @@ final class HologramDeclarationWrappers {
     }
 
     static String channel(IStructureElement<?> element) throws ReflectiveOperationException {
-        Method factory = element.getClass()
-            .getEnclosingMethod();
+        Method factory = factory(element.getClass());
         return factory != null && factory.getDeclaringClass() == StructureUtility.class
             && "withChannel".equals(factory.getName()) ? (String) captured(element, "val$channel") : null;
     }
@@ -227,8 +245,7 @@ final class HologramDeclarationWrappers {
     private static List<ItemStack> materials(IStructureElement<?> root) throws ReflectiveOperationException {
         List<ItemStack> result = new ArrayList<>();
         for (IStructureElement<?> part : HologramElementCatalog.parts(root, false)) {
-            Method factory = part.getClass()
-                .getEnclosingMethod();
+            Method factory = factory(part.getClass());
             if (factory == null) continue;
             if (factory.getDeclaringClass() == StructureUtility.class && "ofBlocksTiered".equals(factory.getName())) {
                 Object raw = captured(part, "val$hints");

@@ -97,8 +97,7 @@ final class HologramDeclarationCandidates {
                 collect(alternative, context, world, x, y, z, trigger, environment, depth + 1, false);
                 return;
             }
-            Method factory = element.getClass()
-                .getEnclosingMethod();
+            Method factory = HologramDeclarationWrappers.factory(element.getClass());
             if (factory == null) {
                 if (element != StructureUtility.isAir()) complete = false;
                 return;

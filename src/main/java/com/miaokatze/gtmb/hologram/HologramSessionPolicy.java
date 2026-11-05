@@ -211,10 +211,12 @@ final class HologramSessionPolicy {
             .removeTag(HologramSessionKeys.DRAFT);
         HologramDraftPersistence.writeSettings(s, result);
         result.stackSize = s.main;
-        List<String> existing = new ArrayList<>();
-        ChannelDataAccessor.iterateChannelData(result)
-            .forEach(entry -> existing.add(entry.getKey()));
-        for (String channel : existing) ChannelDataAccessor.unsetChannelData(result, channel);
+        if (ChannelDataAccessor.hasSubChannel(result)) {
+            List<String> existing = new ArrayList<>();
+            ChannelDataAccessor.iterateChannelData(result)
+                .forEach(entry -> existing.add(entry.getKey()));
+            for (String channel : existing) ChannelDataAccessor.unsetChannelData(result, channel);
+        }
         NBTTagCompound active = s.capabilities == null ? s.channels : s.capabilities.sanitizeChannels(s.channels);
         for (Object key : active.func_150296_c())
             ChannelDataAccessor.setChannelData(result, (String) key, active.getInteger((String) key));

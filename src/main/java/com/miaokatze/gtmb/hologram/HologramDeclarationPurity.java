@@ -26,8 +26,7 @@ final class HologramDeclarationPurity {
         if (element instanceof Declarations.PureElement) return true;
         // Keep chains contextual even if some children are pure: hatch/predicate branches must never borrow authority.
         if (element instanceof IStructureElementChain) return false;
-        Method factory = element.getClass()
-            .getEnclosingMethod();
+        Method factory = HologramDeclarationWrappers.factory(element.getClass());
         if (factory != null) {
             String name = factory.getName();
             if (factory.getDeclaringClass() == StructureUtility.class

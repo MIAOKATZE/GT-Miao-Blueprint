@@ -35,8 +35,7 @@ final class HologramElementCatalog {
         for (IStructureElement<?> part : parts(element)) {
             Declarations.PureElement<?> declaration = pure(part);
             if (declaration != null) return declaration.role();
-            Method method = part.getClass()
-                .getEnclosingMethod();
+            Method method = HologramDeclarationWrappers.factory(part.getClass());
             if (method != null && method.getDeclaringClass() == HatchElementBuilder.class
                 && "build".equals(method.getName())) return "hatch";
         }

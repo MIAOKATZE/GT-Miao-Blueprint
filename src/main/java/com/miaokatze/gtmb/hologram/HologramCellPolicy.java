@@ -125,7 +125,7 @@ final class HologramCellPolicy {
             } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {}
         }
         Class<?> type = value.getClass();
-        java.lang.reflect.Method enclosing = type.getEnclosingMethod();
+        java.lang.reflect.Method enclosing = HologramDeclarationWrappers.factory(type);
         if (enclosing != null && enclosing.getName()
             .equals(name)
             && enclosing.getDeclaringClass()
@@ -388,11 +388,14 @@ final class HologramCellPolicy {
         if (c.elementTrigger != null) {
             // Preserve the current inventory tool's identity/unrelated NBT while retaining the real piece signal.
             result.stackSize = c.elementTrigger.stackSize;
-            List<String> existing = new ArrayList<>();
-            ChannelDataAccessor.iterateChannelData(result)
-                .forEach(entry -> existing.add(entry.getKey()));
-            for (String name : existing) ChannelDataAccessor.unsetChannelData(result, name);
-            ChannelDataAccessor.iterateChannelData(c.elementTrigger)
+            if (ChannelDataAccessor.hasSubChannel(result)) {
+                List<String> existing = new ArrayList<>();
+                ChannelDataAccessor.iterateChannelData(result)
+                    .forEach(entry -> existing.add(entry.getKey()));
+                for (String name : existing) ChannelDataAccessor.unsetChannelData(result, name);
+            }
+            if (ChannelDataAccessor.hasSubChannel(c.elementTrigger)) ChannelDataAccessor
+                .iterateChannelData(c.elementTrigger)
                 .forEach(entry -> ChannelDataAccessor.setChannelData(result, entry.getKey(), entry.getValue()));
         }
         // A concrete new hatch pin authorizes that item even when the automatic hatch toggle is off.
