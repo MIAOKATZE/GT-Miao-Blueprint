@@ -479,8 +479,7 @@ final class HologramActionDispatcher {
             // A newly accepted server scan owns session/uiSequence, not a completed library save's token.
             s.blueprintClientTaskToken = 0;
             HologramBuildPreparation.scan(s);
-        }
-        else if ("configure".equals(op) && s.job != 1 && s.job != 2) {
+        } else if ("configure".equals(op) && s.job != 1 && s.job != 2) {
             if (!configure(s, action)) {
                 HologramSnapshots.send(s);
                 return;

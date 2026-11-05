@@ -35,7 +35,8 @@ public final class HologramBackgroundTasksRegression {
             "actual scan failure cannot be rejected because it carries a completed library task's token");
         SimpleAssert.that(!owner.busy(), "failed current scan releases projector ownership");
         SimpleAssert.eq(HologramTaskOwner.Result.FAILURE, results.get(1), "scan failure is not old save success");
-        SimpleAssert.that(!owner.failSnapshot(failure, "duplicate"), "duplicate actual failure has no second completion");
+        SimpleAssert
+            .that(!owner.failSnapshot(failure, "duplicate"), "duplicate actual failure has no second completion");
     }
 
     public static void run() {

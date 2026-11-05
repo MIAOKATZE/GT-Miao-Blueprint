@@ -294,7 +294,8 @@ final class HologramControllerCapture {
             }
             work.beginFinish();
         }
-        boolean finished = work.step(s, FINISH_WORK_PER_BATCH, HologramWorkBudget.remainingNanos(HologramWorkBudget.SLICE_NANOS));
+        boolean finished = work
+            .step(s, FINISH_WORK_PER_BATCH, HologramWorkBudget.remainingNanos(HologramWorkBudget.SLICE_NANOS));
         if (work.stopped) return;
         if (!finished) {
             scheduleCaptureRetry(s);

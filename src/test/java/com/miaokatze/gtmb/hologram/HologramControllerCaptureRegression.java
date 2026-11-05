@@ -391,20 +391,28 @@ public final class HologramControllerCaptureRegression {
         SimpleAssert.eq("SOURCE_TRIGGER_CHANGED", s.capture.failure, "full trigger NBT guard survives finalization");
         SimpleAssert.that(!s.capture.sourceCurrent(), "stale trigger rejection also invalidates the retained source");
         SimpleAssert.that(s.planStatus.isEmpty(), "no classified plan is published for a stale capture");
-        SimpleAssert.that(!s.capturePending && s.captureWork == null, "source rejection retires the pending tail immediately");
+        SimpleAssert
+            .that(!s.capturePending && s.captureWork == null, "source rejection retires the pending tail immediately");
         SimpleAssert.eq(4, s.job, "source rejection reaches the reliable stopped workflow");
         SimpleAssert.eq("STOPPED", s.phase, "failed source cannot resume through the ordinary retry lane");
         NBTTagCompound terminal = WIRE.get(WIRE.size() - 1);
-        SimpleAssert.that(terminal.getBoolean("transportError"), "source rejection emits the actual client failure envelope");
-        SimpleAssert.eq("capture.prepare", terminal.getString("errorCode"), "source failure uses the existing capture terminal protocol");
+        SimpleAssert
+            .that(terminal.getBoolean("transportError"), "source rejection emits the actual client failure envelope");
+        SimpleAssert.eq(
+            "capture.prepare",
+            terminal.getString("errorCode"),
+            "source failure uses the existing capture terminal protocol");
         SimpleAssert.eq(s.id, terminal.getString("session"), "source terminal belongs to the exact pending session");
         SimpleAssert.eq(88L, terminal.getLong("uiSequence"), "source terminal retires the exact scan command");
         int emitted = WIRE.size();
         work.step(s, 1, Long.MAX_VALUE);
         SimpleAssert.eq(emitted, WIRE.size(), "retired work cannot emit a second failure or invoke candidates");
         HologramSnapshots.send(s);
-        SimpleAssert.that(!HologramSnapshotPreparation.pending(s), "source failure does not depend on an invalid normal snapshot");
-        player.playerNetServerHandler.netManager.channel().close();
+        SimpleAssert.that(
+            !HologramSnapshotPreparation.pending(s),
+            "source failure does not depend on an invalid normal snapshot");
+        player.playerNetServerHandler.netManager.channel()
+            .close();
     }
 
     private static void failedFinalization(sun.misc.Unsafe unsafe) throws ReflectiveOperationException {
