@@ -178,9 +178,13 @@ final class HologramControllerCapture {
 
     /** A failed native continuation cannot publish a partial plan or leave the client's task pending. */
     static void stop(HologramSession s, String reason, Throwable failure) {
+        stop(s, reason, failure, false);
+    }
+
+    private static void stop(HologramSession s, String reason, Throwable failure, boolean sourceRejected) {
         if (!s.virtual) {
             s.captureError = reason;
-            if (s.capture != null) {
+            if (s.capture != null && !sourceRejected) {
                 if (failure != null) s.capture.noteFailure(failure);
                 s.capture.invalidateSource(
                     failure == null ? "CAPTURE_STOPPED"
@@ -290,7 +294,9 @@ final class HologramControllerCapture {
             }
             work.beginFinish();
         }
-        if (!work.step(s, FINISH_WORK_PER_BATCH, HologramWorkBudget.remainingNanos(HologramWorkBudget.SLICE_NANOS))) {
+        boolean finished = work.step(s, FINISH_WORK_PER_BATCH, HologramWorkBudget.remainingNanos(HologramWorkBudget.SLICE_NANOS));
+        if (work.stopped) return;
+        if (!finished) {
             scheduleCaptureRetry(s);
             return;
         }
@@ -312,7 +318,7 @@ final class HologramControllerCapture {
         private Iterator<String> pinPositions;
         private Iterator<HologramCapture.Cell> manual;
         private HologramResourcePlanner.PlanTask planner;
-        private boolean pinsRetained;
+        private boolean pinsRetained, stopped;
         private int stage, cursor, lastWork;
 
         FinishWork(Map<String, ItemStack> savedPins) {
@@ -346,13 +352,22 @@ final class HologramControllerCapture {
         boolean step(HologramSession s, int maxWork, long maxNanos) {
             if (Thread.currentThread() != owner)
                 throw new IllegalStateException("Capture finalization must stay on its server thread");
+            if (stopped) {
+                lastWork = 0;
+                return false;
+            }
             if (maxWork <= 0 || maxNanos <= 0) {
                 lastWork = 0;
                 return planner != null && planner.done();
             }
             long started = System.nanoTime();
             HologramPlanBudget budget = new HologramPlanBudget(maxWork, maxNanos);
-            s.capture.sourceCurrent(HologramSessionPolicy.trigger(s));
+            if (!s.capture.sourceCurrent(HologramSessionPolicy.trigger(s))) {
+                lastWork = 0;
+                stopped = true;
+                stop(s, "结构采集已停止：" + s.capture.failure + "；请重新读取控制器", null, true);
+                return false;
+            }
             while (stage < 6 && budget.take()) advance(s);
             lastWork = budget.used();
             if (planner == null) return false;

@@ -12,6 +12,32 @@ public final class HologramBackgroundTasksRegression {
 
     private HologramBackgroundTasksRegression() {}
 
+    /** A real server failure packet is supplied by the snapshot publication fixture. */
+    public static void scanFailureAfterCompletedSave(NBTTagCompound failure) {
+        List<HologramTaskOwner.Result> results = new ArrayList<>();
+        HologramTaskOwner owner = new HologramTaskOwner(new HologramTaskOwner.Notifications() {
+
+            @Override
+            public void background(String label) {}
+
+            @Override
+            public void finished(String label, HologramTaskOwner.Result result, String detail) {
+                results.add(result);
+            }
+        });
+        long save = owner.begin("library", "completed-save", "save");
+        SimpleAssert.eq(1L, save, "fixture starts with the previous real library owner token");
+        owner.finish(save, HologramTaskOwner.Result.SUCCESS, "saved");
+        long scan = owner.begin("server", failure.getString("session") + ":" + failure.getLong("uiSequence"), "scan");
+        SimpleAssert.that(scan > save && owner.busy(), "subsequent scan has a distinct current task owner");
+        SimpleAssert.that(
+            owner.failSnapshot(failure, "actual snapshot preparation failure"),
+            "actual scan failure cannot be rejected because it carries a completed library task's token");
+        SimpleAssert.that(!owner.busy(), "failed current scan releases projector ownership");
+        SimpleAssert.eq(HologramTaskOwner.Result.FAILURE, results.get(1), "scan failure is not old save success");
+        SimpleAssert.that(!owner.failSnapshot(failure, "duplicate"), "duplicate actual failure has no second completion");
+    }
+
     public static void run() {
         HologramMaterialOrderLifecycleRegression.run();
         presentationValues();

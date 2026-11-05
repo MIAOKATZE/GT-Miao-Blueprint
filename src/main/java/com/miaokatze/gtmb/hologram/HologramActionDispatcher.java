@@ -52,16 +52,17 @@ final class HologramActionDispatcher {
                 return;
             }
         }
-        // Closing changes presentation only; it must not invalidate an unchanged data snapshot.
-        if (action.hasKey("uiSequence") && !"close".equals(action.getString("op"))
-            && !HologramMaterialWorkflow.lightweight(action.getString("op")))
-            s.uiSequence = action.getLong("uiSequence");
+        // Closing/lightweight commands do not own the full snapshot's presentation sequence.
+        boolean presentationSequence = action.hasKey("uiSequence") && !"close".equals(action.getString("op"))
+            && !HologramMaterialWorkflow.lightweight(action.getString("op"));
+        if (presentationSequence && !action.hasKey("uiSequence", 99)) return;
         long now = player.worldObj.getTotalWorldTime();
         if (s.actionTick != now) {
             s.actionTick = now;
             s.actionCount = 0;
         }
         if (s.actionCount++ >= 8) return;
+        if (presentationSequence) s.uiSequence = action.getLong("uiSequence");
         String op = action.getString("op");
         if ("captureIntent".equals(op) && HologramSessionPolicy.valid(s) && !s.virtual && s.job != 1 && s.job != 2) {
             String intent = action.getString("intent");
@@ -474,7 +475,11 @@ final class HologramActionDispatcher {
             }
             s.job = 1;
             s.status = "继续施工";
-        } else if ("scan".equals(op) && s.job != 1 && s.job != 2) HologramBuildPreparation.scan(s);
+        } else if ("scan".equals(op) && s.job != 1 && s.job != 2) {
+            // A newly accepted server scan owns session/uiSequence, not a completed library save's token.
+            s.blueprintClientTaskToken = 0;
+            HologramBuildPreparation.scan(s);
+        }
         else if ("configure".equals(op) && s.job != 1 && s.job != 2) {
             if (!configure(s, action)) {
                 HologramSnapshots.send(s);

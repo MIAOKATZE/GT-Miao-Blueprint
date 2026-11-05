@@ -55,7 +55,6 @@ public final class HologramControllerCaptureRegression {
             nativePrefix(unsafe);
             finishSlices(unsafe);
             builtProofSlices(unsafe);
-            changedSignal(unsafe);
             lifecycle(unsafe);
             HologramDynamicDefinitionRegression.virtualMemberRebuild(unsafe);
         } catch (ReflectiveOperationException | InterruptedException | java.io.IOException failure) {
@@ -356,20 +355,56 @@ public final class HologramControllerCaptureRegression {
 
     private static void changedSignal(sun.misc.Unsafe unsafe) throws ReflectiveOperationException {
         EntityPlayerMP player = player(unsafe);
+        connect(player);
         HologramSession s = session(player);
+        s.uiSequence = 88;
+        HologramWorkspace.activate(player.getUniqueID(), s);
         HologramControllerCapture.FinishWork work = new HologramControllerCapture.FinishWork(new HashMap<>());
         s.captureWork = work;
         s.capturePending = true;
         work.beginFinish();
         SimpleAssert.that(!work.step(s, 7, Long.MAX_VALUE), "signal fixture yields during candidate resolution");
+        SimpleAssert.eq("capture.candidates", work.phase(), "fixture really retains a pending candidate tail");
+        Field cursor = HologramControllerCapture.FinishWork.class.getDeclaredField("cursor");
+        cursor.setAccessible(true);
+        int next = cursor.getInt(work);
+        int[] callbacks = { 0 };
+        HologramCapture.Cell tripwire = new HologramCapture.Cell(new HologramPureElementsRegression.Leaf(true) {
+
+            @Override
+            public List<ItemStack> candidates() {
+                callbacks[0]++;
+                return super.candidates();
+            }
+        }, next, 64, 0);
+        tripwire.block = Blocks.stone;
+        s.capture.cells.set(next, tripwire);
+        s.capture.positions.put(HologramValues.position(tripwire), tripwire);
         player.getHeldItem()
             .getTagCompound()
             .setInteger("customStructureSignal", 9);
+        // Execute the real next unit without wall-clock flakiness, before the normal owning workflow retires it.
+        work.step(s, 1, Long.MAX_VALUE);
+        SimpleAssert.eq(0, callbacks[0], "known expired source cannot invoke another declaration candidate callback");
         HologramControllerCapture.collect(s, false);
         SimpleAssert.that(s.capture.incomplete, "a real custom signal change rejects the pending plan tail");
         SimpleAssert.eq("SOURCE_TRIGGER_CHANGED", s.capture.failure, "full trigger NBT guard survives finalization");
         SimpleAssert.that(!s.capture.sourceCurrent(), "stale trigger rejection also invalidates the retained source");
         SimpleAssert.that(s.planStatus.isEmpty(), "no classified plan is published for a stale capture");
+        SimpleAssert.that(!s.capturePending && s.captureWork == null, "source rejection retires the pending tail immediately");
+        SimpleAssert.eq(4, s.job, "source rejection reaches the reliable stopped workflow");
+        SimpleAssert.eq("STOPPED", s.phase, "failed source cannot resume through the ordinary retry lane");
+        NBTTagCompound terminal = WIRE.get(WIRE.size() - 1);
+        SimpleAssert.that(terminal.getBoolean("transportError"), "source rejection emits the actual client failure envelope");
+        SimpleAssert.eq("capture.prepare", terminal.getString("errorCode"), "source failure uses the existing capture terminal protocol");
+        SimpleAssert.eq(s.id, terminal.getString("session"), "source terminal belongs to the exact pending session");
+        SimpleAssert.eq(88L, terminal.getLong("uiSequence"), "source terminal retires the exact scan command");
+        int emitted = WIRE.size();
+        work.step(s, 1, Long.MAX_VALUE);
+        SimpleAssert.eq(emitted, WIRE.size(), "retired work cannot emit a second failure or invoke candidates");
+        HologramSnapshots.send(s);
+        SimpleAssert.that(!HologramSnapshotPreparation.pending(s), "source failure does not depend on an invalid normal snapshot");
+        player.playerNetServerHandler.netManager.channel().close();
     }
 
     private static void failedFinalization(sun.misc.Unsafe unsafe) throws ReflectiveOperationException {
@@ -440,6 +475,7 @@ public final class HologramControllerCaptureRegression {
         try {
             channel.set(null, unsafe.allocateInstance(RecordingChannel.class));
             failedFinalization(unsafe);
+            changedSignal(unsafe);
             replacedCapture(unsafe);
             movedController(unsafe);
             invalidatedController(unsafe);

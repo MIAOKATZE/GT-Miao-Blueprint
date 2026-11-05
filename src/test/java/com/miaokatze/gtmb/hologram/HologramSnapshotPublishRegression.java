@@ -292,6 +292,8 @@ public final class HologramSnapshotPublishRegression {
             SimpleAssert.eq(1, accepted.get(), "server stop cannot publish a late ready callback");
 
             paletteNegotiation(player, work);
+            scanFailureAfterCompletedSave(player, work);
+            rejectedActionsPreserveSnapshotOwner(player, work);
             cancelledSaveSourceDoesNotRebuild(player, work);
             retiredPreparations(player, work, accepted);
             failedPlanReopen(player, work);
@@ -315,6 +317,147 @@ public final class HologramSnapshotPublishRegression {
             channel.set(null, previousChannel);
             executor.set(null, previousExecutor);
             WIRE.clear();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void rejectedActionsPreserveSnapshotOwner(EntityPlayerMP player, Queue<Runnable> work)
+        throws ReflectiveOperationException, java.io.IOException {
+        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
+        sessionsField.setAccessible(true);
+        java.util.Map<UUID, HologramSession> sessions = (java.util.Map<UUID, HologramSession>) sessionsField.get(null);
+        HologramSession previous = sessions.get(player.getUniqueID());
+        Field tasksField = HologramSnapshotPreparation.class.getDeclaredField("TASKS");
+        tasksField.setAccessible(true);
+        java.util.Map<HologramSession, ?> tasks = (java.util.Map<HologramSession, ?>) tasksField.get(null);
+        HologramSession session = null;
+        try {
+            HologramNetwork.clearServerQueues();
+            work.clear();
+            WIRE.clear();
+            session = presentationOrigin(player);
+            session.uiSequence = 41;
+            NBTTagCompound saving = new NBTTagCompound();
+            saving.setString("op", "saveBlueprint");
+            saving.setLong("clientTaskToken", 7);
+            HologramLibraryWorkflow.captureClientTaskToken(session, saving);
+            HologramSnapshotPreparation.start(session);
+            Object task = tasks.get(session);
+            java.lang.reflect.Method valid = task.getClass().getDeclaredMethod("valid");
+            valid.setAccessible(true);
+            SimpleAssert.eq(true, valid.invoke(task), "fixture has a genuine current queued preparation");
+            NBTTagCompound action = new NBTTagCompound();
+            action.setString("session", session.id);
+            action.setString("op", "scan");
+            action.setLong("uiSequence", 42);
+            session.actionTick = player.worldObj.getTotalWorldTime();
+            session.actionCount = 8;
+            HologramActionDispatcher.handle(player, action);
+            SimpleAssert.eq(9, session.actionCount, "ninth command reaches the actual per-tick rate rejection");
+            SimpleAssert.eq(41L, session.uiSequence, "rate-rejected command cannot replace the accepted UI sequence");
+            SimpleAssert.eq(7L, session.blueprintClientTaskToken, "rate-rejected scan cannot clear an active library token");
+            SimpleAssert.that(tasks.get(session) == task, "rate rejection retains the queued task identity");
+            SimpleAssert.eq(true, valid.invoke(task), "rate rejection cannot invalidate the accepted snapshot owner");
+
+            session.actionCount = 0;
+            action.setString("op", "cancelSourceSwitch");
+            action.setString("uiSequence", "not-a-long");
+            HologramActionDispatcher.handle(player, action);
+            SimpleAssert.eq(41L, session.uiSequence, "wrong-type request cannot reset the accepted sequence to zero");
+            SimpleAssert.eq(7L, session.blueprintClientTaskToken, "malformed request cannot clear library ownership");
+            SimpleAssert.that(tasks.get(session) == task, "malformed identity cannot restart a current preparation");
+            SimpleAssert.eq(true, valid.invoke(task), "malformed identity leaves the original snapshot owner valid");
+            for (String ignored : new String[] { "close", "setDecorativeVoucher" }) {
+                session.actionCount = 8;
+                action.setString("op", ignored);
+                HologramActionDispatcher.handle(player, action);
+                SimpleAssert.eq(9, session.actionCount, "close/lightweight retain their ignored UI-sequence contract");
+                SimpleAssert.eq(41L, session.uiSequence, "ignored malformed identity cannot mutate presentation");
+                SimpleAssert.eq(7L, session.blueprintClientTaskToken, "close/lightweight do not steal library ownership");
+            }
+            session.actionCount = 0;
+            action.setString("op", "cancelSourceSwitch");
+            action.setInteger("uiSequence", 43);
+            HologramActionDispatcher.handle(player, action);
+            SimpleAssert.eq(43L, session.uiSequence, "legacy numeric sequence retains getLong conversion compatibility");
+            SimpleAssert.eq(7L, session.blueprintClientTaskToken, "source-review control retains the save token");
+            session.actionCount = 0;
+            action.setString("op", "confirmAeSave");
+            action.setLong("uiSequence", 44);
+            action.setLong("clientTaskToken", 7);
+            HologramActionDispatcher.handle(player, action);
+            SimpleAssert.eq(7L, session.blueprintClientTaskToken, "AE save continuation retains its original library owner even when review is unavailable");
+        } finally {
+            if (session != null) HologramSnapshotPreparation.cancel(session);
+            HologramNetwork.clearServerQueues();
+            work.clear();
+            WIRE.clear();
+            if (previous == null) sessions.remove(player.getUniqueID());
+            else sessions.put(player.getUniqueID(), previous);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void scanFailureAfterCompletedSave(EntityPlayerMP player, Queue<Runnable> work)
+        throws ReflectiveOperationException, java.io.IOException {
+        Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
+        sessionsField.setAccessible(true);
+        java.util.Map<UUID, HologramSession> sessions = (java.util.Map<UUID, HologramSession>) sessionsField.get(null);
+        HologramSession previous = sessions.get(player.getUniqueID());
+        HologramSession session = null;
+        try {
+            HologramNetwork.clearServerQueues();
+            work.clear();
+            WIRE.clear();
+            session = presentationOrigin(player);
+            NBTTagCompound saved = new NBTTagCompound();
+            saved.setString("op", "saveBlueprint");
+            saved.setLong("clientTaskToken", 1);
+            HologramLibraryWorkflow.captureClientTaskToken(session, saved);
+            SimpleAssert.eq(1L, session.blueprintClientTaskToken, "previous save request established its own token");
+            NBTTagCompound scan = new NBTTagCompound();
+            scan.setString("session", session.id);
+            scan.setString("op", "scan");
+            scan.setLong("uiSequence", 90);
+            session.actionTick = player.worldObj.getTotalWorldTime();
+            session.actionCount = 0;
+            HologramActionDispatcher.handle(player, scan);
+            SimpleAssert.eq(90L, session.uiSequence, "real subsequent scan is admitted without a library token");
+            SimpleAssert.eq(0L, session.blueprintClientTaskToken, "only the newly accepted scan clears the prior library token");
+            Field tasksField = HologramSnapshotPreparation.class.getDeclaredField("TASKS");
+            tasksField.setAccessible(true);
+            Object task = ((java.util.Map<?, ?>) tasksField.get(null)).get(session);
+            SimpleAssert.that(task != null, "scan created its actual full-snapshot reservation");
+            Field token = task.getClass().getDeclaredField("clientTask");
+            token.setAccessible(true);
+            long failureToken = token.getLong(task);
+            // Exercise the real error publisher using identity frozen by that actual preparation, not a fabricated packet.
+            HologramSnapshotPreparation.cancel(session);
+            HologramNetwork.transportFailure(
+                player, session.id, session.uiSequence, "snapshot.prepare", failureToken,
+                new java.io.IOException("fixture preparation failure"));
+            IMessage message = WIRE.get(WIRE.size() - 1);
+            SimpleAssert.that(message instanceof HologramNetwork.State, "failure traverses the actual State envelope");
+            ByteBuf bytes = Unpooled.buffer();
+            try {
+                message.toBytes(bytes);
+                HologramNetwork.State decoded = new HologramNetwork.State();
+                decoded.fromBytes(bytes);
+                SimpleAssert.that(decoded.tag.getBoolean("transportError"), "actual error codec retains transport failure");
+                SimpleAssert.eq(session.id, decoded.tag.getString("session"), "error retains exact scan session");
+                SimpleAssert.eq(90L, decoded.tag.getLong("uiSequence"), "error retains exact scan request");
+                SimpleAssert.that(!decoded.tag.hasKey("clientTaskToken"), "server scan failure does not claim a library task token");
+                com.miaokatze.gtmb.client.hologram.HologramBackgroundTasksRegression.scanFailureAfterCompletedSave(decoded.tag);
+            } finally {
+                bytes.release();
+            }
+        } finally {
+            if (session != null) HologramSnapshotPreparation.cancel(session);
+            HologramNetwork.clearServerQueues();
+            work.clear();
+            WIRE.clear();
+            if (previous == null) sessions.remove(player.getUniqueID());
+            else sessions.put(player.getUniqueID(), previous);
         }
     }
 

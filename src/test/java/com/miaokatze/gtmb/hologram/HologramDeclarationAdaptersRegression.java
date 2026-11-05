@@ -196,6 +196,7 @@ final class HologramDeclarationAdaptersRegression {
             writer.visit(Opcodes.V1_8, Opcodes.ACC_PUBLIC, internal, null, "java/lang/Object", null);
             String signature = "(L" + MISSING + ";)Ljava/lang/Object;";
             if (CHILD.equals(internal)) writer.visitOuterClass(OWNER, "factory", signature);
+            writer.visitInnerClass(CHILD, null, "Element", 0);
             MethodVisitor init = writer.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
             init.visitCode();
             init.visitVarInsn(Opcodes.ALOAD, 0);
