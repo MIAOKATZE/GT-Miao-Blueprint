@@ -321,7 +321,9 @@ final class HologramStructureProjection {
         row.setInteger("meta", actualMeta);
         row.setString("wantId", wanted == null ? "" : String.valueOf(Block.blockRegistry.getNameForObject(wanted)));
         row.setInteger("wantMeta", wantedMeta);
-        row.setBoolean("missingBlock", wanted == null);
+        row.setBoolean(
+            "missingBlock",
+            wanted == null || target == null && wanted == com.gtnewhorizon.structurelib.StructureLibAPI.getBlockHint());
         row.setString(
             "renderKind",
             target != null && target.getItem() instanceof gregtech.common.blocks.ItemMachines || cell.anchor ? "item"

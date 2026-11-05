@@ -24,6 +24,8 @@ import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 import com.mojang.authlib.GameProfile;
 
+import gregtech.api.GregTechAPI;
+
 /** Native continuation work counts and candidate/plan tail parity on the owning server thread. */
 public final class HologramControllerCaptureRegression {
 
@@ -56,6 +58,7 @@ public final class HologramControllerCaptureRegression {
             nativePrefix(unsafe);
             finishSlices(unsafe);
             projectionFactories(unsafe);
+            presetActions(unsafe);
             builtProofSlices(unsafe);
             lifecycle(unsafe);
             HologramDynamicDefinitionRegression.virtualMemberRebuild(unsafe);
@@ -445,6 +448,7 @@ public final class HologramControllerCaptureRegression {
                 verified++;
             }
             SimpleAssert.eq(elements.size(), verified, "the native projection tests every declaration family fixture");
+            projectionMarkerBoundary(s, uninitialized);
             s.mode = 1;
             HologramResourcePlanner.PlanTask replacement = HologramResourcePlanner.beginCapturePlan(s);
             replacement.step(1, Long.MAX_VALUE);
@@ -535,6 +539,163 @@ public final class HologramControllerCaptureRegression {
         } catch (java.io.IOException expected) {
             SimpleAssert.that(expected.getMessage() != null, message);
         }
+    }
+
+    private static void projectionMarkerBoundary(HologramSession s,
+        com.gtnewhorizon.structurelib.structure.IStructureElement<?> unknown) throws ReflectiveOperationException {
+        Field marker = com.gtnewhorizon.structurelib.StructureLib.class.getDeclaredField("blockHint");
+        marker.setAccessible(true);
+        Object previous = marker.get(null);
+        marker.set(null, Blocks.glass);
+        try {
+            for (int index = 0; index < s.capture.cells.size(); index++) {
+                HologramCapture.Cell cell = s.capture.cells.get(index);
+                if (cell.element != unknown) continue;
+                net.minecraft.block.Block block = cell.block;
+                String role = cell.role;
+                int hint = cell.hintIndex, metadata = cell.meta;
+                try {
+                    cell.block = Blocks.glass;
+                    cell.meta = 2;
+                    cell.role = "hatch";
+                    cell.hintIndex = 2;
+                    NBTTagCompound row = HologramStructureProjection.row(s, cell, index);
+                    SimpleAssert.that(row.getBoolean("missingBlock") && !row.hasKey("targetStack", 10),
+                        "a numeric hint without a real target remains an unresolved material observation");
+                    SimpleAssert.that("minecraft:glass".equals(row.getString("wantId"))
+                        && row.getInteger("wantMeta") == 2 && row.getInteger("hintIndex") == 2,
+                        "an unresolved numeric hint retains its visible native placeholder");
+                } finally {
+                    cell.block = block;
+                    cell.meta = metadata;
+                    cell.role = role;
+                    cell.hintIndex = hint;
+                }
+                return;
+            }
+            throw new AssertionError("missing unresolved declaration fixture");
+        } finally {
+            marker.set(null, previous);
+        }
+    }
+
+    private static void presetActions(sun.misc.Unsafe unsafe) throws ReflectiveOperationException {
+        int energyId = 32740, mufflerId = 32741;
+        net.minecraft.block.Block previousBlock = GregTechAPI.sBlockMachines;
+        gregtech.api.interfaces.metatileentity.IMetaTileEntity previousEnergy = GregTechAPI.METATILEENTITIES[energyId],
+            previousMuffler = GregTechAPI.METATILEENTITIES[mufflerId];
+        Field channel = HologramNetwork.class.getDeclaredField("channel");
+        channel.setAccessible(true);
+        Object previousChannel = channel.get(null);
+        try {
+            channel.set(null, null);
+            net.minecraft.block.Block machines = net.minecraft.block.Block.getBlockFromName("gtmb:preset_action_fixture");
+            if (machines == null) {
+                machines = new net.minecraft.block.Block(net.minecraft.block.material.Material.iron) {};
+                int id = 3899;
+                while (net.minecraft.block.Block.getBlockById(id) != null
+                    && net.minecraft.block.Block.getBlockById(id) != Blocks.air
+                    || net.minecraft.item.Item.getItemById(id) != null) id--;
+                net.minecraft.block.Block.blockRegistry.addObject(id, "gtmb:preset_action_fixture", machines);
+                net.minecraft.item.Item.itemRegistry.addObject(
+                    id, "gtmb:preset_action_fixture", new gregtech.common.blocks.ItemMachines(machines));
+            }
+            GregTechAPI.sBlockMachines = machines;
+            GregTechAPI.METATILEENTITIES[energyId] = (gregtech.api.interfaces.metatileentity.IMetaTileEntity) unsafe
+                .allocateInstance(gregtech.api.metatileentity.implementations.MTEHatchEnergy.class);
+            GregTechAPI.METATILEENTITIES[mufflerId] = (gregtech.api.interfaces.metatileentity.IMetaTileEntity) unsafe
+                .allocateInstance(gregtech.api.metatileentity.implementations.MTEHatchMuffler.class);
+            for (int id : new int[] { energyId, mufflerId }) {
+                gregtech.api.metatileentity.BaseMetaTileEntity base = (gregtech.api.metatileentity.BaseMetaTileEntity) unsafe
+                    .allocateInstance(gregtech.api.metatileentity.BaseMetaTileEntity.class);
+                base.setMetaTileID((short) id);
+                GregTechAPI.METATILEENTITIES[id].setBaseMetaTileEntity(base);
+            }
+            ItemStack energy = new ItemStack(machines, 1, energyId), muffler = new ItemStack(machines, 1, mufflerId);
+            Map<gregtech.api.interfaces.IHatchElement<?>, Integer> quotas = new java.util.LinkedHashMap<>();
+            quotas.put(gregtech.api.enums.HatchElement.Energy, 2);
+            quotas.put(gregtech.api.enums.HatchElement.Muffler, 1);
+            java.lang.reflect.Method fixture = HologramSemanticSafetyRegression.class.getDeclaredMethod(
+                "presetSession", sun.misc.Unsafe.class, Map.class, ItemStack[].class);
+            fixture.setAccessible(true);
+            HologramSession s = (HologramSession) fixture.invoke(null, unsafe, quotas, new ItemStack[] { energy, muffler });
+            s.player.posY = 64;
+            HologramDynamicDefinitionRegression.DynamicController machine = new HologramDynamicDefinitionRegression.DynamicController();
+            HologramDynamicDefinitionRegression.NativeTile base = (HologramDynamicDefinitionRegression.NativeTile) unsafe
+                .allocateInstance(HologramDynamicDefinitionRegression.NativeTile.class);
+            base.setWorldObj(s.player.worldObj);
+            machine.setBaseMetaTileEntity(base);
+            s.machine = machine;
+            s.context = machine;
+            for (HologramCapture.Cell cell : s.capture.cells)
+                s.capture.positions.put(HologramValues.position(cell), cell);
+            s.pins.put(2, energy.copy());
+            s.coordinatePins.put(HologramValues.position(s.capture.cells.get(2)), energy.copy());
+            HologramResourcePlanner.refreshPlan(s);
+            SimpleAssert.that(s.presetSupported && s.autoTargets.size() == 2,
+                "native action fixture starts with two autos alongside the manual energy target");
+            HologramWorkspace.activate(s.player.getUniqueID(), s);
+            int facing = HologramCellPolicy.legalFacings(s, s.capture.cells.get(0), energy)[0];
+            NBTTagCompound action = presetAction(s, "hatchFacing");
+            action.setInteger("selected", 0);
+            action.setInteger("facing", facing);
+            HologramActionDispatcher.handle(s.player, action);
+            SimpleAssert.that(s.allocationsFrozen && s.frozenAutoTargets.size() == 2,
+                "the real facing edit freezes the current native allocation");
+            Map<Integer, ItemStack> before = new HashMap<>(s.autoTargets);
+            Map<String, Integer> facings = new HashMap<>(s.facingPins);
+            action = presetAction(s, "hatchPreset");
+            action.setInteger("tier", -1);
+            HologramActionDispatcher.handle(s.player, action);
+            SimpleAssert.that(s.allocationsFrozen && s.frozenAutoTargets.size() == 2,
+                "an invalid preset tier cannot retire the user's frozen allocation");
+            HologramActionDispatcher.handle(s.player, presetAction(s, "clearHatchPreset"));
+            SimpleAssert.that(!s.allocationsFrozen && s.frozenAutoTargets.isEmpty() && s.autoTargets.isEmpty(),
+                "the clear action cannot refill automatic targets from the old frozen allocation");
+            SimpleAssert.that(HologramValues.same(s.pins.get(2), energy) && s.facingPins.equals(facings),
+                "clearing the preset retains manual targets and facing pins");
+            HologramActionDispatcher.handle(s.player, presetAction(s, "editUndo"));
+            SimpleAssert.eq(before.keySet(), s.autoTargets.keySet(), "undo restores exact automatic positions");
+            for (int index : before.keySet()) SimpleAssert.that(
+                HologramValues.same(before.get(index), s.autoTargets.get(index)),
+                "undo restores each original automatic material identity");
+            SimpleAssert.that(s.allocationsFrozen && s.facingPins.equals(facings),
+                "undo keeps the restored allocation frozen with its original facings");
+            java.util.List<ItemStack> candidates = HologramCellPolicy.candidates(s, s.capture.cells.get(0));
+            int choice = -1;
+            for (int i = 0; i < candidates.size(); i++)
+                if (HologramValues.same(candidates.get(i), muffler)) choice = i;
+            SimpleAssert.that(choice >= 0, "the native declaration exposes the replacement manual muffler");
+            action = presetAction(s, "pin");
+            action.setInteger("selected", 0);
+            action.setInteger("choiceindex", choice);
+            HologramActionDispatcher.handle(s.player, action);
+            SimpleAssert.that(HologramValues.same(s.pins.get(0), muffler), "the real pin action owns the former auto slot");
+            action = presetAction(s, "hatchPreset");
+            action.setInteger("tier", 0);
+            HologramActionDispatcher.handle(s.player, action);
+            SimpleAssert.that(s.presetSupported && !s.allocationsFrozen && s.frozenAutoTargets.isEmpty()
+                && s.autoTargets.size() == 1 && HologramValues.same(s.autoTargets.get(1), energy),
+                "regenerating the preset reallocates the remaining energy quota around both manual pins");
+            SimpleAssert.that(HologramValues.same(s.pins.get(0), muffler)
+                && HologramValues.same(s.pins.get(2), energy) && s.facingPins.equals(facings),
+                "regeneration preserves manual ownership and facing selections");
+        } finally {
+            HologramWorkspace.clear();
+            channel.set(null, previousChannel);
+            GregTechAPI.sBlockMachines = previousBlock;
+            GregTechAPI.METATILEENTITIES[energyId] = previousEnergy;
+            GregTechAPI.METATILEENTITIES[mufflerId] = previousMuffler;
+        }
+    }
+
+    private static NBTTagCompound presetAction(HologramSession s, String operation) {
+        NBTTagCompound action = new NBTTagCompound();
+        action.setString("session", s.id);
+        action.setString("op", operation);
+        action.setLong("planRevision", s.planRevision);
+        action.setLong("uiSequence", s.uiSequence + 1);
+        return action;
     }
 
     private static final class ProjectionProxy extends com.gtnewhorizon.structurelib.CommonProxy {

@@ -356,10 +356,6 @@ final class HologramActionDispatcher {
                     HologramLocalPlanRefresh.sparseOperation(s, op) ? HologramLocalPlanRefresh.selected(s, action)
                         : null)
                 : null;
-        if (s.job != 1 && s.job != 2 && ("hatchPreset".equals(op) || "clearHatchPreset".equals(op))) {
-            s.allocationsFrozen = false;
-            s.frozenAutoTargets.clear();
-        }
         if (s.virtual && beforeEdit != null
             && !HologramBlueprintEditor.isCellEdit(op)
             && !"hatchPreset".equals(op)
@@ -614,6 +610,8 @@ final class HologramActionDispatcher {
             if (tier < 0 || tier >= gregtech.api.enums.GTValues.VN.length || s.capture == null || s.capture.incomplete)
                 s.status = "电压等级或完整结构无效";
             else {
+                s.allocationsFrozen = false;
+                s.frozenAutoTargets.clear();
                 s.hatchTier = tier;
                 s.hatchDowngrade = action.getBoolean("downgrade");
                 s.presetEnabled = true;
@@ -626,6 +624,8 @@ final class HologramActionDispatcher {
                 s.status = s.presetReason;
             }
         } else if ("clearHatchPreset".equals(op) && s.job != 1 && s.job != 2) {
+            s.allocationsFrozen = false;
+            s.frozenAutoTargets.clear();
             s.presetEnabled = false;
             s.presetPaused = true;
             s.autoTargets.clear();
