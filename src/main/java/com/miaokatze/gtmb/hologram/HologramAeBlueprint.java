@@ -374,9 +374,7 @@ public final class HologramAeBlueprint {
 
     /** Recognition is broader than restoration. Unknown AE hosts receive a safe shell and an explicit blocker. */
     public static boolean supports(Block block) {
-        return HologramNetworkBindings.node(block) || block != null && block.getClass()
-            .getName()
-            .startsWith("appeng.block.");
+        return NativeAdapter.recognizes(block);
     }
 
     /** Static AE decoration has no native tile to restore, including canonical transport-only shell metadata. */
@@ -387,18 +385,12 @@ public final class HologramAeBlueprint {
     }
 
     public static boolean supports(Block block, NBTTagCompound payload) {
-        if (supports(block)) return true;
-        if (payload == null || !payloadCanEnableSupport(block)) return false;
-        NBTTagList parts = payload.getTagList("parts", 10);
-        for (int i = 0; i < parts.tagCount(); i++) if (isAeMultipartPart(parts.getCompoundTagAt(i))) return true;
-        return false;
+        return NativeAdapter.recognizes(block, payload);
     }
 
     /** The only host whose AE recognition depends on serialized parts rather than its own block identity. */
     static boolean payloadCanEnableSupport(Block block) {
-        return block != null && block.getClass()
-            .getName()
-            .equals("codechicken.multipart.BlockMultipart");
+        return NativeAdapter.payloadHost(block);
     }
 
     /** Exact FMP serialized part discriminator; callers must establish the BlockMultipart host first. */
@@ -420,9 +412,33 @@ public final class HologramAeBlueprint {
     /** Register after the legacy Builtin so this provider owns reviewed ordinary AE blocks and CableBus. */
     public static final class NativeAdapter implements HologramNativePlacement.Adapter {
 
+        /** Pure identity gate; ordinary projection must not initialize the outer AE schema table. */
+        static boolean recognizes(Block block) {
+            return HologramNetworkBindings.node(block) || block != null && block.getClass()
+                .getName()
+                .startsWith("appeng.block.");
+        }
+
+        static boolean payloadHost(Block block) {
+            return block != null && block.getClass()
+                .getName()
+                .equals("codechicken.multipart.BlockMultipart");
+        }
+
+        static boolean recognizes(Block block, NBTTagCompound payload) {
+            if (recognizes(block)) return true;
+            if (payload == null || !payloadHost(block)) return false;
+            NBTTagList parts = payload.getTagList("parts", 10);
+            for (int i = 0; i < parts.tagCount(); i++)
+                if (parts.getCompoundTagAt(i)
+                    .getString("id")
+                    .equals("ae2_cablebus")) return true;
+            return false;
+        }
+
         @Override
         public boolean supports(Block block) {
-            if (!HologramAeBlueprint.supports(block)) return false;
+            if (!recognizes(block)) return false;
             if (HologramNetworkBindings.node(block)) return true;
             if (block.getClass()
                 .getName()

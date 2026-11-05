@@ -31,6 +31,7 @@ public final class HologramAeProtocolRegression {
 
     public static void run() {
         try {
+            nativeRecognitionBoundary();
             reviewIdentityAndImmutability();
             previewIdentityAndReplay();
             rateAndBounds();
@@ -44,6 +45,42 @@ public final class HologramAeProtocolRegression {
         } catch (Exception failure) {
             throw new AssertionError("AE protocol/canonical persistence regression", failure);
         }
+    }
+
+    private static void nativeRecognitionBoundary() throws Exception {
+        HologramAeBlueprint.NativeAdapter adapter = new HologramAeBlueprint.NativeAdapter();
+        SimpleAssert.that(!adapter.supports(Blocks.stone) && !adapter.supports(null), "native AE adapter rejects ordinary and absent hosts");
+        Block ae = fixture(), multipart = HologramSnapshotAeTaskRegression.host("codechicken.multipart.BlockMultipart");
+        NBTTagCompound payload = new NBTTagCompound(), part = new NBTTagCompound();
+        part.setString("id", "ae2_cablebus");
+        NBTTagList parts = new NBTTagList();
+        parts.appendTag(part);
+        payload.setTag("parts", parts);
+        NBTTagCompound before = (NBTTagCompound) payload.copy();
+        SimpleAssert.that(HologramAeBlueprint.NativeAdapter.recognizes(ae), "existing AE namespace remains recognized");
+        SimpleAssert.that(
+            HologramAeBlueprint.NativeAdapter.recognizes(multipart, payload),
+            "only the genuine multipart host can gain AE recognition from serialized AE parts");
+        SimpleAssert.that(
+            !HologramAeBlueprint.NativeAdapter.recognizes(Blocks.stone, payload)
+                && !HologramAeBlueprint.NativeAdapter.recognizes(null, payload)
+                && !HologramAeBlueprint.NativeAdapter.recognizes(multipart, null)
+                && !HologramAeBlueprint.NativeAdapter.recognizes(multipart, new NBTTagCompound()),
+            "ordinary, absent and empty multipart hosts do not acquire AE recognition");
+        for (Block block : new Block[] { null, Blocks.stone, ae, multipart })
+            for (NBTTagCompound data : new NBTTagCompound[] { null, new NBTTagCompound(), payload })
+                SimpleAssert.eq(
+                    HologramAeBlueprint.supports(block, data),
+                    HologramAeBlueprint.NativeAdapter.recognizes(block, data),
+                    "pure native gate retains the public AE recognition contract");
+        SimpleAssert.that(
+            HologramAePolicy.handles(multipart, HologramBlueprintNbt.encodeCanonical(payload))
+                && !HologramAePolicy.handles(Blocks.stone, HologramBlueprintNbt.encodeCanonical(payload))
+                && !HologramAePolicy.handles(multipart, ""),
+            "encoded policy keeps multipart recognition and ordinary/empty rejection");
+        rejects(() -> HologramAePolicy.handles(Blocks.stone, "%%%not-base64%%%"), "ordinary host still validates malformed retained NBT before rejection");
+        rejects(() -> HologramAePolicy.handles(null, "%%%not-base64%%%"), "absent host still validates malformed retained NBT before rejection");
+        SimpleAssert.that(payload.equals(before), "recognition never changes retained multipart contents");
     }
 
     private static void reviewIdentityAndImmutability() throws Exception {

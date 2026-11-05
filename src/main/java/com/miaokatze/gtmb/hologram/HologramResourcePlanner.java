@@ -101,9 +101,14 @@ final class HologramResourcePlanner {
     }
 
     private static void resetPlan(HologramSession s) {
+        resetPlan(s, true);
+    }
+
+    private static void resetPlan(HologramSession s, boolean verifyReplacement) {
         s.ae.invalidate();
         s.replacementAuthorized = false;
-        s.replacementReady = !HologramSessionPolicy.authoring(s) && HologramPlanPolicy.replacementStructureBuilt(s);
+        s.replacementReady = verifyReplacement && !HologramSessionPolicy.authoring(s)
+            && HologramPlanPolicy.replacementStructureBuilt(s);
         s.job = 0;
         s.cursor = 0;
         s.completed = 0;
@@ -167,6 +172,7 @@ final class HologramResourcePlanner {
     static final class PlanTask {
 
         private final HologramSession s;
+        private final HologramCapture capture;
         private final Thread owner = Thread.currentThread();
         private final List<int[]> geometry = new ArrayList<>();
         private HologramVirtualAllocationTask allocation;
@@ -175,16 +181,21 @@ final class HologramResourcePlanner {
         private HologramPlanClassifier classifier;
         private PresetTask preset;
         private int stage, cursor, lastWork;
-        private boolean needsExterior;
+        private boolean needsExterior, structureFound;
         private java.util.Set<String> outside = Collections.emptySet();
 
         private PlanTask(HologramSession s) {
             this.s = s;
+            capture = s.capture;
         }
 
         boolean step(int maxWork, long maxNanos) {
             if (Thread.currentThread() != owner)
                 throw new IllegalStateException("Planning must stay on its main thread");
+            if (s.capture != capture || stage == 12 && !capture.sourceCurrent(HologramSessionPolicy.trigger(s))) {
+                s.replacementReady = false;
+                throw new IllegalStateException("Planning capture source changed");
+            }
             long measured = HologramRuntimeMetrics.start();
             long now = System.nanoTime();
             long available = maxNanos == Long.MAX_VALUE ? Long.MAX_VALUE
@@ -217,7 +228,8 @@ final class HologramResourcePlanner {
                     : stage == 3 ? "facing.cells"
                         : stage == 5 ? "facing.choose"
                             : stage == 6 ? "plan.targets"
-                                : stage == 7 ? "plan.classify" : stage == 10 ? "plan.index" : "plan.complete";
+                                : stage == 7 ? "plan.classify"
+                                    : stage == 10 ? "plan.index" : stage == 12 ? "plan.structure" : "plan.complete";
         }
 
         long completed() {
@@ -238,7 +250,7 @@ final class HologramResourcePlanner {
 
         private void advance() {
             if (stage == 0) {
-                resetPlan(s);
+                resetPlan(s, false);
                 if (s.capture == null) {
                     stage = 9;
                     return;
@@ -250,6 +262,24 @@ final class HologramResourcePlanner {
                 }
                 if (!HologramSessionPolicy.authoring(s)) classifier = new HologramPlanClassifier(s);
                 s.cellIndices.clear();
+                stage = !s.virtual && s.machine != null && s.target != null && !capture.pending
+                    && !capture.incomplete ? 12 : 10;
+            } else if (stage == 12) {
+                // The synchronous preflight keeps its whole-structure contract; this task proves one cell per unit.
+                if (cursor < capture.cells.size()) {
+                    int built = HologramPlanPolicy.replacementCellBuilt(s, capture.cells.get(cursor++));
+                    if (built >= 0) {
+                        structureFound |= built > 0;
+                        return;
+                    }
+                } else {
+                    if (!capture.sourceCurrent(HologramSessionPolicy.trigger(s))) {
+                        s.replacementReady = false;
+                        throw new IllegalStateException("Planning capture source changed");
+                    }
+                    s.replacementReady = structureFound;
+                }
+                cursor = 0;
                 stage = 10;
             } else if (stage == 10) {
                 if (cursor < s.capture.cells.size()) {

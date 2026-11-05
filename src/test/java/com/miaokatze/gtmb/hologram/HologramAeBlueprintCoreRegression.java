@@ -90,6 +90,7 @@ public final class HologramAeBlueprintCoreRegression {
 
     private static void payloadRecognitionBoundary(Block drive) {
         Block multipart = registeredBlock("codechicken.multipart.BlockMultipart");
+        Block node = registeredBlock(HologramNetworkBindings.NODE_BLOCK);
         NBTTagCompound payload = new NBTTagCompound(), part = new NBTTagCompound();
         part.setString("id", "ae2_cablebus");
         NBTTagList parts = new NBTTagList();
@@ -106,6 +107,14 @@ public final class HologramAeBlueprintCoreRegression {
                 && !HologramAeBlueprint.supports(net.minecraft.init.Blocks.stone, payload),
             "the same serialized parts do not turn an ordinary host into AE");
         check(HologramAeBlueprint.supports(drive), "registered AE blocks retain identity-based full analysis");
+        check(
+            HologramAeBlueprint.NativeAdapter.recognizes(node) && HologramAeBlueprint.supports(node)
+                && new HologramAeBlueprint.NativeAdapter().supports(node),
+            "registered GTSWN node retains the same native AE recognition without schema lookup");
+        check(
+            HologramAeBlueprint.NativeAdapter.recognizes(multipart, payload)
+                && !HologramAeBlueprint.NativeAdapter.recognizes(net.minecraft.init.Blocks.stone, payload),
+            "pure native recognition preserves the real FMP-only payload boundary");
     }
 
     private static void nativeStaticMaterialIdentity() throws Exception {

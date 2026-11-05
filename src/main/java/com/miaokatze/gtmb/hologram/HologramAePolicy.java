@@ -22,7 +22,7 @@ final class HologramAePolicy {
     private HologramAePolicy() {}
 
     static boolean handles(Block block, String encoded) throws IOException {
-        return HologramAeBlueprint.supports(block, HologramBlueprintNbt.decode(encoded));
+        return HologramAeBlueprint.NativeAdapter.recognizes(block, HologramBlueprintNbt.decode(encoded));
     }
 
     /** Gson DTO: schema fields only; never contains original device/cell NBT. Coordinates are local on disk. */

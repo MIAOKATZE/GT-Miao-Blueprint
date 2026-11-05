@@ -19,6 +19,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 
 import com.gtnewhorizon.structurelib.structure.StructureUtility;
+import com.miaokatze.gtmb.api.Declarations;
 import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 import com.mojang.authlib.GameProfile;
@@ -53,6 +54,7 @@ public final class HologramControllerCaptureRegression {
             sun.misc.Unsafe unsafe = (sun.misc.Unsafe) field.get(null);
             nativePrefix(unsafe);
             finishSlices(unsafe);
+            builtProofSlices(unsafe);
             changedSignal(unsafe);
             lifecycle(unsafe);
             HologramDynamicDefinitionRegression.virtualMemberRebuild(unsafe);
@@ -248,6 +250,104 @@ public final class HologramControllerCaptureRegression {
         field.setAccessible(true);
         field.set(capture, cells);
         return cells;
+    }
+
+    private static HologramSession proofSession(sun.misc.Unsafe unsafe, ProofLeaf leaf)
+        throws ReflectiveOperationException {
+        HologramSession s = session(player(unsafe));
+        HologramDynamicDefinitionRegression.NativeTile tile = (HologramDynamicDefinitionRegression.NativeTile) unsafe
+            .allocateInstance(HologramDynamicDefinitionRegression.NativeTile.class);
+        tile.setWorldObj(s.player.worldObj);
+        s.target = tile;
+        s.machine = new HologramDynamicDefinitionRegression.DynamicController();
+        s.machine.setBaseMetaTileEntity(tile);
+        s.capture.cells.clear();
+        s.capture.positions.clear();
+        for (int i = 0; i < 257; i++) {
+            HologramCapture.Cell cell = new HologramCapture.Cell(leaf, i, 64, 0);
+            cell.anchor = i == 0;
+            cell.block = Blocks.air;
+            s.capture.cells.add(cell);
+            s.capture.positions.put(HologramValues.position(cell), cell);
+        }
+        return s;
+    }
+
+    private static void builtProofSlices(sun.misc.Unsafe unsafe) throws ReflectiveOperationException {
+        ProofLeaf leaf = new ProofLeaf();
+        HologramSession s = proofSession(unsafe, leaf);
+        s.replacementReady = s.replacementAuthorized = true;
+        HologramResourcePlanner.PlanTask task = HologramResourcePlanner.beginCapturePlan(s);
+        SimpleAssert.that(!task.step(1, Long.MAX_VALUE), "initialization cannot finish a native plan");
+        SimpleAssert.eq(0, leaf.calls, "initial plan unit does not scan the complete original structure");
+        SimpleAssert.eq("plan.structure", task.phase(), "native built proof has an explicit continuation phase");
+        SimpleAssert.that(!s.replacementReady && !s.replacementAuthorized, "partial proof grants no replacement authority");
+        SimpleAssert.that(!task.step(7, 0), "zero time cannot advance native built proof");
+        SimpleAssert.eq(0, leaf.calls, "zero proof time performs no native declaration reads");
+        int slices = 0;
+        while ("plan.structure".equals(task.phase()) && slices++ < 1000) {
+            int before = leaf.calls;
+            task.step(3, Long.MAX_VALUE);
+            SimpleAssert.that(leaf.calls - before <= 3, "one proof slice reads at most its assigned cell units");
+            if ("plan.structure".equals(task.phase()))
+                SimpleAssert.that(!s.replacementReady, "successful prefix cannot publish a whole-structure proof");
+        }
+        SimpleAssert.that(slices > 80 && slices < 1000, "complete native proof yields over many slices");
+        SimpleAssert.eq(256, leaf.calls, "proof examines every non-anchor once");
+        SimpleAssert.eq(
+            HologramPlanPolicy.replacementStructureBuilt(s),
+            s.replacementReady,
+            "incremental proof equals the unchanged synchronous replacement preflight");
+        SimpleAssert.that(s.replacementReady && !s.replacementAuthorized, "complete proof does not authorize replacement");
+
+        ProofLeaf rejected = new ProofLeaf();
+        rejected.failAt = 11;
+        HologramSession bad = proofSession(unsafe, rejected);
+        HologramResourcePlanner.PlanTask badTask = HologramResourcePlanner.beginCapturePlan(bad);
+        badTask.step(1, Long.MAX_VALUE);
+        for (int i = 0; i < 20 && "plan.structure".equals(badTask.phase()); i++) badTask.step(2, Long.MAX_VALUE);
+        SimpleAssert.eq(11, rejected.calls, "negative proof stops at the first unsupported original member");
+        SimpleAssert.that(!bad.replacementReady && !bad.replacementAuthorized, "negative proof cannot grant authority");
+        rejected.calls = 0;
+        SimpleAssert.that(!HologramPlanPolicy.replacementStructureBuilt(bad), "synchronous negative preflight agrees");
+        SimpleAssert.eq(11, rejected.calls, "synchronous negative proof keeps its original early return");
+
+        HologramSession changed = proofSession(unsafe, new ProofLeaf());
+        HologramResourcePlanner.PlanTask stale = HologramResourcePlanner.beginCapturePlan(changed);
+        stale.step(2, Long.MAX_VALUE);
+        changed.capture = new HologramCapture(null, HologramSessionPolicy.trigger(changed));
+        boolean captureRejected = false;
+        try {
+            stale.step(3, Long.MAX_VALUE);
+        } catch (IllegalStateException expected) {
+            captureRejected = true;
+        }
+        SimpleAssert.that(captureRejected && !changed.replacementReady, "changed capture cannot reuse a partial proof");
+
+        HologramSession invalid = proofSession(unsafe, new ProofLeaf());
+        HologramResourcePlanner.PlanTask invalidTask = HologramResourcePlanner.beginCapturePlan(invalid);
+        invalidTask.step(2, Long.MAX_VALUE);
+        invalid.capture.invalidateSource("fixture declaration source changed");
+        boolean sourceRejected = false;
+        try {
+            invalidTask.step(3, Long.MAX_VALUE);
+        } catch (IllegalStateException expected) {
+            sourceRejected = true;
+        }
+        SimpleAssert.that(sourceRejected && !invalid.replacementReady, "invalidated source cannot finish a partial proof");
+    }
+
+    private static final class ProofLeaf extends HologramPureElementsRegression.Leaf {
+        int calls, failAt;
+
+        ProofLeaf() {
+            super(true);
+        }
+
+        @Override
+        public boolean matches(Declarations.WorldState state) {
+            return state.loaded && (++calls != failAt);
+        }
     }
 
     private static void changedSignal(sun.misc.Unsafe unsafe) throws ReflectiveOperationException {
