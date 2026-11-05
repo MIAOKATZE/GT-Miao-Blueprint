@@ -177,8 +177,8 @@ final class HologramHatchHintCaptureRegression {
         return marker(active, element, world);
     }
 
-    private static HologramCapture.Cell marker(ThreadLocal<HologramCapture> active,
-        IStructureElement<Object> element, World world) throws ReflectiveOperationException {
+    private static HologramCapture.Cell marker(ThreadLocal<HologramCapture> active, IStructureElement<Object> element,
+        World world) throws ReflectiveOperationException {
         ItemStack signal = new ItemStack(Items.feather);
         HologramCapture capture = new HologramCapture(new Object(), signal);
         capture.pieces.add(new HologramCapture.Piece("main", 0, 0, 0, signal));
@@ -228,8 +228,15 @@ final class HologramHatchHintCaptureRegression {
                 "a reviewed sheet-metal proxy has known native appearance");
             SimpleAssert.eq(metadata, cell.meta, "sheet-metal hint metadata is not truncated to four bits");
             ItemStack material = HologramBlockIdentity.materialStack(cell.block, cell.meta);
-            SimpleAssert.eq(metadata, sheetBlock.getDamageValue(world, 0, 64, 0), "the controlled sheet world preserves extended material metadata");
-            SimpleAssert.eq(metadata, material.getItem().getMetadata(material.getItemDamage()), "the registered sheet item maps the complete metadata back to the world");
+            SimpleAssert.eq(
+                metadata,
+                sheetBlock.getDamageValue(world, 0, 64, 0),
+                "the controlled sheet world preserves extended material metadata");
+            SimpleAssert.eq(
+                metadata,
+                material.getItem()
+                    .getMetadata(material.getItemDamage()),
+                "the registered sheet item maps the complete metadata back to the world");
             SimpleAssert.eq(
                 metadata,
                 material.getItemDamage(),
@@ -271,11 +278,13 @@ final class HologramHatchHintCaptureRegression {
         Object existing = Block.blockRegistry.getObject(name);
         if (existing instanceof SheetBlock) return (Block) existing;
         int slot = 3960;
-        while (slot > 0 && (net.minecraft.item.Item.getItemById(slot) != null || Block.getBlockById(slot) != Blocks.air)) slot--;
+        while (slot > 0
+            && (net.minecraft.item.Item.getItemById(slot) != null || Block.getBlockById(slot) != Blocks.air)) slot--;
         if (slot == 0) throw new AssertionError("No isolated sheet-metal fixture registry slot");
         SheetBlock block = new SheetBlock();
         Block.blockRegistry.addObject(slot, name, block);
         net.minecraft.item.Item.itemRegistry.addObject(slot, name, new net.minecraft.item.ItemBlock(block) {
+
             @Override
             public int getMetadata(int metadata) {
                 return metadata;
@@ -285,6 +294,7 @@ final class HologramHatchHintCaptureRegression {
     }
 
     private static final class SheetBlock extends Block {
+
         private SheetBlock() {
             super(net.minecraft.block.material.Material.iron);
             setBlockName("gtmb_sheetmetal_hint_fixture");
@@ -297,6 +307,7 @@ final class HologramHatchHintCaptureRegression {
     }
 
     private static final class SheetWorld extends net.minecraft.world.WorldServer {
+
         Block sheet;
         int metadata;
 
