@@ -436,8 +436,12 @@ final class TestLabNativeMachines {
                 + zone.sizeZ
                 + ":north:trigger=1"
                 + (controller[0] == zone.x + spec.zoneX / 2 && controller[1] == zone.y + (spec.zoneY > 16 ? 32 : 6)
-                    && controller[2] == zone.z + 8 ? ""
-                        : ":controller-offset=" + (controller[0] - zone.x) + "," + (controller[1] - zone.y) + ","
+                    && controller[2] == zone.z + 8
+                        ? ""
+                        : ":controller-offset=" + (controller[0] - zone.x)
+                            + ","
+                            + (controller[1] - zone.y)
+                            + ","
                             + (controller[2] - zone.z));
         }
 

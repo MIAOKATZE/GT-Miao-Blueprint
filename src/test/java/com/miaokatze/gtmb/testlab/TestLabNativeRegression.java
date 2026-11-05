@@ -120,13 +120,23 @@ final class TestLabNativeRegression {
 
     private static void machineLayoutBoundaries() throws Exception {
         Class<?> specType = Class.forName(TestLabNativeMachines.class.getName() + "$Spec");
-        Constructor<?> spec = specType.getDeclaredConstructor(String.class, String.class, int.class, int.class,
-            int.class, int.class, int.class, int.class, int.class, int.class, int.class);
+        Constructor<?> spec = specType.getDeclaredConstructor(
+            String.class,
+            String.class,
+            int.class,
+            int.class,
+            int.class,
+            int.class,
+            int.class,
+            int.class,
+            int.class,
+            int.class,
+            int.class);
         spec.setAccessible(true);
         Class<?> machineType = Class.forName(TestLabNativeMachines.class.getName() + "$Machine");
         Constructor<?> legacy = machineType.getDeclaredConstructor(specType, int.class, int.class, int.class);
-        Constructor<?> explicit = machineType.getDeclaredConstructor(specType, int.class, int.class, int.class,
-            int.class, int.class, int.class);
+        Constructor<?> explicit = machineType
+            .getDeclaredConstructor(specType, int.class, int.class, int.class, int.class, int.class, int.class);
         legacy.setAccessible(true);
         explicit.setAccessible(true);
         Method layout = machineType.getDeclaredMethod("layout");
@@ -135,19 +145,27 @@ final class TestLabNativeRegression {
             first = machineType.getDeclaredField("first"), second = machineType.getDeclaredField("second");
         for (Field field : new Field[] { controller, zone, first, second }) field.setAccessible(true);
         Object small = spec.newInstance("legacy", "fixture-legacy", 3, 4, 3, 1, 3, 0, 32, 16, 32);
-        Object old = legacy.newInstance(small, 100, 64, 200), same = explicit.newInstance(small, 100, 64, 200, 16, 6, 8);
-        SimpleAssert.that(Arrays.equals(new int[] { 116, 70, 208 }, (int[]) controller.get(old)), "legacy controller unchanged");
+        Object old = legacy.newInstance(small, 100, 64, 200),
+            same = explicit.newInstance(small, 100, 64, 200, 16, 6, 8);
+        SimpleAssert.that(
+            Arrays.equals(new int[] { 116, 70, 208 }, (int[]) controller.get(old)),
+            "legacy controller unchanged");
         String oldLayout = "native-machine-v1:fixture-legacy:100,64,200:32,16,32:north:trigger=1";
         SimpleAssert.eq(oldLayout, layout.invoke(old), "legacy layout bytes unchanged");
         SimpleAssert.eq(oldLayout, layout.invoke(same), "explicit default offsets keep legacy layout bytes");
         Object sun = spec.newInstance("sun", "fixture-sun", 112, 170, 112, 56, 165, 76, 192, 224, 224);
         Object large = explicit.newInstance(sun, 512, 32, 1024, 96, 36, 112);
-        SimpleAssert.that(Arrays.equals(new int[] { 608, 68, 1136 }, (int[]) controller.get(large)), "explicit SUN controller");
-        SimpleAssert.eq("native-machine-v1:fixture-sun:512,32,1024:192,224,224:north:trigger=1:controller-offset=96,36,112",
-            layout.invoke(large), "custom offsets encoded in layout");
+        SimpleAssert
+            .that(Arrays.equals(new int[] { 608, 68, 1136 }, (int[]) controller.get(large)), "explicit SUN controller");
+        SimpleAssert.eq(
+            "native-machine-v1:fixture-sun:512,32,1024:192,224,224:north:trigger=1:controller-offset=96,36,112",
+            layout.invoke(large),
+            "custom offsets encoded in layout");
         int[] a = (int[]) first.get(large), b = (int[]) second.get(large);
-        SimpleAssert.that(((TestLabZone) zone.get(large)).contains(a[0], a[1], a[2], b[0] - a[0] + 1,
-            b[1] - a[1] + 1, b[2] - a[2] + 1), "SUN bounds remain contained");
+        SimpleAssert.that(
+            ((TestLabZone) zone.get(large))
+                .contains(a[0], a[1], a[2], b[0] - a[0] + 1, b[1] - a[1] + 1, b[2] - a[2] + 1),
+            "SUN bounds remain contained");
         int[] offset = new int[3];
         ExtendedFacing.NORTH_NORMAL_NONE.getWorldOffset(new int[] { -16, 0, 0 }, offset);
         Object shifted = spec.newInstance("outside", "fixture-outside", 1, 1, 1, 16, 0, 0, 16, 16, 16);
