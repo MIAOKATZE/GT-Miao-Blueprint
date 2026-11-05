@@ -932,13 +932,13 @@ public final class HologramRegressionTest {
         java.util.List<int[]> cells = new java.util.ArrayList<>();
         for (int x = 0; x < 3; x++) for (int y = 0; y < 3; y++)
             for (int z = 0; z < 3; z++) cells.add(new int[] { x, y, z, x == 1 && y == 1 && z == 1 ? 0 : 1 });
-        java.util.Set<String> outside = HologramHatchGeometry.exterior(cells, (x, y, z) -> true);
-        SimpleAssert.that(!outside.contains("1,1,1"), "template cavity never exterior even if world is all air");
+        HologramHatchGeometry.Exterior outside = HologramHatchGeometry.exterior(cells, (x, y, z) -> true);
+        SimpleAssert.that(!outside.contains(1, 1, 1), "template cavity never exterior even if world is all air");
         SimpleAssert.eq(
             4,
             HologramHatchGeometry.choose(0, 1, 1, new int[] { 5, 4 }, outside),
             "choose external face instead of cavity");
-        java.util.Set<String> obstructed = HologramHatchGeometry.exterior(cells, (x, y, z) -> x >= 0);
+        HologramHatchGeometry.Exterior obstructed = HologramHatchGeometry.exterior(cells, (x, y, z) -> x >= 0);
         SimpleAssert.eq(
             -1,
             HologramHatchGeometry.choose(0, 1, 1, new int[] { 5, 4 }, obstructed),
@@ -946,7 +946,7 @@ public final class HologramRegressionTest {
         for (int[] cell : cells) if (cell[0] == 0 && cell[1] == 1 && cell[2] == 1) cell[3] = 0;
         outside = HologramHatchGeometry.exterior(cells, (x, y, z) -> true);
         SimpleAssert.that(
-            !outside.contains("1,1,1") && !outside.contains("0,1,1"),
+            !outside.contains(1, 1, 1) && !outside.contains(0, 1, 1),
             "open template air also excluded from exterior");
         cells.add(new int[] { 1000000, 0, 0, 1 });
         SimpleAssert.that(

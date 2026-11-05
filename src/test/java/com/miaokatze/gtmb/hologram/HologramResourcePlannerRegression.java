@@ -1,8 +1,12 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.lang.reflect.Field;
+import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Random;
+import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
 
 import net.minecraft.entity.player.EntityPlayerMP;
@@ -13,6 +17,8 @@ import net.minecraft.init.Items;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
+
+import net.minecraftforge.common.util.ForgeDirection;
 
 import com.gtnewhorizon.structurelib.structure.StructureUtility;
 import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
@@ -52,43 +58,157 @@ public final class HologramResourcePlannerRegression {
         SimpleAssert.that(!new HologramPlanBudget(10, 0, clock::get).take(), "zero time makes no progress");
     }
 
-    private static void exterior() {
+    private static void exterior() throws Exception {
         List<int[]> cells = new ArrayList<>();
         for (int x = 0; x < 9; x++) for (int y = 0; y < 9; y++) for (int z = 0; z < 9; z++) {
             boolean wall = x == 0 || x == 8 || y == 0 || y == 8 || z == 0 || z == 8;
             cells.add(new int[] { x, y, z, wall ? 1 : 0 });
         }
-        for (boolean blocked : new boolean[] { false, true }) {
-            HologramHatchGeometry.Air air = (x, y, z) -> !blocked || x >= 0;
-            int[] airReads = { 0 };
-            HologramExteriorTask task = new HologramExteriorTask(cells, (x, y, z) -> {
-                airReads[0]++;
-                return air.test(x, y, z);
-            });
-            int calls = 0;
-            while (!task.done() && calls++ < 100000) {
-                int before = airReads[0];
-                task.advance();
-                SimpleAssert.that(airReads[0] - before <= 1, "exterior operation performs at most one world air probe");
-                SimpleAssert.that(task.completed() <= task.total(), "exterior progress is factual");
-            }
-            SimpleAssert.that(task.done(), "exterior proof terminates");
-            SimpleAssert.eq(
-                HologramHatchGeometry.exterior(cells, air),
-                task.result(),
-                "resumed flood preserves cavities and boundary policy");
+        assertExterior(cells, (x, y, z) -> true);
+        assertExterior(cells, (x, y, z) -> x >= 0);
+        // An open cavity is reachable but declared air must still be removed from the final proof.
+        for (int[] cell : cells) if (cell[0] == 0 && cell[1] == 4 && cell[2] == 4) cell[3] = 0;
+        assertExterior(cells, (x, y, z) -> true);
+        for (int[] cell : cells) {
+            cell[0] -= 30000000;
+            cell[1] -= 50;
+            cell[2] += 29999990;
+        }
+        assertExterior(cells, (x, y, z) -> (x + y + z) % 7 != 0);
+        assertExterior(java.util.Collections.emptyList(), (x, y, z) -> true);
+        assertExterior(java.util.Collections.singletonList(new int[] { -5, -6, -7 }), (x, y, z) -> false);
+        // Exactly 131072 expanded positions is admitted; the next x extent is not.
+        List<int[]> limit = new ArrayList<>();
+        limit.add(new int[] { 0, 0, 0 });
+        limit.add(new int[] { 125, 29, 29 });
+        assertExterior(limit, (x, y, z) -> false);
+        limit.get(1)[0]++;
+        assertExterior(limit, (x, y, z) -> { throw new AssertionError("over-limit proof must not read world"); });
+        Random random = new Random(7315);
+        for (int trial = 0; trial < 12; trial++) {
+            List<int[]> varied = new ArrayList<>();
+            for (int i = 0; i < 18; i++)
+                varied.add(new int[] { random.nextInt(7) - 3, random.nextInt(5) - 2, random.nextInt(9) - 4,
+                    random.nextBoolean() ? 0 : 1 });
+            assertExterior(varied, (x, y, z) -> (31 * x + 7 * y + z) % 5 != 0);
         }
         cells.clear();
         cells.add(new int[] { -30000000, 64, -30000000 });
         cells.add(new int[] { 29999999, 64, 29999999 });
-        HologramExteriorTask sparse = new HologramExteriorTask(
-            cells,
-            (x, y, z) -> { throw new AssertionError("huge sparse bounds must never probe the world"); });
-        while (!sparse.done()) sparse.advance();
-        SimpleAssert.that(
-            sparse.result()
-                .isEmpty(),
-            "huge sparse declarations retain no exterior proof");
+        assertExterior(cells, (x, y, z) -> { throw new AssertionError("huge sparse bounds must never probe world"); });
+        HologramExteriorTask sparse = new HologramExteriorTask(cells, (x, y, z) -> true);
+        while (!sparse.done()) {
+            SimpleAssert.eq("facing.bounds", sparse.phase(), "over-limit proof only visits its bounds");
+            sparse.advance();
+        }
+        SimpleAssert.that(sparse.result() == HologramHatchGeometry.Exterior.EMPTY, "no over-limit occupancy retained");
+        for (String name : new String[] { "occupied", "queue" }) {
+            Field retained = HologramExteriorTask.class.getDeclaredField(name);
+            retained.setAccessible(true);
+            SimpleAssert.that(retained.get(sparse) == null, "no over-limit " + name + " allocated");
+        }
+    }
+
+    private static void assertExterior(List<int[]> cells, HologramHatchGeometry.Air air) {
+        List<String> expectedProbes = new ArrayList<>(), actualProbes = new ArrayList<>();
+        Set<String> expected = exteriorOracle(cells, (x, y, z) -> {
+            expectedProbes.add(exteriorKey(x, y, z));
+            return air.test(x, y, z);
+        });
+        HologramExteriorTask task = new HologramExteriorTask(cells, (x, y, z) -> {
+            actualProbes.add(exteriorKey(x, y, z));
+            return air.test(x, y, z);
+        });
+        int calls = 0;
+        while (!task.done() && calls++ < 1000000) {
+            int before = actualProbes.size();
+            task.advance();
+            SimpleAssert.that(actualProbes.size() - before <= 1, "exterior unit performs at most one world probe");
+            SimpleAssert.that(task.completed() <= task.total(), "exterior progress is factual");
+        }
+        SimpleAssert.that(task.done(), "exterior proof terminates");
+        SimpleAssert.eq(expectedProbes, actualProbes, "independent legacy oracle preserves world probe order/count");
+        assertExteriorResult(cells, expected, task.result());
+        actualProbes.clear();
+        HologramHatchGeometry.Exterior synchronous = HologramHatchGeometry.exterior(cells, (x, y, z) -> {
+            actualProbes.add(exteriorKey(x, y, z));
+            return air.test(x, y, z);
+        });
+        SimpleAssert.eq(expectedProbes, actualProbes, "synchronous entry preserves legacy probe order/count");
+        assertExteriorResult(cells, expected, synchronous);
+    }
+
+    private static void assertExteriorResult(List<int[]> cells, Set<String> expected,
+        HologramHatchGeometry.Exterior actual) {
+        SimpleAssert.eq(expected.size(), actual.positions.cardinality(), "exact independent exterior membership count");
+        for (String position : expected) {
+            String[] xyz = position.split(",");
+            SimpleAssert.that(
+                actual.contains(Integer.parseInt(xyz[0]), Integer.parseInt(xyz[1]), Integer.parseInt(xyz[2])),
+                "all legacy exterior positions are present");
+        }
+        SimpleAssert.that(!actual.contains(Integer.MIN_VALUE, 0, Integer.MAX_VALUE), "distant coordinates cannot alias");
+        int[][] choices = { { 5, 4, 3, 2, 1, 0 }, { 0, 1 }, { 4, 5 }, { 3 }, {} };
+        for (int[] cell : cells) for (int[] legal : choices) {
+            int direction = -1;
+            for (int pass = 0; pass < 2 && direction < 0; pass++) for (int side : legal) {
+                if (pass == 0 && side < 2) continue;
+                ForgeDirection d = ForgeDirection.getOrientation(side);
+                if (expected.contains(exteriorKey(cell[0] + d.offsetX, cell[1] + d.offsetY, cell[2] + d.offsetZ))) {
+                    direction = side;
+                    break;
+                }
+            }
+            SimpleAssert.eq(direction, HologramHatchGeometry.choose(cell[0], cell[1], cell[2], legal, actual),
+                "direction and horizontal preference match independent legacy membership");
+        }
+    }
+
+    private static String exteriorKey(int x, int y, int z) {
+        return x + "," + y + "," + z;
+    }
+
+    /** Frozen pre-optimization algorithm; never calls the production task or coordinate index. */
+    private static Set<String> exteriorOracle(List<int[]> cells, HologramHatchGeometry.Air air) {
+        Set<String> occupied = new HashSet<>(), exterior = new HashSet<>();
+        if (cells.isEmpty()) return exterior;
+        int minX = Integer.MAX_VALUE, minY = minX, minZ = minX;
+        int maxX = Integer.MIN_VALUE, maxY = maxX, maxZ = maxX;
+        for (int[] c : cells) {
+            minX = Math.min(minX, c[0]);
+            minY = Math.min(minY, c[1]);
+            minZ = Math.min(minZ, c[2]);
+            maxX = Math.max(maxX, c[0]);
+            maxY = Math.max(maxY, c[1]);
+            maxZ = Math.max(maxZ, c[2]);
+            if (c.length < 4 || c[3] != 0) occupied.add(exteriorKey(c[0], c[1], c[2]));
+        }
+        minX--;
+        minY--;
+        minZ--;
+        maxX++;
+        maxY++;
+        maxZ++;
+        long volume = (long) (maxX - minX + 1) * (maxY - minY + 1) * (maxZ - minZ + 1);
+        if (volume > 131072 || volume <= 0) return exterior;
+        ArrayDeque<int[]> queue = new ArrayDeque<>();
+        for (int x = minX; x <= maxX; x++) for (int y = minY; y <= maxY; y++) for (int z = minZ; z <= maxZ; z++) {
+            if (x != minX && x != maxX && y != minY && y != maxY && z != minZ && z != maxZ) continue;
+            if (air.test(x, y, z) && exterior.add(exteriorKey(x, y, z))) queue.add(new int[] { x, y, z });
+        }
+        while (!queue.isEmpty()) {
+            int[] c = queue.remove();
+            for (ForgeDirection d : ForgeDirection.VALID_DIRECTIONS) {
+                int x = c[0] + d.offsetX, y = c[1] + d.offsetY, z = c[2] + d.offsetZ;
+                String key = exteriorKey(x, y, z);
+                if (x < minX || x > maxX || y < minY || y > maxY || z < minZ || z > maxZ
+                    || occupied.contains(key) || exterior.contains(key) || !air.test(x, y, z)) continue;
+                exterior.add(key);
+                queue.add(new int[] { x, y, z });
+            }
+        }
+        for (int[] c : cells) exterior.remove(exteriorKey(c[0], c[1], c[2]));
+        return exterior;
     }
 
     private static void exactAccumulator() throws Exception {

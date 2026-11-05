@@ -1,9 +1,7 @@
 package com.miaokatze.gtmb.hologram;
 
-import java.util.ArrayDeque;
-import java.util.HashSet;
+import java.util.BitSet;
 import java.util.List;
-import java.util.Set;
 
 import net.minecraftforge.common.util.ForgeDirection;
 
@@ -12,12 +10,14 @@ final class HologramExteriorTask {
 
     private final List<int[]> cells;
     private final HologramHatchGeometry.Air air;
-    private final Set<String> occupied = new HashSet<>(), exterior = new HashSet<>();
-    private final ArrayDeque<int[]> queue = new ArrayDeque<>();
+    private BitSet occupied;
+    private HologramHatchGeometry.Exterior exterior = HologramHatchGeometry.Exterior.EMPTY;
+    private int[] queue;
+    private int head, tail;
     private int stage, cursor, minX = Integer.MAX_VALUE, minY = minX, minZ = minX;
     private int maxX = Integer.MIN_VALUE, maxY = maxX, maxZ = maxX;
     private int x, y, z, side;
-    private int[] active;
+    private int active = -1;
     private long volume, boundary, walked, discovered;
 
     HologramExteriorTask(List<int[]> cells, HologramHatchGeometry.Air air) {
@@ -26,25 +26,26 @@ final class HologramExteriorTask {
     }
 
     boolean done() {
-        return stage == 4;
+        return stage == 5;
     }
 
-    Set<String> result() {
+    HologramHatchGeometry.Exterior result() {
         if (!done()) throw new IllegalStateException("Exterior proof is incomplete");
         return exterior;
     }
 
     String phase() {
         return stage == 0 ? "facing.bounds"
-            : stage == 1 ? "facing.boundary" : stage == 2 ? "facing.exterior" : "facing.exclude";
+            : stage == 1 ? "facing.occupancy"
+                : stage == 2 ? "facing.boundary" : stage == 3 ? "facing.exterior" : "facing.exclude";
     }
 
     long completed() {
-        return stage == 1 || stage == 2 ? walked : cursor;
+        return stage == 2 || stage == 3 ? walked : cursor;
     }
 
     long total() {
-        return stage == 1 ? boundary : stage == 2 ? discovered * 6 : cells.size();
+        return stage == 2 ? boundary : stage == 3 ? discovered * 6 : cells.size();
     }
 
     void advance() {
@@ -57,11 +58,10 @@ final class HologramExteriorTask {
                 maxX = Math.max(maxX, c[0]);
                 maxY = Math.max(maxY, c[1]);
                 maxZ = Math.max(maxZ, c[2]);
-                if (c.length < 4 || c[3] != 0) occupied.add(HologramHatchGeometry.key(c[0], c[1], c[2]));
                 return;
             }
             if (cells.isEmpty()) {
-                stage = 4;
+                stage = 5;
                 return;
             }
             minX--;
@@ -74,19 +74,30 @@ final class HologramExteriorTask {
             volume = width <= 0 || height <= 0 || depth <= 0 || width > 131072 || height > 131072 || depth > 131072 ? 0
                 : width * height * depth;
             if (volume <= 0 || volume > 131072) {
-                stage = 4;
+                stage = 5;
                 return;
             }
+            // Admit bounds before allocating occupancy or retaining any per-position state.
+            exterior = new HologramHatchGeometry.Exterior(
+                minX, minY, minZ, (int) width, (int) height, (int) depth);
+            occupied = new BitSet((int) volume);
+            queue = new int[(int) volume];
             boundary = volume - Math.max(0, width - 2) * Math.max(0, height - 2) * Math.max(0, depth - 2);
+            cursor = 0;
+            stage = 1;
+        } else if (stage == 1) {
+            if (cursor < cells.size()) {
+                int[] c = cells.get(cursor++);
+                if (c.length < 4 || c[3] != 0) occupied.set(exterior.index(c[0], c[1], c[2]));
+                return;
+            }
             x = minX;
             y = minY;
             z = minZ;
-            stage = 1;
-        } else if (stage == 1) {
-            if (air.test(x, y, z) && exterior.add(HologramHatchGeometry.key(x, y, z))) {
-                queue.add(new int[] { x, y, z });
-                discovered++;
-            }
+            stage = 2;
+        } else if (stage == 2) {
+            int index = exterior.index(x, y, z);
+            if (air.test(x, y, z) && !exterior.positions.get(index)) enqueue(index);
             walked++;
             // Preserve native x/y/z boundary order while skipping all interior positions in constant work.
             if (x != minX && x != maxX && y != minY && y != maxY && z == minZ) z = maxZ;
@@ -96,42 +107,43 @@ final class HologramExteriorTask {
                     y = minY;
                     if (++x > maxX) {
                         walked = 0;
-                        stage = 2;
+                        stage = 3;
                     }
                 }
             }
-        } else if (stage == 2) {
-            if (active == null) {
-                active = queue.poll();
+        } else if (stage == 3) {
+            if (active < 0) {
                 side = 0;
-                if (active == null) {
-                    stage = 3;
+                if (head == tail) {
+                    queue = null;
+                    occupied = null;
+                    stage = 4;
                     cursor = 0;
                     return;
                 }
+                active = queue[head++];
+                x = minX + active / (exterior.height * exterior.depth);
+                y = minY + active / exterior.depth % exterior.height;
+                z = minZ + active % exterior.depth;
             }
             ForgeDirection d = ForgeDirection.VALID_DIRECTIONS[side++];
-            int nx = active[0] + d.offsetX, ny = active[1] + d.offsetY, nz = active[2] + d.offsetZ;
-            String key = HologramHatchGeometry.key(nx, ny, nz);
-            if (nx >= minX && nx <= maxX
-                && ny >= minY
-                && ny <= maxY
-                && nz >= minZ
-                && nz <= maxZ
-                && !occupied.contains(key)
-                && !exterior.contains(key)
-                && air.test(nx, ny, nz)) {
-                exterior.add(key);
-                queue.add(new int[] { nx, ny, nz });
-                discovered++;
-            }
+            int nx = x + d.offsetX, ny = y + d.offsetY, nz = z + d.offsetZ;
+            int index = exterior.index(nx, ny, nz);
+            if (index >= 0 && !occupied.get(index) && !exterior.positions.get(index)
+                && air.test(nx, ny, nz)) enqueue(index);
             walked++;
-            if (side == 6) active = null;
-        } else if (stage == 3) {
+            if (side == 6) active = -1;
+        } else if (stage == 4) {
             if (cursor < cells.size()) {
                 int[] c = cells.get(cursor++);
-                exterior.remove(HologramHatchGeometry.key(c[0], c[1], c[2]));
-            } else stage = 4;
+                exterior.positions.clear(exterior.index(c[0], c[1], c[2]));
+            } else stage = 5;
         }
+    }
+
+    private void enqueue(int index) {
+        exterior.positions.set(index);
+        queue[tail++] = index;
+        discovered++;
     }
 }

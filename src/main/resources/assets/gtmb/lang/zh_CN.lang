@@ -360,6 +360,7 @@ gtmb.hologram.progress.area.detail.allocation.order=排序候选材料
 gtmb.hologram.progress.area.detail.allocation.reservations=分配材料预留
 gtmb.hologram.progress.area.detail.allocation.targets=分配目标方块
 gtmb.hologram.progress.area.detail.facing.bounds=计算朝向边界
+gtmb.hologram.progress.area.detail.facing.occupancy=分析结构占位
 gtmb.hologram.progress.area.detail.facing.boundary=检查外部边界
 gtmb.hologram.progress.area.detail.facing.exterior=计算外部连通区域
 gtmb.hologram.progress.area.detail.facing.exclude=整理朝向限制

@@ -182,7 +182,7 @@ final class HologramResourcePlanner {
         private PresetTask preset;
         private int stage, cursor, lastWork;
         private boolean needsExterior, structureFound;
-        private java.util.Set<String> outside = Collections.emptySet();
+        private HologramHatchGeometry.Exterior outside = HologramHatchGeometry.Exterior.EMPTY;
 
         private PlanTask(HologramSession s) {
             this.s = s;
@@ -915,7 +915,7 @@ final class HologramResourcePlanner {
                 && !(ItemMachines.getMetaTileEntity(target) instanceof gregtech.api.metatileentity.MetaPipeEntity))
                 needsExterior = true;
         }
-        java.util.Set<String> exterior = !needsExterior ? Collections.emptySet()
+        HologramHatchGeometry.Exterior exterior = !needsExterior ? HologramHatchGeometry.Exterior.EMPTY
             : HologramHatchGeometry.exterior(
                 cells,
                 (x, y, z) -> HologramSessionPolicy.authoring(s)

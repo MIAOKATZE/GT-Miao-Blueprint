@@ -360,6 +360,7 @@ gtmb.hologram.progress.area.detail.allocation.order=Order candidate materials
 gtmb.hologram.progress.area.detail.allocation.reservations=Allocate material reservations
 gtmb.hologram.progress.area.detail.allocation.targets=Allocate target blocks
 gtmb.hologram.progress.area.detail.facing.bounds=Compute facing bounds
+gtmb.hologram.progress.area.detail.facing.occupancy=Analyze structure occupancy
 gtmb.hologram.progress.area.detail.facing.boundary=Check exterior boundary
 gtmb.hologram.progress.area.detail.facing.exterior=Resolve exterior regions
 gtmb.hologram.progress.area.detail.facing.exclude=Prepare facing constraints
