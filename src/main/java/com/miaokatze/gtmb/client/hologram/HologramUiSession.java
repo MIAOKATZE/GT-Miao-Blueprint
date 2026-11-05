@@ -325,6 +325,8 @@ final class HologramUiSession {
         if (!ui.ae.commandAllowed(op)) return;
         ui.preview.prepareCommand(op);
         NBTTagCompound n = request == null ? new NBTTagCompound() : request;
+        // Unversioned editor controls use the displayed plan; reviewed requests retain their explicit revision.
+        if (!n.hasKey("planRevision")) n.setLong("planRevision", revision());
         if (state.data.hasKey("sourceRevision", 4)) {
             n.setLong("sourceRevision", state.data.getLong("sourceRevision"));
             n.setLong("semanticPlanRevision", revision());

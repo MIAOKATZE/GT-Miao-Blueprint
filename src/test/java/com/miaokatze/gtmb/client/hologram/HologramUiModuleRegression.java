@@ -23,6 +23,7 @@ public final class HologramUiModuleRegression {
     public static void run() {
         localPlanConsumersWaitWithoutLockingEditing();
         outgoingSelectionScope();
+        outgoingPlanningRevision();
         switchReviewOwnsOverlappingLibraryRows();
         nativeBindingDrawerControls();
         selectedParsedNetworkGroup();
@@ -106,6 +107,86 @@ public final class HologramUiModuleRegression {
                 Boolean.TRUE,
                 HologramUiTabMemory.openingTab(opening, true),
                 "the explicit " + purpose + " opening overrides remembered structure navigation");
+        }
+    }
+
+    private static void outgoingPlanningRevision() {
+        try {
+            HologramUiModules ui = headlessUi();
+            NBTTagCompound data = new NBTTagCompound();
+            data.setString("session", "native-candidate-revision");
+            data.setString("editorWorkspace", "projection");
+            data.setBoolean("structureProjection", true);
+            data.setBoolean("target", true);
+            data.setLong("planRevision", 42);
+            data.setLong("sourceRevision", 19);
+            data.setLong("editorWorkspaceEpoch", 3);
+            NBTTagList cells = new NBTTagList(), candidates = new NBTTagList();
+            NBTTagCompound cell = new NBTTagCompound();
+            for (int damage = 0; damage < 2; damage++) candidates.appendTag(
+                new net.minecraft.item.ItemStack(net.minecraft.init.Items.stick, 1, damage)
+                    .writeToNBT(new NBTTagCompound()));
+            cell.setTag("candidates", candidates);
+            cells.appendTag(cell);
+            data.setTag("cells", cells);
+            setUiField(ui.session, "state", new HologramState(data));
+            setUiField(ui.diagnostics, "captureRenderSmokeAction", true);
+            ui.preview.selected(0);
+            ui.preview.selection().click(0, false);
+
+            ui.router.activate(10001);
+            NBTTagCompound candidate = (NBTTagCompound) uiField(ui.diagnostics, "capturedRenderSmokeAction");
+            SimpleAssert.that(
+                "pin".equals(candidate.getString("op")) && candidate.getInteger("selected") == 0
+                    && candidate.getInteger("choiceindex") == 1
+                    && candidate.hasKey("planRevision", 4)
+                    && candidate.getLong("planRevision") == 42,
+                "the real candidate control emits its selected option with the server-required long plan revision");
+            SimpleAssert.that(
+                "native-candidate-revision".equals(candidate.getString("session"))
+                    && candidate.getLong("sourceRevision") == 19
+                    && candidate.getLong("semanticPlanRevision") == 42
+                    && candidate.getLong("editorWorkspaceEpoch") == 3,
+                "candidate versioning retains source, semantic revision and workspace ownership fences");
+            ui.session.pendingSequence(-1);
+            NBTTagCompound capability = new NBTTagCompound(), option = new NBTTagCompound();
+            capability.setBoolean("editable", true);
+            capability.setString("kind", "hatchCandidate");
+            option.setInteger("value", 0);
+            NBTTagList options = new NBTTagList();
+            options.appendTag(option);
+            capability.setTag("options", options);
+            ui.config.chooseOption(capability, 0);
+            candidate = (NBTTagCompound) uiField(ui.diagnostics, "capturedRenderSmokeAction");
+            SimpleAssert.that(
+                "pin".equals(candidate.getString("op")) && candidate.getInteger("choiceindex") == 0
+                    && candidate.hasKey("planRevision", 4)
+                    && candidate.getLong("planRevision") == 42,
+                "the native hatch-grade option uses the same versioned production sender");
+            ui.session.pendingSequence(-1);
+            for (String operation : new String[] { "editMove", "editCopy", "editCut", "editPaste", "restoreCell",
+                "rotateCell", "clearPin", "customPin", "sourcePin", "pin", "hatchFacing", "hatchPreset",
+                "clearHatchPreset" }) {
+                ui.session.send(operation, new NBTTagCompound(), false);
+                NBTTagCompound emitted = (NBTTagCompound) uiField(ui.diagnostics, "capturedRenderSmokeAction");
+                SimpleAssert.that(
+                    operation.equals(emitted.getString("op")) && emitted.hasKey("planRevision", 4)
+                        && emitted.getLong("planRevision") == 42,
+                    "the production sender versions planning edit " + operation);
+            }
+            for (String operation : new String[] { "pin", "build" }) {
+                NBTTagCompound reviewed = new NBTTagCompound();
+                reviewed.setLong("planRevision", 41);
+                reviewed.setLong("placementReviewNonce", 7);
+                ui.session.send(operation, reviewed, false);
+                NBTTagCompound emitted = (NBTTagCompound) uiField(ui.diagnostics, "capturedRenderSmokeAction");
+                SimpleAssert.that(
+                    emitted.hasKey("planRevision", 4) && emitted.getLong("planRevision") == 41
+                        && emitted.getLong("placementReviewNonce") == 7,
+                    "an explicitly reviewed older " + operation + " remains stale for server rejection");
+            }
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("actual editor sender plan revision", failure);
         }
     }
 

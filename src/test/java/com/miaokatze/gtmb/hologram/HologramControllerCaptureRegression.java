@@ -723,6 +723,20 @@ public final class HologramControllerCaptureRegression {
             int choice = -1;
             for (int i = 0; i < candidates.size(); i++) if (HologramValues.same(candidates.get(i), muffler)) choice = i;
             SimpleAssert.that(choice >= 0, "the native declaration exposes the replacement manual muffler");
+            long beforeRevision = s.planRevision;
+            ItemStack beforeTarget = HologramCellPolicy.targetFor(s, s.capture.cells.get(0), 0);
+            action = presetAction(s, "pin");
+            action.setInteger("selected", 0);
+            action.setInteger("choiceindex", choice);
+            action.removeTag("planRevision");
+            long rejectedSequence = action.getLong("uiSequence");
+            dispatchPresetAction(s, action);
+            SimpleAssert.that(
+                s.uiSequence == rejectedSequence && s.planRevision == beforeRevision
+                    && !s.pins.containsKey(0)
+                    && HologramValues.same(beforeTarget, HologramCellPolicy.targetFor(s, s.capture.cells.get(0), 0))
+                    && "蓝图计划已更新，请重新选择编辑目标".equals(s.status),
+                "a pin missing its plan revision acknowledges receipt while retaining the exact target and rejection reason");
             action = presetAction(s, "pin");
             action.setInteger("selected", 0);
             action.setInteger("choiceindex", choice);
