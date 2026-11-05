@@ -17,7 +17,6 @@ import net.minecraft.init.Items;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
-
 import net.minecraftforge.common.util.ForgeDirection;
 
 import com.gtnewhorizon.structurelib.structure.StructureUtility;
@@ -87,8 +86,8 @@ public final class HologramResourcePlannerRegression {
         Random random = new Random(7315);
         for (int trial = 0; trial < 12; trial++) {
             List<int[]> varied = new ArrayList<>();
-            for (int i = 0; i < 18; i++)
-                varied.add(new int[] { random.nextInt(7) - 3, random.nextInt(5) - 2, random.nextInt(9) - 4,
+            for (int i = 0; i < 18; i++) varied.add(
+                new int[] { random.nextInt(7) - 3, random.nextInt(5) - 2, random.nextInt(9) - 4,
                     random.nextBoolean() ? 0 : 1 });
             assertExterior(varied, (x, y, z) -> (31 * x + 7 * y + z) % 5 != 0);
         }
@@ -147,7 +146,8 @@ public final class HologramResourcePlannerRegression {
                 actual.contains(Integer.parseInt(xyz[0]), Integer.parseInt(xyz[1]), Integer.parseInt(xyz[2])),
                 "all legacy exterior positions are present");
         }
-        SimpleAssert.that(!actual.contains(Integer.MIN_VALUE, 0, Integer.MAX_VALUE), "distant coordinates cannot alias");
+        SimpleAssert
+            .that(!actual.contains(Integer.MIN_VALUE, 0, Integer.MAX_VALUE), "distant coordinates cannot alias");
         int[][] choices = { { 5, 4, 3, 2, 1, 0 }, { 0, 1 }, { 4, 5 }, { 3 }, {} };
         for (int[] cell : cells) for (int[] legal : choices) {
             int direction = -1;
@@ -159,7 +159,9 @@ public final class HologramResourcePlannerRegression {
                     break;
                 }
             }
-            SimpleAssert.eq(direction, HologramHatchGeometry.choose(cell[0], cell[1], cell[2], legal, actual),
+            SimpleAssert.eq(
+                direction,
+                HologramHatchGeometry.choose(cell[0], cell[1], cell[2], legal, actual),
                 "direction and horizontal preference match independent legacy membership");
         }
     }
@@ -201,8 +203,14 @@ public final class HologramResourcePlannerRegression {
             for (ForgeDirection d : ForgeDirection.VALID_DIRECTIONS) {
                 int x = c[0] + d.offsetX, y = c[1] + d.offsetY, z = c[2] + d.offsetZ;
                 String key = exteriorKey(x, y, z);
-                if (x < minX || x > maxX || y < minY || y > maxY || z < minZ || z > maxZ
-                    || occupied.contains(key) || exterior.contains(key) || !air.test(x, y, z)) continue;
+                if (x < minX || x > maxX
+                    || y < minY
+                    || y > maxY
+                    || z < minZ
+                    || z > maxZ
+                    || occupied.contains(key)
+                    || exterior.contains(key)
+                    || !air.test(x, y, z)) continue;
                 exterior.add(key);
                 queue.add(new int[] { x, y, z });
             }

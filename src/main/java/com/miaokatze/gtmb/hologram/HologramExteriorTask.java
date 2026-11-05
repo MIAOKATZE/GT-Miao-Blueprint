@@ -78,8 +78,7 @@ final class HologramExteriorTask {
                 return;
             }
             // Admit bounds before allocating occupancy or retaining any per-position state.
-            exterior = new HologramHatchGeometry.Exterior(
-                minX, minY, minZ, (int) width, (int) height, (int) depth);
+            exterior = new HologramHatchGeometry.Exterior(minX, minY, minZ, (int) width, (int) height, (int) depth);
             occupied = new BitSet((int) volume);
             queue = new int[(int) volume];
             boundary = volume - Math.max(0, width - 2) * Math.max(0, height - 2) * Math.max(0, depth - 2);
@@ -129,8 +128,8 @@ final class HologramExteriorTask {
             ForgeDirection d = ForgeDirection.VALID_DIRECTIONS[side++];
             int nx = x + d.offsetX, ny = y + d.offsetY, nz = z + d.offsetZ;
             int index = exterior.index(nx, ny, nz);
-            if (index >= 0 && !occupied.get(index) && !exterior.positions.get(index)
-                && air.test(nx, ny, nz)) enqueue(index);
+            if (index >= 0 && !occupied.get(index) && !exterior.positions.get(index) && air.test(nx, ny, nz))
+                enqueue(index);
             walked++;
             if (side == 6) active = -1;
         } else if (stage == 4) {
