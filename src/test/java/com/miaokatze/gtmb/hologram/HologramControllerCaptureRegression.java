@@ -560,10 +560,12 @@ public final class HologramControllerCaptureRegression {
                     cell.role = "hatch";
                     cell.hintIndex = 2;
                     NBTTagCompound row = HologramStructureProjection.row(s, cell, index);
-                    SimpleAssert.that(row.getBoolean("missingBlock") && !row.hasKey("targetStack", 10),
+                    SimpleAssert.that(
+                        row.getBoolean("missingBlock") && !row.hasKey("targetStack", 10),
                         "a numeric hint without a real target remains an unresolved material observation");
-                    SimpleAssert.that("minecraft:glass".equals(row.getString("wantId"))
-                        && row.getInteger("wantMeta") == 2 && row.getInteger("hintIndex") == 2,
+                    SimpleAssert.that(
+                        "minecraft:glass".equals(row.getString("wantId")) && row.getInteger("wantMeta") == 2
+                            && row.getInteger("hintIndex") == 2,
                         "an unresolved numeric hint retains its visible native placeholder");
                 } finally {
                     cell.block = block;
@@ -589,7 +591,8 @@ public final class HologramControllerCaptureRegression {
         Object previousChannel = channel.get(null);
         try {
             channel.set(null, null);
-            net.minecraft.block.Block machines = net.minecraft.block.Block.getBlockFromName("gtmb:preset_action_fixture");
+            net.minecraft.block.Block machines = net.minecraft.block.Block
+                .getBlockFromName("gtmb:preset_action_fixture");
             if (machines == null) {
                 machines = new net.minecraft.block.Block(net.minecraft.block.material.Material.iron) {};
                 int id = 3899;
@@ -597,8 +600,8 @@ public final class HologramControllerCaptureRegression {
                     && net.minecraft.block.Block.getBlockById(id) != Blocks.air
                     || net.minecraft.item.Item.getItemById(id) != null) id--;
                 net.minecraft.block.Block.blockRegistry.addObject(id, "gtmb:preset_action_fixture", machines);
-                net.minecraft.item.Item.itemRegistry.addObject(
-                    id, "gtmb:preset_action_fixture", new gregtech.common.blocks.ItemMachines(machines));
+                net.minecraft.item.Item.itemRegistry
+                    .addObject(id, "gtmb:preset_action_fixture", new gregtech.common.blocks.ItemMachines(machines));
             }
             GregTechAPI.sBlockMachines = machines;
             GregTechAPI.METATILEENTITIES[energyId] = (gregtech.api.interfaces.metatileentity.IMetaTileEntity) unsafe
@@ -615,10 +618,11 @@ public final class HologramControllerCaptureRegression {
             Map<gregtech.api.interfaces.IHatchElement<?>, Integer> quotas = new java.util.LinkedHashMap<>();
             quotas.put(gregtech.api.enums.HatchElement.Energy, 2);
             quotas.put(gregtech.api.enums.HatchElement.Muffler, 1);
-            java.lang.reflect.Method fixture = HologramSemanticSafetyRegression.class.getDeclaredMethod(
-                "presetSession", sun.misc.Unsafe.class, Map.class, ItemStack[].class);
+            java.lang.reflect.Method fixture = HologramSemanticSafetyRegression.class
+                .getDeclaredMethod("presetSession", sun.misc.Unsafe.class, Map.class, ItemStack[].class);
             fixture.setAccessible(true);
-            HologramSession s = (HologramSession) fixture.invoke(null, unsafe, quotas, new ItemStack[] { energy, muffler });
+            HologramSession s = (HologramSession) fixture
+                .invoke(null, unsafe, quotas, new ItemStack[] { energy, muffler });
             s.player.posY = 64;
             HologramDynamicDefinitionRegression.DynamicController machine = new HologramDynamicDefinitionRegression.DynamicController();
             HologramDynamicDefinitionRegression.NativeTile base = (HologramDynamicDefinitionRegression.NativeTile) unsafe
@@ -632,7 +636,8 @@ public final class HologramControllerCaptureRegression {
             s.pins.put(2, energy.copy());
             s.coordinatePins.put(HologramValues.position(s.capture.cells.get(2)), energy.copy());
             HologramResourcePlanner.refreshPlan(s);
-            SimpleAssert.that(s.presetSupported && s.autoTargets.size() == 2,
+            SimpleAssert.that(
+                s.presetSupported && s.autoTargets.size() == 2,
                 "native action fixture starts with two autos alongside the manual energy target");
             HologramWorkspace.activate(s.player.getUniqueID(), s);
             int facing = HologramCellPolicy.legalFacings(s, s.capture.cells.get(0), energy)[0];
@@ -640,45 +645,54 @@ public final class HologramControllerCaptureRegression {
             action.setInteger("selected", 0);
             action.setInteger("facing", facing);
             HologramActionDispatcher.handle(s.player, action);
-            SimpleAssert.that(s.allocationsFrozen && s.frozenAutoTargets.size() == 2,
+            SimpleAssert.that(
+                s.allocationsFrozen && s.frozenAutoTargets.size() == 2,
                 "the real facing edit freezes the current native allocation");
             Map<Integer, ItemStack> before = new HashMap<>(s.autoTargets);
             Map<String, Integer> facings = new HashMap<>(s.facingPins);
             action = presetAction(s, "hatchPreset");
             action.setInteger("tier", -1);
             HologramActionDispatcher.handle(s.player, action);
-            SimpleAssert.that(s.allocationsFrozen && s.frozenAutoTargets.size() == 2,
+            SimpleAssert.that(
+                s.allocationsFrozen && s.frozenAutoTargets.size() == 2,
                 "an invalid preset tier cannot retire the user's frozen allocation");
             HologramActionDispatcher.handle(s.player, presetAction(s, "clearHatchPreset"));
-            SimpleAssert.that(!s.allocationsFrozen && s.frozenAutoTargets.isEmpty() && s.autoTargets.isEmpty(),
+            SimpleAssert.that(
+                !s.allocationsFrozen && s.frozenAutoTargets.isEmpty() && s.autoTargets.isEmpty(),
                 "the clear action cannot refill automatic targets from the old frozen allocation");
-            SimpleAssert.that(HologramValues.same(s.pins.get(2), energy) && s.facingPins.equals(facings),
+            SimpleAssert.that(
+                HologramValues.same(s.pins.get(2), energy) && s.facingPins.equals(facings),
                 "clearing the preset retains manual targets and facing pins");
             HologramActionDispatcher.handle(s.player, presetAction(s, "editUndo"));
             SimpleAssert.eq(before.keySet(), s.autoTargets.keySet(), "undo restores exact automatic positions");
             for (int index : before.keySet()) SimpleAssert.that(
                 HologramValues.same(before.get(index), s.autoTargets.get(index)),
                 "undo restores each original automatic material identity");
-            SimpleAssert.that(s.allocationsFrozen && s.facingPins.equals(facings),
+            SimpleAssert.that(
+                s.allocationsFrozen && s.facingPins.equals(facings),
                 "undo keeps the restored allocation frozen with its original facings");
             java.util.List<ItemStack> candidates = HologramCellPolicy.candidates(s, s.capture.cells.get(0));
             int choice = -1;
-            for (int i = 0; i < candidates.size(); i++)
-                if (HologramValues.same(candidates.get(i), muffler)) choice = i;
+            for (int i = 0; i < candidates.size(); i++) if (HologramValues.same(candidates.get(i), muffler)) choice = i;
             SimpleAssert.that(choice >= 0, "the native declaration exposes the replacement manual muffler");
             action = presetAction(s, "pin");
             action.setInteger("selected", 0);
             action.setInteger("choiceindex", choice);
             HologramActionDispatcher.handle(s.player, action);
-            SimpleAssert.that(HologramValues.same(s.pins.get(0), muffler), "the real pin action owns the former auto slot");
+            SimpleAssert
+                .that(HologramValues.same(s.pins.get(0), muffler), "the real pin action owns the former auto slot");
             action = presetAction(s, "hatchPreset");
             action.setInteger("tier", 0);
             HologramActionDispatcher.handle(s.player, action);
-            SimpleAssert.that(s.presetSupported && !s.allocationsFrozen && s.frozenAutoTargets.isEmpty()
-                && s.autoTargets.size() == 1 && HologramValues.same(s.autoTargets.get(1), energy),
+            SimpleAssert.that(
+                s.presetSupported && !s.allocationsFrozen
+                    && s.frozenAutoTargets.isEmpty()
+                    && s.autoTargets.size() == 1
+                    && HologramValues.same(s.autoTargets.get(1), energy),
                 "regenerating the preset reallocates the remaining energy quota around both manual pins");
-            SimpleAssert.that(HologramValues.same(s.pins.get(0), muffler)
-                && HologramValues.same(s.pins.get(2), energy) && s.facingPins.equals(facings),
+            SimpleAssert.that(
+                HologramValues.same(s.pins.get(0), muffler) && HologramValues.same(s.pins.get(2), energy)
+                    && s.facingPins.equals(facings),
                 "regeneration preserves manual ownership and facing selections");
         } finally {
             HologramWorkspace.clear();
