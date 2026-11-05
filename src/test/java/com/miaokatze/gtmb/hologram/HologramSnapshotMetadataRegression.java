@@ -103,13 +103,16 @@ final class HologramSnapshotMetadataRegression {
             int batches = 0;
             Field contextField = HologramSnapshotMetadataTask.class.getDeclaredField("dataContext");
             contextField.setAccessible(true);
+            Field stageField = HologramSnapshotMetadataTask.class.getDeclaredField("stage");
+            stageField.setAccessible(true);
             HologramSnapshotDataContext context = (HologramSnapshotDataContext) contextField.get(task);
             Long captureOwnerDecodes = null;
             boolean captureChecked = false;
             while (!task.step(7, Long.MAX_VALUE) && System.nanoTime() < deadline) {
                 if ("metadata.capture".equals(task.phase()) && captureOwnerDecodes == null)
                     captureOwnerDecodes = HologramSnapshotDataContextRegression.counter(context, "ownerDecodes");
-                if ("metadata.processing".equals(task.phase()) && captureOwnerDecodes != null) {
+                // Worker progress can advance before this observer sees its initial processing label.
+                if (!captureChecked && stageField.getInt(task) >= 3 && captureOwnerDecodes != null) {
                     SimpleAssert.eq(
                         captureOwnerDecodes,
                         HologramSnapshotDataContextRegression.counter(context, "ownerDecodes"),
@@ -124,7 +127,11 @@ final class HologramSnapshotMetadataRegression {
             }
             SimpleAssert.that(
                 "metadata.complete".equals(task.phase()) && batches > 100 && captureChecked,
-                "full metadata finishes through many bounded main-thread continuations");
+                "full metadata finishes through many bounded main-thread continuations: phase=" + task.phase()
+                    + " batches="
+                    + batches
+                    + " captureChecked="
+                    + captureChecked);
             NBTTagCompound expected = new NBTTagCompound();
             HologramSnapshots.writeBlueprintState(session, expected);
             HologramSnapshots.aeSnapshot(session, expected);
