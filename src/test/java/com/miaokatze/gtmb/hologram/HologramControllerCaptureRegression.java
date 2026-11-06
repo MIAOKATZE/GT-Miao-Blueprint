@@ -855,8 +855,7 @@ public final class HologramControllerCaptureRegression {
         build.setLong("placementReviewNonce", s.placementReviewNonce);
         HologramActionDispatcher.handle(s.player, build);
         SimpleAssert.that(
-            s.uiSequence == build.getLong("uiSequence") && s.job == 0
-                && "施工材料不足，请补齐后重试".equals(s.status),
+            s.uiSequence == build.getLong("uiSequence") && s.job == 0 && "施工材料不足，请补齐后重试".equals(s.status),
             "the actual newly reviewed action reaches the original survival inventory guard: " + operationState(s));
         s.player.inventory.mainInventory[1].stackSize = 2;
         HologramMaterialQuote.recheck(s);
@@ -870,9 +869,25 @@ public final class HologramControllerCaptureRegression {
     }
 
     private static String operationState(HologramSession s) {
-        return "job=" + s.job + " status=" + s.status + " missing=" + s.planMissing + " planStatus=" + s.planStatus
-            + " unknown=" + s.capture.cells.stream().filter(cell -> cell.unknown).count() + " mode=" + s.mode
-            + " pending=" + s.capturePending + " actionCount=" + s.actionCount + " uiSequence=" + s.uiSequence;
+        return "job=" + s.job
+            + " status="
+            + s.status
+            + " missing="
+            + s.planMissing
+            + " planStatus="
+            + s.planStatus
+            + " unknown="
+            + s.capture.cells.stream()
+                .filter(cell -> cell.unknown)
+                .count()
+            + " mode="
+            + s.mode
+            + " pending="
+            + s.capturePending
+            + " actionCount="
+            + s.actionCount
+            + " uiSequence="
+            + s.uiSequence;
     }
 
     private static void scanScopes(HologramSession s, ItemStack energy, ItemStack muffler)
