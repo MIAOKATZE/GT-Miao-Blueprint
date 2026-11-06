@@ -255,10 +255,17 @@ final class HologramCellPolicy {
     }
 
     static boolean requiredNativeAir(HologramSession s, HologramCapture.Cell c, int index) {
-        return !s.virtual && !c.anchor && !c.userPosition && !explicitTarget(s, c, index)
-            && !s.autoTargets.containsKey(index) && !s.facingPins.containsKey(HologramValues.position(c))
-            && c.tileNbt.isEmpty() && c.itemNbt.isEmpty() && c.coverCostsNbt.isEmpty() && !c.invalidCoverCosts
-            && c.resourceError.isEmpty() && HologramElementCatalog.nativeAir(c.element);
+        return !s.virtual && !c.anchor
+            && !c.userPosition
+            && !explicitTarget(s, c, index)
+            && !s.autoTargets.containsKey(index)
+            && !s.facingPins.containsKey(HologramValues.position(c))
+            && c.tileNbt.isEmpty()
+            && c.itemNbt.isEmpty()
+            && c.coverCostsNbt.isEmpty()
+            && !c.invalidCoverCosts
+            && c.resourceError.isEmpty()
+            && HologramElementCatalog.nativeAir(c.element);
     }
 
     private static boolean nativeAirSatisfied(HologramSession s, HologramCapture.Cell c) {

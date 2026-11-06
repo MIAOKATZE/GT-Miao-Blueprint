@@ -662,9 +662,11 @@ public final class HologramControllerCaptureRegression {
                 .<Object>builder()
                 .addShape("preset", new String[][] { { "XXX-Y" } })
                 .addElement('X', element)
-                .addElement('Y', StructureUtility.onElementPass(
-                    controller -> { throw new AssertionError("air classification ran pass callback"); },
-                    StructureUtility.isAir()))
+                .addElement(
+                    'Y',
+                    StructureUtility.onElementPass(
+                        controller -> { throw new AssertionError("air classification ran pass callback"); },
+                        StructureUtility.isAir()))
                 .build();
             source = com.miaokatze.gtmb.api.StructureSources.register(
                 "gtmb_test:preset_actions",
@@ -794,7 +796,8 @@ public final class HologramControllerCaptureRegression {
             if (!HologramElementCatalog.nativeAir(cell.element)) continue;
             verified++;
             SimpleAssert.that(
-                cell.block == Blocks.air && !cell.unknown && HologramCellPolicy.targetFor(s, cell, index) == null
+                cell.block == Blocks.air && !cell.unknown
+                    && HologramCellPolicy.targetFor(s, cell, index) == null
                     && "satisfied".equals(HologramPlanPolicy.classify(s, cell, index))
                     && HologramCellPolicy.targetSatisfied(s, cell, index, Blocks.air, 0),
                 "actual native required air and its reviewed pass wrapper are satisfied without a payable item");
@@ -803,7 +806,9 @@ public final class HologramControllerCaptureRegression {
             try {
                 world.occupied = Blocks.stone;
                 world.occupiedX = cell.x;
-                SimpleAssert.eq("blocked", HologramPlanPolicy.classify(s, cell, index),
+                SimpleAssert.eq(
+                    "blocked",
+                    HologramPlanPolicy.classify(s, cell, index),
                     "occupied native required air remains a real structural blocker");
             } finally {
                 world.occupied = previous;
@@ -990,7 +995,8 @@ public final class HologramControllerCaptureRegression {
         HologramPlacementJobs.tickJob(s);
         SimpleAssert.that(
             s.job == 3 && s.completed == 3,
-            "real job finalization counts satisfied required-air cells without false partial completion: " + operationState(s));
+            "real job finalization counts satisfied required-air cells without false partial completion: "
+                + operationState(s));
     }
 
     private static String operationState(HologramSession s) {
