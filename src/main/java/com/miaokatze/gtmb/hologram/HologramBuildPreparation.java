@@ -68,9 +68,11 @@ final class HologramBuildPreparation {
             return;
         }
         boolean nativeReview = !s.virtual && HologramEditorWorkspaceRegistry.physicalProjection(s)
-            && s.capture != null && !s.capture.projectionOnly;
-        if ((s.virtual || nativeReview) && (!s.id.equals(action.getString("session")) || !action.hasKey("placementReviewNonce", 4)
-            || action.getLong("placementReviewNonce") != s.placementReviewNonce)) {
+            && s.capture != null
+            && !s.capture.projectionOnly;
+        if ((s.virtual || nativeReview)
+            && (!s.id.equals(action.getString("session")) || !action.hasKey("placementReviewNonce", 4)
+                || action.getLong("placementReviewNonce") != s.placementReviewNonce)) {
             s.forcePlacementReady = false;
             s.status = "材料确认已更新，请重新核对当前计划后确认";
             return;

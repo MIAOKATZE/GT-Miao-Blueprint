@@ -859,9 +859,11 @@ public final class HologramControllerCaptureRegression {
             HologramActionDispatcher.handle(s.player, rejected);
             SimpleAssert.that(
                 s.uiSequence == rejected.getLong("uiSequence") && s.planRevision == preparedRevision
-                    && s.placementReviewNonce == preparedNonce && s.job == 0
+                    && s.placementReviewNonce == preparedNonce
+                    && s.job == 0
                     && "材料确认已更新，请重新核对当前计划后确认".equals(s.status),
-                "same-revision native build rejects stale, wrongly typed and missing review nonces " + invalid + ": "
+                "same-revision native build rejects stale, wrongly typed and missing review nonces " + invalid
+                    + ": "
                     + operationState(s));
         }
         NBTTagCompound build = presetAction(s, "build");
@@ -877,17 +879,21 @@ public final class HologramControllerCaptureRegression {
         refresh.setLong("placementReviewNonce", s.placementReviewNonce);
         HologramActionDispatcher.handle(s.player, refresh);
         SimpleAssert.that(
-            s.job == 0 && s.planRevision == preparedRevision && s.placementReviewNonce == preparedNonce
-                && !s.capture.projectionOnly && !s.blueprintAwaitingConfirmation
+            s.job == 0 && s.planRevision == preparedRevision
+                && s.placementReviewNonce == preparedNonce
+                && !s.capture.projectionOnly
+                && !s.blueprintAwaitingConfirmation
                 && "已按当前材料需求更新已有与缺失数量；库存以确认施工时为准".equals(s.status),
             "the real full-native refresh action preserves plan/review ownership and never enters a job or blueprint review: "
                 + operationState(s));
-        SimpleAssert.eq(2L, quotedDemand(s.materialQuote, energy), "full-native refresh preserves the reviewed energy demand");
+        SimpleAssert
+            .eq(2L, quotedDemand(s.materialQuote, energy), "full-native refresh preserves the reviewed energy demand");
         long energyAvailable = -1;
         net.minecraft.nbt.NBTTagList refreshedRows = s.materialQuote.getTagList("rows", 10);
         for (int index = 0; index < refreshedRows.tagCount(); index++) {
             NBTTagCompound row = refreshedRows.getCompoundTagAt(index);
-            if (HologramValues.same(energy, HologramMaterialQuote.readItem(row))) energyAvailable = row.getLong("available");
+            if (HologramValues.same(energy, HologramMaterialQuote.readItem(row)))
+                energyAvailable = row.getLong("available");
         }
         SimpleAssert.eq(2L, energyAvailable, "full-native refresh recounts the actual newly supplied stock");
         SimpleAssert.eq(0, s.planMissing, "the reviewed native quote records the now sufficient real stock");
@@ -896,11 +902,14 @@ public final class HologramControllerCaptureRegression {
         build.setLong("placementReviewNonce", s.placementReviewNonce);
         HologramActionDispatcher.handle(s.player, build);
         SimpleAssert.that(
-            s.job == 0 && s.planRevision == preparedRevision && s.placementReviewNonce == preparedNonce + 1
+            s.job == 0 && s.planRevision == preparedRevision
+                && s.placementReviewNonce == preparedNonce + 1
                 && s.operationReviewSequence == build.getLong("uiSequence")
-                && !s.blueprintAwaitingConfirmation && !s.placementReviewIssued
+                && !s.blueprintAwaitingConfirmation
+                && !s.placementReviewIssued
                 && s.materialQuote.getLong("placementReviewNonce") == s.placementReviewNonce
-                && s.planMissing == 1 && s.player.inventory.mainInventory[1].stackSize == 1,
+                && s.planMissing == 1
+                && s.player.inventory.mainInventory[1].stackSize == 1,
             "inventory deterioration rotates native review consent and requests the current native material confirmation without entering blueprint placement: "
                 + operationState(s));
         NBTTagCompound updated = HologramSnapshots.basicState(s);

@@ -31,8 +31,7 @@ final class HologramMaterialWorkflow {
             if (!(cancellingOrder ? HologramSessionPolicy.jobValid(s) : HologramSessionPolicy.valid(s)))
                 throw new IOException("投影仪或蓝图会话已失效");
             if ("refreshMaterialQuote".equals(op) && !s.virtual
-                && HologramEditorWorkspaceRegistry.physicalProjection(s))
-                requireProjectionRefresh(s, action);
+                && HologramEditorWorkspaceRegistry.physicalProjection(s)) requireProjectionRefresh(s, action);
             else requireReview(s, action);
             if ("cancelMaterialOrder".equals(op)) {
                 HologramAeCraftingOrders.cancel(s.player, "AE 缺料订单已取消；已入网材料保留，待交付产物存入玩家回收暂存");
@@ -154,7 +153,9 @@ final class HologramMaterialWorkflow {
 
     /** Inventory-only refresh of an already published native plan; no order, voucher or placement permission. */
     static void requireProjectionRefresh(HologramSession s, NBTTagCompound action) throws IOException {
-        if (s.virtual || !HologramEditorWorkspaceRegistry.physicalProjection(s) || s.capture == null || s.capture.pending
+        if (s.virtual || !HologramEditorWorkspaceRegistry.physicalProjection(s)
+            || s.capture == null
+            || s.capture.pending
             || s.capture.incomplete
             || s.capturePending
             || s.captureWork != null
