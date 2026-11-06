@@ -42,6 +42,8 @@ public final class HologramCapture {
     /** Recorded cells; unrecorded space inside the bounds does not consume this budget. */
     public static final int LIMIT = HologramBlueprintLimits.MAX_CELLS;
     private static final int CELLS_PER_BATCH = 4096;
+    /** Native declaration discovery is atomic; bound recorded pieces without interrupting it on cold startup. */
+    private static final int PIECE_LIMIT = 4096;
     /** Wall-clock threshold at checkpoints; native machine callbacks cannot be interrupted mid-call. */
     private static final long CAPTURE_TIME_NS = 100000000L;
     private static final Logger LOG = LogManager.getLogger("gtmb");
@@ -164,8 +166,8 @@ public final class HologramCapture {
     }
 
     private boolean recordPiece(String name, ItemStack signal, int a, int b, int c) {
-        if (System.nanoTime() > deadline) {
-            fail("TIME_LIMIT");
+        if (pieces.size() >= PIECE_LIMIT) {
+            fail("PIECE_LIMIT");
             throw new CaptureLimitException();
         }
         pieces.add(new Piece(name, a, b, c, signal == null ? trigger.copy() : signal.copy()));
@@ -486,7 +488,7 @@ public final class HologramCapture {
         if (!ownSources.rejection.isEmpty()) return ownSources.rejection;
         if (sourceResolution != null && sourceBinding == null) {
             String reason = sourceResolution.validityFailure();
-            reason = reason == null ? "SOURCE_NOT_CAPTURED" : reason;
+            if (reason == null) reason = incomplete && !failure.isEmpty() ? failure : "SOURCE_NOT_CAPTURED";
             if (reject) ownSources.rejection = reason;
             return reason;
         }

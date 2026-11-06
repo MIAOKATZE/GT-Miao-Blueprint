@@ -104,9 +104,70 @@ final class HologramBuildOrHintsRegression {
                 "without an active capture the actual StructureLib server-side hint result is unchanged");
             SimpleAssert
                 .eq(1, controller.definition.nativeTraversals, "ordinary calls reach the native default method");
+            atomicDiscovery(trigger);
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("StructureLib buildOrHints capture", failure);
         }
+    }
+
+    private static void atomicDiscovery(ItemStack trigger) throws ReflectiveOperationException {
+        Controller controller = controller();
+        controller.expireDeclaration = true;
+        HologramCapture capture = HologramCapture.collect(controller, trigger, controller.facing);
+        SimpleAssert.that(
+            !capture.incomplete && capture.pending && !capture.walkingComplete,
+            "expired declaration deadline yields only during resumable walking: " + capture.failure);
+        SimpleAssert.eq(1, capture.pieces.size(), "cold declaration records the complete piece before yielding");
+        SimpleAssert.that(capture.sourceCurrent(), "cold declaration binds its source before the walk yields");
+        int slices = 0;
+        while (capture.pending && slices++ < 16)
+            capture = HologramCapture.collect(controller, trigger, controller.facing, capture);
+        SimpleAssert.that(
+            !capture.incomplete && !capture.pending && capture.walkingComplete,
+            "the expired first slice resumes to completion: " + capture.failure);
+        SimpleAssert.eq(1, capture.nativeConstructCalls, "continuation never replays atomic construct");
+        SimpleAssert.eq(1, controller.constructions, "only one native declaration callback executes");
+        SimpleAssert.eq(0, controller.definitionGets, "the direct declaration keeps its observed graph");
+        SimpleAssert.eq(2, nativePositions(controller).size(), "fixture declares two separate cells");
+        SimpleAssert.eq(3, capture.cells.size(), "continuation retains both declared cells and controller anchor");
+
+        controller = controller();
+        controller.legacy = true;
+        controller.expireDeclaration = true;
+        capture = HologramCapture.collect(controller, trigger, controller.facing);
+        SimpleAssert.that(!capture.incomplete && capture.pending, "legacy declaration also survives an expired deadline");
+        slices = 0;
+        while (capture.pending && slices++ < 16)
+            capture = HologramCapture.collect(controller, trigger, controller.facing, capture);
+        SimpleAssert.that(!capture.incomplete && !capture.pending, "legacy cold declaration resumes successfully");
+        SimpleAssert.eq(1, capture.nativeConstructCalls, "legacy continuation never repeats construct");
+        SimpleAssert.eq(1, capture.nativeDefinitionCalls, "legacy continuation never repeats definition discovery");
+        SimpleAssert.eq(1, controller.definitionGets, "legacy getter executes only once");
+
+        controller = controller();
+        controller.throwDeclaration = true;
+        HologramCapture rejected = HologramCapture.collect(controller, trigger, controller.facing);
+        SimpleAssert.that(rejected.incomplete && !rejected.pending, "a genuine declaration exception remains terminal");
+        SimpleAssert.eq("IllegalStateException", rejected.failure, "unbound failure retains the original exception");
+        SimpleAssert.that(
+            rejected.failureOrigin.contains("Controller.construct"),
+            "unbound failure retains its declaration origin");
+        SimpleAssert.that(!rejected.sourceCurrent(), "a failed declaration never acquires source authority");
+        SimpleAssert.eq("IllegalStateException", rejected.failure, "validity checks do not overwrite declaration failure");
+
+        controller = controller();
+        controller.pieceCount = 4097;
+        rejected = HologramCapture.collect(controller, trigger, controller.facing);
+        SimpleAssert.eq(4096, rejected.pieces.size(), "atomic discovery has a finite piece limit");
+        SimpleAssert.eq("PIECE_LIMIT", rejected.failure, "piece overflow retains its explicit failure reason");
+        SimpleAssert.that(
+            rejected.incomplete && !rejected.pending && !rejected.sourceCurrent(),
+            "piece overflow cannot be resumed or accepted as a complete source");
+        SimpleAssert.that(
+            rejected.failureOrigin.contains("CaptureLimitException"),
+            "piece overflow retains its original bounded-discovery exception");
+        SimpleAssert.eq(1, rejected.nativeConstructCalls, "overflow does not retry native declaration discovery");
+        SimpleAssert.eq(0, rejected.nativeDefinitionCalls, "overflow aborts before definition binding");
     }
 
     private static Set<String> nativePositions(Controller controller) {
@@ -206,8 +267,8 @@ final class HologramBuildOrHintsRegression {
 
         final EntryDefinition definition = new EntryDefinition();
         ExtendedFacing facing = ExtendedFacing.DEFAULT;
-        int shift = 1, reject, definitionGets;
-        boolean legacy;
+        int shift = 1, reject, definitionGets, constructions, pieceCount = 1;
+        boolean legacy, expireDeclaration, throwDeclaration;
 
         Controller() {
             super("build_or_hints_fixture");
@@ -223,6 +284,24 @@ final class HologramBuildOrHintsRegression {
         }
 
         public void construct(ItemStack trigger, boolean hints) {
+            constructions++;
+            if (expireDeclaration) {
+                try {
+                    Field field = HologramCapture.class.getDeclaredField("ACTIVE");
+                    field.setAccessible(true);
+                    @SuppressWarnings("unchecked")
+                    ThreadLocal<HologramCapture> active = (ThreadLocal<HologramCapture>) field.get(null);
+                    active.get().deadline = Long.MIN_VALUE;
+                } catch (ReflectiveOperationException failure) {
+                    throw new AssertionError("expire atomic declaration deadline", failure);
+                }
+            }
+            if (throwDeclaration) throw new IllegalStateException("native declaration failed");
+            if (pieceCount > 1) {
+                for (int i = 0; i < pieceCount; i++)
+                    HologramCapture.piece(this, "main", trigger, hints, 7, -2, 5);
+                return;
+            }
             if (legacy || reject == 6) {
                 if (HologramCapture.piece(this, "main", trigger, hints, 7, -2, 5) && legacy) return;
             }

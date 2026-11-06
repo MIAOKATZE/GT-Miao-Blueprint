@@ -801,6 +801,20 @@ public final class HologramControllerCaptureRegression {
                     && "satisfied".equals(HologramPlanPolicy.classify(s, cell, index))
                     && HologramCellPolicy.targetSatisfied(s, cell, index, Blocks.air, 0),
                 "actual native required air and its reviewed pass wrapper are satisfied without a payable item");
+            boolean replacementReady = s.replacementReady;
+            try {
+                s.mode = 1;
+                for (boolean ready : new boolean[] { false, true }) {
+                    s.replacementReady = ready;
+                    SimpleAssert.that(
+                        !HologramCellPolicy.originalMember(s, cell)
+                            && "satisfied".equals(HologramPlanPolicy.classify(s, cell, index)),
+                        "empty required air is a satisfied fact in replacement mode without original-member authority");
+                }
+            } finally {
+                s.mode = 0;
+                s.replacementReady = replacementReady;
+            }
             net.minecraft.block.Block previous = world.occupied;
             int occupiedX = world.occupiedX;
             try {
@@ -810,7 +824,17 @@ public final class HologramControllerCaptureRegression {
                     "blocked",
                     HologramPlanPolicy.classify(s, cell, index),
                     "occupied native required air remains a real structural blocker");
+                s.mode = 1;
+                SimpleAssert.eq(
+                    "protected", HologramPlanPolicy.classify(s, cell, index),
+                    "replacement cannot remove an occupant of required-air space");
+                s.mode = 2;
+                SimpleAssert.that(
+                    "satisfied".equals(HologramPlanPolicy.classify(s, cell, index))
+                        && world.getBlock(cell.x, cell.y, cell.z) == Blocks.stone,
+                    "demolition retains its existing keep-air-position semantics");
             } finally {
+                s.mode = 0;
                 world.occupied = previous;
                 world.occupiedX = occupiedX;
             }
@@ -992,11 +1016,20 @@ public final class HologramControllerCaptureRegression {
         // Supply committed transaction outcomes to the real job finalizer; physical placement is tested in-game.
         for (int index : s.work) s.capture.cells.get(index).status = "placed";
         s.cursor = s.completed = s.work.size();
-        HologramPlacementJobs.tickJob(s);
-        SimpleAssert.that(
-            s.job == 3 && s.completed == 3,
-            "real job finalization counts satisfied required-air cells without false partial completion: "
-                + operationState(s));
+        for (int mode : new int[] { 0, 1 }) {
+            s.mode = mode;
+            for (int index = 0; index < s.capture.cells.size(); index++) {
+                HologramCapture.Cell cell = s.capture.cells.get(index);
+                if (HologramElementCatalog.nativeAir(cell.element))
+                    cell.status = HologramPlanPolicy.classify(s, cell, index);
+            }
+            s.job = 1;
+            HologramPlacementJobs.tickJob(s);
+            SimpleAssert.that(
+                s.job == 3 && s.completed == 3 && !s.replacementAuthorized,
+                "real job finalization counts required-air satisfaction in build/replacement without granting replacement authority: "
+                    + operationState(s));
+        }
     }
 
     private static String operationState(HologramSession s) {
