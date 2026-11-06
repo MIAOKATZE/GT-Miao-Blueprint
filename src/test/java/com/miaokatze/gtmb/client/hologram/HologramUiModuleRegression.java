@@ -214,6 +214,8 @@ public final class HologramUiModuleRegression {
             NBTTagCompound review = (NBTTagCompound) uiField(ui.diagnostics, "capturedRenderSmokeAction");
             SimpleAssert.that(
                 "scan".equals(review.getString("op")) && ui.session.awaitingScan()
+                    && review.hasKey("operationPreflight", 1)
+                    && review.getBoolean("operationPreflight")
                     && review.hasKey("scope", 3)
                     && review.getInteger("scope") == 0
                     && review.hasKey("layer", 3)
@@ -228,6 +230,55 @@ public final class HologramUiModuleRegression {
                 "施工范围：全部结构",
                 ui.review.constructionScopeLabel(false),
                 "the pre-review scope label agrees with the actual whole-structure scan request");
+            SimpleAssert.that(
+                !HologramPlacementConfirmation.canBuild(ui.session.state().data, 42),
+                "light native materials do not authorize the final construction confirmation");
+            NBTTagCompound prepared = (NBTTagCompound) ui.session.state().data.copy();
+            prepared.removeTag("structureProjection");
+            prepared.setLong("planRevision", 43);
+            prepared.setLong("uiSequence", review.getLong("uiSequence"));
+            prepared.setLong("placementReviewNonce", 8);
+            prepared.setBoolean("operationPrepared", true);
+            prepared.setBoolean("operationReviewRequired", true);
+            HologramState next = new HologramState(prepared);
+            setUiField(ui.session, "state", next);
+            ui.session.pendingSequence(-1);
+            ui.review.acknowledgeReview(next);
+            ui.review.acknowledgeScan(next);
+            SimpleAssert.that(
+                ui.review.confirmation() && ui.review.confirmedRevision() == 43 && !ui.session.awaitingScan(),
+                "the prepared native receipt opens the existing confirmation for its new plan revision");
+            ui.review.activateControl(54);
+            ui.review.acknowledgeReview(next);
+            SimpleAssert.that(!ui.review.confirmation(), "duplicate preparation receipts cannot reopen a dismissed review");
+            ui.router.activate(50);
+            NBTTagCompound repeated = (NBTTagCompound) uiField(ui.diagnostics, "capturedRenderSmokeAction");
+            SimpleAssert.that(
+                "scan".equals(repeated.getString("op")) && repeated.getBoolean("operationPreflight")
+                    && repeated.getLong("planRevision") == 43,
+                "construction control 50 requests fresh operation preparation even after a prior full native plan");
+            ui.session.pendingSequence(-1);
+            prepared = (NBTTagCompound) prepared.copy();
+            prepared.setLong("uiSequence", repeated.getLong("uiSequence"));
+            next = new HologramState(prepared);
+            setUiField(ui.session, "state", next);
+            ui.review.acknowledgeReview(next);
+            ui.review.activateControl(55);
+            NBTTagCompound confirmed = (NBTTagCompound) uiField(ui.diagnostics, "capturedRenderSmokeAction");
+            SimpleAssert.that(
+                "build".equals(confirmed.getString("op")) && confirmed.getLong("planRevision") == 43
+                    && confirmed.getLong("placementReviewNonce") == 8,
+                "actual confirmation 55 sends only the newly prepared plan revision and review nonce");
+            ui.session.pendingSequence(-1);
+            ui.session.state().data.setBoolean("virtual", true);
+            ui.session.state().data.setBoolean("virtualPlacement", true);
+            ui.session.state().data.setBoolean("virtualLocked", true);
+            ui.router.activate(50);
+            NBTTagCompound blueprintReview = (NBTTagCompound) uiField(ui.diagnostics, "capturedRenderSmokeAction");
+            SimpleAssert.that(
+                "scan".equals(blueprintReview.getString("op")) && !blueprintReview.hasKey("operationPreflight"),
+                "virtual blueprint review retains its existing scan flow without native-operation preparation");
+            operationReviewCompletion();
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("actual editor sender plan revision", failure);
         } finally {
@@ -236,6 +287,52 @@ public final class HologramUiModuleRegression {
             } catch (IllegalAccessException failure) {
                 throw new AssertionError("cannot restore detached Minecraft singleton", failure);
             }
+        }
+    }
+
+    private static void operationReviewCompletion() throws ReflectiveOperationException {
+        java.lang.reflect.Field ownerField = HologramBackgroundTasks.class.getDeclaredField("OWNER");
+        ownerField.setAccessible(true);
+        HologramTaskOwner owner = (HologramTaskOwner) ownerField.get(null);
+        java.lang.reflect.Field callbacks = HologramTaskOwner.class.getDeclaredField("notifications");
+        callbacks.setAccessible(true);
+        Object original = callbacks.get(owner);
+        List<HologramTaskOwner.Result> results = new ArrayList<>();
+        callbacks.set(owner, new HologramTaskOwner.Notifications() {
+
+            @Override
+            public void background(String label) {}
+
+            @Override
+            public void finished(String label, HologramTaskOwner.Result result, String detail) {
+                results.add(result);
+            }
+        });
+        try {
+            HologramBackgroundTasks.command("operation-review-receipt", 73, "build");
+            NBTTagCompound prepared = new NBTTagCompound();
+            prepared.setString("session", "operation-review-receipt");
+            prepared.setLong("uiSequence", 73);
+            prepared.setLong("planRevision", 9);
+            prepared.setBoolean("operationReviewRequired", true);
+            prepared.setBoolean("capturePending", true);
+            HologramBackgroundTasks.snapshot(new HologramState(prepared));
+            SimpleAssert.that(owner.busy() && results.isEmpty(), "raw build stays owned during native operation preparation");
+            prepared.setBoolean("capturePending", false);
+            prepared.setBoolean("operationPrepared", true);
+            NBTTagCompound stale = (NBTTagCompound) prepared.copy();
+            stale.setLong("uiSequence", 72);
+            HologramBackgroundTasks.snapshot(new HologramState(stale));
+            SimpleAssert.that(owner.busy() && results.isEmpty(), "an older review receipt cannot finish the live build request");
+            HologramBackgroundTasks.snapshot(new HologramState(prepared));
+            SimpleAssert.eq(
+                java.util.Collections.singletonList(HologramTaskOwner.Result.REVIEW_REQUIRED),
+                results,
+                "the exact completed raw-build preparation requests review instead of reporting false construction failure or success");
+            SimpleAssert.that(!owner.busy(), "review preparation releases the background owner for final confirmation");
+        } finally {
+            if (owner.busy()) owner.finish(owner.token(), HologramTaskOwner.Result.CANCELLED, "test cleanup");
+            callbacks.set(owner, original);
         }
     }
 

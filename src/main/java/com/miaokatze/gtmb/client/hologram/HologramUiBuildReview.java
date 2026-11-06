@@ -26,6 +26,7 @@ final class HologramUiBuildReview {
     private long confirmedRevision = -1;
 
     private long seenPlacementReviewNonce;
+    private long seenOperationReviewSequence = -1;
 
     private final HologramPlacementReviewContext placementReviewContext = new HologramPlacementReviewContext();
 
@@ -246,7 +247,9 @@ final class HologramUiBuildReview {
                             this.confirmation = true;
                         else {
                             ui.session.awaitingScan(true);
-                            ui.session.send("scan", ui.config.configuration(), true);
+                            NBTTagCompound preflight = ui.config.configuration();
+                            if (!ui.session.state().data.getBoolean("virtual")) preflight.setBoolean("operationPreflight", true);
+                            ui.session.send("scan", preflight, true);
                         }
                 }
                 return true;
@@ -325,6 +328,7 @@ final class HologramUiBuildReview {
 
     void resetSession(long nonce) {
         seenPlacementReviewNonce = nonce;
+        seenOperationReviewSequence = -1;
         confirmedRevision = -1;
     }
 
@@ -338,6 +342,15 @@ final class HologramUiBuildReview {
             return;
         }
         if (confirmation && confirmedRevision != ui.session.revision()) confirmation = false;
+        if (next.data.getBoolean("operationReviewRequired") && next.data.getBoolean("operationPrepared")
+            && next.data.getLong("planRevision") == ui.session.revision()
+            && ui.session.pendingSequence() < 0
+            && next.data.getLong("uiSequence") > seenOperationReviewSequence) {
+            seenOperationReviewSequence = next.data.getLong("uiSequence");
+            confirmedRevision = ui.session.revision();
+            materialOffset = 0;
+            confirmation = true;
+        }
         if (next.data.getBoolean("blueprintAwaitingConfirmation")
             && !next.data.getBoolean("presetBrowseForPlacement")) {
             confirmedRevision = ui.session.revision();

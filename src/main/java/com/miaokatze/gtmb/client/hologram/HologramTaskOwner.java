@@ -5,6 +5,7 @@ final class HologramTaskOwner {
 
     enum Result {
         SUCCESS,
+        REVIEW_REQUIRED,
         FAILURE,
         CANCELLED
     }

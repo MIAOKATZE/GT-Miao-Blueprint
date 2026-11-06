@@ -216,7 +216,13 @@ final class HologramActionDispatcher {
         boolean scanScope = "scan".equals(op) && s.job != 1
             && s.job != 2
             && (action.hasKey("scope") || action.hasKey("layer"));
-        if (("editMove".equals(op) || HologramBlueprintEditor.isPlanningEdit(op) || scanScope)
+        boolean operationPreflight = "scan".equals(op) && action.hasKey("operationPreflight");
+        if (operationPreflight && !action.hasKey("operationPreflight", 1)) {
+            s.status = "施工预检参数无效，当前计划未修改";
+            HologramSnapshots.send(s);
+            return;
+        }
+        if (("editMove".equals(op) || HologramBlueprintEditor.isPlanningEdit(op) || scanScope || operationPreflight)
             && (!action.hasKey("planRevision", 4) || action.getLong("planRevision") != s.planRevision)) {
             s.status = "蓝图计划已更新，请重新选择编辑目标";
             HologramSnapshots.send(s);
@@ -341,6 +347,11 @@ final class HologramActionDispatcher {
                 if (action.hasKey("scope", 3)) s.scope = action.getInteger("scope");
                 if (action.hasKey("layer", 3)) s.layer = action.getInteger("layer");
             }
+        }
+        if (construction && s.job != 1 && s.job != 2 && HologramStructureProjection.showing(s)) {
+            HologramStructureProjection.requestOperationReview(s);
+            HologramSnapshots.send(s);
+            return;
         }
         if (construction && s.job != 1 && s.job != 2 && !HologramStructureProjection.prepareOperation(s)) {
             HologramSnapshots.send(s);
@@ -491,7 +502,10 @@ final class HologramActionDispatcher {
         } else if ("scan".equals(op) && s.job != 1 && s.job != 2) {
             // A newly accepted server scan owns session/uiSequence, not a completed library save's token.
             s.blueprintClientTaskToken = 0;
-            HologramBuildPreparation.scan(s);
+            if (operationPreflight && action.getBoolean("operationPreflight")
+                && HologramEditorWorkspaceRegistry.physicalProjection(s))
+                HologramStructureProjection.requestOperationReview(s);
+            else HologramBuildPreparation.scan(s);
         } else if ("configure".equals(op) && s.job != 1 && s.job != 2) {
             if (!configure(s, action)) {
                 HologramSnapshots.send(s);

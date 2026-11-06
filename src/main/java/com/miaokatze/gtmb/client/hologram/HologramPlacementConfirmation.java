@@ -17,6 +17,7 @@ final class HologramPlacementConfirmation {
 
     static boolean canBuild(NBTTagCompound state, long reviewedRevision) {
         return reviewedRevision == state.getLong("planRevision") && networksReady(state)
+            && (!state.getBoolean("structureProjection") || state.getBoolean("operationPrepared"))
             && voucherPaymentReady(state)
             && (!state.getBoolean("virtual") || lockedBlueprint(state))
             && (state.getInteger("missing") == 0 || lockedBlueprint(state));

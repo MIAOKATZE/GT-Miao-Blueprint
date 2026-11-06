@@ -22,7 +22,8 @@ public final class HologramBackgroundTasks {
             terminalNotifications++;
             completedToken = boundToken;
             succeeded = result == HologramTaskOwner.Result.SUCCESS;
-            completion = label + (succeeded ? "已完成" : result == HologramTaskOwner.Result.CANCELLED ? "已取消" : "失败")
+            completion = label + (succeeded ? "已完成" : result == HologramTaskOwner.Result.REVIEW_REQUIRED ? "等待确认"
+                : result == HologramTaskOwner.Result.CANCELLED ? "已取消" : "失败")
                 + (detail == null || detail.isEmpty() ? "" : "：" + detail);
             if ("orderMissingMaterials".equals(operation)) completion += "；右键投影仪返回材料确认，点击“刷新材料”核对后继续放置。";
             chat(completion);
@@ -502,6 +503,9 @@ public final class HologramBackgroundTasks {
                 OWNER.token(),
                 cancelling ? HologramTaskOwner.Result.CANCELLED : HologramTaskOwner.Result.FAILURE,
                 data.getString("status"));
+        } else if (data.getBoolean("operationReviewRequired") && data.getBoolean("operationPrepared")
+            && job != 1 && job != 2 && !"scan".equals(operation)) {
+            OWNER.finish(OWNER.token(), HologramTaskOwner.Result.REVIEW_REQUIRED, data.getString("status"));
         } else if ("processBlueprint".equals(operation)) {
             OWNER.finish(
                 OWNER.token(),

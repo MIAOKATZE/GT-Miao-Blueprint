@@ -583,7 +583,7 @@ public final class HologramControllerCaptureRegression {
     }
 
     @SuppressWarnings("unchecked")
-    private static void presetActions(sun.misc.Unsafe unsafe) throws ReflectiveOperationException {
+    private static void presetActions(sun.misc.Unsafe unsafe) throws ReflectiveOperationException, java.io.IOException {
         int energyId = 32740, mufflerId = 32741;
         net.minecraft.block.Block previousBlock = GregTechAPI.sBlockMachines;
         gregtech.api.interfaces.metatileentity.IMetaTileEntity previousEnergy = GregTechAPI.METATILEENTITIES[energyId],
@@ -758,6 +758,7 @@ public final class HologramControllerCaptureRegression {
                     && s.facingPins.equals(facings),
                 "regeneration preserves manual ownership and facing selections");
             scanScopes(s, energy, muffler);
+            operationReviews(s, energy, muffler);
         } finally {
             HologramWorkspace.clear();
             if (source != null) source.close();
@@ -779,6 +780,83 @@ public final class HologramControllerCaptureRegression {
         action.setLong("sourceRevision", com.miaokatze.gtmb.api.StructureSources.revision());
         action.setLong("uiSequence", s.uiSequence + 1);
         return action;
+    }
+
+    private static void operationReviews(HologramSession s, ItemStack energy, ItemStack muffler)
+        throws ReflectiveOperationException, java.io.IOException {
+        s.actionTick = Long.MIN_VALUE;
+        HologramCapture preview = s.capture;
+        long revision = s.planRevision, nonce = s.placementReviewNonce;
+        for (int invalid = 0; invalid < 3; invalid++) {
+            NBTTagCompound rejected = presetAction(s, "scan");
+            rejected.setBoolean("operationPreflight", true);
+            if (invalid == 0) rejected.removeTag("planRevision");
+            if (invalid == 1) rejected.setLong("planRevision", revision - 1);
+            if (invalid == 2) rejected.setString("operationPreflight", "true");
+            HologramActionDispatcher.handle(s.player, rejected);
+            SimpleAssert.that(
+                s.capture == preview && s.planRevision == revision && s.placementReviewNonce == nonce,
+                "invalid or stale operation preflight cannot replace the live native preview " + invalid);
+        }
+        NBTTagCompound raw = presetAction(s, "build");
+        raw.setLong("placementReviewNonce", nonce);
+        HologramActionDispatcher.handle(s.player, raw);
+        complete(s);
+        SimpleAssert.that(
+            !s.capture.projectionOnly && s.planRevision > revision && s.placementReviewNonce > nonce
+                && s.operationReviewSequence == raw.getLong("uiSequence")
+                && s.job == 0 && !s.buildAfterCapture,
+            "raw build prepares a new native plan for review without retaining the old placement consent");
+        NBTTagCompound ready = HologramSnapshots.basicState(s);
+        SimpleAssert.that(
+            ready.getBoolean("operationPrepared") && ready.getBoolean("operationReviewRequired"),
+            "the completed native operation publishes its exact command's new-review receipt");
+        HologramActionDispatcher.handle(s.player, presetAction(s, "scan"));
+        complete(s);
+        SimpleAssert.that(
+            HologramStructureProjection.showing(s) && s.operationReviewSequence != s.uiSequence,
+            "an ordinary scan remains lightweight and cannot inherit the previous operation review receipt");
+        NBTTagCompound preflight = presetAction(s, "scan");
+        preflight.setBoolean("operationPreflight", true);
+        revision = s.planRevision;
+        HologramActionDispatcher.handle(s.player, preflight);
+        complete(s);
+        SimpleAssert.that(
+            !s.capture.projectionOnly && s.planRevision > revision && s.job == 0
+                && s.operationReviewSequence == preflight.getLong("uiSequence")
+                && HologramPlanPolicy.planCurrent(s),
+            "explicit construction preflight finishes a fresh native world differential before confirmation");
+        HologramCapture firstPrepared = s.capture;
+        long firstRevision = s.planRevision, firstNonce = s.placementReviewNonce;
+        preflight = presetAction(s, "scan");
+        preflight.setBoolean("operationPreflight", true);
+        HologramActionDispatcher.handle(s.player, preflight);
+        complete(s);
+        SimpleAssert.that(
+            s.capture != firstPrepared && !s.capture.projectionOnly && s.planRevision > firstRevision
+                && s.placementReviewNonce > firstNonce && s.job == 0,
+            "repeated preflight on an already prepared native workspace rereads the world and replaces old review consent");
+        NBTTagCompound quote = nativeDemand(s);
+        SimpleAssert.eq(2L, quotedDemand(quote, energy), "prepared operation retains both real energy demands");
+        SimpleAssert.eq(1L, quotedDemand(quote, muffler), "prepared operation retains the real muffler demand");
+        NBTTagCompound stale = presetAction(s, "build");
+        stale.setLong("planRevision", revision);
+        HologramActionDispatcher.handle(s.player, stale);
+        SimpleAssert.that(s.job == 0, "the projection revision cannot authorize the prepared operation");
+        NBTTagCompound build = presetAction(s, "build");
+        build.setLong("placementReviewNonce", s.placementReviewNonce);
+        HologramActionDispatcher.handle(s.player, build);
+        SimpleAssert.that(
+            s.job == 0 && "施工材料不足，请补齐后重试".equals(s.status),
+            "the actual newly reviewed action reaches the original survival inventory guard");
+        s.player.inventory.mainInventory[1].stackSize = 2;
+        HologramMaterialQuote.recheck(s);
+        build = presetAction(s, "build");
+        build.setLong("placementReviewNonce", s.placementReviewNonce);
+        HologramActionDispatcher.handle(s.player, build);
+        SimpleAssert.that(
+            s.job == 1 && s.work.size() == 3 && s.player.inventory.mainInventory[1].stackSize == 2,
+            "a current confirmed native plan with sufficient stock reaches the existing bounded placement job without prepaying");
     }
 
     private static void scanScopes(HologramSession s, ItemStack energy, ItemStack muffler)

@@ -69,6 +69,22 @@ final class HologramStructureProjection {
         return false;
     }
 
+    /** Prepare a new native plan for review; consent to the previous projection never starts placement. */
+    static void requestOperationReview(HologramSession s) {
+        s.operationReviewSequence = -1;
+        if (showing(s)) prepareOperation(s);
+        else {
+            HologramSnapshotPreparation.cancel(s);
+            s.forcePlacementReady = false;
+            s.placementReviewIssued = false;
+            s.placementReviewNonce++;
+            HologramControllerCapture.collect(s);
+        }
+        if (s.capture == null || s.capture.projectionOnly || s.capture.incomplete) return;
+        s.operationReviewSequence = s.uiSequence;
+        s.status = s.capturePending ? "正在准备施工计划；完成后请核对材料与位置" : "施工计划已准备，请核对材料与位置后确认施工";
+    }
+
     static void finishHatchConfiguration(HologramSession s) {
         NBTTagCompound request = s.projectionHatchConfiguration;
         HologramCapture capture = s.projectionHatchCapture;
@@ -211,6 +227,7 @@ final class HologramStructureProjection {
         state.setBoolean("structureProjection", true);
         state.setBoolean("projectionDataComplete", true);
         state.setBoolean("operationPrepared", false);
+        state.setBoolean("operationReviewRequired", false);
         state.setBoolean("quotesIncomplete", false);
         state.setBoolean("supported", true);
         state.setBoolean("target", s.target != null);
