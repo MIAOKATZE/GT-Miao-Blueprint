@@ -248,7 +248,8 @@ final class HologramUiBuildReview {
                         else {
                             ui.session.awaitingScan(true);
                             NBTTagCompound preflight = ui.config.configuration();
-                            if (!ui.session.state().data.getBoolean("virtual")) preflight.setBoolean("operationPreflight", true);
+                            if (!ui.session.state().data.getBoolean("virtual"))
+                                preflight.setBoolean("operationPreflight", true);
                             ui.session.send("scan", preflight, true);
                         }
                 }

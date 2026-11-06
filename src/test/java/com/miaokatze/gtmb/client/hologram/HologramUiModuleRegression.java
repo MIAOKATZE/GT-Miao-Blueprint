@@ -250,7 +250,8 @@ public final class HologramUiModuleRegression {
                 "the prepared native receipt opens the existing confirmation for its new plan revision");
             ui.review.activateControl(54);
             ui.review.acknowledgeReview(next);
-            SimpleAssert.that(!ui.review.confirmation(), "duplicate preparation receipts cannot reopen a dismissed review");
+            SimpleAssert
+                .that(!ui.review.confirmation(), "duplicate preparation receipts cannot reopen a dismissed review");
             ui.router.activate(50);
             NBTTagCompound repeated = (NBTTagCompound) uiField(ui.diagnostics, "capturedRenderSmokeAction");
             SimpleAssert.that(
@@ -317,13 +318,16 @@ public final class HologramUiModuleRegression {
             prepared.setBoolean("operationReviewRequired", true);
             prepared.setBoolean("capturePending", true);
             HologramBackgroundTasks.snapshot(new HologramState(prepared));
-            SimpleAssert.that(owner.busy() && results.isEmpty(), "raw build stays owned during native operation preparation");
+            SimpleAssert
+                .that(owner.busy() && results.isEmpty(), "raw build stays owned during native operation preparation");
             prepared.setBoolean("capturePending", false);
             prepared.setBoolean("operationPrepared", true);
             NBTTagCompound stale = (NBTTagCompound) prepared.copy();
             stale.setLong("uiSequence", 72);
             HologramBackgroundTasks.snapshot(new HologramState(stale));
-            SimpleAssert.that(owner.busy() && results.isEmpty(), "an older review receipt cannot finish the live build request");
+            SimpleAssert.that(
+                owner.busy() && results.isEmpty(),
+                "an older review receipt cannot finish the live build request");
             HologramBackgroundTasks.snapshot(new HologramState(prepared));
             SimpleAssert.eq(
                 java.util.Collections.singletonList(HologramTaskOwner.Result.REVIEW_REQUIRED),

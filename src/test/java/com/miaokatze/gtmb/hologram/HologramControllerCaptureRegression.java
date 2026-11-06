@@ -803,9 +803,11 @@ public final class HologramControllerCaptureRegression {
         HologramActionDispatcher.handle(s.player, raw);
         complete(s);
         SimpleAssert.that(
-            !s.capture.projectionOnly && s.planRevision > revision && s.placementReviewNonce > nonce
+            !s.capture.projectionOnly && s.planRevision > revision
+                && s.placementReviewNonce > nonce
                 && s.operationReviewSequence == raw.getLong("uiSequence")
-                && s.job == 0 && !s.buildAfterCapture,
+                && s.job == 0
+                && !s.buildAfterCapture,
             "raw build prepares a new native plan for review without retaining the old placement consent");
         NBTTagCompound ready = HologramSnapshots.basicState(s);
         SimpleAssert.that(
@@ -822,7 +824,8 @@ public final class HologramControllerCaptureRegression {
         HologramActionDispatcher.handle(s.player, preflight);
         complete(s);
         SimpleAssert.that(
-            !s.capture.projectionOnly && s.planRevision > revision && s.job == 0
+            !s.capture.projectionOnly && s.planRevision > revision
+                && s.job == 0
                 && s.operationReviewSequence == preflight.getLong("uiSequence")
                 && HologramPlanPolicy.planCurrent(s),
             "explicit construction preflight finishes a fresh native world differential before confirmation");
@@ -833,8 +836,10 @@ public final class HologramControllerCaptureRegression {
         HologramActionDispatcher.handle(s.player, preflight);
         complete(s);
         SimpleAssert.that(
-            s.capture != firstPrepared && !s.capture.projectionOnly && s.planRevision > firstRevision
-                && s.placementReviewNonce > firstNonce && s.job == 0,
+            s.capture != firstPrepared && !s.capture.projectionOnly
+                && s.planRevision > firstRevision
+                && s.placementReviewNonce > firstNonce
+                && s.job == 0,
             "repeated preflight on an already prepared native workspace rereads the world and replaces old review consent");
         NBTTagCompound quote = nativeDemand(s);
         SimpleAssert.eq(2L, quotedDemand(quote, energy), "prepared operation retains both real energy demands");

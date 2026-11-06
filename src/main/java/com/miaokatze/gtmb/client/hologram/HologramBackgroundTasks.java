@@ -22,8 +22,10 @@ public final class HologramBackgroundTasks {
             terminalNotifications++;
             completedToken = boundToken;
             succeeded = result == HologramTaskOwner.Result.SUCCESS;
-            completion = label + (succeeded ? "已完成" : result == HologramTaskOwner.Result.REVIEW_REQUIRED ? "等待确认"
-                : result == HologramTaskOwner.Result.CANCELLED ? "已取消" : "失败")
+            completion = label
+                + (succeeded ? "已完成"
+                    : result == HologramTaskOwner.Result.REVIEW_REQUIRED ? "等待确认"
+                        : result == HologramTaskOwner.Result.CANCELLED ? "已取消" : "失败")
                 + (detail == null || detail.isEmpty() ? "" : "：" + detail);
             if ("orderMissingMaterials".equals(operation)) completion += "；右键投影仪返回材料确认，点击“刷新材料”核对后继续放置。";
             chat(completion);
@@ -504,34 +506,37 @@ public final class HologramBackgroundTasks {
                 cancelling ? HologramTaskOwner.Result.CANCELLED : HologramTaskOwner.Result.FAILURE,
                 data.getString("status"));
         } else if (data.getBoolean("operationReviewRequired") && data.getBoolean("operationPrepared")
-            && job != 1 && job != 2 && !"scan".equals(operation)) {
-            OWNER.finish(OWNER.token(), HologramTaskOwner.Result.REVIEW_REQUIRED, data.getString("status"));
-        } else if ("processBlueprint".equals(operation)) {
-            OWNER.finish(
-                OWNER.token(),
-                "processBlueprint".equals(data.getString("processingPresetOperation"))
-                    && data.getBoolean("processingPresetOperationSuccess")
-                    && data.getLong("planRevision") > startRevision ? HologramTaskOwner.Result.SUCCESS
-                        : HologramTaskOwner.Result.FAILURE,
-                data.getString("status"));
-        } else if ("scan".equals(operation)) {
-            if (!data.getBoolean("capturePending")) OWNER.finish(
-                OWNER.token(),
-                cancelling ? HologramTaskOwner.Result.CANCELLED
-                    : data.getBoolean("supported") && data.getLong("planRevision") > startRevision
-                        ? HologramTaskOwner.Result.SUCCESS
-                        : HologramTaskOwner.Result.FAILURE,
-                data.getString("status"));
-        } else if ("area".equals(operation)) {
-            OWNER.finishAreaSnapshot(data, startRevision, cancelling);
-        } else if (job == 4 || job == 5) {
-            OWNER.finish(
-                OWNER.token(),
-                cancelling ? HologramTaskOwner.Result.CANCELLED : HologramTaskOwner.Result.FAILURE,
-                data.getString("status"));
-        } else if (job == 3) OWNER.finish(OWNER.token(), HologramTaskOwner.Result.SUCCESS, data.getString("status"));
-        else if (job != 1 && job != 2 && !data.getBoolean("capturePending"))
-            OWNER.finish(OWNER.token(), HologramTaskOwner.Result.FAILURE, data.getString("status"));
+            && job != 1
+            && job != 2
+            && !"scan".equals(operation)) {
+                OWNER.finish(OWNER.token(), HologramTaskOwner.Result.REVIEW_REQUIRED, data.getString("status"));
+            } else if ("processBlueprint".equals(operation)) {
+                OWNER.finish(
+                    OWNER.token(),
+                    "processBlueprint".equals(data.getString("processingPresetOperation"))
+                        && data.getBoolean("processingPresetOperationSuccess")
+                        && data.getLong("planRevision") > startRevision ? HologramTaskOwner.Result.SUCCESS
+                            : HologramTaskOwner.Result.FAILURE,
+                    data.getString("status"));
+            } else if ("scan".equals(operation)) {
+                if (!data.getBoolean("capturePending")) OWNER.finish(
+                    OWNER.token(),
+                    cancelling ? HologramTaskOwner.Result.CANCELLED
+                        : data.getBoolean("supported") && data.getLong("planRevision") > startRevision
+                            ? HologramTaskOwner.Result.SUCCESS
+                            : HologramTaskOwner.Result.FAILURE,
+                    data.getString("status"));
+            } else if ("area".equals(operation)) {
+                OWNER.finishAreaSnapshot(data, startRevision, cancelling);
+            } else if (job == 4 || job == 5) {
+                OWNER.finish(
+                    OWNER.token(),
+                    cancelling ? HologramTaskOwner.Result.CANCELLED : HologramTaskOwner.Result.FAILURE,
+                    data.getString("status"));
+            } else
+                if (job == 3) OWNER.finish(OWNER.token(), HologramTaskOwner.Result.SUCCESS, data.getString("status"));
+                else if (job != 1 && job != 2 && !data.getBoolean("capturePending"))
+                    OWNER.finish(OWNER.token(), HologramTaskOwner.Result.FAILURE, data.getString("status"));
     }
 
     static void detach() {
