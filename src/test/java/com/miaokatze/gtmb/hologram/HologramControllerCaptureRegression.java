@@ -941,6 +941,8 @@ public final class HologramControllerCaptureRegression {
             .getDeclaredConstructor(HologramSession.class, HologramNetwork.SnapshotTicket.class);
         constructor.setAccessible(true);
         Object collector = constructor.newInstance(s, null);
+        // Full DTO preparation initializes its row cache after metadata, before the native cell stage.
+        if (!s.capture.projectionOnly) HologramLocalPlanRefresh.snapshotBegin(s);
         java.lang.reflect.Method cell = type.getDeclaredMethod("addCell", int.class);
         cell.setAccessible(true);
         for (int index = 0; index < s.capture.cells.size(); index++) cell.invoke(collector, index);
