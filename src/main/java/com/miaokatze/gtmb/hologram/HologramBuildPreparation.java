@@ -67,7 +67,9 @@ final class HologramBuildPreparation {
             s.status = "确认计划已更新，请重新核对材料与位置";
             return;
         }
-        if (s.virtual && (!s.id.equals(action.getString("session")) || !action.hasKey("placementReviewNonce", 4)
+        boolean nativeReview = !s.virtual && HologramEditorWorkspaceRegistry.physicalProjection(s)
+            && s.capture != null && !s.capture.projectionOnly;
+        if ((s.virtual || nativeReview) && (!s.id.equals(action.getString("session")) || !action.hasKey("placementReviewNonce", 4)
             || action.getLong("placementReviewNonce") != s.placementReviewNonce)) {
             s.forcePlacementReady = false;
             s.status = "材料确认已更新，请重新核对当前计划后确认";

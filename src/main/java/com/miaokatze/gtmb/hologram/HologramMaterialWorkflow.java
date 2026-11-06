@@ -30,7 +30,8 @@ final class HologramMaterialWorkflow {
             boolean cancellingOrder = "cancelMaterialOrder".equals(op) && HologramAeCraftingOrders.active(s.player);
             if (!(cancellingOrder ? HologramSessionPolicy.jobValid(s) : HologramSessionPolicy.valid(s)))
                 throw new IOException("投影仪或蓝图会话已失效");
-            if ("refreshMaterialQuote".equals(op) && HologramStructureProjection.showing(s))
+            if ("refreshMaterialQuote".equals(op) && !s.virtual
+                && HologramEditorWorkspaceRegistry.physicalProjection(s))
                 requireProjectionRefresh(s, action);
             else requireReview(s, action);
             if ("cancelMaterialOrder".equals(op)) {
@@ -145,13 +146,15 @@ final class HologramMaterialWorkflow {
         s.placementReviewNonce++;
         if (s.materialQuote != null) s.materialQuote.setLong("placementReviewNonce", s.placementReviewNonce);
         if (s.virtualPlacement && s.virtualLocked) s.blueprintAwaitingConfirmation = true;
+        if (!s.virtual && HologramEditorWorkspaceRegistry.physicalProjection(s))
+            s.operationReviewSequence = s.uiSequence;
         s.status = reason;
         return false;
     }
 
     /** Inventory-only refresh of an already published native plan; no order, voucher or placement permission. */
     static void requireProjectionRefresh(HologramSession s, NBTTagCompound action) throws IOException {
-        if (!HologramStructureProjection.showing(s) || s.capture.pending
+        if (s.virtual || !HologramEditorWorkspaceRegistry.physicalProjection(s) || s.capture == null || s.capture.pending
             || s.capture.incomplete
             || s.capturePending
             || s.captureWork != null

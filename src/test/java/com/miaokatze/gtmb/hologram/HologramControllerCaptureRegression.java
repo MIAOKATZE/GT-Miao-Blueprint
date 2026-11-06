@@ -851,12 +851,63 @@ public final class HologramControllerCaptureRegression {
         // The fixture clock is fixed; eight preceding validation/read actions filled this tick's protocol budget.
         // The separate survival-confirmation scenario represents the player's next interaction tick.
         s.actionTick = Long.MIN_VALUE;
+        long preparedRevision = s.planRevision, preparedNonce = s.placementReviewNonce;
+        for (int invalid = 0; invalid < 3; invalid++) {
+            NBTTagCompound rejected = presetAction(s, "build");
+            if (invalid == 0) rejected.setLong("placementReviewNonce", preparedNonce - 1);
+            if (invalid == 1) rejected.setInteger("placementReviewNonce", (int) preparedNonce);
+            HologramActionDispatcher.handle(s.player, rejected);
+            SimpleAssert.that(
+                s.uiSequence == rejected.getLong("uiSequence") && s.planRevision == preparedRevision
+                    && s.placementReviewNonce == preparedNonce && s.job == 0
+                    && "材料确认已更新，请重新核对当前计划后确认".equals(s.status),
+                "same-revision native build rejects stale, wrongly typed and missing review nonces " + invalid + ": "
+                    + operationState(s));
+        }
         NBTTagCompound build = presetAction(s, "build");
         build.setLong("placementReviewNonce", s.placementReviewNonce);
         HologramActionDispatcher.handle(s.player, build);
         SimpleAssert.that(
             s.uiSequence == build.getLong("uiSequence") && s.job == 0 && "施工材料不足，请补齐后重试".equals(s.status),
             "the actual newly reviewed action reaches the original survival inventory guard: " + operationState(s));
+        // Material refresh and its later confirmation are separate player interactions, after the nonce negatives.
+        s.actionTick = Long.MIN_VALUE;
+        s.player.inventory.mainInventory[1].stackSize = 2;
+        NBTTagCompound refresh = presetAction(s, "refreshMaterialQuote");
+        refresh.setLong("placementReviewNonce", s.placementReviewNonce);
+        HologramActionDispatcher.handle(s.player, refresh);
+        SimpleAssert.that(
+            s.job == 0 && s.planRevision == preparedRevision && s.placementReviewNonce == preparedNonce
+                && !s.capture.projectionOnly && !s.blueprintAwaitingConfirmation
+                && "已按当前材料需求更新已有与缺失数量；库存以确认施工时为准".equals(s.status),
+            "the real full-native refresh action preserves plan/review ownership and never enters a job or blueprint review: "
+                + operationState(s));
+        SimpleAssert.eq(2L, quotedDemand(s.materialQuote, energy), "full-native refresh preserves the reviewed energy demand");
+        long energyAvailable = -1;
+        net.minecraft.nbt.NBTTagList refreshedRows = s.materialQuote.getTagList("rows", 10);
+        for (int index = 0; index < refreshedRows.tagCount(); index++) {
+            NBTTagCompound row = refreshedRows.getCompoundTagAt(index);
+            if (HologramValues.same(energy, HologramMaterialQuote.readItem(row))) energyAvailable = row.getLong("available");
+        }
+        SimpleAssert.eq(2L, energyAvailable, "full-native refresh recounts the actual newly supplied stock");
+        SimpleAssert.eq(0, s.planMissing, "the reviewed native quote records the now sufficient real stock");
+        s.player.inventory.mainInventory[1].stackSize = 1;
+        build = presetAction(s, "build");
+        build.setLong("placementReviewNonce", s.placementReviewNonce);
+        HologramActionDispatcher.handle(s.player, build);
+        SimpleAssert.that(
+            s.job == 0 && s.planRevision == preparedRevision && s.placementReviewNonce == preparedNonce + 1
+                && s.operationReviewSequence == build.getLong("uiSequence")
+                && !s.blueprintAwaitingConfirmation && !s.placementReviewIssued
+                && s.materialQuote.getLong("placementReviewNonce") == s.placementReviewNonce
+                && s.planMissing == 1 && s.player.inventory.mainInventory[1].stackSize == 1,
+            "inventory deterioration rotates native review consent and requests the current native material confirmation without entering blueprint placement: "
+                + operationState(s));
+        NBTTagCompound updated = HologramSnapshots.basicState(s);
+        SimpleAssert.that(
+            updated.getBoolean("operationReviewRequired") && updated.getBoolean("operationPrepared")
+                && !updated.getBoolean("blueprintAwaitingConfirmation"),
+            "native inventory recheck publishes a prepared review receipt for the same plan and new nonce");
         s.player.inventory.mainInventory[1].stackSize = 2;
         HologramMaterialQuote.recheck(s);
         build = presetAction(s, "build");
