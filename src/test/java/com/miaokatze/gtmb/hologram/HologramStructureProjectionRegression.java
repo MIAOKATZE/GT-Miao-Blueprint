@@ -168,7 +168,8 @@ final class HologramStructureProjectionRegression {
         net.minecraft.entity.player.EntityPlayerMP player = (net.minecraft.entity.player.EntityPlayerMP) players
             .invoke(null, unsafe);
         HologramServiceEditRegression.ReadOnlyWorld world = (HologramServiceEditRegression.ReadOnlyWorld) player.worldObj;
-        net.minecraft.tileentity.TileEntity tile = (net.minecraft.tileentity.TileEntity) controller.getBaseMetaTileEntity();
+        net.minecraft.tileentity.TileEntity tile = (net.minecraft.tileentity.TileEntity) controller
+            .getBaseMetaTileEntity();
         tile.setWorldObj(world);
         world.occupant = tile;
         HologramSession session = new HologramSession(player, 0, 100, 0, false, 2);
@@ -181,7 +182,8 @@ final class HologramStructureProjectionRegression {
         ProtocolHint helper = new ProtocolHint(), readerVisual = new ProtocolHint();
         ReaderHint reader = new ReaderHint();
         for (NativeHint hint : NativeHint.values()) hint.calls = 0;
-        com.gtnewhorizon.structurelib.structure.IStructureDefinition<Object> definition = StructureDefinition.<Object>builder()
+        com.gtnewhorizon.structurelib.structure.IStructureDefinition<Object> definition = StructureDefinition
+            .<Object>builder()
             .addShape("hints", new String[][] { { "HHBITVMNERP" } })
             .addElement('H', helper)
             .addElement('B', NativeHint.BLOCK)
@@ -222,7 +224,8 @@ final class HologramStructureProjectionRegression {
                     session.capture);
             } while (session.capture.pending);
             SimpleAssert.eq(0, helper.calls, "lightweight capture defers generic helper hints to preparation");
-            HologramControllerCapture.FinishWork work = new HologramControllerCapture.FinishWork(new java.util.HashMap<>());
+            HologramControllerCapture.FinishWork work = new HologramControllerCapture.FinishWork(
+                new java.util.HashMap<>());
             work.beginFinish();
             int slices = 0;
             while (!work.step(session, 3, Long.MAX_VALUE))
@@ -233,13 +236,18 @@ final class HologramStructureProjectionRegression {
                 SimpleAssert.that(
                     cell.block == null && cell.unknown && cell.candidates.isEmpty() && !cell.candidateComplete,
                     "native hints provide no material, certainty or placement contract");
-                SimpleAssert.eq(null, HologramCellPolicy.targetFor(session, cell, index), "a native hint creates no payable target");
+                SimpleAssert.eq(
+                    null,
+                    HologramCellPolicy.targetFor(session, cell, index),
+                    "a native hint creates no payable target");
                 SimpleAssert.eq("protected", cell.status, "a native hint grants no construction authority");
                 if (cell.element == NativeHint.EMPTY || cell.element == NativeHint.FAIL) {
-                    SimpleAssert.that(cell.renderHint == null, "no output or an exception cannot become a successful hint");
+                    SimpleAssert
+                        .that(cell.renderHint == null, "no output or an exception cannot become a successful hint");
                     continue;
                 }
-                SimpleAssert.that(cell.renderHint != null, "ordinary and enum elements expose actual native hint output");
+                SimpleAssert
+                    .that(cell.renderHint != null, "ordinary and enum elements expose actual native hint output");
                 if (cell.element == NativeHint.ICONS || cell.element == NativeHint.TINTED_ICONS) {
                     SimpleAssert.that(
                         cell.iconOnly && "gtmb:native_hint".equals(cell.hintIcons[0]),
@@ -439,10 +447,9 @@ final class HologramStructureProjectionRegression {
                 IIcon[] icons = { icon, icon, icon, icon, icon, icon };
                 if (this == ICONS) StructureLibAPI.hintParticle(world, x, y, z, icons);
                 else StructureLibAPI.hintParticleTinted(world, x, y, z, icons, tint);
-            } else if (this == MARKER)
-                StructureLibAPI.hintParticle(world, x, y, z, StructureLibAPI.getBlockHint(), 7);
-            else if (this == TINTED_BLOCK)
-                StructureLibAPI.hintParticleTinted(world, x, y, z, Blocks.stone, (x + y + z + signal.stackSize) & 15, tint);
+            } else if (this == MARKER) StructureLibAPI.hintParticle(world, x, y, z, StructureLibAPI.getBlockHint(), 7);
+            else if (this == TINTED_BLOCK) StructureLibAPI
+                .hintParticleTinted(world, x, y, z, Blocks.stone, (x + y + z + signal.stackSize) & 15, tint);
             else ProtocolHint.emit(world, x, y, z, signal);
             if (this == FAIL) throw new IllegalStateException("native hint failed after emitting incomplete output");
             return true;

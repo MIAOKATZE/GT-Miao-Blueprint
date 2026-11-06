@@ -1099,10 +1099,8 @@ final class HologramCellPolicy {
             s.areaStructureId,
             signal,
             // Material declarations must not enumerate inventory predicates, even for simulated requests.
-            AutoPlaceEnvironment.fromLegacy(
-                (predicate, simulate, count) -> Collections.emptyMap(),
-                s.player,
-                message -> {}));
+            AutoPlaceEnvironment
+                .fromLegacy((predicate, simulate, count) -> Collections.emptyMap(), s.player, message -> {}));
     }
 
     @SuppressWarnings("unchecked")

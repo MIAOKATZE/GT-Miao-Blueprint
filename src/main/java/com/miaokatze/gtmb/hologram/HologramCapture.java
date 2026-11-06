@@ -850,9 +850,14 @@ public final class HologramCapture {
 
     /** Finish the appearance of an unresolved native cell without deriving material or construction authority. */
     static void prepareNativeHint(HologramSession session, Cell cell) {
-        if (session.virtual || session.capture == null || cell.anchor || cell.element == null
-            || cell.candidates == null || !cell.candidates.isEmpty()
-            || cell.block != null || cell.renderHint != null || cell.hintIcons != null) return;
+        if (session.virtual || session.capture == null
+            || cell.anchor
+            || cell.element == null
+            || cell.candidates == null
+            || !cell.candidates.isEmpty()
+            || cell.block != null
+            || cell.renderHint != null
+            || cell.hintIcons != null) return;
         HologramCapture capture = session.capture;
         ItemStack signal = HologramCellPolicy.elementTrigger(session, cell);
         Cell display = new Cell(cell.element, cell.x, cell.y, cell.z, signal, true);
@@ -896,16 +901,15 @@ public final class HologramCapture {
             return true;
         }
         IStructureElement backing = HologramDeclarationWrappers.backing(element);
-        if (backing != null)
-            return spawnHint(
-                backing,
-                world,
-                x,
-                y,
-                z,
-                HologramDeclarationWrappers.trigger(element, signal),
-                depth + 1,
-                nativeFallback);
+        if (backing != null) return spawnHint(
+            backing,
+            world,
+            x,
+            y,
+            z,
+            HologramDeclarationWrappers.trigger(element, signal),
+            depth + 1,
+            nativeFallback);
         if (HologramDeclarationAdapters.declaration(element) != null) return false;
         if (!nativeFallback && HologramDeclarationWrappers.requiresAdapter(element)) return false;
         if (element instanceof IStructureElementChain) {

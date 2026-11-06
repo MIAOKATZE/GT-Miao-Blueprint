@@ -218,9 +218,14 @@ final class HologramNativeAdmissionRegression {
         ItemStack stone = new ItemStack(Blocks.stone);
         NativeOutput output = new NativeOutput();
         HologramCapture.Cell cell = use(session, output, stone);
-        SimpleAssert.eq(1, HologramCellPolicy.declaredCandidates(session, cell).size(), "public native output is visible");
+        SimpleAssert.eq(
+            1,
+            HologramCellPolicy.declaredCandidates(session, cell)
+                .size(),
+            "public native output is visible");
         SimpleAssert.that(!cell.candidateComplete, "public native output retains its advisory enumeration boundary");
-        SimpleAssert.eq(null, HologramSourcePolicy.targetFailure(session, cell, 0), "its exact native target is admitted");
+        SimpleAssert
+            .eq(null, HologramSourcePolicy.targetFailure(session, cell, 0), "its exact native target is admitted");
         place(session, cell, stone);
         SimpleAssert.eq(1, output.outputReads, "material reads and construction reuse one contextual output");
         SimpleAssert.eq(0, output.calls, "public material reads never call structure checks, hints or placement");

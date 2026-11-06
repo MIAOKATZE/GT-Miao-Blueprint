@@ -223,8 +223,7 @@ final class HologramDeclarationCandidates {
         // actual backing for roles and alternatives without calling the resolver again.
         if (HologramDeclarationWrappers.isLazy(element)) {
             IStructureElement<?> backing = HologramDeclarationWrappers.nativeBacking(element);
-            if (backing != null)
-                collect(backing, context, world, x, y, z, trigger, environment, depth + 1, placement);
+            if (backing != null) collect(backing, context, world, x, y, z, trigger, environment, depth + 1, placement);
         }
     }
 

@@ -16,6 +16,7 @@ import net.minecraft.item.Item;
 import net.minecraft.item.ItemBlock;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
+
 import com.gtnewhorizon.structurelib.CommonProxy;
 import com.gtnewhorizon.structurelib.StructureLib;
 import com.gtnewhorizon.structurelib.structure.IStructureDefinition;
@@ -132,7 +133,8 @@ final class HologramColdGregTechDeclarationsRegression {
                 Materials.Steel,
                 Casings.ReinforcedSteamTurbineCasing,
                 hatchId);
-            // Recreate a cold native source for the second context; native lazy initialization is owned by StructureLib.
+            // Recreate a cold native source for the second context; native lazy initialization is owned by
+            // StructureLib.
             restoreLazy(originals);
             HologramSession second = capture(
                 unsafe,
@@ -146,7 +148,8 @@ final class HologramColdGregTechDeclarationsRegression {
                 first.capture.cells.get(4).block != second.capture.cells.get(4).block
                     || first.capture.cells.get(4).meta != second.capture.cells.get(4).meta,
                 "separate native output contexts retain their own captured casing targets");
-            SimpleAssert.that(unknownCalls.get() > 0, "unavailable native resolvers are read without inventing materials");
+            SimpleAssert
+                .that(unknownCalls.get() > 0, "unavailable native resolvers are read without inventing materials");
             SimpleAssert.eq(
                 previousCount,
                 casingCount.getInt(null),
@@ -282,8 +285,12 @@ final class HologramColdGregTechDeclarationsRegression {
 
     private static void restoreLazy(Map<IStructureElement<?>, Object[]> originals) throws ReflectiveOperationException {
         for (Map.Entry<IStructureElement<?>, Object[]> entry : originals.entrySet()) {
-            Field initialized = entry.getKey().getClass().getDeclaredField("elem"),
-                deferred = entry.getKey().getClass().getDeclaredField("to");
+            Field initialized = entry.getKey()
+                .getClass()
+                .getDeclaredField("elem"),
+                deferred = entry.getKey()
+                    .getClass()
+                    .getDeclaredField("to");
             initialized.setAccessible(true);
             deferred.setAccessible(true);
             initialized.set(entry.getKey(), entry.getValue()[0]);

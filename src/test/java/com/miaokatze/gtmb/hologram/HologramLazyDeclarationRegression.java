@@ -22,10 +22,8 @@ final class HologramLazyDeclarationRegression {
     static void run() {
         try {
             ItemStack signal = new ItemStack(Items.feather);
-            IStructureElement<Object> deferred = StructureUtility.lazy(
-                context -> {
-                    throw new IllegalStateException("native declaration output unavailable");
-                });
+            IStructureElement<Object> deferred = StructureUtility
+                .lazy(context -> { throw new IllegalStateException("native declaration output unavailable"); });
             SimpleAssert.that(
                 HologramCasingFallback.resolve(deferred, signal) == null,
                 "uninitialized lazy has no backing before its public native output is read");

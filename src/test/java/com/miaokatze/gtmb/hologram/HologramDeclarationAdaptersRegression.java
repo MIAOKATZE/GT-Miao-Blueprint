@@ -115,7 +115,8 @@ final class HologramDeclarationAdaptersRegression {
         candidates.collect(NativeOutput.STACKS, new Object(), null, 0, 0, 0, signal, null, 0);
         SimpleAssert.eq(1, candidates.stacks.size(), "an ordinary enum exposes its public native output");
         SimpleAssert.that(!candidates.complete, "a concrete native output is not exhaustive acceptance");
-        SimpleAssert.that(candidates.allows(new ItemStack(Blocks.stone), true), "the exact native output has authority");
+        SimpleAssert
+            .that(candidates.allows(new ItemStack(Blocks.stone), true), "the exact native output has authority");
         SimpleAssert.that(!candidates.allows(new ItemStack(Blocks.dirt), false), "unadvertised materials stay unknown");
         SimpleAssert.eq(1, signal.stackSize, "a native output reader receives a disposable trigger");
 
@@ -138,9 +139,8 @@ final class HologramDeclarationAdaptersRegression {
             "transparent wrappers retain their projected native signal");
 
         IStructureElement<Object> advisory = new DeclaredWrapper(NativeOutput.STACKS);
-        HologramDeclarationAdapters.register(
-            advisory,
-            new HologramDeclarationAdapters.Declaration(() -> NativeOutput.STACKS, null, false));
+        HologramDeclarationAdapters
+            .register(advisory, new HologramDeclarationAdapters.Declaration(() -> NativeOutput.STACKS, null, false));
         candidates = new HologramDeclarationCandidates();
         candidates.collect(advisory, new Object(), null, 0, 0, 0, signal, null, 0);
         SimpleAssert.eq(1, candidates.stacks.size(), "advisory backing retains visible native outputs");
@@ -151,7 +151,10 @@ final class HologramDeclarationAdaptersRegression {
         IStructureElement<Object> advisoryPure = new DeclaredWrapper(null);
         HologramDeclarationAdapters.register(
             advisoryPure,
-            new HologramDeclarationAdapters.Declaration(() -> new HologramPureElementsRegression.Leaf(true), null, false));
+            new HologramDeclarationAdapters.Declaration(
+                () -> new HologramPureElementsRegression.Leaf(true),
+                null,
+                false));
         SimpleAssert.that(
             HologramElementCatalog.pure(advisoryPure) == null,
             "advisory backing cannot inherit a pure placement contract");
@@ -168,24 +171,23 @@ final class HologramDeclarationAdaptersRegression {
             new HologramDeclarationAdapters.Declaration(() -> StructureUtility.ofBlock(Blocks.dirt, 0), null, false));
         candidates = new HologramDeclarationCandidates();
         candidates.collect(advisoryChain, new Object(), null, 0, 0, 0, signal, null, 0);
-        SimpleAssert.eq(2, candidates.stacks.size(), "advisory data supplements the original chain's visible candidates");
+        SimpleAssert
+            .eq(2, candidates.stacks.size(), "advisory data supplements the original chain's visible candidates");
         SimpleAssert.that(
-            candidates.allows(new ItemStack(Blocks.stone), true) && !candidates.allows(new ItemStack(Blocks.dirt), false),
+            candidates.allows(new ItemStack(Blocks.stone), true)
+                && !candidates.allows(new ItemStack(Blocks.dirt), false),
             "the original chain retains its own proof without inheriting advisory placement authority");
 
         for (IStructureElement<Object> unknown : Arrays.asList(
             NativeOutput.PREDICATE_ONLY,
             NativeOutput.NO_OUTPUT,
             NativeOutput.FAIL,
-            StructureUtility.onlyIf(
-                context -> false,
-                NativeOutput.STACKS),
+            StructureUtility.onlyIf(context -> false, NativeOutput.STACKS),
             StructureUtility.defer(context -> { throw new IllegalStateException("deferred output unavailable"); }),
             StructureUtility.lazy(context -> { throw new IllegalStateException("lazy output unavailable"); }))) {
             candidates = new HologramDeclarationCandidates();
             candidates.collect(unknown, new Object(), null, 0, 0, 0, signal, null, 0);
-            SimpleAssert
-                .that(!candidates.complete && candidates.stacks.isEmpty(), "unresolved output remains unknown");
+            SimpleAssert.that(!candidates.complete && candidates.stacks.isEmpty(), "unresolved output remains unknown");
             SimpleAssert
                 .that(!candidates.allows(new ItemStack(Blocks.stone), false), "unknown output grants no authority");
         }
@@ -193,9 +195,8 @@ final class HologramDeclarationAdaptersRegression {
         NativeOutputLeaf leaf = new NativeOutputLeaf();
         HologramDeclarationCollector collector = new HologramDeclarationCollector();
         HologramDeclarationCandidates first = collector.collect(leaf, null, null, 0, 0, 0, "", signal, null);
-        SimpleAssert.that(
-            first.allows(new ItemStack(Blocks.stone), true),
-            "a named non-factory class exposes native output");
+        SimpleAssert
+            .that(first.allows(new ItemStack(Blocks.stone), true), "a named non-factory class exposes native output");
         SimpleAssert.that(
             first == collector.collect(leaf, null, null, 0, 0, 0, "", signal, null),
             "repeated reads reuse the existing contextual declaration cache");
@@ -220,7 +221,8 @@ final class HologramDeclarationAdaptersRegression {
                 reads.incrementAndGet();
                 return leaf;
             };
-            IStructureElement<Object> dynamic = lazy ? StructureUtility.lazy(resolver) : StructureUtility.defer(resolver);
+            IStructureElement<Object> dynamic = lazy ? StructureUtility.lazy(resolver)
+                : StructureUtility.defer(resolver);
             HologramDeclarationCollector collector = new HologramDeclarationCollector();
             HologramDeclarationCandidates output = collector.collect(dynamic, null, null, 0, 0, 0, "", signal, null);
             SimpleAssert.that(output.allows(new ItemStack(Blocks.stone), true), "standard dynamic output is usable");

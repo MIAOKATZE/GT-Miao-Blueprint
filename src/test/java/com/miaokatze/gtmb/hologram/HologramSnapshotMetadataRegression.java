@@ -432,9 +432,7 @@ final class HologramSnapshotMetadataRegression {
                 .tagCount(),
             "selected native rows retain their actual editable candidate options");
         com.gtnewhorizon.structurelib.structure.IStructureElement<Object> incomplete = com.gtnewhorizon.structurelib.structure.StructureUtility
-            .onlyIf(
-                context -> false,
-                declared);
+            .onlyIf(context -> false, declared);
         HologramCapture.Cell unknown = new HologramCapture.Cell(incomplete, 2, 64, 0, signal);
         unknown.block = Blocks.stone;
         session.capture.cells.add(unknown);

@@ -145,8 +145,7 @@ final class HologramPureElementsRegression {
         SimpleAssert.that(
             collector.collect(wrapper, null, null, 0, 64, 0, "", signal, null).stacks.isEmpty(),
             "reader removal invalidates the previously accepted candidate cache");
-        IStructureElement<Object> conditional = StructureUtility
-            .onlyIf(controller -> false, declaration);
+        IStructureElement<Object> conditional = StructureUtility.onlyIf(controller -> false, declaration);
         IStructureElement<Object> deferred = StructureUtility
             .defer(controller -> { throw new IllegalStateException("native output unavailable"); });
         for (IStructureElement<?> unknown : Arrays.asList(conditional, deferred)) {
