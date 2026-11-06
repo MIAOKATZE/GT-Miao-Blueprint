@@ -135,7 +135,8 @@ final class HologramBuildOrHintsRegression {
         controller.legacy = true;
         controller.expireDeclaration = true;
         capture = HologramCapture.collect(controller, trigger, controller.facing);
-        SimpleAssert.that(!capture.incomplete && capture.pending, "legacy declaration also survives an expired deadline");
+        SimpleAssert
+            .that(!capture.incomplete && capture.pending, "legacy declaration also survives an expired deadline");
         slices = 0;
         while (capture.pending && slices++ < 16)
             capture = HologramCapture.collect(controller, trigger, controller.facing, capture);
@@ -153,7 +154,8 @@ final class HologramBuildOrHintsRegression {
             rejected.failureOrigin.contains("Controller.construct"),
             "unbound failure retains its declaration origin");
         SimpleAssert.that(!rejected.sourceCurrent(), "a failed declaration never acquires source authority");
-        SimpleAssert.eq("IllegalStateException", rejected.failure, "validity checks do not overwrite declaration failure");
+        SimpleAssert
+            .eq("IllegalStateException", rejected.failure, "validity checks do not overwrite declaration failure");
 
         controller = controller();
         controller.pieceCount = 4097;
@@ -298,8 +300,7 @@ final class HologramBuildOrHintsRegression {
             }
             if (throwDeclaration) throw new IllegalStateException("native declaration failed");
             if (pieceCount > 1) {
-                for (int i = 0; i < pieceCount; i++)
-                    HologramCapture.piece(this, "main", trigger, hints, 7, -2, 5);
+                for (int i = 0; i < pieceCount; i++) HologramCapture.piece(this, "main", trigger, hints, 7, -2, 5);
                 return;
             }
             if (legacy || reject == 6) {

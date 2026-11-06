@@ -826,7 +826,8 @@ public final class HologramControllerCaptureRegression {
                     "occupied native required air remains a real structural blocker");
                 s.mode = 1;
                 SimpleAssert.eq(
-                    "protected", HologramPlanPolicy.classify(s, cell, index),
+                    "protected",
+                    HologramPlanPolicy.classify(s, cell, index),
                     "replacement cannot remove an occupant of required-air space");
                 s.mode = 2;
                 SimpleAssert.that(
