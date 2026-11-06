@@ -499,6 +499,7 @@ final class HologramControllerCapture {
                     if (key.equals(s.scanSelectedPosition)) s.selected = i;
                     if (s.scanSelectedPositions.contains(key)) s.selectedIndices.add(i);
                     cell.candidates = HologramCellPolicy.candidates(s, cell);
+                    HologramCapture.prepareNativeHint(s, cell);
                 } else stage = 5;
             } else if (stage == 5) {
                 s.scanSelectedPosition = null;

@@ -24,17 +24,16 @@ final class HologramLazyDeclarationRegression {
             ItemStack signal = new ItemStack(Items.feather);
             IStructureElement<Object> deferred = StructureUtility.lazy(
                 context -> {
-                    throw new AssertionError(
-                        "deferred controller supplier must not execute during declaration capture");
+                    throw new IllegalStateException("native declaration output unavailable");
                 });
             SimpleAssert.that(
                 HologramCasingFallback.resolve(deferred, signal) == null,
-                "unreviewed uninitialized lazy declaration stays protected");
+                "uninitialized lazy has no backing before its public native output is read");
             HologramDeclarationCandidates unknown = new HologramDeclarationCandidates();
             unknown.collect(deferred, new Object(), null, 0, 0, 0, signal, null, 0);
             SimpleAssert.that(
                 !unknown.complete && unknown.stacks.isEmpty(),
-                "unreviewed lazy does not invent material candidates");
+                "unavailable lazy output does not invent material candidates");
             HologramCapture capture = new HologramCapture(new Object(), signal);
             Method hint = HologramCapture.class.getDeclaredMethod(
                 "spawnHint",

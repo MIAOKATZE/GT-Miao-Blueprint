@@ -7,6 +7,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import net.minecraft.block.Block;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemStack;
+import net.minecraft.util.IIcon;
 import net.minecraft.world.World;
 
 import com.gtnewhorizon.structurelib.CommonProxy;
@@ -150,11 +151,121 @@ final class HologramStructureProjectionRegression {
                 marker.set(null, oldMarker);
             }
             targetCacheBoundaries(unsafe, world, controller);
+            nativeHintProtocol(unsafe, controller);
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("light structure projection", failure);
         } finally {
             Thread.currentThread()
                 .setName(thread);
+        }
+    }
+
+    private static void nativeHintProtocol(sun.misc.Unsafe unsafe,
+        HologramDynamicDefinitionRegression.DynamicController controller) throws ReflectiveOperationException {
+        java.lang.reflect.Method players = HologramControllerCaptureRegression.class
+            .getDeclaredMethod("player", sun.misc.Unsafe.class);
+        players.setAccessible(true);
+        net.minecraft.entity.player.EntityPlayerMP player = (net.minecraft.entity.player.EntityPlayerMP) players
+            .invoke(null, unsafe);
+        HologramServiceEditRegression.ReadOnlyWorld world = (HologramServiceEditRegression.ReadOnlyWorld) player.worldObj;
+        net.minecraft.tileentity.TileEntity tile = (net.minecraft.tileentity.TileEntity) controller.getBaseMetaTileEntity();
+        tile.setWorldObj(world);
+        world.occupant = tile;
+        HologramSession session = new HologramSession(player, 0, 100, 0, false, 2);
+        session.machine = controller;
+        session.context = controller;
+        session.target = tile;
+        session.facing = controller.getExtendedFacing()
+            .ordinal();
+        session.materialSettings.containers = session.materialSettings.me = false;
+        ProtocolHint helper = new ProtocolHint(), readerVisual = new ProtocolHint();
+        ReaderHint reader = new ReaderHint();
+        for (NativeHint hint : NativeHint.values()) hint.calls = 0;
+        com.gtnewhorizon.structurelib.structure.IStructureDefinition<Object> definition = StructureDefinition.<Object>builder()
+            .addShape("hints", new String[][] { { "HHBITVMNERP" } })
+            .addElement('H', helper)
+            .addElement('B', NativeHint.BLOCK)
+            .addElement('I', NativeHint.ICONS)
+            .addElement('T', NativeHint.TINTED_ICONS)
+            .addElement('V', NativeHint.TINTED_BLOCK)
+            .addElement('M', NativeHint.MARKER)
+            .addElement('N', NativeHint.EMPTY)
+            .addElement('E', NativeHint.FAIL)
+            .addElement('R', reader)
+            .addElement('P', new HologramPureElementsRegression.Leaf(false))
+            .build();
+        Field proxy = StructureLib.class.getDeclaredField("proxy"),
+            marker = StructureLib.class.getDeclaredField("blockHint");
+        proxy.setAccessible(true);
+        marker.setAccessible(true);
+        Object previousProxy = proxy.get(null), previousMarker = marker.get(null);
+        proxy.set(null, unsafe.allocateInstance(CaptureProxy.class));
+        marker.set(null, Blocks.glass);
+        try (
+            GTMBExtensions.Registration registered = com.miaokatze.gtmb.api.Declarations.registerReader(
+                "gtmb_test:native_hint_reader",
+                ReaderHint.class,
+                ignored -> new com.miaokatze.gtmb.api.Declarations.Declaration(readerVisual));
+            GTMBExtensions.Registration source = StructureSources.register(
+                "gtmb_test:native_hint_protocol",
+                HologramDynamicDefinitionRegression.DynamicController.class,
+                (machine, signal) -> new StructureSources.Plan(
+                    definition,
+                    java.util.Collections.singletonList(new StructureSources.Piece("hints", -1, 0, 0, signal))))) {
+            ItemStack signal = HologramSessionPolicy.trigger(session);
+            do {
+                session.capture = HologramCapture.collectProjection(
+                    controller,
+                    signal,
+                    controller.getExtendedFacing(),
+                    session.captureIntent,
+                    session.capture);
+            } while (session.capture.pending);
+            SimpleAssert.eq(0, helper.calls, "lightweight capture defers generic helper hints to preparation");
+            HologramControllerCapture.FinishWork work = new HologramControllerCapture.FinishWork(new java.util.HashMap<>());
+            work.beginFinish();
+            int slices = 0;
+            while (!work.step(session, 3, Long.MAX_VALUE))
+                SimpleAssert.that(++slices < 10000, "native hint preparation uses the existing bounded finish work");
+            for (int index = 0; index < session.capture.cells.size(); index++) {
+                HologramCapture.Cell cell = session.capture.cells.get(index);
+                if (cell.anchor || cell.element instanceof com.miaokatze.gtmb.api.Declarations.PureElement) continue;
+                SimpleAssert.that(
+                    cell.block == null && cell.unknown && cell.candidates.isEmpty() && !cell.candidateComplete,
+                    "native hints provide no material, certainty or placement contract");
+                SimpleAssert.eq(null, HologramCellPolicy.targetFor(session, cell, index), "a native hint creates no payable target");
+                SimpleAssert.eq("protected", cell.status, "a native hint grants no construction authority");
+                if (cell.element == NativeHint.EMPTY || cell.element == NativeHint.FAIL) {
+                    SimpleAssert.that(cell.renderHint == null, "no output or an exception cannot become a successful hint");
+                    continue;
+                }
+                SimpleAssert.that(cell.renderHint != null, "ordinary and enum elements expose actual native hint output");
+                if (cell.element == NativeHint.ICONS || cell.element == NativeHint.TINTED_ICONS) {
+                    SimpleAssert.that(
+                        cell.iconOnly && "gtmb:native_hint".equals(cell.hintIcons[0]),
+                        "native icon hints retain only their texture descriptors");
+                } else if (cell.element == NativeHint.MARKER) {
+                    SimpleAssert.that(
+                        cell.renderHint.block == Blocks.glass && cell.hintIndex == 7,
+                        "numeric native markers remain display facts");
+                } else SimpleAssert.that(
+                    cell.renderHint.block == Blocks.stone
+                        && cell.renderHint.metadata == ((cell.x + cell.y + cell.z + signal.stackSize) & 15),
+                    "helper and computed native hints retain their own coordinate and signal");
+                if (cell.element == NativeHint.TINTED_BLOCK || cell.element == NativeHint.TINTED_ICONS)
+                    SimpleAssert.that(
+                        cell.hintTint != null && cell.hintTint[0] == 11 && cell.hintTint[3] == 44,
+                        "both native tint protocols retain their actual display values");
+                HologramCapture.prepareNativeHint(session, cell);
+            }
+            SimpleAssert.eq(2, helper.calls, "each unresolved helper cell is hinted once at its own position");
+            SimpleAssert.eq(1, readerVisual.calls, "a registered reader supplies its own native visual backing");
+            SimpleAssert.eq(0, reader.calls, "registered readers never invoke the original hint callback");
+            for (NativeHint hint : NativeHint.values())
+                SimpleAssert.eq(1, hint.calls, "each enum hint protocol is read once during preparation");
+        } finally {
+            proxy.set(null, previousProxy);
+            marker.set(null, previousMarker);
         }
     }
 
@@ -245,6 +356,96 @@ final class HologramStructureProjectionRegression {
         @Override
         public void hintParticle(World world, int x, int y, int z, Block block, int meta) {
             HologramCapture.hint(world, x, y, z, block, meta);
+        }
+
+        @Override
+        public void hintParticle(World world, int x, int y, int z, IIcon[] icons) {
+            HologramCapture.iconHint(world, x, y, z, icons, null);
+        }
+
+        @Override
+        public void hintParticleTinted(World world, int x, int y, int z, IIcon[] icons, short[] tint) {
+            HologramCapture.iconHint(world, x, y, z, icons, tint);
+        }
+
+        @Override
+        public void hintParticleTinted(World world, int x, int y, int z, Block block, int meta, short[] tint) {
+            HologramCapture.hint(world, x, y, z, block, meta);
+            HologramCapture.hintTint(x, y, z, tint);
+        }
+    }
+
+    private static class ProtocolHint implements IStructureElementNoPlacement<Object> {
+
+        int calls;
+
+        public boolean check(Object context, World world, int x, int y, int z) {
+            throw new AssertionError("native hint preparation ran a structure check");
+        }
+
+        public boolean placeBlock(Object context, World world, int x, int y, int z, ItemStack signal) {
+            throw new AssertionError("native hint preparation ran element placement");
+        }
+
+        public boolean spawnHint(Object context, World world, int x, int y, int z, ItemStack signal) {
+            calls++;
+            emit(world, x, y, z, signal);
+            return true;
+        }
+
+        static void emit(World world, int x, int y, int z, ItemStack signal) {
+            StructureLibAPI.hintParticle(world, x, y, z, Blocks.stone, (x + y + z + signal.stackSize) & 15);
+        }
+    }
+
+    private static final class ReaderHint extends ProtocolHint {
+
+        @Override
+        public boolean spawnHint(Object context, World world, int x, int y, int z, ItemStack signal) {
+            calls++;
+            throw new AssertionError("registered reader invoked its original hint callback");
+        }
+    }
+
+    private enum NativeHint implements IStructureElementNoPlacement<Object> {
+
+        BLOCK,
+        ICONS,
+        TINTED_ICONS,
+        TINTED_BLOCK,
+        MARKER,
+        EMPTY,
+        FAIL;
+
+        int calls;
+
+        public boolean check(Object context, World world, int x, int y, int z) {
+            throw new AssertionError("enum native hint preparation ran a structure check");
+        }
+
+        public boolean placeBlock(Object context, World world, int x, int y, int z, ItemStack signal) {
+            throw new AssertionError("enum native hint preparation ran element placement");
+        }
+
+        public boolean spawnHint(Object context, World world, int x, int y, int z, ItemStack signal) {
+            calls++;
+            if (this == EMPTY) return true;
+            short[] tint = { 11, 22, 33, 44 };
+            if (this == ICONS || this == TINTED_ICONS) {
+                IIcon icon = (IIcon) java.lang.reflect.Proxy.newProxyInstance(
+                    IIcon.class.getClassLoader(),
+                    new Class<?>[] { IIcon.class },
+                    (proxy, method, arguments) -> "getIconName".equals(method.getName()) ? "gtmb:native_hint" : null);
+                IIcon[] icons = { icon, icon, icon, icon, icon, icon };
+                if (this == ICONS) StructureLibAPI.hintParticle(world, x, y, z, icons);
+                else StructureLibAPI.hintParticleTinted(world, x, y, z, icons, tint);
+            } else if (this == MARKER)
+                StructureLibAPI.hintParticle(world, x, y, z, StructureLibAPI.getBlockHint(), 7);
+            else if (this == TINTED_BLOCK)
+                StructureLibAPI.hintParticleTinted(world, x, y, z, Blocks.stone, (x + y + z + signal.stackSize) & 15, tint);
+            else ProtocolHint.emit(world, x, y, z, signal);
+            if (this == FAIL) throw new IllegalStateException("native hint failed after emitting incomplete output");
+            return true;
         }
     }
 

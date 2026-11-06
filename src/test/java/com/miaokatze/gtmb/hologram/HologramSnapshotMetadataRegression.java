@@ -433,7 +433,7 @@ final class HologramSnapshotMetadataRegression {
             "selected native rows retain their actual editable candidate options");
         com.gtnewhorizon.structurelib.structure.IStructureElement<Object> incomplete = com.gtnewhorizon.structurelib.structure.StructureUtility
             .onlyIf(
-                context -> { throw new AssertionError("snapshot evaluated an arbitrary declaration predicate"); },
+                context -> false,
                 declared);
         HologramCapture.Cell unknown = new HologramCapture.Cell(incomplete, 2, 64, 0, signal);
         unknown.block = Blocks.stone;

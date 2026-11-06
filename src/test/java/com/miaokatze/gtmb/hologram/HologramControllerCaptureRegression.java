@@ -349,7 +349,7 @@ public final class HologramControllerCaptureRegression {
         initialized.setAccessible(true);
         initialized.set(lazy, StructureUtility.ofBlock(Blocks.wool, 8));
         com.gtnewhorizon.structurelib.structure.IStructureElement<Object> uninitialized = StructureUtility
-            .lazy(controller -> { throw new AssertionError("projection ran uninitialized lazy factory"); });
+            .lazy(controller -> { throw new IllegalStateException("native output unavailable"); });
         java.util.List<com.gtnewhorizon.structurelib.structure.IStructureElement<Object>> elements = java.util.Arrays
             .asList(
                 StructureUtility.ofBlock(Blocks.wool, 5),
@@ -369,8 +369,8 @@ public final class HologramControllerCaptureRegression {
         net.minecraft.block.Block[] expected = { Blocks.wool, Blocks.wool, Blocks.dirt, Blocks.wool, Blocks.dirt,
             Blocks.stone, Blocks.dirt, Blocks.stone, Blocks.wool, null };
         int[] metadata = { 5, 7, 0, 4, 0, 0, 0, 0, 8, 0 };
-        int[] counts = { 1, 16, 2, 0, 2, 2, 2, 2, 1, 0 };
-        boolean[] complete = { true, false, true, false, false, false, false, false, true, false };
+        int[] counts = { 1, 16, 2, 2, 2, 2, 2, 2, 1, 0 };
+        boolean[] complete = { true, false, true, false, false, false, false, false, false, false };
         com.gtnewhorizon.structurelib.structure.StructureDefinition.Builder<Object> definition = com.gtnewhorizon.structurelib.structure.StructureDefinition
             .<Object>builder()
             .addShape("factories", new String[][] { { "ABCDEFGHIJ" } });

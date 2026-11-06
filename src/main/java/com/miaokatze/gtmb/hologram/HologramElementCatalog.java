@@ -41,6 +41,8 @@ final class HologramElementCatalog {
             if (seen.put(element, Boolean.TRUE) != null) return null;
             if (element instanceof Declarations.PureElement) return (Declarations.PureElement<?>) element;
             try {
+                HologramDeclarationAdapters.Declaration declaration = HologramDeclarationAdapters.declaration(element);
+                if (declaration != null && !declaration.backingAuthority) return null;
                 element = HologramDeclarationWrappers.backing(element);
             } catch (ReflectiveOperationException | RuntimeException | LinkageError invalid) {
                 return null;

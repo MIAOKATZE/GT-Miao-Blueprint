@@ -3,8 +3,10 @@ package com.miaokatze.gtmb.hologram;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.function.Predicate;
 
 import net.minecraft.block.Block;
@@ -18,6 +20,7 @@ import com.gtnewhorizon.structurelib.structure.IStructureElement;
 import com.gtnewhorizon.structurelib.structure.IStructureElementChain;
 import com.gtnewhorizon.structurelib.structure.StructureUtility;
 import com.miaokatze.gtmb.api.Declarations;
+import com.miaokatze.gtmb.hologram.HologramBlueprintResources.ExactKey;
 
 import gregtech.api.GregTechAPI;
 import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
@@ -31,7 +34,8 @@ final class HologramDeclarationCandidates {
     final List<ItemStack> stacks = new ArrayList<>();
     private final List<ItemStack> placementStacks = new ArrayList<>();
     private final List<Declarations.PureElement<?>> placementContracts = new ArrayList<>();
-    final IdentityHashMap<IStructureElement<?>, Boolean> seen = new IdentityHashMap<>();
+    private final IdentityHashMap<IStructureElement<?>, Map<Pair<Integer, ExactKey>, Boolean>> seen = new IdentityHashMap<>();
+    private int observations;
     boolean complete = true;
 
     HologramDeclarationCandidates() {
@@ -51,13 +55,17 @@ final class HologramDeclarationCandidates {
     @SuppressWarnings({ "rawtypes", "unchecked" })
     private void collect(IStructureElement element, Object context, World world, int x, int y, int z, ItemStack trigger,
         AutoPlaceEnvironment environment, int depth, boolean placement) {
-        if (element == null || depth > 12 || seen.size() >= 128) {
+        if (element == null || depth > 12 || observations >= 128) {
             complete = false;
             return;
         }
-        Boolean previous = seen.get(element);
+        Map<Pair<Integer, ExactKey>, Boolean> signals = seen.computeIfAbsent(element, ignored -> new HashMap<>());
+        Pair<Integer, ExactKey> signal = trigger == null ? Pair.of(0, null)
+            : Pair.of(trigger.stackSize, HologramValues.lookupKey(trigger));
+        Boolean previous = signals.get(signal);
         if (previous != null && (previous || !placement)) return;
-        seen.put(element, placement);
+        signals.put(trigger == null ? signal : Pair.of(trigger.stackSize, HologramValues.stackKey(trigger)), placement);
+        observations++;
         if (element instanceof Declarations.PureElement) {
             Declarations.PureElement<?> declaration = (Declarations.PureElement<?>) element;
             if (placement) placementContracts.add(declaration);
@@ -66,16 +74,12 @@ final class HologramDeclarationCandidates {
             return;
         }
         try {
-            if (element instanceof IStructureElementChain) {
-                IStructureElement<?>[] children = ((IStructureElementChain<?>) element).fallbacks();
-                if (children == null || children.length > 64) complete = false;
-                else for (IStructureElement<?> child : children)
-                    collect(child, context, world, x, y, z, trigger, environment, depth + 1, placement);
-                return;
-            }
             IStructureElement<?> backing = HologramDeclarationWrappers.backing(element);
             if (backing != null) {
                 HologramDeclarationAdapters.Declaration projection = HologramDeclarationAdapters.declaration(element);
+                boolean advisory = projection != null && !projection.backingAuthority;
+                if (advisory) complete = false;
+                if (projection == null && HologramDeclarationWrappers.isLazy(element)) complete = false;
                 collect(
                     backing,
                     context,
@@ -86,7 +90,16 @@ final class HologramDeclarationCandidates {
                     HologramDeclarationWrappers.trigger(element, trigger),
                     environment,
                     depth + 1,
-                    placement && (projection == null || projection.backingAuthority));
+                    placement && !advisory);
+                // Advisory data supplements the original OR declaration; only its own
+                // real children can still establish their independent placement facts.
+                if (!advisory || !(element instanceof IStructureElementChain)) return;
+            }
+            if (element instanceof IStructureElementChain) {
+                IStructureElement<?>[] children = ((IStructureElementChain<?>) element).fallbacks();
+                if (children == null || children.length > 64) complete = false;
+                else for (IStructureElement<?> child : children)
+                    collect(child, context, world, x, y, z, trigger, environment, depth + 1, placement);
                 return;
             }
             IStructureElement<?> alternative = HologramDeclarationWrappers.alternativesBacking(element);
@@ -99,7 +112,10 @@ final class HologramDeclarationCandidates {
             }
             Method factory = HologramDeclarationWrappers.factory(element.getClass());
             if (factory == null) {
-                if (element != StructureUtility.isAir()) complete = false;
+                if (element != StructureUtility.isAir()) {
+                    complete = false;
+                    collectNativeOutput(element, context, world, x, y, z, trigger, environment, depth, placement);
+                }
                 return;
             }
             String name = factory.getName();
@@ -164,25 +180,10 @@ final class HologramDeclarationCandidates {
             boolean frame = factory.getDeclaringClass() == GTStructureUtility.class && "ofFrame".equals(name)
                 && HologramFrameSupport.target(element) != null;
             boolean coil = factory.getDeclaringClass() == GTStructureUtility.class && "ofCoil".equals(name);
-            if (!fixed && !flat && !frame && !coil) {
-                complete = false;
-                return;
-            }
-            IStructureElement.BlocksToPlace blocks = element
-                .getBlocksToPlace(context, world, x, y, z, trigger, environment);
-            if (blocks == null || blocks.getStacks() == null) {
-                complete = false;
-                return;
-            }
-            int count = 0;
-            for (ItemStack stack : blocks.getStacks()) {
-                if (count++ >= 128) {
-                    complete = false;
-                    break;
-                }
-                add(stack, placement);
-            }
-            if (coil) complete = false; // Trigger selects one coil grade; full coil alternatives are not enumerated.
+            // The public protocol is usable without factory provenance. Its current outputs
+            // prove individual materials, never exhaustive acceptance or a complete structure.
+            if (!fixed && !flat && !frame) complete = false;
+            collectNativeOutput(element, context, world, x, y, z, trigger, environment, depth, placement);
             if (coil) {
                 for (ItemStack target : new ArrayList<>(stacks)) {
                     Block block = Block.getBlockFromItem(target.getItem());
@@ -197,6 +198,33 @@ final class HologramDeclarationCandidates {
             }
         } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {
             complete = false;
+        }
+    }
+
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    private void collectNativeOutput(IStructureElement element, Object context, World world, int x, int y, int z,
+        ItemStack trigger, AutoPlaceEnvironment environment, int depth, boolean placement)
+        throws ReflectiveOperationException {
+        IStructureElement.BlocksToPlace blocks = element
+            .getBlocksToPlace(context, world, x, y, z, trigger == null ? null : trigger.copy(), environment);
+        if (blocks == null || blocks.getStacks() == null) {
+            complete = false;
+        } else {
+            int count = 0;
+            for (ItemStack stack : blocks.getStacks()) {
+                if (count++ >= 128) {
+                    complete = false;
+                    break;
+                }
+                add(stack, placement);
+            }
+        }
+        // The standard public lazy protocol initializes its own declaration. Read that
+        // actual backing for roles and alternatives without calling the resolver again.
+        if (HologramDeclarationWrappers.isLazy(element)) {
+            IStructureElement<?> backing = HologramDeclarationWrappers.nativeBacking(element);
+            if (backing != null)
+                collect(backing, context, world, x, y, z, trigger, environment, depth + 1, placement);
         }
     }
 

@@ -1337,7 +1337,7 @@ final class HologramBlueprintServiceRegression {
     private static void serviceReaderLifecycle(Object session) throws ReflectiveOperationException {
         Object previousVirtual = get(session, "virtual"), previousCapture = get(session, "capture");
         com.gtnewhorizon.structurelib.structure.IStructureElement<Object> wrapper = com.gtnewhorizon.structurelib.structure.StructureUtility
-            .defer(context -> { throw new AssertionError("service lifecycle evaluated deferred controller factory"); });
+            .defer(context -> { throw new IllegalStateException("native output unavailable"); });
         HologramCapture capture = new HologramCapture(null, new ItemStack(Blocks.stone));
         HologramCapture.Cell cell = new HologramCapture.Cell(wrapper, 31, 64, 0);
         cell.block = Blocks.stone;

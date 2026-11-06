@@ -1,7 +1,5 @@
 package com.miaokatze.gtmb.hologram;
 
-import java.io.ByteArrayInputStream;
-import java.io.InputStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.Collections;
@@ -18,12 +16,6 @@ import net.minecraft.item.Item;
 import net.minecraft.item.ItemBlock;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
-
-import org.objectweb.asm.ClassWriter;
-import org.objectweb.asm.MethodVisitor;
-import org.objectweb.asm.Opcodes;
-import org.objectweb.asm.Type;
-
 import com.gtnewhorizon.structurelib.CommonProxy;
 import com.gtnewhorizon.structurelib.StructureLib;
 import com.gtnewhorizon.structurelib.structure.IStructureDefinition;
@@ -49,7 +41,7 @@ import gregtech.common.tileentities.machines.multi.xlturbines.MTEXLTurbineBase;
 import gregtech.common.tileentities.machines.multi.xlturbines.MTEXLTurbineHPSteam;
 import gregtech.common.tileentities.machines.multi.xlturbines.MTEXLTurbineSteam;
 
-/** Real cold GT factories, their capture-owned delegates and the unknown-callback boundary. */
+/** Real cold GT factories consume the public native output protocol without structure checks. */
 final class HologramColdGregTechDeclarationsRegression {
 
     private HologramColdGregTechDeclarationsRegression() {}
@@ -81,6 +73,7 @@ final class HologramColdGregTechDeclarationsRegression {
         Map<IStructureElement<?>, IStructureElement<?>> fixed = (Map<IStructureElement<?>, IStructureElement<?>>) lazyCache
             .get(null);
         Map<IStructureElement<?>, IStructureElement<?>> previousFixed = new IdentityHashMap<>(fixed);
+        Map<IStructureElement<?>, Object[]> originals = new IdentityHashMap<>();
         Field casingCount = MTEXLTurbineBase.class.getDeclaredField("casingAmount");
         casingCount.setAccessible(true);
         int previousCount = casingCount.getInt(null);
@@ -117,15 +110,16 @@ final class HologramColdGregTechDeclarationsRegression {
             AtomicInteger unknownCalls = new AtomicInteger();
             IStructureElement<MTEXLTurbineBase> unknown = StructureUtility.lazy(context -> {
                 unknownCalls.incrementAndGet();
-                throw new AssertionError("unknown deferred factory was executed");
+                throw new IllegalStateException("native deferred output unavailable");
             });
             StructureDefinition.Builder<MTEXLTurbineBase> builder = StructureDefinition.<MTEXLTurbineBase>builder()
                 .addShape("cold", new String[][] { { "BCDEFU" } });
-            Map<IStructureElement<?>, Object[]> originals = new IdentityHashMap<>();
             for (char symbol : "BCDEF".toCharArray()) {
                 IStructureElement<MTEXLTurbineBase> element = nativeElements.get(symbol);
                 SimpleAssert.that(element != null, "the official native definition contains factory " + symbol);
-                originals.put(element, lazyState(element));
+                Object[] state = lazyState(element);
+                SimpleAssert.that(state[0] == null && state[1] != null, "official native factory starts cold");
+                originals.put(element, state);
                 builder.addElement(symbol, element);
             }
             builder.addElement('U', unknown);
@@ -138,6 +132,8 @@ final class HologramColdGregTechDeclarationsRegression {
                 Materials.Steel,
                 Casings.ReinforcedSteamTurbineCasing,
                 hatchId);
+            // Recreate a cold native source for the second context; native lazy initialization is owned by StructureLib.
+            restoreLazy(originals);
             HologramSession second = capture(
                 unsafe,
                 new MTEXLTurbineHPSteam("cold_native_hp"),
@@ -147,50 +143,25 @@ final class HologramColdGregTechDeclarationsRegression {
                 Casings.ReinforcedHPSteamTurbineCasing,
                 hatchId);
             SimpleAssert.that(
-                first.capture.cells.get(4).element != second.capture.cells.get(4).element,
-                "one shared cold source gets a separate native hatch delegate for each controller context");
-            MTEXLTurbineBase missingClient = signatureContext(false);
-            capture(
-                unsafe,
-                missingClient,
-                definition,
-                Casings.SteelPipeCasing,
-                Materials.Steel,
-                Casings.ReinforcedSteamTurbineCasing,
-                hatchId);
-            MTEXLTurbineBase missingClientOverride = signatureContext(true);
-            HologramSession deniedSignature = capture(
-                unsafe,
-                missingClientOverride,
-                definition,
-                null,
-                null,
-                null,
-                hatchId);
-            SimpleAssert.that(
-                HologramCellPolicy.targetFor(deniedSignature, deniedSignature.capture.cells.get(1), 1) == null
-                    && missingClientOverride.getClass()
-                        .getDeclaredField("unknownCalls")
-                        .getInt(null) == 0,
-                "a missing client-only signature cannot hide an unknown metadata getter override");
-            unknownGetterCalls.set(0);
-            HologramSession rejected = capture(unsafe, new UnknownGetterSteam(), definition, null, null, null, hatchId);
-            SimpleAssert.that(
-                HologramCellPolicy.targetFor(rejected, rejected.capture.cells.get(1), 1) == null,
-                "an unknown virtual getter override cannot inherit the official cold factory's target authority");
-            SimpleAssert.eq(0, unknownGetterCalls.get(), "unknown context getters are rejected before invocation");
-            SimpleAssert.eq(0, unknownCalls.get(), "unreviewed deferred factories remain outside native capture");
+                first.capture.cells.get(4).block != second.capture.cells.get(4).block
+                    || first.capture.cells.get(4).meta != second.capture.cells.get(4).meta,
+                "separate native output contexts retain their own captured casing targets");
+            SimpleAssert.that(unknownCalls.get() > 0, "unavailable native resolvers are read without inventing materials");
             SimpleAssert.eq(
                 previousCount,
                 casingCount.getInt(null),
-                "cold metadata reconstruction never executes the native onElementPass casing counter");
-            for (Map.Entry<IStructureElement<?>, Object[]> entry : originals.entrySet()) {
-                Object[] after = lazyState(entry.getKey());
-                SimpleAssert.that(
-                    after[0] == null && after[1] == entry.getValue()[1],
-                    "read-only cold capture leaves the original lazy elem and to untouched");
+                "native declaration reads never execute the onElementPass casing counter");
+            int initialized = 0;
+            for (IStructureElement<?> element : originals.keySet()) {
+                Object[] after = lazyState(element);
+                if (after[0] != null) {
+                    initialized++;
+                    SimpleAssert.that(after[1] == null, "native lazy initialization consumes its original resolver");
+                }
             }
+            SimpleAssert.that(initialized >= 3, "public native output initializes the real contextual declarations");
         } finally {
+            restoreLazy(originals);
             for (Map.Entry<Casings, Object> entry : previousCasings.entrySet())
                 cachedBlock.set(entry.getKey(), entry.getValue());
             if (previousSteel == null) ores.remove(steel);
@@ -245,7 +216,12 @@ final class HologramColdGregTechDeclarationsRegression {
             SimpleAssert.that(
                 !s.capture.incomplete && s.capture.projectionOnly,
                 "real cold native declaration traversal completes without operation preparation");
-            for (HologramCapture.Cell cell : s.capture.cells) mirrorHatchMixin(cell.element);
+            for (HologramCapture.Cell cell : s.capture.cells) if (!cell.anchor) {
+                HologramCellPolicy.declaredCandidates(s, cell);
+                // Production records these builder arguments at factory RETURN, during native lazy resolution.
+                mirrorHatchMixin(cell.element);
+            }
+            s.declarations.clear();
             HologramControllerCapture.FinishWork finish = new HologramControllerCapture.FinishWork(new HashMap<>());
             finish.beginFinish();
             int slices = 0;
@@ -301,8 +277,18 @@ final class HologramColdGregTechDeclarationsRegression {
         initialized.setAccessible(true);
         deferred.setAccessible(true);
         Object[] state = { initialized.get(element), deferred.get(element) };
-        SimpleAssert.that(state[0] == null && state[1] != null, "official lazy factory starts genuinely cold");
         return state;
+    }
+
+    private static void restoreLazy(Map<IStructureElement<?>, Object[]> originals) throws ReflectiveOperationException {
+        for (Map.Entry<IStructureElement<?>, Object[]> entry : originals.entrySet()) {
+            Field initialized = entry.getKey().getClass().getDeclaredField("elem"),
+                deferred = entry.getKey().getClass().getDeclaredField("to");
+            initialized.setAccessible(true);
+            deferred.setAccessible(true);
+            initialized.set(entry.getKey(), entry.getValue()[0]);
+            deferred.set(entry.getKey(), entry.getValue()[1]);
+        }
     }
 
     /** The headless harness mirrors only the existing atLeast/build mixins' immutable argument recording. */
@@ -370,117 +356,6 @@ final class HologramColdGregTechDeclarationsRegression {
         Block.blockRegistry.addObject(id, key, block);
         Item.itemRegistry.addObject(id, key, new gregtech.common.blocks.ItemMachines(block));
         return block;
-    }
-
-    /** A real missing-client signature reproduces Class.getDeclaredMethod's unrelated signature resolution. */
-    private static MTEXLTurbineBase signatureContext(boolean override) throws ReflectiveOperationException {
-        String name = "gtmb_test/cold/" + (override ? "UnknownSignatureSteam" : "InheritedSignatureSteam");
-        ClassWriter writer = new ClassWriter(0);
-        writer.visit(
-            Opcodes.V1_8,
-            Opcodes.ACC_PUBLIC | Opcodes.ACC_SUPER,
-            name,
-            null,
-            Type.getInternalName(MTEXLTurbineSteam.class),
-            null);
-        MethodVisitor constructor = writer.visitMethod(Opcodes.ACC_PUBLIC, "<init>", "()V", null, null);
-        constructor.visitCode();
-        constructor.visitVarInsn(Opcodes.ALOAD, 0);
-        constructor.visitLdcInsn("missing_client_signature");
-        constructor.visitMethodInsn(
-            Opcodes.INVOKESPECIAL,
-            Type.getInternalName(MTEXLTurbineSteam.class),
-            "<init>",
-            "(Ljava/lang/String;)V",
-            false);
-        constructor.visitInsn(Opcodes.RETURN);
-        constructor.visitMaxs(2, 1);
-        constructor.visitEnd();
-        MethodVisitor client = writer.visitMethod(
-            Opcodes.ACC_PUBLIC,
-            "unusedClientHook",
-            "(Lnet/minecraft/client/resources/IResourceManager;)V",
-            null,
-            null);
-        client.visitCode();
-        client.visitInsn(Opcodes.RETURN);
-        client.visitMaxs(0, 2);
-        client.visitEnd();
-        if (override) {
-            writer.visitField(Opcodes.ACC_PUBLIC | Opcodes.ACC_STATIC, "unknownCalls", "I", null, null)
-                .visitEnd();
-            MethodVisitor getter = writer
-                .visitMethod(Opcodes.ACC_PROTECTED, "getFrameMaterial", "()Lgregtech/api/enums/Materials;", null, null);
-            getter.visitCode();
-            getter.visitFieldInsn(Opcodes.GETSTATIC, name, "unknownCalls", "I");
-            getter.visitInsn(Opcodes.ICONST_1);
-            getter.visitInsn(Opcodes.IADD);
-            getter.visitFieldInsn(Opcodes.PUTSTATIC, name, "unknownCalls", "I");
-            getter.visitTypeInsn(Opcodes.NEW, "java/lang/AssertionError");
-            getter.visitInsn(Opcodes.DUP);
-            getter.visitLdcInsn("unknown metadata override executed");
-            getter.visitMethodInsn(
-                Opcodes.INVOKESPECIAL,
-                "java/lang/AssertionError",
-                "<init>",
-                "(Ljava/lang/Object;)V",
-                false);
-            getter.visitInsn(Opcodes.ATHROW);
-            getter.visitMaxs(3, 1);
-            getter.visitEnd();
-        }
-        writer.visitEnd();
-        byte[] bytes = writer.toByteArray();
-        class SignatureLoader extends ClassLoader {
-
-            SignatureLoader() {
-                super(MTEXLTurbineSteam.class.getClassLoader());
-            }
-
-            @Override
-            protected Class<?> loadClass(String type, boolean resolve) throws ClassNotFoundException {
-                if (type.equals("net.minecraft.client.resources.IResourceManager"))
-                    throw new ClassNotFoundException(type);
-                return super.loadClass(type, resolve);
-            }
-
-            @Override
-            public InputStream getResourceAsStream(String resource) {
-                return resource.equals(name + ".class") ? new ByteArrayInputStream(bytes)
-                    : super.getResourceAsStream(resource);
-            }
-
-            Class<?> define() {
-                return defineClass(name.replace('/', '.'), bytes, 0, bytes.length);
-            }
-        }
-        Class<?> type = new SignatureLoader().define();
-        try {
-            type.getDeclaredMethod("getCasing");
-            throw new AssertionError("reflective getter search did not resolve the missing client signature");
-        } catch (NoClassDefFoundError expected) {
-            SimpleAssert.that(
-                expected.getMessage()
-                    .contains("IResourceManager"),
-                "the former reflective path loads an unrelated unavailable client resource signature");
-        }
-        return (MTEXLTurbineBase) type.getDeclaredConstructor()
-            .newInstance();
-    }
-
-    private static final AtomicInteger unknownGetterCalls = new AtomicInteger();
-
-    private static final class UnknownGetterSteam extends MTEXLTurbineSteam {
-
-        UnknownGetterSteam() {
-            super("unknown_cold_metadata");
-        }
-
-        @Override
-        protected Materials getFrameMaterial() {
-            unknownGetterCalls.incrementAndGet();
-            throw new AssertionError("unknown metadata getter was executed");
-        }
     }
 
     private static final class Hints extends CommonProxy {

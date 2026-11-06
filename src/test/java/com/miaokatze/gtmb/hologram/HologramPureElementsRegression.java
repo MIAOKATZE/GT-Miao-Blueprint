@@ -146,9 +146,9 @@ final class HologramPureElementsRegression {
             collector.collect(wrapper, null, null, 0, 64, 0, "", signal, null).stacks.isEmpty(),
             "reader removal invalidates the previously accepted candidate cache");
         IStructureElement<Object> conditional = StructureUtility
-            .onlyIf(controller -> { throw new AssertionError("unknown predicate was evaluated"); }, declaration);
+            .onlyIf(controller -> false, declaration);
         IStructureElement<Object> deferred = StructureUtility
-            .defer(controller -> { throw new AssertionError("unknown supplier was evaluated"); });
+            .defer(controller -> { throw new IllegalStateException("native output unavailable"); });
         for (IStructureElement<?> unknown : Arrays.asList(conditional, deferred)) {
             SimpleAssert.that(
                 HologramElementCatalog.pure(unknown) == null,
@@ -157,7 +157,7 @@ final class HologramPureElementsRegression {
             candidates.collect(unknown, null, null, 0, 64, 0, signal, null, 0);
             SimpleAssert.that(
                 !candidates.complete && candidates.stacks.isEmpty(),
-                "unknown declarations stay incomplete without probing their callbacks");
+                "unavailable public outputs stay incomplete without inheriting pure-leaf authority");
         }
     }
 

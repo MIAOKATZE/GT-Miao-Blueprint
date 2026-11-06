@@ -270,7 +270,7 @@ public final class HologramSourceContractRegression {
             SimpleAssert.that(fresh.sourceCurrent(), "new capture accepts the current binding after rebind");
         }
         IStructureElement<Controller> unregistered = StructureUtility
-            .defer(controller -> { throw new AssertionError("negative-cache factory executed"); });
+            .defer(controller -> { throw new IllegalStateException("native output unavailable"); });
         try (GTMBExtensions.Registration registration = StructureSources.registerContextual(
             "gtmb_test:first-binding-source",
             Controller.class,

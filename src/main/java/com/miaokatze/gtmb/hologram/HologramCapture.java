@@ -70,7 +70,6 @@ public final class HologramCapture {
     final IdentityHashMap<IStructureElement<?>, String> roleCache = new IdentityHashMap<>();
     final IdentityHashMap<IStructureElement<?>, Set<Pair<Integer, ExactKey>>> declarationTrace = new IdentityHashMap<>();
     private final IdentityHashMap<IStructureElement<?>, Map<Pair<Integer, ExactKey>, Cell>> projectionTargets = new IdentityHashMap<>();
-    private final IdentityHashMap<IStructureElement<?>, IStructureElement<?>> contextDeclarations = new IdentityHashMap<>();
     /** One declaration identity graph per capture, retained across server tick continuations. */
     IStructureDefinition<?> definition;
     private long interpretationGeneration = HologramDeclarationAdapters.generation();
@@ -657,15 +656,6 @@ public final class HologramCapture {
             IStructureWalker walker = new IStructureWalker() {
 
                 public boolean visit(IStructureElement element, World w, int xx, int yy, int zz, int a, int b, int c) {
-                    try {
-                        if (!capture.contextDeclarations.containsKey(element)) capture.contextDeclarations
-                            .put(element, HologramDeclarationAdapters.captureDeclaration(element, capture.context));
-                        element = capture.contextDeclarations.get(element);
-                    } catch (ReflectiveOperationException failure) {
-                        capture.noteFailure(failure);
-                        capture.fail("SOURCE_DECLARATION_FAILED");
-                        return false;
-                    }
                     String position = xx + "," + yy + "," + zz;
                     Cell existing = capture.positions.get(position);
                     if (existing != null) {
@@ -826,7 +816,6 @@ public final class HologramCapture {
     }
 
     void clearInterpretationCaches() {
-        contextDeclarations.clear();
         casingCache.clear();
         familyCache.clear();
         roleCache.clear();
@@ -856,6 +845,49 @@ public final class HologramCapture {
     @SuppressWarnings({ "rawtypes", "unchecked" })
     private boolean spawnHint(IStructureElement element, World world, int x, int y, int z, ItemStack signal, int depth)
         throws ReflectiveOperationException {
+        return spawnHint(element, world, x, y, z, signal, depth, false);
+    }
+
+    /** Finish the appearance of an unresolved native cell without deriving material or construction authority. */
+    static void prepareNativeHint(HologramSession session, Cell cell) {
+        if (session.virtual || session.capture == null || cell.anchor || cell.element == null
+            || cell.candidates == null || !cell.candidates.isEmpty()
+            || cell.block != null || cell.renderHint != null || cell.hintIcons != null) return;
+        HologramCapture capture = session.capture;
+        ItemStack signal = HologramCellPolicy.elementTrigger(session, cell);
+        Cell display = new Cell(cell.element, cell.x, cell.y, cell.z, signal, true);
+        HologramCapture previous = ACTIVE.get();
+        Cell previousCell = capture.current;
+        ACTIVE.set(capture);
+        capture.current = display;
+        try (HologramDeclarationAdapters.Scope declarations = HologramDeclarationAdapters
+            .observe(capture.declarationBindings)) {
+            capture.spawnHint(cell.element, session.player.worldObj, cell.x, cell.y, cell.z, signal.copy(), 0, true);
+            HologramStructureHintData.Hint hint = display.renderHint;
+            if (hint == null && display.block != null)
+                hint = new HologramStructureHintData.Hint(display.block, display.meta);
+            if (hint == null && display.hintIcons != null)
+                hint = new HologramStructureHintData.Hint(display.hintIcons, display.hintTint);
+            if (hint == null) return;
+            cell.renderHint = hint;
+            cell.renderKind = display.renderKind;
+            cell.iconOnly = display.iconOnly;
+            cell.hintIcons = display.hintIcons == null ? null : display.hintIcons.clone();
+            cell.hintTint = display.hintTint == null ? null : display.hintTint.clone();
+            cell.hintIndex = display.hintIndex;
+            cell.renderBoundary = "";
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailableHint) {
+            capture.noteFailure(unavailableHint);
+        } finally {
+            capture.current = previousCell;
+            if (previous == null) ACTIVE.remove();
+            else ACTIVE.set(previous);
+        }
+    }
+
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    private boolean spawnHint(IStructureElement element, World world, int x, int y, int z, ItemStack signal, int depth,
+        boolean nativeFallback) throws ReflectiveOperationException {
         if (element == null || depth > 12) return false;
         Declarations.PureElement<?> declaration = HologramElementCatalog.pure(element);
         if (declaration != null) {
@@ -865,24 +897,34 @@ public final class HologramCapture {
         }
         IStructureElement backing = HologramDeclarationWrappers.backing(element);
         if (backing != null)
-            return spawnHint(backing, world, x, y, z, HologramDeclarationWrappers.trigger(element, signal), depth + 1);
-        if (HologramDeclarationWrappers.requiresAdapter(element)) return false;
+            return spawnHint(
+                backing,
+                world,
+                x,
+                y,
+                z,
+                HologramDeclarationWrappers.trigger(element, signal),
+                depth + 1,
+                nativeFallback);
+        if (HologramDeclarationAdapters.declaration(element) != null) return false;
+        if (!nativeFallback && HologramDeclarationWrappers.requiresAdapter(element)) return false;
         if (element instanceof IStructureElementChain) {
             IStructureElementChain chain = (IStructureElementChain) element;
-            IStructureElement[] fallbacks = projectionOnly ? HologramDeclarationWrappers.nativeChainChildren(chain)
+            IStructureElement[] fallbacks = projectionOnly && !nativeFallback
+                ? HologramDeclarationWrappers.nativeChainChildren(chain)
                 : chain.fallbacks();
             if (fallbacks == null || fallbacks.length > 64) return false;
             for (IStructureElement fallback : fallbacks)
-                if (spawnHint(fallback, world, x, y, z, signal, depth + 1)) return true;
+                if (spawnHint(fallback, world, x, y, z, signal, depth + 1, nativeFallback)) return true;
             return false;
         }
-        if (!reviewedHintLeaf(element)) return false;
+        if (!nativeFallback && !reviewedHintLeaf(element)) return false;
         nativeHintCalls++;
         return element.spawnHint(context, world, x, y, z, signal);
     }
 
     /** Project declared data; native hint/check/placement methods remain outside the read path. */
-    private static void describePure(Cell cell, Declarations.PureElement<?> declaration) {
+    static void describePure(Cell cell, Declarations.PureElement<?> declaration) {
         ItemStack sample = declaration.primary();
         cell.block = Block.getBlockFromItem(sample.getItem());
         cell.meta = declaration.targetMeta(sample);

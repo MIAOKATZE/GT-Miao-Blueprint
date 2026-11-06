@@ -1026,6 +1026,8 @@ final class HologramCellPolicy {
     @SuppressWarnings("unchecked")
     static List<ItemStack> declaredCandidates(HologramSession s, HologramCapture.Cell cell) {
         HologramDeclarationCandidates declaration = declaration(s, cell);
+        if (!s.virtual && (cell.unknown || cell.block == null || cell.block == StructureLibAPI.getBlockHint()))
+            refreshNativeDeclaration(s, cell);
         List<ItemStack> result = new ArrayList<>();
         for (ItemStack stack : declaration.stacks) {
             Block block = Block.getBlockFromItem(stack.getItem());
@@ -1037,8 +1039,46 @@ final class HologramCellPolicy {
         cell.candidateComplete = declaration.complete;
         Declarations.PureElement<?> pure = HologramElementCatalog.pure(cell.element);
         cell.candidateBoundary = declaration.complete ? ""
-            : pure == null ? "仅列出已识别的结构声明；自定义校验或动态条件未完整解析" : pure.candidateBoundary();
+            : pure == null ? "原生声明未穷尽候选，仅列出已知输出" : pure.candidateBoundary();
         return result;
+    }
+
+    /** Public native output may have initialized a standard lazy element since the lightweight capture. */
+    private static void refreshNativeDeclaration(HologramSession s, HologramCapture.Cell cell) {
+        Declarations.PureElement<?> pure = HologramElementCatalog.pure(cell.element);
+        if (pure != null) HologramCapture.describePure(cell, pure);
+        else if (HologramElementCatalog.nativeAir(cell.element)) {
+            cell.block = Blocks.air;
+            cell.meta = 0;
+            cell.unknown = false;
+        } else {
+            HologramCasingFallback.Target casing = HologramCasingFallback
+                .resolve(cell.element, elementTrigger(s, cell));
+            ItemStack frame = HologramFrameSupport.target(cell.element);
+            if (frame != null) {
+                cell.block = Block.getBlockFromItem(frame.getItem());
+                cell.meta = frame.getItem()
+                    .getMetadata(frame.getItemDamage());
+                cell.unknown = false;
+                cell.iconOnly = false;
+            } else if (casing != null) {
+                cell.block = casing.block;
+                cell.meta = casing.meta;
+                cell.unknown = false;
+            }
+        }
+        String role = HologramElementCatalog.hatchRole(cell.element);
+        cell.role = "block".equals(role) && (cell.actualStack != null || cell.unknown) ? "interface" : role;
+        HologramReplacementFamily.Family family = HologramReplacementFamily
+            .resolve(cell.element, cell.block, cell.meta);
+        cell.family = family == null ? "" : family.id;
+        s.hatchCandidates.remove(cell.element);
+        s.hatchParts.remove(cell.element);
+        s.hatchRequirements.remove(cell.element);
+        if (s.capture != null && s.capture.projectionOnly && cell.block != null) {
+            cell.renderHint = new HologramStructureHintData.Hint(cell.block, cell.meta);
+            cell.renderBoundary = "";
+        }
     }
 
     static boolean declaredTarget(HologramSession s, HologramCapture.Cell cell, ItemStack target, boolean automatic) {
@@ -1058,9 +1098,9 @@ final class HologramCellPolicy {
             cell.z,
             s.areaStructureId,
             signal,
+            // Material declarations must not enumerate inventory predicates, even for simulated requests.
             AutoPlaceEnvironment.fromLegacy(
-                (predicate, simulate, count) -> HologramMaterialAccess.materialSource(s)
-                    .take(predicate, true, count),
+                (predicate, simulate, count) -> Collections.emptyMap(),
                 s.player,
                 message -> {}));
     }

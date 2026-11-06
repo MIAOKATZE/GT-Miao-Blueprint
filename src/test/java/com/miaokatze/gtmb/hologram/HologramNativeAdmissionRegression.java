@@ -44,6 +44,7 @@ final class HologramNativeAdmissionRegression {
         try {
             nativeFurnace();
             nativeTieredAndKnownChain();
+            nativeOutputContract();
             failedPlacementRollsBack();
             unknownAndDisplayOnly();
         } catch (ReflectiveOperationException failure) {
@@ -146,6 +147,7 @@ final class HologramNativeAdmissionRegression {
         SimpleAssert.eq(null, HologramSourcePolicy.targetFailure(session, cell, 0), "the known OR branch proves stone");
         place(session, cell, stone);
         SimpleAssert.eq(0, unknown.calls, "construction never enters the unknown OR branch");
+        SimpleAssert.eq(1, unknown.outputReads, "an unavailable native output is read once and remains unknown");
 
         IStructureElement<Object> differentHint = StructureUtility.ofBlock(Blocks.stone, 0, Blocks.dirt, 0);
         cell = use(session, differentHint, new ItemStack(Blocks.dirt));
@@ -165,8 +167,8 @@ final class HologramNativeAdmissionRegression {
         for (IStructureElement<?> element : Arrays.asList(
             unknown,
             display,
-            StructureUtility.onlyIf(context -> { throw new AssertionError("unknown predicate must not run"); }, fixed),
-            StructureUtility.defer(context -> { throw new AssertionError("unknown supplier must not run"); }))) {
+            StructureUtility.onlyIf(context -> false, fixed),
+            StructureUtility.defer(context -> { throw new IllegalStateException("native output unavailable"); }))) {
             HologramCapture.Cell cell = use(session, element, stone);
             cell.unknown = true;
             if (element == display) {
@@ -208,6 +210,20 @@ final class HologramNativeAdmissionRegression {
                 "display-only traversal cannot hide a known OR proof");
         }
         SimpleAssert.eq(0, unknown.calls, "unknown callbacks are not invoked by admission, planning or transactions");
+        SimpleAssert.eq(1, unknown.outputReads, "admission reuses the cached unavailable native output");
+    }
+
+    private static void nativeOutputContract() throws ReflectiveOperationException {
+        HologramSession session = session();
+        ItemStack stone = new ItemStack(Blocks.stone);
+        NativeOutput output = new NativeOutput();
+        HologramCapture.Cell cell = use(session, output, stone);
+        SimpleAssert.eq(1, HologramCellPolicy.declaredCandidates(session, cell).size(), "public native output is visible");
+        SimpleAssert.that(!cell.candidateComplete, "public native output retains its advisory enumeration boundary");
+        SimpleAssert.eq(null, HologramSourcePolicy.targetFailure(session, cell, 0), "its exact native target is admitted");
+        place(session, cell, stone);
+        SimpleAssert.eq(1, output.outputReads, "material reads and construction reuse one contextual output");
+        SimpleAssert.eq(0, output.calls, "public material reads never call structure checks, hints or placement");
     }
 
     private static void failedPlacementRollsBack() throws ReflectiveOperationException {
@@ -299,9 +315,9 @@ final class HologramNativeAdmissionRegression {
         return (sun.misc.Unsafe) field.get(null);
     }
 
-    private static final class Unknown implements IStructureElement<Object> {
+    private static class Unknown implements IStructureElement<Object> {
 
-        int calls;
+        int calls, outputReads;
 
         public boolean check(Object context, World world, int x, int y, int z) {
             calls++;
@@ -320,8 +336,26 @@ final class HologramNativeAdmissionRegression {
 
         public BlocksToPlace getBlocksToPlace(Object context, World world, int x, int y, int z, ItemStack trigger,
             AutoPlaceEnvironment environment) {
-            calls++;
-            throw new AssertionError("unknown material callback");
+            outputReads++;
+            throw new IllegalStateException("native material output unavailable");
+        }
+    }
+
+    private static final class NativeOutput extends Unknown {
+
+        @Override
+        public BlocksToPlace getBlocksToPlace(Object context, World world, int x, int y, int z, ItemStack trigger,
+            AutoPlaceEnvironment environment) {
+            outputReads++;
+            for (boolean simulate : new boolean[] { true, false }) SimpleAssert.that(
+                environment.getSource()
+                    .take(
+                        stack -> { throw new AssertionError("declaration read executed an inventory predicate"); },
+                        simulate,
+                        1)
+                    .isEmpty(),
+                "declaration environments expose an empty read-only item source");
+            return BlocksToPlace.create(Blocks.stone, 0);
         }
     }
 

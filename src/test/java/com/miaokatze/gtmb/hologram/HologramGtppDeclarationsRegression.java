@@ -132,8 +132,8 @@ final class HologramGtppDeclarationsRegression {
             SimpleAssert.eq(Math.min(count, 8) - 1, target.meta, "chemical casing uses its native tier index");
             HologramDeclarationCandidates candidates = candidates(union, signal);
             SimpleAssert.that(
-                !candidates.complete && candidates.stacks.isEmpty(),
-                "native chain-first candidate semantics remain incomplete for the private leaves");
+                !candidates.complete && candidates.stacks.size() == 8,
+                "advisory union candidates remain visible without certifying the private leaves");
             SimpleAssert.that(
                 !candidates.allows(new ItemStack(Blocks.stone, 1, target.meta), false),
                 "the descriptive whole-chain backing grants no leaf placement authority");

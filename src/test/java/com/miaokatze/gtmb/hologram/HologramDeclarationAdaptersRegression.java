@@ -4,6 +4,7 @@ import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import net.minecraft.block.Block;
 import net.minecraft.init.Blocks;
@@ -17,7 +18,9 @@ import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
 import com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor;
+import com.gtnewhorizon.structurelib.structure.AutoPlaceEnvironment;
 import com.gtnewhorizon.structurelib.structure.IStructureElement;
+import com.gtnewhorizon.structurelib.structure.IWithExtendedContext;
 import com.gtnewhorizon.structurelib.structure.StructureUtility;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
@@ -99,9 +102,197 @@ final class HologramDeclarationAdaptersRegression {
                     == null,
                 "subclass private acceptance cannot inherit declaration reader authority");
             nativeFactoryRecorder(signal);
+            nativeOutputProtocol();
+            dynamicOutputProtocol();
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError(failure);
         }
+    }
+
+    private static void nativeOutputProtocol() {
+        ItemStack signal = new ItemStack(Items.feather);
+        HologramDeclarationCandidates candidates = new HologramDeclarationCandidates();
+        candidates.collect(NativeOutput.STACKS, new Object(), null, 0, 0, 0, signal, null, 0);
+        SimpleAssert.eq(1, candidates.stacks.size(), "an ordinary enum exposes its public native output");
+        SimpleAssert.that(!candidates.complete, "a concrete native output is not exhaustive acceptance");
+        SimpleAssert.that(candidates.allows(new ItemStack(Blocks.stone), true), "the exact native output has authority");
+        SimpleAssert.that(!candidates.allows(new ItemStack(Blocks.dirt), false), "unadvertised materials stay unknown");
+        SimpleAssert.eq(1, signal.stackSize, "a native output reader receives a disposable trigger");
+
+        ChannelDataAccessor.setChannelData(signal, "native_output", 2);
+        candidates = new HologramDeclarationCandidates();
+        candidates.collect(
+            StructureUtility.onElementPass(
+                context -> { throw new AssertionError("pass callback executed during native output collection"); },
+                StructureUtility.withChannel("native_output", NativeOutput.STACKS)),
+            new Object(),
+            null,
+            0,
+            0,
+            0,
+            signal,
+            null,
+            0);
+        SimpleAssert.that(
+            candidates.allows(new ItemStack(Blocks.dirt), true),
+            "transparent wrappers retain their projected native signal");
+
+        IStructureElement<Object> advisory = new DeclaredWrapper(NativeOutput.STACKS);
+        HologramDeclarationAdapters.register(
+            advisory,
+            new HologramDeclarationAdapters.Declaration(() -> NativeOutput.STACKS, null, false));
+        candidates = new HologramDeclarationCandidates();
+        candidates.collect(advisory, new Object(), null, 0, 0, 0, signal, null, 0);
+        SimpleAssert.eq(1, candidates.stacks.size(), "advisory backing retains visible native outputs");
+        SimpleAssert.that(
+            !candidates.allows(new ItemStack(Blocks.stone), false),
+            "an advisory native output cannot grant placement authority");
+
+        IStructureElement<Object> advisoryPure = new DeclaredWrapper(null);
+        HologramDeclarationAdapters.register(
+            advisoryPure,
+            new HologramDeclarationAdapters.Declaration(() -> new HologramPureElementsRegression.Leaf(true), null, false));
+        SimpleAssert.that(
+            HologramElementCatalog.pure(advisoryPure) == null,
+            "advisory backing cannot inherit a pure placement contract");
+        candidates = new HologramDeclarationCandidates();
+        candidates.collect(advisoryPure, new Object(), null, 0, 0, 0, signal, null, 0);
+        SimpleAssert.that(!candidates.stacks.isEmpty(), "advisory pure data remains available for display");
+        SimpleAssert.that(
+            !candidates.allows(new ItemStack(Blocks.stone), false),
+            "advisory pure data grants no placement authority");
+
+        IStructureElement<Object> advisoryChain = StructureUtility.ofChain(StructureUtility.ofBlock(Blocks.stone, 0));
+        HologramDeclarationAdapters.register(
+            advisoryChain,
+            new HologramDeclarationAdapters.Declaration(() -> StructureUtility.ofBlock(Blocks.dirt, 0), null, false));
+        candidates = new HologramDeclarationCandidates();
+        candidates.collect(advisoryChain, new Object(), null, 0, 0, 0, signal, null, 0);
+        SimpleAssert.eq(2, candidates.stacks.size(), "advisory data supplements the original chain's visible candidates");
+        SimpleAssert.that(
+            candidates.allows(new ItemStack(Blocks.stone), true) && !candidates.allows(new ItemStack(Blocks.dirt), false),
+            "the original chain retains its own proof without inheriting advisory placement authority");
+
+        for (IStructureElement<Object> unknown : Arrays.asList(
+            NativeOutput.PREDICATE_ONLY,
+            NativeOutput.NO_OUTPUT,
+            NativeOutput.FAIL,
+            StructureUtility.onlyIf(
+                context -> false,
+                NativeOutput.STACKS),
+            StructureUtility.defer(context -> { throw new IllegalStateException("deferred output unavailable"); }),
+            StructureUtility.lazy(context -> { throw new IllegalStateException("lazy output unavailable"); }))) {
+            candidates = new HologramDeclarationCandidates();
+            candidates.collect(unknown, new Object(), null, 0, 0, 0, signal, null, 0);
+            SimpleAssert
+                .that(!candidates.complete && candidates.stacks.isEmpty(), "unresolved output remains unknown");
+            SimpleAssert
+                .that(!candidates.allows(new ItemStack(Blocks.stone), false), "unknown output grants no authority");
+        }
+
+        NativeOutputLeaf leaf = new NativeOutputLeaf();
+        HologramDeclarationCollector collector = new HologramDeclarationCollector();
+        HologramDeclarationCandidates first = collector.collect(leaf, null, null, 0, 0, 0, "", signal, null);
+        SimpleAssert.that(
+            first.allows(new ItemStack(Blocks.stone), true),
+            "a named non-factory class exposes native output");
+        SimpleAssert.that(
+            first == collector.collect(leaf, null, null, 0, 0, 0, "", signal, null),
+            "repeated reads reuse the existing contextual declaration cache");
+        SimpleAssert.eq(1, leaf.reads, "one contextual output is collected once");
+        SimpleAssert.that(
+            collector.collect(leaf, null, null, 1, 0, 0, "", signal, null)
+                .allows(new ItemStack(Blocks.dirt), true),
+            "native output caches remain specific to their position");
+        signal.stackSize = 2;
+        collector.collect(leaf, null, null, 0, 0, 0, "", signal, null);
+        SimpleAssert.eq(3, leaf.reads, "a new signal has its own native output cache entry");
+    }
+
+    private static void dynamicOutputProtocol() {
+        ItemStack signal = new ItemStack(Items.feather);
+        IStructureElement<Object> leaf = StructureUtility.onElementPass(
+            context -> { throw new AssertionError("native output ran an element-pass callback"); },
+            NativeOutput.STACKS);
+        for (boolean lazy : new boolean[] { true, false }) {
+            AtomicInteger reads = new AtomicInteger();
+            java.util.function.Function<Object, IStructureElement<Object>> resolver = context -> {
+                reads.incrementAndGet();
+                return leaf;
+            };
+            IStructureElement<Object> dynamic = lazy ? StructureUtility.lazy(resolver) : StructureUtility.defer(resolver);
+            HologramDeclarationCollector collector = new HologramDeclarationCollector();
+            HologramDeclarationCandidates output = collector.collect(dynamic, null, null, 0, 0, 0, "", signal, null);
+            SimpleAssert.that(output.allows(new ItemStack(Blocks.stone), true), "standard dynamic output is usable");
+            SimpleAssert.that(!output.complete, "standard dynamic output remains partial");
+            collector.collect(dynamic, null, null, 0, 0, 0, "", signal, null);
+            SimpleAssert.eq(1, reads.get(), "standard native resolver is read once per cached output");
+            if (lazy) SimpleAssert.that(
+                HologramElementCatalog.parts(dynamic)
+                    .contains(leaf),
+                "public lazy initialization exposes its real backing declaration");
+        }
+
+        AtomicInteger predicates = new AtomicInteger();
+        IStructureElement<Object> conditional = StructureUtility.onlyIf(context -> {
+            predicates.incrementAndGet();
+            return true;
+        }, leaf);
+        HologramDeclarationCollector collector = new HologramDeclarationCollector();
+        HologramDeclarationCandidates output = collector.collect(conditional, null, null, 0, 0, 0, "", signal, null);
+        SimpleAssert.that(
+            output.allows(new ItemStack(Blocks.stone), true) && !output.complete,
+            "onlyIf uses its native output contract");
+        collector.collect(conditional, null, null, 0, 0, 0, "", signal, null);
+        SimpleAssert.eq(1, predicates.get(), "onlyIf is evaluated only by the cached public native output read");
+
+        AtomicInteger contexts = new AtomicInteger();
+        Object extended = new Object();
+        IStructureElement<Object> contextualLeaf = new NativeOutputLeaf() {
+
+            @Override
+            public BlocksToPlace getBlocksToPlace(Object context, World world, int x, int y, int z, ItemStack trigger,
+                AutoPlaceEnvironment environment) {
+                SimpleAssert.that(context == extended, "withContext passes its actual extended context");
+                return BlocksToPlace.create(Blocks.stone, 0);
+            }
+        };
+        IWithExtendedContext<Object> context = () -> {
+            contexts.incrementAndGet();
+            return extended;
+        };
+        output = new HologramDeclarationCandidates();
+        output.collect(StructureUtility.withContext(contextualLeaf), context, null, 0, 0, 0, signal, null, 0);
+        SimpleAssert.that(
+            output.allows(new ItemStack(Blocks.stone), true) && !output.complete,
+            "withContext retains native outputs");
+        SimpleAssert.eq(1, contexts.get(), "withContext uses the public protocol's single context delegation");
+
+        IStructureElement<Object> air = StructureUtility.lazy(ignored -> StructureUtility.isAir());
+        output = new HologramDeclarationCandidates();
+        output.collect(air, new Object(), null, 0, 0, 0, signal, null, 0);
+        SimpleAssert.that(
+            output.stacks.isEmpty() && !output.complete && HologramElementCatalog.nativeAir(air),
+            "a null native output invents no material while retaining an initialized real air declaration");
+
+        ChannelDataAccessor.setChannelData(signal, "first", 1);
+        ChannelDataAccessor.setChannelData(signal, "second", 2);
+        output = new HologramDeclarationCandidates();
+        output.collect(
+            StructureUtility.ofChain(
+                StructureUtility.withChannel("first", NativeOutput.STACKS),
+                StructureUtility.withChannel("second", NativeOutput.STACKS)),
+            new Object(),
+            null,
+            0,
+            0,
+            0,
+            signal,
+            null,
+            0);
+        SimpleAssert.that(
+            output.allows(new ItemStack(Blocks.stone), true) && output.allows(new ItemStack(Blocks.dirt), true),
+            "one leaf reached with different channel inputs retains both native outputs");
     }
 
     private static void factoryMetadata() throws ReflectiveOperationException {
@@ -280,6 +471,53 @@ final class HologramDeclarationAdaptersRegression {
 
         DifferentWrapper(IStructureElement<?> declared) {
             super(declared);
+        }
+    }
+
+    private static class NativeOutputLeaf extends DeclaredWrapper {
+
+        int reads;
+
+        NativeOutputLeaf() {
+            super(null);
+        }
+
+        @Override
+        public BlocksToPlace getBlocksToPlace(Object context, World world, int x, int y, int z, ItemStack signal,
+            AutoPlaceEnvironment environment) {
+            reads++;
+            return BlocksToPlace.create(x == 0 ? Blocks.stone : Blocks.dirt, 0);
+        }
+    }
+
+    private enum NativeOutput implements IStructureElement<Object> {
+
+        STACKS,
+        PREDICATE_ONLY,
+        NO_OUTPUT,
+        FAIL;
+
+        public boolean check(Object context, World world, int x, int y, int z) {
+            throw new AssertionError("native output collection called check");
+        }
+
+        public boolean spawnHint(Object context, World world, int x, int y, int z, ItemStack signal) {
+            throw new AssertionError("native output collection called hints");
+        }
+
+        public boolean placeBlock(Object context, World world, int x, int y, int z, ItemStack signal) {
+            throw new AssertionError("native output collection called placement");
+        }
+
+        public BlocksToPlace getBlocksToPlace(Object context, World world, int x, int y, int z, ItemStack signal,
+            AutoPlaceEnvironment environment) {
+            if (this == NO_OUTPUT) return null;
+            if (this == FAIL) throw new IllegalStateException("native output unavailable");
+            if (this == PREDICATE_ONLY)
+                return BlocksToPlace.create(stack -> { throw new AssertionError("inventory predicate executed"); });
+            Block block = signal.stackSize == 1 ? Blocks.stone : Blocks.dirt;
+            signal.stackSize = 99;
+            return BlocksToPlace.create(block, 0);
         }
     }
 }
