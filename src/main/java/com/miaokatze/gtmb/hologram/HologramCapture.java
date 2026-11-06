@@ -709,7 +709,7 @@ public final class HologramCapture {
                         Declarations.PureElement<?> declaration = HologramElementCatalog.pure(element);
                         if (declaration != null) {
                             describePure(cell, declaration);
-                        } else if (element == StructureUtility.isAir()) {
+                        } else if (HologramElementCatalog.nativeAir(element)) {
                             cell.block = Blocks.air;
                             cell.meta = 0;
                         } else capture.spawnHint(element, w, xx, yy, zz, piece.trigger, 0);

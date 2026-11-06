@@ -41,6 +41,10 @@ final class HologramPlanPolicy {
         if (c.y < 0 || c.y >= w.getHeight() || !loaded) return "unsupported";
         if (c.anchor) return "protected";
         if (HologramSourcePolicy.targetFailure(s, c, index) != null) return "protected";
+        if (s.mode == 0 && HologramCellPolicy.requiredNativeAir(s, c, index)) {
+            if (tile != null) return "protected";
+            return HologramCellPolicy.targetMatches(s, c, index, old, meta) ? "satisfied" : "blocked";
+        }
         // Native payload errors must survive even when their primary material cannot be sampled.
         boolean resourceChecked = s.mode != 2 && s.virtual
             && s.virtualPreset != null

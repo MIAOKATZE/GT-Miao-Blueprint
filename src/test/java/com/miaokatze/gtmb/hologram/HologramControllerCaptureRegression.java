@@ -660,8 +660,11 @@ public final class HologramControllerCaptureRegression {
             com.gtnewhorizon.structurelib.structure.IStructureElement<Object> element = s.capture.cells.get(0).element;
             com.gtnewhorizon.structurelib.structure.IStructureDefinition<Object> definition = com.gtnewhorizon.structurelib.structure.StructureDefinition
                 .<Object>builder()
-                .addShape("preset", new String[][] { { "XXX" } })
+                .addShape("preset", new String[][] { { "XXX-Y" } })
                 .addElement('X', element)
+                .addElement('Y', StructureUtility.onElementPass(
+                    controller -> { throw new AssertionError("air classification ran pass callback"); },
+                    StructureUtility.isAir()))
                 .build();
             source = com.miaokatze.gtmb.api.StructureSources.register(
                 "gtmb_test:preset_actions",
@@ -677,7 +680,7 @@ public final class HologramControllerCaptureRegression {
                     .collectProjection(machine, signal, machine.getExtendedFacing(), s.captureIntent, s.capture);
             } while (s.capture.pending);
             SimpleAssert.that(
-                !s.capture.incomplete && s.capture.cells.size() == 4
+                !s.capture.incomplete && s.capture.cells.size() == 6
                     && HologramStructureProjection.showing(s)
                     && HologramSessionPolicy.valid(s),
                 "preset actions use a real native projection bound to its live controller, world and tool");
@@ -686,6 +689,7 @@ public final class HologramControllerCaptureRegression {
             HologramWorkspace.activate(s.player.getUniqueID(), s);
             HologramResourcePlanner.refreshPlan(s);
             complete(s);
+            nativeAirBoundaries(s);
             SimpleAssert.that(
                 s.presetSupported && s.autoTargets.size() == 2,
                 "native action fixture starts with two autos alongside the manual energy target");
@@ -780,6 +784,60 @@ public final class HologramControllerCaptureRegression {
         action.setLong("sourceRevision", com.miaokatze.gtmb.api.StructureSources.revision());
         action.setLong("uiSequence", s.uiSequence + 1);
         return action;
+    }
+
+    private static void nativeAirBoundaries(HologramSession s) {
+        HologramServiceEditRegression.ReadOnlyWorld world = (HologramServiceEditRegression.ReadOnlyWorld) s.player.worldObj;
+        int verified = 0;
+        for (int index = 0; index < s.capture.cells.size(); index++) {
+            HologramCapture.Cell cell = s.capture.cells.get(index);
+            if (!HologramElementCatalog.nativeAir(cell.element)) continue;
+            verified++;
+            SimpleAssert.that(
+                cell.block == Blocks.air && !cell.unknown && HologramCellPolicy.targetFor(s, cell, index) == null
+                    && "satisfied".equals(HologramPlanPolicy.classify(s, cell, index))
+                    && HologramCellPolicy.targetSatisfied(s, cell, index, Blocks.air, 0),
+                "actual native required air and its reviewed pass wrapper are satisfied without a payable item");
+            net.minecraft.block.Block previous = world.occupied;
+            int occupiedX = world.occupiedX;
+            try {
+                world.occupied = Blocks.stone;
+                world.occupiedX = cell.x;
+                SimpleAssert.eq("blocked", HologramPlanPolicy.classify(s, cell, index),
+                    "occupied native required air remains a real structural blocker");
+            } finally {
+                world.occupied = previous;
+                world.occupiedX = occupiedX;
+            }
+            world.unloaded = true;
+            try {
+                SimpleAssert.that(
+                    "unsupported".equals(HologramPlanPolicy.classify(s, cell, index))
+                        && !HologramCellPolicy.targetMatches(s, cell, index, Blocks.air, 0),
+                    "unloaded required air cannot be reported satisfied");
+            } finally {
+                world.unloaded = false;
+            }
+            ItemStack target = s.planTargets.get(index);
+            s.pins.put(index, new ItemStack(Blocks.stone));
+            s.planTargets.set(index, new ItemStack(Blocks.stone));
+            try {
+                SimpleAssert.that(
+                    !"satisfied".equals(HologramPlanPolicy.classify(s, cell, index))
+                        && HologramValues.same(s.pins.get(index), new ItemStack(Blocks.stone)),
+                    "required-air matching cannot erase an explicit material target");
+            } finally {
+                s.pins.remove(index);
+                s.planTargets.set(index, target);
+            }
+            HologramCapture.Cell hint = new HologramCapture.Cell(StructureUtility.ofHint(14), cell.x, cell.y, cell.z);
+            hint.block = Blocks.air;
+            SimpleAssert.that(
+                !HologramElementCatalog.nativeAir(hint.element)
+                    && !"satisfied".equals(HologramPlanPolicy.classify(s, hint, index)),
+                "an air-looking hint without the native air declaration cannot prove required emptiness");
+        }
+        SimpleAssert.eq(2, verified, "the real native source includes direct and transparently wrapped required air");
     }
 
     private static void operationReviews(HologramSession s, ItemStack energy, ItemStack muffler)
@@ -926,6 +984,13 @@ public final class HologramControllerCaptureRegression {
             s.job == 1 && s.work.size() == 3 && s.player.inventory.mainInventory[1].stackSize == 2,
             "a current confirmed native plan with sufficient stock reaches the existing bounded placement job without prepaying: "
                 + operationState(s));
+        // Supply committed transaction outcomes to the real job finalizer; physical placement is tested in-game.
+        for (int index : s.work) s.capture.cells.get(index).status = "placed";
+        s.cursor = s.completed = s.work.size();
+        HologramPlacementJobs.tickJob(s);
+        SimpleAssert.that(
+            s.job == 3 && s.completed == 3,
+            "real job finalization counts satisfied required-air cells without false partial completion: " + operationState(s));
     }
 
     private static String operationState(HologramSession s) {

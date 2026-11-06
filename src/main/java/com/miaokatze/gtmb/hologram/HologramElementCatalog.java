@@ -7,6 +7,7 @@ import java.util.List;
 
 import com.gtnewhorizon.structurelib.structure.IStructureElement;
 import com.gtnewhorizon.structurelib.structure.IStructureElementChain;
+import com.gtnewhorizon.structurelib.structure.StructureUtility;
 import com.miaokatze.gtmb.api.Declarations;
 
 import gregtech.api.util.HatchElementBuilder;
@@ -15,6 +16,23 @@ import gregtech.api.util.HatchElementBuilder;
 final class HologramElementCatalog {
 
     private HologramElementCatalog() {}
+
+    /** Only the actual air declaration through authoritative transparent wrappers proves required empty space. */
+    static boolean nativeAir(IStructureElement<?> element) {
+        IdentityHashMap<IStructureElement<?>, Boolean> seen = new IdentityHashMap<>();
+        for (int depth = 0; element != null && depth <= 12; depth++) {
+            if (seen.put(element, Boolean.TRUE) != null) return false;
+            if (element == StructureUtility.isAir()) return true;
+            try {
+                HologramDeclarationAdapters.Declaration declaration = HologramDeclarationAdapters.declaration(element);
+                if (declaration != null && !declaration.backingAuthority) return false;
+                element = HologramDeclarationWrappers.backing(element);
+            } catch (ReflectiveOperationException | RuntimeException | LinkageError invalid) {
+                return false;
+            }
+        }
+        return false;
+    }
 
     /** A pure contract can be inherited only through an explicitly transparent declaration wrapper. */
     static Declarations.PureElement<?> pure(IStructureElement<?> element) {

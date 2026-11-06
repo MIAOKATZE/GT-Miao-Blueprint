@@ -102,7 +102,8 @@ final class HologramSourcePolicy {
                 && (session.virtual || HologramCellPolicy.explicitTarget(session, cell, index))) return null;
             return "SOURCE_DECLARATION_UNVERIFIED";
         }
-        if (cell.element == StructureUtility.isAir()) return null;
+        if (cell.element == StructureUtility.isAir()
+            || !session.virtual && target == null && HologramElementCatalog.nativeAir(cell.element)) return null;
         Declarations.PureElement<?> pure = HologramElementCatalog.pure(cell.element);
         boolean automatic = !HologramCellPolicy.explicitTarget(session, cell, index);
         if (pure != null) {
@@ -223,7 +224,8 @@ final class HologramSourcePolicy {
         for (int index = 0; index < session.capture.cells.size(); index++) {
             HologramCapture.Cell cell = session.capture.cells.get(index);
             if (!structureId.isEmpty() && !cell.belongsTo(structureId)) continue;
-            boolean air = cell.element == StructureUtility.isAir();
+            boolean air = cell.element == StructureUtility.isAir()
+                || !session.virtual && HologramElementCatalog.nativeAir(cell.element);
             boolean controller = savedPlan && templateController(session, cell, index, type, controllerId, structureId);
             if (!cell.anchor && !air && !controller) {
                 HologramCapture.SourceAuthority observed = cell.sourceAuthority;

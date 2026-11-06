@@ -254,8 +254,22 @@ final class HologramCellPolicy {
             && (s.channels.hasKey("item_pipe", 3) || s.channels.hasKey("coke_oven_casing", 3));
     }
 
+    static boolean requiredNativeAir(HologramSession s, HologramCapture.Cell c, int index) {
+        return !s.virtual && !c.anchor && !c.userPosition && !explicitTarget(s, c, index)
+            && !s.autoTargets.containsKey(index) && !s.facingPins.containsKey(HologramValues.position(c))
+            && c.tileNbt.isEmpty() && c.itemNbt.isEmpty() && c.coverCostsNbt.isEmpty() && !c.invalidCoverCosts
+            && c.resourceError.isEmpty() && HologramElementCatalog.nativeAir(c.element);
+    }
+
+    private static boolean nativeAirSatisfied(HologramSession s, HologramCapture.Cell c) {
+        World world = s.player.worldObj;
+        return world.blockExists(c.x, c.y, c.z) && world.isAirBlock(c.x, c.y, c.z)
+            && world.getTileEntity(c.x, c.y, c.z) == null;
+    }
+
     static boolean targetSatisfied(HologramSession s, HologramCapture.Cell c, int index, Block old, int meta) {
         ItemStack target = targetFor(s, c, index);
+        if (target == null && requiredNativeAir(s, c, index)) return nativeAirSatisfied(s, c);
         if (s.facingPins.containsKey(HologramValues.position(c))) {
             TileEntity actual = s.player.worldObj.getTileEntity(c.x, c.y, c.z);
             if (!(actual instanceof IGregTechTileEntity) || ((IGregTechTileEntity) actual).getFrontFacing()
@@ -280,7 +294,7 @@ final class HologramCellPolicy {
     static boolean targetMatches(HologramSession s, HologramCapture.Cell c, int index, Block old, int meta,
         boolean restoredConfiguration) {
         ItemStack wanted = targetFor(s, c, index);
-        if (wanted == null) return false;
+        if (wanted == null) return requiredNativeAir(s, c, index) && nativeAirSatisfied(s, c);
         Declarations.PureElement<?> declaration = HologramElementCatalog.pure(c.element);
         if (declaration != null && !HologramRecovery.hasSeal(wanted)) {
             if (!declaration.matchesTarget(worldState(s.player.worldObj, c.x, c.y, c.z), wanted)) return false;
