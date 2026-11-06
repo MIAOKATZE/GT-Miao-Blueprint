@@ -848,12 +848,16 @@ public final class HologramControllerCaptureRegression {
         stale.setLong("planRevision", revision);
         HologramActionDispatcher.handle(s.player, stale);
         SimpleAssert.that(s.job == 0, "the projection revision cannot authorize the prepared operation");
+        // The fixture clock is fixed; eight preceding validation/read actions filled this tick's protocol budget.
+        // The separate survival-confirmation scenario represents the player's next interaction tick.
+        s.actionTick = Long.MIN_VALUE;
         NBTTagCompound build = presetAction(s, "build");
         build.setLong("placementReviewNonce", s.placementReviewNonce);
         HologramActionDispatcher.handle(s.player, build);
         SimpleAssert.that(
-            s.job == 0 && "施工材料不足，请补齐后重试".equals(s.status),
-            "the actual newly reviewed action reaches the original survival inventory guard");
+            s.uiSequence == build.getLong("uiSequence") && s.job == 0
+                && "施工材料不足，请补齐后重试".equals(s.status),
+            "the actual newly reviewed action reaches the original survival inventory guard: " + operationState(s));
         s.player.inventory.mainInventory[1].stackSize = 2;
         HologramMaterialQuote.recheck(s);
         build = presetAction(s, "build");
@@ -861,7 +865,14 @@ public final class HologramControllerCaptureRegression {
         HologramActionDispatcher.handle(s.player, build);
         SimpleAssert.that(
             s.job == 1 && s.work.size() == 3 && s.player.inventory.mainInventory[1].stackSize == 2,
-            "a current confirmed native plan with sufficient stock reaches the existing bounded placement job without prepaying");
+            "a current confirmed native plan with sufficient stock reaches the existing bounded placement job without prepaying: "
+                + operationState(s));
+    }
+
+    private static String operationState(HologramSession s) {
+        return "job=" + s.job + " status=" + s.status + " missing=" + s.planMissing + " planStatus=" + s.planStatus
+            + " unknown=" + s.capture.cells.stream().filter(cell -> cell.unknown).count() + " mode=" + s.mode
+            + " pending=" + s.capturePending + " actionCount=" + s.actionCount + " uiSequence=" + s.uiSequence;
     }
 
     private static void scanScopes(HologramSession s, ItemStack energy, ItemStack muffler)
