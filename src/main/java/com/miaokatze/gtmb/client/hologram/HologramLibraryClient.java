@@ -3,7 +3,6 @@ package com.miaokatze.gtmb.client.hologram;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.nio.file.Paths;
-import java.security.MessageDigest;
 import java.util.Arrays;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -776,6 +775,11 @@ final class HologramLibraryClient {
                 if (token == generation) knownQuickSource = observedSource;
                 finishLocalRefresh(token, operation, labels);
             });
+        }, error -> {
+            loading = false;
+            localCatalogProgress.finish(operation, System.nanoTime());
+            com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Blueprint local catalog refresh failed", error);
+            if (!busy()) status = "读取本地蓝图库失败：" + HologramUiText.reason(error.getMessage());
         });
     }
 
@@ -1384,7 +1388,7 @@ final class HologramLibraryClient {
         status = upload ? "正在读取客户端蓝图，准备上传" : "正在读取客户端蓝图，准备" + actionLabel(action);
         work(() -> {
             byte[] bytes = store.artifact(id);
-            String hash = hash(bytes);
+            String hash = HologramBlueprintArtifact.hash(bytes);
             String replaceId = upload ? store.uploadedId(targetServer, id) : "";
             main(() -> {
                 if (generation != token) return;
@@ -1877,7 +1881,7 @@ final class HologramLibraryClient {
                 HologramBlueprintArtifact.Artifact transferred = HologramBlueprintArtifact.transfer(uploadJson, actual);
                 artifact = HologramBlueprintArtifact.encode(transferred.json, transferred.png);
                 source.artifact = artifact;
-                source.artifactHash = hash(artifact);
+                source.artifactHash = HologramBlueprintArtifact.hash(artifact);
             }
             byte[] bytes = artifact;
             main(() -> {
@@ -3002,10 +3006,12 @@ final class HologramLibraryClient {
         final Job job;
         final long token = generation;
         final boolean durable;
+        final java.util.function.Consumer<Exception> failure;
 
-        QueuedWork(Job job, boolean durable) {
+        QueuedWork(Job job, boolean durable, java.util.function.Consumer<Exception> failure) {
             this.job = job;
             this.durable = durable;
+            this.failure = failure;
         }
 
         public void run() {
@@ -3013,29 +3019,45 @@ final class HologramLibraryClient {
             try {
                 job.run();
             } catch (Exception error) {
-                main(() -> {
-                    if (token != generation) return;
-                    loading = false;
-                    failSave("保存蓝图失败：" + HologramUiText.reason(error.getMessage()), error);
-                });
+                failed(error);
             }
+        }
+
+        void failed(Exception error) {
+            main(() -> { if (token == generation) failure.accept(error); });
         }
     }
 
     private void work(Job job) {
-        enqueueWork(job, false);
+        enqueueSaveWork(job, false);
+    }
+
+    private void work(Job job, java.util.function.Consumer<Exception> failure) {
+        enqueueWork(job, false, failure);
     }
 
     private void durableWork(Job job) {
-        enqueueWork(job, true);
+        enqueueSaveWork(job, true);
     }
 
-    private void enqueueWork(Job job, boolean durable) {
-        try {
-            worker.execute(new QueuedWork(job, durable));
-        } catch (java.util.concurrent.RejectedExecutionException busy) {
+    private void enqueueSaveWork(Job job, boolean durable) {
+        long task = backgroundTaskToken;
+        enqueueWork(job, durable, error -> {
+            if (task != backgroundTaskToken) return;
             loading = false;
-            failSave("蓝图保存队列繁忙，请稍后重试", busy);
+            failSave(
+                error instanceof java.util.concurrent.RejectedExecutionException ? "蓝图保存队列繁忙，请稍后重试"
+                    : "保存蓝图失败：" + HologramUiText.reason(error.getMessage()),
+                error);
+        });
+    }
+
+    private void enqueueWork(Job job, boolean durable, java.util.function.Consumer<Exception> failure) {
+        QueuedWork queued = new QueuedWork(job, durable, failure);
+        try {
+            worker.execute(queued);
+        } catch (java.util.concurrent.RejectedExecutionException busy) {
+            queued.failed(busy);
         }
     }
 
@@ -3065,12 +3087,5 @@ final class HologramLibraryClient {
     static String bytes(long bytes) {
         return bytes >= 1024 * 1024 ? String.format(java.util.Locale.ROOT, "%.1f MiB", bytes / 1048576.0)
             : bytes >= 1024 ? String.format(java.util.Locale.ROOT, "%.1f KiB", bytes / 1024.0) : bytes + " B";
-    }
-
-    private static String hash(byte[] bytes) throws Exception {
-        StringBuilder hex = new StringBuilder();
-        for (byte value : MessageDigest.getInstance("SHA-256")
-            .digest(bytes)) hex.append(String.format("%02x", value & 255));
-        return hex.toString();
     }
 }

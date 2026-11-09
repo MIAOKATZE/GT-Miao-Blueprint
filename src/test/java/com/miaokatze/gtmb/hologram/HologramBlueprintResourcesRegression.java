@@ -1579,7 +1579,7 @@ public final class HologramBlueprintResourcesRegression {
         monitor.insertionLimit = 500;
         monitor.throwCharge = true;
         try {
-            HologramMaterials.refundFluid(monitor, left);
+            HologramMaterials.refundFluid(monitor, left, HologramMaterials.fluidReceipt(left));
             throw new AssertionError("fixture energy charge must fail after insertion");
         } catch (IllegalStateException expected) {
             aeThat(left.getStackSize() == 1500, "inserted fluid is removed from refund before charging failure");
@@ -1592,7 +1592,7 @@ public final class HologramBlueprintResourcesRegression {
         monitor.throwCharge = false;
         monitor.powerLimit = Long.MAX_VALUE;
         monitor.insertionLimit = Long.MAX_VALUE;
-        HologramMaterials.refundFluid(monitor, left);
+        HologramMaterials.refundFluid(monitor, left, HologramMaterials.fluidReceipt(left));
         aeThat(
             left.getStackSize() == 0 && monitor.stored == 10000,
             "retry returns remaining fluid once, without duplication");

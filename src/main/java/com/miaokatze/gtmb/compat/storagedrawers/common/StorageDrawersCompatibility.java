@@ -1,7 +1,6 @@
 package com.miaokatze.gtmb.compat.storagedrawers.common;
 
 import java.io.IOException;
-import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.math.BigInteger;
 import java.util.ArrayList;
@@ -25,6 +24,7 @@ import net.minecraft.world.World;
 import com.miaokatze.gtmb.api.GTMBExtensions;
 import com.miaokatze.gtmb.api.NativeCapture;
 import com.miaokatze.gtmb.api.ResourceContainers;
+import com.miaokatze.gtmb.compat.internal.NativeFields;
 import com.miaokatze.gtmb.hologram.HologramNativePlacement;
 import com.miaokatze.miaokatzecore.api.items.NativeItemIds;
 
@@ -405,22 +405,13 @@ public final class StorageDrawersCompatibility {
     }
 
     private static Object get(Object source, String name) throws ReflectiveOperationException {
-        return field(source.getClass(), name).get(source);
+        return NativeFields.find(source.getClass(), name)
+            .get(source);
     }
 
     private static void set(Object source, String name, Object value) throws ReflectiveOperationException {
-        field(source.getClass(), name).set(source, value);
-    }
-
-    private static Field field(Class<?> type, String name) throws NoSuchFieldException {
-        for (Class<?> current = type; current != null; current = current.getSuperclass()) {
-            try {
-                Field field = current.getDeclaredField(name);
-                field.setAccessible(true);
-                return field;
-            } catch (NoSuchFieldException absent) {}
-        }
-        throw new NoSuchFieldException(name);
+        NativeFields.find(source.getClass(), name)
+            .set(source, value);
     }
 
     private static Object call(Object source, String name, Class<?>[] parameters, Object... arguments)

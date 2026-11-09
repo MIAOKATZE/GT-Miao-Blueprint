@@ -33,6 +33,7 @@ public final class HologramRegressionTest {
     private static void run(String[] args) throws Exception {
         if (!MinecraftTestBootstrap.enter(HologramRegressionTest.class, args)) return;
         Map<String, Runnable> cases = new LinkedHashMap<>();
+        cases.put("ordinary_refunds_quarantine_unknown_native_results", HologramRefundUncertaintyRegression::run);
         cases.put(
             "native_structure_projection_reads_geometry_without_operation_authority",
             HologramStructureProjectionRegression::run);

@@ -535,15 +535,14 @@ public final class HologramMaterials {
             }
         }
 
-        private void returnFluid(IAEFluidStack stack) {
-            refundFluid(fluidAccess(null), stack);
+        private void returnFluid(IAEFluidStack stack, NBTTagCompound receipt) {
+            refundFluid(fluidAccess(null), stack, receipt);
         }
 
-        private void recoverFluid(IAEFluidStack stack) {
-            if (stack == null || stack.getStackSize() <= 0) return;
+        private void recoverFluid(NBTTagCompound entry) {
+            if (entry.getLong("gtmbRecoveryAmount") <= 0) return;
             NBTTagCompound owner = recoveryOwner();
             NBTTagList stored = owner.getTagList(RECOVERY_FLUID, 10);
-            NBTTagCompound entry = fluidReceipt(stack);
             stored.appendTag(entry);
             owner.setTag(RECOVERY_FLUID, stored);
         }
@@ -572,40 +571,36 @@ public final class HologramMaterials {
                     LOG.warn("Hologram wireless energy refund remains queued", failure);
                 }
             }
-            NBTTagList stored = owner.getTagList(RECOVERY_FLUID, 10);
-            NBTTagList remaining = new NBTTagList();
-            for (int i = 0; i < stored.tagCount(); i++) {
-                NBTTagCompound receipt = stored.getCompoundTagAt(i);
-                FluidStack fluid = FluidStack.loadFluidStackFromNBT(receipt);
-                long amount = receipt.getLong("gtmbRecoveryAmount");
-                if (fluid == null || amount <= 0 || i >= 96 || !supportsFluidNbt(fluid)) {
-                    remaining.appendTag(receipt.copy());
-                    continue;
-                }
-                IAEFluidStack stack = AEFluidStack.create(fluid);
-                stack.setStackSize(amount);
-                try {
-                    returnFluid(stack);
-                } catch (RuntimeException | LinkageError failure) {
-                    LOG.warn("Hologram AE fluid return failed; preserving known remainder", failure);
-                } finally {
-                    receipt.setLong("gtmbRecoveryAmount", stack.getStackSize());
-                }
-                if (stack.getStackSize() > 0) remaining.appendTag(receipt.copy());
-            }
-            owner.setTag(RECOVERY_FLUID, remaining);
-            NBTTagList essentia = owner.getTagList(RECOVERY_ESSENTIA, 10);
-            NBTTagList pendingEssentia = new NBTTagList();
-            for (int i = 0; i < essentia.tagCount(); i++) {
-                NBTTagCompound receipt = essentia.getCompoundTagAt(i);
-                if (i < 96) try {
-                    refundEssentia(receipt);
-                } catch (RuntimeException | LinkageError failure) {
-                    LOG.warn("Hologram native essentia refund remains queued", failure);
-                }
-                if (receipt.getLong("Cnt") > 0) pendingEssentia.appendTag(receipt.copy());
-            }
-            owner.setTag(RECOVERY_ESSENTIA, pendingEssentia);
+            owner.setTag(
+                RECOVERY_FLUID,
+                HologramResourceRecovery.retry(owner.getTagList(RECOVERY_FLUID, 10), RECOVERY_VISITS, receipt -> {
+                    try {
+                        FluidStack fluid = FluidStack.loadFluidStackFromNBT(receipt);
+                        long amount = receipt.getLong("gtmbRecoveryAmount");
+                        if (fluid == null || amount <= 0 || !supportsFluidNbt(fluid)) return true;
+                        IAEFluidStack stack = AEFluidStack.create(fluid);
+                        stack.setStackSize(amount);
+                        try {
+                            returnFluid(stack, receipt);
+                        } finally {
+                            receipt.setLong("gtmbRecoveryAmount", stack.getStackSize());
+                        }
+                        return stack.getStackSize() > 0;
+                    } catch (RuntimeException | LinkageError failure) {
+                        LOG.warn("Hologram AE fluid return failed; preserving known remainder", failure);
+                        return true;
+                    }
+                }));
+            owner.setTag(
+                RECOVERY_ESSENTIA,
+                HologramResourceRecovery.retry(owner.getTagList(RECOVERY_ESSENTIA, 10), RECOVERY_VISITS, receipt -> {
+                    try {
+                        refundEssentia(receipt);
+                    } catch (RuntimeException | LinkageError failure) {
+                        LOG.warn("Hologram native essentia refund remains queued", failure);
+                    }
+                    return receipt.getLong("Cnt") > 0;
+                }));
         }
 
         /** Enabled main inventory stock. Disabled sources are not inspected; the held tool slot is excluded. */
@@ -1014,13 +1009,8 @@ public final class HologramMaterials {
         }
 
         /** Update the known remainder before charging so later failures cannot refund already inserted items. */
-        private void returnToMe(ItemStack stack) {
-            returnToMe(stack, null);
-        }
-
-        private void returnToMe(ItemStack stack, NBTTagCompound demolitionReceipt) {
-            if (demolitionReceipt != null && demolitionReceipt.hasKey(RECOVERY_UNCERTAIN))
-                throw new IllegalStateException("AE 注入结果未确认，回收记录已保留，需核查后再交付");
+        private void returnToMe(ItemStack stack, NBTTagCompound receipt) {
+            if (receipt.hasKey(RECOVERY_UNCERTAIN)) throw new IllegalStateException("AE 注入结果未确认，回收记录已保留，需核查后再交付");
             if (!settings.me || !terminalAvailable()) return;
             IMEMonitor<IAEItemStack> monitor = terminal.getItemInventory();
             if (monitor == null) return;
@@ -1028,22 +1018,11 @@ public final class HologramMaterials {
             int count = poweredCount(offered);
             if (count <= 0) return;
             offered.setStackSize(count);
-            if (demolitionReceipt != null) setRecoveryUncertain(demolitionReceipt, count);
-            IAEItemStack left = monitor.injectItems(
-                demolitionReceipt == null ? offered : offered.copy(),
-                Actionable.MODULATE,
-                new PlayerSource(player, terminal));
-            int previous = stack.stackSize;
-            stack.stackSize = recoveryRemainder(
-                previous,
-                count,
-                demolitionReceipt == null ? left == null ? 0 : left.getStackSize()
-                    : checkedItemRemainder(offered, left));
-            if (demolitionReceipt != null) {
-                demolitionReceipt.setInteger(RECOVERY_COUNT, stack.stackSize);
-                setRecoveryUncertain(demolitionReceipt, 0);
-            }
-            int inserted = previous - stack.stackSize;
+            int inserted = refundItem(
+                stack,
+                offered,
+                receipt,
+                request -> monitor.injectItems(request, Actionable.MODULATE, new PlayerSource(player, terminal)));
             if (inserted > 0) {
                 charge(inserted, offered.getAmountPerUnit(), null);
                 Stats.ItemsInserted.addToPlayer(player, inserted);
@@ -1220,7 +1199,7 @@ public final class HologramMaterials {
                         boolean meFirst = receipt.getBoolean(RECOVERY_ME);
                         if (!explicit && meFirst) {
                             try {
-                                returnToMe(stack, receipt.getBoolean(RECOVERY_DROP) ? receipt : null);
+                                returnToMe(stack, receipt);
                             } catch (RuntimeException | LinkageError failure) {
                                 if (receipt.hasKey(RECOVERY_UNCERTAIN)) throw failure;
                                 LOG.warn("Hologram ME recovery failed; preserving known remainder", failure);
@@ -1297,7 +1276,10 @@ public final class HologramMaterials {
                 NBTTagCompound previous = stored.getCompoundTagAt(i);
                 int count = previous.getInteger(RECOVERY_COUNT);
                 long total = (long) count + entry.getInteger(RECOVERY_COUNT);
-                if (count <= 0 || total > Integer.MAX_VALUE || !sameRecovery(previous, entry)) continue;
+                if (count <= 0 || total > Integer.MAX_VALUE
+                    || entry.hasKey(RECOVERY_UNCERTAIN)
+                    || previous.hasKey(RECOVERY_UNCERTAIN)
+                    || !sameRecovery(previous, entry)) continue;
                 previous.setInteger(RECOVERY_COUNT, (int) total);
                 previous.setByte("Count", (byte) total);
                 return;
@@ -1493,12 +1475,14 @@ public final class HologramMaterials {
             }
             for (IAEFluidStack stack : meFluids) {
                 IAEFluidStack left = stack.copy();
+                NBTTagCompound receipt = fluidReceipt(left);
                 try {
-                    context.returnFluid(left);
+                    context.returnFluid(left, receipt);
                 } catch (RuntimeException | LinkageError failure) {
                     LOG.warn("Hologram AE fluid refund queued", failure);
                 } finally {
-                    context.recoverFluid(left);
+                    receipt.setLong("gtmbRecoveryAmount", left.getStackSize());
+                    context.recoverFluid(receipt);
                 }
             }
             // SL's generic extractor has no insertion API. Keep its actual post-extraction state and
@@ -1506,15 +1490,21 @@ public final class HologramMaterials {
             for (ItemStack stack : containerItems) context.recover(stack.copy());
             for (IAEItemStack stack : meItems) {
                 ItemStack left = stack.getItemStack();
+                NBTTagCompound receipt = itemReceipt(left);
                 try {
-                    context.returnToMe(left);
+                    context.returnToMe(left, receipt);
                 } catch (RuntimeException | LinkageError failure) {
                     // A broken third-party insertion must not discard later ledger entries.
                     LOG.warn(
                         "Hologram ME material return failed; preserving remaining ledger in player recovery",
                         failure);
                 } finally {
-                    if (left != null && left.stackSize > 0) context.recover(left);
+                    if (left != null && left.stackSize > 0) {
+                        if (receipt.hasKey(RECOVERY_UNCERTAIN)) {
+                            receipt.setBoolean(RECOVERY_ME, true);
+                            context.enqueueRecovery(receipt);
+                        } else context.recover(left);
+                    }
                 }
             }
             if (terminalState != null && terminalSlot >= 0) {
@@ -1570,6 +1560,23 @@ public final class HologramMaterials {
         IAEItemStack inject(IAEItemStack stack, Actionable mode);
 
         void charge(int amount, int unit);
+    }
+
+    /** Shared ordinary-refund boundary: an unacknowledged injection may never fall through to another destination. */
+    static int refundItem(ItemStack stack, IAEItemStack offered, NBTTagCompound receipt,
+        java.util.function.Function<IAEItemStack, IAEItemStack> inject) {
+        if (receipt.hasKey(RECOVERY_UNCERTAIN)) throw new IllegalStateException("AE 注入结果未确认，回收记录已保留，需核查后再交付");
+        int count = (int) Math.min(stack.stackSize, offered.getStackSize());
+        if (count <= 0) return 0;
+        offered = offered.copy();
+        offered.setStackSize(count);
+        setRecoveryUncertain(receipt, count);
+        IAEItemStack left = inject.apply(offered.copy());
+        int previous = stack.stackSize;
+        stack.stackSize = recoveryRemainder(previous, count, checkedItemRemainder(offered, left));
+        receipt.setInteger(RECOVERY_COUNT, stack.stackSize);
+        setRecoveryUncertain(receipt, 0);
+        return previous - stack.stackSize;
     }
 
     /** Only an authenticated, fully powered storage refusal authorizes dropping the capacity remainder. */
@@ -1662,15 +1669,21 @@ public final class HologramMaterials {
         return taken.getStackSize() == amount;
     }
 
-    static void refundFluid(FluidAccess access, IAEFluidStack stack) {
+    static void refundFluid(FluidAccess access, IAEFluidStack stack, NBTTagCompound receipt) {
+        if (receipt.hasKey(RECOVERY_UNCERTAIN)) throw new IllegalStateException("AE 流体注入结果未确认，回收记录已保留，需核查后再交付");
         if (stack == null || stack.getStackSize() <= 0 || !access.available()) return;
         long previous = stack.getStackSize();
         long offered = Math.max(0, Math.min(previous, access.poweredCount(stack)));
         if (offered == 0) return;
         IAEFluidStack request = stack.copy();
         request.setStackSize(offered);
-        IAEFluidStack left = access.inject(request);
+        receipt.setLong(RECOVERY_UNCERTAIN, offered);
+        IAEFluidStack left = access.inject(request.copy());
+        if (left != null && (left.getStackSize() < 0 || left.getStackSize() > offered || !request.equals(left)))
+            throw new IllegalStateException("Invalid native AE fluid recovery remainder");
         stack.setStackSize(fluidRecoveryRemainder(previous, offered, left == null ? 0 : left.getStackSize()));
+        receipt.setLong("gtmbRecoveryAmount", stack.getStackSize());
+        receipt.removeTag(RECOVERY_UNCERTAIN);
         if (previous > stack.getStackSize()) access.charge(previous - stack.getStackSize(), stack.getAmountPerUnit());
     }
 
