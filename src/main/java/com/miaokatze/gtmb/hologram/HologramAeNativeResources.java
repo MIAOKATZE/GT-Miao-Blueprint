@@ -9,7 +9,10 @@ import net.minecraft.nbt.NBTTagList;
 import appeng.api.parts.IPart;
 import appeng.api.parts.IPartItem;
 
-/** Exact AE2 rv3-beta-1080 native schemas which cannot survive the current payment precision. */
+/**
+ * AE2 native schemas (initial 1080 audit; 1095 waitingToSend writer/reader rechecked) which cannot survive the current
+ * payment precision.
+ */
 final class HologramAeNativeResources {
 
     private HologramAeNativeResources() {}

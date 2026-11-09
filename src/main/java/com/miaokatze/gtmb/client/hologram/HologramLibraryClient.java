@@ -97,8 +97,7 @@ final class HologramLibraryClient {
     private boolean displayFirstPublished;
     private boolean browseRendering;
     private long browseStartedAt;
-    private BufferedImage browseImage;
-    private net.minecraft.util.ResourceLocation browseImageTexture;
+    private final HologramLibraryPreviewImage previewImage = new HologramLibraryPreviewImage();
     private String activePublicPreviewId = "";
     private long activePublicPreviewEpoch;
     private String browseImageHash = "", browseImageRevision = "";
@@ -1543,7 +1542,7 @@ final class HologramLibraryClient {
             break;
         }
         if (cached != null && cached.display != null && cached.display.state != null) {
-            browseImage = cached.thumbnail;
+            previewImage.replace(cached.thumbnail);
             startDisplay(cached.display, placement, epoch);
             return;
         }
@@ -1577,7 +1576,9 @@ final class HologramLibraryClient {
                 readDisplayBytes(png, HologramBlueprintArtifact.MAX_PNG_BYTES, false));
             if (!stamp.equals(fileStamp(png))) return null;
             main(
-                () -> { if (token == generation && epoch == browseEpoch && browseState == null) browseImage = image; });
+                () -> {
+                    if (token == generation && epoch == browseEpoch && browseState == null) previewImage.replace(image);
+                });
             return image;
         } catch (java.io.IOException | RuntimeException unavailable) {
             // An optional picture never blocks the actual blueprint display.
@@ -1608,37 +1609,15 @@ final class HologramLibraryClient {
     }
 
     net.minecraft.util.ResourceLocation browsePreviewTexture() {
-        if (browseImage == null || System.nanoTime() - browseStartedAt < 200_000_000L) return null;
-        if (browseImageTexture == null) {
-            net.minecraft.client.renderer.texture.DynamicTexture texture = new net.minecraft.client.renderer.texture.DynamicTexture(
-                browseImage.getWidth(),
-                browseImage.getHeight());
-            browseImage.getRGB(
-                0,
-                0,
-                browseImage.getWidth(),
-                browseImage.getHeight(),
-                texture.getTextureData(),
-                0,
-                browseImage.getWidth());
-            texture.updateDynamicTexture();
-            browseImageTexture = Minecraft.getMinecraft()
-                .getTextureManager()
-                .getDynamicTextureLocation("gtmb_blueprint_preview", texture);
-        }
-        return browseImageTexture;
+        return System.nanoTime() - browseStartedAt < 200_000_000L ? null : previewImage.texture();
     }
 
     BufferedImage browsePreviewImage() {
-        return browseImage;
+        return previewImage.image();
     }
 
     void releaseBrowseImage() {
-        if (browseImageTexture != null) Minecraft.getMinecraft()
-            .getTextureManager()
-            .deleteTexture(browseImageTexture);
-        browseImageTexture = null;
-        browseImage = null;
+        previewImage.clear();
         browseImageHash = browseImageRevision = "";
     }
 
@@ -1762,7 +1741,7 @@ final class HologramLibraryClient {
     private void startDisplay(DisplaySource source, boolean placement, long epoch) {
         workerDisplayProgress = null;
         displayFirstPublished = false;
-        if (browseImage == null) browseImage = source.thumbnail;
+        if (previewImage.image() == null) previewImage.replace(source.thumbnail);
         displayPreparing = source;
         displayPlacement = placement;
         displayEpoch = epoch;
@@ -2148,7 +2127,7 @@ final class HologramLibraryClient {
                 }
                 main(() -> {
                     if (token != generation || epoch != browseEpoch || !id.equals(activePublicPreviewId)) return;
-                    browseImage = image;
+                    previewImage.replace(image);
                     browseImageHash = hash;
                     browseImageRevision = revision;
                     PublicPreview retained = publicPreviews.get(id);
@@ -2608,7 +2587,7 @@ final class HologramLibraryClient {
                         PublicPreview cached = new PublicPreview(bytes, sourceHash, sourceRevision);
                         cached.display = display;
                         if (sourceHash.equals(browseImageHash) && sourceRevision.equals(browseImageRevision))
-                            cached.thumbnail = display.thumbnail = browseImage;
+                            cached.thumbnail = display.thumbnail = previewImage.image();
                         else if (!browseImageHash.isEmpty()) releaseBrowseImage();
                         PublicPreview old = publicPreviews.put(id, cached);
                         if (old != null) publicPreviewBytes -= old.bytes.length;

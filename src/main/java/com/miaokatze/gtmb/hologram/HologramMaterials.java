@@ -409,8 +409,12 @@ public final class HologramMaterials {
                 @Override
                 public IAEStack<?> extract(IAEStack<?> stack, Actionable mode) {
                     IMEMonitor monitor = monitor();
-                    return monitor == null ? null
-                        : monitor.extractItems(stack, mode, new PlayerSource(player, terminal));
+                    if (monitor == null) return null;
+                    if (mode == Actionable.MODULATE && transaction != null) return transaction.extract(
+                        "essentia",
+                        stack,
+                        () -> monitor.extractItems(stack, mode, new PlayerSource(player, terminal)));
+                    return monitor.extractItems(stack, mode, new PlayerSource(player, terminal));
                 }
 
                 @Override
@@ -453,6 +457,7 @@ public final class HologramMaterials {
                 stack.writeToNBT(receipt);
                 receipt.setString(ESSENTIA_SOURCE, terminalKey == null ? "" : terminalKey);
                 transaction.meEssentia.add(receipt);
+                transaction.acknowledged();
             });
         }
 
@@ -506,6 +511,11 @@ public final class HologramMaterials {
                 @Override
                 public IAEFluidStack extract(IAEFluidStack stack, Actionable mode) {
                     if (!available()) return null;
+                    if (mode == Actionable.MODULATE && transaction != null) return transaction.extract(
+                        "fluid",
+                        stack,
+                        () -> terminal.getFluidInventory()
+                            .extractItems(stack, mode, new PlayerSource(player, terminal)));
                     return terminal.getFluidInventory()
                         .extractItems(stack, mode, new PlayerSource(player, terminal));
                 }
@@ -526,7 +536,10 @@ public final class HologramMaterials {
 
         private boolean takeFluid(FluidStack stack, long amount, Transaction transaction) {
             try {
-                return reserveFluid(fluidAccess(transaction), stack, amount, transaction.meFluids::add);
+                return reserveFluid(fluidAccess(transaction), stack, amount, taken -> {
+                    transaction.meFluids.add(taken);
+                    transaction.acknowledged();
+                });
             } finally {
                 if (terminalSlot >= 0) {
                     transaction.terminalSlot = terminalSlot;
@@ -939,10 +952,17 @@ public final class HologramMaterials {
                         int offered = poweredCount(request);
                         if (offered <= 0) continue;
                         request.setStackSize(offered);
-                        extracted = monitor.extractItems(request, Actionable.MODULATE, action);
+                        extracted = transaction == null ? monitor.extractItems(request, Actionable.MODULATE, action)
+                            : transaction.extract(
+                                "item",
+                                request,
+                                () -> monitor.extractItems(request, Actionable.MODULATE, action));
                         // Record the actual extraction before energy charging, which may throw in an adapter.
                         if (extracted != null && extracted.getStackSize() > 0) {
-                            if (transaction != null) transaction.meItems.add(extracted.copy());
+                            if (transaction != null) {
+                                transaction.meItems.add(extracted.copy());
+                                transaction.acknowledged();
+                            }
                             charge(extracted.getStackSize(), extracted.getAmountPerUnit(), transaction);
                             Stats.ItemsExtracted.addToPlayer(player, (int) extracted.getStackSize());
                         }
@@ -953,7 +973,10 @@ public final class HologramMaterials {
                         transaction.terminalState = terminalStack.copy();
                     }
                 }
-                if (extracted == null || extracted.getStackSize() <= 0) continue;
+                if (extracted == null || extracted.getStackSize() <= 0) {
+                    if (!simulate && transaction != null) transaction.acknowledged();
+                    continue;
+                }
                 int taken = (int) extracted.getStackSize();
                 add(result, extracted.getItemStack(), taken);
                 if (allocation != null) allocation.extracted(extracted.getItemStack(), taken);
@@ -1347,10 +1370,259 @@ public final class HologramMaterials {
         private int terminalSlot = -1;
         private ItemStack terminalState;
         private boolean closed;
+        private NBTTagCompound journal;
         private Map<HologramBlueprintResources.ExactKey, Long> protectedAssets, currentAssets;
 
         private Transaction(Context context) {
             this.context = context;
+        }
+
+        Transaction journal(NBTTagCompound value) {
+            journal = value;
+            checkpoint();
+            return this;
+        }
+
+        boolean hasJournal() {
+            return journal != null;
+        }
+
+        boolean uncertain() {
+            return journal != null && journal.hasKey("operation");
+        }
+
+        <T extends IAEStack<?>> T extract(String kind, T request, java.util.function.Supplier<T> nativeCall) {
+            requested(kind, request);
+            long offered = request.getStackSize();
+            T result = nativeCall.get();
+            if (result != null && (result.getStackSize() < 0 || result.getStackSize() > offered))
+                throw new IllegalStateException(
+                    "Native extraction returned an invalid amount; retain unresolved evidence");
+            if (result == null || result.getStackSize() == 0) acknowledged();
+            return result;
+        }
+
+        void requested(String kind, IAEStack<?> request) {
+            if (journal == null) return;
+            if (uncertain()) throw new IllegalStateException("Previous native extraction is unresolved");
+            snapshot();
+            NBTTagCompound operation = new NBTTagCompound();
+            operation.setString("kind", kind);
+            operation.setString("source", context.terminalKey == null ? "" : context.terminalKey);
+            operation.setLong("requested", request.getStackSize());
+            NBTTagCompound payload = new NBTTagCompound();
+            request.writeToNBT(payload);
+            operation.setTag("request", payload);
+            journal.setTag("operation", operation);
+            journal.setString("phase", "external-pending");
+            HologramConstructionJournal.persist(context.player, journal);
+        }
+
+        void acknowledged() {
+            if (journal == null) return;
+            journal.removeTag("operation");
+            journal.setString("phase", "paid");
+            snapshot();
+        }
+
+        void checkpoint() {
+            snapshot();
+            if (journal != null && journal.getBoolean("durable"))
+                HologramConstructionJournal.persist(context.player, journal);
+        }
+
+        void snapshot() {
+            if (journal == null) return;
+            NBTTagCompound ledger = new NBTTagCompound();
+            ledger.setString("energy", energyTaken.toString());
+            ledger.setString("source", context.terminalKey == null ? "" : context.terminalKey);
+            NBTTagList items = new NBTTagList(), fluids = new NBTTagList(), essentia = new NBTTagList();
+            for (IAEItemStack stack : meItems) {
+                NBTTagCompound tag = new NBTTagCompound();
+                stack.writeToNBT(tag);
+                items.appendTag(tag);
+            }
+            for (IAEFluidStack stack : meFluids) {
+                NBTTagCompound tag = new NBTTagCompound();
+                stack.writeToNBT(tag);
+                fluids.appendTag(tag);
+            }
+            for (NBTTagCompound tag : meEssentia) essentia.appendTag(tag.copy());
+            ledger.setTag("items", items);
+            ledger.setTag("fluids", fluids);
+            ledger.setTag("essentia", essentia);
+            NBTTagList containers = new NBTTagList();
+            for (ItemStack stack : containerItems) containers.appendTag(itemReceipt(stack));
+            ledger.setTag("containerItems", containers);
+            NBTTagList states = new NBTTagList();
+            for (Map.Entry<Integer, ItemStack> entry : containerStates.entrySet()) {
+                NBTTagCompound tag = new NBTTagCompound();
+                tag.setInteger("slot", entry.getKey());
+                tag.setTag("stack", itemReceipt(entry.getValue()));
+                states.appendTag(tag);
+            }
+            ledger.setTag("containerStates", states);
+            NBTTagList energy = new NBTTagList();
+            for (HologramEnergy.Receipt receipt : cachedEnergyReceipts) {
+                NBTTagCompound tag = new NBTTagCompound();
+                tag.setString("eu", receipt.eu.toString());
+                tag.setDouble("ae", receipt.ae);
+                tag.setString("source", receipt.source);
+                tag.setString("network", receipt.networkKey);
+                energy.appendTag(tag);
+            }
+            ledger.setTag("cachedEnergy", energy);
+            ledger.setIntArray("supplies", terminalSupplies.clone());
+            NBTTagList references = new NBTTagList();
+            for (int i = 0; i < terminalSupplyReferences.length; i++) {
+                NBTTagCompound tag = new NBTTagCompound();
+                tag.setInteger("kind", i);
+                if (terminalSupplyReferences[i] != null)
+                    tag.setTag("stack", terminalSupplyReferences[i].writeToNBT(new NBTTagCompound()));
+                references.appendTag(tag);
+            }
+            ledger.setTag("supplyReferences", references);
+            ledger.setInteger("terminalSlot", terminalSlot);
+            if (terminalState != null) ledger.setTag("terminalState", terminalState.writeToNBT(new NBTTagCompound()));
+            journal.setTag("payment", ledger);
+            journal
+                .setTag("heldInventory", HologramConstructionJournal.inventory(context.player.inventory.mainInventory));
+        }
+
+        void beforeWorldMutation() {
+            if (journal != null) journal.setString("phase", "world-pending");
+            checkpoint();
+        }
+
+        boolean commitStarted() {
+            return journal != null && journal.getBoolean("commitStarted");
+        }
+
+        static Transaction resume(EntityPlayerMP player, NBTTagCompound journal) {
+            Context context = new Context(player, new Settings(), -1);
+            Transaction result = new Transaction(context);
+            NBTTagCompound ledger = journal.getCompoundTag("payment");
+            if (!ledger.getString("source")
+                .isEmpty()
+                && !ledger.getString("source")
+                    .equals(context.terminalKey))
+                throw new IllegalStateException(
+                    "Restore the original authenticated wireless terminal before settlement");
+            result.energyTaken = new BigInteger(ledger.getString("energy"));
+            for (int i = 0; i < ledger.getTagList("items", 10)
+                .tagCount(); i++) {
+                IAEItemStack stack = AEItemStack.loadItemStackFromNBT(
+                    ledger.getTagList("items", 10)
+                        .getCompoundTagAt(i));
+                if (stack == null) throw new IllegalStateException("Unresolved persisted item identity");
+                result.meItems.add(stack);
+            }
+            for (int i = 0; i < ledger.getTagList("fluids", 10)
+                .tagCount(); i++) {
+                IAEFluidStack stack = AEFluidStack.loadFluidStackFromNBT(
+                    ledger.getTagList("fluids", 10)
+                        .getCompoundTagAt(i));
+                if (stack == null) throw new IllegalStateException("Unresolved persisted fluid identity");
+                result.meFluids.add(stack);
+            }
+            for (int i = 0; i < ledger.getTagList("essentia", 10)
+                .tagCount(); i++)
+                result.meEssentia.add(
+                    (NBTTagCompound) ledger.getTagList("essentia", 10)
+                        .getCompoundTagAt(i)
+                        .copy());
+            for (int i = 0; i < ledger.getTagList("containerItems", 10)
+                .tagCount(); i++) {
+                ItemStack stack = recoveryItem(
+                    ledger.getTagList("containerItems", 10)
+                        .getCompoundTagAt(i));
+                if (stack == null) throw new IllegalStateException("Unresolved persisted container item");
+                result.containerItems.add(stack);
+            }
+            for (int i = 0; i < ledger.getTagList("containerStates", 10)
+                .tagCount(); i++) {
+                NBTTagCompound tag = ledger.getTagList("containerStates", 10)
+                    .getCompoundTagAt(i);
+                ItemStack stack = recoveryItem(tag.getCompoundTag("stack"));
+                if (stack == null || tag.getInteger("slot") < 0
+                    || tag.getInteger("slot") >= player.inventory.mainInventory.length)
+                    throw new IllegalStateException("Unresolved persisted container state");
+                result.containerStates.put(tag.getInteger("slot"), stack);
+            }
+            for (int i = 0; i < ledger.getTagList("cachedEnergy", 10)
+                .tagCount(); i++) {
+                NBTTagCompound tag = ledger.getTagList("cachedEnergy", 10)
+                    .getCompoundTagAt(i);
+                result.cachedEnergyReceipts.add(
+                    HologramEnergy.resumeReceipt(
+                        new HologramEnergyNetwork(player, tag.getString("network")),
+                        new BigInteger(tag.getString("eu")),
+                        tag.getDouble("ae"),
+                        tag.getString("source")));
+            }
+            int[] supplies = ledger.getIntArray("supplies");
+            if (supplies.length != result.terminalSupplies.length)
+                throw new IllegalStateException("Invalid persisted supply ledger");
+            System.arraycopy(supplies, 0, result.terminalSupplies, 0, supplies.length);
+            NBTTagList refs = ledger.getTagList("supplyReferences", 10);
+            for (int i = 0; i < refs.tagCount(); i++) {
+                NBTTagCompound tag = refs.getCompoundTagAt(i);
+                int kind = tag.getInteger("kind");
+                if (kind < 0 || kind >= supplies.length)
+                    throw new IllegalStateException("Invalid persisted supply kind");
+                if (tag.hasKey("stack", 10))
+                    result.terminalSupplyReferences[kind] = ItemStack.loadItemStackFromNBT(tag.getCompoundTag("stack"));
+                if (supplies[kind] > 0 && result.terminalSupplyReferences[kind] == null)
+                    throw new IllegalStateException("Missing supply identity");
+            }
+            result.terminalSlot = ledger.getInteger("terminalSlot");
+            result.terminalState = ledger.hasKey("terminalState", 10)
+                ? ItemStack.loadItemStackFromNBT(ledger.getCompoundTag("terminalState"))
+                : null;
+            return result;
+        }
+
+        static void adjudicateExtraction(NBTTagCompound journal, long actual) {
+            if (!journal.hasKey("operation", 10) || journal.getBoolean("settlementStarted"))
+                throw new IllegalStateException("No unresolved extraction, or settlement already started");
+            NBTTagCompound operation = journal.getCompoundTag("operation");
+            if (actual < 0 || actual > operation.getLong("requested"))
+                throw new IllegalStateException("Actual amount must be between zero and the requested amount");
+            String kind = operation.getString("kind");
+            NBTTagCompound request = operation.getCompoundTag("request");
+            String target;
+            if ("item".equals(kind)) {
+                if (actual > Integer.MAX_VALUE || ItemStack.loadItemStackFromNBT(request) == null)
+                    throw new IllegalStateException("Original item identity no longer resolves");
+                target = "items";
+            } else if ("fluid".equals(kind)) {
+                if (FluidStack.loadFluidStackFromNBT(request) == null)
+                    throw new IllegalStateException("Original fluid identity no longer resolves");
+                target = "fluids";
+            } else if ("essentia".equals(kind)) {
+                if (actual > 0 && HologramEssentia.stackType() == null)
+                    throw new IllegalStateException("Original essentia channel unavailable");
+                target = "essentia";
+            } else throw new IllegalStateException("Unsupported extraction kind; retain evidence");
+            if (actual > 0) {
+                NBTTagCompound payload = (NBTTagCompound) request.copy();
+                payload.setLong("Cnt", actual);
+                if ("essentia".equals(kind)) payload.setString(ESSENTIA_SOURCE, operation.getString("source"));
+                NBTTagCompound payment = journal.getCompoundTag("payment");
+                NBTTagList ledger = payment.getTagList(target, 10);
+                ledger.appendTag(payload);
+                payment.setTag(target, ledger);
+            }
+            NBTTagList audit = journal.getTagList("adjudicatedOperations", 10);
+            NBTTagCompound resolved = (NBTTagCompound) operation.copy();
+            resolved.setLong("actual", actual);
+            audit.appendTag(resolved);
+            journal.setTag("adjudicatedOperations", audit);
+            journal.removeTag("operation");
+        }
+
+        void afterInventoryRestore() {
+            context.afterInventoryRestore();
         }
 
         /** Remaining whole-plan budgets are shared; the already-paid current cell must not be protected twice. */
@@ -1420,6 +1692,15 @@ public final class HologramMaterials {
         }
 
         public void commit() {
+            if (uncertain()) throw new IllegalStateException("Cannot commit unresolved extraction");
+            if (journal != null) {
+                snapshot();
+                journal.setTag(
+                    "commitPayment",
+                    journal.getCompoundTag("payment")
+                        .copy());
+                journal.setBoolean("commitStarted", true);
+            }
             for (HologramEnergy.Receipt receipt : cachedEnergyReceipts) receipt.commit();
             cachedEnergyReceipts.clear();
             java.util.Arrays.fill(terminalSupplies, 0);
@@ -1432,10 +1713,12 @@ public final class HologramMaterials {
             meEssentia.clear();
             energyTaken = BigInteger.ZERO;
             terminalState = null;
+            if (journal != null) HologramConstructionJournal.clear(context.player);
         }
 
         /** Main items are restored by the service snapshot; only external deductions are handled here. */
         public void rollbackExternal() {
+            if (uncertain()) throw new IllegalStateException("Cannot refund unresolved extraction");
             if (closed) return;
             closed = true;
             for (int kind = 0; kind < terminalSupplies.length; kind++) {

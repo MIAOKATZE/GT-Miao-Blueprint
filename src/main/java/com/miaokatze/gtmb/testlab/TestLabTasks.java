@@ -18,6 +18,9 @@ final class TestLabTasks {
     static Task create(TestLabRuntime runtime, String kind) throws Exception {
         if ("reset".equals(kind) || "refresh".equals(kind))
             return new TestLabResetTask(runtime, "refresh".equals(kind));
+        if ("recovery-stage".equals(kind) || "recovery-resume".equals(kind))
+            return new TestLabRecoveryTask(runtime, "recovery-resume".equals(kind));
+        if ("construction-performance".equals(kind)) return new TestLabConstructionPerformanceTask(runtime);
         if ("minimal".equals(kind)) return new TestLabMinimalTask(runtime);
         if ("stress".equals(kind)) return new TestLabStressTask(runtime);
         if ("composite".equals(kind) && runtime.config().composite) return new TestLabCompositeTask(runtime);

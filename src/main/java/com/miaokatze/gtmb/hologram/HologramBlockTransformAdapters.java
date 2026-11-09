@@ -11,7 +11,10 @@ import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
 import com.gtnewhorizon.structurelib.alignment.enumerable.Flip;
 import com.gtnewhorizon.structurelib.alignment.enumerable.Rotation;
 
-/** Versioned schemas inspected in GT5U .205, AE2 1080, EnderIO 2.10.48 and FMP 1.7.16 sources. */
+/**
+ * Initial schema audits: GT5U .205 / AE2 1080 / EIO 2.10.48 / FMP 1.7.16. Current selected fields and source
+ * boundaries: plan/workflow/core-followup-schema-matrix.md.
+ */
 final class HologramBlockTransformAdapters {
 
     private HologramBlockTransformAdapters() {}

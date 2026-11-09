@@ -55,7 +55,10 @@ import appeng.tile.inventory.IAEAppEngInventory;
 import appeng.tile.inventory.IAEStackInventory;
 import appeng.util.Platform;
 
-/** AE2 rv3-beta-1080 schema analysis. Every public input and output is a disposable copy. */
+/**
+ * Initially reviewed on AE2 rv3-beta-1080; selected 1095 custody/side contracts rechecked in
+ * plan/workflow/core-followup-schema-matrix.md. Every public input and output is a disposable copy.
+ */
 public final class HologramAeBlueprint {
 
     public static final int POLICY_VERSION = 1;
@@ -1139,7 +1142,10 @@ public final class HologramAeBlueprint {
         }
     }
 
-    /** Exact classes/declaring fields in AE2 1080. No generic proxy-field scan. */
+    /**
+     * Initial exact classes/declaring-field audit: AE2 1080; this remains a strict schema adapter, not a generic field
+     * scan. No generic proxy-field scan.
+     */
     private static String outerProxyClass(Object part) {
         String type = part.getClass()
             .getName();
@@ -1909,7 +1915,10 @@ public final class HologramAeBlueprint {
             }
         }
 
-        /** Native 1080 sums all three custody lists on load; none is a free sample or a redundant alias. */
+        /**
+         * Native custody load sums all three lists (initial 1080 audit; rechecked against 1095); none is a free sample
+         * or a redundant alias.
+         */
         private static void idleReshuffle(Work work, NBTTagCompound data, appeng.tile.misc.TileStorageReshuffle host)
             throws IOException {
             for (String key : Arrays.asList("cantInject", "extracted", "injectQueue")) {

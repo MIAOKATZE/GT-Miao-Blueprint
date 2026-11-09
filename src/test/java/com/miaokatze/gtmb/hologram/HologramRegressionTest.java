@@ -32,7 +32,12 @@ public final class HologramRegressionTest {
 
     private static void run(String[] args) throws Exception {
         if (!MinecraftTestBootstrap.enter(HologramRegressionTest.class, args)) return;
+        HologramConstructionJournal.STORAGE_ROOT
+            .set(java.nio.file.Files.createTempDirectory("gtmb-construction-contracts-"));
         Map<String, Runnable> cases = new LinkedHashMap<>();
+        cases.put(
+            "durable_construction_unknown_extraction_and_world_failure",
+            HologramConstructionJournalRegression::run);
         cases.put("ordinary_refunds_quarantine_unknown_native_results", HologramRefundUncertaintyRegression::run);
         cases.put(
             "native_structure_projection_reads_geometry_without_operation_authority",
@@ -1204,6 +1209,9 @@ public final class HologramRegressionTest {
             field.setAccessible(true);
             net.minecraft.entity.player.EntityPlayerMP player = (net.minecraft.entity.player.EntityPlayerMP) ((sun.misc.Unsafe) field
                 .get(null)).allocateInstance(net.minecraft.entity.player.EntityPlayerMP.class);
+            java.lang.reflect.Field identity = net.minecraft.entity.Entity.class.getDeclaredField("entityUniqueID");
+            identity.setAccessible(true);
+            identity.set(player, java.util.UUID.randomUUID());
             player.inventory = new net.minecraft.entity.player.InventoryPlayer(player);
             player.inventoryContainer = new net.minecraft.inventory.Container() {
 

@@ -114,34 +114,45 @@ public final class HologramJobLifecycleRegression {
             SimpleAssert.eq(3L, terminal.getLong("total"), "terminal preserves original work total");
             SimpleAssert.eq(7L, terminal.getLong("uiSequence"), "terminal preserves the admitted command sequence");
             SimpleAssert.eq(11L, terminal.getLong("planRevision"), "terminal preserves its plan revision");
-            net.minecraft.command.ICommandSender denied = (net.minecraft.command.ICommandSender) java.lang.reflect.Proxy
-                .newProxyInstance(
-                    HologramJobLifecycleRegression.class.getClassLoader(),
-                    new Class<?>[] { net.minecraft.command.ICommandSender.class },
-                    (proxy, method, args) -> method.getName()
-                        .equals("canCommandSenderUseCommand") ? false : null);
-            boolean permissionRejected = false;
-            try {
-                new HologramCommand().processCommand(denied, new String[] { "restart" });
-            } catch (net.minecraft.command.CommandException expected) {
-                permissionRejected = true;
-            }
-            SimpleAssert.that(permissionRejected, "restart enforces administrator permission at the command boundary");
-            SimpleAssert.that(
-                new HologramCommand().addTabCompletionOptions(denied, new String[] { "r" })
-                    .isEmpty(),
-                "unauthorized senders cannot discover administrative completion");
-            net.minecraft.command.ICommandSender allowed = (net.minecraft.command.ICommandSender) java.lang.reflect.Proxy
-                .newProxyInstance(
-                    HologramJobLifecycleRegression.class.getClassLoader(),
-                    new Class<?>[] { net.minecraft.command.ICommandSender.class },
-                    (proxy, method, args) -> method.getName()
-                        .equals("canCommandSenderUseCommand") ? true : null);
             HologramCommand command = new HologramCommand();
+            SimpleAssert.eq(4, command.getRequiredPermissionLevel(), "all administrative subcommands require OP4");
+            for (int permission : new int[] { 0, 3 }) {
+                net.minecraft.command.ICommandSender unauthorized = sender(permission);
+                SimpleAssert.that(
+                    !command.canCommandSenderUseCommand(unauthorized),
+                    "ordinary and OP3 senders fail the actual OP4 command gate");
+                for (String subcommand : new String[] { "restart", "voucher", "recovery" }) {
+                    boolean permissionRejected = false;
+                    try {
+                        command.processCommand(
+                            unauthorized,
+                            "recovery".equals(subcommand) ? new String[] { subcommand, "fixture-player" }
+                                : new String[] { subcommand });
+                    } catch (net.minecraft.command.CommandException expected) {
+                        permissionRejected = "需要管理员权限（等级 4）".equals(expected.getMessage());
+                    }
+                    SimpleAssert.that(
+                        permissionRejected,
+                        "ordinary and OP3 senders cannot execute administrative " + subcommand);
+                }
+                for (String prefix : new String[] { "", "re", "recovery" }) SimpleAssert.that(
+                    command.addTabCompletionOptions(unauthorized, new String[] { prefix })
+                        .isEmpty(),
+                    "ordinary and OP3 senders cannot discover any administrative completion");
+            }
+            net.minecraft.command.ICommandSender allowed = sender(4);
+            SimpleAssert.eq(
+                java.util.Arrays.asList("restart", "recovery"),
+                command.addTabCompletionOptions(allowed, new String[] { "re" }),
+                "OP4 discovers both allowed re-prefixed actions without executing either");
             SimpleAssert.eq(
                 java.util.Collections.singletonList("restart"),
-                command.addTabCompletionOptions(allowed, new String[] { "re" }),
-                "partial subcommand completes restart without executing it");
+                command.addTabCompletionOptions(allowed, new String[] { "rest" }),
+                "unambiguous restart prefix retains its existing completion contract");
+            SimpleAssert.eq(
+                java.util.Collections.singletonList("recovery"),
+                command.addTabCompletionOptions(allowed, new String[] { "reco" }),
+                "OP4 can discover the new recovery action without looking up or mutating a player");
             SimpleAssert.that(
                 command.addTabCompletionOptions(allowed, new String[] { "restart", "" })
                     .isEmpty(),
@@ -168,6 +179,14 @@ public final class HologramJobLifecycleRegression {
                 .close();
             WIRE.clear();
         }
+    }
+
+    private static net.minecraft.command.ICommandSender sender(int permission) {
+        return (net.minecraft.command.ICommandSender) java.lang.reflect.Proxy.newProxyInstance(
+            HologramJobLifecycleRegression.class.getClassLoader(),
+            new Class<?>[] { net.minecraft.command.ICommandSender.class },
+            (proxy, method, arguments) -> method.getName()
+                .equals("canCommandSenderUseCommand") ? permission >= (Integer) arguments[0] : null);
     }
 
     private static void diagnosticLimits() {

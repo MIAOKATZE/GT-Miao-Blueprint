@@ -7,7 +7,10 @@ import java.util.Map;
 
 import net.minecraft.nbt.NBTTagCompound;
 
-/** LittleTiles 1.6.59: voxel boxes, cutout basis and inter-cell structure references are one transform. */
+/**
+ * LittleTiles: initial 1.6.59 schema audit; 1.6.63 OrientationMapper/cutout fields rechecked. Boxes, basis and
+ * inter-cell references form one transform.
+ */
 final class HologramBlockTransformLittleTiles {
 
     private HologramBlockTransformLittleTiles() {}
@@ -176,7 +179,7 @@ final class HologramBlockTransformLittleTiles {
             return (Integer) mapper.getMethod("toId", matrixClass)
                 .invoke(null, rotated);
         } catch (ReflectiveOperationException | RuntimeException | LinkageError invalid) {
-            throw new IOException("LittleTiles 1.6.59 cutout orientation API unavailable", invalid);
+            throw new IOException("LittleTiles cutout orientation API unavailable", invalid);
         }
     }
 }

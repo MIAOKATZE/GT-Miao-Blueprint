@@ -1,40 +1,32 @@
 package com.miaokatze.gtmb.client.hologram;
 
-import java.io.ByteArrayOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.lang.reflect.Field;
 import java.lang.reflect.InvocationHandler;
-import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.lang.reflect.Proxy;
 
 import net.minecraftforge.common.util.ForgeDirection;
-
-import org.objectweb.asm.ClassReader;
-import org.objectweb.asm.ClassVisitor;
-import org.objectweb.asm.ClassWriter;
-import org.objectweb.asm.MethodVisitor;
 
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
 import gregtech.api.interfaces.ITexture;
 import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
 
-/** Executes the production resolver against the actual GT interface with and without its optional getter. */
+/** Executes the supported GT5U .265 public API, six-facing inventory fallback and native callback failure contracts. */
 public final class HologramTextureCompatibilityRegression {
 
-    private static final String MACHINE = IMetaTileEntity.class.getName();
-    private static final String RESOLVER = HologramMachineTextures.class.getName();
+    // GT's inventory model faces WEST. Rows are world front DOWN/UP/NORTH/SOUTH/WEST/EAST;
+    // columns are world sides in the same order, with their canonical inventory-model source face.
+    private static final int[][] EXPECTED_INVENTORY_SIDES = { { 4, 5, 1, 0, 3, 2 }, { 5, 4, 0, 1, 3, 2 },
+        { 0, 1, 4, 5, 3, 2 }, { 0, 1, 5, 4, 2, 3 }, { 0, 1, 2, 3, 4, 5 }, { 0, 1, 3, 2, 5, 4 } };
 
     private HologramTextureCompatibilityRegression() {}
 
     public static void run() {
         try {
             modernOverride();
-            legacyInterface();
+            nullInventoryFallback();
             callbackFailures();
-        } catch (ReflectiveOperationException | IOException | RuntimeException failure) {
+        } catch (ReflectiveOperationException | RuntimeException failure) {
             failure.printStackTrace();
             throw new AssertionError(failure);
         }
@@ -42,7 +34,10 @@ public final class HologramTextureCompatibilityRegression {
 
     private static void modernOverride() throws ReflectiveOperationException {
         Method getter = IMetaTileEntity.class.getMethod("getInventoryTextures");
-        SimpleAssert.that(getter != null, "baseline includes the real optional GT getter");
+        SimpleAssert
+            .that(getter.isDefault(), "supported GT .265 declares the public inventory getter as a default method");
+        SimpleAssert
+            .eq(ITexture[][].class, getter.getReturnType(), "public getter returns native six-face texture layers");
         MachineProbe probe = new MachineProbe();
         probe.inventory = faces();
         IMetaTileEntity machine = (IMetaTileEntity) probe.proxy(IMetaTileEntity.class);
@@ -50,7 +45,7 @@ public final class HologramTextureCompatibilityRegression {
         SimpleAssert.that(
             HologramMachineTextures.resolve(machine, -1, sources) == probe.inventory,
             "new API keeps the exact custom inventory model");
-        SimpleAssert.eq(1, probe.getterCalls, "optional getter delegates to the machine override");
+        SimpleAssert.eq(1, probe.getterCalls, "public getter delegates to the machine override");
         SimpleAssert.eq(0, probe.legacyCalls, "valid override avoids legacy reconstruction");
         for (int front = 0; front < 6; front++) {
             probe.world = faces();
@@ -65,51 +60,35 @@ public final class HologramTextureCompatibilityRegression {
         SimpleAssert.eq(0, probe.legacyCalls, "world-side resolution also keeps the new inventory override");
     }
 
-    private static void legacyInterface() throws ReflectiveOperationException, IOException {
-        // A new loader binds the unchanged production bytecode to the real interface minus only the new method.
-        ClassLoader loader = new LegacyApiLoader();
-        Class<?> machineType = loader.loadClass(MACHINE);
-        boolean absent = false;
-        try {
-            machineType.getMethod("getInventoryTextures");
-        } catch (NoSuchMethodException expected) {
-            absent = true;
-        }
-        SimpleAssert.that(absent, "legacy interface actually lacks the optional getter");
-        Class<?> resolver = loader.loadClass(RESOLVER);
-        Field cached = resolver.getDeclaredField("INVENTORY_TEXTURES");
-        cached.setAccessible(true);
-        SimpleAssert.that(cached.get(null) == null, "missing API is cached once rather than failing every render");
-        Method resolve = resolver.getDeclaredMethod("resolve", machineType, int.class, int[].class);
-        resolve.setAccessible(true);
+    private static void nullInventoryFallback() {
         MachineProbe probe = new MachineProbe();
-        Object machine = probe.proxy(machineType);
-        ITexture[][] inventory = invoke(resolve, machine, -1, identity());
-        for (int side = 0; side < 6; side++) {
-            SimpleAssert.that(inventory[side] == probe.legacy[side], "old shared API supplies each inventory face");
-        }
-        SimpleAssert.eq(6, probe.legacyCalls, "old inventory model reads six sides");
+        IMetaTileEntity machine = (IMetaTileEntity) probe.proxy(IMetaTileEntity.class);
+        ITexture[][] inventory = HologramMachineTextures.resolve(machine, -1, identity());
+        for (int side = 0; side < 6; side++) SimpleAssert
+            .that(inventory[side] == probe.legacy[side], "null native model retains every fallback layer array");
+        SimpleAssert.eq(1, probe.getterCalls, "fallback follows an actual call to the supported public getter");
+        SimpleAssert.eq(6, probe.legacyCalls, "null model reconstructs all six canonical WEST-front inventory faces");
         for (int front = 0; front < 6; front++) {
             int[] sources = identity();
-            ITexture[][] resolved = invoke(resolve, machine, front, sources);
+            ITexture[][] resolved = HologramMachineTextures.resolve(machine, front, sources);
             for (int side = 0; side < 6; side++) {
-                int source = HologramTextures.inventorySide(front, side);
-                SimpleAssert
-                    .that(resolved[side] == probe.legacy[source], "old inventory fallback follows every facing");
-                SimpleAssert.eq(source, sources[side], "sided icons use the remapped inventory face");
-                SimpleAssert.eq(front, probe.worldFronts[side], "old world callback still receives actual facing");
+                int source = EXPECTED_INVENTORY_SIDES[front][side];
+                SimpleAssert.that(
+                    resolved[side] == probe.legacy[source],
+                    "each world facing preserves the expected inventory base and overlay layers");
+                SimpleAssert.eq(source, sources[side], "fallback icon source follows the canonical six-facing mapping");
+                SimpleAssert.eq(front, probe.worldFronts[side], "world callback still receives the actual world front");
             }
-            SimpleAssert.that(resolved[front] == probe.legacy[4], "WEST inventory front follows world front");
+            SimpleAssert.that(
+                resolved[front] == probe.legacy[ForgeDirection.WEST.ordinal()],
+                "canonical WEST inventory front follows every world front");
         }
-        probe.world = faces();
-        int[] sources = identity();
-        ITexture[][] resolved = invoke(resolve, machine, 3, sources);
-        for (int side = 0; side < 6; side++) {
-            SimpleAssert.that(resolved[side] == probe.world[side], "old API preserves world overlay callback results");
-            SimpleAssert.eq(side, sources[side], "old world results retain original side identity");
-        }
-        SimpleAssert.eq(0, probe.getterCalls, "old interface never attempts the missing getter");
-        SimpleAssert.that(cached.get(null) == null, "repeated resolves reuse the cached missing capability");
+        SimpleAssert.eq(7, probe.getterCalls, "a null model is not cached as an absent interface capability");
+        probe.inventory = faces();
+        SimpleAssert.that(
+            HologramMachineTextures.resolve(machine, -1, identity()) == probe.inventory,
+            "a subsequent valid native model replaces the null-model fallback immediately");
+        SimpleAssert.eq(8, probe.getterCalls, "later resolves continue calling the supported public API");
     }
 
     private static void callbackFailures() {
@@ -131,7 +110,7 @@ public final class HologramTextureCompatibilityRegression {
         int[] sources = identity();
         ITexture[][] resolved = HologramMachineTextures.resolve(machine, 3, sources);
         for (int side = 0; side < 6; side++) {
-            int source = HologramTextures.inventorySide(3, side);
+            int source = EXPECTED_INVENTORY_SIDES[3][side];
             if (side == 2 || side == 4) {
                 SimpleAssert
                     .that(resolved[side] == probe.inventory[source], "failed or empty world face uses inventory");
@@ -169,17 +148,6 @@ public final class HologramTextureCompatibilityRegression {
         // Distinct layer arrays prove that both base and overlay slots survive resolution unchanged.
         for (int side = 0; side < 6; side++) faces[side] = new ITexture[2];
         return faces;
-    }
-
-    private static ITexture[][] invoke(Method resolve, Object machine, int front, int[] sources)
-        throws ReflectiveOperationException {
-        try {
-            return (ITexture[][]) resolve.invoke(null, machine, front, sources);
-        } catch (InvocationTargetException failure) {
-            Throwable cause = failure.getCause();
-            if (cause instanceof Error) throw (Error) cause;
-            throw failure;
-        }
     }
 
     private static final class MachineProbe implements InvocationHandler {
@@ -226,55 +194,4 @@ public final class HologramTextureCompatibilityRegression {
         }
     }
 
-    private static final class LegacyApiLoader extends ClassLoader {
-
-        LegacyApiLoader() {
-            super(HologramTextureCompatibilityRegression.class.getClassLoader());
-        }
-
-        @Override
-        protected Class<?> loadClass(String name, boolean resolve) throws ClassNotFoundException {
-            if (!MACHINE.equals(name) && !RESOLVER.equals(name)) return super.loadClass(name, resolve);
-            synchronized (getClassLoadingLock(name)) {
-                Class<?> loaded = findLoadedClass(name);
-                if (loaded == null) {
-                    try {
-                        byte[] bytes = classBytes(name);
-                        if (MACHINE.equals(name)) {
-                            ClassReader reader = new ClassReader(bytes);
-                            ClassWriter writer = new ClassWriter(0);
-                            // ASM9 at runtime, while compilation still uses Forge's older API declarations.
-                            reader.accept(new ClassVisitor(9 << 16, writer) {
-
-                                @Override
-                                public MethodVisitor visitMethod(int access, String method, String descriptor,
-                                    String signature, String[] exceptions) {
-                                    if ("getInventoryTextures".equals(method) && descriptor.startsWith("()"))
-                                        return null;
-                                    return super.visitMethod(access, method, descriptor, signature, exceptions);
-                                }
-                            }, 0);
-                            bytes = writer.toByteArray();
-                        }
-                        loaded = defineClass(name, bytes, 0, bytes.length);
-                    } catch (IOException failure) {
-                        throw new ClassNotFoundException(name, failure);
-                    }
-                }
-                if (resolve) resolveClass(loaded);
-                return loaded;
-            }
-        }
-
-        private byte[] classBytes(String name) throws IOException {
-            try (InputStream stream = getParent().getResourceAsStream(name.replace('.', '/') + ".class")) {
-                if (stream == null) throw new IOException("Missing class bytes: " + name);
-                ByteArrayOutputStream bytes = new ByteArrayOutputStream();
-                byte[] buffer = new byte[4096];
-                int count;
-                while ((count = stream.read(buffer)) >= 0) bytes.write(buffer, 0, count);
-                return bytes.toByteArray();
-            }
-        }
-    }
 }
