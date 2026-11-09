@@ -75,9 +75,9 @@
 *Import a structure from its real controller, inspect the 3D and layer views, then choose build, replace or dismantle.*
 
 <p align="center">
-  <a href="README/screenshots/controller-projector.png"><img src="README/screenshots/controller-projector.png" alt="控制器结构工作台：仓室目标、材料来源与施工操作 / Controller workspace with hatch targets, material sources and construction controls" width="640"></a><br>
+  <a href="README/screenshots/20261025/projection-workspace.png"><img src="README/screenshots/20261025/projection-workspace.png" alt="固定控制器的投影工作区与属性工具栏 / Controller-anchored Projection workspace and property tools" width="800"></a><br>
   <strong>右击控制器导入结构，调整仓室与目标，按需建造、替换或拆除。</strong><br>
-  <em>Inspect structure targets and construction controls together.</em>
+  <em>Inspect the controller structure and adjust its targets before construction.</em>
 </p>
 
 **操作要点：**选中模型后用「属性」侧栏修改规划；可通过选区限定施工范围，确认前核对界面显示的范围。手持投影仪空闲时，屏幕顶部 HUD 也会列出当前可执行操作，包括打开工作台、框选区域，以及可用时快速放置上次蓝图或查看剪切暂存。
@@ -92,11 +92,24 @@
 
 *Capture a world region, recognize its member structures and work on the surrounding layout in one blueprint.*
 
-<p align="center">
-  <a href="README/screenshots/large-region-recognition.png"><img src="README/screenshots/large-region-recognition.png" alt="大型区域导入后识别控制器、仓室与待处理内容 / Imported region with recognized controllers, hatches and review markers" width="640"></a><br>
-  <strong>框选整片区域，识别成员结构，在同一张蓝图内继续编辑与保存。</strong><br>
-  <em>Review the whole layout and its recognized structures.</em>
-</p>
+<table>
+  <tr>
+    <td width="50%"><a href="README/screenshots/20261025/isometric-selection.png"><img src="README/screenshots/20261025/isometric-selection.png" alt="等距视角中的建筑选区 / Building selection in isometric view" width="400"></a></td>
+    <td width="50%"><a href="README/screenshots/20261025/polygon-selection.png"><img src="README/screenshots/20261025/polygon-selection.png" alt="自由多边形与法向厚度框选 / Free polygon and extrusion-depth selection" width="400"></a></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>等距框选：从整体检查建筑与区域边界。</strong><br><em>Inspect the building and selection boundaries together.</em></td>
+    <td align="center"><strong>多边形框选：沿轮廓选取，再确定厚度。</strong><br><em>Select an outline, then set its extrusion depth.</em></td>
+  </tr>
+  <tr>
+    <td><a href="README/screenshots/20261025/selection-guidance.png"><img src="README/screenshots/20261025/selection-guidance.png" alt="紫色角点与框选操作提示 / Purple corners and contextual selection hints" width="400"></a></td>
+    <td><a href="README/screenshots/20261025/xray-slicing.png"><img src="README/screenshots/20261025/xray-slicing.png" alt="X光高度切片与隐藏上方 / X-ray height slicing with upper layers hidden" width="400"></a></td>
+  </tr>
+  <tr>
+    <td align="center"><strong>角点提示：辨认当前编辑框与可用操作。</strong><br><em>Identify editable corners and available actions.</em></td>
+    <td align="center"><strong>透视切层：检查遮挡之下的内部空间。</strong><br><em>Slice through upper layers to inspect the interior.</em></td>
+  </tr>
+</table>
 
 大图的导入、快照准备与传输按阶段显示状态：总量已知时显示实际进度与百分比，未知时显示动态等待与耗时。**关闭工作台后长任务仍可继续**，再次打开恢复原业务页面、选区与视角。稳定几何上的局部编辑会保留未改动的 16³ 预览分区；几何增删与专门审核在需要时完整刷新。
 
@@ -106,15 +119,9 @@
 
 *Reading, region capture and editing are limited to **999,999 recorded cells**; empty positions inside the bounding box do not count toward the limit.*
 
-<p align="center">
-  <a href="README/screenshots/region-import-progress.png"><img src="README/screenshots/region-import-progress.png" alt="区域导入快照准备进度79%，可返回世界后台继续 / Region snapshot preparation at 79 percent with background continuation" width="620"></a><br>
-  <strong>分阶段显示区域导入与蓝图快照准备进度，返回世界后任务继续。</strong><br>
-  <em>See the current preparation stage and continue in the background.</em>
-</p>
+保存准备会跟随实际快照与序列化工作更新进度；传输结束后仍须等待原生预览、JSON + PNG 配对文件和最终保存确认。
 
-保存准备会跟随实际快照与序列化工作更新进度；传输结束后仍须等待原生预览、JSON + PNG 配对文件和最终保存确认。图中是 **79% 的准备中状态**，不代表保存已经完成。
-
-*Transfer completion is followed by preview validation, paired files and final save confirmation. The screenshot shows preparation in progress.*
+*Transfer completion is followed by preview validation, paired files and final save confirmation.*
 
 <a id="editing"></a>
 
@@ -126,12 +133,12 @@
 
 <table>
   <tr>
-    <td width="50%"><a href="README/screenshots/blueprint-library.png"><img src="README/screenshots/blueprint-library.png" alt="蓝图库列表与独立三维预览 / Blueprint library and 3D preview" width="310"></a></td>
-    <td width="50%"><a href="README/screenshots/blueprint-editor.png"><img src="README/screenshots/blueprint-editor.png" alt="区域蓝图中的多选与移动轴编辑 / Multiple selected cells and movement axes in the blueprint editor" width="310"></a></td>
+    <td width="50%"><a href="README/screenshots/20261025/collapsible-tools.png"><img src="README/screenshots/20261025/collapsible-tools.png" alt="可收纳的蓝图处理侧栏与蓝图库 / Collapsible blueprint processing and library panels" width="400"></a></td>
+    <td width="50%"><a href="README/screenshots/20261025/blueprint-workspace.png"><img src="README/screenshots/20261025/blueprint-workspace.png" alt="收起侧栏后的大型建筑蓝图工作区 / Large building in the Blueprint workspace with panels collapsed" width="400"></a></td>
   </tr>
   <tr>
     <td align="center"><strong>蓝图库：按条目选择，三维旋转与分层检查，再进入世界放置。</strong><br><em>Choose a design, inspect its layers, then place it.</em></td>
-    <td align="center"><strong>结构编辑：多选、移动与调整方块，让规划先在预览里完成。</strong><br><em>Select, move and adjust blocks before construction.</em></td>
+    <td align="center"><strong>蓝图工作区：收起侧栏，留出完整画布检查建筑。</strong><br><em>Collapse panels to inspect the design on a larger canvas.</em></td>
   </tr>
 </table>
 
@@ -144,6 +151,16 @@
 *Tier-related casings can be selected individually. Purple outlines and the T hint identify related cells in the same structure; press T to select them together while keeping configured hatches independent.*
 
 *Adjust supported member signals and channels while retaining other members. Uncertain legacy boundaries require reimport; check the resulting dimensions. G toggles axis and plane handles; F1 opens editor key bindings.*
+
+顶部「教程」提供分步操作与高亮引导，可跟着界面学习蓝图载入、编辑和放置。
+
+*Open Tutorials from the top bar for step-by-step guidance with highlighted controls.*
+
+<p align="center">
+  <a href="README/screenshots/20261025/tutorial.png"><img src="README/screenshots/20261025/tutorial.png" alt="蓝图教程的载入步骤与导航 / Blueprint tutorial loading step and navigation" width="800"></a><br>
+  <strong>跟随高亮提示，逐步熟悉工作台。</strong><br>
+  <em>Follow highlighted controls to learn the workspace.</em>
+</p>
 
 ### 让文字与图片成为蓝图的一部分 / Add text & picture art
 
@@ -159,8 +176,8 @@
 
 <table>
   <tr>
-    <td width="50%"><a href="README/screenshots/text-attachment-editor.png"><img src="README/screenshots/text-attachment-editor.png" alt="文字转蓝图编辑器：字形预览与形态参数 / Text editor with glyph preview and shape controls" width="310"></a></td>
-    <td width="50%"><a href="README/screenshots/picture-attachment-editor.png"><img src="README/screenshots/picture-attachment-editor.png" alt="添加图片编辑器：材料色预览与像素尺寸 / Picture editor with material-color preview and pixel dimensions" width="310"></a></td>
+    <td width="50%"><a href="README/screenshots/20261025/text-editor.png"><img src="README/screenshots/20261025/text-editor.png" alt="文字编辑浮窗：字形预览与形态参数 / Text editor window with glyph preview and shape controls" width="400"></a></td>
+    <td width="50%"><a href="README/screenshots/20261025/picture-editor.png"><img src="README/screenshots/20261025/picture-editor.png" alt="图片编辑浮窗：材料像素预览与尺寸，底部保留空输入提示 / Picture editor window with palette preview, dimensions and a visible empty-input message" width="400"></a></td>
   </tr>
   <tr>
     <td align="center"><strong>文字：字体、颜色、厚度、竖排与居中弧形。</strong><br><em>Fonts, colors, thickness, upright columns and centered curves.</em></td>
@@ -186,12 +203,6 @@
 
 *Blueprint Settings handles processing and saving. Review identity, coordinate, network and resource choices for private use or sharing, resolve conflicts, then save.*
 
-<p align="center">
-  <a href="README/screenshots/blueprint-processing.png"><img src="README/screenshots/blueprint-processing.png" alt="蓝图处理流程：私用或分享倾向与去标识等级确认 / Blueprint processing with private-use and sharing choices" width="640"></a><br>
-  <strong>按用途核对处理选项，再保存自己的蓝图。</strong><br>
-  <em>Review processing choices for the way you intend to use the blueprint.</em>
-</p>
-
 <a id="placement"></a>
 
 ## 04 · 把蓝图带回世界，锁定后再确认 / Position in the world
@@ -205,9 +216,11 @@
 *Place a selected blueprint into the world preview and align it with the site. In ordinary view, right-click to lock the position and right-click again to review materials; in isometric view, use the left mouse button for these actions.*
 
 <p align="center">
-  <a href="README/screenshots/placement-preview.png"><img src="README/screenshots/placement-preview.png" alt="蓝图青色锁定预览与顶部定位操作提示 / Locked cyan blueprint preview with placement guidance" width="620"></a><br>
+  <a href="README/screenshots/20261025/isometric-placement.png"><img src="README/screenshots/20261025/isometric-placement.png" alt="等距视角中的世界蓝图放置预览 / Blueprint world placement preview in isometric view" width="800"></a><br>
   <strong>在世界里看位置、看朝向，确认后再投入材料。</strong><br>
-  <em>Check position and orientation at the actual site.</em>
+  <em>Check position and orientation at the actual site.</em><br>
+  图中保留早期 Ctrl 提示；当前等距视角用左键锁定与确认。<br>
+  <em>The screenshot retains an earlier Ctrl hint; current isometric locking and confirmation use left-click.</em>
 </p>
 
 | 定位操作 / Placement | 用途 / Result |
@@ -239,9 +252,9 @@
 *Review exact required, available and missing quantities by item and NBT identity, including full demand in creative mode.*
 
 <p align="center">
-  <a href="README/screenshots/blueprint-material-review.png"><img src="README/screenshots/blueprint-material-review.png" alt="蓝图材料预检：精确条目、缺料、EU需求、补料与装饰券 / Blueprint material review with exact costs, shortages, EU, crafting and voucher controls" width="620"></a><br>
-  <strong>施工范围、材料缺口、EU 与本次选项集中核对。</strong><br>
-  <em>Review scope, shortages, energy and construction choices together.</em>
+  <a href="README/screenshots/20261025/material-review.png"><img src="README/screenshots/20261025/material-review.png" alt="创造模式材料审核：需求、已有、缺失与装饰抵用标记 / Creative-mode material review with required, available and missing quantities and voucher eligibility" width="800"></a><br>
+  <strong>材料需求与装饰抵用范围集中核对；图中为创造模式。</strong><br>
+  <em>Review material requirements and voucher eligibility, shown in creative mode.</em>
 </p>
 
 **同一材料方案只需确认一次。** 报价或施工条件变化时仍须重新核对；打开清单、切换抵用券复用已核定的材料数据，主动「刷新材料」核对清单中的库存，实际施工前再检查现场与材料。普通按钮使用默认猫猫材质，需要处理的操作与确认才作强调；EU 只有不足时标红。
@@ -253,12 +266,6 @@
 可完整解析材料成本的库存数据可选择「完全保留」，施工时匹配完整物品数据并扣除对应材料。可解析的 AE 编码样板保留配方，并将所需空白样板计入材料；样板输入总成等设备与配置材料分别列出。确实无法解析的信息会指出具体路径，移除后才能保存。
 
 *Keep inventory data whose complete cost can be decoded, paying with matching item data. Supported encoded patterns retain their recipes and account for physical blank patterns; unreadable paths must be removed before saving.*
-
-<p align="center">
-  <a href="README/screenshots/pattern-configuration.png"><img src="README/screenshots/pattern-configuration.png" alt="材料明细中的ME样板输入总成与空白样板 / ME pattern input hatch and blank patterns listed as separate material entries" width="640"></a><br>
-  <strong>样板配方随蓝图保留；设备与空白样板分项计数，配置所需物资也看得见。</strong><br>
-  <em>The hatch and blank patterns appear as separate material costs.</em>
-</p>
 
 ### 缺料时主动下单，等待时回到世界 / Request missing materials
 
@@ -288,18 +295,12 @@ ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继
 
 *Cut stores existing builds in a persistent queue for each player and save, carrying native block, machine and inventory data separately from blueprint sharing.*
 
-<p align="center">
-  <a href="README/screenshots/mode-switcher.png"><img src="README/screenshots/mode-switcher.png" alt="蓝图与剪切模式选择器 / Blueprint and Cut mode selector" width="600"></a><br>
-  <strong>设计新蓝图，或搬走已有结构：从模式选择开始。</strong><br>
-  <em>Choose Blueprint for designs or Cut for moving existing builds.</em>
-</p>
-
 **进入与暂存：**蓝图模式下 Shift + 右键打开模式切换器，按住 Shift 继续右键切换，松开 Shift 进入；非框选时 Ctrl + Shift + 右键直接打开剪切列表。选择「剪切」开始框选：普通视角用左、右键设置两角；等距视角用 Ctrl+左键固定点1、Ctrl+右键固定点2，并用 Shift + 左键确认。保存条目后可继续框选；Ctrl + Shift + 右键打开暂存列表。
 
 *Hold Shift and right-click to cycle modes, then release Shift to enter. Outside selection, Ctrl+Shift+right-click opens stored cuts. In ordinary view, set the two cut corners with left- and right-click and confirm with Shift+right-click; in isometric view, Ctrl+left-click fixes corner 1, Ctrl+right-click fixes corner 2, and Shift+left-click submits the selection. Save a cut and continue selecting.*
 
 <p align="center">
-  <a href="README/screenshots/cut-queue.png"><img src="README/screenshots/cut-queue.png" alt="剪切暂存列表、每项尺寸与独立三维预览，画面包含诊断文字 / Stored cuts with dimensions and individual 3D preview; screenshot includes diagnostic text" width="620"></a><br>
+  <a href="README/screenshots/20261025/cut-workspace.png"><img src="README/screenshots/20261025/cut-workspace.png" alt="剪切暂存队列、尺寸与独立预览 / Cut queue with dimensions and independent preview" width="800"></a><br>
   <strong>连续剪切多份机器与建筑，暂存队列逐条预览，再旋转、镜像与定位粘贴。</strong><br>
   <em>Choose and preview each queued build before placing it.</em>
 </p>
@@ -360,7 +361,7 @@ ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继
 | **3 · 定位 / Position** | 从蓝图库选择蓝图并放置预览，调整朝向；普通视角右键锁定位置，等距视角用左键。 / Select a blueprint, preview it in the world and adjust its pose; right-click to lock in ordinary view, or left-click in isometric view. |
 | **4 · 施工 / Build** | 普通视角再右键核对材料，等距视角用左键；处理缺料或绑定要求后确认，Esc 取消。 / In ordinary view, right-click again to review materials; use left-click in isometric view. Resolve missing materials or binding requirements, then confirm; Esc cancels. |
 
-感谢玩家提供全部 **12 张功能展示截图**；点击图片可查看原尺寸。[素材清单 / Image credits](README/screenshots/manifest.json)。
+感谢玩家提供功能展示截图；点击图片可查看原尺寸。工作台、框选、图文编辑与材料审核采用与 Release、Web Wiki 同源的[新版界面素材](README/screenshots/20261025/manifest.json)，世界投影与图文成品展示见[投影素材](README/screenshots/manifest.json)和[图文素材](README/screenshots/attachments-manifest.json)，三档模式见[素材来源](README/projector-modes-source.json)。截图中的旧快捷键提示以本文当前操作说明为准。
 
 ## 快捷键与更多说明 / Controls & further reading
 
