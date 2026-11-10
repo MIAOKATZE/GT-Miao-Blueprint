@@ -8,7 +8,7 @@
 
 测试命令由 **console 或 OP2** 执行，指定真实 actor 也须具备 OP2；生产 `/gtmb` 恢复裁决、蓝图库管理员等既有权限不随测试门槛降低。实验室仍须本地配置启用，JVM UI profile 不会开启服务端实验室。
 
-统一入口为 `/miaotest gtmb list`、`status`、`run <kind>`、`stop`、`reset`、`report`。旧 `/gtmbtestlab` 继续支持八种 run：`minimal`、`stress`、`composite`、`native-build`、`native-test`、`recovery-stage`、`recovery-resume`、`construction-performance`，以及独立 `reset/refresh`。没有新增 `run all` 或任意坐标入口。目录中的 `legacy-*` 与 `client-ui` 只声明独立 JVM profile，不能通过维度 `run` 隐式启动；此路径明确拒绝并记录 `UNSUPPORTED`。
+统一入口为 `/miaotest gtmb list`、`status`、`run <kind>`、`stop`、`reset`、`report`。统一入口的 `run all` 仅映射目录声明的默认任务，当前为 `minimal`。旧 `/gtmbtestlab` 继续支持八种 run：`minimal`、`stress`、`composite`、`native-build`、`native-test`、`recovery-stage`、`recovery-resume`、`construction-performance`，以及独立 `reset/refresh`；不新增任意坐标入口。目录中的 `legacy-*` 与 `client-ui` 只声明独立 JVM profile，不能通过维度 `run` 隐式启动；此路径明确拒绝并记录 `UNSUPPORTED`。
 
 宿主统一使用工作区 [`tools/testlab/host.py`](../tools/testlab/host.py)，固定实例来自 [`plan/testlab-instances.json`](../plan/testlab-instances.json)。GTMB 复用 `E:/CodeGT/测试实例-GTMB` 的客户端和服务端，不按轮次克隆整包。客户端必须运行在 private desktop，创建失败即停止，不回退用户前台，不使用系统鼠标；Java 26、默认 4096 MiB，最大 5120 MiB。`doctor/catalog`、未带 `--execute` 的计划及 helper 编译都不是实机通过；使用方法见[测试维度指南](plan/测试维度指南.md)。
 
