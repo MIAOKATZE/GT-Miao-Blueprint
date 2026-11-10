@@ -86,6 +86,21 @@ final class TestLabModule implements LabModule {
         return catalog;
     }
 
+    /** Canonical suite selection uses declared defaults, never the complete legacy catalog. */
+    String[] commandArguments(String[] args) {
+        if (args.length != 2 || !"run".equals(args[0]) || !"all".equals(args[1])) return args;
+        String selected = null;
+        for (LabCase entry : catalog) {
+            if (!entry.defaultSuite()) continue;
+            if (selected != null) throw new CommandException("GTMB default suite requires one bounded task");
+            selected = entry.id();
+        }
+        if (selected == null) throw new CommandException("GTMB default suite has no declared task");
+        String[] forwarded = args.clone();
+        forwarded[1] = selected;
+        return forwarded;
+    }
+
     public void execute(ICommandSender sender, String[] args) {
         if (!sender.canCommandSenderUseCommand(2, "miaotest")) throw new CommandException("Operator level 2 required");
         if (args.length == 2 && "run".equals(args[0])
@@ -103,7 +118,7 @@ final class TestLabModule implements LabModule {
         }
         TestLabRuntime runtime = TestLab.runtime();
         if (runtime == null) throw new CommandException("GTMB lab has no validated server save");
-        new TestLabCommand(runtime).processCommand(sender, args);
+        new TestLabCommand(runtime).processCommand(sender, commandArguments(args));
     }
 
     public String status() {

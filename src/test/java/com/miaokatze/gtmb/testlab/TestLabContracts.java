@@ -69,6 +69,81 @@ public final class TestLabContracts {
         TestLabRecoveryGuard.verify(root, TestLabRegression.config(4096), java.util.UUID.randomUUID(), "reset");
     }
 
+    private static void verifyDefaultSuiteDispatch() throws Exception {
+        TestLabModule module = TestLabModule.INSTANCE;
+        String[] requested = { "run", "all" };
+        String[] forwarded = module.commandArguments(requested);
+        SimpleAssert.eq("minimal", forwarded[1], "canonical all selects the declared default task");
+        SimpleAssert.eq("all", requested[1], "suite alias does not mutate caller arguments");
+        SimpleAssert.that(forwarded != requested, "suite alias owns its forwarded array");
+        for (String[] unchanged : new String[][] { { "run", "stress" }, { "run", "legacy-HologramSmokeTest" },
+            { "status" }, { "run", "all", "unexpected" } })
+            SimpleAssert.that(module.commandArguments(unchanged) == unchanged, "other arguments remain untouched");
+
+        java.lang.reflect.Field configured = TestLab.class.getDeclaredField("config");
+        java.lang.reflect.Field registered = TestLab.class.getDeclaredField("dimensionRegistered");
+        java.lang.reflect.Field activeRuntime = TestLab.class.getDeclaredField("runtime");
+        java.lang.reflect.Field activeTask = TestLabRuntime.class.getDeclaredField("task");
+        for (java.lang.reflect.Field field : new java.lang.reflect.Field[] { configured, registered, activeRuntime,
+            activeTask }) field.setAccessible(true);
+        Object previousConfig = configured.get(null), previousRuntime = activeRuntime.get(null);
+        boolean previousRegistration = registered.getBoolean(null);
+        TestLabConfig config = new TestLabConfig(
+            true,
+            false,
+            1048578,
+            1048578,
+            4096,
+            4096,
+            4096,
+            80,
+            8,
+            512,
+            5,
+            60,
+            64,
+            512);
+        TestLabRuntime runtime = new TestLabRuntime(config);
+        TestLabTasks.Task existing = () -> TestLabTasks.WAIT;
+        activeTask.set(runtime, existing);
+        net.minecraft.command.ICommandSender sender = (net.minecraft.command.ICommandSender) java.lang.reflect.Proxy
+            .newProxyInstance(
+                TestLabContracts.class.getClassLoader(),
+                new Class<?>[] { net.minecraft.command.ICommandSender.class },
+                (proxy, method, arguments) -> "canCommandSenderUseCommand".equals(method.getName())
+                    ? (Integer) arguments[0] <= 2
+                    : null);
+        try {
+            configured.set(null, config);
+            registered.setBoolean(null, true);
+            activeRuntime.set(null, runtime);
+            boolean reachedRuntime = false;
+            try {
+                module.execute(sender, requested, "024af89c-6ad9-49ab-95b2-937bd4fd502a");
+            } catch (net.minecraft.command.CommandException expected) {
+                reachedRuntime = expected.getMessage()
+                    .contains("Another lab run is active; stop it first");
+            }
+            SimpleAssert.that(reachedRuntime, "canonical all passes the real parser and reaches runtime admission");
+            SimpleAssert.that(activeTask.get(runtime) == existing, "suite dispatch preserves the active task");
+            SimpleAssert.eq("all", requested[1], "request-aware dispatch preserves caller arguments");
+            boolean rejectedExtra = false;
+            try {
+                module.execute(
+                    sender,
+                    new String[] { "run", "all", "unexpected" },
+                    "a6c9de28-c0a1-4cb7-8c44-4cbaf584479e");
+            } catch (net.minecraft.command.WrongUsageException expected) {
+                rejectedExtra = true;
+            }
+            SimpleAssert.that(rejectedExtra, "real parser still rejects extra arguments instead of dropping them");
+        } finally {
+            configured.set(null, previousConfig);
+            registered.setBoolean(null, previousRegistration);
+            activeRuntime.set(null, previousRuntime);
+        }
+    }
+
     public static void main(String[] args) throws Exception {
         int status = 0;
         try {
@@ -101,6 +176,7 @@ public final class TestLabContracts {
                 "all ten existing kinds remain discoverable");
             SimpleAssert.that(!TestLabModule.INSTANCE.ownsWorld(null), "null world never gains ownership");
             verifyPermissionGate();
+            verifyDefaultSuiteDispatch();
             verifyRecoveryGuard();
             TestLabReport evidence = new TestLabReport("contract-run", "minimal", TestLabRegression.config(4096));
             SimpleAssert.that(evidence.data.getBoolean("notNetty"), "common test does not claim network dispatch");

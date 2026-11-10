@@ -36,6 +36,8 @@ public final class HologramTestLabUiProfile {
     private HologramState snapshot;
     private int stage;
     private long requestedGeneration, frameSerial, requestedFrame;
+    private long openedAt;
+    private boolean graphInitialized;
     private long lastDiagnostic;
     private String lastScreen = "";
     private int lastStage = -1;
@@ -80,24 +82,72 @@ public final class HologramTestLabUiProfile {
                             .getName());
                 snapshot = fixture();
                 screen = new HologramScreen(snapshot);
-                mc.displayGuiScreen(screen);
+                screen.openFrom(previous);
+                if (mc.currentScreen != screen)
+                    throw new IllegalStateException("Normal MUI open lifecycle did not retain the requested screen");
+                Object initialized = HologramTestLabUiDiagnostics.readDiagnosticField(screen, "initializedGraphs");
+                graphInitialized = initialized instanceof java.util.Set
+                    && ((java.util.Set<?>) initialized).contains(screen.ui)
+                    && HologramTestLabUiDiagnostics.readDiagnosticField(screen, "workspaceMount") != null;
+                if (!graphInitialized)
+                    throw new IllegalStateException("Normal MUI open lifecycle did not build the workspace graph");
+                receipt.put("openMethod", "HologramMuiScreen.openFrom");
+                receipt.put("graphInitialized", true);
                 screen.ui.library.libraryDrawer(true);
                 requestedGeneration = screen.ui.canvas.renderGeneration();
                 requestedFrame = frameSerial;
+                openedAt = System.nanoTime();
                 stage = 1;
-            } else if (stage == 1 && frameSerial >= requestedFrame + 2
-                && screen.ui.canvas.renderGeneration() > requestedGeneration) {
-                    if (mc.currentScreen != screen)
-                        throw new IllegalStateException("Native UI screen ownership changed");
-                    HologramMuiProbeInput.control(screen, 148);
-                    if (screen.ui.library.libraryDrawer())
-                        throw new IllegalStateException("Native control 148 did not close the library drawer");
-                    receipt.put("nativeInputDispatched", true);
-                    receipt.put("controlId", 148);
-                    requestedGeneration = screen.ui.canvas.renderGeneration();
-                    requestedFrame = frameSerial;
-                    stage = 2;
+            } else if (stage == 1) {
+                if (mc.currentScreen != screen) throw new IllegalStateException("Native UI screen ownership changed");
+                boolean attached = screen.panel()
+                    .isValid()
+                    && screen.getScreen()
+                        .getPanelManager()
+                        .isOpen()
+                    && screen.panel()
+                        .getArea().width > 0
+                    && screen.panel()
+                        .getArea().height > 0;
+                if (!attached || frameSerial < requestedFrame + 2
+                    || screen.ui.canvas.renderGeneration() <= requestedGeneration) {
+                    if (System.nanoTime() - openedAt > 30000000000L) throw new IllegalStateException(
+                        "No naturally drawn attached MUI workspace within 30 seconds; panelValid=" + screen.panel()
+                            .isValid()
+                            + " panelOpen="
+                            + screen.getScreen()
+                                .getPanelManager()
+                                .isOpen()
+                            + " size="
+                            + screen.panel()
+                                .getArea().width
+                            + "x"
+                            + screen.panel()
+                                .getArea().height
+                            + " graphInitialized="
+                            + graphInitialized
+                            + " generation="
+                            + screen.ui.canvas.renderGeneration());
+                    return;
                 }
+                receipt.put("panelAttached", true);
+                receipt.put(
+                    "panelWidth",
+                    screen.panel()
+                        .getArea().width);
+                receipt.put(
+                    "panelHeight",
+                    screen.panel()
+                        .getArea().height);
+                HologramMuiProbeInput.control(screen, 148);
+                if (screen.ui.library.libraryDrawer())
+                    throw new IllegalStateException("Native control 148 did not close the library drawer");
+                receipt.put("nativeInputDispatched", true);
+                receipt.put("controlId", 148);
+                requestedGeneration = screen.ui.canvas.renderGeneration();
+                requestedFrame = frameSerial;
+                stage = 2;
+            }
         } catch (Throwable failure) {
             finish(false, failure.toString());
         }
@@ -139,7 +189,22 @@ public final class HologramTestLabUiProfile {
                 + " frames="
                 + frameSerial
                 + " generation="
-                + (screen == null ? -1 : screen.ui.canvas.renderGeneration()));
+                + (screen == null ? -1 : screen.ui.canvas.renderGeneration())
+                + " panelValid="
+                + (screen != null && screen.panel()
+                    .isValid())
+                + " panelOpen="
+                + (screen != null && screen.getScreen()
+                    .getPanelManager()
+                    .isOpen())
+                + " panelSize="
+                + (screen == null ? "none"
+                    : screen.panel()
+                        .getArea().width + "x"
+                        + screen.panel()
+                            .getArea().height)
+                + " graphInitialized="
+                + graphInitialized);
     }
 
     @SubscribeEvent
