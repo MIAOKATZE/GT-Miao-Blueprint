@@ -37,7 +37,11 @@ public final class HologramTestLabUiProfile {
     private int stage;
     private long requestedGeneration, frameSerial, requestedFrame;
     private long openedAt;
+    private long dispatchedAt;
     private boolean graphInitialized;
+    private com.cleanroommc.modularui.widgets.Expandable drawer;
+    private boolean drawerBefore;
+    private int[] drawerBoundsBefore;
     private long lastDiagnostic;
     private String lastScreen = "";
     private int lastStage = -1;
@@ -93,7 +97,6 @@ public final class HologramTestLabUiProfile {
                     throw new IllegalStateException("Normal MUI open lifecycle did not build the workspace graph");
                 receipt.put("openMethod", "HologramMuiScreen.openFrom");
                 receipt.put("graphInitialized", true);
-                screen.ui.library.libraryDrawer(true);
                 requestedGeneration = screen.ui.canvas.renderGeneration();
                 requestedFrame = frameSerial;
                 openedAt = System.nanoTime();
@@ -139,14 +142,35 @@ public final class HologramTestLabUiProfile {
                     "panelHeight",
                     screen.panel()
                         .getArea().height);
-                HologramMuiProbeInput.control(screen, 148);
-                if (screen.ui.library.libraryDrawer())
-                    throw new IllegalStateException("Native control 148 did not close the library drawer");
+                drawer = (com.cleanroommc.modularui.widgets.Expandable) HologramTestLabUiDiagnostics
+                    .readDiagnosticField(screen.ui.shell, "libraryDrawer");
+                drawerBefore = drawer.isExpanded();
+                drawerBoundsBefore = screen.ui.shell.targetBounds("library");
+                if (drawerBoundsBefore == null || screen.ui.library.libraryDrawer() != drawerBefore)
+                    throw new IllegalStateException(
+                        "Native library drawer and presentation state disagree before input");
+                receipt.put("drawerExpandedBefore", drawerBefore);
+                receipt.put("drawerBoundsBefore", drawerBoundsBefore);
+                Map<String, Object> input = new LinkedHashMap<String, Object>();
+                receipt.put("nativeControl", input);
+                HologramMuiProbeInput.nativeTarget(screen, "header.library", input);
                 receipt.put("nativeInputDispatched", true);
-                receipt.put("controlId", 148);
+                receipt.put("controlKey", "header.library");
+                dispatchedAt = System.nanoTime();
+                stage = 2;
+            } else if (stage == 2) {
+                if (mc.currentScreen != screen) throw new IllegalStateException("Native UI screen ownership changed");
+                // The real header button defers its action until the next safe MUI tick.
+                if (drawer.isExpanded() == drawerBefore || screen.ui.library.libraryDrawer() == drawerBefore) {
+                    if (System.nanoTime() - dispatchedAt > 10000000000L) throw new IllegalStateException(
+                        "Native header.library input did not toggle the drawer on a subsequent MUI tick");
+                    return;
+                }
+                receipt.put("drawerExpandedAfter", drawer.isExpanded());
+                receipt.put("deferredStateChangeObserved", true);
                 requestedGeneration = screen.ui.canvas.renderGeneration();
                 requestedFrame = frameSerial;
-                stage = 2;
+                stage = 3;
             }
         } catch (Throwable failure) {
             finish(false, failure.toString());
@@ -211,12 +235,27 @@ public final class HologramTestLabUiProfile {
     public void render(TickEvent.RenderTickEvent event) {
         if (finished || event.phase != TickEvent.Phase.END) return;
         frameSerial++;
-        if (stage != 2 || frameSerial < requestedFrame + 2
+        if (stage != 3 || frameSerial < requestedFrame + 2
             || screen.ui.canvas.renderGeneration() <= requestedGeneration) return;
         Minecraft mc = Minecraft.getMinecraft();
         try {
             if (mc.currentScreen != screen || screen.ui.session.state() != snapshot)
                 throw new IllegalStateException("Post-input natural frame changed screen/snapshot identity");
+            int[] after = screen.ui.shell.targetBounds("library");
+            boolean resized = after != null
+                && (drawerBefore ? after[2] < drawerBoundsBefore[2] : after[2] > drawerBoundsBefore[2]);
+            if (!resized) {
+                if (System.nanoTime() - dispatchedAt > 10000000000L) throw new IllegalStateException(
+                    "Drawer state changed without visible native layout change; before="
+                        + java.util.Arrays.toString(drawerBoundsBefore)
+                        + " after="
+                        + java.util.Arrays.toString(after));
+                return;
+            }
+            if (drawer.isExpanded() == drawerBefore || screen.ui.library.libraryDrawer() == drawerBefore)
+                throw new IllegalStateException("Native drawer state reverted before the post-input natural frame");
+            receipt.put("drawerBoundsAfter", after);
+            receipt.put("drawerVisibleLayoutChanged", true);
             GL11.glFinish();
             int error = GL11.glGetError();
             if (error != GL11.GL_NO_ERROR) throw new IllegalStateException("Natural UI frame GL error: " + error);
@@ -245,7 +284,23 @@ public final class HologramTestLabUiProfile {
             receipt.put("actualGeneration", screen.ui.canvas.renderGeneration());
             receipt.put("requestedFrameSerial", requestedFrame);
             receipt.put("actualFrameSerial", frameSerial);
-            receipt.put("layout", screen.ui.diagnostics.smokeLayout());
+            int[] viewport = screen.ui.shell.targetBounds("viewport");
+            if (viewport == null) throw new IllegalStateException("Post-input native viewport is not visible");
+            Map<String, Object> layout = new LinkedHashMap<String, Object>();
+            layout.put("graph", "HologramEditorShell");
+            layout.put("viewportBounds", viewport);
+            layout.put("libraryBounds", after);
+            layout.put(
+                "panelBounds",
+                new int[] { screen.panel()
+                    .getArea().x,
+                    screen.panel()
+                        .getArea().y,
+                    screen.panel()
+                        .getArea().width,
+                    screen.panel()
+                        .getArea().height });
+            receipt.put("layout", layout);
             receipt.put("clientRenderVerified", true);
             finish(true, "Real MUI2 screen and native control dispatch followed by a naturally rendered framebuffer");
         } catch (Throwable failure) {

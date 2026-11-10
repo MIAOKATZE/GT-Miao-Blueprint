@@ -8,7 +8,9 @@ import org.lwjgl.input.Keyboard;
 
 import com.cleanroommc.modularui.ModularUI;
 import com.cleanroommc.modularui.api.UpOrDown;
+import com.cleanroommc.modularui.api.widget.IWidget;
 import com.cleanroommc.modularui.screen.ModularScreen;
+import com.cleanroommc.modularui.screen.viewport.LocatedWidget;
 
 import me.eigenraven.lwjgl3ify.api.InputEvents;
 
@@ -72,6 +74,88 @@ final class HologramMuiProbeInput {
     static void control(HologramQuantumGroupsScreen owner, int id) {
         int[] point = owner.smokeControlPoint(id);
         click(owner, point[0], point[1], 0);
+    }
+
+    /** Locate a current shell widget, prove the native hit, then use the screen's normal input dispatcher. */
+    static void nativeTarget(HologramScreen owner, String key, java.util.Map<String, Object> evidence)
+        throws ReflectiveOperationException {
+        evidence.put("targetKey", key);
+        int[] clipped = owner.ui.shell.targetBounds(key);
+        evidence.put("clippedBounds", clipped);
+        if (clipped == null || clipped[2] <= 0 || clipped[3] <= 0)
+            throw new IllegalStateException("Native target is disabled, clipped or outside the attached graph: " + key);
+        boolean modal = owner.ui.shell.hasModalPanel();
+        evidence.put("modalBlocked", modal);
+        if (modal) throw new IllegalStateException("A native modal panel blocks target " + key);
+        Object registry = HologramTestLabUiDiagnostics.readDiagnosticField(owner.ui.shell, "targets");
+        Object entries = ((java.util.Map<?, ?>) registry).get(key);
+        IWidget target = null;
+        if (entries instanceof java.util.List) {
+            java.util.List<?> widgets = (java.util.List<?>) entries;
+            for (int i = widgets.size() - 1; i >= 0; i--) {
+                IWidget widget = (IWidget) widgets.get(i);
+                if (java.util.Arrays.equals(clipped, owner.ui.shell.nativeWidgetBounds(widget))) {
+                    target = widget;
+                    break;
+                }
+            }
+        }
+        if (target == null) throw new IllegalStateException("No actual registered widget matches target " + key);
+        evidence.put(
+            "widgetClass",
+            target.getClass()
+                .getName());
+        evidence.put("widgetName", target.getName());
+        evidence.put(
+            "widgetArea",
+            new int[] { target.getArea().x, target.getArea().y, target.getArea().width, target.getArea().height });
+        evidence.put(
+            "panelName",
+            target.getPanel()
+                .getName());
+        evidence.put("widgetEnabled", target.isEnabled() && target.areAncestorsEnabled());
+        int x = clipped[0] + clipped[2] / 2, y = clipped[1] + clipped[3] / 2;
+        evidence.put("pointer", new int[] { x, y });
+        ModularScreen screen = owner.getScreen();
+        screen.getContext()
+            .updateState(x, y, 0);
+        // Panel.onInit registers its real findHoveredWidgets callback with this native frame hook.
+        screen.onFrameUpdate();
+        boolean hit = false;
+        java.util.List<String> hovered = new java.util.ArrayList<String>();
+        for (LocatedWidget located : target.getPanel()
+            .getHovering()) {
+            IWidget widget = located.getElement();
+            if (widget == target) hit = true;
+            hovered.add(
+                widget.getClass()
+                    .getName() + ":"
+                    + widget.getName());
+        }
+        evidence.put("actualHovering", hovered);
+        evidence.put("targetInActualHovering", hit);
+        if (!hit) throw new IllegalStateException(
+            "Native hit test missed " + key
+                + " at "
+                + x
+                + ","
+                + y
+                + "; clipped="
+                + java.util.Arrays.toString(clipped)
+                + "; hovering="
+                + hovered);
+        boolean consumed = screen.onMouseInputPre(0, true);
+        boolean handled = false;
+        try {
+            if (!consumed) handled = screen.onMousePressed(0);
+        } finally {
+            if (!screen.onMouseInputPre(0, false)) screen.onMouseRelease(0);
+        }
+        evidence.put("pressPreConsumed", consumed);
+        evidence.put("pressHandled", handled);
+        evidence.put("dispatch", "ModularScreen.onMouseInputPre/onMousePressed/onMouseRelease");
+        if (consumed || !handled)
+            throw new IllegalStateException("Native input was intercepted or unhandled for target " + key);
     }
 
     static void scroll(HologramMuiScreen owner, int x, int y, int delta) {
