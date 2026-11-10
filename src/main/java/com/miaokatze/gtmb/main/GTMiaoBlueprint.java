@@ -8,9 +8,7 @@ import com.miaokatze.gtmb.hologram.HologramAeCraftingOrders;
 import com.miaokatze.gtmb.hologram.HologramCommand;
 import com.miaokatze.gtmb.hologram.HologramLibraryCommand;
 import com.miaokatze.gtmb.hologram.HologramLibraryFacade;
-import com.miaokatze.gtmb.hologram.HologramLibrarySocketServerProbe;
 import com.miaokatze.gtmb.hologram.HologramStargateRules;
-import com.miaokatze.gtmb.testlab.TestLab;
 
 import cpw.mods.fml.common.Mod;
 import cpw.mods.fml.common.SidedProxy;
@@ -42,14 +40,15 @@ public final class GTMiaoBlueprint {
     @Mod.EventHandler
     public void preInit(FMLPreInitializationEvent event) {
         HologramStargateRules.load(event.getModConfigurationDirectory());
-        TestLab.preInit(event.getModConfigurationDirectory());
+        com.miaokatze.gtmb.main.OptionalTestLab
+            .call("com.miaokatze.gtmb.testlab.TestLab", "preInit", event.getModConfigurationDirectory());
         proxy.preInit();
     }
 
     @Mod.EventHandler
     public void init(FMLInitializationEvent event) {
         proxy.init();
-        TestLab.init();
+        com.miaokatze.gtmb.main.OptionalTestLab.call("com.miaokatze.gtmb.testlab.TestLab", "init");
         proxy.testLabClientReady();
     }
 
@@ -60,27 +59,28 @@ public final class GTMiaoBlueprint {
 
     @Mod.EventHandler
     public void serverAboutToStart(FMLServerAboutToStartEvent event) {
-        TestLab.beforeServerWorldsLoad();
+        com.miaokatze.gtmb.main.OptionalTestLab.call("com.miaokatze.gtmb.testlab.TestLab", "beforeServerWorldsLoad");
     }
 
     @Mod.EventHandler
     public void serverStarting(FMLServerStartingEvent event) {
         event.registerServerCommand(new HologramCommand());
         event.registerServerCommand(new HologramLibraryCommand());
-        TestLab.serverStarting(event);
+        com.miaokatze.gtmb.main.OptionalTestLab.call("com.miaokatze.gtmb.testlab.TestLab", "serverStarting", event);
     }
 
     @Mod.EventHandler
     public void serverStopping(FMLServerStoppingEvent event) {
         HologramAeCraftingOrders.clearAll("服务器正在关闭，AE 缺料订单已停止");
-        TestLab.serverStopping();
-        HologramLibrarySocketServerProbe.stop();
+        com.miaokatze.gtmb.main.OptionalTestLab.call("com.miaokatze.gtmb.testlab.TestLab", "serverStopping");
+        com.miaokatze.gtmb.main.OptionalTestLab
+            .call("com.miaokatze.gtmb.hologram.HologramLibrarySocketServerProbe", "stop");
         HologramLibraryFacade.stop();
         proxy.serverStopping();
     }
 
     @Mod.EventHandler
     public void serverStopped(FMLServerStoppedEvent event) {
-        TestLab.serverStopped();
+        com.miaokatze.gtmb.main.OptionalTestLab.call("com.miaokatze.gtmb.testlab.TestLab", "serverStopped");
     }
 }

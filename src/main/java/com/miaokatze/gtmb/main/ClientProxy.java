@@ -1,7 +1,6 @@
 package com.miaokatze.gtmb.main;
 
 import com.miaokatze.gtmb.client.hologram.HologramClient;
-import com.miaokatze.gtmb.client.hologram.HologramInteractionClientSmoke;
 
 public final class ClientProxy extends CommonProxy {
 
@@ -14,7 +13,8 @@ public final class ClientProxy extends CommonProxy {
 
     @Override
     public void testLabClientReady() {
-        com.miaokatze.gtmb.client.testlab.TestLabClientLifecycle.install();
+        com.miaokatze.gtmb.main.OptionalTestLab
+            .call("com.miaokatze.gtmb.client.testlab.TestLabClientLifecycle", "install");
     }
 
     @Override
@@ -29,6 +29,7 @@ public final class ClientProxy extends CommonProxy {
     public void init() {
         super.init();
         HologramClient.install();
+        OptionalTestLab.call("com.miaokatze.gtmb.client.hologram.HologramNativeRasterSmoke", "installObserver");
         if (cpw.mods.fml.common.Loader.isModLoaded("CarpentersBlocks"))
             carpentersRenderer = com.miaokatze.gtmb.client.compat.carpenters.CarpentersClientCompatibility.install();
         if (cpw.mods.fml.common.Loader.isModLoaded("cookingforblockheads"))
@@ -37,13 +38,21 @@ public final class ClientProxy extends CommonProxy {
         com.miaokatze.gtmb.client.compat.extrautilities.ExtraUtilitiesClientCompatibility.initialize();
         com.miaokatze.gtmb.client.compat.floodlights.FloodLightsClientCompatibility.initialize();
         com.miaokatze.gtmb.client.compat.storagedrawers.StorageDrawersClientCompatibility.initialize();
-        com.miaokatze.gtmb.client.hologram.HologramV010GuiSmoke.install();
-        HologramInteractionClientSmoke.install();
-        com.miaokatze.gtmb.client.hologram.HologramV011AreaClientSmoke.install();
-        com.miaokatze.gtmb.client.hologram.HologramV011ProcessingClientProbe.install();
-        com.miaokatze.gtmb.client.hologram.HologramV011WorkbenchClientSmoke.install();
-        com.miaokatze.gtmb.client.hologram.HologramSulfurLineSmokeClientProbe.install();
-        com.miaokatze.gtmb.client.hologram.HologramProductionPreviewSmoke.install();
-        com.miaokatze.gtmb.client.hologram.HologramLibrarySocketClientProbe.install();
+        com.miaokatze.gtmb.main.OptionalTestLab
+            .call("com.miaokatze.gtmb.client.hologram.HologramV010GuiSmoke", "install");
+        com.miaokatze.gtmb.main.OptionalTestLab
+            .call("com.miaokatze.gtmb.client.hologram.HologramInteractionClientSmoke", "install");
+        com.miaokatze.gtmb.main.OptionalTestLab
+            .call("com.miaokatze.gtmb.client.hologram.HologramV011AreaClientSmoke", "install");
+        com.miaokatze.gtmb.main.OptionalTestLab
+            .call("com.miaokatze.gtmb.client.hologram.HologramV011ProcessingClientProbe", "install");
+        com.miaokatze.gtmb.main.OptionalTestLab
+            .call("com.miaokatze.gtmb.client.hologram.HologramV011WorkbenchClientSmoke", "install");
+        com.miaokatze.gtmb.main.OptionalTestLab
+            .call("com.miaokatze.gtmb.client.hologram.HologramSulfurLineSmokeClientProbe", "install");
+        com.miaokatze.gtmb.main.OptionalTestLab
+            .call("com.miaokatze.gtmb.client.hologram.HologramProductionPreviewSmoke", "install");
+        com.miaokatze.gtmb.main.OptionalTestLab
+            .call("com.miaokatze.gtmb.client.hologram.HologramLibrarySocketClientProbe", "install");
     }
 }

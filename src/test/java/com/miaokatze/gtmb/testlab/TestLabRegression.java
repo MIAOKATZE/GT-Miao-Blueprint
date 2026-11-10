@@ -266,7 +266,7 @@ public final class TestLabRegression {
         return field;
     }
 
-    private static TestLabConfig config(int x) {
+    static TestLabConfig config(int x) {
         return new TestLabConfig(false, true, 1048578, 1048578, x, 4096, 4096, 80, 8, 512, 5, 60, 64, 512);
     }
 

@@ -1,5 +1,23 @@
 # GTMB agent test laboratory
 
+## 当前测试入口与制品边界
+
+实验室、Smoke/Probe、合成输入及反射诊断实现位于 `src/testlab/java`。普通 JAR 只保留可选生命周期和被动诊断桥；不携带这些实现，也不会因旧 JVM 探针属性自动施工或关服。正常玩家教程、生产 Deadline、付款与恢复 API 保留。
+
+测试使用 **完整替换包** `<base>-testlab.jar`，由 `reobfTestlabJar` 生成；`testlabJar` 生成开发映射的 `-testlab-dev.jar`。它们包含普通包的生产代码与资源，沿用同一 modid，不能与普通 GTMB JAR 并装。统一 `/miaotest` 入口还需配套 Core 0.2.9 的完整测试变体，Core 普通包只提供被动 API。已存在的原生平台、ownership、真实付款后端与 Actor/Lease 流程继续复用。
+
+测试命令由 **console 或 OP2** 执行，指定真实 actor 也须具备 OP2；生产 `/gtmb` 恢复裁决、蓝图库管理员等既有权限不随测试门槛降低。实验室仍须本地配置启用，JVM UI profile 不会开启服务端实验室。
+
+统一入口为 `/miaotest gtmb list`、`status`、`run <kind>`、`stop`、`reset`、`report`。旧 `/gtmbtestlab` 继续支持八种 run：`minimal`、`stress`、`composite`、`native-build`、`native-test`、`recovery-stage`、`recovery-resume`、`construction-performance`，以及独立 `reset/refresh`。没有新增 `run all` 或任意坐标入口。目录中的 `legacy-*` 与 `client-ui` 只声明独立 JVM profile，不能通过维度 `run` 隐式启动；此路径明确拒绝并记录 `UNSUPPORTED`。
+
+宿主统一使用工作区 [`tools/testlab/host.py`](../tools/testlab/host.py)，固定实例来自 [`plan/testlab-instances.json`](../plan/testlab-instances.json)。GTMB 复用 `E:/CodeGT/测试实例-GTMB` 的客户端和服务端，不按轮次克隆整包。客户端必须运行在 private desktop，创建失败即停止，不回退用户前台，不使用系统鼠标；Java 26、默认 4096 MiB，最大 5120 MiB。`doctor/catalog`、未带 `--execute` 的计划及 helper 编译都不是实机通过；使用方法见[测试维度指南](plan/测试维度指南.md)。
+
+环境隔离仅作用于已核归属的测试世界：抑制自然刷怪和天气，不切 Peaceful、不改全局 gamerule、不赋予无敌，生存付款、逐位置权限与精确扣料断言保留。原生平台准备就绪、`NATIVE_READY`、在线真人或远程 channel 存在，都不证明 Netty 操作或渲染通过。报告分别记录 actor、可用 transport、实际 transport/render 覆盖、工件身份、结果、落盘和清理状态。
+
+`recovery-stage` 留下真实持久故障现场后终态为 `RECOVERY_PENDING`，不是完整恢复 PASS。自有测试 actor 存在未结算的施工恢复日志时，`reset/refresh` 和新场景变更均被只读检查阻断；只有专属 `recovery-resume` 可继续该恢复夹具。不要删日志、清场或改写背包绕过生产恢复；退出清理失败保留资源与 `cleanupPending`，供显式 stop 重试。
+
+本轮已验证编译、JVM 合同、普通 UI 模块图缺测试实现时的构造、样式及双变体生产字节一致性。真实客户端、Netty、生存施工和跨进程恢复仍须各自运行回执；本节不新增实机 PASS。实施记录见[本轮 workflow](plan/workflow/testlab-source-isolation_20261110.md)。
+
 ## 持久原生 Mod 平台（显式选择）
 
 本地 `testlab.enabled=true` 之外，还需明确设置 `nativePlatformsEnabled=true`。
@@ -78,7 +96,7 @@ The agent laboratory is an administrator tool for repeatable, common-side tests.
 
 ## Enable locally
 
-Start GTMB once to generate `config/gtmb-testlab.cfg`. In its `testlab` category set `B:enabled=true`, then restart. Commands, network messages and JVM properties cannot enable it. On the disabled path GTMB registers no laboratory provider, dimension, tick handler or command, enables no laboratory metrics, and creates no laboratory world, actor, ticket or report.
+Start the complete GTMB testlab replacement variant once to generate `config/gtmb-testlab.cfg`. In its `testlab` category set `B:enabled=true`, then restart. Commands, network messages and JVM properties cannot enable it. The ordinary JAR does not generate or load laboratory configuration. On the disabled path GTMB registers no laboratory provider, dimension, tick handler or command, enables no laboratory metrics, and creates no laboratory world, actor, ticket or report.
 
 | Setting | Default | Allowed range / meaning |
 | --- | --- | --- |
@@ -106,7 +124,7 @@ There is no laboratory teleport command. A client with the default disabled sett
 
 ## Commands
 
-Use the server console or a command sender with permission level 4. Commands have no arbitrary coordinate, dimension, path or enable argument.
+Use the server console or a command sender with permission level 2. Commands have no arbitrary coordinate, dimension, path or enable argument. Production administrator/recovery permissions retain their separate existing gates.
 
 | Command | Effect |
 | --- | --- |
@@ -116,7 +134,12 @@ Use the server console or a command sender with permission level 4. Commands hav
 | `/gtmbtestlab run minimal` | Run the bounded small-unit suite below |
 | `/gtmbtestlab run stress` | Explicitly run finite in-memory frame/codec and server task queue load |
 | `/gtmbtestlab run composite` | Build the explicitly enabled native 40 cubed fixture and wait for connected self/share/RAW workflow verification; fixture readiness alone is never PASS |
-| `/gtmbtestlab stop` | Cancel the current run cooperatively and release its tickets |
+| `/gtmbtestlab run native-build` | Build/reuse explicitly selected persistent native platforms; blueprint workflow remains NOT_RUN |
+| `/gtmbtestlab run native-test` | Admit the configured connected survival OP2 actor to existing platforms and wait for the separate production probe |
+| `/gtmbtestlab run recovery-stage` | Stage the owned durable fault fixture; terminal outcome is RECOVERY_PENDING |
+| `/gtmbtestlab run recovery-resume` | Resume the dedicated staged fixture and verify production rollback/payment conservation |
+| `/gtmbtestlab run construction-performance` | Exercise bounded real tick construction and exact survival payment; not a full-pack performance certification |
+| `/gtmbtestlab stop` | Cancel cooperatively and attempt actor/ticket cleanup; failed cleanup remains visible and retained for retry |
 | `/gtmbtestlab report` | Persist the current in-memory report; refuses if no run/report exists |
 
 Only one run may be active. Repeated start commands are refused. No suite starts automatically. Cancellation and timeout happen between steps; a single native world save, factory call or compression operation cannot be preempted. `atomicStepsOverTickBudget` records ticks that exceed the cooperative budget. Reset and refresh also obey the operation and time limits rather than synchronously scanning their whole volume.
@@ -150,7 +173,7 @@ v0.3.1 候选仅保留通用测试设施。此前未发布的 GTNL 五机专属�
 
 ## Evidence and timing
 
-Each run gets a fresh UUID. Public `TestLab.status()` and `TestLab.report()` return detached NBT. Terminal states are PASS, FAIL or CANCELLED. PASS means the listed executable checks completed; the idle observation can remain explicitly INCONCLUSIVE or SKIP. Exceptions, ownership failures and actual assertion failures fail the run and retain details.
+Each run gets a fresh UUID. Test-variant `TestLab.status()` and `TestLab.report()` return detached NBT. Runtime terminal states include PASS, FAIL, CANCELLED, TIMEOUT and RECOVERY_PENDING. PASS means the listed executable checks completed; the idle observation can remain explicitly INCONCLUSIVE or SKIP. Staging durable recovery is RECOVERY_PENDING, not a completed recovery. Exceptions, ownership failures and actual assertion failures retain their details.
 
 The final report is persisted once to `<save>/gtmb-testlab/latest-report.nbt` and `latest-report.json`, each by synced temporary file plus atomic replacement, capped at 512 KiB each. The pair is not a single filesystem transaction. `reportPersisted=true` and matching `persistedRunId` are exposed only after both writes complete; consumers must check these before associating disk files with a terminal run. Report write errors remain visible in memory and the server log. The report command intentionally requests another save.
 
@@ -160,9 +183,9 @@ When configured, `metricsStart` and `metricsEnd` are snapshots of the global com
 
 ## Lifecycle and validation boundaries
 
-Main integration calls `TestLab.preInit(configDirectory)`, `init()`, `serverStarting(event)`, `serverStopping()` and `serverStopped()`. Default-off pure regressions validate configuration/bounds/ownership/report isolation. The separately installed test-only headless observer drives real server commands and observes actual dimensions, actors, cleanup and reports. It cannot enable the lab through a property. Builds, dedicated launch, real mod-pack behavior and default-disabled-client login require independent run receipts; source inspection and this document do not replace those checks.
+Main integration uses optional bootstrap calls for the test-variant lifecycle; missing implementation classes are inert. Default-off pure regressions validate configuration/bounds/ownership/report isolation. The separately installed test-only headless observer drives real server commands and observes actual dimensions, actors, cleanup and reports. It cannot enable the lab through a property. Builds, dedicated launch, real mod-pack behavior and default-disabled-client login require independent run receipts; source inspection and this document do not replace those checks.
 
-The design follows local GTSWN and GTSR opt-in dimension, FakePlayer and bounded facility patterns. It does not reuse their running worlds or identities. The evidence design is recorded in `plan/tmp/progress-testlab/testlab-design.md`.
+The design follows local GTSWN and GTSR opt-in dimension, FakePlayer and bounded facility patterns. It does not reuse their running worlds or identities. Current contracts and validation limits are recorded in [the implementation workflow](plan/workflow/testlab-source-isolation_20261110.md).
 
 
 ## Opt-in native composite suite (v0.1.11 work in progress)

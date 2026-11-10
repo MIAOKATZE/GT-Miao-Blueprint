@@ -402,8 +402,8 @@ public final class HologramNetwork {
     }
 
     static void sendLibraryReply(EntityPlayerMP player, NBTTagCompound tag) {
-        if (Boolean.getBoolean("gtmb.hologram.librarySocketSmoke"))
-            HologramLibrarySocketServerProbe.observe(player, tag);
+        if (Boolean.getBoolean("gtmb.hologram.librarySocketSmoke")) com.miaokatze.gtmb.main.OptionalTestLab
+            .call("com.miaokatze.gtmb.hologram.HologramLibrarySocketServerProbe", "observe", player, tag);
         if (channel != null) channel.sendTo(new LibraryReply(tag), player);
     }
 

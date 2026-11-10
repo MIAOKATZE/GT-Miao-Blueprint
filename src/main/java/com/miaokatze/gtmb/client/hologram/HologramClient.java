@@ -275,9 +275,12 @@ public final class HologramClient {
         FMLCommonHandler.instance()
             .bus()
             .register(listener);
-        HologramClientSmoke.install();
-        HologramCutNativeClientProbe.install();
-        HologramBackgroundNativeProbe.install();
+        com.miaokatze.gtmb.main.OptionalTestLab
+            .call("com.miaokatze.gtmb.client.hologram.HologramClientSmoke", "install");
+        com.miaokatze.gtmb.main.OptionalTestLab
+            .call("com.miaokatze.gtmb.client.hologram.HologramCutNativeClientProbe", "install");
+        com.miaokatze.gtmb.main.OptionalTestLab
+            .call("com.miaokatze.gtmb.client.hologram.HologramBackgroundNativeProbe", "install");
     }
 
     private static long lastUseTick = Long.MIN_VALUE;

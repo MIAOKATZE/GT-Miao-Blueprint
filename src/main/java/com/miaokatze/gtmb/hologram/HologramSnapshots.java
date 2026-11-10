@@ -674,7 +674,11 @@ final class HologramSnapshots {
         NBTTagCompound envelope = new NBTTagCompound();
         envelope.setBoolean("progressOnly", true);
         envelope.setTag("progress", state);
-        HologramV0116MaterialAcceptanceProbe.observeMaterialEnvelope(s.player, envelope);
+        com.miaokatze.gtmb.main.OptionalTestLab.call(
+            "com.miaokatze.gtmb.hologram.HologramV0116MaterialAcceptanceProbe",
+            "observeMaterialEnvelope",
+            s.player,
+            envelope);
         HologramWorkspace.snapshotSink()
             .send(s.player, envelope);
     }

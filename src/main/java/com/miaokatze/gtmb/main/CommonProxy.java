@@ -1,10 +1,8 @@
 package com.miaokatze.gtmb.main;
 
-import com.miaokatze.gtmb.hologram.HologramInteractionSmoke;
 import com.miaokatze.gtmb.hologram.HologramLifecycle;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
 import com.miaokatze.gtmb.hologram.HologramService;
-import com.miaokatze.gtmb.hologram.HologramSmokeTest;
 import com.miaokatze.gtmb.register.ProjectorRegistry;
 import com.miaokatze.gtmb.util.ServerTaskScheduler;
 
@@ -39,14 +37,19 @@ public class CommonProxy {
         FMLCommonHandler.instance()
             .bus()
             .register(new HologramLifecycle());
-        HologramSmokeTest.registerIfEnabled();
-        HologramInteractionSmoke.registerIfEnabled();
-        com.miaokatze.gtmb.hologram.HologramCutNativeSmoke.install();
-        com.miaokatze.gtmb.hologram.HologramCutNativeServerProbe.install();
-        com.miaokatze.gtmb.hologram.HologramV011InteractionFixture.install();
-        com.miaokatze.gtmb.hologram.HologramV011WorldSmoke.install();
-        com.miaokatze.gtmb.hologram.HologramV011WorkbenchFixture.install();
-        com.miaokatze.gtmb.hologram.HologramSulfurLineSmoke.install();
+        com.miaokatze.gtmb.main.OptionalTestLab
+            .call("com.miaokatze.gtmb.hologram.HologramSmokeTest", "registerIfEnabled");
+        com.miaokatze.gtmb.main.OptionalTestLab
+            .call("com.miaokatze.gtmb.hologram.HologramInteractionSmoke", "registerIfEnabled");
+        com.miaokatze.gtmb.main.OptionalTestLab.call("com.miaokatze.gtmb.hologram.HologramCutNativeSmoke", "install");
+        com.miaokatze.gtmb.main.OptionalTestLab
+            .call("com.miaokatze.gtmb.hologram.HologramCutNativeServerProbe", "install");
+        com.miaokatze.gtmb.main.OptionalTestLab
+            .call("com.miaokatze.gtmb.hologram.HologramV011InteractionFixture", "install");
+        com.miaokatze.gtmb.main.OptionalTestLab.call("com.miaokatze.gtmb.hologram.HologramV011WorldSmoke", "install");
+        com.miaokatze.gtmb.main.OptionalTestLab
+            .call("com.miaokatze.gtmb.hologram.HologramV011WorkbenchFixture", "install");
+        com.miaokatze.gtmb.main.OptionalTestLab.call("com.miaokatze.gtmb.hologram.HologramSulfurLineSmoke", "install");
         engineReady = true;
     }
 

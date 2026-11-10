@@ -625,10 +625,7 @@ public final class HologramAeContainerScreen extends ModularScreen {
 
     /** Dispatches the same native MUI2 event hooks used by physical input. */
     void smokeMouseButton(int x, int y, int button, boolean pressed) {
-        getContext().updateState(x, y, 0);
-        // Use the native frame hook to collect hover targets at the probe's synthetic pointer.
-        onFrameUpdate();
-        if (pressed) onMousePressed(button);
-        else onMouseRelease(button);
+        com.miaokatze.gtmb.main.OptionalTestLab
+            .call("com.miaokatze.gtmb.client.hologram.HologramUiActionProbe", "aeMouse", this, x, y, button, pressed);
     }
 }

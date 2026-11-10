@@ -8,6 +8,36 @@ extensions.configure<com.gtnewhorizons.retrofuturagradle.MinecraftExtension>("mi
 }
 
 // 手写回归由 JavaExec 运行，不通过 JUnit 发现。
+// A complete replacement variant, never an addon to the ordinary Core jar.
+val testlabSourceSet = sourceSets.create("testlab") {
+    compileClasspath += sourceSets.main.get().output + sourceSets.main.get().compileClasspath
+    runtimeClasspath += output + compileClasspath + sourceSets.main.get().runtimeClasspath
+}
+configurations.named(testlabSourceSet.implementationConfigurationName) { extendsFrom(configurations.implementation.get()) }
+configurations.named(testlabSourceSet.compileOnlyConfigurationName) { extendsFrom(configurations.compileOnly.get()) }
+configurations.named(testlabSourceSet.annotationProcessorConfigurationName) { extendsFrom(configurations.annotationProcessor.get()) }
+sourceSets.test {
+    compileClasspath += testlabSourceSet.output
+    runtimeClasspath += testlabSourceSet.output
+}
+val testlabJar = tasks.register<Jar>("testlabJar") {
+    group = "build"
+    description = "Complete opt-in testlab replacement; do not install alongside the ordinary jar."
+    archiveClassifier.set("testlab-dev")
+    with(tasks.jar.get())
+    from(testlabSourceSet.output)
+    manifest.from(tasks.jar.get().manifest)
+    manifest.attributes("Miaokatze-Testlab-Variant" to "replacement")
+}
+// RFG 2.x creates and fully configures this task through its reobf<JarTaskName> rule.
+tasks.named<com.gtnewhorizons.retrofuturagradle.mcp.ReobfuscatedJar>("reobfTestlabJar") {
+    archiveClassifier.set("testlab")
+    referenceClasspath.from(testlabSourceSet.compileClasspath)
+    val productionReobf = tasks.named<com.gtnewhorizons.retrofuturagradle.mcp.ReobfuscatedJar>("reobfJar")
+    extraSrgFiles.from(productionReobf.map { it.extraSrgFiles })
+    extraSrgEntries.addAll(productionReobf.flatMap { it.extraSrgEntries })
+}
+
 tasks.test {
     failOnNoDiscoveredTests = false
 }
@@ -294,3 +324,50 @@ if (providers.gradleProperty("hologramInteractionClient").isPresent) {
         args("--width", "1280", "--height", "800")
     }
 }
+
+// Existing isolated development profiles can see the same opt-in implementation classes.
+if (providers.gradlePropertiesPrefixedBy("hologram").get().isNotEmpty() || providers.gradleProperty("testlab").isPresent) {
+    tasks.withType<JavaExec>().matching { it.name == "runClient" || it.name == "runServer" }.configureEach {
+        dependsOn(testlabSourceSet.classesTaskName)
+        classpath += testlabSourceSet.output
+    }
+}
+
+val testlabSourceCommit = providers.exec { commandLine("git", "rev-parse", "HEAD") }.standardOutput.asText.map { it.trim() }
+val testlabSourceDirty = providers.exec { commandLine("git", "status", "--porcelain", "--untracked-files=normal") }.standardOutput.asText.map { it.isNotBlank().toString() }
+tasks.withType<Jar>().configureEach {
+    manifest.attributes("Miaokatze-Source-Commit" to testlabSourceCommit.get(), "Miaokatze-Source-Dirty" to testlabSourceDirty.get())
+}
+
+tasks.register<JavaExec>("runTestlabContracts") {
+    group = "verification"
+    dependsOn("compileTestJava")
+    mainClass = "com.miaokatze.gtmb.testlab.TestLabContracts"
+    classpath = tasks.named<JavaExec>("runHologramTest").get().classpath
+    val scratchDir = layout.buildDirectory.dir("testlab-contracts")
+    workingDir(scratchDir)
+    doFirst { scratchDir.get().asFile.mkdirs() }
+}
+val compileProductionTestlabIsolation = tasks.register<JavaCompile>("compileProductionTestlabIsolation") {
+    source("src/test/java/com/miaokatze/gtmb/client/hologram/HologramProductionTestlabIsolation.java")
+    classpath = sourceSets.main.get().output + sourceSets.main.get().compileClasspath
+    destinationDirectory.set(layout.buildDirectory.dir("classes/java/productionTestlabIsolation"))
+    options.annotationProcessorPath = tasks.compileJava.get().options.annotationProcessorPath
+    options.isFork = tasks.compileJava.get().options.isFork
+    options.forkOptions.jvmArgs = tasks.compileJava.get().options.forkOptions.jvmArgs
+    sourceCompatibility = "8"
+    targetCompatibility = "8"
+    options.encoding = "UTF-8"
+}
+tasks.register<JavaExec>("runProductionTestlabIsolation") {
+    group = "verification"
+    dependsOn(compileProductionTestlabIsolation)
+    mainClass = "com.miaokatze.gtmb.client.hologram.HologramProductionTestlabIsolation"
+    // Materialize file paths so filtering the optional output also removes its task dependencies.
+    classpath = files(
+        listOf(compileProductionTestlabIsolation.get().destinationDirectory.get().asFile) +
+            tasks.named<JavaExec>("runHologramTest").get().classpath.files.filter { it !in testlabSourceSet.output.files && it !in sourceSets.test.get().output.files }
+    )
+}
+
+tasks.named("check") { dependsOn("runTestlabContracts", "runProductionTestlabIsolation") }

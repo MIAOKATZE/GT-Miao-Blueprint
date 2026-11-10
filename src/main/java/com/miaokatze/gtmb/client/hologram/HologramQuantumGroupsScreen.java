@@ -489,19 +489,18 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
     }
 
     void smokeClickControl(int id) {
-        int[] point = smokeControlPoint(id);
-        mouseClicked(point[0], point[1], 0);
+        com.miaokatze.gtmb.main.OptionalTestLab
+            .call("com.miaokatze.gtmb.client.hologram.HologramUiActionProbe", "quantumControl", this, id);
     }
 
     void smokeClickNode(int index, boolean control) {
-        int[] point = smokeNodePoint(index);
-        click(point[0], point[1], 0, control);
+        com.miaokatze.gtmb.main.OptionalTestLab
+            .call("com.miaokatze.gtmb.client.hologram.HologramUiActionProbe", "quantumNode", this, index, control);
     }
 
     void smokeKey(int key, boolean control) {
-        requireSmoke();
-        nameField.setFocused(false);
-        key('\0', key, control);
+        com.miaokatze.gtmb.main.OptionalTestLab
+            .call("com.miaokatze.gtmb.client.hologram.HologramUiActionProbe", "quantumKey", this, key, control);
     }
 
     int[] smokeNamePoint() {
@@ -510,12 +509,8 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
     }
 
     void smokeName(String value) {
-        requireSmoke();
-        int[] point = smokeNamePoint();
-        mouseClicked(point[0], point[1], 0);
-        nameField.setCursorPositionEnd();
-        nameField.setSelectionPos(0);
-        for (int i = 0; i < value.length(); i++) keyTyped(value.charAt(i), 0);
+        com.miaokatze.gtmb.main.OptionalTestLab
+            .call("com.miaokatze.gtmb.client.hologram.HologramUiActionProbe", "quantumName", this, value);
     }
 
     NBTTagCompound smokeUiState() {

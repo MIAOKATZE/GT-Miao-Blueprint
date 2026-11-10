@@ -45,7 +45,7 @@ final class HologramUiModules {
         bindings = new HologramUiNetworkBindings(this);
         canvas = new HologramUiCanvas(this);
         config = new HologramUiConfiguration(this);
-        diagnostics = new HologramUiDiagnostics(this);
+        diagnostics = HologramUiDiagnostics.create(this);
         identity = new HologramUiDeidentification(this);
         library = new HologramUiLibrary(this);
         memory = new HologramUiMemory(this);

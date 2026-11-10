@@ -39,9 +39,9 @@ final class HologramBlueprintWebsite {
 
     /** Exercise the real vanilla No-button callback in client smoke checks without opening a browser. */
     static boolean cancelConfirmationForSmoke() {
-        if (!(Minecraft.getMinecraft().currentScreen instanceof WebsiteConfirmation confirmation)) return false;
-        confirmation.cancel();
-        return true;
+        return Boolean.TRUE.equals(
+            com.miaokatze.gtmb.main.OptionalTestLab
+                .call("com.miaokatze.gtmb.client.hologram.HologramUiActionProbe", "cancelWebsite"));
     }
 
     private static final class WebsiteConfirmation extends GuiConfirmOpenLink {

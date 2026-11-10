@@ -675,7 +675,8 @@ final class HologramRenderer {
             GL11.glEnable(GL11.GL_ALPHA_TEST);
             GL11.glAlphaFunc(GL11.GL_GREATER, .01f);
             double depthScale = 128 / extent;
-            HologramSourcePreviewReference.captureCamera(depthScale);
+            com.miaokatze.gtmb.main.OptionalTestLab
+                .call("com.miaokatze.gtmb.client.hologram.HologramSourcePreviewReference", "captureCamera", depthScale);
             Tessellator t = Tessellator.instance;
             double moveX = 0, moveY = 0;
             if ((moveOffset[0] != 0 || moveOffset[1] != 0 || moveOffset[2] != 0) && selection != null
@@ -710,10 +711,10 @@ final class HologramRenderer {
                 if (com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.isEnabled()) previewSliceFallbackFrames++;
                 materialDrawn = drawPreviewQuads(t, faces, depthScale, moveX, moveY);
             }
-            HologramNativeRasterSmoke.Frame raster = HologramNativeRasterSmoke
+            HologramRasterBridge.Frame raster = HologramRasterBridge
                 .begin(state, view == 1 || state.data.getInteger("mode") == 2);
             for (HologramState.Cell cell : nativePreviewCells) {
-                HologramNativeRasterSmoke.Slice pixels = null;
+                Object pixels = null;
                 if (raster != null) for (Face outline : cachedOutlines) if (outline.cell == cell) {
                     pixels = raster.before(outline.points, depthScale);
                     break;
@@ -738,7 +739,7 @@ final class HologramRenderer {
                 GL11.glPopMatrix();
                 if (pixels != null) raster.after(cell, pixels);
             }
-            HologramNativeRasterSmoke.finish(raster);
+            HologramRasterBridge.finish(raster);
             for (HologramState.Cell cell : linkedPreviewCells) {
                 boolean current = view == 1 || state.data.getInteger("mode") == 2;
                 if (HologramLinkNodePreview.prepare(cell, current)
