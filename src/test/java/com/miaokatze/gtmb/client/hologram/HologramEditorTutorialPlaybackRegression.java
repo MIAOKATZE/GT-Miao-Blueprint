@@ -29,6 +29,65 @@ public final class HologramEditorTutorialPlaybackRegression {
         loadingDocumentReplacesGeometryWithoutMutatingLibrary();
         inputHintsMatchWorldControls();
         manualCoursesRememberIndependentOutcomes();
+        testLabPreparationIsReadOnly();
+    }
+
+    public static void testLabPreparationIsReadOnly() {
+        java.nio.file.Path directory = null;
+        try {
+            directory = java.nio.file.Files.createTempDirectory("gtmb-profile-teaching-preparation-");
+            java.io.File file = directory.resolve("gtmb-editor-guide.properties")
+                .toFile();
+            boolean rejected = false;
+            try {
+                HologramTestLabUiProfile.requireTutorialPrepared(new HologramEditorPreferences(file), file);
+            } catch (IllegalStateException expected) {
+                rejected = true;
+            }
+            SimpleAssert.that(rejected && !file.exists(), "unprepared profile refuses without creating preferences");
+            byte[] base = "# owner preferences\r\ntutorial.v2.text=completed\r\nguide.collapsed=true\r\n"
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
+            java.nio.file.Files.write(file.toPath(), base);
+            rejected = false;
+            try {
+                HologramTestLabUiProfile.requireTutorialPrepared(new HologramEditorPreferences(file), file);
+            } catch (IllegalStateException expected) {
+                rejected = true;
+            }
+            SimpleAssert.that(
+                rejected && java.util.Arrays.equals(base, java.nio.file.Files.readAllBytes(file.toPath())),
+                "unprepared existing owner preferences are rejected without byte changes");
+            for (String outcome : new String[] { "skipped", "completed" }) {
+                byte[] prepared = (new String(base, java.nio.charset.StandardCharsets.UTF_8) + "tutorial.v2.blueprint="
+                    + outcome
+                    + "\r\n").getBytes(java.nio.charset.StandardCharsets.UTF_8);
+                java.nio.file.Files.write(file.toPath(), prepared);
+                HologramEditorPreferences preferences = new HologramEditorPreferences(file);
+                HologramTestLabUiProfile.requireTutorialPrepared(preferences, file);
+                SimpleAssert.eq(
+                    outcome,
+                    preferences.outcome("blueprint"),
+                    "normal teaching progress API accepts prepared outcome");
+                SimpleAssert.eq("completed", preferences.outcome("text"), "unrelated teaching progress remains intact");
+                SimpleAssert.that(
+                    java.util.Arrays.equals(prepared, java.nio.file.Files.readAllBytes(file.toPath())),
+                    "profile preparation check preserves exact preference bytes");
+                SimpleAssert.that(
+                    !directory.resolve("gtmb-editor-guide.properties.pending")
+                        .toFile()
+                        .exists(),
+                    "profile preparation check never starts a preference write");
+            }
+        } catch (java.io.IOException failure) {
+            throw new AssertionError("Test profile teaching preparation contract failed", failure);
+        } finally {
+            if (directory != null) try {
+                java.nio.file.Files.deleteIfExists(directory.resolve("gtmb-editor-guide.properties"));
+                java.nio.file.Files.deleteIfExists(directory);
+            } catch (java.io.IOException failure) {
+                throw new AssertionError("Test profile teaching preparation cleanup failed", failure);
+            }
+        }
     }
 
     private static void manualCoursesRememberIndependentOutcomes() {

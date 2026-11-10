@@ -12,6 +12,8 @@
 
 宿主统一使用工作区 [`tools/testlab/host.py`](../tools/testlab/host.py)，固定实例来自 [`plan/testlab-instances.json`](../plan/testlab-instances.json)。GTMB 复用 `E:/CodeGT/测试实例-GTMB` 的客户端和服务端，不按轮次克隆整包。客户端必须运行在 private desktop，创建失败即停止，不回退用户前台，不使用系统鼠标；Java 26、默认 4096 MiB，最大 5120 MiB。`doctor/catalog`、未带 `--execute` 的计划及 helper 编译都不是实机通过；使用方法见[测试维度指南](plan/测试维度指南.md)。
 
+独立 `client-ui` 使用 `--prepare` 在启动前临时准备已读教学状态，避免正常首次教学覆盖编辑器；教程进度文件及既存 `.pending` 都按原字节和存在性恢复。profile 不修改生产教学逻辑，并核验原三格输入快照、原生控件命中、异步状态变化及实际 GUI 帧；3D 视口证据单独记录。
+
 环境隔离仅作用于已核归属的测试世界：抑制自然刷怪和天气，不切 Peaceful、不改全局 gamerule、不赋予无敌，生存付款、逐位置权限与精确扣料断言保留。原生平台准备就绪、`NATIVE_READY`、在线真人或远程 channel 存在，都不证明 Netty 操作或渲染通过。报告分别记录 actor、可用 transport、实际 transport/render 覆盖、工件身份、结果、落盘和清理状态。
 
 `recovery-stage` 留下真实持久故障现场后终态为 `RECOVERY_PENDING`，不是完整恢复 PASS。自有测试 actor 存在未结算的施工恢复日志时，`reset/refresh` 和新场景变更均被只读检查阻断；只有专属 `recovery-resume` 可继续该恢复夹具。不要删日志、清场或改写背包绕过生产恢复；退出清理失败保留资源与 `cleanupPending`，供显式 stop 重试。

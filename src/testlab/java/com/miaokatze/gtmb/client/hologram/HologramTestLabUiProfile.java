@@ -86,6 +86,14 @@ public final class HologramTestLabUiProfile {
                 boolean readyWorld = mc.theWorld != null && mc.thePlayer != null && mc.currentScreen == null;
                 if (!readyTitle(mc.currentScreen) && !readyWorld) return;
                 Files.createDirectories(output);
+                java.io.File tutorialPreferences = new java.io.File(
+                    mc.mcDataDir,
+                    "config/gtmb-editor-guide.properties");
+                HologramEditorPreferences preferences = HologramEditorPreferences.get(mc.mcDataDir);
+                receipt.put("tutorialPreferencesPath", tutorialPreferences.getAbsolutePath());
+                receipt.put("tutorialPreferenceKey", "tutorial.v2.blueprint");
+                receipt.put("tutorialPreferenceOutcome", preferences.outcome("blueprint"));
+                requireTutorialPrepared(preferences, tutorialPreferences);
                 previous = mc.currentScreen;
                 receipt.put(
                     "entryScreenClass",
@@ -112,6 +120,7 @@ public final class HologramTestLabUiProfile {
                 stage = 1;
             } else if (stage == 1) {
                 if (mc.currentScreen != screen) throw new IllegalStateException("Native UI screen ownership changed");
+                requireIndependentFixture();
                 boolean attached = screen.panel()
                     .isValid()
                     && screen.getScreen()
@@ -176,6 +185,7 @@ public final class HologramTestLabUiProfile {
                 stage = 2;
             } else if (stage == 2) {
                 if (mc.currentScreen != screen) throw new IllegalStateException("Native UI screen ownership changed");
+                requireIndependentFixture();
                 // The real header button defers its action until the next safe MUI tick.
                 if (drawer.isExpanded() == drawerBefore || screen.ui.library.libraryDrawer() == drawerBefore) {
                     if (System.nanoTime() - dispatchedAt > 10000000000L) throw new IllegalStateException(
@@ -192,6 +202,22 @@ public final class HologramTestLabUiProfile {
         } catch (Throwable failure) {
             finish(false, failure.toString());
         }
+    }
+
+    /** Host preparation owns preference backup/restore; the profile never writes teaching progress. */
+    static void requireTutorialPrepared(HologramEditorPreferences preferences, java.io.File file) {
+        if (!preferences.seen("blueprint")) throw new IllegalStateException(
+            "Independent client-ui profile requires host lease preparation of tutorial.v2.blueprint=skipped in "
+                + file.getAbsolutePath()
+                + "; preserve existing preferences and restore original bytes after the run");
+    }
+
+    private void requireIndependentFixture() {
+        if (screen.ui.tutorial.active() || screen.ui.session.isTutorial()
+            || screen.ui.session.state() != snapshot
+            || screen.ui.session.state().cells.size() != 3)
+            throw new IllegalStateException(
+                "Independent native UI requires the original three-cell fixture and no active teaching overlay");
     }
 
     @SubscribeEvent(priority = EventPriority.LOWEST)
@@ -280,6 +306,7 @@ public final class HologramTestLabUiProfile {
                 || guiPostSerial < requestedGuiPost + 2) return;
             if (mc.currentScreen != screen || screen.ui.session.state() != snapshot)
                 throw new IllegalStateException("Post-input natural frame changed screen/snapshot identity");
+            requireIndependentFixture();
             int[] after = screen.ui.shell.targetBounds("library");
             boolean resized = after != null
                 && (drawerBefore ? after[2] < drawerBoundsBefore[2] : after[2] > drawerBoundsBefore[2]);
@@ -325,6 +352,8 @@ public final class HologramTestLabUiProfile {
             receipt.put("requestedFrameSerial", requestedFrame);
             receipt.put("actualFrameSerial", frameSerial);
             receipt.put("layout", nativeLayout());
+            receipt.put("fixtureCellsPreserved", screen.ui.session.state().cells.size());
+            receipt.put("tutorialInactive", !screen.ui.tutorial.active());
             receipt.put("clientRenderVerified", true);
             finish(true, "Real MUI2 screen and native control dispatch followed by a naturally rendered framebuffer");
         } catch (Throwable failure) {
@@ -368,6 +397,9 @@ public final class HologramTestLabUiProfile {
         result.put("guiPostSerial", guiPostSerial);
         result.put("lastGuiPostFrameSerial", lastGuiPostFrame);
         result.put("canvasGeneration", screen.ui.canvas.renderGeneration());
+        result.put("tutorialActive", screen.ui.tutorial.active());
+        result.put("mainFixtureIdentityPreserved", screen.ui.session.state() == snapshot);
+        result.put("mainFixtureCells", screen.ui.session.state().cells.size());
         result.put("panel", widgetFacts(screen.panel()));
         result.put("root", widgetFacts(screen.ui.shell.root()));
         result.put("content", widgetFacts(screen.ui.shell.contentRoot()));
