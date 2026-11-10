@@ -1,8 +1,5 @@
 package com.miaokatze.gtmb.client.hologram;
 
-import java.lang.reflect.InvocationTargetException;
-import java.lang.reflect.Method;
-
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraftforge.common.util.ForgeDirection;
 
@@ -16,23 +13,14 @@ import gregtech.api.metatileentity.implementations.MTEHatch;
 import gregtech.api.render.TextureFactory;
 import gregtech.common.tileentities.machines.MTEHatchCraftingInputME;
 
-/** Read-only GT texture access across the inventory-model API introduced after beta2. */
+/** Read-only GT5U .265 inventory texture API; the supported GTNH 2.9.0 baseline has this method. */
 final class HologramMachineTextures {
 
-    private static final Method INVENTORY_TEXTURES = findInventoryTextures();
     private static final int[][] NORTH_TO_FRONT = { { 2, 3, 1, 0, 4, 5 }, { 3, 2, 0, 1, 4, 5 }, { 0, 1, 2, 3, 4, 5 },
         { 0, 1, 3, 2, 5, 4 }, { 0, 1, 5, 4, 2, 3 }, { 0, 1, 4, 5, 3, 2 } };
     private static final int[] NORTH_TO_WEST = { 0, 1, 4, 5, 3, 2 };
 
     private HologramMachineTextures() {}
-
-    private static Method findInventoryTextures() {
-        try {
-            return IMetaTileEntity.class.getMethod("getInventoryTextures");
-        } catch (NoSuchMethodException absentOnBeta1And2) {
-            return null;
-        }
-    }
 
     static ITexture[][] resolve(IMetaTileEntity machine, int front, int[] textureSides) {
         ITexture[][] inventory = inventory(machine);
@@ -141,19 +129,11 @@ final class HologramMachineTextures {
     }
 
     private static ITexture[][] inventory(IMetaTileEntity machine) {
-        if (INVENTORY_TEXTURES != null) {
-            try {
-                ITexture[][] inventory = (ITexture[][]) INVENTORY_TEXTURES.invoke(machine);
-                if (inventory != null) return inventory;
-            } catch (InvocationTargetException failedDelegate) {
-                Throwable cause = failedDelegate.getCause();
-                if (cause instanceof Error) throw (Error) cause;
-                if (!(cause instanceof RuntimeException))
-                    throw new IllegalStateException("Inventory texture callback failed", cause);
-                // A world-dependent optional model can still expose its legacy inventory faces.
-            } catch (IllegalAccessException inaccessibleDelegate) {
-                throw new IllegalStateException("Cannot invoke inventory texture callback", inaccessibleDelegate);
-            }
+        try {
+            ITexture[][] nativeTextures = machine.getInventoryTextures();
+            if (nativeTextures != null) return nativeTextures;
+        } catch (RuntimeException requiresWorldTile) {
+            // Preserve the existing optional, world-dependent texture fallback. Errors still propagate.
         }
         ITexture[][] inventory = new ITexture[6][];
         IGregTechTileEntity base = machine.getBaseMetaTileEntity();

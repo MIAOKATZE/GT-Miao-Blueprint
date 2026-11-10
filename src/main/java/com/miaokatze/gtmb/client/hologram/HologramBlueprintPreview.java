@@ -3,9 +3,6 @@ package com.miaokatze.gtmb.client.hologram;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.lang.reflect.Field;
-import java.lang.reflect.Modifier;
-import java.nio.Buffer;
 import java.nio.ByteBuffer;
 import java.nio.DoubleBuffer;
 import java.nio.charset.StandardCharsets;
@@ -56,6 +53,7 @@ import com.google.gson.JsonObject;
 import com.miaokatze.gtmb.hologram.HologramAeNativePreview;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
+import com.miaokatze.miaokatzecore.client.preview.PreviewRenderScope.ClientTessState;
 
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.EventPriority;
@@ -811,51 +809,6 @@ public final class HologramBlueprintPreview {
             for (int current = GL11.glGetInteger(depthName); current < depth; current++) GL11.glPushMatrix();
             value.rewind();
             GL11.glLoadMatrix(value);
-        }
-    }
-
-    /** Preview starts only between batches; preserve the caller's scalar state, backing arrays, and NIO cursors. */
-    private static final class ClientTessState {
-
-        private final Tessellator tessellator;
-        private final Map<Field, Object> values = new HashMap<>();
-        private final Map<Buffer, int[]> cursors = new java.util.IdentityHashMap<>();
-
-        ClientTessState(Tessellator tessellator) throws ReflectiveOperationException {
-            this.tessellator = tessellator;
-            if (ReflectionHelper.findField(Tessellator.class, "isDrawing", "field_78415_z")
-                .getBoolean(tessellator))
-                throw new IllegalStateException("Cannot capture a blueprint inside an active tessellator batch");
-            for (Class<?> type = tessellator.getClass(); type != Object.class; type = type.getSuperclass()) {
-                for (Field field : type.getDeclaredFields()) {
-                    boolean staticField = Modifier.isStatic(field.getModifiers());
-                    if ((!staticField && !Modifier.isFinal(field.getModifiers())
-                        && field.getType()
-                            .isPrimitive())
-                        || (!staticField && field.getType() == int[].class)
-                        || Buffer.class.isAssignableFrom(field.getType())) {
-                        field.setAccessible(true);
-                        Object value = field.get(staticField ? null : tessellator);
-                        if (value instanceof Buffer) {
-                            Buffer buffer = (Buffer) value;
-                            cursors.put(buffer, new int[] { buffer.position(), buffer.limit() });
-                        } else if (!Modifier.isFinal(field.getModifiers())) values.put(field, value);
-                    }
-                }
-            }
-        }
-
-        void restore() throws IllegalAccessException {
-            for (Map.Entry<Field, Object> entry : values.entrySet()) entry.getKey()
-                .set(tessellator, entry.getValue());
-            for (Map.Entry<Buffer, int[]> entry : cursors.entrySet()) {
-                entry.getKey()
-                    .position(0);
-                entry.getKey()
-                    .limit(entry.getValue()[1]);
-                entry.getKey()
-                    .position(entry.getValue()[0]);
-            }
         }
     }
 }

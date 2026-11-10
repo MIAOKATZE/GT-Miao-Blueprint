@@ -53,6 +53,10 @@ public final class HologramEnergy {
         double rfToEuPerHundred();
 
         double aeToEu();
+
+        default String sourceKey() {
+            return "";
+        }
     }
 
     public static final class Quote {
@@ -116,6 +120,7 @@ public final class HologramEnergy {
         public final BigInteger eu;
         public final double ae;
         public final String source;
+        final String networkKey;
         private final Bank bank;
         private boolean settled;
 
@@ -124,6 +129,7 @@ public final class HologramEnergy {
             this.eu = eu;
             this.ae = ae;
             this.source = source;
+            this.networkKey = bank.sourceKey();
         }
 
         public synchronized void commit() {
@@ -138,6 +144,13 @@ public final class HologramEnergy {
             if (ae > 0) bank.refundAe(ae);
             if (eu.signum() > 0) bank.refundEu(eu);
         }
+    }
+
+    /** Reconstitute only an unsettled, owner-authenticated construction journal receipt. */
+    static Receipt resumeReceipt(Bank bank, BigInteger eu, double ae, String source) {
+        if (eu.signum() < 0 || !Double.isFinite(ae) || ae < 0)
+            throw new IllegalArgumentException("Invalid persisted energy receipt");
+        return new Receipt(bank, eu, ae, source);
     }
 
     public static Quote quote(Demand demand, Bank bank) {

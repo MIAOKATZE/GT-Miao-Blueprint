@@ -56,6 +56,13 @@ final class HologramPlacementJobs {
 
     static void tickJob(HologramSession s) {
         if (s.job != 1) return;
+        if (HologramConstructionJournal.pending(s.player)) {
+            s.job = 4;
+            s.phase = "STOPPED";
+            s.status = "存在待核定施工凭据，施工已暂停；请联系管理员 /gtmb recovery";
+            HologramSnapshots.sendStoppedJob(s);
+            return;
+        }
         String invalid = HologramSessionPolicy.jobInvalidReason(s);
         if (!invalid.isEmpty()) {
             // Keep attempted/total counters and unpublished outcomes for the stopped-job receipt.
@@ -115,6 +122,11 @@ final class HologramPlacementJobs {
                 s.stopTick = false;
                 break;
             }
+        }
+        if (s.job == 4) {
+            s.phase = "STOPPED";
+            HologramSnapshots.sendStoppedJob(s);
+            return;
         }
         s.phase = "ACK";
         s.batchSeq++;

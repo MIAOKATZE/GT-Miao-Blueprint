@@ -49,9 +49,28 @@ final class HologramWorldTransactions {
 
     static boolean operate(HologramSession s, HologramCapture.Cell c, int index) {
         try {
-            return operateChecked(s, c, index);
+            if (HologramConstructionJournal.pending(s.player)) {
+                s.job = 4;
+                s.stopTick = true;
+                s.status = "存在待核定施工凭据，施工已暂停；请联系管理员 /gtmb recovery";
+                return false;
+            }
+            boolean result = operateChecked(s, c, index);
+            if (HologramConstructionJournal.pending(s.player)) {
+                s.job = 4;
+                s.stopTick = true;
+                s.status = "施工结果待核定，已暂停并保留世界/付款凭据；请联系管理员 /gtmb recovery";
+            }
+            return result;
         } catch (RuntimeException | LinkageError failure) {
             if (Boolean.getBoolean("gtmb.v0111.nativeContractsOnly")) failure.printStackTrace(System.err);
+            if (HologramConstructionJournal.owner(s.player)
+                .hasKey(HologramConstructionJournal.KEY)) {
+                s.job = 4;
+                s.stopTick = true;
+                s.status = "Construction recovery pending; external writes stopped; /gtmb recovery";
+                return false;
+            }
             HologramPlacementDiagnostics.failure(s, c, index, "admission", failure);
             c.status = "unsupported";
             s.status = "设备状态或回收数据无法读取，该格未施工";
@@ -209,7 +228,8 @@ final class HologramWorldTransactions {
         BlockSnapshot snapshot = readOnlyBlockSnapshot(w, c.x, c.y, c.z);
         HologramMaterials.Transaction transaction = HologramMaterialAccess.materialSource(s)
             .begin()
-            .protectAssets(s.pendingAssetBudget, s.cellAssetBudgets.getOrDefault(index, Collections.emptyMap()));
+            .protectAssets(s.pendingAssetBudget, s.cellAssetBudgets.getOrDefault(index, Collections.emptyMap()))
+            .journal(HologramConstructionJournal.begin(s.player, c.x, c.y, c.z, old, oldMeta, savedTile, inventory));
         HologramDecorMaterials.Descriptor decorDescriptor = null;
         HologramDecorMaterials.Quote decorQuote = null;
         ItemStack reserved = null;
@@ -358,6 +378,7 @@ final class HologramWorldTransactions {
                     boolean removed;
                     if (tile) {
                         changedWorld = true;
+                        transaction.beforeWorldMutation();
                         removed = HologramRecovery.removeWithoutDrops(w, c.x, c.y, c.z);
                     } else {
                         boolean frame = old instanceof BlockFrameBox;
@@ -371,12 +392,13 @@ final class HologramWorldTransactions {
                             }
                         }
                         changedWorld = true;
+                        transaction.beforeWorldMutation();
                         removed = frame ? w.setBlockToAir(c.x, c.y, c.z)
                             : old.removedByPlayer(w, s.player, c.x, c.y, c.z, false);
                         if (removed) old.onBlockDestroyedByPlayer(w, c.x, c.y, c.z, oldMeta);
                     }
                     if (!removed) {
-                        HologramRecovery.restore(w, c.x, c.y, c.z, old, oldMeta, savedTile);
+                        if (!restoreCell(s, c, transaction, old, oldMeta, savedTile)) return false;
                         rollbackMaterials(s, transaction, inventory);
                         c.status = "protected";
                         return true;
@@ -388,6 +410,7 @@ final class HologramWorldTransactions {
                 if (!HologramValues.same(energyTarget, HologramCellPolicy.targetFor(s, c, index)))
                     throw new IllegalStateException("Placement target changed after resource reservation");
                 changedWorld = true;
+                transaction.beforeWorldMutation();
                 final ItemStack material = reserved;
                 HologramMaterialSources.ReservedSource reservation = material == null ? null
                     : new HologramMaterialSources.ReservedSource(material);
@@ -459,7 +482,7 @@ final class HologramWorldTransactions {
                         + ":"
                         + w.getBlockMetadata(c.x, c.y, c.z));
                 if (result == PlaceResult.STOP) {
-                    HologramRecovery.restore(w, c.x, c.y, c.z, old, oldMeta, savedTile);
+                    if (!restoreCell(s, c, transaction, old, oldMeta, savedTile)) return false;
                     rollbackMaterials(s, transaction, inventory);
                     s.defer = true;
                     c.status = "pending";
@@ -491,7 +514,7 @@ final class HologramWorldTransactions {
                             false))) {
                     HologramPlacementDiagnostics
                         .rejected(s, c, index, result.name(), nativeCancelled, reservation == null || reservation.used);
-                    HologramRecovery.restore(w, c.x, c.y, c.z, old, oldMeta, savedTile);
+                    if (!restoreCell(s, c, transaction, old, oldMeta, savedTile)) return false;
                     rollbackMaterials(s, transaction, inventory);
                     c.status = nativeCancelled ? "protected"
                         : result == PlaceResult.REJECT_CONTINUE ? "unsupported" : "missing";
@@ -669,7 +692,7 @@ final class HologramWorldTransactions {
                     throw new java.io.IOException(c.resourceError);
                 }
                 if (MinecraftForge.EVENT_BUS.post(new BlockEvent.PlaceEvent(snapshot, old, s.player))) {
-                    HologramRecovery.restore(w, c.x, c.y, c.z, old, oldMeta, savedTile);
+                    if (!restoreCell(s, c, transaction, old, oldMeta, savedTile)) return false;
                     rollbackMaterials(s, transaction, inventory);
                     c.status = "protected";
                     s.status = "领地/模组保护取消放置，该格已恢复，预留材料已归还";
@@ -695,7 +718,6 @@ final class HologramWorldTransactions {
                     }
                 }
             }
-            transaction.commit();
             if (decorQuote != null) s.decorLedger.commit(decorQuote);
             HologramMaterialAccess.commitAssetBudget(s, index);
             s.player.inventory.markDirty();
@@ -707,6 +729,7 @@ final class HologramWorldTransactions {
                 s.status = cacheNotice;
             }
             if (voucherReserved) s.jobVoucherConsumed = true;
+            transaction.commit();
         } catch (java.io.IOException | RuntimeException | LinkageError e) {
             if (Boolean.getBoolean("gtmb.v0111.nativeContractsOnly")) e.printStackTrace(System.err);
             HologramPlacementDiagnostics.failure(s, c, index, placementStage, e);
@@ -729,7 +752,11 @@ final class HologramWorldTransactions {
                     + String.valueOf(cause.getMessage());
                 if (nativeFailure.length() > 240) nativeFailure = nativeFailure.substring(0, 240);
             }
-            if (changedWorld) HologramRecovery.restore(w, c.x, c.y, c.z, old, oldMeta, savedTile);
+            if (transaction.commitStarted()) {
+                HologramConstructionJournal.suspend(s, transaction, e);
+                return false;
+            }
+            if (changedWorld && !restoreCell(s, c, transaction, old, oldMeta, savedTile)) return false;
             rollbackMaterials(s, transaction, inventory);
             s.status = "施工异常，已还原该格；请检查部分完成结果";
             if (!nativeFailure.isEmpty()) s.status += " [" + nativeFailure + "]";
@@ -859,13 +886,58 @@ final class HologramWorldTransactions {
         return new BlockSnapshot(world, x, y, z, world.getBlock(x, y, z), world.getBlockMetadata(x, y, z), data);
     }
 
+    private static boolean restoreCell(HologramSession s, HologramCapture.Cell c,
+        HologramMaterials.Transaction transaction, Block old, int metadata, NBTTagCompound tile) {
+        return restoreCell(
+            s,
+            transaction,
+            () -> HologramRecovery.restore(s.player.worldObj, c.x, c.y, c.z, old, metadata, tile));
+    }
+
+    static boolean restoreCell(HologramSession s, HologramMaterials.Transaction transaction, Runnable restoration) {
+        transaction.checkpoint();
+        try {
+            restoration.run();
+            return true;
+        } catch (RuntimeException | LinkageError failure) {
+            HologramConstructionJournal.suspend(s, transaction, failure);
+            return false;
+        }
+    }
+
     static void rollbackMaterials(HologramSession s, HologramMaterials.Transaction transaction, ItemStack[] inventory) {
+        if (!transaction.hasJournal()) {
+            try {
+                transaction.rollbackExternal();
+            } finally {
+                HologramMaterialAccess.restoreInventory(s, inventory);
+                HologramMaterialAccess.materialSource(s)
+                    .afterInventoryRestore();
+            }
+            return;
+        }
+        if (transaction.uncertain()) {
+            HologramConstructionJournal
+                .suspend(s, transaction, new IllegalStateException("Native extraction outcome unknown"));
+            return;
+        }
+        transaction.checkpoint();
+        NBTTagCompound journal = HologramConstructionJournal.owner(s.player)
+            .getCompoundTag(HologramConstructionJournal.KEY);
+        journal.setTag(
+            "settlementPayment",
+            journal.getCompoundTag("payment")
+                .copy());
+        journal.setBoolean("settlementStarted", true);
+        if (journal.getBoolean("durable")) HologramConstructionJournal.persist(s.player, journal);
         try {
             transaction.rollbackExternal();
-        } finally {
             HologramMaterialAccess.restoreInventory(s, inventory);
             HologramMaterialAccess.materialSource(s)
                 .afterInventoryRestore();
+            HologramConstructionJournal.clear(s.player);
+        } catch (RuntimeException | LinkageError failure) {
+            HologramConstructionJournal.suspend(s, transaction, failure);
         }
     }
 }

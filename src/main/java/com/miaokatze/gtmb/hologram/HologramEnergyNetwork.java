@@ -36,6 +36,7 @@ final class HologramEnergyNetwork implements HologramEnergy.Bank {
     private static final Logger LOG = LogManager.getLogger("gtmb");
     private final EntityPlayerMP player;
     private final Connection connection;
+    private final String refundNetworkKey;
 
     HologramEnergyNetwork(EntityPlayerMP player) {
         this(player, null);
@@ -46,6 +47,7 @@ final class HologramEnergyNetwork implements HologramEnergy.Bank {
             throw new IllegalArgumentException("Energy banks require a server player");
         this.player = player;
         connection = findConnection(player, networkKey);
+        refundNetworkKey = connection == null ? networkKey : connection.key;
     }
 
     @Override
@@ -90,11 +92,17 @@ final class HologramEnergyNetwork implements HologramEnergy.Bank {
     }
 
     @Override
+    public String sourceKey() {
+        return refundNetworkKey == null ? "" : refundNetworkKey;
+    }
+
+    @Override
     public void refundAe(double amount) {
         double remaining = amount;
         boolean uncertain = false;
         try {
-            remaining = checkedRemainder(connection.energy.injectPower(amount, Actionable.MODULATE), amount);
+            if (connection != null)
+                remaining = checkedRemainder(connection.energy.injectPower(amount, Actionable.MODULATE), amount);
         } catch (RuntimeException | LinkageError failure) {
             // A native provider may throw after accepting power. Automatic retry would risk a duplicate refund.
             uncertain = true;
@@ -104,7 +112,9 @@ final class HologramEnergyNetwork implements HologramEnergy.Bank {
             NBTTagCompound owner = owner(player);
             NBTTagList queue = owner.getTagList(AE_RECOVERY, 10);
             NBTTagCompound row = new NBTTagCompound();
-            row.setString("network", connection.key);
+            if (sourceKey().isEmpty())
+                throw new IllegalStateException("AE refund is missing its authenticated source key");
+            row.setString("network", sourceKey());
             row.setDouble("amount", remaining);
             if (uncertain) row.setBoolean("uncertain", true);
             queue.appendTag(row);
