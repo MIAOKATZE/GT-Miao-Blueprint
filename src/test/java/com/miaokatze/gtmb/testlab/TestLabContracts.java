@@ -179,6 +179,7 @@ public final class TestLabContracts {
             verifyDefaultSuiteDispatch();
             verifyRecoveryGuard();
             com.miaokatze.gtmb.client.hologram.HologramEditorTutorialPlaybackRegression.testLabPreparationIsReadOnly();
+            com.miaokatze.gtmb.client.hologram.HologramNativeWidgetDiagnosticsRegression.run();
             TestLabReport evidence = new TestLabReport("contract-run", "minimal", TestLabRegression.config(4096));
             SimpleAssert.that(evidence.data.getBoolean("notNetty"), "common test does not claim network dispatch");
             SimpleAssert.eq(

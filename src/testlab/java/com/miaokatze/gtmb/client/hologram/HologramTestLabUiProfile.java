@@ -19,6 +19,8 @@ import net.minecraftforge.common.MinecraftForge;
 import org.lwjgl.opengl.GL11;
 
 import com.cleanroommc.modularui.api.widget.IWidget;
+import com.cleanroommc.modularui.screen.ModularPanel;
+import com.cleanroommc.modularui.screen.ModularScreen;
 import com.cleanroommc.modularui.screen.viewport.LocatedWidget;
 import com.google.gson.GsonBuilder;
 import com.miaokatze.miaokatzecore.api.testlab.ArtifactIdentity;
@@ -200,7 +202,7 @@ public final class HologramTestLabUiProfile {
                 stage = 3;
             }
         } catch (Throwable failure) {
-            finish(false, failure.toString());
+            fail(failure);
         }
     }
 
@@ -357,7 +359,7 @@ public final class HologramTestLabUiProfile {
             receipt.put("clientRenderVerified", true);
             finish(true, "Real MUI2 screen and native control dispatch followed by a naturally rendered framebuffer");
         } catch (Throwable failure) {
-            finish(false, failure.toString());
+            fail(failure);
         }
     }
 
@@ -413,35 +415,68 @@ public final class HologramTestLabUiProfile {
         result.put(
             "header.library",
             widgetFacts(header == null || header.isEmpty() ? null : (IWidget) header.get(header.size() - 1)));
-        result.put("viewportBounds", screen.ui.shell.targetBounds("viewport"));
-        result.put("libraryBounds", screen.ui.shell.targetBounds("library"));
-        result.put("headerBounds", screen.ui.shell.targetBounds("header.library"));
+        result.put("viewportBounds", ((Map<?, ?>) result.get("scene")).get("clippedBounds"));
+        result.put("libraryBounds", ((Map<?, ?>) result.get("libraryDrawer")).get("clippedBounds"));
+        result.put("headerBounds", ((Map<?, ?>) result.get("header.library")).get("clippedBounds"));
         return result;
     }
 
     private Map<String, Object> widgetFacts(IWidget widget) {
+        return describeWidget(widget, screen.getScreen(), screen.ui.shell::nativeWidgetBounds);
+    }
+
+    /** MUI's default ancestor helper requires a non-root receiver; diagnostics also inspect panel roots. */
+    static Map<String, Object> describeWidget(IWidget widget, ModularScreen expectedScreen,
+        java.util.function.Function<IWidget, int[]> clippedBounds) {
         Map<String, Object> result = new LinkedHashMap<String, Object>();
+        result.put("attachment", "unattached");
         if (widget == null) {
             result.put("missing", true);
             return result;
         }
-        result.put(
-            "class",
-            widget.getClass()
-                .getName());
-        result.put("name", widget.getName());
-        result.put("valid", widget.isValid());
-        result.put("enabled", widget.isEnabled());
-        result.put("ancestorsEnabled", widget.areAncestorsEnabled());
-        result.put(
-            "area",
-            new int[] { widget.getArea().x, widget.getArea().y, widget.getArea().width, widget.getArea().height });
-        if (widget.isValid()) {
+        try {
             result.put(
-                "panelOpen",
-                widget.getPanel()
-                    .isOpen());
-            result.put("clippedBounds", screen.ui.shell.nativeWidgetBounds(widget));
+                "class",
+                widget.getClass()
+                    .getName());
+            result.put("name", widget.getName());
+            result.put("valid", widget.isValid());
+            result.put("enabled", widget.isEnabled());
+            result.put(
+                "area",
+                new int[] { widget.getArea().x, widget.getArea().y, widget.getArea().width, widget.getArea().height });
+            java.util.Set<IWidget> visited = java.util.Collections
+                .newSetFromMap(new java.util.IdentityHashMap<IWidget, Boolean>());
+            IWidget cursor = widget;
+            ModularPanel root = null;
+            boolean enabled = true;
+            while (cursor != null && visited.size() < 128 && visited.add(cursor)) {
+                enabled &= cursor.isEnabled();
+                if (cursor instanceof ModularPanel) {
+                    root = (ModularPanel) cursor;
+                    break;
+                }
+                if (!cursor.isValid()) break;
+                cursor = cursor.getParent();
+            }
+            result.put("parentDepth", Math.max(0, visited.size() - 1));
+            result.put("ancestorsEnabled", root != null && enabled);
+            if (root == null) {
+                result.put("unattachedReason", "Parent chain has no ModularPanel root");
+                return result;
+            }
+            result.put("rootPanel", root.getName());
+            result.put("panelOpen", root.isOpen());
+            if (!widget.isValid() || !root.isValid() || !root.isOpen()) {
+                result.put("unattachedReason", "Widget or root is invalid/closed");
+                return result;
+            }
+            if (expectedScreen == null || root.getScreen() != expectedScreen || widget.getPanel() != root) {
+                result.put("unattachedReason", "Panel/owner identity does not match the inspected screen");
+                return result;
+            }
+            result.put("attachment", "attached");
+            result.put("clippedBounds", clippedBounds.apply(widget));
             com.cleanroommc.modularui.screen.viewport.TransformationMatrix matrix = LocatedWidget.of(widget)
                 .getTransformationMatrix();
             int x = Math.round(matrix.transformX(0, 0)), y = Math.round(matrix.transformY(0, 0));
@@ -449,8 +484,28 @@ public final class HologramTestLabUiProfile {
                 "screenBounds",
                 new int[] { x, y, Math.round(matrix.transformX(widget.getArea().width, widget.getArea().height)) - x,
                     Math.round(matrix.transformY(widget.getArea().width, widget.getArea().height)) - y });
+        } catch (RuntimeException | LinkageError failure) {
+            result.put("attachment", "unattached");
+            result.put("diagnosticError", failure.toString());
+            result.put("diagnosticErrorStackTrace", failureStack(failure));
         }
         return result;
+    }
+
+    static String failureStack(Throwable failure) {
+        java.io.StringWriter text = new java.io.StringWriter();
+        failure.printStackTrace(new java.io.PrintWriter(text));
+        return text.toString();
+    }
+
+    private void fail(Throwable failure) {
+        receipt.put(
+            "exceptionClass",
+            failure.getClass()
+                .getName());
+        receipt.put("exceptionStackTrace", failureStack(failure));
+        failure.printStackTrace(System.err);
+        finish(false, failure.toString());
     }
 
     private void writeJson(String name, Object value) throws java.io.IOException {
@@ -512,6 +567,7 @@ public final class HologramTestLabUiProfile {
                     receipt.put("terminalNativeLayout", nativeLayout());
                 } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
                     receipt.put("terminalNativeLayoutError", failure.toString());
+                    receipt.put("terminalNativeLayoutErrorStackTrace", failureStack(failure));
                 }
             }
             if (mc.currentScreen == screen && screen != null) mc.displayGuiScreen(previous);
@@ -520,6 +576,8 @@ public final class HologramTestLabUiProfile {
         } catch (Throwable failure) {
             passed = false;
             detail = "UI cleanup failed: " + failure;
+            receipt.put("cleanupErrorStackTrace", failureStack(failure));
+            failure.printStackTrace(System.err);
             receipt.put("cleanupPending", true);
         }
         try {
