@@ -371,3 +371,6 @@ tasks.register<JavaExec>("runProductionTestlabIsolation") {
 }
 
 tasks.named("check") { dependsOn("runTestlabContracts", "runProductionTestlabIsolation") }
+
+// Package and verify the project-specific code and independent-asset licenses.
+apply(from = "gradle/licensing.gradle.kts")

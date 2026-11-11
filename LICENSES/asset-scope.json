@@ -1,0 +1,32 @@
+{
+  "schemaVersion": 1,
+  "project": "GT-Miao-Blueprint",
+  "modId": "gtmb",
+  "effectiveFrom": "v0.3.21",
+  "canonicalSource": "https://github.com/MIAOKATZE/GT-Miao-Blueprint",
+  "rightsHolder": "MIAOKATZE; other applicable rights holders retain their existing notices",
+  "defaultLicense": "AGPL-3.0-only",
+  "codeAdditionalTerms": "AGPL-ADDITIONAL-TERMS.md",
+  "ruleOrder": "last matching rule wins; paths are relative to src/main/resources or the JAR root; ** also matches zero directories",
+  "rules": [
+    {
+      "pattern": "assets/gtmb/textures/**",
+      "license": "CC-BY-NC-ND-4.0",
+      "kind": "independent project artwork"
+    },
+    {
+      "pattern": "assets/gtmb/fonts/DejaVu*.ttf",
+      "license": "LicenseRef-DejaVu",
+      "notice": "assets/gtmb/fonts/LICENSE_DEJAVU"
+    },
+    {
+      "pattern": "assets/gtmb/fonts/*.otf",
+      "license": "OFL-1.1",
+      "notice": "assets/gtmb/fonts/Fusion-Pixel-OFL.txt"
+    }
+  ],
+  "notes": [
+    "DejaVu fonts retain their supplied Bitstream/Arev notices. Fusion Pixel and the renamed/subset Miao Wiki Pixel font retain SIL OFL 1.1; the project asset license does not replace these grants."
+  ],
+  "existingGrants": "No valid existing grant is revoked or narrowed. Existing third-party terms and statutory rights remain applicable."
+}

@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Additional terms: see AGPL-ADDITIONAL-TERMS.md in the project root.
+
 package com.miaokatze.gtmb.hologram;
 
 /** World gestures never authorize construction; that remains an explicit server-validated UI action. */

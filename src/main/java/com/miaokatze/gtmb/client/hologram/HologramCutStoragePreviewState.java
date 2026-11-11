@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Additional terms: see AGPL-ADDITIONAL-TERMS.md in the project root.
+
 package com.miaokatze.gtmb.client.hologram;
 
 /** One selected item and one read request. Changing selection invalidates every older reply. */

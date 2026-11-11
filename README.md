@@ -6,7 +6,7 @@
 <p align="center"><strong>猫猫蓝图 · GTNH 结构预览、蓝图编辑与材料施工</strong><br><strong>Miao Blueprint · Preview, edit and build with your materials</strong></p>
 
 <p align="center">
-  <a href="LICENSE"><img alt="License AGPL-3.0" src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg"></a>
+  <a href="LICENSE"><img alt="Code license AGPL-3.0" src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg"></a>
   <img alt="Minecraft 1.7.10" src="https://img.shields.io/badge/Minecraft-1.7.10-blue.svg">
   <img alt="Forge 10.13.4.1614" src="https://img.shields.io/badge/Forge-10.13.4.1614-blue.svg">
   <a href="https://github.com/GTNewHorizons/GT-New-Horizons-Modpack"><img alt="GTNH2.9.0 正式版" src="https://img.shields.io/badge/GTNH-2.9.0-blue.svg"></a>
@@ -386,6 +386,12 @@ ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继
 
 ## License & Origins / 许可与来源
 
-[AGPL-3.0](LICENSE) · 源自 / Origin: GT-Interesting-Thing · 现独立维护为 / Independently maintained as GTMB · 开发记录 / Development notes: [GT-Miao-Blueprint-plan](https://github.com/MIAOKATZE/GT-Miao-Blueprint-plan).
+**Code:** [AGPLv3](LICENSE) with [reasonable additional terms](AGPL-ADDITIONAL-TERMS.md). **Designated independent assets:** [CC BY-NC-ND 4.0](ASSET-LICENSE.md). See [NOTICE](NOTICE.md) for project identity, exact scope, third-party exceptions, and independent legal-compliance duties.
+
+**代码：** AGPLv3及合理附加条款；**指定独立素材：** CC BY-NC-ND 4.0。具体范围、第三方例外和独立法律合规义务见NOTICE；既有有效授权不追溯撤回。
+
+This arrangement applies from **v0.3.21**. The two licenses cover different material; they are not alternative choices for the same material.
+
+源自 / Origin: GT-Interesting-Thing · 现独立维护为 / Independently maintained as GTMB · 开发记录 / Development notes: [GT-Miao-Blueprint-plan](https://github.com/MIAOKATZE/GT-Miao-Blueprint-plan).
 
 兼容平台：GTNH2.9.0 正式版。

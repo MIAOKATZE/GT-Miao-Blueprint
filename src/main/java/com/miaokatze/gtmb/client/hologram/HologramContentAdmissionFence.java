@@ -1,3 +1,6 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Additional terms: see AGPL-ADDITIONAL-TERMS.md in the project root.
+
 package com.miaokatze.gtmb.client.hologram;
 
 /** A content receipt can open only its original UI selection, once, before cancellation. */
