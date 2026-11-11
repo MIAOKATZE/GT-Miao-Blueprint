@@ -25,6 +25,7 @@ public final class HologramUiLifecycleRegression {
 
     public static void run() {
         deferredIntent();
+        dismissEmptyNetworkDrawer();
         try {
             libraryKeepsTheFirstHandler();
             freshDialogClosures();
@@ -33,6 +34,27 @@ public final class HologramUiLifecycleRegression {
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("Cannot inspect MUI2 2.3.94 local dialog state", failure);
         }
+    }
+
+    private static void dismissEmptyNetworkDrawer() {
+        HologramUiModules ui = new HologramUiModules(null);
+        NBTTagCompound snapshot = new NBTTagCompound();
+        snapshot.setString("session", "network-modal");
+        snapshot.setBoolean("networkBindingRequested", true);
+        HologramState open = new HologramState(snapshot);
+        List<String> sent = new ArrayList<>();
+        ui.session.initializeIsolated(open, (operation, request) -> sent.add(operation));
+        ui.session.pendingSequence(37);
+        ui.bindings.activateNetworkBinding(201);
+        SimpleAssert.that(
+            !ui.bindings.networkDrawer() && sent.equals(java.util.Arrays.asList("closeNetworkBindings")),
+            "modal cancel is local, even with zero groups and a pending server ticket");
+        SimpleAssert
+            .eq(37L, ui.session.pendingSequence(), "dismissal does not cancel or replace the pending operation");
+        ui.bindings.acknowledgeSnapshot(open, ui.bindings.captureSnapshotTransition(), false);
+        SimpleAssert.that(!ui.bindings.networkDrawer(), "an older requested=true snapshot cannot reopen the drawer");
+        ui.bindings.openBindingsControl(196);
+        SimpleAssert.that(ui.bindings.networkDrawer(), "explicit reopening is allowed");
     }
 
     private static void deferredIntent() {

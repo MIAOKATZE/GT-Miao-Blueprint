@@ -463,8 +463,6 @@ item.decoration_voucher.description.2=§7Covers allowed building materials; §6i
 gtmb.hologram.progress.snapshot.detail.export_json=Encode blueprint JSON
 
 # Projector and decoration voucher tooltip details
-gtmb.tooltip.hold_shift.projector=§8Hold §eShift §8for all blueprint, cut and selection controls.§r
-gtmb.tooltip.hold_shift.voucher=§8Hold §eShift §8for coverage, consumption and server settings.§r
 gtmb.tooltip.section.coverage=§b§lCovered materials§r
 gtmb.tooltip.section.payment=§6§lConsumption and retention§r
 gtmb.tooltip.section.configuration=§d§lServer settings§r

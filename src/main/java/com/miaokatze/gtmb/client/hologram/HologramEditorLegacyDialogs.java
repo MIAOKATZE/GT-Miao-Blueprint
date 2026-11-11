@@ -456,8 +456,16 @@ final class HologramEditorLegacyDialogs {
 
             NativeControl(int id) {
                 // The native action is deferred; recheck the business at execution, not just the last painted frame.
-                widget = ui.shell
-                    .nativeAction(id, () -> label, () -> domain.active() && enabled && visible, () -> help);
+                // The descriptor buffer is restored after painting. Dispatch network buttons to the
+                // modal that owns their retained, validated widget (201 is also a library button).
+                widget = ui.shell.nativeAction(
+                    id,
+                    HologramEditorIcons.forControl(id, ""),
+                    () -> label,
+                    () -> domain.active() && enabled && visible,
+                    () -> help,
+                    false,
+                    "network".equals(domain.id) ? ui.bindings::activateNetworkBinding : ui.router::activate);
                 if (id == domain.cancelControl) {
                     ui.shell.registerTarget(domain.id + ".cancel", widget);
                     // These exits may leave the editor, cancel a save review, or apply a placement strategy.

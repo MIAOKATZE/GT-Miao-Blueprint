@@ -463,8 +463,6 @@ item.decoration_voucher.description.2=§7仅抵扣允许的建筑材料；§6工
 gtmb.hologram.progress.snapshot.detail.export_json=编码蓝图 JSON
 
 # Projector and decoration voucher tooltip details
-gtmb.tooltip.hold_shift.projector=§8按住 §eShift §8查看全部蓝图、剪切与选区操作。§r
-gtmb.tooltip.hold_shift.voucher=§8按住 §eShift §8查看抵扣范围、消耗规则与配置。§r
 gtmb.tooltip.section.coverage=§b§l抵扣范围§r
 gtmb.tooltip.section.payment=§6§l消耗与保留§r
 gtmb.tooltip.section.configuration=§d§l服务器配置§r

@@ -36,6 +36,7 @@ final class HologramDeclarationCandidates {
     private final HologramDeclarationCollector collector;
     final List<ItemStack> stacks = new ArrayList<>();
     private final List<ItemStack> placementStacks = new ArrayList<>();
+    private final List<ItemStack> manualHatches = new ArrayList<>();
     private final List<Declarations.PureElement<?>> placementContracts = new ArrayList<>();
     private final IdentityHashMap<IStructureElement<?>, Map<Pair<Integer, ExactKey>, Boolean>> seen = new IdentityHashMap<>();
     private int observations;
@@ -123,6 +124,11 @@ final class HologramDeclarationCandidates {
             }
             String name = factory.getName();
             if (factory.getDeclaringClass() == HatchElementBuilder.class && "build".equals(name)) {
+                int steamId = HologramHatchPolicy.manualSteamId(element, context);
+                if (steamId >= 0) {
+                    collectManualSteamHatch(steamId, placement);
+                    return;
+                }
                 Predicate<ItemStack> declared = HologramHatchPolicy.predicate(element, context, trigger);
                 if (declared == null) {
                     complete = false;
@@ -234,6 +240,18 @@ final class HologramDeclarationCandidates {
         collectHatches(declared, true);
     }
 
+    void collectManualSteamHatch(int id, boolean placement) {
+        if (id < 0 || id >= GregTechAPI.METATILEENTITIES.length) return;
+        IMetaTileEntity hatch = GregTechAPI.METATILEENTITIES[id];
+        if (hatch == null) return;
+        ItemStack sample = hatch.getStackForm(1);
+        if (sample == null || sample.getItemDamage() != id || HologramCellPolicy.hatchTier(sample) == Integer.MAX_VALUE)
+            return;
+        add(sample, false);
+        // No automatic placement grant: the factory carries a controller list quota.
+        if (placement) manualHatches.add(sample.copy());
+    }
+
     private void collectHatches(Predicate<ItemStack> declared, boolean placement) {
         try {
             for (IMetaTileEntity prototype : GregTechAPI.METATILEENTITIES) {
@@ -258,6 +276,8 @@ final class HologramDeclarationCandidates {
     /** A partial enumeration can prove a particular native construction output; display-only alternatives cannot. */
     boolean allows(ItemStack target, boolean automatic) {
         if (target == null) return false;
+        if (!automatic && manualHatches.stream()
+            .anyMatch(candidate -> HologramValues.sameMaterial(candidate, target))) return true;
         for (Declarations.PureElement<?> contract : placementContracts)
             if (contract.accepts(target) && (!automatic || contract.placementAllows(target))) return true;
         return placementStacks.stream()

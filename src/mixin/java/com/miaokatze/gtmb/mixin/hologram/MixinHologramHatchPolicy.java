@@ -39,14 +39,29 @@ public abstract class MixinHologramHatchPolicy {
     @Inject(
         method = { "hatchItemFilter(Ljava/util/function/Function;)Lgregtech/api/util/HatchElementBuilder;",
             "hatchItemFilter(Ljava/util/function/BiFunction;)Lgregtech/api/util/HatchElementBuilder;",
-            "hatchId(I)Lgregtech/api/util/HatchElementBuilder;", "hatchIds([I)Lgregtech/api/util/HatchElementBuilder;",
             "hatchClass(Ljava/lang/Class;)Lgregtech/api/util/HatchElementBuilder;",
             "hatchClasses([Ljava/lang/Class;)Lgregtech/api/util/HatchElementBuilder;",
-            "hatchClasses(Ljava/util/List;)Lgregtech/api/util/HatchElementBuilder;",
-            "shouldReject(Ljava/util/function/Predicate;)Lgregtech/api/util/HatchElementBuilder;" },
+            "hatchClasses(Ljava/util/List;)Lgregtech/api/util/HatchElementBuilder;" },
         at = @At("RETURN"))
     private void gtit$reset(CallbackInfoReturnable<HatchElementBuilder<?>> callback) {
         HologramHatchPolicy.reset(this);
+    }
+
+    @Inject(method = "hatchId(I)Lgregtech/api/util/HatchElementBuilder;", at = @At("RETURN"))
+    private void gtmb$singleId(int id, CallbackInfoReturnable<HatchElementBuilder<?>> callback) {
+        HologramHatchPolicy.singleId(this, id);
+    }
+
+    @Inject(method = "hatchIds([I)Lgregtech/api/util/HatchElementBuilder;", at = @At("RETURN"))
+    private void gtmb$ids(int[] ids, CallbackInfoReturnable<HatchElementBuilder<?>> callback) {
+        HologramHatchPolicy.singleId(this, ids.length == 1 ? ids[0] : -1);
+    }
+
+    @Inject(
+        method = "shouldReject(Ljava/util/function/Predicate;)Lgregtech/api/util/HatchElementBuilder;",
+        at = @At("RETURN"))
+    private void gtmb$automaticReject(CallbackInfoReturnable<HatchElementBuilder<?>> callback) {
+        HologramHatchPolicy.automaticReject(this);
     }
 
     @Inject(

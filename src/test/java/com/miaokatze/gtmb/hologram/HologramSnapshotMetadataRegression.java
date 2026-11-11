@@ -229,6 +229,7 @@ final class HologramSnapshotMetadataRegression {
                 source.result.cells.get(0).allowedTargets.size(),
                 "both declared hatches and the casing remain editable candidates");
             hatchCacheBoundaries(builder, hatch, chain, signal, first, second, gson);
+            steamWoodcutterDeclarations(builder, first);
             System.out.println(
                 "Snapshot 512 native hatch-chain rows registryReads uncached=" + uncachedReads
                     + " shared="
@@ -244,6 +245,51 @@ final class HologramSnapshotMetadataRegression {
             .adder((context, tile, texture) -> { throw new AssertionError("metadata ran a hatch adder"); })
             .casingIndex(69)
             .hint(1);
+    }
+
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    private static void steamWoodcutterDeclarations(HatchElementBuilder<Object> nativeBuilder, CountingMuffler fixture)
+        throws Exception {
+        Object captured = new Object();
+        String owner = "com.science.gtnl.common.machine.multiblock.steam.SteamWoodcutter";
+        for (int id : new int[] { 22518, 22576, 31040, 42 }) {
+            IStructureElement<?> element = nativeBuilder.build();
+            HologramHatchPolicy.singleId(captured, id);
+            HologramHatchPolicy.automaticReject(captured);
+            HologramHatchPolicy.built(captured, element);
+            SimpleAssert.eq(
+                id == 42 ? -1 : id,
+                HologramHatchPolicy.manualSteamId(element, owner),
+                "only the three reviewed, explicitly declared steam IDs survive an automatic quota");
+            SimpleAssert.eq(
+                -1,
+                HologramHatchPolicy.manualSteamId(element, "other.Controller"),
+                "the same builder grants no manual hatch to a different machine");
+        }
+        HologramHatchPolicy.singleId(captured, 22518);
+        HologramHatchPolicy.andFunction(captured, ignored -> { throw new AssertionError("foreign callback"); });
+        IStructureElement<?> unknown = nativeBuilder.build();
+        HologramHatchPolicy.built(captured, unknown);
+        SimpleAssert.eq(-1, HologramHatchPolicy.manualSteamId(unknown, owner), "a replaced or narrowed ID is unknown");
+        Class bases = Class.forName(
+            "gtPlusPlus.xmod.gregtech.api.metatileentity.implementations.base.MTESteamMultiBlockBase$SteamHatchElement");
+        for (String role : new String[] { "InputBus_Steam", "OutputBus_Steam" }) SimpleAssert.that(
+            HologramHatchPolicy.reviewedSteamBus((gregtech.api.interfaces.IHatchElement<?>) Enum.valueOf(bases, role)),
+            "native GT++ steam bus declaration remains readable inside a mixed atLeast: " + role);
+        fixture.fail = false;
+        fixture.id = 22518;
+        GregTechAPI.METATILEENTITIES[fixture.id] = fixture;
+        ItemStack stack = fixture.getStackForm(1);
+        HologramDeclarationCandidates direct = new HologramDeclarationCandidates();
+        direct.collectManualSteamHatch(fixture.id, true);
+        SimpleAssert.that(
+            direct.allows(stack, false) && !direct.allows(stack, true),
+            "a real registered MTE item can be pinned but never auto-filled from a conditional steam branch");
+        HologramDeclarationCandidates advisory = new HologramDeclarationCandidates();
+        advisory.collectManualSteamHatch(fixture.id, false);
+        SimpleAssert.that(
+            advisory.stacks.size() == 1 && !advisory.allows(stack, false),
+            "an advisory shell cannot grant construction authority to the same hatch");
     }
 
     private static void hatchCacheBoundaries(HatchElementBuilder<Object> builder, IStructureElement<Object> hatch,

@@ -9,13 +9,15 @@
   <a href="LICENSE"><img alt="Code license AGPL-3.0" src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg"></a>
   <img alt="Minecraft 1.7.10" src="https://img.shields.io/badge/Minecraft-1.7.10-blue.svg">
   <img alt="Forge 10.13.4.1614" src="https://img.shields.io/badge/Forge-10.13.4.1614-blue.svg">
+  <img alt="GTMB 0.3.22" src="https://img.shields.io/badge/GTMB-0.3.22-blue.svg">
+  <img alt="MIAOKATZE Core 0.2.11+" src="https://img.shields.io/badge/Core-0.2.11%2B-blue.svg">
   <a href="https://github.com/GTNewHorizons/GT-New-Horizons-Modpack"><img alt="GTNH2.9.0 正式版" src="https://img.shields.io/badge/GTNH-2.9.0-blue.svg"></a>
   <a href="https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases"><img alt="Releases" src="https://img.shields.io/badge/Downloads-Releases-green.svg"></a>
 </p>
 
-**必需前置：客户端与服务端均需 [MIAOKATZE Core 0.2.5 ~ +](https://github.com/MIAOKATZE/MIAOKATZE-Core)**（最低版本 0.2.5，不设版本上限）。FalsePatternLib 可在缺失时补下载；已有旧版请手动更新。
+**必需前置：GTMB 0.3.22 客户端与服务端均需 [MIAOKATZE Core 0.2.11 或更新版本](https://github.com/MIAOKATZE/MIAOKATZE-Core)**。已有旧版请手动更新。
 
-默认构建与缺包下载使用 **Core 0.2.5**；客户端与服务端均需更新至该版本或更新版本。
+默认编译坐标与 FalsePatternLib 缺包下载声明均为 **Core 0.2.11**。
 
 <p align="center">
   <a href="https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases">下载 / Download</a> ·
@@ -31,6 +33,8 @@
 ## 三档投影仪模式 / Three projector modes
 
 手持投影仪，**按住 Shift 连续右键切换，松开 Shift 进入所选模式，Esc 取消选择**。
+
+背包里悬停投影仪或装饰抵用券时，按提示的 **C** 切换详细说明与简要说明。这是物品悬停操作，与世界中的框选快捷键分开。
 
 | 模式 / Mode | 用途 |
 | --- | --- |
@@ -71,6 +75,8 @@
 ## 01 · 从控制器开始，看清后再施工 / Project & inspect
 
 手持投影仪右键打开工作台；**对准真实控制器可导入它的结构**。在三维预览里旋转、分层查看，选中方块后调整外壳、仓室或朝向，再选择建造、替换或拆除。预览让你先检查结构和目标，材料与现场条件则在施工确认中核对。
+
+GTNL 0.2.7-rc2.1 蒸汽树场的青铜加固木位置可按原机声明手动选用大型蒸汽输入舱、无线蒸汽输入舱或普通蒸汽输入舱，也能识别兼容的蒸汽输入、输出总线。手动选择不会自动补齐这些专用舱；机器是否成型仍以原控制器的结构和仓数检查为准。
 
 *Import a structure from its real controller, inspect the 3D and layer views, then choose build, replace or dismantle.*
 
@@ -269,6 +275,8 @@
 
 ### 缺料时主动下单，等待时回到世界 / Request missing materials
 
+先按 AE2 的方式把无线终端绑定到目标 ME 网络，随身携带并处于可访问范围；玩家需要合成、提取和存入产物的权限，网络也需要有对应样板和可用的合成 CPU。锁定投影后右键打开材料确认，等报价完成，再对缺料下单。**不用把投影仪绑到量子网络**：量子绑定窗口处理的是蓝图里的 GTSWN 类群，不是 AE 补料网络。自用蓝图可保留原绑定；需要重绑时，选择待绑定类群，再选择背包中对应的量子终端。没有待绑定类群，点「取消 / 返回」或按 Esc 即可；退出窗口不会撤销已提交的服务端操作。
+
 ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继续，重新打开可查看总进度和结果。按实际产物交付确认完成，材料进入 ME 网络后，**刷新材料，再确认施工**。取消只取消本次订单；已接管未交付的产物在退出或运行时重置时进入玩家回收暂存。退出游戏结束活动订单。
 
 *Submit missing materials through an independent AE crafting request. Closing the window keeps it running; after delivery to ME storage, refresh and confirm construction. Leaving the game ends the active order, with received but undelivered outputs retained for recovery.*
@@ -343,10 +351,10 @@ ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继
 
 | 项目 / Requirement | 版本或说明 / Version or notes |
 | --- | --- |
-| **目标整包 / Target pack** | **GTNH 2.9.0 正式版**；模组版本范围 **0.3.0 ~ +**；当前 [v0.3.8](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases/tag/v0.3.8) |
+| **目标整包 / Target pack** | **GTNH 2.9.0 正式版**；当前源码版本 **GTMB 0.3.22** |
 | **游戏与加载器 / Game & loader** | Minecraft **1.7.10** · Forge **10.13.4.1614** |
 | **安装位置 / Install on** | **客户端与服务端均需安装 / Both client and server** |
-| **必需依赖 / Required mods** | GregTech、StructureLib、Applied Energistics 2、GTNHLib、ModularUI、ModularUI2 **2.3.94-1.7.10**；目标 GTNH 整包已提供。 / Included in the target GTNH pack. |
+| **必需依赖 / Required mods** | **MIAOKATZE Core ≥ 0.2.11**；另需目标整包中的 GregTech、StructureLib、Applied Energistics 2、GTNHLib、ModularUI、ModularUI2 **2.3.94-1.7.10**。 |
 | **可选模组 / Optional mod** | **GTIT**；兼容版本可提供猫猫机兑换。 / Compatible versions add the vending-machine exchange. |
 | **下载 / Download** | [GitHub Releases](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases) |
 

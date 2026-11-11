@@ -1190,6 +1190,14 @@ public final class HologramUiModuleRegression {
             SimpleAssert
                 .eq("closeNetworkBindings", cancel.getString("op"), "native cancel uses the original close operation");
             SimpleAssert.eq(5L, ui.session.pendingSequence(), "cancel receives its own subsequent ACK ticket");
+            // The real MUI panel restores the underlying canvas descriptors between paint and press.
+            ui.canvas.controls()
+                .clear();
+            ui.bindings.networkDrawer(true);
+            ui.bindings.activateNetworkBinding(201);
+            SimpleAssert
+                .that(!ui.bindings.networkDrawer(), "retained cancel does not need transient canvas descriptors");
+            SimpleAssert.eq(5L, ui.session.pendingSequence(), "closing while pending preserves the outstanding ticket");
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("cannot inspect the actual composed binding dispatch", failure);
         }

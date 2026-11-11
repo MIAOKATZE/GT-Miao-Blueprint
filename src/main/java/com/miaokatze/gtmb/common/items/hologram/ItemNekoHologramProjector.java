@@ -6,7 +6,6 @@ package com.miaokatze.gtmb.common.items.hologram;
 import java.util.List;
 import java.util.Set;
 
-import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.item.ItemStack;
@@ -21,6 +20,7 @@ import com.miaokatze.gtmb.hologram.HologramNetwork;
 import com.miaokatze.gtmb.hologram.HologramService;
 import com.miaokatze.gtmb.main.GTMiaoBlueprint;
 import com.miaokatze.gtmb.register.CreativeTabManager;
+import com.miaokatze.miaokatzecore.api.tooltip.TooltipPages;
 
 import cpw.mods.fml.relauncher.Side;
 import cpw.mods.fml.relauncher.SideOnly;
@@ -104,24 +104,23 @@ public class ItemNekoHologramProjector extends ItemConstructableTrigger {
                 .getInteger("gtitHologramMain"))
             : 1;
         ProjectorTooltip.value(tooltip, StatCollector.translateToLocal("gtmb.hologram.main"), main);
-        ChannelDataAccessor.iterateChannelData(stack)
-            .limit(8)
-            .forEach(entry -> ProjectorTooltip.value(tooltip, entry.getKey(), entry.getValue()));
-        ProjectorTooltip.description(
-            tooltip,
-            "item." + ID + ".description.0",
-            "item." + ID + ".description.1",
-            "item." + ID + ".description.2");
-        ProjectorTooltip.controls(tooltip);
-        boolean details = GuiScreen.isShiftKeyDown();
-        for (int i = 0;; i++) {
-            String key = "item." + ID + ".tooltip." + i;
-            String line = StatCollector.translateToLocal(key);
-            if (line.equals(key)) break;
-            if (!details && i >= 3) break;
-            tooltip.add(line);
-        }
-        if (!details) ProjectorTooltip.add(tooltip, "gtmb.tooltip.hold_shift.projector");
+        if (TooltipPages.expanded(stack)) {
+            ChannelDataAccessor.iterateChannelData(stack)
+                .limit(8)
+                .forEach(entry -> ProjectorTooltip.value(tooltip, entry.getKey(), entry.getValue()));
+            ProjectorTooltip.description(
+                tooltip,
+                "item." + ID + ".description.0",
+                "item." + ID + ".description.1",
+                "item." + ID + ".description.2");
+            ProjectorTooltip.controls(tooltip);
+            for (int i = 0;; i++) {
+                String key = "item." + ID + ".tooltip." + i;
+                if (!StatCollector.canTranslate(key)) break;
+                tooltip.add(StatCollector.translateToLocal(key));
+            }
+        } else ProjectorTooltip.description(tooltip, "item." + ID + ".description.0");
+        TooltipPages.hint(stack, tooltip, false);
         ProjectorTooltip.finish(tooltip);
     }
 }

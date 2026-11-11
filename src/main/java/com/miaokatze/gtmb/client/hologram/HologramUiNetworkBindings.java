@@ -24,6 +24,7 @@ final class HologramUiNetworkBindings {
     }
 
     private boolean networkDrawer;
+    private String dismissedSession;
 
     private int networkGroupIndex;
 
@@ -175,7 +176,7 @@ final class HologramUiNetworkBindings {
             ui.session.editable() && groups.tagCount() > 0 && ui.session.pendingSequence() < 0,
             mx,
             my);
-        ui.canvas.button(201, 405, 220, 210, 17, "取消 / 返回 · Esc / E", ui.session.pendingSequence() < 0, mx, my);
+        ui.canvas.button(201, 405, 220, 210, 17, "取消 / 返回 · Esc / E", true, mx, my);
         ui.canvas.button(
             197,
             405,
@@ -203,7 +204,10 @@ final class HologramUiNetworkBindings {
         if (id == 197 || id == 201) {
             if (id == 197 && !HologramPlacementConfirmation.networksReady(ui.session.state().data)) return;
             this.networkDrawer = false;
-            ui.session.send("closeNetworkBindings", new NBTTagCompound(), true);
+            dismissedSession = ui.session.state().session;
+            networkBindingNavigation.cancel();
+            // Dismissal is local navigation. Do not replace the ticket for an outstanding bind or quote.
+            ui.session.send("closeNetworkBindings", new NBTTagCompound(), ui.session.pendingSequence() < 0);
         } else if (id == 198) this.networkGroupOffset = Math.max(0, this.networkGroupOffset - 5);
         else if (id == 199) this.networkGroupOffset = this.networkGroupOffset + (5);
         else if (id == 200 && this.networkHintField != null
@@ -255,6 +259,7 @@ final class HologramUiNetworkBindings {
 
     boolean openBindingsControl(int id) {
         if (id == 196) {
+            dismissedSession = null;
             ui.bindings.revealPendingNetworkGroup();
             ui.session.send("openNetworkBindings", new NBTTagCompound(), true);
             this.networkDrawer = true;
@@ -315,7 +320,9 @@ final class HologramUiNetworkBindings {
     }
 
     void acknowledgeSnapshot(HologramState next, SnapshotTransition previous, boolean sourceChanged) {
-        networkDrawer = next.data.getBoolean("networkBindingRequested");
+        boolean requested = next.data.getBoolean("networkBindingRequested");
+        if (!requested || sourceChanged || !next.session.equals(dismissedSession)) dismissedSession = null;
+        networkDrawer = requested && dismissedSession == null;
         boolean wasPending = networkBindingNavigation.pending();
         int group = networkBindingNavigation.observe(next.data, previous.group);
         if (wasPending && !networkBindingNavigation.pending()) networkRebindSelected = false;
@@ -376,6 +383,7 @@ final class HologramUiNetworkBindings {
     }
 
     void initializeSnapshot(HologramState snapshot) {
+        dismissedSession = null;
         networkDrawer = snapshot.data.getBoolean("networkBindingRequested");
         revealPendingNetworkGroup();
     }

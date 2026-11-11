@@ -641,13 +641,18 @@ final class HologramEditorShell {
 
     private ButtonWidget<?> nativeAction(int id, String icon, Supplier<String> label, BooleanSupplier enabled,
         Supplier<String> tooltip, boolean iconOnly) {
+        return nativeAction(id, icon, label, enabled, tooltip, iconOnly, ui.router::activate);
+    }
+
+    ButtonWidget<?> nativeAction(int id, String icon, Supplier<String> label, BooleanSupplier enabled,
+        Supplier<String> tooltip, boolean iconOnly, java.util.function.IntConsumer dispatch) {
         boolean primary = id == 140 || id == 141 || id == 210 || id == 224 || id == 54;
         Runnable invoke = () -> ui.host.parent()
             .deferAction(() -> {
                 if (!enabled.getAsBoolean()) return;
                 try (HologramMuiCanvasScreen.FieldGraph ignored = ui.host.parent()
                     .fieldGraph(ui)) {
-                    ui.router.activate(id);
+                    dispatch.accept(id);
                 }
             });
         ButtonWidget<?> widget = (iconOnly

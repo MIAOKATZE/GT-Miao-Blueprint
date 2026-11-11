@@ -29,6 +29,8 @@ import gregtech.common.blocks.ItemMachines;
 public final class HologramHatchPolicy {
 
     private static final Method MATCHES_HATCH = findMatchesHatch();
+    private static final Map<Object, Integer> SINGLE_IDS = new WeakHashMap<>();
+    private static final Map<IStructureElement<?>, Integer> ELEMENT_SINGLE_IDS = new WeakHashMap<>();
     private static final Map<Object, BiFunction<Object, ItemStack, Predicate<ItemStack>>> BUILDERS = new WeakHashMap<>();
     private static final Map<IStructureElement<?>, BiFunction<Object, ItemStack, Predicate<ItemStack>>> ELEMENTS = new WeakHashMap<>();
     private static final Map<Object, Map<IHatchElement<?>, Integer>> REQUIREMENTS = new WeakHashMap<>();
@@ -127,6 +129,7 @@ public final class HologramHatchPolicy {
 
     public static synchronized void declare(Object builder, Collection<? extends IHatchElement<?>> elements,
         boolean sharedBlacklist) {
+        SINGLE_IDS.remove(builder);
         List<IHatchElement<?>> declared = new ArrayList<>(elements);
         // Standard or() nodes only combine their two declarations. Custom leaves still carry executable policy.
         if (declared.stream()
@@ -162,7 +165,7 @@ public final class HologramHatchPolicy {
     }
 
     private static int contribution(IHatchElement<?> element, IMetaTileEntity tile, int depth) {
-        if (element instanceof gregtech.api.enums.HatchElement)
+        if (element instanceof gregtech.api.enums.HatchElement || reviewedSteamBus(element))
             return tile != null && matchesHatch(element, tile) ? 1 : 0;
         if (element == null || depth >= 12) return -1;
         Class<?> type = element.getClass();
@@ -182,9 +185,45 @@ public final class HologramHatchPolicy {
     }
 
     public static synchronized void reset(Object builder) {
+        SINGLE_IDS.remove(builder);
+        automaticReject(builder);
+    }
+
+    // Native shouldReject gates survival auto-placement, not the explicit, observed hatch ID.
+    public static synchronized void automaticReject(Object builder) {
         BUILDERS.remove(builder);
         REQUIREMENTS.remove(builder);
         DECLARED.remove(builder);
+    }
+
+    public static synchronized void singleId(Object builder, int id) {
+        reset(builder);
+        // Fixed upstream machines in the reviewed SteamWoodcutter 'B' branches.
+        if (id == 22518 || id == 22576 || id == 31040) SINGLE_IDS.put(builder, id);
+    }
+
+    static boolean reviewedSteamBus(IHatchElement<?> element) {
+        if (!(element instanceof Enum<?>role)) return false;
+        Class<?> type = role.getDeclaringClass();
+        return type.getClassLoader() == IHatchElement.class.getClassLoader() && type.getName()
+            .equals(
+                "gtPlusPlus.xmod.gregtech.api.metatileentity.implementations.base.MTESteamMultiBlockBase$SteamHatchElement")
+            && ("InputBus_Steam".equals(role.name()) || "OutputBus_Steam".equals(role.name()));
+    }
+
+    static synchronized int manualSteamId(IStructureElement<?> element, Object context) {
+        return context != null && context.getClass()
+            .getClassLoader() == IHatchElement.class.getClassLoader() ? manualSteamId(
+                element,
+                context.getClass()
+                    .getName())
+                : -1;
+    }
+
+    static synchronized int manualSteamId(IStructureElement<?> element, String controller) {
+        return "com.science.gtnl.common.machine.multiblock.steam.SteamWoodcutter".equals(controller)
+            ? ELEMENT_SINGLE_IDS.getOrDefault(element, -1)
+            : -1;
     }
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
@@ -199,6 +238,8 @@ public final class HologramHatchPolicy {
     }
 
     public static synchronized void built(Object builder, IStructureElement<?> element) {
+        if (element != null && SINGLE_IDS.containsKey(builder))
+            ELEMENT_SINGLE_IDS.put(element, SINGLE_IDS.get(builder));
         BiFunction<Object, ItemStack, Predicate<ItemStack>> rule = BUILDERS.get(builder);
         if (rule != null && element != null) ELEMENTS.put(element, rule);
         if (element != null && REQUIREMENTS.containsKey(builder))
@@ -208,6 +249,9 @@ public final class HologramHatchPolicy {
 
     public static synchronized Predicate<ItemStack> predicate(IStructureElement<?> element, Object context,
         ItemStack trigger) {
+        int id = manualSteamId(element, context);
+        if (id >= 0)
+            return stack -> stack != null && stack.getItem() instanceof ItemMachines && stack.getItemDamage() == id;
         BiFunction<Object, ItemStack, Predicate<ItemStack>> rule = ELEMENTS.get(element);
         return rule == null ? null : rule.apply(context, trigger);
     }
