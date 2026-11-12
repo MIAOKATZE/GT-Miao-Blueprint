@@ -723,6 +723,38 @@ public final class HologramBlueprintResources {
         if (depth > 64) throw unsupported(rootKey, "资源NBT嵌套过深");
         String lower = name.toLowerCase(Locale.ROOT);
         if (inspection.configuration.contains(path)) return;
+        if ("InvSlots".equals(rootKey) && rootKey.equals(path) && value instanceof NBTTagCompound) {
+            NBTTagCompound groups = (NBTTagCompound) value;
+            for (Object raw : groups.func_150296_c()) {
+                String groupName = (String) raw;
+                if (groupName.indexOf('/') >= 0 || !groups.hasKey(groupName, 10))
+                    throw unsupported(rootKey, "IC2 槽组格式无效");
+                NBTTagCompound group = groups.getCompoundTag(groupName);
+                // Group names are machine-defined (including names such as fluidInput). Only the native
+                // Contents list gets special treatment; extra fields still go through the normal resource audit.
+                for (Object field : group.func_150296_c()) {
+                    String child = (String) field, childPath = path + "/" + groupName + "/" + child;
+                    if ("Contents".equals(child)) {
+                        if (!group.hasKey(child, 9)) throw unsupported(rootKey, "IC2 槽组缺少物品列表");
+                        inspectSlots((NBTTagList) group.getTag(child), rootKey, childPath, plan, inspection, depth + 2);
+                    } else inspect(
+                        group.getTag(child),
+                        child,
+                        rootKey,
+                        childPath,
+                        plan,
+                        inspection,
+                        depth + 2,
+                        false,
+                        false);
+                }
+            }
+            return;
+        }
+        if (value instanceof NBTTagList && slottedList(rootKey, path, (NBTTagList) value)) {
+            inspectSlots((NBTTagList) value, rootKey, path, plan, inspection, depth);
+            return;
+        }
         if (inspection.fullyPreserved.contains(rootKey)) {
             inspectFullyPreserved(value, rootKey, path, plan, inspection, depth);
             return;
@@ -894,7 +926,15 @@ public final class HologramBlueprintResources {
             if (itemRecord(row)) {
                 for (Object raw : row.func_150296_c()) {
                     String key = (String) raw;
-                    if (!key.equals("id") && !key.equals("idExt")
+                    if (!(key.equals("Index") && root.equals("InvSlots")
+                        && path.matches("InvSlots/[^/]+/Contents/[0-9]+")
+                        && row.hasKey(key, 1))
+                        && !(key.equals("IntSlot") && root.equals("Inventory")
+                            && path.matches("Inventory/[0-9]+")
+                            && row.hasKey(key, 3)
+                            && row.getInteger(key) >= 0)
+                        && !key.equals("id")
+                        && !key.equals("idExt")
                         && !key.equals("Count")
                         && !key.equals("Damage")
                         && !key.equals("tag")
@@ -947,12 +987,46 @@ public final class HologramBlueprintResources {
         }
         if (value instanceof NBTTagList) {
             NBTTagList list = (NBTTagList) value;
+            if (slottedList(root, path, list)) {
+                inspectSlots(list, root, path, plan, inspection, depth);
+                return;
+            }
             if (list.tagCount() > 0 && list.func_150303_d() != 10) throw unsupported(root, "无法解析的资源列表 " + path);
             for (int i = 0; i < list.tagCount(); i++)
                 inspectFullyPreserved(list.getCompoundTagAt(i), root, path + "/" + i, plan, inspection, depth + 1);
             return;
         }
         throw unsupported(root, "无法解析私有资产 " + path + "；请移除此信息");
+    }
+
+    // IC2 writes InvSlots/<group>/Contents with a byte Index. Other common top-level slot
+    // lists are admitted only when every entry is a native stack with a unique explicit Slot.
+    private static boolean slottedList(String root, String path, NBTTagList list) {
+        if ("InvSlots".equals(root)) return path.matches("InvSlots/[^/]+/Contents");
+        // Some machines call a list of ghost selectors "slots"; leave such records to their native decoder.
+        if (!path.equals(root) || !(root.equalsIgnoreCase("contents") || root.equalsIgnoreCase("stacks")
+            || root.equalsIgnoreCase("slots"))) return false;
+        if (list.tagCount() == 0 || list.func_150303_d() != 10) return false;
+        for (int i = 0; i < list.tagCount(); i++)
+            if (!integer(list.getCompoundTagAt(i), "Slot") || !itemRecord(list.getCompoundTagAt(i))) return false;
+        return true;
+    }
+
+    private static void inspectSlots(NBTTagList list, String root, String path, Plan plan, Inspection inspection,
+        int depth) throws IOException {
+        if (list.tagCount() > 0 && list.func_150303_d() != 10) throw unsupported(root, "库存槽位列表格式无效 " + path);
+        Set<Integer> seen = new HashSet<>();
+        String slot = root.equals("InvSlots") ? "Index" : "Slot";
+        for (int i = 0; i < list.tagCount(); i++) {
+            NBTTagCompound row = list.getCompoundTagAt(i);
+            if (!integer(row, slot) || !itemRecord(row)) throw unsupported(root, "缺少可识别的物品或槽号 " + path);
+            long idx = row.getLong(slot);
+            if (row.hasKey(slot, 1)) idx &= 255;
+            if (idx < 0 || idx > Integer.MAX_VALUE || !seen.add((int) idx))
+                throw unsupported(root, "库存槽位无效或重复 " + path);
+            // Validate the complete row; index is address metadata, not a second asset.
+            inspectFullyPreserved(row, root, path + "/" + i, plan, inspection, depth + 1);
+        }
     }
 
     private static boolean integer(NBTTagCompound row, String key) {

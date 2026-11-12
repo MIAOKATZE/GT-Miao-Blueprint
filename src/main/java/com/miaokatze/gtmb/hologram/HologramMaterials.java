@@ -59,7 +59,6 @@ import appeng.api.storage.data.IAEStackType;
 import appeng.core.stats.Stats;
 import appeng.helpers.WirelessTerminalGuiObject;
 import appeng.util.Platform;
-import appeng.util.PlayerInventoryUtil;
 import appeng.util.item.AEFluidStack;
 import appeng.util.item.AEItemStack;
 import gregtech.common.blocks.ItemMachines;
@@ -233,21 +232,60 @@ public final class HologramMaterials {
         }
 
         private void refreshTerminal() {
-            terminalStack = settings.me ? PlayerInventoryUtil.getFirstWirelessTerminal(player) : null;
+            terminal = null;
+            terminalStack = null;
+            terminalHandler = null;
             terminalSlot = -1;
-            if (terminalStack != null) for (int slot = 0; slot < player.inventory.mainInventory.length; slot++)
-                if (player.inventory.mainInventory[slot] == terminalStack) terminalSlot = slot;
-            IWirelessTermHandler handler = terminalStack == null ? null
-                : AEApi.instance()
-                    .registries()
-                    .wireless()
-                    .getWirelessTerminalHandler(terminalStack);
-            terminalHandler = handler;
-            terminalKey = handler == null ? null : handler.getEncryptionKey(terminalStack);
-            terminalInfiniteRange = handler != null && handler.hasInfinityRange(terminalStack);
-            terminalInfinitePower = handler != null && handler.hasInfinityPower(terminalStack);
-            terminal = handler == null ? null
-                : new WirelessTerminalGuiObject(handler, terminalStack, player, player.worldObj, -1, 0, 0);
+            terminalUnavailableTick = Long.MIN_VALUE;
+            terminalRefreshTick = Long.MIN_VALUE;
+            if (!settings.me) return;
+            for (ItemStack candidate : HologramCarriedTerminals.candidates(player)) {
+                try {
+                    IWirelessTermHandler handler = AEApi.instance()
+                        .registries()
+                        .wireless()
+                        .getWirelessTerminalHandler(candidate);
+                    if (handler == null) continue;
+                    String key = handler.getEncryptionKey(candidate);
+                    if (key == null || key.isEmpty()) continue;
+                    WirelessTerminalGuiObject probe = new WirelessTerminalGuiObject(
+                        handler,
+                        candidate.copy(),
+                        player,
+                        player.worldObj,
+                        -1,
+                        0,
+                        0);
+                    if (!probe.rangeCheck()) continue;
+                    IGridNode node = probe.getActionableNode();
+                    if (node == null || !node.isActive() || node.getGrid() == null) continue;
+                    ISecurityGrid security = node.getGrid()
+                        .getCache(ISecurityGrid.class);
+                    boolean unlimited = handler.hasInfinityPower(candidate);
+                    if (security == null || !security.hasPermission(player, SecurityPermissions.EXTRACT)
+                        || !unlimited && !handler.hasPower(player, 0.5, candidate)) continue;
+                    WirelessTerminalGuiObject live = new WirelessTerminalGuiObject(
+                        handler,
+                        candidate,
+                        player,
+                        player.worldObj,
+                        -1,
+                        0,
+                        0);
+                    boolean range = handler.hasInfinityRange(candidate);
+                    terminal = live;
+                    terminalStack = candidate;
+                    terminalHandler = handler;
+                    terminalKey = key;
+                    terminalInfinitePower = unlimited;
+                    terminalInfiniteRange = range;
+                    for (int slot = 0; slot < player.inventory.mainInventory.length; slot++)
+                        if (player.inventory.mainInventory[slot] == candidate) terminalSlot = slot;
+                    return;
+                } catch (RuntimeException | LinkageError unavailable) {
+                    // An unavailable integration must not hide a subsequent native terminal.
+                }
+            }
         }
 
         public Transaction begin() {
@@ -875,11 +913,7 @@ public final class HologramMaterials {
                 || terminalInfiniteRange != terminalHandler.hasInfinityRange(terminalStack)
                 || terminalInfinitePower != terminalHandler.hasInfinityPower(terminalStack)) return false;
             // A cached GUI object must never keep access after the carried terminal is removed.
-            boolean carried = false;
-            for (ItemStack stack : player.inventory.mainInventory) if (stack == terminalStack) carried = true;
-            if (!carried && Platform.isBaublesLoaded)
-                carried = PlayerInventoryUtil.getWirelessTerminalFromBaubles(player) == terminalStack;
-            if (!carried) return false;
+            if (!HologramCarriedTerminals.contains(player, terminalStack)) return false;
             long tick = player.worldObj.getTotalWorldTime();
             if (terminalUnavailableTick == tick) return false;
             if (!terminal.rangeCheck()) {

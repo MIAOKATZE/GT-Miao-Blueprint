@@ -45,6 +45,7 @@ public final class HologramBlueprintResourcesRegression {
     public static void run() {
         try {
             inventoryAndEnergy();
+            nativeSlots();
             configurationSamples();
             gtswnNativeConfiguration();
             nativeReservoirContainers();
@@ -69,6 +70,36 @@ public final class HologramBlueprintResourcesRegression {
             failure.printStackTrace(System.err);
             throw new AssertionError("blueprint resources regression", failure);
         }
+    }
+
+    private static void nativeSlots() throws Exception {
+        NBTTagCompound root = new NBTTagCompound(), groups = new NBTTagCompound(), reactor = new NBTTagCompound();
+        NBTTagCompound fuel = new ItemStack(Items.redstone, 6, 3).writeToNBT(new NBTTagCompound());
+        fuel.setByte("Index", (byte) 5);
+        NBTTagList slots = new NBTTagList();
+        slots.appendTag(fuel);
+        reactor.setTag("Contents", slots);
+        groups.setTag("fluidInput", reactor);
+        root.setTag("InvSlots", groups);
+        java.util.List<ItemStack> items = HologramBlueprintResources.plan(root).items;
+        SimpleAssert.eq(1, items.size(), "IC2 master inventory counted once");
+        SimpleAssert.eq(6, items.get(0).stackSize, "IC2 slot amount");
+        SimpleAssert.eq(
+            3,
+            items.get(0)
+                .getItemDamage(),
+            "IC2 component damage");
+        slots.appendTag(fuel.copy());
+        reject(root, "InvSlots");
+        root = new NBTTagCompound();
+        slots = new NBTTagList();
+        fuel.removeTag("Index");
+        fuel.setByte("Slot", (byte) 2);
+        slots.appendTag(fuel);
+        root.setTag("Contents", slots);
+        SimpleAssert.eq(6, HologramBlueprintResources.plan(root).items.get(0).stackSize, "indexed standalone contents");
+        fuel.setString("opaquePayload", "not a slot");
+        reject(root, "Contents");
     }
 
     private static void fullyPreservedNativeContainers() throws Exception {

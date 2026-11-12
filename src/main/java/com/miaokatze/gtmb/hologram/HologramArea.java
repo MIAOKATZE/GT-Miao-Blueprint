@@ -12,6 +12,7 @@ import java.util.Map;
 import net.minecraft.block.Block;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.init.Blocks;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
@@ -47,6 +48,7 @@ final class HologramArea extends HologramAreaSelection {
     HologramResourcePlanner.PlanTask planTask;
     long expandedNbt;
     private HologramAreaBlockCursor blockCursor;
+    private final java.util.Set<java.util.UUID> seenFrames = new java.util.HashSet<>();
     String active = "";
 
     public boolean contains(int xx, int yy, int zz) {
@@ -94,6 +96,7 @@ final class HologramArea extends HologramAreaSelection {
         blueprint.schema = 2;
         blueprint.name = "施工区域";
         blueprint.controllerType = "area";
+        seenFrames.clear();
         structures.clear();
         members.clear();
         discovery.clear();
@@ -228,6 +231,20 @@ final class HologramArea extends HologramAreaSelection {
             if (!preparation.start(blueprint) || !preparation.ready()) return false;
             blueprint = preparation.result();
             imported = true;
+            if (blueprint.sourceItemFrames != null && !blueprint.sourceItemFrames.isEmpty()) {
+                net.minecraft.util.IChatComponent report = new net.minecraft.util.ChatComponentTranslation(
+                    "gtmb.area.source_frames",
+                    blueprint.sourceItemFrames.size()
+                        + (Boolean.TRUE.equals(blueprint.sourceItemFramesTruncated) ? "+" : ""));
+                int shown = 0;
+                for (HologramPresets.FrameNote frame : blueprint.sourceItemFrames) {
+                    if (frame.item == null || !(Item.itemRegistry.getObject(frame.item) instanceof Item item)) continue;
+                    report.appendText(shown == 0 ? " " : ", ");
+                    report.appendSibling(new ItemStack(item, 1, frame.damage).func_151000_E());
+                    if (++shown == 3) break;
+                }
+                player.addChatMessage(report);
+            }
             // Workflow continues with detached memberships, projection and plan; publication is atomic.
             importPhase = "memberships";
             return true;
@@ -252,11 +269,38 @@ final class HologramArea extends HologramAreaSelection {
         blockCursor = null;
     }
 
-    private static boolean emptySection(World world, int chunkX, int sectionY, int chunkZ) throws IOException {
+    private boolean emptySection(World world, int chunkX, int sectionY, int chunkZ) throws IOException {
         if (!world.getChunkProvider()
             .chunkExists(chunkX, chunkZ)) throw new IOException("区域包含未加载区块，导入已停止");
-        ExtendedBlockStorage[] sections = world.getChunkFromChunkCoords(chunkX, chunkZ)
-            .getBlockStorageArray();
+        net.minecraft.world.chunk.Chunk chunk = world.getChunkFromChunkCoords(chunkX, chunkZ);
+        if (sectionY >= 0 && sectionY < chunk.entityLists.length
+            && !Boolean.TRUE.equals(blueprint.sourceItemFramesTruncated)) {
+            for (Object entity : chunk.entityLists[sectionY]) {
+                if (!(entity instanceof net.minecraft.entity.item.EntityItemFrame frame) || frame.isDead) continue;
+                int fx = net.minecraft.util.MathHelper.floor_double(frame.posX),
+                    fy = net.minecraft.util.MathHelper.floor_double(frame.posY),
+                    fz = net.minecraft.util.MathHelper.floor_double(frame.posZ);
+                if (!contains(fx, fy, fz) || !seenFrames.add(frame.getUniqueID())) continue;
+                if (seenFrames.size() > 1024) {
+                    blueprint.sourceItemFramesTruncated = true;
+                    break;
+                }
+                HologramPresets.FrameNote note = new HologramPresets.FrameNote();
+                note.x = fx - minX;
+                note.y = fy - minY;
+                note.z = fz - minZ;
+                note.facing = frame.hangingDirection;
+                note.rotation = frame.getRotation();
+                ItemStack displayed = frame.getDisplayedItem();
+                if (displayed != null && displayed.getItem() != null) {
+                    note.item = Item.itemRegistry.getNameForObject(displayed.getItem());
+                    note.damage = displayed.getItemDamage();
+                }
+                if (blueprint.sourceItemFrames == null) blueprint.sourceItemFrames = new ArrayList<>();
+                blueprint.sourceItemFrames.add(note);
+            }
+        }
+        ExtendedBlockStorage[] sections = chunk.getBlockStorageArray();
         return sectionY >= sections.length || sections[sectionY] == null || sections[sectionY].isEmpty();
     }
 

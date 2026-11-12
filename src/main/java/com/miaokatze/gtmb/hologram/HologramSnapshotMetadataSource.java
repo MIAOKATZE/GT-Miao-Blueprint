@@ -306,6 +306,8 @@ final class HologramSnapshotMetadataSource {
         target.deidentificationChosen = source.deidentificationChosen;
         target.processingNbt = source.processingNbt;
         target.semanticNbt = source.semanticNbt;
+        target.sourceItemFrames = source.sourceItemFrames == null ? null : new ArrayList<>(source.sourceItemFrames);
+        target.sourceItemFramesTruncated = source.sourceItemFramesTruncated;
         target.quantumGroupingNbt = source.quantumGroupingNbt;
         target.retainNbt = source.retainNbt;
         target.retainCovers = source.retainCovers;

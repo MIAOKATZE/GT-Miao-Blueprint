@@ -524,3 +524,4 @@ gtmb.hologram.selection.discard.hint=Delete 可以单独删除上一个选区
 gtmb.hologram.selection.discard.no=否
 gtmb.hologram.selection.discard.yes=是
 gtmb.hologram.selection.discard.yesWithoutPrompt=是并且不再提醒
+gtmb.area.source_frames=选区记录了 %s 个物品展示框。展示物为来源记录，不扣料或自动放置。

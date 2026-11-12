@@ -524,3 +524,4 @@ gtmb.hologram.selection.discard.hint=Delete removes the most recent region indiv
 gtmb.hologram.selection.discard.no=No
 gtmb.hologram.selection.discard.yes=Yes
 gtmb.hologram.selection.discard.yesWithoutPrompt=Yes, and do not ask again
+gtmb.area.source_frames=Recorded %s item frames in the selection. Their contents are source notes; construction does not charge for or place them.

@@ -302,6 +302,13 @@ final class HologramPresets {
         Map<String, Integer> channels = new LinkedHashMap<>();
     }
 
+    /** Survey of hanging entities in the source selection. Never a block placement or payment instruction. */
+    static final class FrameNote {
+
+        int x, y, z, facing, rotation, damage;
+        String item;
+    }
+
     static final class Preset {
 
         String id, name, controllerType;
@@ -316,6 +323,8 @@ final class HologramPresets {
         boolean deidentificationChosen;
         // Schema 2 extension: a bounded binary NBT receipt, never a recoverable copy of stripped identities.
         String processingNbt;
+        List<FrameNote> sourceItemFrames;
+        Boolean sourceItemFramesTruncated;
         // Optional provenance only. Reloaded documents must revalidate construction independently.
         String semanticNbt;
         String quantumGroupingNbt;
@@ -922,6 +931,14 @@ final class HologramPresets {
     }
 
     static void validate(Preset preset) throws IOException {
+        if (preset != null && preset.sourceItemFrames != null) {
+            if (preset.sourceItemFrames.size() > 1024) throw new IOException("蓝图展示框来源记录过多");
+            for (FrameNote frame : preset.sourceItemFrames) if (frame == null || frame.facing < 0
+                || frame.facing > 3
+                || frame.rotation < 0
+                || frame.rotation > 7
+                || frame.item != null && frame.item.length() > 256) throw new IOException("蓝图展示框来源记录无效");
+        }
         HologramBlueprintVersions.validateIfPresent(preset);
         if (preset != null) {
             validateSemanticMetadata(preset.semanticNbt);

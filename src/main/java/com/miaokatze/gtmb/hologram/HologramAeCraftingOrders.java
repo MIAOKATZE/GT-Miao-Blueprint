@@ -24,7 +24,6 @@ import net.minecraftforge.fluids.FluidStack;
 import com.google.common.collect.ImmutableSet;
 
 import appeng.api.config.Actionable;
-import appeng.api.config.CraftingAllow;
 import appeng.api.config.SecurityPermissions;
 import appeng.api.networking.IGrid;
 import appeng.api.networking.IGridNode;
@@ -369,27 +368,19 @@ public final class HologramAeCraftingOrders {
                     return;
                 }
             }
-            ICraftingCPU selected = null;
-            for (ICraftingCPU candidate : crafting.getCpus())
-                if (!candidate.isBusy() && candidate.getAvailableStorage() >= job.getByteTotal()
-                    && candidate.getCraftingAllowMode() != CraftingAllow.ONLY_NONPLAYER
-                    && job.supportsCPUCluster(candidate)
-                    && (selected == null || candidate.getAvailableStorage() < selected.getAvailableStorage()))
-                    selected = candidate;
-            if (selected == null) {
-                state = "waiting_cpu";
-                status = "等待可用 AE 合成 CPU：" + request.label;
-                if (++waiting >= CPU_WAIT_POLLS) finish("failed", "AE 合成 CPU 持续不可用，订单已停止；请检查 CPU 后重新下单", true);
-                return;
-            }
-            // A real requester creates non-standalone links. Native AE therefore cannot merge another player's
-            // standalone order into this CPU; canceling our link never cancels somebody else's combined order.
-            link = crafting.submitJob(job, this, selected, false, source);
+            // Like the Matter Manipulator uplink, let AE choose an eligible CPU. A real requester
+            // keeps the link non-standalone, so it cannot merge with another player's standalone order.
+            link = crafting.submitJob(job, this, null, false, source);
             if (link == null) {
-                finish("failed", "AE 拒绝合成订单；网络材料或 CPU 状态已变化，请刷新后重新下单", true);
+                state = "waiting_cpu";
+                status = "AE 尚未接单，正在等待合适的 CPU 或网络材料：" + request.label;
+                if (++waiting >= CPU_WAIT_POLLS) finish("failed", "AE 未能接单；请检查 CPU、样板及原料后重试", true);
                 return;
             }
-            cpu = selected;
+            for (ICraftingCPU candidate : crafting.getCpus()) if (candidate.getCurrentJobSource() == source) {
+                cpu = candidate;
+                break;
+            }
             state = "crafting";
             status = "AE 正在合成：" + request.label;
         }

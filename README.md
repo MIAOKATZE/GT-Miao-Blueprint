@@ -9,13 +9,13 @@
   <a href="LICENSE"><img alt="Code license AGPL-3.0" src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg"></a>
   <img alt="Minecraft 1.7.10" src="https://img.shields.io/badge/Minecraft-1.7.10-blue.svg">
   <img alt="Forge 10.13.4.1614" src="https://img.shields.io/badge/Forge-10.13.4.1614-blue.svg">
-  <img alt="GTMB 0.3.24" src="https://img.shields.io/badge/GTMB-0.3.24-blue.svg">
+  <img alt="GTMB 0.3.25" src="https://img.shields.io/badge/GTMB-0.3.25-blue.svg">
   <img alt="MIAOKATZE Core 0.2.14+" src="https://img.shields.io/badge/Core-0.2.14%2B-blue.svg">
   <a href="https://github.com/GTNewHorizons/GT-New-Horizons-Modpack"><img alt="GTNH2.9.0 正式版" src="https://img.shields.io/badge/GTNH-2.9.0-blue.svg"></a>
   <a href="https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases"><img alt="Releases" src="https://img.shields.io/badge/Downloads-Releases-green.svg"></a>
 </p>
 
-**必需前置：GTMB 0.3.24 客户端与服务端均需 [MIAOKATZE Core 0.2.14 或更新版本](https://github.com/MIAOKATZE/MIAOKATZE-Core)**。已有旧版请手动更新。
+**必需前置：GTMB 0.3.25 客户端与服务端均需 [MIAOKATZE Core 0.2.14 或更新版本](https://github.com/MIAOKATZE/MIAOKATZE-Core)**。已有旧版请手动更新。
 
 默认编译坐标与 FalsePatternLib 缺包下载声明均为 **Core 0.2.14**。
 
@@ -35,6 +35,11 @@
 手持投影仪，**按住 Shift 连续右键切换，松开 Shift 进入所选模式，Esc 取消选择**。
 
 背包里悬停投影仪或装饰抵用券时，按 Tooltip 显示的按键（默认 **V**）切换详细说明与简要说明。这是物品悬停操作，与世界中的框选快捷键分开。固定注解按内容调整高度；仅 AE 注解显示“AE 全部详情”，仅资源阻塞注解显示“处理阻塞”。
+
+区域蓝图按机器自己的存档记录库存。GT 机器保留大堆叠的实际数量，IC2 反应堆按槽位记录元件；连在主机上的反应仓不重复计料。原版物品展示框属于实体：区域导入会记录原选区内最多 1024 个展示框的相对位置、朝向、旋转、展示物注册名与损伤值，作为来源清单保存，不复制实体、展示物或其内部 NBT。
+
+抽取 ME 材料时优先查饰品栏，再查背包，跳过未配对、没电、无提取权限或不在范围内的无线终端。社区终端通过 AE 的无线终端注册接口识别。AE 缺料订单由 AE 原生服务计算并分配 CPU；已接受的订单固定使用原网络，产物回网还需要存入权限。
+
 
 | 模式 / Mode | 用途 |
 | --- | --- |
@@ -351,7 +356,7 @@ ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继
 
 | 项目 / Requirement | 版本或说明 / Version or notes |
 | --- | --- |
-| **目标整包 / Target pack** | **GTNH 2.9.0 正式版**；当前源码版本 **GTMB 0.3.24** |
+| **目标整包 / Target pack** | **GTNH 2.9.0 正式版**；当前源码版本 **GTMB 0.3.25** |
 | **游戏与加载器 / Game & loader** | Minecraft **1.7.10** · Forge **10.13.4.1614** |
 | **安装位置 / Install on** | **客户端与服务端均需安装 / Both client and server** |
 | **必需依赖 / Required mods** | **MIAOKATZE Core ≥ 0.2.14**；另需目标整包中的 GregTech、StructureLib、Applied Energistics 2、GTNHLib、ModularUI、ModularUI2 **2.3.94-1.7.10**。 |
