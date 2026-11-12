@@ -31,9 +31,9 @@ public final class ItemDecorationVoucher extends Item {
     @Override
     @SideOnly(Side.CLIENT)
     public void addInformation(ItemStack stack, EntityPlayer player, List<String> tooltip, boolean advanced) {
-        ProjectorTooltip
-            .description(tooltip, "item.decoration_voucher.description.0", "item.decoration_voucher.description.2");
         if (TooltipPages.expanded(stack)) {
+            ProjectorTooltip
+                .description(tooltip, "item.decoration_voucher.description.0", "item.decoration_voucher.description.2");
             ProjectorTooltip.controls(tooltip, "item.decoration_voucher.description.1");
             ProjectorTooltip.section(
                 tooltip,
@@ -52,6 +52,13 @@ public final class ItemDecorationVoucher extends Item {
                 "configuration",
                 "item.decoration_voucher.detail.config",
                 "item.decoration_voucher.detail.reload");
+        } else {
+            ProjectorTooltip.description(
+                tooltip,
+                "gtmb.voucher.compact.scope",
+                "gtmb.voucher.compact.excluded",
+                "gtmb.voucher.compact.consume",
+                "gtmb.voucher.compact.payment");
         }
         TooltipPages.hint(stack, tooltip, false);
         ProjectorTooltip.finish(tooltip);

@@ -119,7 +119,10 @@ public class ItemNekoHologramProjector extends ItemConstructableTrigger {
                 if (!StatCollector.canTranslate(key)) break;
                 java.util.Collections.addAll(tooltip, gregtech.api.util.GTSplit.splitLocalized(key));
             }
-        } else ProjectorTooltip.description(tooltip, "item." + ID + ".description.0");
+        } else {
+            ProjectorTooltip.description(tooltip, "item." + ID + ".description.0", "item." + ID + ".description.2");
+            ProjectorTooltip.add(tooltip, "gtmb.projector.compact.sources", "gtmb.projector.compact.controls");
+        }
         TooltipPages.hint(stack, tooltip, false);
         ProjectorTooltip.finish(tooltip);
     }

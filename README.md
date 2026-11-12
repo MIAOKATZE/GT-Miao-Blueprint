@@ -9,13 +9,13 @@
   <a href="LICENSE"><img alt="Code license AGPL-3.0" src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg"></a>
   <img alt="Minecraft 1.7.10" src="https://img.shields.io/badge/Minecraft-1.7.10-blue.svg">
   <img alt="Forge 10.13.4.1614" src="https://img.shields.io/badge/Forge-10.13.4.1614-blue.svg">
-  <img alt="GTMB 0.3.25" src="https://img.shields.io/badge/GTMB-0.3.25-blue.svg">
+  <img alt="GTMB 0.3.26" src="https://img.shields.io/badge/GTMB-0.3.26-blue.svg">
   <img alt="MIAOKATZE Core 0.2.14+" src="https://img.shields.io/badge/Core-0.2.14%2B-blue.svg">
   <a href="https://github.com/GTNewHorizons/GT-New-Horizons-Modpack"><img alt="GTNH2.9.0 正式版" src="https://img.shields.io/badge/GTNH-2.9.0-blue.svg"></a>
   <a href="https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases"><img alt="Releases" src="https://img.shields.io/badge/Downloads-Releases-green.svg"></a>
 </p>
 
-**必需前置：GTMB 0.3.25 客户端与服务端均需 [MIAOKATZE Core 0.2.14 或更新版本](https://github.com/MIAOKATZE/MIAOKATZE-Core)**。已有旧版请手动更新。
+**必需前置：GTMB 0.3.26 客户端与服务端均需 [MIAOKATZE Core 0.2.14 或更新版本](https://github.com/MIAOKATZE/MIAOKATZE-Core)**。已有旧版请手动更新。
 
 默认编译坐标与 FalsePatternLib 缺包下载声明均为 **Core 0.2.14**。
 
@@ -356,7 +356,7 @@ ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继
 
 | 项目 / Requirement | 版本或说明 / Version or notes |
 | --- | --- |
-| **目标整包 / Target pack** | **GTNH 2.9.0 正式版**；当前源码版本 **GTMB 0.3.25** |
+| **目标整包 / Target pack** | **GTNH 2.9.0 正式版**；当前源码版本 **GTMB 0.3.26** |
 | **游戏与加载器 / Game & loader** | Minecraft **1.7.10** · Forge **10.13.4.1614** |
 | **安装位置 / Install on** | **客户端与服务端均需安装 / Both client and server** |
 | **必需依赖 / Required mods** | **MIAOKATZE Core ≥ 0.2.14**；另需目标整包中的 GregTech、StructureLib、Applied Energistics 2、GTNHLib、ModularUI、ModularUI2 **2.3.94-1.7.10**。 |
