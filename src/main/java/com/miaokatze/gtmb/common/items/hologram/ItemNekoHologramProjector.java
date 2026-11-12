@@ -117,7 +117,7 @@ public class ItemNekoHologramProjector extends ItemConstructableTrigger {
             for (int i = 0;; i++) {
                 String key = "item." + ID + ".tooltip." + i;
                 if (!StatCollector.canTranslate(key)) break;
-                tooltip.add(StatCollector.translateToLocal(key));
+                java.util.Collections.addAll(tooltip, gregtech.api.util.GTSplit.splitLocalized(key));
             }
         } else ProjectorTooltip.description(tooltip, "item." + ID + ".description.0");
         TooltipPages.hint(stack, tooltip, false);
