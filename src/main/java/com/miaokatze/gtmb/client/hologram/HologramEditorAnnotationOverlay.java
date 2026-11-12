@@ -210,7 +210,10 @@ final class HologramEditorAnnotationOverlay {
     private final class NoteDialog extends Dialog<Void> {
 
         private final ListWidget<IWidget, ?> lines = new ListWidget<>();
+        private final Flow actions;
         private final ButtonWidget<?> details, processing;
+        private ButtonWidget<?> contextualAction;
+        private List<String> wrapped = Collections.emptyList();
         private HologramAnnotationMarkers.Marker marker;
         private String lastKey = "", lastPrompt = "";
         private int width = -1, height = -1;
@@ -239,7 +242,7 @@ final class HologramEditorAnnotationOverlay {
             lines.pos(8, 32)
                 .background(IDrawable.NONE);
             child(lines);
-            Flow actions = Flow.row()
+            actions = Flow.row()
                 .left(8)
                 .bottom(8)
                 .height(22)
@@ -260,29 +263,37 @@ final class HologramEditorAnnotationOverlay {
                 () -> "AE 全部详情",
                 () -> marker != null && marker.key.startsWith("ae:"),
                 () -> "查看全部 AE 提示与材料信息。");
-            actions.child(
-                details.widthRel(1f)
-                    .expanded()
-                    .height(22));
+            details.widthRel(1f)
+                .expanded()
+                .height(22);
             processing = ui.shell.nativeAction(
                 297,
                 () -> "处理阻塞",
                 () -> marker != null && marker.key.startsWith("resource:") && ui.session.editable(),
                 () -> "通过原蓝图处理流程修正资源阻塞。");
-            actions.child(
-                processing.widthRel(1f)
-                    .expanded()
-                    .height(22));
-            actions.collapseDisabledChild(true);
+            processing.widthRel(1f)
+                .expanded()
+                .height(22);
+            // Only applicable actions enter the Flow. A disabled expanded child cannot resolve its width.
             child(actions);
         }
 
         void refresh(HologramAnnotationMarkers.Marker marker) {
             this.marker = marker;
-            details.setEnabled(marker.key.startsWith("ae:"));
-            processing.setEnabled(marker.key.startsWith("resource:"));
+            ButtonWidget<?> nextAction = marker.key.startsWith("ae:") ? details
+                : marker.key.startsWith("resource:") ? processing : null;
+            if (nextAction != contextualAction) {
+                if (contextualAction != null) actions.remove(contextualAction);
+                if (nextAction != null) actions.child(nextAction);
+                contextualAction = nextAction;
+                scheduleResize();
+            }
             int nextWidth = Math.max(96, Math.min(384, ui.host.screenWidth() - 16));
-            int nextHeight = Math.max(96, Math.min(186, ui.host.screenHeight() - 16));
+            boolean textChanged = width != nextWidth || !lastPrompt.equals(marker.prompt);
+            if (textChanged) wrapped = ui.host.font()
+                .listFormattedStringToWidth(marker.prompt, Math.max(1, nextWidth - 28));
+            int nextHeight = Math
+                .max(96, Math.min(Math.min(186, ui.host.screenHeight() - 16), 70 + wrapped.size() * 12));
             boolean resized = width != nextWidth || height != nextHeight;
             if (resized) {
                 width = nextWidth;
@@ -301,12 +312,10 @@ final class HologramEditorAnnotationOverlay {
             lastKey = marker.key;
             lastPrompt = marker.prompt;
             lines.removeAll();
-            for (String line : ui.host.font()
-                .listFormattedStringToWidth(marker.prompt, Math.max(1, width - 28)))
-                lines.child(
-                    HologramEditorNativeTheme.label(() -> line)
-                        .widthRel(1f)
-                        .height(12));
+            for (String line : wrapped) lines.child(
+                HologramEditorNativeTheme.label(() -> line)
+                    .widthRel(1f)
+                    .height(12));
         }
 
         @Override
