@@ -44,6 +44,7 @@ final class HologramSemanticSafetyRegression {
 
     static void run() {
         standardHatchUnions();
+        HologramLayeredHatchRegression.run();
         unknownFiltersAreNeverInvoked();
         metadataRemainsProvenance();
     }
@@ -236,7 +237,7 @@ final class HologramSemanticSafetyRegression {
         }
     }
 
-    private static HologramSession presetSession(sun.misc.Unsafe unsafe, Map<IHatchElement<?>, Integer> requirements,
+    static HologramSession presetSession(sun.misc.Unsafe unsafe, Map<IHatchElement<?>, Integer> requirements,
         ItemStack... stock) throws ReflectiveOperationException {
         EntityPlayerMP player = (EntityPlayerMP) unsafe.allocateInstance(EntityPlayerMP.class);
         UUID identity = UUID.randomUUID();

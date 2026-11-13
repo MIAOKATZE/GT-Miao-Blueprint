@@ -139,6 +139,8 @@ final class HologramHatchProfiles {
             budget.evaluate();
             HologramCapture.Cell cell = s.capture.cells.get(i);
             if (cell.anchor || cell.userPosition || !HologramSessionPolicy.editableStructureCell(s, cell)) continue;
+            if (!HologramHatchPolicy.globalRequirementsComplete(cell.element))
+                throw new IOException("此结构的分层或动态仓室配额不能按整机合并，请逐格指定仓室；原规划未修改");
             TileEntity actual = s.player.worldObj.getTileEntity(cell.x, cell.y, cell.z);
             ItemStack fixed = s.pins.get(i);
             if (fixed == null && actual instanceof IGregTechTileEntity)

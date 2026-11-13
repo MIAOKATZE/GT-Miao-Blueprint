@@ -8,6 +8,7 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.WeakHashMap;
@@ -97,6 +98,16 @@ public final class HologramHatchPolicy {
         return values == null ? java.util.Collections.emptyMap() : new java.util.LinkedHashMap<>(values);
     }
 
+    /** Layer/context counts cannot be flattened into the whole-machine preset's name/max quotas. */
+    static synchronized boolean globalRequirementsComplete(IStructureElement<?> element) {
+        for (IStructureElement<?> part : HologramElementCatalog.parts(element)) {
+            Map<IHatchElement<?>, Integer> values = ELEMENT_REQUIREMENTS.get(part);
+            if (values != null)
+                for (IHatchElement<?> type : values.keySet()) if (contribution(type, null, 0) < 0) return false;
+        }
+        return true;
+    }
+
     private HologramHatchPolicy() {}
 
     private static Method findMatchesHatch() {
@@ -131,7 +142,7 @@ public final class HologramHatchPolicy {
         boolean sharedBlacklist) {
         SINGLE_IDS.remove(builder);
         List<IHatchElement<?>> declared = new ArrayList<>(elements);
-        // Standard or() nodes only combine their two declarations. Custom leaves still carry executable policy.
+        // Native decorators preserve the reviewed matching declaration, independently of their count/adder callbacks.
         if (declared.stream()
             .anyMatch(element -> !reviewed(element, 0))) {
             reset(builder);
@@ -156,7 +167,7 @@ public final class HologramHatchPolicy {
     }
 
     private static boolean reviewed(IHatchElement<?> element, int depth) {
-        return contribution(element, null, depth) >= 0;
+        return inspect(element, null, depth, false, new IdentityHashMap<>()) >= 0;
     }
 
     /** Native Either.count adds its branches, including repeated leaves. Never execute a custom count callback. */
@@ -165,22 +176,48 @@ public final class HologramHatchPolicy {
     }
 
     private static int contribution(IHatchElement<?> element, IMetaTileEntity tile, int depth) {
-        if (element instanceof gregtech.api.enums.HatchElement || reviewedSteamBus(element))
+        return inspect(element, tile, depth, true, new IdentityHashMap<>());
+    }
+
+    /** Read only native declaration fields; never execute a custom matcher, counter or hatch adder. */
+    private static int inspect(IHatchElement<?> element, IMetaTileEntity tile, int depth, boolean quota,
+        IdentityHashMap<IHatchElement<?>, Boolean> path) {
+        if (element == null || depth >= 12 || path.put(element, Boolean.TRUE) != null) return -1;
+        if (element instanceof gregtech.api.enums.HatchElement || reviewedSteamBus(element)) {
+            path.remove(element);
             return tile != null && matchesHatch(element, tile) ? 1 : 0;
-        if (element == null || depth >= 12) return -1;
+        }
         Class<?> type = element.getClass();
-        if (!type.getName()
-            .equals("gregtech.api.interfaces.HatchElementEither")
-            || type.getClassLoader() != IHatchElement.class.getClassLoader()) return -1;
         try {
+            if (type.getClassLoader() != IHatchElement.class.getClassLoader()) return -1;
+            if (type.getName()
+                .equals("gregtech.api.interfaces.HatchElement")) {
+                // .265 matchesHatch delegates only to mBacking. Older class-based matching is not this contract.
+                if (MATCHES_HATCH == null) return -1;
+                if (quota) {
+                    Field count = type.getDeclaredField("mCount");
+                    if (count.getType() != java.util.function.ToLongFunction.class) return -1;
+                    count.setAccessible(true);
+                    if (count.get(element) != null) return -1;
+                }
+                Field backing = type.getDeclaredField("mBacking");
+                if (backing.getType() != IHatchElement.class) return -1;
+                backing.setAccessible(true);
+                return inspect((IHatchElement<?>) backing.get(element), tile, depth + 1, quota, path);
+            }
+            if (!type.getName()
+                .equals("gregtech.api.interfaces.HatchElementEither")) return -1;
             Field first = type.getDeclaredField("first"), second = type.getDeclaredField("second");
+            if (first.getType() != IHatchElement.class || second.getType() != IHatchElement.class) return -1;
             first.setAccessible(true);
             second.setAccessible(true);
-            int left = contribution((IHatchElement<?>) first.get(element), tile, depth + 1);
-            int right = contribution((IHatchElement<?>) second.get(element), tile, depth + 1);
+            int left = inspect((IHatchElement<?>) first.get(element), tile, depth + 1, quota, path);
+            int right = inspect((IHatchElement<?>) second.get(element), tile, depth + 1, quota, path);
             return left < 0 || right < 0 ? -1 : left + right;
-        } catch (ReflectiveOperationException changedContract) {
+        } catch (ReflectiveOperationException | RuntimeException changedContract) {
             return -1;
+        } finally {
+            path.remove(element);
         }
     }
 

@@ -1026,13 +1026,16 @@ final class HologramResourcePlanner {
                 if (cursor < s.capture.cells.size()) {
                     int i = cursor++;
                     HologramCapture.Cell cell = s.capture.cells.get(i);
+                    if (rejectContextualQuotas(cell)) return;
                     ItemStack target = s.frozenAutoTargets.get(HologramValues.position(cell));
                     if (!cell.anchor && !s.pins.containsKey(i) && HologramCellPolicy.acceptableSample(s, cell, target))
                         s.autoTargets.put(i, target.copy());
                 } else stage = 8;
             } else if (stage == 2) {
                 if (cursor < s.capture.cells.size()) {
-                    HologramCellPolicy.hatchRequirements(s, s.capture.cells.get(cursor++))
+                    HologramCapture.Cell cell = s.capture.cells.get(cursor++);
+                    if (rejectContextualQuotas(cell)) return;
+                    HologramCellPolicy.hatchRequirements(s, cell)
                         .forEach((type, count) -> {
                             types.putIfAbsent(type.name(), type);
                             quotas.merge(type.name(), count, Math::max);
@@ -1089,6 +1092,15 @@ final class HologramResourcePlanner {
                 } else if (cursor < s.capture.cells.size()) choose(cursor++);
                 else commitChoice();
             }
+        }
+
+        private boolean rejectContextualQuotas(HologramCapture.Cell cell) {
+            if (HologramHatchPolicy.globalRequirementsComplete(cell.element)) return false;
+            s.autoTargets.clear();
+            s.presetAvailable = s.presetSupported = false;
+            s.presetReason = "此结构的分层或动态仓室配额不能按整机合并，请逐格指定仓室；原机成型仍由原机判断";
+            stage = 8;
+            return true;
         }
 
         private void countExisting(int i) {
