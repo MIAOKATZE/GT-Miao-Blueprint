@@ -37,7 +37,8 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     private List<Step> steps = Collections.emptyList();
     private List<Action> actions = Collections.emptyList();
     private final List<NBTTagCompound> checkpoints = new ArrayList<>();
-    private String topic = "", requestedTopic = "", lastAutoTopic = "", unavailable = "";
+    private String topic = "", requestedTopic = "", lastAutoTopic = "";
+    private final HologramEditorTutorialFailure failureState = new HologramEditorTutorialFailure();
     private String sourceFingerprint = "";
     private int step, actionIndex;
     private long actionStarted, targetWaitingSince;
@@ -291,7 +292,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         pendingModalRestore = null;
         actionBounds = null;
         lastFocusBounds = null;
-        unavailable = "";
+        failureState.reset();
         pressed = queuedNext = actionApplied = actionPending = actionDispatched = false;
         actionBefore = null;
         scenePresentationPrepared = false;
@@ -415,7 +416,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                 restore(checkpoints.get(step));
                 playStep();
             } else if (id == BASE + 2) {
-                if (!unavailable.isEmpty()) queuedNext = false;
+                if (failureState.blocked()) queuedNext = false;
                 else if (actionIndex < actions.size() || pendingMaterialRestore
                     || pendingNativeScroll != null
                     || pendingModalRestore != null) queuedNext = true;
@@ -449,7 +450,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
 
     @Override
     public String nextLabel() {
-        return !unavailable.isEmpty() ? "本步未完成" : queuedNext ? "已排队" : step + 1 == steps.size() ? "完成教程" : "下一步";
+        return failureState.blocked() ? "本步未完成" : queuedNext ? "已排队" : step + 1 == steps.size() ? "完成教程" : "下一步";
     }
 
     private void playStep() {
@@ -464,11 +465,12 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         actionBounds = null;
         lastFocusBounds = null;
         dragStart = null;
-        unavailable = sandbox.session.state().data.getBoolean("tutorialPartialSample") ? "当前大图只取有界局部；不把它当作完整机器。" : "";
+        failureState.reset();
+        if (sandbox.session.state().data.getBoolean("tutorialPartialSample")) blockAction("当前大图只取有界局部；不把它当作完整机器。");
     }
 
     private void nextStep() {
-        if (!unavailable.isEmpty() || actionIndex < actions.size()
+        if (failureState.blocked() || actionIndex < actions.size()
             || actionPending
             || pendingMaterialRestore
             || pendingNativeScroll != null
@@ -541,7 +543,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             }
             if (actionIndex >= actions.size()) {
                 final long version = playbackVersion;
-                if (queuedNext && unavailable.isEmpty()
+                if (queuedNext && !failureState.blocked()
                     && ui.host.parent()
                         .tryDeferAction(() -> { if (active() && playbackVersion == version) nextStep(); }))
                     queuedNext = false;
@@ -564,7 +566,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     void drawScreen(int mouseX, int mouseY, float ticks) {}
 
     private void animate(long now) {
-        if (!unavailable.isEmpty()) {
+        if (failureState.blocked()) {
             actionBounds = null;
             pressed = queuedNext = false;
             return;
@@ -714,9 +716,23 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     }
 
     private void blockAction(String reason) {
-        unavailable = reason;
+        boolean firstFailure = failureState.block(reason);
         queuedNext = pressed = actionPending = false;
-        sandbox.session.notice("本步演示未能完成，可返回上一步或重新开始。");
+        if (firstFailure) {
+            sandbox.session.notice(reason);
+            try {
+                NBTTagCompound diagnostic = HologramEditorTutorialFailure.redactedDiagnostic(diagnosticState());
+                if (actionIndex < actions.size())
+                    diagnostic.setString("operation", actions.get(actionIndex).operation.name());
+                com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Native tutorial blocked: {}", diagnostic);
+            } catch (RuntimeException diagnosticFailure) {
+                // A missing native layout must not turn a recoverable blocked lesson into an abort.
+                com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn(
+                    "Native tutorial blocked; diagnostic snapshot unavailable ({})",
+                    diagnosticFailure.getClass()
+                        .getSimpleName());
+            }
+        }
     }
 
     private boolean protectedConfirmation() {
@@ -868,7 +884,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                             .indices())
                         .allMatch(members::contains);
             case TYPE_ATTACHMENT:
-                return unavailable.isEmpty();
+                return !failureState.blocked();
             case SELECT_PICTURE:
                 NBTTagCompound loadedPicture = sandbox.textBoxes.editorState();
                 return pictureSample != null && loadedPicture.getBoolean("previewReady")
@@ -887,7 +903,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                     || commandResults > actionCommandResults && !sandbox.textBoxes.active();
                 break;
             case TYPE_CAPABILITY:
-                return unavailable.isEmpty() && !sandbox.config.optionValueField()
+                return !failureState.blocked() && !sandbox.config.optionValueField()
                     .getText()
                     .isEmpty();
             case MATERIALS:
@@ -1698,30 +1714,15 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
     public void drawFocus(ModularGuiContext context, int width, int height) {
         if (!active()) return;
         // Never reuse the rectangle captured before a click: that widget may have closed or moved this frame.
-        int[] focus = actionIndex < actions.size() && actionStarted != 0 && !actionApplied
+        int[] focus = !failureState.blocked() && actionIndex < actions.size() && actionStarted != 0 && !actionApplied
             ? target(actions.get(actionIndex))
             : null;
-        if ((actionApplied || actionIndex >= actions.size()) && unavailable.isEmpty())
+        if ((actionApplied || actionIndex >= actions.size()) && !failureState.blocked())
             focus = completedStepFocusBounds();
         if (materialLesson.visible()) focus = materialLesson.bounds(width, height);
         if (focus == null && actionApplied) focus = sandbox.shell.targetBounds("modal");
         lastFocusBounds = focus == null ? null : focus.clone();
         int[] footer = overlay.footerBounds();
-        if (!unavailable.isEmpty()) {
-            String message = "本步演示未能完成，可返回上一步或重新开始。";
-            int messageWidth = ui.host.font()
-                .getStringWidth(message);
-            int messageX = Math.max(4, (width - messageWidth) / 2);
-            int messageY = footer == null ? height - 42 : Math.max(4, footer[1] - 17);
-            Gui.drawRect(
-                messageX - 4,
-                messageY - 3,
-                Math.min(width, messageX + messageWidth + 4),
-                messageY + 12,
-                0xf0543428);
-            ui.host.font()
-                .drawString(message, messageX, messageY, 0xffffddb9);
-        }
         if (focus != null) {
             // Native widget bounds and the normal viewport remain unchanged by the floating navigation.
             HologramEditorTutorialBlur.drawOutside(width, height, focus[0], focus[1], focus[2], focus[3]);
@@ -1765,7 +1766,29 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
                     .drawString(visibleTitle, label[0] + 5, label[1] + 2, 0xfff1d3a5);
             }
         }
+        if (failureState.blocked()) drawFailureMessage(width, height, footer);
         drawPointer();
+    }
+
+    private void drawFailureMessage(int width, int height, int[] footer) {
+        List<String> lines = new ArrayList<>();
+        for (String text : failureState.messageLines(step, steps.size(), steps.get(step).title)) lines.addAll(
+            ui.host.font()
+                .listFormattedStringToWidth(text, Math.max(1, width - 24)));
+        int lineHeight = ui.host.font().FONT_HEIGHT + 2, messageWidth = 0;
+        for (String line : lines) messageWidth = Math.max(
+            messageWidth,
+            ui.host.font()
+                .getStringWidth(line));
+        int messageX = Math.max(4, (width - messageWidth) / 2);
+        int bottom = footer == null ? height - 32 : footer[1] - 6;
+        int messageY = Math.max(4, bottom - lines.size() * lineHeight);
+        Gui.drawRect(messageX - 4, messageY - 3, Math.min(width, messageX + messageWidth + 4), bottom + 2, 0xf0543428);
+        for (String line : lines) {
+            ui.host.font()
+                .drawString(line, messageX, messageY, 0xffffddb9);
+            messageY += lineHeight;
+        }
     }
 
     /** Keep the caption in the real scene margin, outside the target and above the independent footer controls. */
@@ -1816,7 +1839,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
             Gui.drawRect(x, y + row, x + width, y + row + 1, 0xffffe7b4);
         }
         if (actionIndex < actions.size() && !actions.get(actionIndex)
-            .hover() && unavailable.isEmpty()) {
+            .hover() && !failureState.blocked()) {
             String hint = inputHint(actions.get(actionIndex).operation, isometric());
             int hintWidth = ui.host.font()
                 .getStringWidth(hint);
@@ -1912,7 +1935,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         result.setBoolean("actionPending", actionPending);
         result.setString(
             "phase",
-            !unavailable.isEmpty() ? "blocked"
+            failureState.blocked() ? "blocked"
                 : actionIndex >= actions.size() ? "complete"
                     : actionPending ? "dispatching"
                         : actionApplied ? "complete"
@@ -1923,7 +1946,7 @@ final class HologramEditorTutorial implements HologramEditorTutorialOverlay.View
         result.setDouble("pointerY", pointerY);
         result.setLong("isolatedCommands", isolatedCommands);
         result.setLong("realSessionSequence", ui.session.sequence());
-        result.setString("unavailable", unavailable);
+        result.setString("unavailable", failureState.reason());
         result.setIntArray("focusBounds", lastFocusBounds == null ? new int[0] : lastFocusBounds);
         int[] completedFocus = completedStepFocusBounds();
         result.setIntArray("completedStepFocusBounds", completedFocus == null ? new int[0] : completedFocus);

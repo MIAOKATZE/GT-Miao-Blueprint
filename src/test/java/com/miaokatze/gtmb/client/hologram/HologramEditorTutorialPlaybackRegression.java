@@ -33,6 +33,109 @@ public final class HologramEditorTutorialPlaybackRegression {
         inputHintsMatchWorldControls();
         manualCoursesRememberIndependentOutcomes();
         testLabPreparationIsReadOnly();
+        blockedPlaybackRetainsItsCauseUntilRestore();
+        replayRestoresNavigationWithoutThePreviousFailure();
+        blockedDiagnosticsExcludeDocumentsAndUserText();
+    }
+
+    private static void blockedPlaybackRetainsItsCauseUntilRestore() {
+        HologramEditorTutorialFailure failure = new HologramEditorTutorialFailure();
+        String cause = "能力、选区或可见控件前提未满足；可返回上一步或重新开始。";
+        SimpleAssert.that(failure.block(cause), "the first blocked frame requests one diagnostic");
+        SimpleAssert.that(
+            !failure.block("动作目标已不可用"),
+            "later blocked frames do not repeat diagnostics or replace the original cause");
+        java.util.List<String> lines = failure.messageLines(2, 25, "精确选格");
+        SimpleAssert.eq("第 3/25 步 · 精确选格", lines.get(0), "a missing target still has its current lesson caption");
+        SimpleAssert.eq("原因：" + cause, lines.get(1), "the blocked caption retains the actual failure reason");
+        SimpleAssert.that(
+            lines.get(2)
+                .contains("跳过"),
+            "the blocked lesson exposes its available recovery choices");
+        failure.reset();
+        SimpleAssert.that(
+            !failure.blocked() && failure.reason()
+                .isEmpty(),
+            "restoring playback clears the old cause");
+        SimpleAssert.that(failure.block("手柄没有产生整格位移"), "restored playback may report its own new failure once");
+        SimpleAssert.eq("手柄没有产生整格位移", failure.reason(), "a new playback never displays the retired cause");
+    }
+
+    private static void blockedDiagnosticsExcludeDocumentsAndUserText() {
+        NBTTagCompound diagnostic = new NBTTagCompound(), engine = new NBTTagCompound();
+        diagnostic.setString("topic", "blueprint");
+        diagnostic.setInteger("step", 2);
+        diagnostic.setInteger("action", 0);
+        diagnostic.setString("pictureSample", "C:/private/picture.png");
+        diagnostic.setString("unavailable", "private filename or input");
+        diagnostic.setString("commandFailure", "private server message");
+        diagnostic.setString("phase", "private arbitrary value");
+        engine.setString("sourceId", "private document identity");
+        engine.setString("contentSha256", "private document fingerprint");
+        engine.setTag("snapshot", document("private-library-name", 42));
+        engine.setInteger("modelCellCount", 240);
+        engine.setInteger("renderedCellCount", 0);
+        engine.setLong("renderGeneration", 7);
+        engine.setBoolean("isolatedCommandSink", true);
+        diagnostic.setTag("lessonEngine", engine);
+        NBTTagCompound before = (NBTTagCompound) diagnostic.copy();
+        NBTTagCompound safe = HologramEditorTutorialFailure.redactedDiagnostic(diagnostic);
+        SimpleAssert.eq("blueprint", safe.getString("topic"), "diagnostics identify the fixed course");
+        SimpleAssert.eq("blocked", safe.getString("phase"), "diagnostics contain a fixed failure phase");
+        SimpleAssert.eq(2, safe.getInteger("step"), "the zero-based blocked step remains inspectable");
+        NBTTagCompound counts = safe.getCompoundTag("lessonEngine");
+        SimpleAssert.eq(240, counts.getInteger("modelCellCount"), "diagnostics preserve model/render count comparison");
+        SimpleAssert
+            .eq(0, counts.getInteger("renderedCellCount"), "an empty rendered mesh remains visible to diagnosis");
+        SimpleAssert.eq(7L, counts.getLong("renderGeneration"), "diagnostics preserve the natural frame counter");
+        SimpleAssert.that(counts.getBoolean("isolatedCommandSink"), "diagnostics preserve teaching isolation evidence");
+        SimpleAssert.that(
+            !safe.toString()
+                .contains("private"),
+            "diagnostics exclude paths, reasons, identities and snapshots");
+        SimpleAssert
+            .that(before.equals(diagnostic), "redacting a failure leaves the original in-memory snapshot intact");
+        diagnostic.setString("topic", "private custom course");
+        SimpleAssert.that(
+            !HologramEditorTutorialFailure.redactedDiagnostic(diagnostic)
+                .hasKey("topic"),
+            "unknown course text cannot enter the diagnostic log");
+    }
+
+    private static void replayRestoresNavigationWithoutThePreviousFailure() {
+        try {
+            HologramUiModules sandbox = new HologramUiModules(null);
+            sandbox.session.initializeIsolated(new HologramState(new NBTTagCompound()), (op, request) -> {});
+            HologramEditorTutorial tutorial = sandbox.tutorial;
+            tutorialField("sandbox").set(tutorial, sandbox);
+            tutorialField("steps").set(tutorial, HologramEditorLessons.course("projection", null));
+            HologramEditorTutorialFailure failure = (HologramEditorTutorialFailure) tutorialField("failureState")
+                .get(tutorial);
+            failure.block("旧选格目标不可用");
+            tutorialField("queuedNext").setBoolean(tutorial, true);
+            tutorialField("actionPending").setBoolean(tutorial, true);
+            long retiredVersion = tutorialField("playbackVersion").getLong(tutorial);
+            java.lang.reflect.Method replay = HologramEditorTutorial.class.getDeclaredMethod("playStep");
+            replay.setAccessible(true);
+            replay.invoke(tutorial);
+            SimpleAssert.that(!failure.blocked(), "the actual replay entry clears the restored lesson's old failure");
+            SimpleAssert.eq("下一步", tutorial.nextLabel(), "replay restores the normal navigation label");
+            SimpleAssert.that(
+                !tutorial.queuedNext() && !tutorialField("actionPending").getBoolean(tutorial),
+                "replay cannot carry a blocked lesson's queued navigation or pending dispatch");
+            SimpleAssert.that(
+                tutorialField("playbackVersion").getLong(tutorial) != retiredVersion,
+                "replay still retires callbacks belonging to the previous failure");
+            SimpleAssert.that(sandbox.session.isTutorial(), "replay retains the isolated command sink");
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("blocked tutorial replay contract", failure);
+        }
+    }
+
+    private static java.lang.reflect.Field tutorialField(String name) throws NoSuchFieldException {
+        java.lang.reflect.Field field = HologramEditorTutorial.class.getDeclaredField(name);
+        field.setAccessible(true);
+        return field;
     }
 
     public static void testLabPreparationIsReadOnly() {
