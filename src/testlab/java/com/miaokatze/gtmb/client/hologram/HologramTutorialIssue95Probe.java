@@ -73,6 +73,7 @@ public final class HologramTutorialIssue95Probe {
                 if (!HologramTestLabUiProfile.readyTitle(mc.currentScreen)) return;
                 if (!displayPrepared) {
                     displayPrepared = true;
+                    previous = mc.currentScreen;
                     if (Boolean.getBoolean("gtmb.testlab.tutorialIssue95OriginalSize")) {
                         previousDisplayMode = Display.getDisplayMode();
                         previousWidth = mc.displayWidth;
@@ -86,8 +87,20 @@ public final class HologramTutorialIssue95Probe {
                         return;
                     }
                 }
+                if (Boolean.getBoolean("gtmb.testlab.tutorialIssue95RestoreOnly")) {
+                    if (previousDisplayMode == null || mc.displayWidth != 2500
+                        || mc.displayHeight != 1410
+                        || mc.gameSettings.guiScale != 3
+                        || Display.getWidth() != 2500
+                        || Display.getHeight() != 1410)
+                        throw new IllegalStateException(
+                            "Restoration-only path did not reach the requested display size and GUI scale");
+                    finish(
+                        "NOT_RUN",
+                        "Native title capture, original-size resize and restoration only; no tutorial playback");
+                    return;
+                }
                 Files.createDirectories(output.resolve("screenshots"));
-                previous = mc.currentScreen;
                 screen = HologramScreen.detachedTutorial("blueprint", true, () -> {});
                 screen.openFrom(previous);
                 return;
@@ -187,7 +200,10 @@ public final class HologramTutorialIssue95Probe {
         MinecraftForge.EVENT_BUS.unregister(this);
         Map<String, Object> receipt = new LinkedHashMap<>();
         receipt.put("schema", "gtmb-issue95-blueprint-playback-v1");
-        receipt.put("outcome", outcome);
+        boolean restorationOnly = Boolean.getBoolean("gtmb.testlab.tutorialIssue95RestoreOnly");
+        receipt.put("mode", restorationOnly ? "restoration-only" : "blueprint-playback");
+        receipt.put("playbackOutcome", outcome);
+        receipt.put("outcome", restorationOnly && "NOT_RUN".equals(outcome) ? "PASS" : outcome);
         receipt.put("detail", detail);
         receipt.put("steps", steps);
         receipt.put(
@@ -202,19 +218,33 @@ public final class HologramTutorialIssue95Probe {
             .put("reportedSizeInference", "2500x1440 image minus 30px title; GUI scale 3 inferred from toolbar pixels");
         try {
             Minecraft mc = Minecraft.getMinecraft();
+            receipt.put("displayWidthBeforeRestore", mc.displayWidth);
+            receipt.put("displayHeightBeforeRestore", mc.displayHeight);
+            receipt.put("guiScaleBeforeRestore", mc.gameSettings.guiScale);
+            receipt.put("nativeDisplayWidthBeforeRestore", Display.getWidth());
+            receipt.put("nativeDisplayHeightBeforeRestore", Display.getHeight());
+            boolean ownedPresentation = screen != null ? mc.currentScreen == screen
+                : previous != null && HologramTestLabUiProfile.readyTitle(mc.currentScreen);
             if (screen != null) screen.ui.tutorial.closeWithoutProgress();
-            if (screen != null && mc.currentScreen == screen) mc.displayGuiScreen(previous);
+            boolean displayRestored = true;
             if (previousDisplayMode != null) {
                 Display.setDisplayMode(previousDisplayMode);
                 mc.gameSettings.guiScale = previousGuiScale;
                 mc.resize(previousWidth, previousHeight);
-                receipt.put(
-                    "displayRestored",
-                    mc.displayWidth == previousWidth && mc.displayHeight == previousHeight
-                        && mc.gameSettings.guiScale == previousGuiScale);
+                displayRestored = mc.displayWidth == previousWidth && mc.displayHeight == previousHeight
+                    && mc.gameSettings.guiScale == previousGuiScale;
             }
-            receipt.put("screenRestored", mc.currentScreen == previous);
-            receipt.put("cleanupPending", mc.currentScreen != previous);
+            // CMM chooses its normal/large menu in GuiOpenEvent using the current GUI scale.
+            // Restore the scale before reopening, so it retains the exact original menu instance.
+            if (ownedPresentation) mc.displayGuiScreen(previous);
+            boolean screenRestored = mc.currentScreen == previous || previous == null && screen == null;
+            receipt.put("displayRestored", displayRestored);
+            receipt.put("screenRestored", screenRestored);
+            receipt.put("cleanupPending", !screenRestored || !displayRestored);
+            if (!screenRestored || !displayRestored) {
+                receipt.put("outcome", "FAIL");
+                receipt.put("cleanupError", "Original screen identity or display settings were not restored");
+            }
         } catch (Throwable failure) {
             receipt.put("outcome", "FAIL");
             receipt.put("cleanupPending", true);
