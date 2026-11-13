@@ -32,6 +32,7 @@ public final class HologramLargeAttachmentRegression {
             savedPictureDefinitions();
             authoringOccupancy();
             presets();
+            HologramAttachmentPerformanceRegression.run();
         } catch (Exception failure) {
             throw new RuntimeException(failure);
         }

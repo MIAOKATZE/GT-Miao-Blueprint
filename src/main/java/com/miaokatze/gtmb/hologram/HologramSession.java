@@ -61,6 +61,7 @@ final class HologramSession {
     boolean jobVoucherRequested, jobVoucherConsumed;
     boolean placementValidating;
     HologramTextWorkflow.Task attachmentTask;
+    HologramCurrentPlacementPreparation currentPlacementTask;
     HologramVoucherCoverage.Task voucherCoverageTask;
     NBTTagCompound textPlacementAck = new NBTTagCompound();
     NBTTagCompound materialQuote = new NBTTagCompound();

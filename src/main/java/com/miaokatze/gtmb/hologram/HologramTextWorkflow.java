@@ -80,6 +80,11 @@ final class HologramTextWorkflow {
         s.textPlacementAck = ack;
     }
 
+    static void acknowledgeCancellation(HologramSession s, long request) {
+        acknowledge(s, request, false, "附加对象处理已取消，原工作区保留");
+        HologramSnapshots.sendUi(s);
+    }
+
     /** Stage the actual projection before geometry edits; rejected additions retain the physical source unchanged. */
     static void stageAttachment(HologramSession s, HologramPresets.Preset preset, List<HologramCapture.Cell> additions,
         Set<String> remove, java.util.Map<String, Integer> payloadSizes) throws IOException {
@@ -134,13 +139,15 @@ final class HologramTextWorkflow {
         private final HologramTextBox text;
         private final HologramPresets.Preset preset;
         private final HologramPresets.Structure existing;
-        private final HologramAttachmentGeometry.Job geometry;
+        private HologramAttachmentGeometry.Job geometry;
+        private final List<String> retained = new ArrayList<>();
+        private final boolean projectsPhysical;
         private final List<HologramCapture.Cell> additions = new ArrayList<>();
         private final Set<String> remove = new HashSet<>();
         private final Set<String> occupiedPositions = new HashSet<>();
         private final Block host;
-        private final long revision, request;
-        private int cursor;
+        private final long revision, request, uiSequence, uploadSequence;
+        private int cursor, preparationStage, preparationCursor;
         private long lastProgress;
 
         Task(HologramSession s, NBTTagCompound action) throws IOException {
@@ -148,6 +155,8 @@ final class HologramTextWorkflow {
             capture = s.capture;
             revision = s.planRevision;
             request = action.getLong("textRequest");
+            uiSequence = action.getLong("uiSequence");
+            uploadSequence = action.getLong("attachmentSequence");
             text = HologramTextBox.read(action.getCompoundTag("textBox"));
             if (text.id.isEmpty()) throw new IOException("缺少附加对象标识");
             if (text.picture == null) validateMaterial(text.material, text.metadata);
@@ -164,40 +173,57 @@ final class HologramTextWorkflow {
             if (existing != null && (existing.textBoxNbt == null || existing.textBoxNbt.isEmpty()))
                 throw new IOException("目标不是附加对象");
             if (existing == null && preset.structures.size() >= 256) throw new IOException("结构与附加对象数量超过上限");
-            List<String> retained = new ArrayList<>();
-            boolean projectsPhysical = !s.virtual && s.virtualPreset == null && capture != null;
-            if (capture != null) for (int i = 0; i < capture.cells.size(); i++) {
-                HologramCapture.Cell cell = capture.cells.get(i);
-                if (cell.belongsTo(text.id)) remove.add(HologramValues.position(cell));
-                else {
-                    if (occupiesBlueprintPosition(cell, HologramCellPolicy.targetFor(s, cell, i)))
-                        occupiedPositions.add(HologramValues.position(cell));
-                    if (!projectsPhysical) {
-                        retained.add(cell.tileNbt);
-                        retained.add(cell.itemNbt);
+            projectsPhysical = !s.virtual && s.virtualPreset == null && capture != null;
+        }
+
+        /** Existing workspaces can contain a million cells; admission must yield before walking them all. */
+        private void prepare(long deadline) throws IOException {
+            int units = 0;
+            while (preparationStage < 4 && units++ < 256 && System.nanoTime() < deadline) {
+                int count = preparationStage == 0 ? capture == null ? 0 : capture.cells.size()
+                    : preparationStage == 1 ? projectsPhysical ? preset.cells.size() : 0
+                        : preparationStage == 2 ? preset.palette.size() : preset.structures.size();
+                if (preparationCursor >= count) {
+                    preparationStage++;
+                    preparationCursor = 0;
+                    continue;
+                }
+                int i = preparationCursor++;
+                if (preparationStage == 0) {
+                    HologramCapture.Cell cell = capture.cells.get(i);
+                    if (cell.belongsTo(text.id)) remove.add(HologramValues.position(cell));
+                    else {
+                        if (occupiesBlueprintPosition(cell, HologramCellPolicy.targetFor(s, cell, i)))
+                            occupiedPositions.add(HologramValues.position(cell));
+                        if (!projectsPhysical) {
+                            retained.add(cell.tileNbt);
+                            retained.add(cell.itemNbt);
+                        }
                     }
+                } else if (preparationStage < 3) {
+                    HologramPresets.Cell cell = (preparationStage == 1 ? preset.cells : preset.palette).get(i);
+                    retained.add(cell.tileNbt);
+                    retained.add(cell.itemNbt);
+                } else {
+                    HologramPresets.Structure group = preset.structures.get(i);
+                    if (group != existing) retained.add(group.textBoxNbt);
                 }
             }
-            // Initial physical conversion commits the projection's refreshed payload, not the old capture payload.
-            if (projectsPhysical) for (HologramPresets.Cell cell : preset.cells) {
-                retained.add(cell.tileNbt);
-                retained.add(cell.itemNbt);
-            }
-            for (HologramPresets.Cell cell : preset.palette) {
-                retained.add(cell.tileNbt);
-                retained.add(cell.itemNbt);
-            }
-            for (HologramPresets.Structure group : preset.structures)
-                if (group != existing) retained.add(group.textBoxNbt);
-            geometry = HologramAttachmentGeometry.submit(text, retained);
+            if (preparationStage == 4) geometry = HologramAttachmentGeometry.submit(text, retained);
         }
 
         boolean ready() {
-            return geometry.done;
+            return geometry == null || geometry.done;
+        }
+
+        boolean matchesCancellation(NBTTagCompound action) {
+            return request == action.getLong("textRequest") && revision == action.getLong("attachmentPlanRevision")
+                && uiSequence == action.getLong("attachmentUiSequence")
+                && uploadSequence == action.getLong("attachmentSequence");
         }
 
         void cancel(String reason) {
-            geometry.cancel();
+            if (geometry != null) geometry.cancel();
             if (s.attachmentTask != this) return;
             s.attachmentTask = null;
             acknowledge(s, request, false, reason);
@@ -208,13 +234,14 @@ final class HologramTextWorkflow {
             NBTTagCompound ack = new NBTTagCompound();
             ack.setLong("request", request);
             ack.setBoolean("pending", true);
-            ack.setString("phase", geometry.done ? "validation" : geometry.phase);
-            ack.setLong("done", geometry.done ? cursor : geometry.completed);
-            ack.setLong("total", geometry.done ? geometry.cells.size() : geometry.total);
+            ack.setString("phase", geometry == null ? "preparation" : geometry.done ? "validation" : geometry.phase);
+            ack.setLong("done", geometry == null ? preparationCursor : geometry.done ? cursor : geometry.completed);
+            ack.setLong("total", geometry == null ? 0 : geometry.done ? geometry.cells.size() : geometry.total);
             s.status = "后台处理" + text.noun()
                 + "："
-                + (geometry.done ? "核对位置 " + cursor + "/" + geometry.cells.size()
-                    : "生成与合并 " + geometry.completed + "/" + geometry.total);
+                + (geometry == null ? "整理现有蓝图 " + preparationCursor
+                    : geometry.done ? "核对位置 " + cursor + "/" + geometry.cells.size()
+                        : "生成与合并 " + geometry.completed + "/" + geometry.total);
             ack.setString("message", s.status);
             s.textPlacementAck = ack;
             HologramSnapshots.sendUi(s);
@@ -226,6 +253,11 @@ final class HologramTextWorkflow {
                 validateAdmission(s, revision);
                 if (s.capture != capture || HologramWorkspace.find(s.player.getUniqueID()) != s)
                     throw new IOException("工作区已变化，旧附加任务已取消");
+                if (geometry == null) {
+                    prepare(HologramWorkBudget.deadline(2_000_000L));
+                    if (System.nanoTime() - lastProgress > 500_000_000L) progress();
+                    return;
+                }
                 if (!geometry.done) {
                     if (System.nanoTime() - lastProgress > 500_000_000L) progress();
                     return;
@@ -262,6 +294,7 @@ final class HologramTextWorkflow {
                 && material.isOpaqueCube()
                 && material.renderAsNormalBlock();
             HologramCapture.Cell added = new HologramCapture.Cell(null, wx, wy, wz);
+            added.userPosition = true;
             added.block = ordinary ? material : host;
             added.meta = ordinary ? metadata : 0;
             added.blueprintBlock = ordinary ? materialName : "littletiles:BlockLittleTiles";
@@ -275,6 +308,7 @@ final class HologramTextWorkflow {
             added.sourceClass = "";
             added.sourceWarning = "";
             HologramBlueprintData.setMemberships(added, java.util.Collections.singletonList(text.id));
+            added.attachmentPlacementProof = HologramAttachmentPlacementProof.generated(added);
             additions.add(added);
             if (occupied != null) remove.add(key);
         }

@@ -274,6 +274,7 @@ final class HologramUiSession {
         return !ui.session.areaImporting() && !this.state.data.getBoolean("targetClosed")
             && !this.state.data.getBoolean("areaSelectionShell")
             && !this.state.data.getBoolean("attachmentPending")
+            && !this.state.data.getBoolean("currentPlacementPending")
             && job != 1
             && job != 2
             && pendingTicket.sequence() < 0

@@ -57,6 +57,7 @@ final class HologramBlueprintData {
         cell.blueprintBlock = old.blueprintBlock;
         cell.blueprintItem = old.blueprintItem;
         cell.blueprintDamage = old.blueprintDamage;
+        cell.attachmentPlacementProof = old.attachmentPlacementProof;
         cell.excluded = old.excluded;
         cell.prompt = old.prompt;
         cell.tileNbt = old.tileNbt;

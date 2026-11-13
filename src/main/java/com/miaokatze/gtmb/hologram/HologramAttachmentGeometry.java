@@ -4,7 +4,6 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.io.IOException;
-import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -51,31 +50,39 @@ public final class HologramAttachmentGeometry {
         return submit(source, Collections.emptyList());
     }
 
+    /** Package-private handoff: the caller relinquishes its private retained-payload list after admission. */
     static Job submit(HologramTextBox source, List<String> retained) throws IOException {
         HologramTextBox frozen = HologramTextBox.read(
             (net.minecraft.nbt.NBTTagCompound) source.write()
                 .copy());
-        List<String> payloads = new ArrayList<>(retained);
         Job job = new Job();
         try {
             WORKER.execute(() -> {
                 CURRENT.set(job);
                 try {
                     checkpoint("generate", 0, 0);
-                    job.cells = frozen.generate();
-                    if (frozen.picture != null) job.picturePixels = frozen.picture.rasterize();
-                    job.definition = HologramBlueprintNbt.encodeCaptured(frozen.write());
-                    payloads.add(job.definition);
+                    if (frozen.picture == null) job.cells = frozen.generate();
+                    else {
+                        job.picturePixels = frozen.picture.rasterize();
+                        job.cells = frozen.picture.generate(frozen, job.picturePixels);
+                    }
+                    HologramBlueprintNbt.Encoded definition = HologramBlueprintNbt
+                        .encodeCapturedWithSize(null, frozen.write());
+                    job.definition = definition.value;
+                    job.payloadSizes.put(definition.value, definition.expandedBytes);
+                    long expanded = definition.expandedBytes;
                     for (int i = 0; i < job.cells.size(); i++) {
                         checkpoint("encode", i, job.cells.size());
-                        payloads.add(
-                            job.cells.get(i)
-                                .encodedTile());
+                        HologramTextBox.Cell cell = job.cells.get(i);
+                        String encoded = cell.encodedTile();
+                        int size = cell.encodedTileBytes();
+                        job.payloadSizes.put(encoded, size);
+                        expanded += size;
+                        if (expanded > 64L * 1024 * 1024) throw new IOException("附加对象细节超出蓝图 64MiB 数据预算，请降低分辨率或简化图片后重试");
                     }
-                    long expanded = 0;
-                    for (int i = 0; i < payloads.size(); i++) {
-                        checkpoint("budget", i, payloads.size());
-                        String payload = payloads.get(i);
+                    for (int i = 0; i < retained.size(); i++) {
+                        checkpoint("budget", i, retained.size());
+                        String payload = retained.get(i);
                         if (payload == null || payload.isEmpty()) continue;
                         Integer size = job.payloadSizes.get(payload);
                         if (size == null) {

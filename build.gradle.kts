@@ -73,6 +73,8 @@ tasks.register<JavaExec>("runHologramTest") {
 tasks.named("check") { dependsOn("runHologramTest") }
 
 mapOf(
+    "runUnsavedPlacementRegression" to "com.miaokatze.gtmb.hologram.HologramUnsavedPlacementRegression",
+    "runAttachmentSnapshotRegression" to "com.miaokatze.gtmb.hologram.HologramAttachmentSnapshotRegression",
     "runCookingCompatibilityTest" to "com.miaokatze.gtmb.compat.cookingforblockheads.CookingForBlockheadsRegression",
     "runCookingModelTest" to "com.miaokatze.gtmb.client.compat.cookingforblockheads.CookingForBlockheadsModelRegression",
     "runBotaniaModelTest" to "com.miaokatze.gtmb.client.compat.botania.BotaniaModelRegression",
@@ -90,6 +92,13 @@ mapOf(
         doFirst { scratchDir.get().asFile.mkdirs() }
     }
     tasks.named("check") { dependsOn(taskName) }
+}
+
+// The unsaved-placement contract exercises the native LittleTiles host, including mixed-material geometry.
+tasks.named<JavaExec>("runUnsavedPlacementRegression") {
+    classpath += configurations.detachedConfiguration(
+        dependencies.create("com.github.GTNewHorizons:LittleTiles:1.6.63:dev")
+    ).apply { isTransitive = false }
 }
 
 tasks.register<JavaExec>("runSnapshotAeTaskRegression") {

@@ -4,7 +4,6 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.io.IOException;
-import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
@@ -169,11 +168,12 @@ public final class HologramPictureBox {
     /** Zero is transparent; other bytes index the fixed material palette plus one. */
     public byte[] rasterize() throws IOException {
         validate();
-        boolean[] background = removeBackground ? backgroundMask() : new boolean[source.length];
+        boolean[] background = removeBackground ? backgroundMask() : null;
         int[] pixels = sample(background);
-        int[] filtered = pixels.clone();
+        int[] filtered = filter >= 5 ? pixels.clone() : pixels;
         if (filter >= 5) {
             for (int y = 0; y < height; y++) for (int x = 0; x < width; x++) {
+                if (x == 0) HologramAttachmentGeometry.checkpoint("filter", y, height);
                 int at = y * width + x;
                 if (pixels[at] >>> 24 < 128) continue;
                 int[] sum = new int[3];
@@ -199,6 +199,7 @@ public final class HologramPictureBox {
         byte[] result = new byte[pixels.length];
         double[][] error = new double[2][(width + 2) * 3];
         for (int y = 0; y < height; y++) {
+            HologramAttachmentGeometry.checkpoint("palette", y, height);
             Arrays.fill(error[(y + 1) & 1], 0);
             for (int x = 0; x < width; x++) {
                 int at = y * width + x;
@@ -237,14 +238,16 @@ public final class HologramPictureBox {
         return result;
     }
 
-    private int[] sample(boolean[] background) {
+    private int[] sample(boolean[] background) throws IOException {
         int[] result = new int[width * height];
         for (int y = 0; y < height; y++) for (int x = 0; x < width; x++) {
+            if (x == 0) HologramAttachmentGeometry.checkpoint("sample", y, height);
             int x0 = x * sourceWidth / width, x1 = Math.max(x0 + 1, (x + 1) * sourceWidth / width);
             int y0 = y * sourceHeight / height, y1 = Math.max(y0 + 1, (y + 1) * sourceHeight / height);
             long r = 0, g = 0, b = 0, alpha = 0;
             for (int yy = y0; yy < y1; yy++) for (int xx = x0; xx < x1; xx++) {
-                int at = yy * sourceWidth + xx, color = source[at], a = background[at] ? 0 : color >>> 24;
+                int at = yy * sourceWidth + xx, color = source[at],
+                    a = background != null && background[at] ? 0 : color >>> 24;
                 alpha += a;
                 r += (color >>> 16 & 255) * a;
                 g += (color >>> 8 & 255) * a;
@@ -257,13 +260,15 @@ public final class HologramPictureBox {
         return result;
     }
 
-    private boolean[] backgroundMask() {
+    private boolean[] backgroundMask() throws IOException {
         Map<Integer, Integer> counts = new HashMap<>();
-        for (int y = 0; y < sourceHeight; y++) for (int x = 0; x < sourceWidth; x++)
-            if (x == 0 || y == 0 || x == sourceWidth - 1 || y == sourceHeight - 1) {
+        for (int y = 0; y < sourceHeight; y++) {
+            int step = y == 0 || y == sourceHeight - 1 ? 1 : Math.max(1, sourceWidth - 1);
+            for (int x = 0; x < sourceWidth; x += step) {
                 int color = source[y * sourceWidth + x];
                 if (color >>> 24 >= 128) counts.merge(color & 0xffffff, 1, Integer::sum);
             }
+        }
         // Transparent padding must not make an interior object's own edge its background.
         int target = -1, frequency = 0;
         for (Map.Entry<Integer, Integer> entry : counts.entrySet())
@@ -273,28 +278,33 @@ public final class HologramPictureBox {
             }
         boolean[] mask = new boolean[source.length];
         if (target < 0) return mask;
-        ArrayDeque<Integer> queue = new ArrayDeque<>();
-        for (int y = 0; y < sourceHeight; y++)
-            for (int x = 0; x < sourceWidth; x++) if (x == 0 || y == 0 || x == sourceWidth - 1 || y == sourceHeight - 1)
-                enqueueBackground(y * sourceWidth + x, target, mask, queue);
-        while (!queue.isEmpty()) {
-            int at = queue.removeFirst(), x = at % sourceWidth, y = at / sourceWidth;
-            if (x > 0) enqueueBackground(at - 1, target, mask, queue);
-            if (x + 1 < sourceWidth) enqueueBackground(at + 1, target, mask, queue);
-            if (y > 0) enqueueBackground(at - sourceWidth, target, mask, queue);
-            if (y + 1 < sourceHeight) enqueueBackground(at + sourceWidth, target, mask, queue);
+        int[] queue = new int[source.length];
+        int head = 0, tail = 0;
+        for (int y = 0; y < sourceHeight; y++) {
+            int step = y == 0 || y == sourceHeight - 1 ? 1 : Math.max(1, sourceWidth - 1);
+            for (int x = 0; x < sourceWidth; x += step)
+                tail = enqueueBackground(y * sourceWidth + x, target, mask, queue, tail);
+        }
+        while (head < tail) {
+            if ((head & 1023) == 0) HologramAttachmentGeometry.checkpoint("background", head, source.length);
+            int at = queue[head++], x = at % sourceWidth, y = at / sourceWidth;
+            if (x > 0) tail = enqueueBackground(at - 1, target, mask, queue, tail);
+            if (x + 1 < sourceWidth) tail = enqueueBackground(at + 1, target, mask, queue, tail);
+            if (y > 0) tail = enqueueBackground(at - sourceWidth, target, mask, queue, tail);
+            if (y + 1 < sourceHeight) tail = enqueueBackground(at + sourceWidth, target, mask, queue, tail);
         }
         return mask;
     }
 
-    private void enqueueBackground(int at, int target, boolean[] mask, ArrayDeque<Integer> queue) {
-        if (mask[at]) return;
+    private int enqueueBackground(int at, int target, boolean[] mask, int[] queue, int tail) {
+        if (mask[at]) return tail;
         int color = source[at];
-        if (color >>> 24 < 128) return;
+        if (color >>> 24 < 128) return tail;
         for (int shift : new int[] { 16, 8, 0 })
-            if (Math.abs((color >>> shift & 255) - (target >>> shift & 255)) > backgroundTolerance) return;
+            if (Math.abs((color >>> shift & 255) - (target >>> shift & 255)) > backgroundTolerance) return tail;
         mask[at] = true;
-        queue.addLast(at);
+        queue[tail] = at;
+        return tail + 1;
     }
 
     private int adjust(int color) {
@@ -328,7 +338,11 @@ public final class HologramPictureBox {
     }
 
     List<HologramTextBox.Cell> generate(HologramTextBox placement) throws IOException {
-        byte[] pixels = rasterize();
+        return generate(placement, rasterize());
+    }
+
+    /** The detached job shares its single palette pass with geometry and the client preview. */
+    List<HologramTextBox.Cell> generate(HologramTextBox placement, byte[] pixels) throws IOException {
         HologramMicroTiles tiles = new HologramMicroTiles();
         int samples = 0;
         for (int py = 0; py < height; py++) for (int px = 0; px < width; px++) {

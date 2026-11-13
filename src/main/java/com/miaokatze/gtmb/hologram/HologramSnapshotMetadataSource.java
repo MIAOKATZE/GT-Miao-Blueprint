@@ -44,9 +44,13 @@ final class HologramSnapshotMetadataSource {
     private Iterator<HologramArea.Structure> areaStructures;
 
     HologramSnapshotMetadataSource(HologramSession s, HologramSnapshotDataContext dataContext) {
+        this(s, dataContext, false);
+    }
+
+    HologramSnapshotMetadataSource(HologramSession s, HologramSnapshotDataContext dataContext, boolean currentCapture) {
         this.s = s;
         this.dataContext = dataContext;
-        project = s.processingSource == null;
+        project = currentCapture || s.processingSource == null;
         draftOnly = s.localPlanPending && !s.localPlanError.isEmpty();
         publishSource = project || draftOnly;
         original = project ? s.virtualPreset : s.processingSource;

@@ -124,6 +124,7 @@ final class HologramSnapshotEncoding {
             long started = HologramRuntimeMetrics.start();
             try {
                 if (!cancelled && frozen != null) {
+                    HologramAttachmentSnapshot.expand(frozen, () -> !cancelled);
                     long[] advancedAt = { System.nanoTime() };
                     byte[] encoded = HologramSnapshotCodec.compress(
                         frozen,

@@ -1110,6 +1110,7 @@ public final class HologramCapture {
         final ItemStack elementTrigger;
         boolean anchor;
         boolean userPosition;
+        HologramAttachmentPlacementProof attachmentPlacementProof;
         boolean iconOnly;
         String role = "block";
         String family = "";

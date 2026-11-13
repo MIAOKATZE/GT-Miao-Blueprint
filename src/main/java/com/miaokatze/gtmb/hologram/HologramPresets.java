@@ -931,6 +931,16 @@ final class HologramPresets {
     }
 
     static void validate(Preset preset) throws IOException {
+        validate(preset, true);
+    }
+
+    /** Detached data validation follows owner-thread per-cell material and payload validation. */
+    static void validatePlacementData(Preset preset) throws IOException {
+        if (preset == null || preset.schema != 2) throw new IOException("需要完整的蓝图草稿");
+        validate(preset, false);
+    }
+
+    private static void validate(Preset preset, boolean materialIdentity) throws IOException {
         if (preset != null && preset.sourceItemFrames != null) {
             if (preset.sourceItemFrames.size() > 1024) throw new IOException("蓝图展示框来源记录过多");
             for (FrameNote frame : preset.sourceItemFrames) if (frame == null || frame.facing < 0
@@ -941,9 +951,9 @@ final class HologramPresets {
         }
         HologramBlueprintVersions.validateIfPresent(preset);
         if (preset != null) {
-            validateSemanticMetadata(preset.semanticNbt);
+            validateSemanticMetadata(preset.semanticNbt, materialIdentity);
             if (preset.structures != null) for (Structure structure : preset.structures)
-                if (structure != null) validateSemanticMetadata(structure.semanticNbt);
+                if (structure != null) validateSemanticMetadata(structure.semanticNbt, materialIdentity);
             HologramBlueprintProcessing.validateReceipt(preset);
             HologramDeidentification.checked(preset.deidentificationLevel);
             if (preset.deidentificationVersion < 0 || preset.deidentificationVersion > HologramDeidentification.VERSION)
@@ -953,7 +963,7 @@ final class HologramPresets {
             HologramAePolicy.validateIssues(preset.aeIssues);
         }
         if (preset != null && preset.schema == 2) {
-            validateBlueprint(preset);
+            validateBlueprint(preset, materialIdentity);
             return;
         }
         if (preset != null && preset.schema != 1) throw new IOException("模板schema无效");
@@ -1009,13 +1019,14 @@ final class HologramPresets {
         if (controllers != 1) throw new IOException("模板必须包含一个控制器");
     }
 
-    private static void validateSemanticMetadata(String encoded) throws IOException {
+    private static void validateSemanticMetadata(String encoded, boolean materialIdentity) throws IOException {
         if (encoded == null || encoded.isEmpty()) return;
         if (encoded.length() > 65536) throw new IOException("结构语义元信息超过上限");
-        HologramBlueprintNbt.decode(encoded);
+        if (materialIdentity) HologramBlueprintNbt.decode(encoded);
+        else HologramBlueprintNbt.decodeData(encoded);
     }
 
-    private static void validateBlueprint(Preset preset) throws IOException {
+    private static void validateBlueprint(Preset preset, boolean materialIdentity) throws IOException {
         if (preset.id == null || !preset.id.matches("[a-zA-Z0-9_-]{1,64}")
             || preset.name == null
             || preset.name.trim()
@@ -1070,7 +1081,15 @@ final class HologramPresets {
                 if (!HologramTextBox.isAttachmentId(structure.id)) throw new IOException("文字或图片对象标识无效");
                 // The shared decoder and payloadBudget already enforce the per-NBT and aggregate byte limits.
                 // A picture retains its source pixels, regardless of the smaller selected output dimensions.
-                HologramTextBox.read(HologramTextWorkflow.definition(structure));
+                if (materialIdentity) HologramTextBox.read(HologramTextWorkflow.definition(structure));
+                else {
+                    NBTTagCompound definition = HologramBlueprintNbt.decodeData(structure.textBoxNbt);
+                    definition.setString("id", structure.id);
+                    definition.setInteger("x", structure.x);
+                    definition.setInteger("y", structure.y);
+                    definition.setInteger("z", structure.z);
+                    HologramTextBox.read(definition);
+                }
             }
             if (structure.main < 1 || structure.channels == null || structure.channels.size() > 64)
                 throw new IOException("蓝图结构通道或规模设置无效");
@@ -1083,15 +1102,15 @@ final class HologramPresets {
         }
         HologramBlueprintValidationCache validation = new HologramBlueprintValidationCache(preset);
         for (Cell cell : preset.cells) {
-            validateBlueprintCell(cell, true, validation);
-            validation.filter(cell);
+            validateBlueprintCell(cell, true, validation, materialIdentity);
+            if (materialIdentity) validation.filter(cell);
             if (!positions.add(cell.x + "," + cell.y + "," + cell.z)) throw new IOException("蓝图位置重复");
             validateMembership(cell, structureIds);
         }
         for (Cell cell : preset.palette) {
-            validateBlueprintCell(cell, false, validation);
+            validateBlueprintCell(cell, false, validation, materialIdentity);
             validateMembership(cell, structureIds);
-            validation.filter(cell);
+            if (materialIdentity) validation.filter(cell);
         }
         for (HintArea area : preset.hintAreas) {
             if (area == null || area.x1 > area.x2 || area.y1 > area.y2 || area.z1 > area.z2)
@@ -1147,6 +1166,11 @@ final class HologramPresets {
 
     static void validateBlueprintCell(Cell cell, boolean placedCell, HologramBlueprintValidationCache validation)
         throws IOException {
+        validateBlueprintCell(cell, placedCell, validation, true);
+    }
+
+    private static void validateBlueprintCell(Cell cell, boolean placedCell,
+        HologramBlueprintValidationCache validation, boolean materialIdentity) throws IOException {
         if (cell == null || (cell.item == null && cell.block == null)
             || cell.count != 1
             || cell.damage < 0
@@ -1163,7 +1187,7 @@ final class HologramPresets {
             validation.registryText(cell.block, true);
             validation.registryText(cell.defaultItem, true);
         }
-        validateMaterialIdentity(cell, placedCell, validation);
+        if (materialIdentity) validateMaterialIdentity(cell, placedCell, validation);
         coordinates(cell.x, cell.y, cell.z);
         text(cell.prompt, 4096);
         if (cell.allowedTargets != null) {
