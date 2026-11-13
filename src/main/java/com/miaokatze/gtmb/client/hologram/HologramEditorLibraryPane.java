@@ -288,6 +288,14 @@ final class HologramEditorLibraryPane {
                             .height(18)));
         footer.child(
             action(
+                311,
+                () -> "放置当前蓝图",
+                ui.library::nativeCanPlaceCurrent,
+                () -> "直接放置当前工作区（包含已附加的文字与图片），无需保存。锁定后仍须核对材料并确认施工。").name("place_current_blueprint")
+                    .widthRel(1f)
+                    .height(HologramEditorNativeTheme.PRIMARY_BUTTON_HEIGHT));
+        footer.child(
+            action(
                 141,
                 () -> "放置所选蓝图",
                 () -> idle() && ui.library.selectedPresetExists(),

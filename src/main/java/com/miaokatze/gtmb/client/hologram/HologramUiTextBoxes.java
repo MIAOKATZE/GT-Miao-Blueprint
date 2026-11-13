@@ -100,7 +100,13 @@ final class HologramUiTextBoxes {
 
     void reset() {
         closeEditor();
-        if (pending) com.miaokatze.gtmb.hologram.HologramNetwork.clearAttachmentClientTransport();
+        if (pending) {
+            ui.session.send(
+                "cancelAttachment",
+                com.miaokatze.gtmb.hologram.HologramAttachmentUpload.clientCancellation(),
+                false);
+            com.miaokatze.gtmb.hologram.HologramNetwork.clearAttachmentClientTransport();
+        }
         if (localJob != null) localJob.cancel();
         localJob = null;
         restoringDraft = false;
@@ -384,7 +390,6 @@ final class HologramUiTextBoxes {
     boolean key(int key) {
         if (draft == null || ui.router.textFieldFocused()) return false;
         if (key == Keyboard.KEY_ESCAPE) {
-            if (pending) ui.session.send("cancelAttachment", new NBTTagCompound(), false);
             reset();
             return true;
         }

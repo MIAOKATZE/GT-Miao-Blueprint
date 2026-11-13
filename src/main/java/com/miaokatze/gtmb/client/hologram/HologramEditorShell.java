@@ -47,6 +47,7 @@ final class HologramEditorShell {
     private HologramEditorLibraryPane library;
     private HologramEditorBlueprintSettingsPane settings;
     private HologramEditorLegacyDialogs legacy;
+    private HologramEditorIdentityDialog identity;
     private HologramEditorAnnotationOverlay annotations;
     private HologramEditorStructurePane structures;
     private HologramEditorCutWorkspace cut;
@@ -109,6 +110,7 @@ final class HologramEditorShell {
         library = new HologramEditorLibraryPane(ui);
         settings = new HologramEditorBlueprintSettingsPane(ui);
         legacy = new HologramEditorLegacyDialogs(ui);
+        identity = new HologramEditorIdentityDialog(ui);
         annotations = new HologramEditorAnnotationOverlay(ui);
         root = Flow.column()
             .sizeRel(1f)
@@ -623,6 +625,7 @@ final class HologramEditorShell {
         library.refresh();
         settings.refresh();
         legacy.refresh();
+        identity.refresh();
         annotations.refresh();
     }
 

@@ -65,6 +65,7 @@ public final class HologramTestLabUiProfile {
 
     public static boolean install() {
         if (!Boolean.getBoolean("gtmb.testlab.clientUi")) return false;
+        if (Boolean.getBoolean("gtmb.testlab.identityUi")) return HologramIdentityNativeProbe.install();
         String directory = System.getProperty("gtmb.testlab.clientUiReceiptDir", "");
         if (directory.isEmpty())
             throw new IllegalArgumentException("Explicit gtmb.testlab.clientUiReceiptDir required");

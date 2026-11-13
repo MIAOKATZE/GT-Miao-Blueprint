@@ -417,6 +417,29 @@ final class HologramUiLibrary {
             && !ui.session.state().cells.isEmpty();
     }
 
+    boolean nativeCanPlaceCurrent() {
+        NBTTagCompound state = ui.session.state().data;
+        return !ui.session.isTutorial() && !browsePreviewActive()
+            && nativeIdle()
+            && ui.workspaces.blueprint()
+            && state.getBoolean("virtual")
+            && !state.getBoolean("virtualPlacement")
+            && !state.getBoolean("settingsOnly")
+            && !state.getBoolean("presetBrowseForPlacement")
+            && !state.getBoolean("snapshotPending")
+            && !state.getBoolean("localPlanPending")
+            && !state.getBoolean("blueprintSavePending")
+            && !ui.textBoxes.active()
+            && !ui.session.state().cells.isEmpty();
+    }
+
+    private void placeCurrentBlueprint() {
+        if (!nativeCanPlaceCurrent()) return;
+        cancelLibraryNavigation();
+        if (presetNameField != null) presetNameField.setFocused(false);
+        ui.session.send("placeCurrentBlueprint", new NBTTagCompound(), true);
+    }
+
     boolean nativeAdmin() {
         return dedicatedLibrary() && HologramLibraryClient.INSTANCE.config()
             .getBoolean("admin");
@@ -1083,6 +1106,10 @@ final class HologramUiLibrary {
 
     boolean activateClientLibrary(int id) {
         if (ui.session.isTutorial()) return false;
+        if (id == 311) {
+            placeCurrentBlueprint();
+            return true;
+        }
         if (!dedicatedLibrary()) return false;
         if (ui.canvas.rejectLocalPlanAction(id)) return true;
         HologramLibraryClient library = HologramLibraryClient.INSTANCE;
@@ -1547,7 +1574,7 @@ final class HologramUiLibrary {
                 case 139:
                     sendPresetSwitch("editPreset", selectedServerPresetId(), false);
                     return true;
-                case 140, 141, 159, 161, 175, 176, 203, 205, 207, 226, 299, 303, 309, 310:
+                case 140, 141, 159, 161, 175, 176, 203, 205, 207, 226, 299, 303, 309, 310, 311:
                     ui.session.notice("教程示例不执行真实蓝图库操作");
                     return true;
                 default:
@@ -1567,6 +1594,9 @@ final class HologramUiLibrary {
         }
         if (ui.canvas.rejectLocalPlanAction(id)) return true;
         switch (id) {
+            case 311:
+                placeCurrentBlueprint();
+                return true;
             case 303:
                 refreshLibrary();
                 return true;

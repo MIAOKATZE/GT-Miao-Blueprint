@@ -42,6 +42,7 @@ public final class HologramAttachmentUpload {
     private static SimpleNetworkWrapper channel;
     private static volatile Outgoing outgoing;
     private static volatile String clientProgress = "";
+    private static volatile NBTTagCompound clientCancellation;
     private static int reservedBytes;
     public static volatile long fragmentsSent, largestFragment;
 
@@ -63,6 +64,12 @@ public final class HologramAttachmentUpload {
         return clientProgress;
     }
 
+    /** Only identities are retained after upload ACK so Esc can also cancel the decode/geometry interval. */
+    public static NBTTagCompound clientCancellation() {
+        NBTTagCompound current = clientCancellation;
+        return current == null ? new NBTTagCompound() : (NBTTagCompound) current.copy();
+    }
+
     /** Read-only transport observation for the editor's shared task strip. */
     public static NBTTagCompound clientProgressState() {
         NBTTagCompound state = new NBTTagCompound();
@@ -81,6 +88,13 @@ public final class HologramAttachmentUpload {
 
     static void send(NBTTagCompound action) {
         long generation = GENERATION.incrementAndGet();
+        NBTTagCompound cancellation = new NBTTagCompound();
+        cancellation.setString("attachmentSession", action.getString("session"));
+        cancellation.setLong("attachmentUiSequence", action.getLong("uiSequence"));
+        cancellation.setLong("attachmentSequence", generation);
+        cancellation.setLong("attachmentPlanRevision", action.getLong("planRevision"));
+        cancellation.setLong("textRequest", action.getLong("textRequest"));
+        clientCancellation = cancellation;
         NBTTagCompound frozen = (NBTTagCompound) action.copy();
         frozen.setInteger("clientSnapshotProtocol", 1);
         frozen.setInteger("clientSnapshotPalette", HologramSnapshotPalette.VERSION);
@@ -151,12 +165,55 @@ public final class HologramAttachmentUpload {
         GENERATION.incrementAndGet();
         outgoing = null;
         clientProgress = "";
+        clientCancellation = null;
     }
 
     static void clearServer() {
-        INCOMING.clear();
-        reservedBytes = 0;
+        Iterator<Incoming> entries = INCOMING.values()
+            .iterator();
+        while (entries.hasNext()) {
+            Incoming incoming = entries.next();
+            incoming.cancelled = true;
+            if (incoming.decoding && !incoming.decoded) continue;
+            reservedBytes -= incoming.assembly.bytes.length;
+            entries.remove();
+        }
         FRAGMENT_GATE.clear();
+    }
+
+    /** Server-thread admission: completion includes decode and dispatch, not just the final fragment ACK. */
+    static boolean pending(HologramSession session) {
+        Incoming incoming = INCOMING.get(session.player.getUniqueID());
+        return incoming != null && incoming.player == session.player
+            && incoming.world == session.player.worldObj
+            && incoming.first.session.equals(session.id)
+            && !incoming.cancelled;
+    }
+
+    static boolean cancellationMatches(HologramSession session, NBTTagCompound action) {
+        return action.hasKey("attachmentUiSequence", 4) && action.hasKey("attachmentSequence", 4)
+            && action.hasKey("attachmentPlanRevision", 4)
+            && action.hasKey("uiSequence", 4)
+            && action.getString("attachmentSession")
+                .equals(session.id)
+            && action.getLong("attachmentPlanRevision") == session.planRevision
+            && action.getLong("attachmentSequence") >= 1
+            && action.getLong("uiSequence") > action.getLong("attachmentUiSequence");
+    }
+
+    /** A decoding owner remains reserved until its worker returns; cancellation only removes commit authority. */
+    static boolean cancel(HologramSession session, NBTTagCompound action) {
+        if (!cancellationMatches(session, action)) return false;
+        Incoming incoming = INCOMING.get(session.player.getUniqueID());
+        if (incoming == null || incoming.player != session.player
+            || incoming.world != session.player.worldObj
+            || !incoming.first.session.equals(session.id)
+            || incoming.first.ui != action.getLong("attachmentUiSequence")
+            || incoming.first.sequence != action.getLong("attachmentSequence")
+            || incoming.revision != action.getLong("attachmentPlanRevision")) return false;
+        incoming.cancelled = true;
+        if (!incoming.decoding) release(session.player.getUniqueID(), incoming);
+        return true;
     }
 
     static void tick() {
@@ -165,11 +222,17 @@ public final class HologramAttachmentUpload {
             .iterator();
         while (entries.hasNext()) {
             Incoming incoming = entries.next();
-            if (!HologramNetwork.progressConnected(incoming.player) || incoming.player.worldObj != incoming.world
-                || now - incoming.updated > TIMEOUT) {
+            boolean invalid = !HologramNetwork.progressConnected(incoming.player)
+                || incoming.player.worldObj != incoming.world;
+            if (incoming.cancelled && incoming.decoded || invalid
+                || !incoming.decoding && now - incoming.updated > TIMEOUT) {
+                if (incoming.decoding && !incoming.decoded) {
+                    incoming.cancelled = true;
+                    continue;
+                }
                 reservedBytes -= incoming.assembly.bytes.length;
                 entries.remove();
-                if (HologramNetwork.progressConnected(incoming.player))
+                if (!incoming.cancelled && HologramNetwork.progressConnected(incoming.player))
                     fail(incoming.player, incoming.first, new IOException("附加数据上传已超时或世界发生变化，请重新确认"));
             }
         }
@@ -184,6 +247,10 @@ public final class HologramAttachmentUpload {
             return;
         }
         Incoming previous = INCOMING.get(player.getUniqueID());
+        if (previous != null && previous.decoding) {
+            fail(player, fragment, new IOException("正在校验附加数据，请等待完成或取消后重试"));
+            return;
+        }
         try {
             if (previous == null || previous.first.sequence != fragment.sequence) {
                 if (fragment.index != 0) return;
@@ -194,6 +261,7 @@ public final class HologramAttachmentUpload {
                 if (INCOMING.size() >= 16 || fragment.total > GLOBAL_BYTES - reservedBytes)
                     throw new IOException("附加数据上传队列已满，请稍后重试");
                 previous = new Incoming(player, world, fragment);
+                previous.revision = session.planRevision;
                 INCOMING.put(player.getUniqueID(), previous);
                 reservedBytes += fragment.total;
             }
@@ -205,20 +273,35 @@ public final class HologramAttachmentUpload {
             previous.updated = System.nanoTime();
             channel.sendTo(new Ack(fragment.sequence, fragment.index + 1), player);
             if (complete == null) return;
-            INCOMING.remove(player.getUniqueID());
-            reservedBytes -= complete.length;
+            Incoming decoding = previous;
+            decoding.decoding = true;
             DECODER.execute(() -> {
                 try {
+                    if (decoding.cancelled) throw new IOException("附加数据上传已取消");
                     if (!MessageDigest.isEqual(sha(complete), fragment.digest)) throw new IOException("附加数据校验失败");
                     NBTTagCompound tag = HologramSnapshotCodec.decode(complete, MAX_BYTES, 4L * MAX_BYTES);
                     if (!"placeTextBox".equals(tag.getString("op")) || !tag.hasKey("textBox", 10)
                         || !tag.getString("session")
                             .equals(fragment.session)
                         || tag.getLong("uiSequence") != fragment.ui) throw new IOException("附加数据请求身份无效");
-                    ServerTaskScheduler
-                        .scheduleServerTask(() -> HologramNetwork.receiveUploadedAction(player, world, tag));
+                    tag.setLong("attachmentSequence", fragment.sequence);
+                    ServerTaskScheduler.scheduleServerTask(() -> {
+                        if (INCOMING.get(player.getUniqueID()) != decoding) return;
+                        try {
+                            if (!decoding.cancelled) HologramNetwork.receiveUploadedAction(player, world, tag);
+                        } finally {
+                            release(player.getUniqueID(), decoding);
+                        }
+                    });
                 } catch (Exception failure) {
-                    ServerTaskScheduler.scheduleServerTask(() -> fail(player, fragment, failure));
+                    ServerTaskScheduler.scheduleServerTask(() -> {
+                        if (INCOMING.get(player.getUniqueID()) != decoding) return;
+                        boolean cancelled = decoding.cancelled;
+                        release(player.getUniqueID(), decoding);
+                        if (!cancelled) fail(player, fragment, failure);
+                    });
+                } finally {
+                    decoding.decoded = true;
                 }
             });
         } catch (Exception failure) {
@@ -226,6 +309,12 @@ public final class HologramAttachmentUpload {
             if (removed != null) reservedBytes -= removed.assembly.bytes.length;
             fail(player, fragment, failure);
         }
+    }
+
+    private static void release(UUID player, Incoming expected) {
+        if (INCOMING.get(player) != expected) return;
+        INCOMING.remove(player);
+        reservedBytes -= expected.assembly.bytes.length;
     }
 
     private static void fail(EntityPlayerMP player, Fragment first, Exception failure) {
@@ -291,6 +380,9 @@ public final class HologramAttachmentUpload {
         final Fragment first;
         final Assembly assembly;
         long updated = System.nanoTime();
+        boolean decoding;
+        volatile boolean cancelled, decoded;
+        long revision;
 
         Incoming(EntityPlayerMP player, World world, Fragment first) {
             this.player = player;

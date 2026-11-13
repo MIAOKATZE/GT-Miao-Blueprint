@@ -13,8 +13,13 @@ public final class HologramProductionTestlabIsolation {
             Class.forName("com.miaokatze.gtmb.testlab.TestLab");
             throw new AssertionError("testlab output leaked onto the normal runtime classpath");
         } catch (ClassNotFoundException expected) {}
+        try {
+            Class.forName("com.miaokatze.gtmb.client.hologram.HologramIdentityNativeProbe");
+            throw new AssertionError("native identity fixture leaked onto the normal runtime classpath");
+        } catch (ClassNotFoundException expected) {}
         System.setProperty("gtmb.hologram.smoketest", "true");
         System.setProperty("gtmb.hologram.realInteractionSmoke", "true");
+        System.setProperty("gtmb.testlab.identityUi", "true");
         HologramUiModules modules = new HologramUiModules(null);
         if (modules.diagnostics == null || modules.diagnostics.getClass() != HologramUiDiagnostics.class)
             throw new AssertionError("normal UI must construct with passive diagnostics");

@@ -21,6 +21,20 @@ final class HologramActionDispatcher {
         if (s == null || s.player != player || s.cancelled || !s.id.equals(action.getString("session"))) return;
         if (action.hasKey("editorWorkspaceEpoch") && (!action.hasKey("editorWorkspaceEpoch", 4)
             || action.getLong("editorWorkspaceEpoch") != s.editorWorkspaceEpoch)) return;
+        if ("cancelAttachment".equals(action.getString("op"))) {
+            if (!HologramAttachmentUpload.cancellationMatches(s, action)) return;
+            boolean cancelled = HologramAttachmentUpload.cancel(s, action);
+            if (s.attachmentTask != null && s.attachmentTask.matchesCancellation(action)) {
+                s.attachmentTask.cancel("附加对象处理已取消，原工作区保留");
+                cancelled = true;
+            }
+            // Also fence an encoder whose first fragment has not reached the server yet.
+            if (cancelled || s.attachmentTask == null && s.uiSequence <= action.getLong("attachmentUiSequence")) {
+                s.uiSequence = Math.max(s.uiSequence, action.getLong("uiSequence"));
+                HologramTextWorkflow.acknowledgeCancellation(s, action.getLong("textRequest"));
+            }
+            return;
+        }
         if (HologramDemolition.active(player) && !"close".equals(action.getString("op"))
             && !"requestFullSnapshot".equals(action.getString("op"))) {
             HologramBusyReplies.reject(player, action, HologramBusyReplies.Kind.ACTION);
@@ -43,6 +57,15 @@ final class HologramActionDispatcher {
         if ("ackBlueprintSaved".equals(action.getString("op"))) {
             if (HologramLibraryWorkflow.acknowledgeBlueprintSave(s, action)) HologramSnapshots.send(s);
             return;
+        }
+        if (s.currentPlacementTask != null) {
+            String operation = action.getString("op");
+            if ("close".equals(operation) || "cancel".equals(operation) || "clearWorkspace".equals(operation)) {
+                s.currentPlacementTask.cancel();
+            } else {
+                HologramSnapshots.sendUi(s);
+                return;
+            }
         }
         if (s.attachmentTask != null) {
             String operation = action.getString("op");
@@ -203,6 +226,15 @@ final class HologramActionDispatcher {
             return;
         }
         if (HologramDeferredPlanRefresh.blocksAction(s, op)) {
+            HologramSnapshots.send(s);
+            return;
+        }
+        if ("placeCurrentBlueprint".equals(op)) {
+            try {
+                HologramWorldPlacementWorkflow.placeCurrentBlueprint(s, action);
+            } catch (java.io.IOException rejected) {
+                s.status = rejected.getMessage();
+            }
             HologramSnapshots.send(s);
             return;
         }

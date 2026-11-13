@@ -132,18 +132,6 @@ final class HologramEditorLegacyDialogs {
             ui.bindings::consumeBindingsKey,
             null);
         domain(
-            "identity",
-            "校验与去标识",
-            212,
-            40,
-            47,
-            610,
-            263,
-            ui.identity::deidentificationDrawer,
-            ui.identity::drawDeidentification,
-            ui.identity::consumeIdentityKey,
-            null);
-        domain(
             "processing",
             "蓝图处理",
             234,

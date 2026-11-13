@@ -296,6 +296,14 @@ final class HologramUiDeidentification {
         return this.deidentificationDrawer;
     }
 
+    boolean placement() {
+        return this.deidentificationPlacement;
+    }
+
+    int selectedLevel() {
+        return this.deidentificationLevel;
+    }
+
     int deidentificationLevel(int value) {
         this.deidentificationLevel = value;
         return value;

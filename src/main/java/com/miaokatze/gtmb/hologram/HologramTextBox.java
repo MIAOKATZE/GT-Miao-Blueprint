@@ -175,6 +175,7 @@ public final class HologramTextBox {
         public final int[] metadata, colors;
         public final boolean fullBlock;
         private String encodedTile;
+        private int encodedTileBytes;
 
         Cell(int x, int y, int z, int[] boxes, String[] materials, int[] metadata, int[] colors, boolean fullBlock) {
             this.x = x;
@@ -196,8 +197,17 @@ public final class HologramTextBox {
         }
 
         String encodedTile() throws IOException {
-            if (encodedTile == null) encodedTile = HologramBlueprintNbt.encodeCaptured(tile());
+            if (encodedTile == null) {
+                HologramBlueprintNbt.Encoded encoded = HologramBlueprintNbt.encodeCapturedWithSize(null, tile());
+                encodedTile = encoded.value;
+                encodedTileBytes = encoded.expandedBytes;
+            }
             return encodedTile;
+        }
+
+        int encodedTileBytes() throws IOException {
+            encodedTile();
+            return encodedTileBytes;
         }
 
         private NBTTagCompound tile(int count) {

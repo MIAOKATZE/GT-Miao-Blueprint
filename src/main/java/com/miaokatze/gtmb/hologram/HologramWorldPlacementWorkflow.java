@@ -20,6 +20,74 @@ final class HologramWorldPlacementWorkflow {
 
     private HologramWorldPlacementWorkflow() {}
 
+    /** The current server draft is a placement source; a library save is never an admission requirement. */
+    static void placeCurrentBlueprint(HologramSession s, NBTTagCompound request) throws java.io.IOException {
+        if (HologramWorkspace.find(s.player.getUniqueID()) != s || s.cancelled
+            || !s.id.equals(request.getString("session"))
+            || !request.hasKey("editorWorkspaceEpoch", 4)
+            || request.getLong("editorWorkspaceEpoch") != s.editorWorkspaceEpoch
+            || !request.hasKey("planRevision", 4)
+            || request.getLong("planRevision") != s.planRevision
+            || !HologramSessionPolicy.valid(s)
+            || !com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector.isProjector(s.player.getHeldItem()))
+            throw new java.io.IOException("蓝图会话、工具或计划已变化，请重新打开当前蓝图");
+        if (!HologramSessionPolicy.authoring(s) || s.settingsOnly
+            || s.presetBrowseForPlacement
+            || s.job == 1
+            || s.job == 2
+            || s.job == 4
+            || s.capture == null
+            || s.capture.cells.isEmpty()
+            || s.capture.incomplete
+            || s.capture.pending
+            || s.capture.projectionOnly
+            || !s.capture.sourceCurrent()
+            || s.capturePending
+            || s.attachmentTask != null
+            || HologramAttachmentUpload.pending(s)
+            || s.localPlanPending
+            || s.currentPlacementTask != null
+            || !s.blueprintSaveReceipt.isEmpty()
+            || HologramAeCraftingOrders.active(s.player)
+            || !s.player.capabilities.allowEdit
+            || HologramSessionPolicy.blockedByAreaImport(s)) throw new java.io.IOException("请等待当前蓝图与附加对象处理完成，再放置当前蓝图");
+        if (s.processingWorkflowStarted && !s.processingReviewed)
+            throw new java.io.IOException("请先完成当前蓝图处理流程，再放置当前蓝图；无需保存");
+        if (!HologramWorldFlow.worldPosition(s.x, s.y, s.z, s.player.worldObj.getHeight())
+            || !HologramSessionPolicy.previewReach(s.player, s.x, s.y, s.z)
+            || !s.player.worldObj.blockExists(s.x, s.y, s.z)) throw new java.io.IOException("当前位置不可用于放置；请靠近已加载区域后重试");
+        // Freeze and validate over bounded owner-thread slices; bitmap decoding stays on the detached worker.
+        s.currentPlacementTask = new HologramCurrentPlacementPreparation(s);
+        s.status = "正在核对当前蓝图；无需保存，完成后进入世界定位";
+    }
+
+    static void publishCurrentPlacement(HologramSession s, HologramPresets.Preset draft) {
+        s.virtualPreset = draft;
+        s.processingSource = draft;
+        s.geometryEdits.validationPending = false;
+        s.target = null;
+        s.machine = null;
+        s.context = null;
+        s.constructable = null;
+        s.mode = 0;
+        s.job = 0;
+        HologramSessionPolicy.clearPlacementSelection(s);
+        s.placementReviewNonce++;
+        s.ae.invalidateReviews();
+        s.virtualPlacement = true;
+        s.virtualLocked = false;
+        s.blueprintAwaitingConfirmation = false;
+        s.placementReviewIssued = false;
+        s.forcePlacementReady = false;
+        HologramDeferredPlanRefresh.request(s, java.util.Collections.emptySet());
+        HologramProjectorWorkflow.libraryCloseUi(s);
+        s.settingsOnly = false;
+        s.presetBrowseForPlacement = false;
+        s.openPurpose = "blueprintPlacement";
+        s.status = "移动鼠标预览位置；右键锁定位置，再次右键核对材料与 NBT，Esc 取消放置";
+        // Keep source identity, dirty state and save receipt untouched. Only reviewed construction can pay/write.
+    }
+
     static void openVirtual(EntityPlayerMP player, int x, int y, int z, int side, String presetId) {
         HologramSession previous = HologramWorkspace.find(player.getUniqueID());
         if (previous != null && previous.player == player && HologramSessionPolicy.blockedByAreaImport(previous)) {
@@ -432,7 +500,7 @@ final class HologramWorldPlacementWorkflow {
         s.blueprintPreview = true;
         s.presetBrowseForPlacement = false;
         HologramProjectorWorkflow.libraryCloseUi(s);
-        s.status = "放置已取消，蓝图蓝图保留；右键可重新打开工作台";
+        s.status = "放置已取消，当前蓝图已保留；右键可重新打开工作台";
         HologramSnapshots.send(s);
     }
 
