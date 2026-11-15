@@ -224,9 +224,8 @@ final class HologramMaterialWorkflow {
             HologramDecorationVoucher.enabled() && eligibleDemand > 0 && voucher.getLong("available") > 0);
         voucher.setString(
             "status",
-            HologramStargateRules.enabled() ? "星门规则：装饰抵用券抵扣已禁用，按正常材料需求施工"
-                : selected ? s.player.capabilities.isCreativeMode ? "已选择减免方案；创造施工不消耗抵扣券" : "已选择；首次成功支付建筑材料时消耗一张"
-                    : "仅抵扣配置允许的建筑模组材料");
+            selected ? s.player.capabilities.isCreativeMode ? "已选择减免方案；创造施工不消耗抵扣券" : "已选择；首次成功支付建筑材料时消耗一张"
+                : "仅抵扣配置允许的建筑模组材料");
         state.setTag("decorativeVoucher", voucher);
     }
 

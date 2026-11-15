@@ -49,10 +49,6 @@ public final class HologramRegressionTest {
             "native_structure_projection_reads_hatch_chain_without_callbacks",
             HologramProjectionChainRegression::run);
         cases.put(
-            "stargate_rules_connection_snapshot_and_mode_selection",
-            com.miaokatze.gtmb.client.hologram.HologramStargateClientRulesRegression::run);
-        cases.put("stargate_rules_opt_in_server_admission_and_retained_returns", HologramStargateRulesRegression::run);
-        cases.put(
             "direct_world_gestures_keep_source_and_plan_revisions",
             com.miaokatze.gtmb.client.hologram.HologramSemanticRequestRegression::run);
         cases.put("contextual_sources_intent_revision_read_set_and_purity", HologramSourceContractRegression::run);
@@ -223,6 +219,7 @@ public final class HologramRegressionTest {
         cases.put("unadapted_channels_are_editable_and_reach_native_trigger", HologramRegressionTest::openChannels);
         cases.put("packet_snapshot_roundtrip_keeps_all_channel_values", HologramRegressionTest::packetRoundTrip);
         cases.put("hostile_packet_lengths_are_rejected", HologramRegressionTest::badLengths);
+        cases.put("retired_control_packets_are_inert_before_dispatch", HologramRegressionTest::retiredControlPackets);
         cases.put("capture_hooks_are_inert_outside_collection", HologramRegressionTest::inertCapture);
         cases.put("server_batch_receipt_roundtrip", HologramRegressionTest::planProtocol);
         cases.put("failed_native_draft_encoding_revokes_only_matching_owner", HologramRegressionTest::failedDraftOwner);
@@ -1488,6 +1485,32 @@ public final class HologramRegressionTest {
             } finally {
                 bytes.release();
             }
+        }
+    }
+
+    private static void retiredControlPackets() {
+        try {
+            java.lang.reflect.Field receiver = HologramNetwork.class.getDeclaredField("receiver");
+            receiver.setAccessible(true);
+            Object previous = receiver.get(null);
+            int[] snapshots = { 0 };
+            HologramNetwork.setClientReceiver(ignored -> snapshots[0]++);
+            try {
+                NBTTagCompound envelope = new NBTTagCompound();
+                envelope.setBoolean("serverRulesOnly", true);
+                new HologramNetwork.ClientHandler().onMessage(new HologramNetwork.State(envelope), null);
+                SimpleAssert.eq(0, snapshots[0], "retired login metadata cannot replace the current workspace");
+                NBTTagCompound request = new NBTTagCompound();
+                request.setString("action", "serverRules");
+                // A null context proves the obsolete request never reaches actor admission or command queues.
+                new HologramNetwork.ServerHandler().onMessage(new HologramNetwork.Action(request), null);
+                new HologramNetwork.ClientHandler().onMessage(new HologramNetwork.State(new NBTTagCompound()), null);
+                SimpleAssert.eq(1, snapshots[0], "ordinary state packets still reach the installed receiver");
+            } finally {
+                receiver.set(null, previous);
+            }
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("retired control packet isolation", failure);
         }
     }
 

@@ -61,7 +61,7 @@ public final class HologramDecorationVoucher {
     private HologramDecorationVoucher() {}
 
     public static boolean enabled() {
-        return !HologramStargateRules.enabled() && DecorationVoucherConfig.view().enabled;
+        return DecorationVoucherConfig.view().enabled;
     }
 
     /** Ordinary decorative items must themselves belong to an allowed decoration namespace. */
