@@ -211,7 +211,6 @@ final class HologramStructureProjection {
 
     static NBTTagCompound header(HologramSession s) {
         NBTTagCompound state = new NBTTagCompound();
-        HologramSnapshots.writeServerRules(state);
         state.setString("session", s.id);
         state.setString("generation", s.id);
         state.setString("toolId", s.toolId);
