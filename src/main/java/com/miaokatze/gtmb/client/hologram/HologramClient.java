@@ -2324,16 +2324,19 @@ public final class HologramClient {
         }
     }
 
+    static boolean ownsNativeRenderSnapshot(HologramUiModules ui) {
+        return ui.tutorial.active() || ui.library.browsePreviewActive();
+    }
+
     private void renderWorldPreview(RenderWorldLastEvent event) {
         HologramAreaOverlay.clearRenderWitness();
         Minecraft mc = Minecraft.getMinecraft();
         assembly.expire(System.nanoTime());
         syncSnapshotWorld();
-        // The read-only library viewport owns the native render snapshot while it is visible.
-        // Rendering the workspace behind it would swap that snapshot twice per frame and
-        // restart its cooperative mesh preparation. Returning to the workspace restores it normally.
+        // Tutorial and read-only library scenes own a detached native render snapshot. A world projection,
+        // local placement or Cut behind them would swap it twice per frame and restart cooperative preparation.
         if (mc.currentScreen instanceof HologramScreen
-            && ((HologramScreen) mc.currentScreen).ui.library.browsePreviewActive()) return;
+            && ownsNativeRenderSnapshot(((HologramScreen) mc.currentScreen).ui)) return;
         if (HologramCutClient.INSTANCE.render(event.partialTicks)) return;
         HologramState localPreview = HologramLocalPlacement.INSTANCE.display();
         if (localPreview != null) {

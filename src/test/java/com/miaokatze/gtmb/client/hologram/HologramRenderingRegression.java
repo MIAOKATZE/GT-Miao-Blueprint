@@ -504,6 +504,7 @@ public final class HologramRenderingRegression {
             materials.put(cell, new HologramTextures.Material[] { material, material });
             try {
                 completeCameraProjection(material, materials);
+                tutorialSnapshotOwnership(material, materials);
                 Class<?> faceClass = Class.forName(HologramRenderer.class.getName() + "$Face");
                 java.lang.reflect.Constructor<?> faceConstructor = faceClass.getDeclaredConstructor(
                     HologramState.Cell.class,
@@ -644,6 +645,133 @@ public final class HologramRenderingRegression {
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("ordered preview submission", failure);
         }
+    }
+
+    @SuppressWarnings("unchecked")
+    private static void tutorialSnapshotOwnership(HologramTextures.Material material,
+        java.util.Map<HologramState.Cell, HologramTextures.Material[]> materials) throws ReflectiveOperationException {
+        NBTTagCompound data = boundarySource("tutorial-owner");
+        NBTTagList rows = new NBTTagList();
+        rows.appendTag(boundaryCell(0, 0, 0, "minecraft:stone"));
+        data.setTag("cells", rows);
+        HologramState world = new HologramState(data), teaching = new HologramState(data);
+        HologramUiModules ui = new HologramUiModules(null), sandbox = new HologramUiModules(null);
+        ui.session.initializeIsolated(world, (op, request) -> {});
+        sandbox.session.initializeIsolated(teaching, (op, request) -> {});
+        java.lang.reflect.Field tutorialSandbox = field(HologramEditorTutorial.class, "sandbox");
+        String[] names = { "previewPreparation", "previewState", "visibleState", "cachedFaces", "cachedOutlines",
+            "cachedMarkers", "projectedFrame", "previewKey", "boundsState", "previewSubmitted", "presentedState",
+            "presentedFrame", "presentedRequest", "previewSubmission", "hoverFaces" };
+        Object[] saved = new Object[names.length];
+        for (int i = 0; i < names.length; i++) saved[i] = field(HologramRenderer.class, names[i]).get(null);
+        java.util.Map<Object, Object> regions = (java.util.Map<Object, Object>) field(
+            HologramRenderer.class,
+            "previewRegions").get(null), savedRegions = new java.util.LinkedHashMap<>(regions);
+        String[] listNames = { "nativePreviewCells", "linkedPreviewCells", "visibleCells" };
+        List<?>[] savedLists = new List<?>[listNames.length];
+        for (int i = 0; i < listNames.length; i++)
+            savedLists[i] = new java.util.ArrayList<>((List<?>) field(HologramRenderer.class, listNames[i]).get(null));
+        java.util.BitSet published = (java.util.BitSet) field(HologramRenderer.class, "publishedPreviewCells")
+            .get(null), savedPublished = (java.util.BitSet) published.clone();
+        boolean worldPreview = HologramClient.worldPreview;
+        try {
+            materials.put(teaching.cells.get(0), new HologramTextures.Material[] { material, material });
+            tutorialSandbox.set(ui.tutorial, sandbox);
+            SimpleAssert.that(HologramClient.ownsNativeRenderSnapshot(ui), "an active lesson owns its native snapshot");
+            for (int frame = 0; frame < 6; frame++) {
+                tutorialPreparationFrame(world, teaching, ui, false);
+                SimpleAssert.eq(
+                    0,
+                    HologramRenderer.previewMeshCompleted(teaching),
+                    "unfenced opposing world frames repeatedly retire the lesson before material preparation");
+                SimpleAssert.that(
+                    ((List<?>) field(HologramRenderer.class, "cachedFaces").get(null)).isEmpty()
+                        && ((List<?>) field(HologramRenderer.class, "visibleCells").get(null)).isEmpty(),
+                    "the unfenced control reproduces the empty material and visible-cell counts");
+            }
+            Object preparation = field(HologramRenderer.class, "previewPreparation").get(null);
+            for (int frame = 0; frame < 6; frame++) {
+                tutorialPreparationFrame(world, teaching, ui, true);
+                SimpleAssert.that(
+                    field(HologramRenderer.class, "previewPreparation").get(null) == preparation,
+                    "fenced world frames retain the lesson's cooperative preparation");
+            }
+            SimpleAssert.eq(1, HologramRenderer.previewMeshCompleted(teaching), "the protected mesh finishes");
+            SimpleAssert.that(
+                !((List<?>) field(HologramRenderer.class, "cachedFaces").get(null)).isEmpty(),
+                "the protected projection publishes actual stone faces");
+            SimpleAssert.eq(
+                1,
+                ((List<?>) field(HologramRenderer.class, "visibleCells").get(null)).size(),
+                "the protected projection publishes the visible stone cell");
+            tutorialSandbox.set(ui.tutorial, null);
+            SimpleAssert
+                .that(!HologramClient.ownsNativeRenderSnapshot(ui), "closing teaching restores world admission");
+            HologramBlockRender.begin(world);
+            SimpleAssert.that(
+                field(HologramBlockRender.class, "snapshot").get(null) == world,
+                "the next admitted world frame restores the original native snapshot");
+            SimpleAssert.that(
+                ui.session.state() == world && ui.session.sequence() == 0
+                    && HologramClient.worldPreview == worldPreview,
+                "teaching ownership does not change the real document, command sequence or world-preview preference");
+            field(HologramUiLibrary.class, "browsePreview").setBoolean(ui.library, true);
+            ui.library.libraryDrawer(true);
+            SimpleAssert
+                .that(HologramClient.ownsNativeRenderSnapshot(ui), "read-only library ownership remains intact");
+        } finally {
+            tutorialSandbox.set(ui.tutorial, null);
+            materials.remove(teaching.cells.get(0));
+            for (int i = 0; i < names.length; i++) field(HologramRenderer.class, names[i]).set(null, saved[i]);
+            regions.clear();
+            regions.putAll(savedRegions);
+            for (int i = 0; i < listNames.length; i++) {
+                List<Object> list = (List<Object>) field(HologramRenderer.class, listNames[i]).get(null);
+                list.clear();
+                list.addAll(savedLists[i]);
+            }
+            published.clear();
+            published.or(savedPublished);
+        }
+    }
+
+    /** Runs the real native snapshot switch and cooperative mesh cursors, without claiming a GL draw. */
+    private static void tutorialPreparationFrame(HologramState world, HologramState teaching, HologramUiModules ui,
+        boolean fence) throws ReflectiveOperationException {
+        if (!fence || !HologramClient.ownsNativeRenderSnapshot(ui)) HologramBlockRender.begin(world);
+        HologramBlockRender.begin(teaching);
+        Class<?> type = Class.forName(HologramRenderer.class.getName() + "$PreviewPreparation");
+        if (field(HologramRenderer.class, "visibleState").get(null) != teaching) {
+            field(HologramRenderer.class, "visibleState").set(null, teaching);
+            ((java.util.Map<?, ?>) field(HologramRenderer.class, "previewRegions").get(null)).clear();
+            java.lang.reflect.Constructor<?> constructor = type
+                .getDeclaredConstructor(HologramState.class, boolean.class);
+            constructor.setAccessible(true);
+            field(HologramRenderer.class, "previewPreparation").set(null, constructor.newInstance(teaching, true));
+        }
+        java.lang.reflect.Method prepare = HologramRenderer.class.getDeclaredMethod(
+            "prepareProgressiveFrame",
+            HologramState.class,
+            String.class,
+            int.class,
+            int.class,
+            int.class,
+            int.class,
+            double.class,
+            double.class,
+            double.class,
+            double.class,
+            double.class,
+            double.class);
+        prepare.setAccessible(true);
+        prepare.invoke(null, teaching, "tutorial-owner-pose", 0, 0, 380, 321, .4, .4, 1d, 0d, 0d, 0d);
+        Object preparation = field(HologramRenderer.class, "previewPreparation").get(null);
+        java.lang.reflect.Method advance = type
+            .getDeclaredMethod("advance", int.class, int.class, boolean.class, String.class);
+        advance.setAccessible(true);
+        advance.invoke(preparation, Integer.MAX_VALUE, 0, false, "tutorial-owner-pose");
+        // Headless fixture supplies only the boundary-drawn signal; cell preparation/projection/publication is real.
+        ((HologramRenderer.PreviewBoundary) field(type, "boundary").get(preparation)).presented = true;
     }
 
     @SuppressWarnings("unchecked")
