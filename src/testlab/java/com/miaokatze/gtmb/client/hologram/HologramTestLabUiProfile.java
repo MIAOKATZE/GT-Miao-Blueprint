@@ -61,6 +61,7 @@ public final class HologramTestLabUiProfile {
     private net.minecraft.nbt.NBTTagCompound previousLibraryConfig;
     private HologramLibraryAdminEditor permissionsEditor;
     private int originalDisplayWidth, originalDisplayHeight;
+    private boolean narrowReopenRequested;
 
     private HologramTestLabUiProfile(Path output) {
         this.output = output;
@@ -254,13 +255,19 @@ public final class HologramTestLabUiProfile {
                     "ADMIN close did not retire actual handler; drawer=" + screen.ui.library.libraryAdminDrawer()
                         + ", panelOpen="
                         + open);
-            }
+            } else if (stage == 11 && !narrowReopenRequested
+                && (!screen.ui.library.libraryAdminDrawer() || !adminPanelOpen())) {
+                    screen.ui.library.openLibraryAdmin();
+                    narrowReopenRequested = true;
+                    receipt.put("permissionsNarrowReopened", true);
+                    requestedGuiPost = guiPostSerial;
+                }
         } catch (Throwable failure) {
             fail(failure);
         }
     }
 
-    /** Host preparation owns preference backup/restore; the profile never writes teaching progress. */
+    /** Inspect the retained native handler independently of the test target registry. */
     private boolean adminPanelOpen() throws ReflectiveOperationException {
         Object pane = HologramTestLabUiDiagnostics.readDiagnosticField(screen.ui.shell, "library");
         Object dialogs = HologramTestLabUiDiagnostics.readDiagnosticField(pane, "dialogs");
@@ -270,6 +277,21 @@ public final class HologramTestLabUiProfile {
         return false;
     }
 
+    private IWidget registeredOpenTarget(String key) throws ReflectiveOperationException {
+        Map<?, ?> targets = (Map<?, ?>) HologramTestLabUiDiagnostics.readDiagnosticField(screen.ui.shell, "targets");
+        Object entry = targets.get(key);
+        if (entry instanceof java.util.List) {
+            java.util.List<?> widgets = (java.util.List<?>) entry;
+            for (int i = widgets.size() - 1; i >= 0; i--) {
+                IWidget widget = (IWidget) widgets.get(i);
+                if (widget.isValid() && widget.getPanel()
+                    .isOpen()) return widget;
+            }
+        }
+        return null;
+    }
+
+    /** Host preparation owns preference backup/restore; the profile never writes teaching progress. */
     static void requireTutorialPrepared(HologramEditorPreferences preferences, java.io.File file) {
         if (!preferences.seen("blueprint")) throw new IllegalStateException(
             "Independent client-ui profile requires host lease preparation of tutorial.v2.blueprint=skipped in "
@@ -387,20 +409,48 @@ public final class HologramTestLabUiProfile {
                     originalDisplayWidth = mc.displayWidth;
                     originalDisplayHeight = mc.displayHeight;
                     mc.resize(640, 480);
+                    dispatchedAt = System.nanoTime();
                     requestedGuiPost = guiPostSerial;
                     stage = 11;
                 } else if (stage == 11) {
-                    int[] close = screen.ui.shell.targetBounds("modal.close");
-                    int[] save = screen.ui.shell.targetBounds("control.210");
-                    if (close == null || save == null) return;
+                    if (!receipt.containsKey("permissionsNarrowFrame"))
+                        receipt.put("permissionsNarrowFrame", capturePng("gtmb-permissions-narrow.png"));
+                    IWidget saveWidget = registeredOpenTarget("control.210");
+                    IWidget closeWidget = registeredOpenTarget("modal.close");
+                    int[] close = closeWidget == null ? null : screen.ui.shell.nativeWidgetBounds(closeWidget);
+                    int[] save = saveWidget == null ? null : screen.ui.shell.nativeWidgetBounds(saveWidget);
+                    if (close == null || save == null) {
+                        if (System.nanoTime() - dispatchedAt > 10000000000L) throw new IllegalStateException(
+                            "Narrow ADMIN footer unavailable; panel="
+                                + (saveWidget == null ? "missing"
+                                    : saveWidget.getPanel()
+                                        .getName() + ":open="
+                                        + saveWidget.getPanel()
+                                            .isOpen()
+                                        + ":size="
+                                        + saveWidget.getPanel()
+                                            .getArea().width
+                                        + "x"
+                                        + saveWidget.getPanel()
+                                            .getArea().height)
+                                + ", close="
+                                + java.util.Arrays.toString(close)
+                                + ", save="
+                                + java.util.Arrays.toString(save));
+                        return;
+                    }
+                    if (saveWidget.getPanel() != closeWidget.getPanel())
+                        throw new IllegalStateException("ADMIN footer owners disagree");
                     for (int[] bounds : new int[][] { close, save }) if (bounds[0] < 0 || bounds[1] < 0
                         || bounds[0] + bounds[2] > screen.width
                         || bounds[1] + bounds[3] > screen.height)
                         throw new IllegalStateException("Narrow ADMIN footer outside GUI");
                     receipt.put("permissionsNarrowGuiSize", new int[] { screen.width, screen.height });
                     receipt.put("permissionsNarrowSaveBounds", save);
+                    receipt.put(
+                        "permissionsNarrowSaveEnabled",
+                        screen.ui.library.nativeAdmin() && permissionsEditor.canSave());
                     receipt.put("permissionsNarrowCloseBounds", close);
-                    receipt.put("permissionsNarrowFrame", capturePng("gtmb-permissions-narrow.png"));
                     finish(
                         true,
                         "Real native library and permission-group dialog rendered; Add Group, reopen and narrow footer verified. No server permission or TCP claim.");
