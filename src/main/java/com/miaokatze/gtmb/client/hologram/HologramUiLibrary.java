@@ -1117,6 +1117,11 @@ final class HologramUiLibrary {
 
     boolean activateClientLibrary(int id) {
         if (ui.session.isTutorial()) return false;
+        // Closing a local modal remains available if the connection/world disappears while it is open.
+        if (id == 211 && libraryAdminDrawer) {
+            libraryAdminDrawer = false;
+            return true;
+        }
         if (id == 311) {
             placeCurrentBlueprint();
             return true;

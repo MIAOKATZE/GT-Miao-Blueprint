@@ -148,6 +148,10 @@ public final class HologramLibraryAdminUiRegression {
                 !editor.canSave() && editor.state()
                     .getLong("configRevision") == 42,
                 "concurrent server broadcast leaves editable snapshot intact and disables stale native save");
+            minecraft.theWorld = null;
+            SimpleAssert.that(
+                ui.library.activateClientLibrary(211) && !ui.library.libraryAdminDrawer(),
+                "local ADMIN close remains available after losing dedicated-server context");
         } finally {
             field(HologramLibraryClient.class, "config").set(client, beforeConfig);
             field(HologramLibraryClient.class, "configWritePending").set(client, false);
