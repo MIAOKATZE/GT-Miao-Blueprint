@@ -88,8 +88,7 @@ final class HologramMuiProbeInput {
         if (clipped == null || clipped[2] <= 0 || clipped[3] <= 0)
             throw new IllegalStateException("Native target is disabled, clipped or outside the attached graph: " + key);
         boolean modal = owner.ui.shell.hasModalPanel();
-        evidence.put("modalBlocked", modal);
-        if (modal) throw new IllegalStateException("A native modal panel blocks target " + key);
+        evidence.put("modalPresent", modal);
         Object registry = HologramTestLabUiDiagnostics.readDiagnosticField(owner.ui.shell, "targets");
         Object entries = ((java.util.Map<?, ?>) registry).get(key);
         IWidget target = null;
@@ -104,6 +103,15 @@ final class HologramMuiProbeInput {
             }
         }
         if (target == null) throw new IllegalStateException("No actual registered widget matches target " + key);
+        if (modal) {
+            java.lang.reflect.Method top = HologramEditorShell.class.getDeclaredMethod("topModal");
+            top.setAccessible(true);
+            if (target.getPanel() != top.invoke(owner.ui.shell)) {
+                evidence.put("modalBlocked", true);
+                throw new IllegalStateException("A different native modal panel blocks target " + key);
+            }
+        }
+        evidence.put("modalBlocked", false);
         evidence.put(
             "widgetClass",
             target.getClass()
