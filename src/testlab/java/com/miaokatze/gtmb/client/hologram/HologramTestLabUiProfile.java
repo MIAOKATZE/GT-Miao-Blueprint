@@ -240,21 +240,36 @@ public final class HologramTestLabUiProfile {
                 stage = 7;
             } else if (stage == 8) {
                 HologramMuiProbeInput.nativeTarget(screen, "modal.close", new LinkedHashMap<String, Object>());
+                dispatchedAt = System.nanoTime();
                 stage = 9;
-            } else if (stage == 9 && !screen.ui.library.libraryAdminDrawer()
-                && screen.ui.shell.targetBounds("modal.close") == null) {
+            } else if (stage == 9) {
+                boolean open = adminPanelOpen();
+                if (!screen.ui.library.libraryAdminDrawer() && !open) {
                     screen.ui.library.openLibraryAdmin();
                     if (screen.ui.library.adminEditor() != permissionsEditor)
                         throw new IllegalStateException("ADMIN reopen changed editor owner");
                     requestedGuiPost = guiPostSerial;
                     stage = 10;
-                }
+                } else if (System.nanoTime() - dispatchedAt > 10000000000L) throw new IllegalStateException(
+                    "ADMIN close did not retire actual handler; drawer=" + screen.ui.library.libraryAdminDrawer()
+                        + ", panelOpen="
+                        + open);
+            }
         } catch (Throwable failure) {
             fail(failure);
         }
     }
 
     /** Host preparation owns preference backup/restore; the profile never writes teaching progress. */
+    private boolean adminPanelOpen() throws ReflectiveOperationException {
+        Object pane = HologramTestLabUiDiagnostics.readDiagnosticField(screen.ui.shell, "library");
+        Object dialogs = HologramTestLabUiDiagnostics.readDiagnosticField(pane, "dialogs");
+        Map<?, ?> handlers = (Map<?, ?>) HologramTestLabUiDiagnostics.readDiagnosticField(dialogs, "handlers");
+        for (Map.Entry<?, ?> entry : handlers.entrySet()) if ("ADMIN".equals(((Enum<?>) entry.getKey()).name()))
+            return ((com.cleanroommc.modularui.api.IPanelHandler) entry.getValue()).isPanelOpen();
+        return false;
+    }
+
     static void requireTutorialPrepared(HologramEditorPreferences preferences, java.io.File file) {
         if (!preferences.seen("blueprint")) throw new IllegalStateException(
             "Independent client-ui profile requires host lease preparation of tutorial.v2.blueprint=skipped in "

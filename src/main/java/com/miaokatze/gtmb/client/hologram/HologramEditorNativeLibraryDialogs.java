@@ -91,11 +91,14 @@ final class HologramEditorNativeLibraryDialogs {
             .height(
                 () -> HologramLibraryAdminEditor.nativeHeight(ui.host.screenHeight()),
                 com.cleanroommc.modularui.widget.sizer.Unit.Measure.PIXEL);
-        dialog.onCloseAction(
-            () -> {
-                if (desired() == kind && ui.host.minecraft().currentScreen == ui.host.parent())
-                    ui.router.activate(cancelId(kind));
-            });
+        dialog.onCloseAction(() -> {
+            if (kind == Kind.ADMIN) {
+                ui.library.libraryAdminDrawer(false);
+                return;
+            }
+            if (desired() == kind && ui.host.minecraft().currentScreen == ui.host.parent())
+                ui.router.activate(cancelId(kind));
+        });
         Flow content = Flow.col()
             .sizeRel(1f)
             .padding(12)
@@ -142,6 +145,12 @@ final class HologramEditorNativeLibraryDialogs {
             .widthRel(1f)
             .expanded()
             .height(24);
+        if (kind == Kind.ADMIN) cancel.onMousePressed(button -> {
+            if (button != 0) return true;
+            ui.library.libraryAdminDrawer(false);
+            dialog.closeIfOpen();
+            return true;
+        });
         ui.shell.registerTarget("modal.close", cancel);
         footer.child(cancel);
         footer.child(
