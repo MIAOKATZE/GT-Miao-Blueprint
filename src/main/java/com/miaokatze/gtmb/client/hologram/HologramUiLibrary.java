@@ -17,7 +17,6 @@ import org.lwjgl.input.Keyboard;
 
 import com.miaokatze.gtmb.client.hologram.HologramUiLibrary.LibraryNavigation;
 import com.miaokatze.gtmb.client.hologram.HologramUiMemory.UiMemory;
-import com.miaokatze.gtmb.hologram.HologramLibraryConfig;
 import com.miaokatze.miaokatzecore.api.ui.CanvasTransform;
 
 /** Internal library workflow; composed by the workstation, never part of the mod extension API. */
@@ -128,6 +127,7 @@ final class HologramUiLibrary {
     private boolean publicLibrary;
 
     private boolean libraryAdminDrawer;
+    private HologramLibraryAdminEditor libraryAdminEditor;
 
     private HologramMuiTextField libraryUploadField;
 
@@ -445,6 +445,15 @@ final class HologramUiLibrary {
             .getBoolean("admin");
     }
 
+    boolean nativeCanReadSelected() {
+        return !publicLibrary || HologramLibraryClient.INSTANCE.canReadPublic();
+    }
+
+    boolean nativeCanTransferSelected() {
+        return publicLibrary ? HologramLibraryClient.INSTANCE.canReadPublic()
+            : HologramLibraryClient.INSTANCE.canPublishPublic();
+    }
+
     boolean nativeCanUpgrade() {
         return !ui.session.isTutorial() && (!dedicatedLibrary() || !publicLibrary || nativeAdmin())
             && upgradeStatus() > 0
@@ -464,7 +473,17 @@ final class HologramUiLibrary {
     String nativeStatus() {
         if (ui.session.isTutorial()) return "独立教学示例，不连接真实蓝图库";
         String status = HologramLibraryClient.INSTANCE.status();
-        return status.isEmpty() ? blueprintSaveState() : status;
+        if (!status.isEmpty()) return status;
+        NBTTagCompound config = HologramLibraryClient.INSTANCE.config();
+        if (dedicatedLibrary() && config.hasKey("permissionGroup", 8))
+            return "权限组：" + config.getString("permissionGroup")
+                + " · 发布"
+                + (config.getBoolean("canPublish") ? "允许" : "禁止")
+                + " · 下载"
+                + (config.getBoolean("canDownload") ? "允许" : "禁止")
+                + " · 配额 "
+                + config.getInteger("memberQuota");
+        return blueprintSaveState();
     }
 
     String nativeReviewTitle() {
@@ -922,11 +941,25 @@ final class HologramUiLibrary {
     void openLibraryAdmin() {
         NBTTagCompound config = HologramLibraryClient.INSTANCE.config();
         if (!config.getBoolean("admin")) return;
+        if (!HologramLibraryClient.INSTANCE.supportsPermissionGroups()) {
+            ui.session.notice("服务器不支持权限组设置，请升级服务器；旧带宽设置仍可使用 /gtmblibrary 命令");
+            return;
+        }
         this.libraryAdminDrawer = true;
         this.libraryConfigRevision = config.getLong("configRevision");
-        this.libraryUploadField = ui.library.libraryAdminField(140, String.valueOf(config.getInteger("uploadKiB")));
-        this.libraryDownloadField = ui.library.libraryAdminField(175, String.valueOf(config.getInteger("downloadKiB")));
-        this.libraryQuotaField = ui.library.libraryAdminField(210, String.valueOf(config.getInteger("maxUploads")));
+        if (libraryAdminEditor == null) libraryAdminEditor = new HologramLibraryAdminEditor(ui, config);
+        else libraryAdminEditor.reopen(config);
+        this.libraryUploadField = libraryAdminEditor.upload;
+        this.libraryDownloadField = libraryAdminEditor.download;
+        this.libraryQuotaField = libraryAdminEditor.quota;
+    }
+
+    boolean adminFieldFocused() {
+        return libraryAdminEditor != null && libraryAdminEditor.focused();
+    }
+
+    HologramLibraryAdminEditor adminEditor() {
+        return libraryAdminEditor;
     }
 
     HologramMuiTextField libraryAdminField(int y, String value) {
@@ -1079,29 +1112,7 @@ final class HologramUiLibrary {
     }
 
     void drawLibraryAdmin(int mx, int my) {
-        drawRect(0, 0, HologramUiCanvas.DESIGN_W, HologramUiCanvas.DESIGN_H, 0xd0102026);
-        drawRect(60, 77, 452, 290, 0xff172f36);
-        ui.canvas.text("服务器蓝图库 · 管理员设置（OP 4）", 76, 90, 360, 0xf5e4b9);
-        ui.canvas.text(
-            "单位 KiB/s；新默认上传 " + HologramLibraryConfig.DEFAULT_UPLOAD_KIB_PER_SECOND
-                + " / 下载 "
-                + HologramLibraryConfig.DEFAULT_DOWNLOAD_KIB_PER_SECOND
-                + "；配额 10 项",
-            76,
-            112,
-            360,
-            0x8ba7ad);
-        ui.canvas.text("客户端上传带宽", 76, 145, 190, 0xb9d5d4);
-        this.libraryUploadField.drawTextBox();
-        ui.canvas.text("客户端下载带宽", 76, 180, 190, 0xb9d5d4);
-        this.libraryDownloadField.drawTextBox();
-        ui.canvas.text("每位玩家上传配额", 76, 215, 190, 0xb9d5d4);
-        this.libraryQuotaField.drawTextBox();
-        ui.canvas.button(210, 76, 247, 166, 19, "保存并等待服务器确认", true, mx, my);
-        ui.canvas.button(211, 254, 247, 164, 19, "关闭", true, mx, my);
-        HologramProgress progress = HologramLibraryClient.INSTANCE.progress();
-        if (progress != null) HologramProgressView.draw(ui.host.font(), progress, 76, 274, 342, 3);
-        else ui.canvas.text(HologramLibraryClient.INSTANCE.status(), 76, 274, 342, 0x8ba7ad);
+        if (libraryAdminEditor != null) libraryAdminEditor.draw(mx, my);
     }
 
     boolean activateClientLibrary(int id) {
@@ -1113,16 +1124,9 @@ final class HologramUiLibrary {
         if (!dedicatedLibrary()) return false;
         if (ui.canvas.rejectLocalPlanAction(id)) return true;
         HologramLibraryClient library = HologramLibraryClient.INSTANCE;
+        if (libraryAdminDrawer && libraryAdminEditor != null && libraryAdminEditor.activate(id)) return true;
         if (id == 210 || id == 211) {
             if (id == 211) this.libraryAdminDrawer = false;
-            else try {
-                library.saveConfig(
-                    Integer.parseInt(this.libraryUploadField.getText()),
-                    Integer.parseInt(this.libraryDownloadField.getText()),
-                    Integer.parseInt(this.libraryQuotaField.getText()));
-            } catch (NumberFormatException invalid) {
-                ui.session.notice("请输入有效的正整数");
-            }
             return true;
         }
         if (!this.libraryDrawer) return false;
@@ -1178,6 +1182,7 @@ final class HologramUiLibrary {
                     ui.library.rememberLibraryNavigation(library.selected(this.publicLibrary), "blueprintEdit");
                 else if (id == 141) ui.library.cancelLibraryNavigation();
                 if (this.publicLibrary) {
+                    if (!library.canReadPublic()) return true;
                     if (id == 141) {
                         library.previewPublic(library.selected(true));
                         return true;
@@ -1751,16 +1756,10 @@ final class HologramUiLibrary {
 
     boolean consumeAdminKey(char c, int key) {
         if (this.libraryAdminDrawer) {
-            if (key == Keyboard.KEY_ESCAPE || key == Keyboard.KEY_E && !this.libraryUploadField.isFocused()
-                && !this.libraryDownloadField.isFocused()
-                && !this.libraryQuotaField.isFocused()) this.libraryAdminDrawer = false;
+            if (key == Keyboard.KEY_ESCAPE || key == Keyboard.KEY_E && !adminFieldFocused())
+                this.libraryAdminDrawer = false;
             else if (key == Keyboard.KEY_RETURN || key == Keyboard.KEY_NUMPADENTER)
                 ui.library.activateClientLibrary(210);
-            else {
-                this.libraryUploadField.textboxKeyTyped(c, key);
-                this.libraryDownloadField.textboxKeyTyped(c, key);
-                this.libraryQuotaField.textboxKeyTyped(c, key);
-            }
             return true;
         }
         return false;
@@ -2068,6 +2067,7 @@ final class HologramUiLibrary {
         if (libraryUploadField != null) state.setString("upload", libraryUploadField.getText());
         if (libraryDownloadField != null) state.setString("download", libraryDownloadField.getText());
         if (libraryQuotaField != null) state.setString("quota", libraryQuotaField.getText());
+        if (libraryAdminEditor != null) state.setTag("libraryAdminEditor", libraryAdminEditor.state());
         if (sourceSwitchProposal != null) state.setTag("sourceSwitchProposal", sourceSwitchProposal.copy());
         return state;
     }
@@ -2097,9 +2097,9 @@ final class HologramUiLibrary {
         libraryConfigRevision = state.getLong("libraryConfigRevision");
         libraryAdminDrawer = state.getBoolean("libraryAdminDrawer");
         if (libraryAdminDrawer) {
-            libraryUploadField = libraryAdminField(140, state.getString("upload"));
-            libraryDownloadField = libraryAdminField(175, state.getString("download"));
-            libraryQuotaField = libraryAdminField(210, state.getString("quota"));
+            openLibraryAdmin();
+            if (state.hasKey("libraryAdminEditor", 10))
+                libraryAdminEditor.restore(state.getCompoundTag("libraryAdminEditor"));
         }
         NBTTagCompound proposal = state.getCompoundTag("sourceSwitchProposal");
         NBTTagCompound current = ui.session.state().data.getCompoundTag("discardTargetAction");
@@ -2173,23 +2173,7 @@ final class HologramUiLibrary {
         if (ui.library.libraryAdminDrawer()) {
             NBTTagCompound libraryConfig = HologramLibraryClient.INSTANCE.config();
             if (!libraryConfig.getBoolean("admin")) ui.library.libraryAdminDrawer(false);
-            else {
-                if (ui.library.libraryConfigRevision() != libraryConfig.getLong("configRevision")) {
-                    ui.library.libraryUploadField()
-                        .setText(String.valueOf(libraryConfig.getInteger("uploadKiB")));
-                    ui.library.libraryDownloadField()
-                        .setText(String.valueOf(libraryConfig.getInteger("downloadKiB")));
-                    ui.library.libraryQuotaField()
-                        .setText(String.valueOf(libraryConfig.getInteger("maxUploads")));
-                    ui.library.libraryConfigRevision(libraryConfig.getLong("configRevision"));
-                }
-                ui.library.libraryUploadField()
-                    .updateCursorCounter();
-                ui.library.libraryDownloadField()
-                    .updateCursorCounter();
-                ui.library.libraryQuotaField()
-                    .updateCursorCounter();
-            }
+            else if (libraryAdminEditor != null) libraryAdminEditor.tick();
         }
     }
 

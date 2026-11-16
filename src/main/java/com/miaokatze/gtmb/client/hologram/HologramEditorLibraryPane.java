@@ -298,7 +298,7 @@ final class HologramEditorLibraryPane {
             action(
                 141,
                 () -> "放置所选蓝图",
-                () -> idle() && ui.library.selectedPresetExists(),
+                () -> idle() && ui.library.selectedPresetExists() && ui.library.nativeCanReadSelected(),
                 () -> "进入真实世界定位，锁定后校验材料并确认施工。").widthRel(1f)
                     .height(HologramEditorNativeTheme.PRIMARY_BUTTON_HEIGHT));
         Flow secondary = Flow.col()
@@ -310,7 +310,9 @@ final class HologramEditorLibraryPane {
                 203,
                 "network",
                 () -> ui.library.publicLibrary() ? "下载至客户端" : "上传 / 更新公库",
-                () -> idle() && ui.library.nativeDedicated() && ui.library.selectedPresetExists(),
+                () -> idle() && ui.library.nativeDedicated()
+                    && ui.library.selectedPresetExists()
+                    && ui.library.nativeCanTransferSelected(),
                 () -> "沿用原 JSON / PNG 传输、权限与配额。").widthRel(1f)
                     .height(20));
         secondary.child(
@@ -371,8 +373,12 @@ final class HologramEditorLibraryPane {
                 () -> "刷新真实目录，保留当前工作区。").expanded()
                     .height(18));
         catalog.child(
-            action(139, () -> "编辑所选", () -> idle() && ui.library.selectedPresetExists(), () -> "编辑库中所选蓝图。").expanded()
-                .height(18));
+            action(
+                139,
+                () -> "编辑所选",
+                () -> idle() && ui.library.selectedPresetExists() && ui.library.nativeCanReadSelected(),
+                () -> "编辑库中所选蓝图。").expanded()
+                    .height(18));
         list.child(catalog);
         Flow maintenance = Flow.row()
             .widthRel(1f)

@@ -67,6 +67,7 @@ public final class HologramLibraryRegression {
         downloadReservations();
         taskCorrelation();
         configuration();
+        permissionGroups();
         hydration();
         ownershipAndPublishing();
         directoryLayout();
@@ -1701,6 +1702,207 @@ public final class HologramLibraryRegression {
         } finally {
             release.countDown();
         }
+    }
+
+    private static void permissionGroups() throws Exception {
+        UUID member = UUID.randomUUID();
+        HologramLibraryPermissions defaults = HologramLibraryPermissions.defaults(7);
+        java.util.List<HologramLibraryPermissions.Group> groups = new java.util.ArrayList<>(defaults.groups);
+        groups.add(
+            new HologramLibraryPermissions.Group(
+                "restricted",
+                "受限玩家",
+                false,
+                false,
+                2,
+                java.util.Collections.singletonList(member)));
+        HologramLibraryPermissions policy = new HologramLibraryPermissions(groups);
+        SimpleAssert.eq(2, policy.effective(member).quota, "explicit UUID receives its group quota");
+        SimpleAssert
+            .eq(7, policy.effective(UUID.randomUUID()).quota, "unassigned UUID receives migrated default quota");
+        SimpleAssert.that(
+            !policy.effective(member).publish && !policy.effective(member).download,
+            "group capabilities are independent of administrator authority");
+        SimpleAssert.eq(
+            policy.json(),
+            HologramLibraryPermissions.read(policy.tag())
+                .json(),
+            "NBT groups round trip");
+        denied(
+            () -> new HologramLibraryPermissions(java.util.Collections.singletonList(groups.get(1))),
+            "default group cannot be deleted");
+        java.util.List<HologramLibraryPermissions.Group> duplicate = new java.util.ArrayList<>(groups);
+        duplicate.add(
+            new HologramLibraryPermissions.Group(
+                "other",
+                "另一个组",
+                true,
+                true,
+                3,
+                java.util.Collections.singletonList(member)));
+        denied(() -> new HologramLibraryPermissions(duplicate), "one UUID cannot belong to two groups");
+        NBTTagList malformed = policy.tag();
+        malformed.getCompoundTagAt(1)
+            .setString("quota", "2");
+        denied(() -> HologramLibraryPermissions.read(malformed), "wrong NBT field types fail closed");
+        denied(() -> HologramLibraryPermissions.uuid("1-1-1-1-1"), "shortened UUID is rejected");
+        Path directory = Files.createTempDirectory("gtmb-permission-groups-");
+        Path path = directory.resolve("library.cfg");
+        HologramLibraryConfig config = new HologramLibraryConfig(path.toFile());
+        config.update(true, 1, 17, 19, policy);
+        HologramLibraryConfig reopened = new HologramLibraryConfig(path.toFile());
+        SimpleAssert.eq(policy.json(), reopened.view().permissions.json(), "actual Forge config retains UUID groups");
+        SimpleAssert.eq(2L, reopened.view().revision, "revision survives restart");
+        byte[] unchanged = Files.readAllBytes(path);
+        denied(() -> reopened.update(true, 1, 20, 30, defaults), "stale administrator snapshot is rejected");
+        denied(() -> reopened.update(false, 2, 20, 30, defaults), "membership never grants config permission");
+        SimpleAssert
+            .that(Arrays.equals(unchanged, Files.readAllBytes(path)), "rejected writes keep original file bytes");
+        reopened.update(true, 2, 20, 30, 9);
+        SimpleAssert.eq(9, reopened.view().permissions.effective(null).quota, "legacy configSet updates default quota");
+        SimpleAssert.that(
+            !reopened.view().permissions.effective(member).download,
+            "legacy update preserves explicit groups and capabilities");
+        SimpleAssert.that(
+            !reopened.view()
+                .tag(false)
+                .hasKey("permissionGroups"),
+            "ordinary DTO hides member UUIDs");
+        // The largest accepted policy must fit the unchanged library wire budget.
+        java.util.List<HologramLibraryPermissions.Group> maximum = new java.util.ArrayList<>(defaults.groups);
+        java.util.List<UUID> members = new java.util.ArrayList<>();
+        for (int i = 0; i < HologramLibraryPermissions.MAX_MEMBERS; i++) members.add(UUID.randomUUID());
+        maximum.add(new HologramLibraryPermissions.Group("maximum", "最大成员组", true, false, 1000, members));
+        for (int i = maximum.size(); i < HologramLibraryPermissions.MAX_GROUPS; i++) maximum.add(
+            new HologramLibraryPermissions.Group(
+                "group_" + i,
+                "权限组" + i,
+                true,
+                true,
+                10,
+                java.util.Collections.emptyList()));
+        HologramLibraryConfig.View full = new HologramLibraryConfig.View(
+            1024,
+            1024,
+            new HologramLibraryPermissions(maximum),
+            4);
+        io.netty.buffer.ByteBuf wire = Unpooled.buffer();
+        new HologramNetwork.LibraryReply(full.tag(true)).toBytes(wire);
+        new HologramNetwork.LibraryReply().fromBytes(wire);
+        members.add(UUID.randomUUID());
+        denied(
+            () -> new HologramLibraryPermissions(
+                java.util.Arrays.asList(
+                    defaults.groups.get(0),
+                    new HologramLibraryPermissions.Group("too_many", "超限", true, true, 10, members))),
+            "member count is bounded");
+
+        Field global = MinecraftServer.class.getDeclaredField("mcServer");
+        global.setAccessible(true);
+        Object beforeServer = global.get(null);
+        HologramServerLibrary store = null;
+        try {
+            global.set(null, unsafe().allocateInstance(DedicatedServer.class));
+            store = new HologramServerLibrary(directory.resolve("entries"), path);
+            HologramServerLibrary active = store;
+            Object restricted = peer(player(member, "RestrictedGroupFixture"));
+            set(restricted, "online", false);
+            Object admin = peer(player(UUID.randomUUID(), "GroupAdminFixture"));
+            set(admin, "online", false);
+            set(admin, "admin", true);
+            for (String operation : new String[] { "uploadBegin", "uploadChunk", "download", "preview",
+                "previewMaterials", "publicPrepare" })
+                denied(
+                    () -> runWorker(
+                        active,
+                        () -> handle(active, restricted, HologramLibraryProtocol.request(operation))),
+                    "actual server entry rejects restricted " + operation);
+            SimpleAssert.that(!active.canDownload(member), "cache access consults effective UUID policy");
+            denied(() -> active.requireDownload(member), "direct public read gate rejects restricted member");
+            Object publisher = peer(player(UUID.randomUUID(), "AllowedGroupPublisher"));
+            transfer(active, publisher, HologramServerLibrary.encodeShare(blueprint()), "", false);
+            String publicId = HologramBlueprintFiles.managedPublic(directory.resolve("entries"))
+                .keySet()
+                .iterator()
+                .next();
+            String publicHash = HologramBlueprintContentHash
+                .of(HologramServerLibrary.encodeShare(active.get(publicId)));
+            NBTTagCompound probe = HologramLibraryProtocol.request("privateBegin");
+            probe.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
+            probe.setBoolean("hashProbe", true);
+            probe.setBoolean("contentOnly", true);
+            probe.setString("jsonHash", publicHash);
+            probe.setString(
+                "transfer",
+                UUID.randomUUID()
+                    .toString());
+            probe.setInteger("total", 32);
+            probe.setString("hash", repeat('a', 64));
+            runWorker(active, () -> handle(active, restricted, probe));
+            SimpleAssert.that(
+                get(restricted, "upload") != null,
+                "denied public cache hit falls back to a real private upload instead of granting content");
+            runWorker(active, () -> invoke(active, "abort", restricted));
+            NBTTagCompound download = HologramLibraryProtocol.request("download");
+            download.setString("id", publicId);
+            runWorker(active, () -> handle(active, publisher, download));
+            set(publisher, "online", false);
+            SimpleAssert.that(get(publisher, "download") != null, "allowed public read allocates a real transfer");
+            HologramLibraryPermissions revoked = new HologramLibraryPermissions(
+                java.util.Arrays.asList(
+                    new HologramLibraryPermissions.Group(
+                        "default",
+                        "默认组",
+                        true,
+                        false,
+                        9,
+                        java.util.Collections.emptyList()),
+                    groups.get(1)));
+            runWorker(active, () -> ((HologramLibraryConfig) get(active, "config")).update(true, 3, 20, 30, revoked));
+            runWorker(active, () -> {
+                Method sendDownload = HologramServerLibrary.class
+                    .getDeclaredMethod("sendDownload", publisher.getClass(), long.class);
+                sendDownload.setAccessible(true);
+                sendDownload.invoke(active, publisher, System.nanoTime());
+            });
+            SimpleAssert
+                .that(get(publisher, "download") == null, "revoking public reads retires an already queued download");
+            NBTTagCompound legacy = HologramLibraryProtocol.request("configSet");
+            legacy.setLong("expectedRevision", 4);
+            legacy.setInteger("uploadKiB", 40);
+            legacy.setInteger("downloadKiB", 50);
+            legacy.setInteger("maxUploads", 6);
+            runWorker(active, () -> handle(active, admin, legacy));
+            SimpleAssert.that(
+                !active.policy(member).download && active.config().maxUploads == 6,
+                "real legacy configSet retains groups while updating the default");
+            NBTTagCompound edit = HologramLibraryProtocol.request("configSet");
+            edit.setLong("expectedRevision", 5);
+            edit.setInteger("uploadKiB", 40);
+            edit.setInteger("downloadKiB", 50);
+            edit.setInteger("permissionGroupsVersion", HologramLibraryPermissions.VERSION);
+            edit.setTag("permissionGroups", defaults.tag());
+            denied(
+                () -> runWorker(active, () -> handle(active, restricted, edit)),
+                "ordinary packet cannot edit groups");
+            runWorker(active, () -> handle(active, admin, edit));
+            SimpleAssert.that(
+                active.canDownload(member) && active.policy(member).quota == 7,
+                "group deletion returns former members to default policy");
+            denied(
+                () -> runWorker(active, () -> handle(active, admin, edit)),
+                "duplicate settings packet fails revision CAS");
+        } finally {
+            if (store != null) store.stop();
+            global.set(null, beforeServer);
+        }
+        Files.write(
+            path,
+            "serverblueprintlibrary {\n I:permissionGroupsVersion=1\n S:permissionGroupsJson=broken\n}\n"
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        byte[] broken = Files.readAllBytes(path);
+        denied(() -> new HologramLibraryConfig(path.toFile()), "damaged policy does not silently reset to allow-all");
+        SimpleAssert.that(Arrays.equals(broken, Files.readAllBytes(path)), "damaged config is preserved for repair");
     }
 
     private static void permissions() throws Exception {

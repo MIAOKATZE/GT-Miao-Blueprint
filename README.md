@@ -338,6 +338,10 @@ ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继
 | **游戏内公库 / In-game server library** | 蓝图库「客户端／服务器」切换，完成上传与下载。 / Switch Client/Server for library transfers. |
 | **直接转交文件 / Manual transfer** | 将**同名 JSON + PNG 双文件**一起放入对方游戏目录的 `MiaoBlueprints/`。单人档打开或刷新蓝图库也会发现联机保存的独立双文件，无须转交集合清单；保留原文件、作者和版本。 / Copy the same-basename JSON + PNG pair into the recipient's game-directory `MiaoBlueprints/`. |
 
+专用服务器的 OP4 管理员可在蓝图库「设置」中维护权限组：按完整 UUID 登记成员，设置发布、下载和每成员发布配额。未登记玩家使用默认组，每人只属于一组；全服上传/下载总带宽仍共享。权限组不授予管理员权限，也不能删除或替换他人的上传。修改全部设置后等待服务器确认；其他管理员已更新时，先重新载入再编辑。
+
+*Dedicated-server OP4 administrators can manage library groups, UUID membership, publishing/downloading permissions and per-member publication quotas in Settings. Unassigned players use the default group. Global transfer bandwidth remains shared; groups do not grant operator or other uploaders' ownership rights. Wait for the server acknowledgement after saving; reload before editing when another administrator has changed the settings.*
+
 独立蓝图现在以 **蓝图名＋完整内容哈希** 命名，JSON 与 PNG 使用同一个文件名主体。蓝图库中的「升级旧蓝图」会一键重新无损压缩、校准配对文件名，并保留最近蓝图与上传关联；旧文件仍可读取。缺图、配对不明确或写入失败的条目会保留原件并报告原因。服务器公库升级由管理员执行。
 
 *Individual blueprints use their name plus the full content hash, with matching JSON/PNG basenames. Upgrade old blueprints recompresses and renames existing pairs while retaining recent and upload associations. Unreadable or ambiguous pairs remain intact and are reported; server-library upgrades require an administrator.*

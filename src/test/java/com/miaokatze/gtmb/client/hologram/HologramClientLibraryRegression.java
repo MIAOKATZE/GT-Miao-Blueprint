@@ -33,6 +33,7 @@ public final class HologramClientLibraryRegression {
             exerciseSaveMessages();
             exerciseSaveRequest();
             HologramLibrarySaveLifecycleRegression.run();
+            HologramLibraryAdminUiRegression.run();
             exerciseQuickFence();
             exerciseLegacyMappings();
             exerciseImportedAuthorUpdates();

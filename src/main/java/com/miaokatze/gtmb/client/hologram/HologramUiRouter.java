@@ -1067,12 +1067,7 @@ final class HologramUiRouter {
             || ui.bindings.networkDrawer() && ui.bindings.networkHintField() != null
                 && ui.bindings.networkHintField()
                     .isFocused()
-            || ui.library.libraryAdminDrawer() && (ui.library.libraryUploadField()
-                .isFocused()
-                || ui.library.libraryDownloadField()
-                    .isFocused()
-                || ui.library.libraryQuotaField()
-                    .isFocused())
+            || ui.library.libraryAdminDrawer() && ui.library.adminFieldFocused()
             || ui.processing.processingPresetSaveReview() && ui.processing.processingPresetField() != null
                 && ui.processing.processingPresetField()
                     .isFocused()

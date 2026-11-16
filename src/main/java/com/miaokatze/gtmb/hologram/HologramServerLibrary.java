@@ -230,6 +230,24 @@ final class HologramServerLibrary {
         return config == null ? null : config.view();
     }
 
+    HologramLibraryPermissions.Group policy(UUID owner) {
+        HologramLibraryConfig.View view = config();
+        return view == null ? HologramLibraryPermissions.defaults(10)
+            .effective(owner) : view.permissions.effective(owner);
+    }
+
+    boolean canDownload(UUID owner) {
+        return !HologramLibraryFacade.enabled() || config() != null && policy(owner).download;
+    }
+
+    void requireDownload(UUID owner) throws IOException {
+        if (!canDownload(owner)) throw new IOException("你所在的权限组不允许下载或读取服务器公共蓝图");
+    }
+
+    private void requirePublish(UUID owner) throws IOException {
+        if (HologramLibraryFacade.enabled() && !policy(owner).publish) throw new IOException("你所在的权限组不允许发布服务器公共蓝图");
+    }
+
     boolean available() {
         return ready && !closed;
     }
@@ -405,6 +423,13 @@ final class HologramServerLibrary {
 
     private void handle(Peer peer, NBTTagCompound request) throws IOException {
         String op = request.getString("op");
+        if ("preview".equals(op) || "previewMaterials".equals(op)
+            || "publicPrepare".equals(op)
+            || "download".equals(op)
+            || "contentResolve".equals(op) && !request.getString("id")
+                .isEmpty())
+            requireDownload(peer.owner);
+        if ("uploadBegin".equals(op) || "uploadChunk".equals(op)) requirePublish(peer.owner);
         if ("list".equals(op)) list(peer, request.getInteger("page"));
         else if ("contentResolve".equals(op)) {
             String hash;
@@ -417,7 +442,8 @@ final class HologramServerLibrary {
                     throw new IOException("Blueprint content identities disagree");
                 HologramLibraryProtocol.header(request.getString("transfer"), 1, hash);
                 Entry publicSource = contentIndex.get(hash);
-                boolean publicHit = publicSource != null && published.get(publicSource.blueprint.id) == publicSource;
+                boolean publicHit = canDownload(peer.owner) && publicSource != null
+                    && published.get(publicSource.blueprint.id) == publicSource;
                 boolean hit = trusted.contains(peer.owner, peer, peer.world, runtimeEpoch, hash) || publicHit
                     || integratedContentHit(request, hash);
                 if (draftTaskCurrent(peer.player, request))
@@ -491,13 +517,26 @@ final class HologramServerLibrary {
         } else if ("upgradeLibrary".equals(op)) upgradeLibrary(peer, request);
         else if ("configGet".equals(op)) send(peer, statusTag(peer.admin));
         else if ("configSet".equals(op)) {
-            config.update(
+            if (!peer.admin) throw new IOException("Operator level 4 required");
+            if (request.hasKey("permissionGroupsVersion")) {
+                if (request.getInteger("permissionGroupsVersion") != HologramLibraryPermissions.VERSION
+                    || !request.hasKey("permissionGroups", 9)) throw new IOException("权限组协议版本不支持");
+                config.update(
+                    peer.admin,
+                    request.getLong("expectedRevision"),
+                    request.getInteger("uploadKiB"),
+                    request.getInteger("downloadKiB"),
+                    HologramLibraryPermissions.read(request.getTagList("permissionGroups", 10)));
+            } else config.update(
                 peer.admin,
                 request.getLong("expectedRevision"),
                 request.getInteger("uploadKiB"),
                 request.getInteger("downloadKiB"),
                 request.getInteger("maxUploads"));
             broadcastConfig();
+            NBTTagCompound confirmed = statusTag(peer.admin);
+            confirmed.setString("configRequestId", request.getString("configRequestId"));
+            send(peer, confirmed);
         } else if ("delete".equals(op)) {
             String id = request.getString("id");
             Entry entry = owned(peer.owner, id);
@@ -701,7 +740,8 @@ final class HologramServerLibrary {
             String jsonHash = request.getString("jsonHash");
             HologramLibraryProtocol.header(request.getString("transfer"), 1, jsonHash);
             Entry publicSource = contentIndex.get(jsonHash);
-            boolean publicHit = publicSource != null && published.get(publicSource.blueprint.id) == publicSource;
+            boolean publicHit = canDownload(peer.owner) && publicSource != null
+                && published.get(publicSource.blueprint.id) == publicSource;
             if (contentOnly) {
                 if (trusted.contains(peer.owner, peer, peer.world, runtimeEpoch, jsonHash) || publicHit
                     || integratedContentHit(request, jsonHash)) {
@@ -712,7 +752,10 @@ final class HologramServerLibrary {
             } else {
                 HologramPresets.Preset cached = trusted.get(peer.owner, peer, peer.world, runtimeEpoch, jsonHash);
                 // Public source access is separate from every other player's private cache.
-                if (cached == null && publicHit) cached = HologramPresets.copy(publicSource.blueprint);
+                if (cached == null && publicHit) {
+                    cached = HologramPresets.copy(publicSource.blueprint);
+                    request.setBoolean("serverPublicSource", true);
+                }
                 if (cached == null) {
                     String integratedId = integratedContentId(request);
                     if (!integratedId.isEmpty()) cached = HologramPresets.matching(integratedId, jsonHash);
@@ -734,8 +777,9 @@ final class HologramServerLibrary {
         boolean previewUpload = "previewBegin".equals(request.getString("op"));
         String replace = request.getString("replaceId");
         if (!privateUpload && !previewUpload) {
+            requirePublish(peer.owner);
             if (!replace.isEmpty()) owned(peer.owner, replace);
-            else checkQuota(peer.owner, countOwned(peer.owner), config.view().maxUploads);
+            else checkQuota(peer.owner, countOwned(peer.owner), policy(peer.owner).quota);
         }
         if (activeUploads >= HologramLibraryProtocol.ACTIVE_UPLOADS
             || request.getInteger("total") > MAX_RESERVED_BYTES - reservedBytes)
@@ -811,8 +855,9 @@ final class HologramServerLibrary {
 
     private void publish(Peer peer, Upload upload, HologramPresets.Preset blueprint,
         HologramBlueprintArtifact.Artifact original) throws IOException {
+        requirePublish(peer.owner);
         Entry previous = upload.replace.isEmpty() ? null : owned(peer.owner, upload.replace);
-        if (previous == null) checkQuota(peer.owner, countOwned(peer.owner), config.view().maxUploads);
+        if (previous == null) checkQuota(peer.owner, countOwned(peer.owner), policy(peer.owner).quota);
         if (previous == null && published.size() >= MAX_ENTRIES) throw new IOException("Server library is full");
         blueprint.id = previous == null ? "public_" + UUID.randomUUID() : previous.blueprint.id;
         if (blueprint.authorName == null || blueprint.authorName.isEmpty()) {
@@ -1386,6 +1431,8 @@ final class HologramServerLibrary {
 
     private void queueDownload(Peer peer, byte[] bytes, String name, NBTTagCompound request, String id)
         throws IOException {
+        boolean publicDownload = !"exportDraft".equals(request.getString("op"));
+        if (publicDownload) requireDownload(peer.owner);
         if (peer.download != null) throw new IOException("A download is already active");
         if (activeDownloads >= 4 || bytes.length > MAX_RESERVED_BYTES - downloadBytes)
             throw new IOException("Server download queue is busy; retry later");
@@ -1396,6 +1443,7 @@ final class HologramServerLibrary {
                     && (request.getLong("clientTaskToken") == 0
                         || request.getLong("clientTaskToken") > peer.retiredThrough)),
             request.getLong("clientTaskToken"));
+        peer.download.publicDownload = publicDownload;
         if ("exportDraft".equals(request.getString("op"))) peer.download.boundRequest = (NBTTagCompound) request.copy();
         downloadBytes += bytes.length;
         activeDownloads++;
@@ -1432,6 +1480,16 @@ final class HologramServerLibrary {
     }
 
     private void sendDownload(Peer peer, long now) {
+        if (!canDownload(peer.owner)
+            && (peer.materialPreview != null || peer.download != null && peer.download.publicDownload)) {
+            long token = peer.materialPreviewRequest != null ? peer.materialPreviewRequest.getLong("clientTaskToken")
+                : peer.download.clientTaskToken;
+            peer.materialPreview = null;
+            peer.materialPreviewRequest = null;
+            clearDownload(peer);
+            error(peer, "权限组已变更，公共蓝图读取已取消", token);
+            return;
+        }
         Entry materialEntry = peer.materialPreview;
         if (materialEntry != null && peer.download == null) {
             NBTTagCompound request = peer.materialPreviewRequest;
@@ -1521,6 +1579,13 @@ final class HologramServerLibrary {
     }
 
     private void send(Peer peer, NBTTagCompound tag) {
+        if ("config".equals(tag.getString("op"))) {
+            HologramLibraryPermissions.Group group = policy(peer.owner);
+            tag.setString("permissionGroup", group.name);
+            tag.setBoolean("canPublish", group.publish);
+            tag.setBoolean("canDownload", group.download);
+            tag.setInteger("memberQuota", group.quota);
+        }
         if (peer.online && !closed) HologramNetwork.sendLibraryReply(peer.player, tag);
     }
 
@@ -1699,6 +1764,7 @@ final class HologramServerLibrary {
         long startedAt;
         long lastActivity = System.nanoTime();
         volatile boolean valid = true;
+        boolean publicDownload;
         NBTTagCompound boundRequest;
 
         Download(HologramLibraryDownload.Encoded payload, long clientTaskToken) {

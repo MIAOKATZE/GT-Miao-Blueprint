@@ -187,6 +187,8 @@ final class HologramLibraryClient {
     }
 
     private boolean outgoingQuick, downloadExpected, configWritePending, draftPending;
+    private String pendingConfigRequestId = "";
+    private long confirmedConfigRevision = -1;
     private boolean incomingCapturePreview;
     private boolean incomingLocalSaveReceipt;
     private NBTTagCompound pendingSaveAck;
@@ -1308,6 +1310,19 @@ final class HologramLibraryClient {
         return config;
     }
 
+    boolean canReadPublic() {
+        return !dedicated() || !config.hasKey("canDownload") || config.getBoolean("canDownload");
+    }
+
+    boolean supportsPermissionGroups() {
+        return config.hasKey("permissionGroupsVersion", 3) && config.getInteger("permissionGroupsVersion")
+            == com.miaokatze.gtmb.hologram.HologramLibraryPermissions.VERSION;
+    }
+
+    boolean canPublishPublic() {
+        return !dedicated() || !config.hasKey("canPublish") || config.getBoolean("canPublish");
+    }
+
     void saveDraft(HologramState state, NBTTagCompound options, boolean replace) {
         saveDraft(state, options, replace, HologramSavePreviewPose.DEFAULT_YAW, HologramSavePreviewPose.DEFAULT_PITCH);
     }
@@ -1376,6 +1391,10 @@ final class HologramLibraryClient {
     }
 
     void sendLocal(HologramState state, String action, boolean upload, boolean confirmDiscard) {
+        if (upload && !canPublishPublic()) {
+            status = "你所在的权限组不允许发布公共蓝图";
+            return;
+        }
         if (!upload && ("place".equals(action) || "preview".equals(action))) {
             previewLocal(selectedLocal, "place".equals(action));
             return;
@@ -1523,6 +1542,10 @@ final class HologramLibraryClient {
     }
 
     void previewPublic(String id, boolean placement) {
+        if (!canReadPublic()) {
+            status = "你所在的权限组不允许读取公共蓝图";
+            return;
+        }
         if (!dedicated()) {
             previewIntegrated(id, placement);
             return;
@@ -1975,6 +1998,10 @@ final class HologramLibraryClient {
     }
 
     void downloadSelected() {
+        if (!canReadPublic()) {
+            status = "你所在的权限组不允许下载公共蓝图";
+            return;
+        }
         if (busy() || selectedServer.isEmpty()) return;
         if (!beginBackgroundTask("下载蓝图")) return;
         captureActor();
@@ -2010,14 +2037,40 @@ final class HologramLibraryClient {
     }
 
     void saveConfig(int uploadKiB, int downloadKiB, int maxUploads) {
+        saveConfig(uploadKiB, downloadKiB, maxUploads, config.getLong("configRevision"), null);
+    }
+
+    boolean configSavePending() {
+        return configWritePending;
+    }
+
+    long confirmedConfigRevision() {
+        return confirmedConfigRevision;
+    }
+
+    void saveConfig(int uploadKiB, int downloadKiB, int maxUploads, long expectedRevision, NBTTagList groups) {
         if (!config.getBoolean("admin")) return;
+        if (groups != null && !supportsPermissionGroups()) {
+            status = "服务器不支持权限组设置，请升级服务器；未发送任何设置更改";
+            return;
+        }
+        if (configWritePending) return;
         NBTTagCompound request = request("configSet");
-        request.setLong("expectedRevision", config.getLong("configRevision"));
+        request.setLong("expectedRevision", expectedRevision);
+        pendingConfigRequestId = java.util.UUID.randomUUID()
+            .toString();
+        request.setString("configRequestId", pendingConfigRequestId);
+        if (groups != null) {
+            request
+                .setInteger("permissionGroupsVersion", com.miaokatze.gtmb.hologram.HologramLibraryPermissions.VERSION);
+            request.setTag("permissionGroups", groups.copy());
+        }
         request.setInteger("uploadKiB", uploadKiB);
         request.setInteger("downloadKiB", downloadKiB);
         request.setInteger("maxUploads", maxUploads);
         configWritePending = true;
-        pendingConfigRevision = config.getLong("configRevision");
+        confirmedConfigRevision = -1;
+        pendingConfigRevision = expectedRevision;
         settingsProgress
             .update("config:" + config.getLong("configRevision"), "settings", 0, 0, "", false, System.nanoTime());
         HologramNetwork.sendLibrary(request);
@@ -2286,8 +2339,9 @@ final class HologramLibraryClient {
                 config.setBoolean("readOnly", !reply.getBoolean("admin"));
             }
         } else if ("config".equals(op)) {
-            boolean confirmsWrite = configWritePending && (!reply.getString("libraryError")
-                .isEmpty() || reply.getLong("configRevision") > pendingConfigRevision);
+            boolean confirmsWrite = configWritePending
+                && pendingConfigRequestId.equals(reply.getString("configRequestId"))
+                && reply.getLong("configRevision") > pendingConfigRevision;
             if (confirmsWrite && reply.getString("libraryError")
                 .isEmpty()) settingsProgress.finish(System.nanoTime());
             else if (confirmsWrite) settingsProgress.clear();
@@ -2295,7 +2349,10 @@ final class HologramLibraryClient {
             if (!config.getString("libraryError")
                 .isEmpty()) status = "服务器蓝图库只读：" + config.getString("libraryError");
             else if (confirmsWrite) status = "服务器设置已确认 · 修订 " + config.getLong("configRevision");
-            if (confirmsWrite) configWritePending = false;
+            if (confirmsWrite) {
+                confirmedConfigRevision = config.getLong("configRevision");
+                configWritePending = false;
+            }
         } else if ("uploadReady".equals(op) || "privateReady".equals(op) || "previewReady".equals(op)) {
             if (!matchesOutgoing(reply) || uploadWindow == null) return;
             if (outgoingQuick && placementIntent != null && contentAdmission == null) {
