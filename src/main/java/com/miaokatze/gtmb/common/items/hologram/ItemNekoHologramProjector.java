@@ -9,18 +9,15 @@ import java.util.Set;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.item.ItemStack;
-import net.minecraft.util.StatCollector;
 import net.minecraft.world.World;
 
-import com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor;
 import com.gtnewhorizon.structurelib.item.ItemConstructableTrigger;
-import com.miaokatze.gtmb.common.util.ProjectorTooltip;
+import com.miaokatze.gtmb.common.util.BlueprintNativeTooltip;
 import com.miaokatze.gtmb.hologram.HologramDemolition;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
 import com.miaokatze.gtmb.hologram.HologramService;
 import com.miaokatze.gtmb.main.GTMiaoBlueprint;
 import com.miaokatze.gtmb.register.CreativeTabManager;
-import com.miaokatze.miaokatzecore.api.tooltip.TooltipPages;
 
 import cpw.mods.fml.relauncher.Side;
 import cpw.mods.fml.relauncher.SideOnly;
@@ -97,33 +94,6 @@ public class ItemNekoHologramProjector extends ItemConstructableTrigger {
     @Override
     @SideOnly(Side.CLIENT)
     public void addInformation(ItemStack stack, EntityPlayer player, List<String> tooltip, boolean showAdvanced) {
-        ProjectorTooltip.state(tooltip);
-        int main = stack.hasTagCompound() ? Math.max(
-            1,
-            stack.getTagCompound()
-                .getInteger("gtitHologramMain"))
-            : 1;
-        ProjectorTooltip.value(tooltip, StatCollector.translateToLocal("gtmb.hologram.main"), main);
-        if (TooltipPages.expanded(stack)) {
-            ChannelDataAccessor.iterateChannelData(stack)
-                .limit(8)
-                .forEach(entry -> ProjectorTooltip.value(tooltip, entry.getKey(), entry.getValue()));
-            ProjectorTooltip.description(
-                tooltip,
-                "item." + ID + ".description.0",
-                "item." + ID + ".description.1",
-                "item." + ID + ".description.2");
-            ProjectorTooltip.controls(tooltip);
-            for (int i = 0;; i++) {
-                String key = "item." + ID + ".tooltip." + i;
-                if (!StatCollector.canTranslate(key)) break;
-                java.util.Collections.addAll(tooltip, gregtech.api.util.GTSplit.splitLocalized(key));
-            }
-        } else {
-            ProjectorTooltip.description(tooltip, "item." + ID + ".description.0", "item." + ID + ".description.2");
-            ProjectorTooltip.add(tooltip, "gtmb.projector.compact.sources", "gtmb.projector.compact.controls");
-        }
-        TooltipPages.hint(stack, tooltip, false);
-        ProjectorTooltip.finish(tooltip);
+        BlueprintNativeTooltip.projector(stack, tooltip);
     }
 }
