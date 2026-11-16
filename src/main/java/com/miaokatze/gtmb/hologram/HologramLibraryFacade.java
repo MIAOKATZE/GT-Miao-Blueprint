@@ -118,6 +118,7 @@ public final class HologramLibraryFacade {
         if (!enabled()) return HologramPresets.get(id);
         if (id == null) return null;
         if (!id.startsWith("public_") || library == null) return null;
+        library.requireDownload(actorId(player));
         return library.get(id);
     }
 
@@ -200,6 +201,8 @@ public final class HologramLibraryFacade {
                 && library.draftTaskCurrent(player, request)
                 && HologramLibraryService.sessionCurrent(player, request)) {
                 try {
+                    if ("publicPrepare".equals(request.getString("op")) || request.getBoolean("serverPublicSource"))
+                        library.requireDownload(actorId(player));
                     String id = receiver.accept(player, request, preset);
                     NBTTagCompound result = HologramLibraryProtocol.reply(reply);
                     result.setString("id", id == null ? "" : id);

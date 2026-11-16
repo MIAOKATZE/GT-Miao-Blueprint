@@ -38,6 +38,7 @@ public final class HologramLibrarySaveLifecycleRegression {
             cancelledCatalogCanRefreshAgain();
             preparationActivityIsCorrelatedAndBounded();
             savedPreviewOwnsItsObservedAngles();
+            settingsReplyRequiresMatchingWrite();
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("Blueprint save lifecycle", failure);
         }
@@ -671,6 +672,44 @@ public final class HologramLibrarySaveLifecycleRegression {
                 && client.status()
                     .contains(HologramProgressView.phase("library.prepare")),
             "translation of a technical failure preserves its actual UI phase suffix");
+    }
+
+    private static void settingsReplyRequiresMatchingWrite() throws ReflectiveOperationException {
+        HologramLibraryClient client = client();
+        NBTTagCompound initial = new NBTTagCompound();
+        initial.setBoolean("admin", true);
+        initial.setLong("configRevision", 8);
+        set(client, "config", initial);
+        NBTTagList groups = com.miaokatze.gtmb.hologram.HologramLibraryPermissions.defaults(7)
+            .tag();
+        SimpleAssert
+            .that(!client.supportsPermissionGroups(), "old protocol-v3 server does not advertise group capability");
+        client.saveConfig(17, 19, 7, 8, groups);
+        SimpleAssert.that(
+            !client.configSavePending() && get(client, "pendingConfigRequestId").equals(""),
+            "group save to an old server is refused before any packet or pending operation");
+        initial.setInteger("permissionGroupsVersion", com.miaokatze.gtmb.hologram.HologramLibraryPermissions.VERSION);
+        client.saveConfig(17, 19, 7, 8, groups);
+        SimpleAssert.that(client.configSavePending(), "settings remains pending until its own acknowledgement");
+        Method receive = HologramLibraryClient.class.getDeclaredMethod("receive", NBTTagCompound.class);
+        receive.setAccessible(true);
+        NBTTagCompound broadcast = new NBTTagCompound();
+        broadcast.setString("op", "config");
+        broadcast.setLong("configRevision", 9);
+        broadcast.setBoolean("admin", true);
+        broadcast.setInteger("permissionGroupsVersion", com.miaokatze.gtmb.hologram.HologramLibraryPermissions.VERSION);
+        broadcast.setTag("permissionGroups", groups);
+        receive.invoke(client, broadcast);
+        SimpleAssert.that(client.configSavePending(), "another administrator's broadcast cannot acknowledge our write");
+        broadcast.setString("configRequestId", String.valueOf(get(client, "pendingConfigRequestId")));
+        receive.invoke(client, broadcast);
+        SimpleAssert.that(
+            !client.configSavePending() && client.confirmedConfigRevision() == 9,
+            "matching request and advanced revision acknowledge the actual settings write");
+        client.saveConfig(20, 30, 7, 9, groups);
+        receive.invoke(client, broadcast);
+        SimpleAssert.that(client.configSavePending(), "old acknowledgement cannot complete a newer settings write");
+        client.cancel();
     }
 
     private static HologramLibraryClient client() throws ReflectiveOperationException {

@@ -58,6 +58,10 @@ public final class HologramTestLabUiProfile {
     private String lastScreen = "";
     private int lastStage = -1;
     private boolean finished;
+    private net.minecraft.nbt.NBTTagCompound previousLibraryConfig;
+    private HologramLibraryAdminEditor permissionsEditor;
+    private int originalDisplayWidth, originalDisplayHeight;
+    private boolean narrowReopenRequested;
 
     private HologramTestLabUiProfile(Path output) {
         this.output = output;
@@ -204,10 +208,87 @@ public final class HologramTestLabUiProfile {
                 requestedFrame = frameSerial;
                 requestedGuiPost = guiPostSerial;
                 stage = 3;
-            }
+            } else if (stage == 4) {
+                previousLibraryConfig = (net.minecraft.nbt.NBTTagCompound) HologramLibraryClient.INSTANCE.config()
+                    .copy();
+                net.minecraft.nbt.NBTTagCompound config = new net.minecraft.nbt.NBTTagCompound();
+                config.setBoolean("admin", true);
+                config.setLong("configRevision", 1);
+                config.setInteger(
+                    "permissionGroupsVersion",
+                    com.miaokatze.gtmb.hologram.HologramLibraryPermissions.VERSION);
+                config.setInteger("uploadKiB", 128);
+                config.setInteger("downloadKiB", 512);
+                config.setInteger("maxUploads", 10);
+                config.setTag(
+                    "permissionGroups",
+                    com.miaokatze.gtmb.hologram.HologramLibraryPermissions.defaults(10)
+                        .tag());
+                java.lang.reflect.Field field = HologramLibraryClient.class.getDeclaredField("config");
+                field.setAccessible(true);
+                field.set(HologramLibraryClient.INSTANCE, config);
+                screen.ui.library.openLibraryAdmin();
+                permissionsEditor = screen.ui.library.adminEditor();
+                receipt
+                    .put("permissionsFixture", "explicit-client-config; no server actor or OP4 authorization claimed");
+                requestedGuiPost = guiPostSerial;
+                stage = 5;
+            } else if (stage == 6) {
+                Map<String, Object> input = new LinkedHashMap<String, Object>();
+                HologramMuiProbeInput.nativeTarget(screen, "library.permissions.action.18002", input);
+                receipt.put("permissionsAddGroupInput", input);
+                requestedGuiPost = guiPostSerial;
+                stage = 7;
+            } else if (stage == 8) {
+                HologramMuiProbeInput.nativeTarget(screen, "modal.close", new LinkedHashMap<String, Object>());
+                dispatchedAt = System.nanoTime();
+                stage = 9;
+            } else if (stage == 9) {
+                boolean open = adminPanelOpen();
+                if (!screen.ui.library.libraryAdminDrawer() && !open) {
+                    screen.ui.library.openLibraryAdmin();
+                    if (screen.ui.library.adminEditor() != permissionsEditor)
+                        throw new IllegalStateException("ADMIN reopen changed editor owner");
+                    requestedGuiPost = guiPostSerial;
+                    stage = 10;
+                } else if (System.nanoTime() - dispatchedAt > 10000000000L) throw new IllegalStateException(
+                    "ADMIN close did not retire actual handler; drawer=" + screen.ui.library.libraryAdminDrawer()
+                        + ", panelOpen="
+                        + open);
+            } else if (stage == 11 && !narrowReopenRequested
+                && (!screen.ui.library.libraryAdminDrawer() || !adminPanelOpen())) {
+                    screen.ui.library.openLibraryAdmin();
+                    narrowReopenRequested = true;
+                    receipt.put("permissionsNarrowReopened", true);
+                    requestedGuiPost = guiPostSerial;
+                }
         } catch (Throwable failure) {
             fail(failure);
         }
+    }
+
+    /** Inspect the retained native handler independently of the test target registry. */
+    private boolean adminPanelOpen() throws ReflectiveOperationException {
+        Object pane = HologramTestLabUiDiagnostics.readDiagnosticField(screen.ui.shell, "library");
+        Object dialogs = HologramTestLabUiDiagnostics.readDiagnosticField(pane, "dialogs");
+        Map<?, ?> handlers = (Map<?, ?>) HologramTestLabUiDiagnostics.readDiagnosticField(dialogs, "handlers");
+        for (Map.Entry<?, ?> entry : handlers.entrySet()) if ("ADMIN".equals(((Enum<?>) entry.getKey()).name()))
+            return ((com.cleanroommc.modularui.api.IPanelHandler) entry.getValue()).isPanelOpen();
+        return false;
+    }
+
+    private IWidget registeredOpenTarget(String key) throws ReflectiveOperationException {
+        Map<?, ?> targets = (Map<?, ?>) HologramTestLabUiDiagnostics.readDiagnosticField(screen.ui.shell, "targets");
+        Object entry = targets.get(key);
+        if (entry instanceof java.util.List) {
+            java.util.List<?> widgets = (java.util.List<?>) entry;
+            for (int i = widgets.size() - 1; i >= 0; i--) {
+                IWidget widget = (IWidget) widgets.get(i);
+                if (widget.isValid() && widget.getPanel()
+                    .isOpen()) return widget;
+            }
+        }
+        return null;
     }
 
     /** Host preparation owns preference backup/restore; the profile never writes teaching progress. */
@@ -307,6 +388,75 @@ public final class HologramTestLabUiProfile {
                 receipt.put("initialDiagnostic", initial);
                 initialDiagnosticWritten = true;
             }
+            if (stage >= 5 && currentGuiPost && guiPostSerial >= requestedGuiPost + 2) {
+                if (stage == 5) {
+                    if (screen.ui.shell.targetBounds("library.permissions.action.18002") == null) return;
+                    receipt.put("permissionsInitialFrame", capturePng("gtmb-permissions-initial.png"));
+                    stage = 6;
+                } else if (stage == 7) {
+                    if (permissionsEditor.state()
+                        .getTagList("permissionGroups", 10)
+                        .tagCount() != 2)
+                        throw new IllegalStateException("Native Add Group did not modify the actual editor draft");
+                    receipt.put("permissionsAddGroupObserved", true);
+                    receipt.put("permissionsEditedFrame", capturePng("gtmb-permissions-added.png"));
+                    stage = 8;
+                } else if (stage == 10) {
+                    if (screen.ui.shell.targetBounds("modal.close") == null) return;
+                    if (!screen.ui.library.libraryUploadField()
+                        .nativeOwned()) throw new IllegalStateException("ADMIN fields lost native owner");
+                    receipt.put("permissionsReopenSameOwner", true);
+                    originalDisplayWidth = mc.displayWidth;
+                    originalDisplayHeight = mc.displayHeight;
+                    mc.resize(640, 480);
+                    dispatchedAt = System.nanoTime();
+                    requestedGuiPost = guiPostSerial;
+                    stage = 11;
+                } else if (stage == 11) {
+                    if (!receipt.containsKey("permissionsNarrowFrame"))
+                        receipt.put("permissionsNarrowFrame", capturePng("gtmb-permissions-narrow.png"));
+                    IWidget saveWidget = registeredOpenTarget("control.210");
+                    IWidget closeWidget = registeredOpenTarget("modal.close");
+                    int[] close = closeWidget == null ? null : screen.ui.shell.nativeWidgetBounds(closeWidget);
+                    int[] save = saveWidget == null ? null : screen.ui.shell.nativeWidgetBounds(saveWidget);
+                    if (close == null || save == null) {
+                        if (System.nanoTime() - dispatchedAt > 10000000000L) throw new IllegalStateException(
+                            "Narrow ADMIN footer unavailable; panel="
+                                + (saveWidget == null ? "missing"
+                                    : saveWidget.getPanel()
+                                        .getName() + ":open="
+                                        + saveWidget.getPanel()
+                                            .isOpen()
+                                        + ":size="
+                                        + saveWidget.getPanel()
+                                            .getArea().width
+                                        + "x"
+                                        + saveWidget.getPanel()
+                                            .getArea().height)
+                                + ", close="
+                                + java.util.Arrays.toString(close)
+                                + ", save="
+                                + java.util.Arrays.toString(save));
+                        return;
+                    }
+                    if (saveWidget.getPanel() != closeWidget.getPanel())
+                        throw new IllegalStateException("ADMIN footer owners disagree");
+                    for (int[] bounds : new int[][] { close, save }) if (bounds[0] < 0 || bounds[1] < 0
+                        || bounds[0] + bounds[2] > screen.width
+                        || bounds[1] + bounds[3] > screen.height)
+                        throw new IllegalStateException("Narrow ADMIN footer outside GUI");
+                    receipt.put("permissionsNarrowGuiSize", new int[] { screen.width, screen.height });
+                    receipt.put("permissionsNarrowSaveBounds", save);
+                    receipt.put(
+                        "permissionsNarrowSaveEnabled",
+                        screen.ui.library.nativeAdmin() && permissionsEditor.canSave());
+                    receipt.put("permissionsNarrowCloseBounds", close);
+                    finish(
+                        true,
+                        "Real native library and permission-group dialog rendered; Add Group, reopen and narrow footer verified. No server permission or TCP claim.");
+                }
+                return;
+            }
             if (stage != 3 || !currentGuiPost
                 || frameSerial < requestedFrame + 2
                 || guiPostSerial < requestedGuiPost + 2) return;
@@ -361,7 +511,7 @@ public final class HologramTestLabUiProfile {
             receipt.put("fixtureCellsPreserved", screen.ui.session.state().cells.size());
             receipt.put("tutorialInactive", !screen.ui.tutorial.active());
             receipt.put("clientRenderVerified", true);
-            finish(true, "Real MUI2 screen and native control dispatch followed by a naturally rendered framebuffer");
+            stage = 4;
         } catch (Throwable failure) {
             fail(failure);
         }
@@ -566,6 +716,12 @@ public final class HologramTestLabUiProfile {
         MinecraftForge.EVENT_BUS.unregister(this);
         try {
             Minecraft mc = Minecraft.getMinecraft();
+            if (previousLibraryConfig != null) {
+                java.lang.reflect.Field field = HologramLibraryClient.class.getDeclaredField("config");
+                field.setAccessible(true);
+                field.set(HologramLibraryClient.INSTANCE, previousLibraryConfig);
+            }
+            if (originalDisplayWidth > 0) mc.resize(originalDisplayWidth, originalDisplayHeight);
             if (screen != null && mc.currentScreen == screen) {
                 try {
                     receipt.put("terminalNativeLayout", nativeLayout());

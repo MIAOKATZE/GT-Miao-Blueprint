@@ -67,6 +67,24 @@ public final class HologramLibraryConfig {
                     1);
             if (!valid(candidate.uploadKiB, candidate.downloadKiB, candidate.maxUploads))
                 candidate = new View(DEFAULT_UPLOAD_KIB_PER_SECOND, DEFAULT_DOWNLOAD_KIB_PER_SECOND, 10, 1);
+            if (loaded.hasKey(CATEGORY.toLowerCase(Locale.ENGLISH), "permissionGroupsVersion")) {
+                if (loaded.get(CATEGORY, "permissionGroupsVersion", 0)
+                    .getInt(0) != HologramLibraryPermissions.VERSION)
+                    throw new IOException("Unsupported library permission groups version");
+                HologramLibraryPermissions permissions = HologramLibraryPermissions.json(
+                    loaded.get(CATEGORY, "permissionGroupsJson", "")
+                        .getString());
+                long revision;
+                try {
+                    revision = Long.parseLong(
+                        loaded.get(CATEGORY, "revision", "1")
+                            .getString());
+                } catch (NumberFormatException invalid) {
+                    throw new IOException("Invalid library revision", invalid);
+                }
+                if (revision < 1 || revision == Long.MAX_VALUE) throw new IOException("Invalid library revision");
+                candidate = new View(candidate.uploadKiB, candidate.downloadKiB, permissions, revision);
+            }
             persist(candidate);
             current = candidate;
         } finally {
@@ -78,11 +96,17 @@ public final class HologramLibraryConfig {
 
         public final int uploadKiB, downloadKiB, maxUploads;
         public final long revision;
+        public final HologramLibraryPermissions permissions;
 
         View(int up, int down, int max, long revision) {
+            this(up, down, HologramLibraryPermissions.defaults(max), revision);
+        }
+
+        View(int up, int down, HologramLibraryPermissions permissions, long revision) {
             uploadKiB = up;
             downloadKiB = down;
-            maxUploads = max;
+            this.permissions = permissions;
+            maxUploads = permissions.effective(null).quota;
             this.revision = revision;
         }
 
@@ -93,6 +117,8 @@ public final class HologramLibraryConfig {
             tag.setInteger("maxUploads", maxUploads);
             tag.setLong("configRevision", revision);
             tag.setBoolean("admin", admin);
+            tag.setInteger("permissionGroupsVersion", HologramLibraryPermissions.VERSION);
+            if (admin) tag.setTag("permissionGroups", permissions.tag());
             return tag;
         }
     }
@@ -106,10 +132,17 @@ public final class HologramLibraryConfig {
     }
 
     synchronized View update(boolean admin, long expected, int up, int down, int max) throws IOException {
+        return update(admin, expected, up, down, current.permissions.withDefaultQuota(max));
+    }
+
+    synchronized View update(boolean admin, long expected, int up, int down, HologramLibraryPermissions permissions)
+        throws IOException {
         if (!admin) throw new IOException("Operator level 4 required");
         if (expected != current.revision) throw new IOException("Configuration changed; refresh before saving");
-        if (!valid(up, down, max)) throw new IOException("Bandwidth must be 1..1024 KiB/s; quota must be 1..1000");
-        View next = new View(up, down, max, current.revision + 1);
+        if (permissions == null || !valid(up, down, permissions.effective(null).quota))
+            throw new IOException("Bandwidth must be 1..1024 KiB/s; quota must be 1..1000");
+        if (current.revision >= Long.MAX_VALUE - 1) throw new IOException("Library revision exhausted");
+        View next = new View(up, down, permissions, current.revision + 1);
         persist(next);
         current = next;
         return next;
@@ -139,6 +172,12 @@ public final class HologramLibraryConfig {
                 .set(view.maxUploads);
             output.get(CATEGORY, "bandwidthDefaultsVersion", 1, "Legacy bandwidth defaults migration version.")
                 .set(1);
+            output.get(CATEGORY, "permissionGroupsVersion", HologramLibraryPermissions.VERSION)
+                .set(HologramLibraryPermissions.VERSION);
+            output.get(CATEGORY, "permissionGroupsJson", "")
+                .set(view.permissions.json());
+            output.get(CATEGORY, "revision", "1")
+                .set(String.valueOf(view.revision));
             output.save(); // Forge catches IOExceptions; verify the actual artifact before publishing.
             if (!Files.isRegularFile(temp)) throw new IOException("Forge library configuration was not written");
             byte[] bytes = HologramBlueprintSharing.readBytes(temp, 64 * 1024);
@@ -153,7 +192,15 @@ public final class HologramLibraryConfig {
                 || read.get(CATEGORY, "downloadKiBPerSecond", -1)
                     .getInt(-1) != view.downloadKiB
                 || read.get(CATEGORY, "maxUploadsPerPlayer", -1)
-                    .getInt(-1) != view.maxUploads)
+                    .getInt(-1) != view.maxUploads
+                || !read.get(CATEGORY, "permissionGroupsJson", "")
+                    .getString()
+                    .equals(view.permissions.json())
+                || !read.get(CATEGORY, "revision", "0")
+                    .getString()
+                    .equals(String.valueOf(view.revision))
+                || read.get(CATEGORY, "permissionGroupsVersion", 0)
+                    .getInt(0) != HologramLibraryPermissions.VERSION)
                 throw new IOException("Forge library configuration read-back failed");
             HologramBlueprintSharing.atomicWrite(file, bytes);
         } catch (RuntimeException failure) {

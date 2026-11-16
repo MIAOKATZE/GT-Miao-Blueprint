@@ -28,10 +28,8 @@ final class HologramEditorNativeLibraryDialogs {
 
     private final HologramUiModules ui;
     private final Map<Kind, IPanelHandler> handlers = new EnumMap<>(Kind.class);
-    private final StringValue presetName = new StringValue(""), upload = new StringValue(""),
-        download = new StringValue(""), quota = new StringValue("");
+    private final StringValue presetName = new StringValue("");
     private Kind displayed;
-    private long adminRevision = Long.MIN_VALUE;
 
     HologramEditorNativeLibraryDialogs(HologramUiModules ui) {
         this.ui = ui;
@@ -40,10 +38,6 @@ final class HologramEditorNativeLibraryDialogs {
     void refresh() {
         Kind desired = desired();
         IPanelHandler current = displayed == null ? null : handlers.get(displayed);
-        if (desired == Kind.ADMIN && desired == displayed
-            && current != null
-            && current.isPanelOpen()
-            && adminRevision != ui.library.libraryConfigRevision()) loadAdmin();
         if (desired == displayed && (desired == null || current != null && current.isPanelOpen())) return;
         // No separate queued latch: the screen accepts one deferred intent. If
         // another input already owns it, the next update retries this transition.
@@ -76,21 +70,7 @@ final class HologramEditorNativeLibraryDialogs {
         if (desired == Kind.PRESET) presetName.setStringValue(
             ui.processing.processingPresetField()
                 .getText());
-        if (desired == Kind.ADMIN) loadAdmin();
         handler.openPanel();
-    }
-
-    private void loadAdmin() {
-        upload.setStringValue(
-            ui.library.libraryUploadField()
-                .getText());
-        download.setStringValue(
-            ui.library.libraryDownloadField()
-                .getText());
-        quota.setStringValue(
-            ui.library.libraryQuotaField()
-                .getText());
-        adminRevision = ui.library.libraryConfigRevision();
     }
 
     private ModularPanel build(Kind kind) {
@@ -102,17 +82,27 @@ final class HologramEditorNativeLibraryDialogs {
         dialog.setDisablePanelsBelow(true)
             .setCloseOnOutOfBoundsClick(false)
             .setDraggable(true)
-            .size(360, kind == Kind.ADMIN ? 260 : kind == Kind.PRESET ? 196 : 184)
+            .size(kind == Kind.ADMIN ? 460 : 360, kind == Kind.ADMIN ? 350 : kind == Kind.PRESET ? 196 : 184)
             .background(HologramEditorNativeTheme.PANEL);
-        dialog.onCloseAction(
-            () -> {
-                if (desired() == kind && ui.host.minecraft().currentScreen == ui.host.parent())
-                    ui.router.activate(cancelId(kind));
-            });
+        if (kind == Kind.ADMIN) dialog
+            .width(
+                () -> HologramLibraryAdminEditor.nativeWidth(ui.host.screenWidth()),
+                com.cleanroommc.modularui.widget.sizer.Unit.Measure.PIXEL)
+            .height(
+                () -> HologramLibraryAdminEditor.nativeHeight(ui.host.screenHeight()),
+                com.cleanroommc.modularui.widget.sizer.Unit.Measure.PIXEL);
+        dialog.onCloseAction(() -> {
+            if (kind == Kind.ADMIN) {
+                ui.library.libraryAdminDrawer(false);
+                return;
+            }
+            if (desired() == kind && ui.host.minecraft().currentScreen == ui.host.parent())
+                ui.router.activate(cancelId(kind));
+        });
         Flow content = Flow.col()
             .sizeRel(1f)
             .padding(12)
-            .childPadding(7);
+            .childPadding(kind == Kind.ADMIN ? 3 : 7);
         content.child(
             HologramEditorNativeTheme.label(() -> title(kind), HologramEditorNativeTheme.TITLE)
                 .widthRel(1f)
@@ -155,6 +145,12 @@ final class HologramEditorNativeLibraryDialogs {
             .widthRel(1f)
             .expanded()
             .height(24);
+        if (kind == Kind.ADMIN) cancel.onMousePressed(button -> {
+            if (button != 0) return true;
+            ui.library.libraryAdminDrawer(false);
+            dialog.closeIfOpen();
+            return true;
+        });
         ui.shell.registerTarget("modal.close", cancel);
         footer.child(cancel);
         footer.child(
@@ -168,37 +164,20 @@ final class HologramEditorNativeLibraryDialogs {
 
     private void admin(Flow content) {
         content.child(
-            HologramEditorNativeTheme.label(() -> "上传 / 下载限速单位 KiB/s；每人配额按份计。")
-                .widthRel(1f)
-                .height(30));
-        content.child(adminField("客户端上传带宽", upload));
-        content.child(adminField("客户端下载带宽", download));
-        content.child(adminField("每位玩家上传配额", quota));
+            ui.library.adminEditor()
+                .buildNative());
         content.child(
-            HologramEditorNativeTheme.label(ui.library::nativeStatus)
-                .sizeRel(1f)
-                .expanded());
-    }
-
-    private Flow adminField(String label, StringValue value) {
-        return Flow.row()
-            .widthRel(1f)
-            .height(23)
-            .childPadding(8)
-            .child(
-                HologramEditorNativeTheme.label(() -> label)
-                    .widthRel(1f)
-                    .expanded()
-                    .height(20))
-            .child(
-                HologramEditorNativeTheme.textField(value, 7)
-                    .width(118)
-                    .height(22));
+            HologramEditorNativeTheme.label(
+                () -> ui.library.adminEditor()
+                    .status())
+                .widthRel(1f)
+                .height(32));
     }
 
     private ButtonWidget<?> confirm(Kind kind) {
         int id = kind == Kind.DELETE ? 176 : kind == Kind.ADMIN ? 210 : 224;
-        BooleanSupplier enabled = () -> kind == Kind.ADMIN ? ui.library.nativeAdmin()
+        BooleanSupplier enabled = () -> kind == Kind.ADMIN ? ui.library.nativeAdmin() && ui.library.adminEditor()
+            .canSave()
             : kind == Kind.PRESET ? ui.session.editable() && !presetName.getStringValue()
                 .trim()
                 .isEmpty()
@@ -207,7 +186,7 @@ final class HologramEditorNativeLibraryDialogs {
                         || HologramBackgroundTasks.awaitingSourceReview() && ui.session.pendingSequence() < 0;
         Supplier<String> label = () -> kind == Kind.PRESET ? "确认保存流程预设"
             : kind == Kind.DELETE ? "确认删除"
-                : kind == Kind.ADMIN ? "保存并等待服务器确认"
+                : kind == Kind.ADMIN ? "保存全部设置"
                     : kind == Kind.OVERWRITE ? "确认覆盖保存"
                         : ui.library.clearWorkspaceReview() ? "确认清空"
                             : ui.library.projectionDiscardReview() ? "丢弃投影并打开蓝图" : "放弃改动并继续";
@@ -216,14 +195,6 @@ final class HologramEditorNativeLibraryDialogs {
                 if (button != 0 || !enabled.getAsBoolean() || desired() != kind) return true;
                 if (kind == Kind.PRESET) ui.processing.processingPresetField()
                     .setText(presetName.getStringValue());
-                if (kind == Kind.ADMIN) {
-                    ui.library.libraryUploadField()
-                        .setText(upload.getStringValue());
-                    ui.library.libraryDownloadField()
-                        .setText(download.getStringValue());
-                    ui.library.libraryQuotaField()
-                        .setText(quota.getStringValue());
-                }
                 ui.router.activate(id);
                 return true;
             });
