@@ -618,3 +618,4 @@ gtmb.tooltip.native.82=保存或恢复默认后立即生效
 gtmb.tooltip.native.83=§f手动修改配置文件
 gtmb.tooltip.native.84=重启服务器后生效
 gtmb.tooltip.native.85=§7配置文件：§fconfig/gtmb-decoration-voucher.cfg
+gtmb.tooltip.authored_locale=zh_CN

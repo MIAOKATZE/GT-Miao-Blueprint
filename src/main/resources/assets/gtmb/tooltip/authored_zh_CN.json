@@ -1,0 +1,523 @@
+{
+  "items": [
+    {
+      "id": "gtmb:neko_hologram_projector@0",
+      "tiers": {
+        "quick": [
+          {
+            "type": "line",
+            "text": "§7投影控制器结构与蓝图，可§b编辑施工§7、§d剪切搬移§7或§c区域拆除§7。"
+          },
+          {
+            "type": "channels"
+          },
+          {
+            "type": "link",
+            "ref": "blueprints",
+            "qr": false,
+            "prefix": "§7蓝图站：§b",
+            "value": "https://miaokatze.com/blueprints"
+          },
+          {
+            "type": "divider"
+          },
+          {
+            "type": "line",
+            "text": "§7蓝图空闲时，§e[right:右击]§7打开工作区，§e[key-right:Shift+右击]§7选择框选模式。"
+          },
+          {
+            "type": "line",
+            "text": "§f添加模组: §bGT§a-§6Miao§d-§bBlueprint§r"
+          }
+        ],
+        "common": [
+          {
+            "type": "line",
+            "text": "§7投影控制器结构与蓝图，可§b编辑施工§7、§d剪切搬移§7或§c区域拆除§7。"
+          },
+          {
+            "type": "channels"
+          },
+          {
+            "type": "link",
+            "ref": "blueprints",
+            "qr": false,
+            "prefix": "§7蓝图站：§b",
+            "value": "https://miaokatze.com/blueprints"
+          },
+          {
+            "type": "divider"
+          },
+          {
+            "type": "line",
+            "text": "§b蓝图模式 §8· 普通视角"
+          },
+          {
+            "type": "table",
+            "columns": [
+              "状态",
+              "操作",
+              "结果"
+            ],
+            "rows": [
+              [
+                "§7空闲",
+                "§e[right:右击]空气或普通方块",
+                "§f蓝图工作区"
+              ],
+              [
+                "§7空闲",
+                "§e[right:右击]可导入的控制器",
+                "§f控制器结构页"
+              ],
+              [
+                "§7蓝图库",
+                "§e[left:左击]选蓝图 → [left:左击]放置",
+                "§f放置预览"
+              ],
+              [
+                "§a移动预览",
+                "§e[right:右击]",
+                "§f锁定位置"
+              ],
+              [
+                "§b锁定预览",
+                "§e[right:右击]",
+                "§f材料确认页"
+              ],
+              [
+                "§b锁定预览",
+                "§e[key-right:Shift+右击]",
+                "§f解锁，重新定位"
+              ]
+            ]
+          },
+          {
+            "type": "divider"
+          },
+          {
+            "type": "line",
+            "text": "§d区域框选"
+          },
+          {
+            "type": "line",
+            "text": "§7蓝图空闲时按住 §e[key:Shift]§7，连续§e[right:右击]§7轮选模式；松开开始框选。"
+          },
+          {
+            "type": "table",
+            "columns": [
+              "模式",
+              "提交有效选区后"
+            ],
+            "rows": [
+              [
+                "§b蓝图",
+                "§f导入选区，进入蓝图编辑"
+              ],
+              [
+                "§d剪切",
+                "§f剪切命名或确认页"
+              ],
+              [
+                "§c拆除",
+                "§f打开拆除确认，选择回收去向"
+              ]
+            ]
+          },
+          {
+            "type": "divider"
+          },
+          {
+            "type": "line",
+            "text": "§d剪切存储"
+          },
+          {
+            "type": "table",
+            "columns": [
+              "状态",
+              "入口",
+              "打开"
+            ],
+            "rows": [
+              [
+                "§d剪切空闲",
+                "§e[right:右击]",
+                "§f打开存储"
+              ],
+              [
+                "§d存储界面",
+                "§e[left:左击]选条目 → [left:左击]放置",
+                "§f放置预览"
+              ]
+            ]
+          },
+          {
+            "type": "divider"
+          },
+          {
+            "type": "line",
+            "text": "§6后台任务 §8· §7[right:右击]返回当前任务界面。"
+          },
+          {
+            "type": "line",
+            "text": "§f添加模组: §bGT§a-§6Miao§d-§bBlueprint§r"
+          }
+        ],
+        "detail": [
+          {
+            "type": "line",
+            "text": "§7投影控制器结构与蓝图，可§b编辑施工§7、§d剪切搬移§7或§c区域拆除§7。"
+          },
+          {
+            "type": "channels"
+          },
+          {
+            "type": "link",
+            "ref": "blueprints",
+            "qr": true,
+            "prefix": "§7蓝图站：§b",
+            "value": "https://miaokatze.com/blueprints"
+          },
+          {
+            "type": "divider"
+          },
+          {
+            "type": "line",
+            "text": "§b蓝图模式 §8· 普通视角"
+          },
+          {
+            "type": "table",
+            "columns": [
+              "状态",
+              "操作",
+              "结果"
+            ],
+            "rows": [
+              [
+                "§7空闲",
+                "§e[right:右击]空气或普通方块",
+                "§f蓝图工作区"
+              ],
+              [
+                "§7空闲",
+                "§e[right:右击]可导入的控制器",
+                "§f控制器结构页"
+              ],
+              [
+                "§7空闲 · 有上次蓝图",
+                "§e[key-right:Alt+右击]",
+                "§f预览上次蓝图"
+              ],
+              [
+                "§7蓝图库",
+                "§e[left:左击]选蓝图 → [left:左击]放置",
+                "§f放置预览"
+              ],
+              [
+                "§a移动预览",
+                "§e[right:右击]",
+                "§f锁定位置"
+              ],
+              [
+                "§a移动预览",
+                "§e[key:R] / [key:Ctrl+R]",
+                "§f水平 / 垂直旋转"
+              ],
+              [
+                "§b锁定预览",
+                "§e[right:右击]",
+                "§f材料确认页"
+              ],
+              [
+                "§b锁定预览",
+                "§e[key-right:Shift+右击]",
+                "§f解锁，重新定位"
+              ],
+              [
+                "§b锁定预览",
+                "§e[key:方向键] / [key:Alt+上下]",
+                "§f水平 / 高度微调一格"
+              ]
+            ]
+          },
+          {
+            "type": "line",
+            "text": "§7当前蓝图有未保存改动时，切换控制器来源需先确认。"
+          },
+          {
+            "type": "divider"
+          },
+          {
+            "type": "line",
+            "text": "§d区域框选"
+          },
+          {
+            "type": "line",
+            "text": "§7蓝图空闲时按住 §e[key:Shift]§7，连续§e[right:右击]§7轮选模式；松开开始框选。"
+          },
+          {
+            "type": "table",
+            "columns": [
+              "模式",
+              "提交有效选区后"
+            ],
+            "rows": [
+              [
+                "§b蓝图",
+                "§f导入选区，进入蓝图编辑"
+              ],
+              [
+                "§d剪切",
+                "§f剪切命名；跳过命名时打开确认页"
+              ],
+              [
+                "§c拆除",
+                "§f打开拆除确认，选择回收去向"
+              ]
+            ]
+          },
+          {
+            "type": "line",
+            "text": "§7在世界中按 §e[key:Esc]§7 可退出剪切或拆除模式；进行中的拆除会取消剩余部分。"
+          },
+          {
+            "type": "divider"
+          },
+          {
+            "type": "line",
+            "text": "§b蓝图选区 §8· 默认键位"
+          },
+          {
+            "type": "table",
+            "columns": [
+              "状态",
+              "操作",
+              "结果"
+            ],
+            "rows": [
+              [
+                "§7普通框选",
+                "§e[key-right:Shift+右击]",
+                "§f提交有效选区"
+              ],
+              [
+                "§7框选中",
+                "§e[key:B]",
+                "§f开始连续选点"
+              ],
+              [
+                "§7已有选区",
+                "§e[key:Shift+B]",
+                "§f开始连续减选"
+              ],
+              [
+                "§7轮廓已闭合",
+                "§e[key:B]",
+                "§f完成本次连续选区"
+              ]
+            ]
+          },
+          {
+            "type": "divider"
+          },
+          {
+            "type": "line",
+            "text": "§d剪切存储"
+          },
+          {
+            "type": "table",
+            "columns": [
+              "状态",
+              "操作",
+              "结果"
+            ],
+            "rows": [
+              [
+                "§d剪切空闲",
+                "§e[right:右击]",
+                "§f打开存储"
+              ],
+              [
+                "§b蓝图空闲",
+                "§e[key-right:Ctrl+Shift+右击]",
+                "§f打开存储"
+              ],
+              [
+                "§d存储界面",
+                "§e[left:左击]选条目 → [left:左击]放置",
+                "§f放置预览"
+              ],
+              [
+                "§d剪切空闲 · 已选条目",
+                "§e[key-right:Alt+右击]",
+                "§f打开撤销确认"
+              ]
+            ]
+          },
+          {
+            "type": "divider"
+          },
+          {
+            "type": "line",
+            "text": "§6后台任务 §8· §7[right:右击]返回当前任务界面。"
+          },
+          {
+            "type": "line",
+            "text": "§f添加模组: §bGT§a-§6Miao§d-§bBlueprint§r"
+          }
+        ]
+      },
+      "links": {
+        "blueprints": {
+          "prefix": "§7蓝图站：§b",
+          "value": "https://miaokatze.com/blueprints"
+        }
+      }
+    },
+    {
+      "id": "gtmb:decoration_voucher@0",
+      "tiers": {
+        "quick": [
+          {
+            "type": "line",
+            "text": "§7抵扣蓝图施工中的§6建筑装饰用料§7。"
+          },
+          {
+            "type": "line",
+            "text": "§7生存：券放§f主背包§7，在 [item:gtmb:neko_hologram_projector@0|猫猫蓝图全息投影仪] 的§e材料确认页§7勾选抵扣。"
+          },
+          {
+            "type": "line",
+            "text": "§7首次成功放置抵扣方块才消耗 §e1 张§7，同次施工不再扣券。"
+          },
+          {
+            "type": "line",
+            "text": "§f添加模组: §bGT§a-§6Miao§d-§bBlueprint§r"
+          }
+        ],
+        "common": [
+          {
+            "type": "line",
+            "text": "§7抵扣蓝图施工中的§6建筑装饰用料§7。"
+          },
+          {
+            "type": "line",
+            "text": "§7生存：券放§f主背包§7，在 [item:gtmb:neko_hologram_projector@0|猫猫蓝图全息投影仪] 的§e材料确认页§7勾选抵扣。"
+          },
+          {
+            "type": "divider"
+          },
+          {
+            "type": "table",
+            "columns": [
+              "结算",
+              "材料范围"
+            ],
+            "rows": [
+              [
+                "§a抵扣",
+                "§f服务器允许的装饰方块与用料"
+              ],
+              [
+                "§6自备",
+                "§f工业材料、库存物品、流体和 EU"
+              ]
+            ]
+          },
+          {
+            "type": "divider"
+          },
+          {
+            "type": "line",
+            "text": "§7首次成功放置抵扣方块才消耗 §e1 张§7，同次施工不再扣券。"
+          },
+          {
+            "type": "line",
+            "text": "§7创造模式不耗券。"
+          },
+          {
+            "type": "line",
+            "text": "§f添加模组: §bGT§a-§6Miao§d-§bBlueprint§r"
+          }
+        ],
+        "detail": [
+          {
+            "type": "line",
+            "text": "§7抵扣蓝图施工中的§6建筑装饰用料§7。"
+          },
+          {
+            "type": "line",
+            "text": "§7生存：券放§f主背包§7，在 [item:gtmb:neko_hologram_projector@0|猫猫蓝图全息投影仪] 的§e材料确认页§7勾选抵扣。"
+          },
+          {
+            "type": "divider"
+          },
+          {
+            "type": "table",
+            "columns": [
+              "结算",
+              "材料范围"
+            ],
+            "rows": [
+              [
+                "§a抵扣",
+                "§f白名单内的装饰方块与用料；黑名单优先"
+              ],
+              [
+                "§a装饰例外",
+                "§f获准的 AE 石英玻璃、石英灯及指定 Ender IO 玻璃"
+              ],
+              [
+                "§6自备",
+                "§f工业材料（含嵌入件）、库存物品、流体和 EU"
+              ]
+            ]
+          },
+          {
+            "type": "divider"
+          },
+          {
+            "type": "line",
+            "text": "§7首次成功放置抵扣方块才消耗 §e1 张§7，同次施工不再扣券。"
+          },
+          {
+            "type": "line",
+            "text": "§7创造模式不耗券。"
+          },
+          {
+            "type": "divider"
+          },
+          {
+            "type": "line",
+            "text": "§6管理员须知 §8· §7装饰材料黑白名单"
+          },
+          {
+            "type": "table",
+            "columns": [
+              "规则入口",
+              "生效时机"
+            ],
+            "rows": [
+              [
+                "§e/gtmb voucher §7（4 级权限）",
+                "保存或恢复默认后立即生效"
+              ],
+              [
+                "§f手动修改配置文件",
+                "重启服务器后生效"
+              ]
+            ]
+          },
+          {
+            "type": "line",
+            "text": "§7配置文件：§fconfig/gtmb-decoration-voucher.cfg"
+          },
+          {
+            "type": "line",
+            "text": "§f添加模组: §bGT§a-§6Miao§d-§bBlueprint§r"
+          }
+        ]
+      }
+    }
+  ]
+}
