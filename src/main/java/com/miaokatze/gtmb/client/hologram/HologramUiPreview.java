@@ -1303,7 +1303,8 @@ final class HologramUiPreview {
                     return true;
                 }
             }
-            if (!ui.canvas.nativeScene() && this.inventory && !ui.review.confirmation()
+            if (!ui.canvas.nativeScene() && this.inventory
+                && !ui.review.confirmation()
                 && ui.config.optionChannel()
                     .isEmpty()) {
                 int slot = ui.preview.inventorySlotAt(mx, my);
