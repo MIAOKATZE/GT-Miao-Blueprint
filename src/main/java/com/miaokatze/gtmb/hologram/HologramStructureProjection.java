@@ -272,9 +272,7 @@ final class HologramStructureProjection {
         state.setInteger("recoveryDestination", s.materialSettings.recoveryDestination);
         state.setBoolean("recoveryFits", s.planRecoveryFits);
         state.setString("blueprintResourceMissing", s.blueprintResourceMissing);
-        NBTTagList choices = new NBTTagList();
-        for (ItemStack sample : s.materialChoices) choices.appendTag(sample.writeToNBT(new NBTTagCompound()));
-        state.setTag("materialChoices", choices);
+        state.setTag("materialChoices", HologramSnapshots.materialChoices(s));
         try {
             state.setTag("presets", HologramLibraryFacade.enabled() ? new NBTTagList() : HologramPresets.labels());
         } catch (java.io.IOException invalid) {

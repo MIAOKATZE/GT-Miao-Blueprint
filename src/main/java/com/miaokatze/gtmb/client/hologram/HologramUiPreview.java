@@ -91,6 +91,8 @@ final class HologramUiPreview {
 
     private int sourceChoice = -1;
 
+    private ItemStack inventorySample, sourceSample;
+
     private int sourceOffset;
 
     private boolean sourceTargets;
@@ -724,9 +726,8 @@ final class HologramUiPreview {
     }
 
     ItemStack pickedTarget() {
-        return this.sourceTargets ? ui.preview.sourceStack(this.sourceChoice)
-            : this.inventorySlot >= 0 ? ui.host.minecraft().thePlayer.inventory.mainInventory[this.inventorySlot]
-                : null;
+        return this.sourceTargets ? this.sourceChoice < 0 ? null : this.sourceSample
+            : this.inventorySlot < 0 ? null : this.inventorySample;
     }
 
     int inventorySlotAt(int x, int y) {
@@ -736,12 +737,20 @@ final class HologramUiPreview {
     }
 
     void pinInventory(int target) {
-        if (!ui.session.editable() || target < 0 || ui.preview.pickedTarget() == null) return;
-        this.selection.click(target, false);
+        if (!ui.session.editable() || target < 0
+            || target >= ui.session.state().cells.size()
+            || ui.preview.pickedTarget() == null) return;
+        // Applying to an already selected cell keeps the entire selection; dropping elsewhere selects that cell.
+        if (!this.selection.contains(target)) this.selection.click(target, false);
         this.selected = target;
         NBTTagCompound n = new NBTTagCompound();
         n.setInteger("selected", target);
         n.setInteger("index", target);
+        n.setIntArray("selectedIndices", this.selection.indices());
+        ItemStack sample = ui.preview.pickedTarget()
+            .copy();
+        sample.stackSize = 1;
+        n.setTag("expectedSample", sample.writeToNBT(new NBTTagCompound()));
         if (this.sourceTargets) n.setInteger("choice", this.sourceChoice);
         else n.setInteger("inventorySlot", this.inventorySlot);
         n.setInteger("scope", 2);
@@ -754,8 +763,9 @@ final class HologramUiPreview {
     }
 
     boolean hasSelectedPin() {
-        return ui.session.selectedCell() != null && ui.session.cellTag()
-            .getBoolean("hasTargetOverride");
+        // Same admission as the main restore control. The server validates the whole selected group on submission.
+        HologramState.Cell cell = ui.session.selectedCell();
+        return cell != null && !cell.anchor;
     }
 
     void clearSelection() {
@@ -1171,7 +1181,7 @@ final class HologramUiPreview {
             case 18:
                 if (ui.session.editable()) {
                     this.sourceChoice = -1;
-                    ui.session.send("scan", null, true);
+                    ui.session.send("refreshMaterialChoices", null, false);
                 }
                 return true;
             case 23:
@@ -1301,8 +1311,8 @@ final class HologramUiPreview {
                     if ((this.sourceTargets ? ui.preview.sourceStack(slot)
                         : ui.host.minecraft().thePlayer.inventory.mainInventory[slot]) != null
                         && ui.session.editable()) {
-                        if (this.sourceTargets) this.sourceChoice = slot;
-                        else this.inventorySlot = slot;
+                        if (this.sourceTargets) ui.preview.sourceChoice(slot);
+                        else ui.preview.inventorySlot(slot);
                         this.inventoryDragging = true;
                     }
                     return true;
@@ -1687,6 +1697,10 @@ final class HologramUiPreview {
 
     int inventorySlot(int value) {
         this.inventorySlot = value;
+        ItemStack stack = value < 0 || ui.host.minecraft().thePlayer == null
+            || value >= ui.host.minecraft().thePlayer.inventory.mainInventory.length ? null
+                : ui.host.minecraft().thePlayer.inventory.mainInventory[value];
+        inventorySample = stack == null ? null : stack.copy();
         return value;
     }
 
@@ -1746,6 +1760,8 @@ final class HologramUiPreview {
 
     int sourceChoice(int value) {
         this.sourceChoice = value;
+        ItemStack stack = sourceStack(value);
+        sourceSample = stack == null ? null : stack.copy();
         return value;
     }
 
@@ -1836,6 +1852,8 @@ final class HologramUiPreview {
         state.setBoolean("sourceTargets", sourceTargets);
         state.setBoolean("inventory", inventory);
         state.setInteger("inventorySlot", inventorySlot);
+        if (inventorySample != null) state.setTag("inventorySample", inventorySample.writeToNBT(new NBTTagCompound()));
+        if (sourceSample != null) state.setTag("sourceSample", sourceSample.writeToNBT(new NBTTagCompound()));
         return state;
     }
 
@@ -1871,6 +1889,8 @@ final class HologramUiPreview {
         sourceTargets = state.getBoolean("sourceTargets");
         inventory = state.getBoolean("inventory");
         inventorySlot = state.getInteger("inventorySlot");
+        inventorySample = ItemStack.loadItemStackFromNBT(state.getCompoundTag("inventorySample"));
+        sourceSample = ItemStack.loadItemStackFromNBT(state.getCompoundTag("sourceSample"));
         // Pointer gestures and queued edits are intentionally never replayed on a new widget tree.
         navigationButton = -1;
         dragging = boxSelecting = inventoryDragging = false;

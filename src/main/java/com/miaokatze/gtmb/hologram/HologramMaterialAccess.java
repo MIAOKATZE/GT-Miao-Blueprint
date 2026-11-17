@@ -148,8 +148,12 @@ final class HologramMaterialAccess {
     }
 
     static void refreshMaterialChoices(HologramSession s) {
+        refreshMaterialChoices(s, materialSource(s));
+    }
+
+    static void refreshMaterialChoices(HologramSession s, HologramMaterials.Context source) {
         s.materialChoices.clear();
-        s.materialChoices.addAll(materialSource(s).catalog(96));
+        s.materialChoices.addAll(source.catalog(96));
     }
 
     static HologramMaterials.Context materialSource(HologramSession s) {

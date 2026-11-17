@@ -858,6 +858,10 @@ final class HologramUiRouter {
             return;
         }
         if (ui.shell.hasModalPanel() && ui.shell.consumeBackLayer()) return;
+        if (ui.preview.inventory()) {
+            activate(64);
+            return;
+        }
         keyTyped('\0', Keyboard.KEY_ESCAPE);
     }
 
@@ -982,6 +986,10 @@ final class HologramUiRouter {
     }
 
     void activate(int id) {
+        if (id == 64) {
+            ui.preview.activateControl(id);
+            return;
+        }
         if (ui.tutorial.activate(id) || ui.guide.activate(id) || ui.tools.activateControl(id)) return;
         if (id == HologramEditorControlIds.LIBRARY) {
             ui.library.activateControl(id);

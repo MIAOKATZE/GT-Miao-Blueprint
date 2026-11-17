@@ -9,8 +9,6 @@ import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 
-import gregtech.common.blocks.ItemMachines;
-
 /** Authenticated, rate-limited protocol dispatch into explicit domain workflows. */
 final class HologramActionDispatcher {
 
@@ -223,6 +221,13 @@ final class HologramActionDispatcher {
             HologramSession.clearPending(s);
             s.status = "目标、维度、距离或持有工具已变化";
             HologramSnapshots.send(s);
+            return;
+        }
+        if ("refreshMaterialChoices".equals(op)) {
+            // Browsing the catalog must not deliver pending construction recovery into the player's inventory.
+            HologramMaterialAccess
+                .refreshMaterialChoices(s, new HologramMaterials.Context(s.player, s.materialSettings, s.slot));
+            HologramSnapshots.sendMaterialChoices(s);
             return;
         }
         if (HologramDeferredPlanRefresh.blocksAction(s, op)) {
@@ -625,19 +630,18 @@ final class HologramActionDispatcher {
                     : player.inventory.mainInventory[slot];
                 HologramCapture.Cell cell = s.capture.cells.get(index);
                 if (s.mode == 2) s.status = "拆除模式不接受建造目标，请先切换模式";
+                else if (!expectedSampleMatches(action, sample)) s.status = "库存样本已变化，请重新选择；选区未修改";
                 else if (sample == null || sample.stackSize < 1 || cell.anchor) s.status = "库存样本或目标格无效";
                 else if (!HologramCellPolicy.acceptableSample(s, cell, sample)) s.status = "该库存物品不是可放置方块或有效 GT 机器";
                 else {
                     ItemStack pin = sample.copy();
                     pin.stackSize = 1;
-                    s.selected = index;
-                    s.scope = 2;
-                    if (pin.getItem() instanceof ItemMachines) s.noHatches = false;
-                    HologramCellPolicy.setBlueprintTarget(s, cell, pin);
-                    s.pins.put(index, pin);
-                    s.coordinatePins.put(HologramValues.position(cell), pin.copy());
-                    HologramBlueprintEditor.refreshEdited(s, java.util.Collections.singleton(index));
-                    s.status = "库存样本已设为目标；点击施工才扣材料";
+                    try {
+                        HologramBlueprintEditor.pinSelection(s, action, index, pin);
+                        s.status = "库存样本已应用到所选 " + s.selectedIndices.size() + " 格；点击施工才扣材料";
+                    } catch (java.io.IOException rejected) {
+                        s.status = rejected.getMessage();
+                    }
                 }
             }
         } else if ("sourcePin".equals(op) && s.job != 1 && s.job != 2) {
@@ -655,18 +659,17 @@ final class HologramActionDispatcher {
                     .copy();
                 pin.stackSize = 1;
                 if (s.mode == 2) s.status = "拆除模式不接受建造目标";
+                else if (!expectedSampleMatches(action, pin)) s.status = "来源目录已变化，请重新选择样本；选区未修改";
                 else if (!HologramCellPolicy.acceptableSample(s, cell, pin)) s.status = "该来源物品不是有效放置目标";
                 else if (!HologramMaterialAccess.materialSource(s)
                     .takeOne(pin, true)) s.status = "来源物品已不可用，请刷新后重选";
                 else {
-                    s.selected = index;
-                    s.scope = 2;
-                    if (pin.getItem() instanceof ItemMachines) s.noHatches = false;
-                    HologramCellPolicy.setBlueprintTarget(s, cell, pin);
-                    s.pins.put(index, pin);
-                    s.coordinatePins.put(HologramValues.position(cell), pin.copy());
-                    HologramBlueprintEditor.refreshEdited(s, java.util.Collections.singleton(index));
-                    s.status = "来源物品已设为目标；点击施工才扣材料";
+                    try {
+                        HologramBlueprintEditor.pinSelection(s, action, index, pin);
+                        s.status = "来源样本已应用到所选 " + s.selectedIndices.size() + " 格；点击施工才扣材料";
+                    } catch (java.io.IOException rejected) {
+                        s.status = rejected.getMessage();
+                    }
                 }
             }
         } else if ("hatchPreset".equals(op) && s.job != 1 && s.job != 2) {
@@ -754,6 +757,13 @@ final class HologramActionDispatcher {
         }
         HologramDraftPersistence.persist(s);
         HologramSnapshots.send(s);
+    }
+
+    /** Old clients omit the proof. New clients bind the chosen sample, while the server still owns the target. */
+    private static boolean expectedSampleMatches(NBTTagCompound action, ItemStack actual) {
+        if (!action.hasKey("expectedSample")) return true;
+        return action.hasKey("expectedSample", 10)
+            && HologramValues.same(ItemStack.loadItemStackFromNBT(action.getCompoundTag("expectedSample")), actual);
     }
 
     /** Selection and scope changes refresh the diff without redistributing existing automatic targets. */

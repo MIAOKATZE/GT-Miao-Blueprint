@@ -1017,7 +1017,6 @@ final class HologramEditorShell {
         return !paused && !ui.workspaces.isCut()
             && !ui.workspaces.switching()
             && !ui.library.browsePreviewActive()
-            && !ui.preview.inventory()
             && !ui.library.libraryAdminDrawer()
             && !ui.bindings.networkDrawer()
             && !HologramBackgroundTasks.busy();

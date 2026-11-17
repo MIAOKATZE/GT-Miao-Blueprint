@@ -38,6 +38,10 @@ public final class HologramRegressionTest {
         HologramConstructionJournal.STORAGE_ROOT
             .set(java.nio.file.Files.createTempDirectory("gtmb-construction-contracts-"));
         Map<String, Runnable> cases = new LinkedHashMap<>();
+        cases.put("batch_restore_and_inventory_source_replacement_are_atomic", HologramBatchEditingRegression::run);
+        cases.put(
+            "native_inventory_keeps_selection_and_root_return_layer",
+            com.miaokatze.gtmb.client.hologram.HologramInventorySelectionRegression::run);
         cases.put(
             "durable_construction_unknown_extraction_and_world_failure",
             HologramConstructionJournalRegression::run);

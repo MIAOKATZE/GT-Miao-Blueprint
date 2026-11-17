@@ -644,6 +644,16 @@ final class HologramSnapshots {
         sendUi(s, null);
     }
 
+    static void sendMaterialChoices(HologramSession s) {
+        sendUi(s, "materialChoices", materialChoices(s));
+    }
+
+    static NBTTagList materialChoices(HologramSession s) {
+        NBTTagList choices = new NBTTagList();
+        for (ItemStack sample : s.materialChoices) choices.appendTag(sample.writeToNBT(new NBTTagCompound()));
+        return choices;
+    }
+
     /** Material choices acknowledge independently of geometry, full encoding and UI opening intents. */
     static void sendMaterialQuote(HologramSession s) {
         sendMaterialQuote(s, s.uiSequence);
@@ -676,12 +686,16 @@ final class HologramSnapshots {
 
     /** An explicit library refresh can attach its already-read labels without rebuilding the structure snapshot. */
     static void sendUi(HologramSession s, NBTTagList presets) {
+        sendUi(s, "presets", presets);
+    }
+
+    private static void sendUi(HologramSession s, String listKey, NBTTagList entries) {
         if (s.cancelled || "cutWorkspace".equals(s.openPurpose)) {
             send(s);
             return;
         }
         NBTTagCompound state = areaSelection(s);
-        if (presets != null) state.setTag("presets", presets);
+        if (entries != null) state.setTag(listKey, entries);
         state.setBoolean("workspaceUiOnly", true);
         state.setTag("textPlacementAck", s.textPlacementAck.copy());
         state.setBoolean("geometryValidationPending", s.geometryEdits.validationPending);
@@ -1030,9 +1044,7 @@ final class HologramSnapshots {
         state.setTag("channels", s.channels.copy());
         state.setBoolean("noHatches", s.noHatches);
         state.setBoolean("keepController", !s.virtual);
-        NBTTagList materialChoices = new NBTTagList();
-        for (ItemStack sample : s.materialChoices) materialChoices.appendTag(sample.writeToNBT(new NBTTagCompound()));
-        state.setTag("materialChoices", materialChoices);
+        state.setTag("materialChoices", materialChoices(s));
         state.setBoolean("materialMain", s.materialSettings.main);
         state.setBoolean("materialContainers", s.materialSettings.containers);
         state.setBoolean("materialMe", s.materialSettings.me);
