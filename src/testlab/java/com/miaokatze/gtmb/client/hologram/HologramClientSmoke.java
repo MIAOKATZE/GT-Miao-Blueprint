@@ -91,6 +91,7 @@ public final class HologramClientSmoke {
     }
 
     static void install() {
+        if (HologramEditorIssuesProbe.install()) return;
         if (HologramTutorialIssue100Probe.install()) return;
         if (HologramTutorialIssue95Probe.install()) return;
         if (HologramTestLabUiProfile.install()) return;
