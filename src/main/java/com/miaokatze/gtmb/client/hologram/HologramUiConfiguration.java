@@ -1285,7 +1285,7 @@ final class HologramUiConfiguration {
                 ui.preview.inventory(true);
                 ui.preview.inventorySlot(ui.preview.sourceChoice(-1));
                 ui.preview.sourceOffset(0);
-                if (ui.session.editable()) ui.session.send("scan", null, true);
+                if (ui.session.editable()) ui.session.send("refreshMaterialChoices", null, false);
                 return true;
             case 94:
                 this.presetTier = ui.session.state().data.getInteger("hatchTier");

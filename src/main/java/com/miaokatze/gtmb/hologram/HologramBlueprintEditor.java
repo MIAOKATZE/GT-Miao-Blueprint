@@ -34,6 +34,12 @@ final class HologramBlueprintEditor {
 
     static void pinSelection(HologramSession s, NBTTagCompound action, int source, ItemStack target)
         throws java.io.IOException {
+        if (s.capturePending || s.capture == null
+            || s.capture.pending
+            || s.capture.incomplete
+            || s.job == 1
+            || s.job == 2
+            || s.mode == 2) throw new java.io.IOException("请在完整可编辑的建造规划中选择目标");
         int[] indices = geometryIndices(s, action);
         if (indices.length == 0) throw new java.io.IOException("请先选择目标位置");
         for (int index : indices) {
@@ -42,6 +48,7 @@ final class HologramBlueprintEditor {
                 throw new java.io.IOException("选中格的结构声明不接受该候选，目标未修改");
         }
         if (indices.length > 1) HologramResourcePlanner.freezeAllocations(s);
+        if (target.getItem() instanceof ItemMachines) s.noHatches = false;
         for (int index : indices) {
             HologramCapture.Cell cell = s.capture.cells.get(index);
             HologramCellPolicy.setBlueprintTarget(s, cell, target);
@@ -49,7 +56,8 @@ final class HologramBlueprintEditor {
             s.pins.put(index, target.copy());
             s.coordinatePins.put(HologramValues.position(cell), target.copy());
         }
-        s.selected = source;
+        s.selected = java.util.Arrays.stream(indices)
+            .anyMatch(index -> index == source) ? source : indices[0];
         s.scope = 2;
         s.selectedIndices.clear();
         for (int index : indices) s.selectedIndices.add(index);
@@ -132,6 +140,14 @@ final class HologramBlueprintEditor {
             }
             return;
         }
+        if ("restoreCell".equals(op)) {
+            try {
+                restoreSelection(s, action);
+            } catch (java.io.IOException failure) {
+                s.status = "默认外壳未恢复：" + failure.getMessage();
+            }
+            return;
+        }
         int[] batch = action.getIntArray("indices");
         if (batch.length > 1) {
             NBTTagCompound single = (NBTTagCompound) action.copy();
@@ -186,12 +202,6 @@ final class HologramBlueprintEditor {
             s.editClipboard = clean;
             s.editClipboardFacing = direction;
             s.status = "editCopy".equals(op) ? "已复制目标物品与朝向，不复制设备库存" : "已剪切规划目标；现场设备保留至施工";
-            return;
-        }
-        if ("restoreCell".equals(op)) {
-            if (restoreCell(s, cell, index))
-                s.status = HologramStructureProjection.showing(s) ? "本格覆盖已清除，恢复结构默认投影；现场方块保持原状"
-                    : "本格已设为原结构默认外壳；施工时安全回收旧设备";
             return;
         }
         if ("editPaste".equals(op)) {
@@ -287,6 +297,46 @@ final class HologramBlueprintEditor {
             s.status = "模板控制器不能恢复外壳";
             return false;
         }
+        ItemStack target = defaultTarget(s, cell);
+        if (!HologramCellPolicy.acceptableSample(s, cell, target)) {
+            s.status = "本格没有可确认的结构默认外壳，规划未修改";
+            return false;
+        }
+        HologramResourcePlanner.freezeAllocations(s);
+        restoreTarget(s, cell, index, target);
+        s.selected = index;
+        s.scope = 2;
+        refreshEdited(s, java.util.Collections.singleton(index));
+        return true;
+    }
+
+    /** Validate the complete selection before changing any target; refresh only once after all writes. */
+    private static void restoreSelection(HologramSession s, NBTTagCompound action) throws java.io.IOException {
+        int[] indices = geometryIndices(s, action);
+        if (indices.length == 0) throw new java.io.IOException("请先选择目标位置");
+        List<ItemStack> targets = new ArrayList<>();
+        for (int index : indices) {
+            HologramCapture.Cell cell = s.capture.cells.get(index);
+            if (cell.anchor || "templateController".equals(cell.role)) throw new java.io.IOException("控制器始终受保护，选区未修改");
+            ItemStack target = defaultTarget(s, cell);
+            if (!HologramCellPolicy.acceptableSample(s, cell, target))
+                throw new java.io.IOException("选区内存在没有可确认默认外壳的格，选区未修改");
+            targets.add(target);
+        }
+        HologramResourcePlanner.freezeAllocations(s);
+        for (int i = 0; i < indices.length; i++)
+            restoreTarget(s, s.capture.cells.get(indices[i]), indices[i], targets.get(i));
+        int primary = action.hasKey("selected", 3) ? action.getInteger("selected") : s.selected;
+        s.selected = java.util.Arrays.stream(indices)
+            .anyMatch(index -> index == primary) ? primary : indices[0];
+        s.scope = 2;
+        s.selectedIndices.clear();
+        for (int index : indices) s.selectedIndices.add(index);
+        refreshEdited(s, new java.util.LinkedHashSet<>(s.selectedIndices));
+        s.status = "已恢复所选 " + indices.length + " 格的结构默认目标；现场方块保持原状";
+    }
+
+    private static ItemStack defaultTarget(HologramSession s, HologramCapture.Cell cell) {
         HologramCasingFallback.Target casing = HologramCasingFallback
             .resolve(cell.element, HologramCellPolicy.elementTrigger(s, cell));
         ItemStack target = casing == null ? null : new ItemStack(casing.block, 1, casing.meta);
@@ -309,20 +359,15 @@ final class HologramBlueprintEditor {
             if (!(original.getItem() instanceof ItemMachines) && HologramCellPolicy.acceptableSample(s, cell, original))
                 target = original;
         }
-        if (!HologramCellPolicy.acceptableSample(s, cell, target)) {
-            s.status = "本格没有可确认的结构默认外壳，规划未修改";
-            return false;
-        }
-        HologramResourcePlanner.freezeAllocations(s);
+        return target;
+    }
+
+    private static void restoreTarget(HologramSession s, HologramCapture.Cell cell, int index, ItemStack target) {
         if (s.virtual) s.virtualEdited.add(HologramValues.position(cell));
         s.pins.put(index, target.copy());
         s.coordinatePins.put(HologramValues.position(cell), target.copy());
         s.facingPins.remove(HologramValues.position(cell));
         s.suppressedAuto.add(HologramValues.position(cell));
-        s.selected = index;
-        s.scope = 2;
-        refreshEdited(s, java.util.Collections.singleton(index));
-        return true;
     }
 
     static void addPosition(HologramSession s, NBTTagCompound action) {

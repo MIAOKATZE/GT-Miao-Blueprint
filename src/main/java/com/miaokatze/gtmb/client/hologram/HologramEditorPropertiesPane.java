@@ -130,7 +130,7 @@ final class HologramEditorPropertiesPane {
                 61,
                 () -> "背包选材",
                 () -> ui.session.editable() && ui.session.state().data.getInteger("mode") != 2,
-                () -> "选择真实物品样本，再指定当前一格；不消耗物品。").expanded());
+                () -> "选择真实物品样本，替换全部所选格；不消耗物品。").expanded());
         target.child(materialTarget);
         target.child(action(94, () -> "仓室预设", this::canHatchPreset, this::hatchPresetReason));
         Flow targetGroup = group(

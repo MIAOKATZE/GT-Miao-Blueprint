@@ -93,6 +93,9 @@ final class HologramEditorConfigurationDialogs {
                 return super.onKeyPressed(character, key);
             }
         };
+        // Inventory is a sample palette beside the scene: uncovered preview pixels remain selectable.
+        if ("inventory".equals(name)) panel.setDisablePanelsBelow(false)
+            .setCloseOnOutOfBoundsClick(false);
         panel.width(() -> Math.min(346, Math.max(160, ui.host.screenWidth() - 24)), Unit.Measure.PIXEL)
             .height(() -> dialogHeight(height), Unit.Measure.PIXEL)
             .background(HologramEditorNativeTheme.PANEL)
@@ -755,7 +758,7 @@ final class HologramEditorConfigurationDialogs {
             action(95, () -> "可替换选项", () -> ui.session.selectedCell() != null, () -> ui.config.candidateNote())
                 .expanded());
         content.child(tabs);
-        content.child(note(() -> "点击样本再点目标槽，或拖到左侧预览格；不消耗物品。"));
+        content.child(note(() -> "左侧点选目标，Ctrl 多选；点击样本后应用，或拖到选区；不消耗物品。"));
         ListWidget<IWidget, ?> grid = list();
         for (int row = 0; row < 4; row++) {
             Flow line = Flow.row()
@@ -789,9 +792,10 @@ final class HologramEditorConfigurationDialogs {
             action(
                 65,
                 () -> ui.session.selectedCell() == null ? "先在预览选中目标格"
-                    : "指定目标格：" + ui.preview.cellName(ui.session.selectedCell(), false),
+                    : "应用到所选 " + ui.preview.selection()
+                        .size() + " 格",
                 () -> editable() && ui.preview.canInventoryPin() && ui.preview.pickedTarget() != null,
-                () -> "沿用原 customPin / sourcePin：只更新当前一格，不消耗物品。"));
+                () -> "全部所选格通过校验后一起替换；只更新规划，不消耗物品。"));
         Flow footer = row();
         footer
             .child(action(66, () -> "恢复默认壳", () -> editable() && ui.preview.hasSelectedPin(), this::reason).expanded());
@@ -799,7 +803,9 @@ final class HologramEditorConfigurationDialogs {
         content.child(footer);
         content.child(
             note(() -> ui.session.pendingSequence() >= 0 ? "等待服务端校验目标…" : ui.session.state().data.getString("status")));
-        return dialog("inventory", () -> "选择方块 / 仓室 · 不消耗物品", content, () -> ui.router.activate(64), 360).right(12)
+        return dialog("inventory", () -> "选择方块 / 仓室 · 不消耗物品", content, () -> ui.router.activate(64), 360)
+            .width(() -> Math.min(346, Math.max(160, ui.host.screenWidth() / 2 - 18)), Unit.Measure.PIXEL)
+            .right(12)
             .top(12);
     }
 
