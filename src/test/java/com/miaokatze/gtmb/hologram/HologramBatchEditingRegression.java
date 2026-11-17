@@ -133,6 +133,22 @@ public final class HologramBatchEditingRegression {
                 s.pins.isEmpty(),
                 "reordered source directory cannot replace the batch with a different material");
             HologramSnapshotPreparation.cancel(s);
+
+            s = fixture(player);
+            sessions.put(player.getUniqueID(), s);
+            s.job = 3;
+            HologramCapture completedStructure = s.capture;
+            long revision = s.planRevision;
+            int inventoryCount = player.inventory.mainInventory[1].stackSize;
+            HologramActionDispatcher.handle(player, request(s, "refreshMaterialChoices"));
+            SimpleAssert.that(
+                s.job == 3 && s.capture == completedStructure && !s.capturePending && s.planRevision == revision,
+                "browsing materials after a completed build preserves the job and its existing capture");
+            SimpleAssert.that(
+                s.materialContext == null && player.inventory.mainInventory[1].stackSize == inventoryCount
+                    && s.materialChoices.stream()
+                        .anyMatch(stack -> HologramValues.same(stack, new ItemStack(Blocks.dirt))),
+                "the completed build returns its available catalog without opening a recovery transaction");
         } catch (Exception failure) {
             throw new AssertionError("batch planning production paths", failure);
         } finally {
