@@ -452,6 +452,11 @@ public final class HologramBackgroundTasks {
             && "area".equals(data.getString("blueprintSource"));
     }
 
+    static void hiddenControllerSnapshot(NBTTagCompound data) {
+        if ("scan".equals(operation) && HologramState.fullBaseline(data))
+            OWNER.finishScanSnapshot(data, startRevision, cancelling);
+    }
+
     static void snapshot(HologramState next) {
         if (context != null && context.session.equals(next.session)) context = next;
         if (libraryTask() && HologramLibraryClient.INSTANCE.snapshot(next)) reviewSubmitted = false;
@@ -523,13 +528,7 @@ public final class HologramBackgroundTasks {
                             : HologramTaskOwner.Result.FAILURE,
                     data.getString("status"));
             } else if ("scan".equals(operation)) {
-                if (!data.getBoolean("capturePending")) OWNER.finish(
-                    OWNER.token(),
-                    cancelling ? HologramTaskOwner.Result.CANCELLED
-                        : data.getBoolean("supported") && data.getLong("planRevision") > startRevision
-                            ? HologramTaskOwner.Result.SUCCESS
-                            : HologramTaskOwner.Result.FAILURE,
-                    data.getString("status"));
+                OWNER.finishScanSnapshot(data, startRevision, cancelling);
             } else if ("area".equals(operation)) {
                 OWNER.finishAreaSnapshot(data, startRevision, cancelling);
             } else if (job == 4 || job == 5) {

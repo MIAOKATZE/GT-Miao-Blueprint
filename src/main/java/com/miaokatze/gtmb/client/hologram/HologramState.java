@@ -497,7 +497,7 @@ final class HologramState {
         return fullBaseline;
     }
 
-    private static boolean fullBaseline(NBTTagCompound source) {
+    static boolean fullBaseline(NBTTagCompound source) {
         return source.hasKey("cells", 9) && !source.getBoolean("partial")
             && !source.getBoolean("areaSelectionOnly")
             && !source.getBoolean("displayPartial")

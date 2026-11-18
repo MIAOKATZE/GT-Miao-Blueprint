@@ -1870,6 +1870,10 @@ public final class HologramClient {
             snapshotHandled(result, true);
             return;
         }
+        if (hideControllerSnapshot(nbt)) {
+            snapshotHandled(result, true);
+            return;
+        }
         editorWorkspaceEpoch = Math.max(editorWorkspaceEpoch, nbt.getLong("editorWorkspaceEpoch"));
         editorSequence = Math
             .max(editorSequence, Math.max(nbt.getLong("uiSequence"), nbt.getLong("editorWorkspaceSequenceFloor")));
@@ -2074,6 +2078,18 @@ public final class HologramClient {
         installSnapshot(nbt, prepared, -1);
     }
 
+    private static boolean hideControllerSnapshot(NBTTagCompound nbt) {
+        if (nbt.getBoolean("cancelled")) return false;
+        long request = nbt.getLong("controllerOpenId");
+        boolean hidden = request > 0 ? !controllerOpen.accepts(request)
+            : nbt.getBoolean("open") && "controllerStructure".equals(nbt.getString("openPurpose"))
+                && !controllerOpen.acceptsLegacy(
+                    nbt.getInteger("dimension"), nbt.getInteger("x"), nbt.getInteger("y"), nbt.getInteger("z"));
+        // A discarded view can still carry the completion of the scan that produced it.
+        if (hidden) HologramBackgroundTasks.hiddenControllerSnapshot(nbt);
+        return hidden;
+    }
+
     private static void installSnapshot(NBTTagCompound nbt, HologramState prepared, long transportSequence) {
         long controllerRequest = nbt.getLong("controllerOpenId");
         boolean openingCutWorkspace = "cutWorkspace".equals(nbt.getString("openPurpose"));
@@ -2102,10 +2118,7 @@ public final class HologramClient {
             if (controllerRetired) HologramUiMemory.forget(cancelled);
             return;
         }
-        if (controllerRequest > 0 && !controllerOpen.accepts(controllerRequest)) return;
-        if (controllerRequest == 0 && nbt.getBoolean("open") && "controllerStructure".equals(nbt.getString("openPurpose"))
-            && !controllerOpen.acceptsLegacy(nbt.getInteger("dimension"), nbt.getInteger("x"), nbt.getInteger("y"),
-                nbt.getInteger("z"))) return;
+        if (hideControllerSnapshot(nbt)) return;
         String session = nbt.getString("session");
         String generation = nbt.getString("generation");
         if ((!generation.isEmpty() && !generation.equals(session)) || retiredSessions.contains(session)) return;

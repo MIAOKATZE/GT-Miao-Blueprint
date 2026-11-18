@@ -48,6 +48,7 @@ public final class HologramBackgroundTasksRegression {
         freshScreenBoundary();
         transportFailures();
         areaSnapshotReview();
+        hiddenControllerScanCompletion();
         List<String> events = new ArrayList<>();
         HologramTaskOwner owner = new HologramTaskOwner(new HologramTaskOwner.Notifications() {
 
@@ -157,6 +158,36 @@ public final class HologramBackgroundTasksRegression {
         SimpleAssert.that(
             owner.finishReceipt("server", "session-D:40", HologramTaskOwner.Result.SUCCESS, "original job finished"),
             "the original job can truthfully complete after its pause was rejected");
+    }
+
+    private static void hiddenControllerScanCompletion() {
+        List<HologramTaskOwner.Result> results = new ArrayList<>();
+        HologramTaskOwner owner = new HologramTaskOwner(new HologramTaskOwner.Notifications() {
+
+            @Override
+            public void background(String label) {}
+
+            @Override
+            public void finished(String label, HologramTaskOwner.Result result, String detail) {
+                results.add(result);
+            }
+        });
+        owner.begin("server", "controller:4", "scan");
+        NBTTagCompound snapshot = new NBTTagCompound();
+        snapshot.setString("session", "controller");
+        snapshot.setLong("uiSequence", 3);
+        snapshot.setLong("planRevision", 7);
+        snapshot.setBoolean("supported", true);
+        SimpleAssert.that(!owner.finishScanSnapshot(snapshot, 6, false), "an older scan cannot release this owner");
+        snapshot.setLong("uiSequence", 4);
+        snapshot.setBoolean("capturePending", true);
+        SimpleAssert.that(!owner.finishScanSnapshot(snapshot, 6, false), "capture progress still owns the scan");
+        snapshot.setBoolean("capturePending", false);
+        SimpleAssert.that(owner.finishScanSnapshot(snapshot, 6, false) && !owner.busy(),
+            "an accepted final snapshot releases the scan even without an installed view");
+        SimpleAssert.that(!owner.finishScanSnapshot(snapshot, 6, false), "duplicate completion has no effect");
+        SimpleAssert.eq(java.util.Collections.singletonList(HologramTaskOwner.Result.SUCCESS), results,
+            "the finished scan has one terminal result");
     }
 
     private static void presentationValues() {
