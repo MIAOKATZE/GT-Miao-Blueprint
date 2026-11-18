@@ -1,4 +1,7 @@
 item.neko_hologram_projector.name=猫猫蓝图全息投影仪
+gtmb.hologram.controllerOpening=读取控制器
+gtmb.hologram.controllerReading=正在核对现场…  Esc 关闭
+gtmb.hologram.controllerPiece=本地结构片段示意
 item.neko_hologram_projector.description.0=§7导入控制器结构或§b蓝图§7，在世界中预览§b全息投影§7。§r
 item.neko_hologram_projector.description.1=§7框选世界区域编辑§b蓝图§7，或完整§d剪切搬移§7世界结构。§r
 item.neko_hologram_projector.description.2=§7核对§f材料§7与改动，确认后执行§a建造§7、§6替换§7或§c拆除§7。§r

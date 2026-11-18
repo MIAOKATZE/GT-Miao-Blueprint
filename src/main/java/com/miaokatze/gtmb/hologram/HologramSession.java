@@ -127,6 +127,7 @@ final class HologramSession {
     HologramBlueprintProcessing.Policy processingPolicy;
     String workspaceTab = "structure";
     String openPurpose = "";
+    long controllerOpenId;
     long placementReviewNonce;
     boolean blueprintOperationSuccess;
     final List<HologramPresets.HintArea> blueprintHintAreas = new ArrayList<>();

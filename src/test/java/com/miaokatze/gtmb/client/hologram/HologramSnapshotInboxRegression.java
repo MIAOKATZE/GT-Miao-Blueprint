@@ -26,7 +26,24 @@ public final class HologramSnapshotInboxRegression {
         errorDecodeRetiresWorker();
         closeDuringDecode();
         explicitRootCloseFence();
+        controllerOpening();
+        HologramControllerOutlineRegression.run();
         loadTiming();
+    }
+
+    private static void controllerOpening() {
+        HologramControllerOpenIntent opening = new HologramControllerOpenIntent();
+        long first = opening.begin(0, 1, 64, 2);
+        SimpleAssert.that(opening.accepts(first), "first click can take its workspace");
+        opening.dismiss(first);
+        SimpleAssert.that(!opening.accepts(first), "Esc before the first reply retires the opening");
+        SimpleAssert.that(!opening.acceptsLegacy(0, 1, 64, 2), "Esc also fences an untagged legacy controller reply");
+        long second = opening.begin(0, 2, 64, 2);
+        SimpleAssert.that(!opening.acceptsLegacy(0, 1, 64, 2) && opening.acceptsLegacy(0, 2, 64, 2),
+            "only the current legacy target may open");
+        opening.dismiss(first);
+        SimpleAssert.that(!opening.accepts(first) && opening.accepts(second),
+            "late reply or dismissal for A cannot replace B, including a fresh click on the same controller");
     }
 
     private static void loadTiming() {

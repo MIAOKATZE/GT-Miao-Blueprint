@@ -704,7 +704,7 @@ final class HologramSnapshots {
         state.setBoolean("workspaceHasCapture", s.capture != null);
         state.setBoolean("workspaceCapturePending", s.capturePending);
         state.setBoolean("snapshotPending", s.capture != null || s.capturePending);
-        state.setString("openPurpose", s.openPurpose);
+        HologramControllerOpen.writePurpose(s, state);
         if ("controllerStructure".equals(s.openPurpose)) s.workspaceTab = "structure";
         else if ("blueprintEdit".equals(s.openPurpose) || "blueprintBrowse".equals(s.openPurpose)
             || "blueprintPlacement".equals(s.openPurpose)
@@ -912,7 +912,7 @@ final class HologramSnapshots {
         state.setBoolean("open", s.open);
         state.setString("quickToken", s.libraryQuickToken);
         state.setLong("quickClientTaskToken", s.libraryQuickClientTaskToken);
-        state.setString("openPurpose", s.openPurpose);
+        HologramControllerOpen.writePurpose(s, state);
         state.setString("cutWorkspaceRequestId", s.cutWorkspaceRequestId);
         state.setBoolean("blueprintEditing", s.blueprintEditing && HologramSessionPolicy.authoring(s));
         s.cutWorkspaceRequestId = "";

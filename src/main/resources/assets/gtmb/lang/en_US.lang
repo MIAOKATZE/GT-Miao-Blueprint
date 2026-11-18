@@ -1,4 +1,7 @@
 item.neko_hologram_projector.name=Neko Blueprint Hologram Projector
+gtmb.hologram.controllerOpening=Reading controller
+gtmb.hologram.controllerReading=Checking the structure…  Esc to close
+gtmb.hologram.controllerPiece=Local structure piece
 item.neko_hologram_projector.description.0=§7Import a controller structure or §bblueprint§7 and preview its §bhologram§7 in the world.§r
 item.neko_hologram_projector.description.1=§7Select world regions to edit §bblueprints§7 or §dcut and move§7 complete structures.§r
 item.neko_hologram_projector.description.2=§7Review §fmaterials§7 and changes, then confirm §aBuild§7, §6Replace§7 or §cDismantle§7.§r

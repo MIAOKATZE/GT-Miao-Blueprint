@@ -34,6 +34,7 @@ final class HologramProjectorWorkflow {
             && previous.z == z
             && HologramSessionPolicy.valid(previous);
         if (sameController && previous.captureError.isEmpty()) {
+            previous.controllerOpenId = HologramControllerOpen.claim(previous);
             previous.open = true;
             previous.settingsOnly = false;
             dismissPresetBrowse(previous);
@@ -86,6 +87,7 @@ final class HologramProjectorWorkflow {
         }
         HologramWorkspace.activate(player.getUniqueID(), session);
         session.openPurpose = "controllerStructure";
+        session.controllerOpenId = HologramControllerOpen.claim(session);
         HologramBuildPreparation.scan(session);
         HologramDraftPersistence.persist(session);
         HologramSnapshots.send(session);

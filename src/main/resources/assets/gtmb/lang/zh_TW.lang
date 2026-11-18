@@ -1,4 +1,7 @@
 gtmb.hologram.cut.name.title=命名並確認剪下
+gtmb.hologram.controllerOpening=讀取控制器
+gtmb.hologram.controllerReading=正在核對現場…  Esc 關閉
+gtmb.hologram.controllerPiece=本機結構片段示意
 gtmb.hologram.worldGuideHeld=貓貓藍圖全息投影儀 · 藍圖模式
 gtmb.hologram.worldGuideOpen=右鍵開啟工作區 / 匯入可建造的控制器結構
 gtmb.hologram.worldGuideCutStorage=Ctrl+Shift+右鍵：開啟剪下清單

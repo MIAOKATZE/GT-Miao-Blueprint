@@ -244,7 +244,7 @@ final class HologramStructureProjection {
         state.setLong("editorWorkspaceSequenceFloor", HologramEditorWorkspaceRegistry.sequenceFloor(s));
         state.setString("editorWorkspace", "projection");
         state.setString("workspaceTab", "structure");
-        state.setString("openPurpose", s.openPurpose);
+        HologramControllerOpen.writePurpose(s, state);
         state.setBoolean("open", s.open);
         if (s.presentationTransition != null)
             state.setString("editorWorkspacePreviousSession", s.presentationTransition.originId);

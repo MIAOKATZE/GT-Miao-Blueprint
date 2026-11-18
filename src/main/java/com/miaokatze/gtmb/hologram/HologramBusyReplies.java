@@ -45,6 +45,7 @@ final class HologramBusyReplies {
             proof.setString(key, value.substring(0, Math.min(128, value.length())));
         }
         if (request.hasKey("uiSequence", 4)) proof.setLong("uiSequence", request.getLong("uiSequence"));
+        if (request.hasKey("controllerOpenId", 4)) proof.setLong("controllerOpenId", request.getLong("controllerOpenId"));
         if (request.hasKey("planRevision", 4)) proof.setLong("planRevision", request.getLong("planRevision"));
         if (request.hasKey("clientTaskToken", 4)) proof.setLong("clientTaskToken", request.getLong("clientTaskToken"));
         if (request.hasKey("artifactVersion", 3))

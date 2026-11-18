@@ -1546,9 +1546,15 @@ public final class HologramControllerCaptureRegression {
         HologramServiceEditRegression.ReadOnlyWorld world = (HologramServiceEditRegression.ReadOnlyWorld) player.worldObj;
         HologramDynamicDefinitionRegression.DynamicController first = controller(unsafe, world, 0);
         try {
-            HologramProjectorWorkflow.open(player, 0, 64, 0, 2);
+            NBTTagCompound click = new NBTTagCompound();
+            click.setString("action", "useBlock");
+            click.setLong("controllerOpenId", 17);
+            HologramControllerOpen.dispatch(player, click, () -> HologramProjectorWorkflow.open(player, 0, 64, 0, 2));
             HologramSession old = HologramWorkspace.find(player.getUniqueID());
             complete(old);
+            SimpleAssert.that(old.controllerOpenId == 17
+                && HologramStructureProjection.header(old).getLong("controllerOpenId") == 17,
+                "deferred projection carries the original right-click identity");
             SimpleAssert.that(
                 !old.projectionPersistPending && HologramSessionPolicy.controllerType(old)
                     .equals(
