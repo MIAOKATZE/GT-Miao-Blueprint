@@ -294,6 +294,7 @@ final class HologramUiBuildReview {
                     NBTTagCompound n = new NBTTagCompound();
                     n.setLong("planRevision", this.confirmedRevision);
                     n.setLong("placementReviewNonce", ui.session.state().data.getLong("placementReviewNonce"));
+                    n.setBoolean("useDecorationVoucher", ui.session.materialVoucherSelected());
                     n.setBoolean(
                         "forceExplicit",
                         HologramPlacementConfirmation.forceReview(ui.session.state().data, this.confirmedRevision));

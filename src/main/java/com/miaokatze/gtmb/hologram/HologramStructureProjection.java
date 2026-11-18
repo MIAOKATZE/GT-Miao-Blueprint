@@ -75,6 +75,7 @@ final class HologramStructureProjection {
     /** Prepare a new native plan for review; consent to the previous projection never starts placement. */
     static void requestOperationReview(HologramSession s) {
         s.operationReviewSequence = -1;
+        s.jobVoucherRequested = false;
         if (showing(s)) prepareOperation(s);
         else {
             HologramSnapshotPreparation.cancel(s);
@@ -91,6 +92,7 @@ final class HologramStructureProjection {
     static boolean dismissOperationReview(HologramSession s) {
         if (s.operationReviewSequence < 0 || !HologramEditorWorkspaceRegistry.physicalProjection(s)) return false;
         s.operationReviewSequence = -1;
+        if (s.job != 1 && s.job != 2) s.jobVoucherRequested = false;
         s.placementReviewNonce++;
         s.forcePlacementReady = false;
         return true;

@@ -35,7 +35,8 @@ final class HologramMaterialWorkflow {
                 throw new IOException("投影仪或蓝图会话已失效");
             if (HologramEditorWorkspaceRegistry.physicalProjection(s) && "refreshMaterialQuote".equals(op))
                 requireProjectionRefresh(s, action);
-            else if ("orderMissingMaterials".equals(op)) requireOrderingReview(s, action);
+            else if ("orderMissingMaterials".equals(op) || "setDecorativeVoucher".equals(op))
+                requireMaterialReview(s, action);
             else if (cancellingOrder && HologramEditorWorkspaceRegistry.physicalProjection(s)) {
                 if (!HologramAeCraftingOrders.matchesActiveOrder(s, action))
                     throw new IOException("AE 缺料订单已变化，请重新核对当前订单");
@@ -45,6 +46,7 @@ final class HologramMaterialWorkflow {
                 s.status = "AE 缺料订单已取消；已入网材料保留，待交付产物存入玩家回收暂存";
             } else if ("setDecorativeVoucher".equals(op)) {
                 boolean selected = action.getBoolean("enabled");
+                if (!HologramMaterialAccess.voucherSupported(s)) throw new IOException("当前操作不支持猫猫装饰抵用券");
                 if (selected && !HologramDecorationVoucher.enabled()) throw new IOException("猫猫装饰抵用券未启用");
                 if (selected != s.jobVoucherRequested) {
                     if (!HologramMaterialQuote.cached(s)) throw new IOException("请等待完整材料计划后选择抵扣券");
@@ -54,8 +56,10 @@ final class HologramMaterialWorkflow {
                     s.placementReviewNonce++;
                     s.forcePlacementReady = false;
                     HologramMaterialQuote.project(s);
-                    s.blueprintAwaitingConfirmation = true;
-                    s.placementReviewIssued = true;
+                    if (s.virtual) {
+                        s.blueprintAwaitingConfirmation = true;
+                        s.placementReviewIssued = true;
+                    }
                     s.status = selected
                         ? s.player.capabilities.isCreativeMode ? "已按抵扣券显示建筑材料减免方案；创造施工不消耗抵扣券"
                             : "已按抵扣券重新核算建筑材料；确认施工并成功提交首格时消耗一张"
@@ -73,8 +77,9 @@ final class HologramMaterialWorkflow {
                 NBTTagCompound request = (NBTTagCompound) s.materialQuote.copy();
                 request.setLong("uiSequence", action.getLong("uiSequence"));
                 request.setLong("placementReviewNonce", s.placementReviewNonce);
-                request.setString("presetId", s.virtual && s.virtualPreset != null && s.virtualPreset.id != null
-                    ? s.virtualPreset.id : "");
+                request.setString(
+                    "presetId",
+                    s.virtual && s.virtualPreset != null && s.virtualPreset.id != null ? s.virtualPreset.id : "");
                 s.status = HologramMaterialOrdering.available(s.player)
                     ? HologramMaterialOrdering.submit(s.player, extensionRequest(request))
                     : HologramAeCraftingOrders.submit(s.player, s.materialSettings, request);
@@ -98,7 +103,13 @@ final class HologramMaterialWorkflow {
     static void validateConfirmation(HologramSession s, NBTTagCompound action) throws IOException {
         requireReview(s, action);
         if (HologramAeCraftingOrders.active(s.player)) throw new IOException("请等待 AE 合成完成并刷新材料后再施工");
-        boolean voucherSelected = s.jobVoucherRequested && HologramDecorationVoucher.enabled();
+        validateVoucherChoice(s, action);
+    }
+
+    static void validateVoucherChoice(HologramSession s, NBTTagCompound action) throws IOException {
+        boolean voucherSelected = HologramMaterialAccess.voucherSelected(s);
+        if (!s.virtual && voucherSelected && !action.hasKey("useDecorationVoucher", 1))
+            throw new IOException("请明确确认本次抵扣券方案");
         if (action.hasKey("useDecorationVoucher") && action.getBoolean("useDecorationVoucher") != voucherSelected)
             throw new IOException("抵扣券选择已变化，请先更新材料报价再确认");
         if (voucherSelected && !s.player.capabilities.isCreativeMode
@@ -148,7 +159,7 @@ final class HologramMaterialWorkflow {
         return current.getLong("missing") > reviewed.getLong("missing");
     }
 
-    private static boolean updatedReview(HologramSession s, String reason) {
+    static boolean updatedReview(HologramSession s, String reason) {
         s.forcePlacementReady = false;
         s.placementReviewNonce++;
         if (s.materialQuote != null) s.materialQuote.setLong("placementReviewNonce", s.placementReviewNonce);
@@ -186,14 +197,13 @@ final class HologramMaterialWorkflow {
             || !HologramMaterialQuote.rulesCurrent(s.materialQuote)) throw new IOException("结构来源或材料需求已变化，请重新读取并核对当前结构");
     }
 
-    static void requireOrderingReview(HologramSession s, NBTTagCompound action) throws IOException {
+    private static void requireMaterialReview(HologramSession s, NBTTagCompound action) throws IOException {
         if (!HologramEditorWorkspaceRegistry.physicalProjection(s)) {
             requireReview(s, action);
             return;
         }
         if (!HologramStructureProjection.operationReviewActive(s) || !HologramStructureProjection.operationPrepared(s)
-            || HologramDeferredPlanRefresh.blocked(s))
-            throw new IOException("请先打开当前控制器的材料确认");
+            || HologramDeferredPlanRefresh.blocked(s)) throw new IOException("请先打开当前控制器的材料确认");
         requireProjectionRefresh(s, action);
     }
 
@@ -215,12 +225,12 @@ final class HologramMaterialWorkflow {
     }
 
     static void writeState(HologramSession s, NBTTagCompound state) {
-        boolean blueprintReview = s.virtual
-            && s.virtualPreset != null
+        boolean blueprintReview = s.virtual && s.virtualPreset != null
             && s.virtualPlacement
             && s.virtualLocked
             && s.blueprintAwaitingConfirmation;
-        boolean controllerReview = HologramEditorWorkspaceRegistry.physicalProjection(s) && s.job != 1 && s.job != 2
+        boolean controllerReview = HologramEditorWorkspaceRegistry.physicalProjection(s) && s.job != 1
+            && s.job != 2
             && HologramStructureProjection.operationReviewActive(s)
             && HologramStructureProjection.operationPrepared(s);
         state.setBoolean(
@@ -233,10 +243,12 @@ final class HologramMaterialWorkflow {
             state.setTag("materialQuote", s.materialQuote.copy());
         NBTTagCompound voucher = new NBTTagCompound();
         voucher.setBoolean("enabled", HologramDecorationVoucher.enabled());
-        boolean selected = s.jobVoucherRequested && HologramDecorationVoucher.enabled();
+        boolean selected = HologramMaterialAccess.voucherSelected(s);
         voucher.setBoolean("selected", selected);
         voucher.setLong("available", HologramDecorationVoucher.available(s.player));
-        long eligibleDemand = HologramMaterialQuote.cached(s) ? s.materialQuoteCache.eligibleDemand : 0;
+        long eligibleDemand = HologramMaterialAccess.voucherSupported(s) && HologramMaterialQuote.cached(s)
+            ? s.materialQuoteCache.eligibleDemand
+            : 0;
         voucher.setLong("eligibleDemand", eligibleDemand);
         voucher.setBoolean(
             "usable",

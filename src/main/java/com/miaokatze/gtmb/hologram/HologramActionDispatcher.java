@@ -603,6 +603,7 @@ final class HologramActionDispatcher {
                     HologramSnapshots.send(s);
                     return;
                 }
+                if (!s.virtual) s.jobVoucherRequested = false;
                 HologramResourcePlanner.refreshResources(s);
                 if (s.planMissing > 0 || !s.planRecoveryFits) {
                     s.status = s.planMissing > 0 ? "整份计划材料不足，请补齐后重新确认" : "背包无法容纳预计回收，请整理后重新确认";
