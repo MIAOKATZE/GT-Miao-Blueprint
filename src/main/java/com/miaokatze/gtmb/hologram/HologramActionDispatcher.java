@@ -15,10 +15,23 @@ final class HologramActionDispatcher {
     private HologramActionDispatcher() {}
 
     static void handle(EntityPlayerMP player, NBTTagCompound action) {
+        HologramWorkspace.pruneRemovedController(player);
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
         if (s == null || s.player != player || s.cancelled || !s.id.equals(action.getString("session"))) return;
         if (action.hasKey("editorWorkspaceEpoch") && (!action.hasKey("editorWorkspaceEpoch", 4)
             || action.getLong("editorWorkspaceEpoch") != s.editorWorkspaceEpoch)) return;
+        if ("dismissOperationReview".equals(action.getString("op"))) {
+            if (HologramSessionPolicy.currentTool(s) != null && action.hasKey("reviewSequence", 4)
+                && action.getLong("reviewSequence") == s.operationReviewSequence
+                && HologramStructureProjection.dismissOperationReview(s)) HologramSnapshots.sendUi(s);
+            return;
+        }
+        if ("leaveControllerProjection".equals(action.getString("op"))) {
+            if (HologramEditorWorkspaceRegistry.physicalProjection(s) && HologramSessionPolicy.currentTool(s) != null
+                && HologramEditorWorkspaceRegistry.idle(s))
+                HologramWorkspace.retireFieldProjection(s, "已切换功能，原控制器现场规划已清除");
+            return;
+        }
         if ("cancelAttachment".equals(action.getString("op"))) {
             if (!HologramAttachmentUpload.cancellationMatches(s, action)) return;
             boolean cancelled = HologramAttachmentUpload.cancel(s, action);
@@ -313,6 +326,7 @@ final class HologramActionDispatcher {
                 return;
             }
             HologramAuthoringWorkflow.clearSourceSwitch(s);
+            HologramStructureProjection.dismissOperationReview(s);
             s.libraryQuickToken = "";
             HologramProjectorWorkflow.dismissPresetBrowse(s);
             HologramProjectorWorkflow.libraryCloseUi(s);

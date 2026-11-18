@@ -120,6 +120,7 @@ final class HologramLibraryWorkflow {
     static NBTTagCompound libraryQuickBootstrap(EntityPlayerMP player, NBTTagCompound request)
         throws java.io.IOException {
         String token = HologramLibraryService.quickToken(request.getString("quickToken"));
+        HologramWorkspace.pruneRemovedController(player);
         HologramSession previous = HologramWorkspace.find(player.getUniqueID());
         if (previous != null && !HologramEditorWorkspaceRegistry.physicalProjection(previous)
             && !HologramAuthoringWorkflow.allowBlueprintDiscard(previous, request, "choosePlacementPreset", ""))

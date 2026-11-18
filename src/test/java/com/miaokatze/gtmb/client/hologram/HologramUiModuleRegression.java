@@ -252,6 +252,11 @@ public final class HologramUiModuleRegression {
                 ui.review.confirmation() && ui.review.confirmedRevision() == 43 && !ui.session.awaitingScan(),
                 "the prepared native receipt opens the existing confirmation for its new plan revision");
             ui.review.activateControl(54);
+            NBTTagCompound dismiss = (NBTTagCompound) uiField(ui.diagnostics, "capturedRenderSmokeAction");
+            SimpleAssert.that(
+                "dismissOperationReview".equals(dismiss.getString("op"))
+                    && dismiss.getLong("reviewSequence") == review.getLong("uiSequence"),
+                "native review close sends a dismissal for precisely the displayed review");
             ui.review.acknowledgeReview(next);
             SimpleAssert
                 .that(!ui.review.confirmation(), "duplicate preparation receipts cannot reopen a dismissed review");
@@ -261,11 +266,28 @@ public final class HologramUiModuleRegression {
                 "scan".equals(repeated.getString("op")) && repeated.getBoolean("operationPreflight")
                     && repeated.getLong("planRevision") == 43,
                 "construction control 50 requests fresh operation preparation even after a prior full native plan");
+            ui.review.dismissConfirmation();
+            dismiss = (NBTTagCompound) uiField(ui.diagnostics, "capturedRenderSmokeAction");
+            SimpleAssert.eq(
+                repeated.getLong("uiSequence"),
+                dismiss.getLong("reviewSequence"),
+                "leaving a pending review dismisses its original scan sequence");
             ui.session.pendingSequence(-1);
             prepared = (NBTTagCompound) prepared.copy();
             prepared.setLong("uiSequence", repeated.getLong("uiSequence"));
             next = new HologramState(prepared);
             setUiField(ui.session, "state", next);
+            ui.review.acknowledgeReview(next);
+            ui.review.acknowledgeScan(next);
+            SimpleAssert
+                .that(!ui.review.confirmation(), "the first late preparation receipt after dismissal stays closed");
+            ui.router.activate(50);
+            NBTTagCompound fresh = (NBTTagCompound) uiField(ui.diagnostics, "capturedRenderSmokeAction");
+            prepared = (NBTTagCompound) prepared.copy();
+            prepared.setLong("uiSequence", fresh.getLong("uiSequence"));
+            next = new HologramState(prepared);
+            setUiField(ui.session, "state", next);
+            ui.session.pendingSequence(-1);
             ui.review.acknowledgeReview(next);
             ui.review.activateControl(55);
             NBTTagCompound confirmed = (NBTTagCompound) uiField(ui.diagnostics, "capturedRenderSmokeAction");

@@ -88,6 +88,14 @@ final class HologramStructureProjection {
         s.status = s.capturePending ? "正在准备施工计划；完成后请核对材料与位置" : "施工计划已准备，请核对材料与位置后确认施工";
     }
 
+    static boolean dismissOperationReview(HologramSession s) {
+        if (s.operationReviewSequence < 0 || !HologramEditorWorkspaceRegistry.physicalProjection(s)) return false;
+        s.operationReviewSequence = -1;
+        s.placementReviewNonce++;
+        s.forcePlacementReady = false;
+        return true;
+    }
+
     static void finishHatchConfiguration(HologramSession s) {
         NBTTagCompound request = s.projectionHatchConfiguration;
         HologramCapture capture = s.projectionHatchCapture;

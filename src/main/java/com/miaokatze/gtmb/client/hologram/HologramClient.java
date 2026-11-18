@@ -2032,6 +2032,16 @@ public final class HologramClient {
     /** Registry lookups, world access, GUI and rendering resources remain on the client thread. */
     private static boolean fullSnapshotRequested;
 
+    static void leaveControllerProjection() {
+        if (state == null || !state.data.getBoolean("target")
+            || HologramEditorWorkspaces.domain(state) != HologramEditorWorkspaces.Mode.PROJECTION) return;
+        NBTTagCompound action = new NBTTagCompound();
+        action.setString("op", "leaveControllerProjection");
+        action.setString("session", state.session);
+        action.setLong("editorWorkspaceEpoch", state.data.getLong("editorWorkspaceEpoch"));
+        HologramNetwork.sendAction(action);
+    }
+
     private static void installSnapshot(NBTTagCompound nbt) {
         installSnapshot(nbt, null);
     }
@@ -2044,9 +2054,26 @@ public final class HologramClient {
         boolean openingCutWorkspace = "cutWorkspace".equals(nbt.getString("openPurpose"));
         if (openingCutWorkspace && !acceptsCutWorkspaceOpening(nbt)) return;
         if (nbt.getBoolean("cancelled")) {
-            retire(nbt.getString("session"));
-            HologramBackgroundTasks.cancelled(nbt.getString("session"));
-            if (state != null && state.session.equals(nbt.getString("session"))) clearProjection(false);
+            String cancelled = nbt.getString("session");
+            boolean controllerRetired = nbt.getBoolean("controllerProjectionRetired");
+            retire(cancelled);
+            HologramBackgroundTasks.cancelled(cancelled);
+            if (state != null && state.session.equals(cancelled)) {
+                long epoch = editorWorkspaceEpoch, sequence = editorSequence;
+                clearProjection(false);
+                if (controllerRetired) {
+                    editorWorkspaceEpoch = epoch;
+                    editorSequence = sequence;
+                    Minecraft mc = Minecraft.getMinecraft();
+                    if (mc.currentScreen instanceof HologramScreen screen
+                        && screen.ui.session.state().session.equals(cancelled)
+                        || mc.currentScreen instanceof HologramSettingsScreen) mc.displayGuiScreen(null);
+                    if (mc.thePlayer != null && !nbt.getString("status")
+                        .isEmpty())
+                        mc.thePlayer.addChatMessage(new net.minecraft.util.ChatComponentText(nbt.getString("status")));
+                }
+            }
+            if (controllerRetired) HologramUiMemory.forget(cancelled);
             return;
         }
         String session = nbt.getString("session");

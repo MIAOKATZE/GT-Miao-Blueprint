@@ -13,6 +13,7 @@ final class HologramProjectorWorkflow {
     private HologramProjectorWorkflow() {}
 
     static void open(EntityPlayerMP player, int x, int y, int z, int side) {
+        HologramWorkspace.pruneRemovedController(player);
         HologramSession previous = HologramWorkspace.find(player.getUniqueID());
         if (previous != null && previous.player == player && HologramSessionPolicy.blockedByAreaImport(previous)) {
             HologramSnapshots.sendUi(previous);
@@ -25,14 +26,14 @@ final class HologramProjectorWorkflow {
             openAir(player);
             return;
         }
-        if (previous != null && previous.player == player
-            && !previous.virtual
+        boolean sameController = previous != null && previous.player == player
+            && HologramEditorWorkspaceRegistry.physicalProjection(previous)
             && !previous.cancelled
-            && previous.captureError.isEmpty()
             && previous.x == x
             && previous.y == y
             && previous.z == z
-            && HologramSessionPolicy.valid(previous)) {
+            && HologramSessionPolicy.valid(previous);
+        if (sameController && previous.captureError.isEmpty()) {
             previous.open = true;
             previous.settingsOnly = false;
             dismissPresetBrowse(previous);
@@ -40,7 +41,9 @@ final class HologramProjectorWorkflow {
             HologramSnapshots.sendUi(previous);
             return;
         }
-        String draftFailure = HologramDraftPersistence.admissionFailure(player, x, y, z);
+        // Coordinates and model IDs from a historical item tag cannot prove it is the same live controller.
+        boolean restoreDraft = sameController && HologramDraftPersistence.ownsProjectionDraft(previous);
+        String draftFailure = restoreDraft ? HologramDraftPersistence.admissionFailure(player, x, y, z) : "";
         if (!draftFailure.isEmpty()) {
             player.addChatMessage(new net.minecraft.util.ChatComponentText(draftFailure));
             return;
@@ -77,7 +80,7 @@ final class HologramProjectorWorkflow {
         }
         HologramSession session = HologramWorkspace.create(player, x, y, z, true, side);
         session.libraryUiActive = true;
-        if (!HologramDraftPersistence.readDraft(session)) {
+        if (restoreDraft && !HologramDraftPersistence.readDraft(session)) {
             player.addChatMessage(new net.minecraft.util.ChatComponentText(session.status));
             return;
         }
@@ -89,7 +92,12 @@ final class HologramProjectorWorkflow {
     }
 
     static void openAir(EntityPlayerMP player) {
+        HologramWorkspace.pruneRemovedController(player);
         HologramSession previous = HologramWorkspace.find(player.getUniqueID());
+        if (previous == null) {
+            previous = HologramEditorWorkspaceRegistry.availableBlueprint(player);
+            if (previous != null) HologramWorkspace.activate(player.getUniqueID(), previous);
+        }
         if (previous != null && previous.player == player
             && !previous.cancelled
             && HologramAeCraftingOrders.active(player)
@@ -188,7 +196,12 @@ final class HologramProjectorWorkflow {
     }
 
     static HologramSession uiSession(EntityPlayerMP player) {
+        HologramWorkspace.pruneRemovedController(player);
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
+        if (s == null) {
+            s = HologramEditorWorkspaceRegistry.availableBlueprint(player);
+            if (s != null) HologramWorkspace.activate(player.getUniqueID(), s);
+        }
         if (s != null && s.player == player
             && HologramWorkspace.areaSessionOwned(s)
             && HologramAuthoringWorkflow.blueprintHasUnsavedChanges(s)) {
@@ -213,6 +226,7 @@ final class HologramProjectorWorkflow {
     }
 
     static void openSettings(EntityPlayerMP player) {
+        HologramWorkspace.pruneRemovedController(player);
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
         if (s != null && s.player == player
             && !s.cancelled

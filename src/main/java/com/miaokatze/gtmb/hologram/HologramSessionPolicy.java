@@ -135,9 +135,18 @@ final class HologramSessionPolicy {
                     && (admittedJob || previewReach(s.player, s.x, s.y, s.z))))
             && (s.target == null || (s.player.getDistanceSq(s.x + .5, s.y + .5, s.z + .5) <= 4096
                 && s.player.worldObj.blockExists(s.x, s.y, s.z)
-                && s.player.worldObj.getTileEntity(s.x, s.y, s.z) == s.target
-                && (!(s.target instanceof IGregTechTileEntity)
-                    || ((IGregTechTileEntity) s.target).getMetaTileEntity() == s.context)));
+                && controllerMatches(s)));
+    }
+
+    static boolean controllerReplaced(HologramSession s) {
+        // A missing chunk alone says nothing about the controller in it.
+        return s.libraryWorld.blockExists(s.x, s.y, s.z) && !controllerMatches(s);
+    }
+
+    private static boolean controllerMatches(HologramSession s) {
+        return !s.target.isInvalid() && s.libraryWorld.getTileEntity(s.x, s.y, s.z) == s.target
+            && (!(s.target instanceof IGregTechTileEntity)
+                || ((IGregTechTileEntity) s.target).getMetaTileEntity() == s.context);
     }
 
     static boolean membershipEnabled(HologramSession s, HologramCapture.Cell cell) {

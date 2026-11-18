@@ -43,6 +43,11 @@ public final class HologramEditorWorkspacesRegression {
             admissionAndOwnership();
             provisionalFailureAndCommit();
             lateRollbackFences();
+            removedControllerDoesNotBlockIndependentBlueprint();
+            newControllerAndToolModeRetireTheOldSite();
+            removedControllerCannotRollBackFromAnUnpublishedBlueprint();
+            lateCleanupKeepsReplacementControllerAndOtherToolDrafts();
+            dismissedReviewFencesTheOldConsent();
         } catch (ReflectiveOperationException | java.io.IOException failure) {
             throw new AssertionError("workspace fixture", failure);
         } finally {
@@ -68,11 +73,188 @@ public final class HologramEditorWorkspacesRegression {
                 "a native API reference never grants an imported declaration projection ownership");
             HologramSession restored = switchTo(declaration, "projection", 82);
             SimpleAssert.that(
-                restored == projection,
-                "imported controller context cannot overwrite the independently owned projection registry entry");
-            SimpleAssert.eq(71L, restored.planRevision, "real controller keeps its own plan revision");
+                projection.cancelled && restored.emptyProjection && restored != projection,
+                "imported author workspace retires the physical projection even when it shares the controller");
             SimpleAssert.eq(73L, declaration.planRevision, "imported declaration keeps its own plan revision");
         }
+    }
+
+    private static void removedControllerDoesNotBlockIndependentBlueprint() throws ReflectiveOperationException {
+        try (Fixture fixture = new Fixture()) {
+            HologramSession blueprint = HologramWorkspace.create(fixture.player, 0, 64, 0, false, 2);
+            blueprint.virtual = true;
+            blueprint.blueprintSavedId = "saved-blueprint";
+            HologramWorkspace.activate(fixture.id, blueprint);
+            HologramSession source = fixture.projection();
+            rememberFieldDraft(source);
+            source.capture = new HologramCapture(null, fixture.player.getHeldItem());
+            source.capturePending = true;
+            source.operationReviewSequence = 17;
+            fixture.world.unloaded = true;
+            HologramWorkspace.pruneRemovedController(fixture.player);
+            SimpleAssert.eq(source, HologramWorkspace.find(fixture.id), "unloaded location is not a removal witness");
+            fixture.world.unloaded = false;
+            fixture.world.occupant = null;
+            NBTTagCompound command = request(source, "projection", 18);
+            command.setString("op", "scan");
+            HologramActionDispatcher.handle(fixture.player, command);
+            SimpleAssert.that(
+                source.cancelled && !source.capturePending && source.operationReviewSequence < 0,
+                "a request to a broken controller retires its pending capture and review");
+            SimpleAssert.that(HologramWorkspace.find(fixture.id) == null, "the broken controller is no longer active");
+            SimpleAssert.that(
+                !fixture.player.getHeldItem()
+                    .getTagCompound()
+                    .hasKey(HologramSessionKeys.DRAFT),
+                "broken controller removes its tool draft pointer");
+            HologramProjectorWorkflow.openAir(fixture.player);
+            SimpleAssert
+                .eq(blueprint, HologramWorkspace.find(fixture.id), "reopening restores the independent blueprint");
+            SimpleAssert.eq("saved-blueprint", blueprint.blueprintSavedId, "saved-blueprint identity is intact");
+            HologramActionDispatcher.handle(fixture.player, command);
+            SimpleAssert.eq(blueprint, HologramWorkspace.find(fixture.id), "a late source command cannot replace it");
+        }
+    }
+
+    private static void newControllerAndToolModeRetireTheOldSite() throws ReflectiveOperationException {
+        try (Fixture fixture = new Fixture()) {
+            HologramSession first = fixture.projection();
+            rememberFieldDraft(first);
+            TileEntity secondController = new TileEntity();
+            fixture.world.occupants = new java.util.HashMap<>();
+            fixture.world.occupants.put("0,64,0", first.target);
+            fixture.world.occupants.put("1,64,0", secondController);
+            HologramSession second = HologramWorkspace.create(fixture.player, 1, 64, 0, true, 2);
+            HologramWorkspace.activate(fixture.id, second);
+            SimpleAssert.that(
+                first.cancelled && second.target == secondController,
+                "recognizing a second controller replaces the sole field cache even while the first exists");
+            SimpleAssert.that(
+                !fixture.player.getHeldItem()
+                    .getTagCompound()
+                    .hasKey(HologramSessionKeys.DRAFT),
+                "switching controllers clears the former site pointer before the new capture finishes");
+            rememberFieldDraft(second);
+            NBTTagCompound leave = request(second, "projection", 28);
+            leave.setString("op", "leaveControllerProjection");
+            second.job = 1;
+            HologramActionDispatcher.handle(fixture.player, leave);
+            SimpleAssert.that(!second.cancelled, "tool mode changes cannot abandon admitted construction");
+            second.job = 0;
+            HologramActionDispatcher.handle(fixture.player, leave);
+            SimpleAssert.that(
+                second.cancelled && HologramWorkspace.find(fixture.id) == null,
+                "changing tool function leaves an idle site");
+            SimpleAssert.that(
+                !fixture.player.getHeldItem()
+                    .getTagCompound()
+                    .hasKey(HologramSessionKeys.DRAFT),
+                "leaving the field function removes its draft pointer");
+        }
+    }
+
+    private static void removedControllerCannotRollBackFromAnUnpublishedBlueprint()
+        throws ReflectiveOperationException {
+        try (Fixture fixture = new Fixture()) {
+            HologramSession source = fixture.projection();
+            rememberFieldDraft(source);
+            HologramSession target = switchTo(source, "blueprint", 111);
+            fixture.world.occupant = new TileEntity();
+            SimpleAssert.that(
+                HologramWorkspace.rollbackPresentation(fixture.player, target.id, 111) == null,
+                "a same-type replacement blocks rollback to the old controller instance");
+            SimpleAssert.that(
+                source.cancelled && HologramWorkspace.find(fixture.id) == target,
+                "a late encoder failure cannot restore a removed controller route");
+        }
+    }
+
+    private static void lateCleanupKeepsReplacementControllerAndOtherToolDrafts() throws ReflectiveOperationException {
+        try (Fixture fixture = new Fixture()) {
+            HologramSession source = fixture.projection();
+            fixture.world.occupant = new TileEntity();
+            HologramSession replacement = HologramWorkspace.create(fixture.player, 0, 64, 0, true, 2);
+            HologramWorkspace.activate(fixture.id, replacement);
+            rememberFieldDraft(replacement);
+            Field storageField = net.minecraft.world.World.class.getField("perWorldStorage");
+            fixture.unsafe.putObject(
+                fixture.world,
+                fixture.unsafe.objectFieldOffset(storageField),
+                new net.minecraft.world.storage.MapStorage(null));
+            ItemStack tool = fixture.player.getHeldItem();
+            NBTTagCompound draft = tool.getTagCompound()
+                .getCompoundTag(HologramSessionKeys.DRAFT);
+            HologramDraftStorage storage = HologramDraftStorage.get(fixture.world);
+            String key = HologramDraftPersistence.draftKey(replacement);
+            storage.put(key, draft);
+            ItemStack other = tool.copy();
+            other.getTagCompound()
+                .setString(HologramSessionKeys.TOOL_ID, "a-different-tool");
+            fixture.player.inventory.mainInventory[1] = other;
+            HologramDraftPersistence.forgetProjection(source);
+            SimpleAssert.that(
+                tool.getTagCompound()
+                    .hasKey(HologramSessionKeys.DRAFT) && storage.read(key) == draft,
+                "retiring an older instance cannot delete the active same-coordinate field record");
+            fixture.player.inventory.currentItem = 1;
+            HologramDraftPersistence.forgetProjection(replacement);
+            SimpleAssert.that(
+                !tool.getTagCompound()
+                    .hasKey(HologramSessionKeys.DRAFT) && storage.read(key)
+                        .hasNoTags()
+                    && other.getTagCompound()
+                        .hasKey(HologramSessionKeys.DRAFT),
+                "field retirement clears the matching tool and site even when another tool is held");
+        }
+    }
+
+    private static void dismissedReviewFencesTheOldConsent() throws ReflectiveOperationException {
+        try (Fixture fixture = new Fixture()) {
+            HologramSession source = fixture.projection();
+            fixture.player.inventory.currentItem = 1;
+            HologramWorkspace.pruneRemovedController(fixture.player);
+            fixture.player.inventory.currentItem = 0;
+            HologramProjectorWorkflow.open(fixture.player, 0, 64, 0, 2);
+            SimpleAssert.eq(
+                source,
+                HologramWorkspace.find(fixture.id),
+                "switching hotbar selection alone keeps the same controller and editing route");
+            source.capture = new HologramCapture(null, fixture.player.getHeldItem());
+            source.uiSequence = source.operationReviewSequence = 17;
+            source.placementReviewNonce = 6;
+            source.forcePlacementReady = true;
+            NBTTagCompound dismiss = request(source, "projection", 18);
+            dismiss.setString("op", "dismissOperationReview");
+            dismiss.setLong("reviewSequence", 16);
+            HologramActionDispatcher.handle(fixture.player, dismiss);
+            SimpleAssert.eq(6L, source.placementReviewNonce, "a late dismissal cannot revoke a newer review");
+            dismiss.setLong("reviewSequence", 17);
+            HologramActionDispatcher.handle(fixture.player, dismiss);
+            SimpleAssert.that(
+                source.operationReviewSequence == -1 && !source.forcePlacementReady,
+                "closing the review revokes its authorization while the controller stays current");
+            SimpleAssert.eq(17L, source.uiSequence, "dismissal preserves the in-flight preparation receipt sequence");
+            SimpleAssert.eq(7L, source.placementReviewNonce, "previous consent is expired");
+            NBTTagCompound confirm = request(source, "projection", 20);
+            confirm.setLong("placementReviewNonce", 6);
+            HologramBuildPreparation.reviewedBuild(source, confirm);
+            SimpleAssert.that(
+                source.job == 0 && source.status.contains("材料确认已更新"),
+                "a delayed confirmation cannot start placement after the review closed");
+        }
+    }
+
+    private static void rememberFieldDraft(HologramSession source) {
+        NBTTagCompound draft = new NBTTagCompound();
+        draft.setInteger("dimension", source.dimension);
+        draft.setInteger("x", source.x);
+        draft.setInteger("y", source.y);
+        draft.setInteger("z", source.z);
+        draft.setString("controllerType", HologramSessionPolicy.controllerType(source));
+        draft.setString("draftSession", source.id);
+        source.player.getHeldItem()
+            .getTagCompound()
+            .setTag(HologramSessionKeys.DRAFT, draft);
     }
 
     private static void epochFencesReactivatedSession() throws ReflectiveOperationException {

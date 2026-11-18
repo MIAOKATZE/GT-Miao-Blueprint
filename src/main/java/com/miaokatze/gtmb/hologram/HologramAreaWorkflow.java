@@ -75,6 +75,10 @@ final class HologramAreaWorkflow {
             HologramSnapshots.sendAreaSelection(s);
             return;
         }
+        if (HologramEditorWorkspaceRegistry.physicalProjection(s)) {
+            HologramWorkspace.retireFieldProjection(s, "");
+            s = HologramProjectorWorkflow.uiSession(player);
+        }
         retireFinishedPlacement(s);
         HologramArea area = new HologramArea();
         HologramWorkspace.AREAS.put(player.getUniqueID(), area);

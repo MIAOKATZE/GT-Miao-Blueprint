@@ -157,7 +157,7 @@ final class HologramMaterialConfirmationDialog {
         if (key == Keyboard.KEY_ESCAPE || key == Keyboard.KEY_E) {
             if (orderActive()) ui.router.closeRoot();
             else {
-                ui.review.confirmation(false);
+                ui.review.dismissConfirmation();
                 close();
             }
         }

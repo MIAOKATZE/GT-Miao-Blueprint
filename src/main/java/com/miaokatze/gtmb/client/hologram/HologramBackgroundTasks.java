@@ -272,6 +272,7 @@ public final class HologramBackgroundTasks {
         return !busy() || "cancel".equals(op)
             || "pause".equals(op)
             || "resume".equals(op)
+            || "scan".equals(operation) && "dismissOperationReview".equals(op)
             || awaitingSourceReview() && !controlPending()
                 && ("importArea".equals(op) || "cancelSourceSwitch".equals(op))
             || "ackBlueprintSaved".equals(op)

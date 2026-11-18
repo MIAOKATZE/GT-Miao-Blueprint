@@ -95,6 +95,16 @@ public final class HologramNetwork {
         channel.sendTo(new State(state), player);
     }
 
+    static void sendControllerProjectionRetired(HologramSession projection, String reason) {
+        if (channel == null || !progressConnected(projection.player)) return;
+        NBTTagCompound state = new NBTTagCompound();
+        state.setString("session", projection.id);
+        state.setBoolean("cancelled", true);
+        state.setBoolean("controllerProjectionRetired", true);
+        state.setString("status", reason);
+        channel.sendTo(new State(state), projection.player);
+    }
+
     public static void init() {
         if (channel != null) return;
         channel = NetworkRegistry.INSTANCE.newSimpleChannel("gtmb_hologram");
@@ -1504,7 +1514,8 @@ public final class HologramNetwork {
                 return null;
             }
             if (msg.tag.hasKey("progress", 10)) observeProgress(msg.tag.getCompoundTag("progress"));
-            if (msg.tag.getBoolean("cancelled") || msg.tag.getBoolean("transportError")) librarySnapshots.clear();
+            if (msg.tag.getBoolean("cancelled") && !msg.tag.getBoolean("controllerProjectionRetired")
+                || msg.tag.getBoolean("transportError")) librarySnapshots.clear();
             Consumer<NBTTagCompound> current = receiver;
             if (current != null) current.accept(msg.tag);
             return null;

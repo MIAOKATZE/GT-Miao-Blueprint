@@ -114,6 +114,10 @@ final class HologramEditorWorkspaces {
             ui.session.notice("请先完成当前操作，再浏览剪切工作区；草稿和选区保留");
             return false;
         }
+        if (hasProjectionContent()) {
+            HologramCutClient.INSTANCE.openStorageWorkspace();
+            return false;
+        }
         cut = true;
         ui.tools.closeTransient();
         return true;
