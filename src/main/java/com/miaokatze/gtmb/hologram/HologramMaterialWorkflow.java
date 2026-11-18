@@ -33,9 +33,13 @@ final class HologramMaterialWorkflow {
             boolean cancellingOrder = "cancelMaterialOrder".equals(op) && HologramAeCraftingOrders.active(s.player);
             if (!(cancellingOrder ? HologramSessionPolicy.jobValid(s) : HologramSessionPolicy.valid(s)))
                 throw new IOException("投影仪或蓝图会话已失效");
-            if ("refreshMaterialQuote".equals(op) && !s.virtual
-                && HologramEditorWorkspaceRegistry.physicalProjection(s)) requireProjectionRefresh(s, action);
-            else requireReview(s, action);
+            if (HologramEditorWorkspaceRegistry.physicalProjection(s) && "refreshMaterialQuote".equals(op))
+                requireProjectionRefresh(s, action);
+            else if ("orderMissingMaterials".equals(op)) requireOrderingReview(s, action);
+            else if (cancellingOrder && HologramEditorWorkspaceRegistry.physicalProjection(s)) {
+                if (!HologramAeCraftingOrders.matchesActiveOrder(s, action))
+                    throw new IOException("AE 缺料订单已变化，请重新核对当前订单");
+            } else requireReview(s, action);
             if ("cancelMaterialOrder".equals(op)) {
                 HologramAeCraftingOrders.cancel(s.player, "AE 缺料订单已取消；已入网材料保留，待交付产物存入玩家回收暂存");
                 s.status = "AE 缺料订单已取消；已入网材料保留，待交付产物存入玩家回收暂存";
@@ -69,7 +73,8 @@ final class HologramMaterialWorkflow {
                 NBTTagCompound request = (NBTTagCompound) s.materialQuote.copy();
                 request.setLong("uiSequence", action.getLong("uiSequence"));
                 request.setLong("placementReviewNonce", s.placementReviewNonce);
-                request.setString("presetId", s.virtualPreset.id == null ? "" : s.virtualPreset.id);
+                request.setString("presetId", s.virtual && s.virtualPreset != null && s.virtualPreset.id != null
+                    ? s.virtualPreset.id : "");
                 s.status = HologramMaterialOrdering.available(s.player)
                     ? HologramMaterialOrdering.submit(s.player, extensionRequest(request))
                     : HologramAeCraftingOrders.submit(s.player, s.materialSettings, request);
@@ -181,6 +186,17 @@ final class HologramMaterialWorkflow {
             || !HologramMaterialQuote.rulesCurrent(s.materialQuote)) throw new IOException("结构来源或材料需求已变化，请重新读取并核对当前结构");
     }
 
+    static void requireOrderingReview(HologramSession s, NBTTagCompound action) throws IOException {
+        if (!HologramEditorWorkspaceRegistry.physicalProjection(s)) {
+            requireReview(s, action);
+            return;
+        }
+        if (!HologramStructureProjection.operationReviewActive(s) || !HologramStructureProjection.operationPrepared(s)
+            || HologramDeferredPlanRefresh.blocked(s))
+            throw new IOException("请先打开当前控制器的材料确认");
+        requireProjectionRefresh(s, action);
+    }
+
     private static void requireReview(HologramSession s, NBTTagCompound action) throws IOException {
         HologramGeometryEdits.validate(s);
         if (!s.virtual || s.virtualPreset == null
@@ -199,14 +215,17 @@ final class HologramMaterialWorkflow {
     }
 
     static void writeState(HologramSession s, NBTTagCompound state) {
-        boolean review = !HologramSessionPolicy.authoring(s) && s.virtual
+        boolean blueprintReview = s.virtual
             && s.virtualPreset != null
             && s.virtualPlacement
             && s.virtualLocked
             && s.blueprintAwaitingConfirmation;
+        boolean controllerReview = HologramEditorWorkspaceRegistry.physicalProjection(s) && s.job != 1 && s.job != 2
+            && HologramStructureProjection.operationReviewActive(s)
+            && HologramStructureProjection.operationPrepared(s);
         state.setBoolean(
             "materialOrderingAvailable",
-            review && (HologramMaterialOrdering.available(s.player)
+            (blueprintReview || controllerReview) && (HologramMaterialOrdering.available(s.player)
                 || HologramAeCraftingOrders.available(s.player, s.materialSettings)));
         state.setTag("materialOrder", HologramAeCraftingOrders.snapshot(s.player));
         if (!HologramSessionPolicy.authoring(s) && s.materialQuote != null

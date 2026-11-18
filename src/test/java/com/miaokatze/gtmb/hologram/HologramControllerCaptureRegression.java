@@ -536,6 +536,59 @@ public final class HologramControllerCaptureRegression {
         }
     }
 
+    private static void projectionOrdering(HologramSession s, ItemStack missingItem) {
+        long originalReview = s.operationReviewSequence;
+        s.operationReviewSequence = -1;
+        List<NBTTagCompound> requests = new ArrayList<>();
+        HologramMaterialOrdering.register(new HologramMaterialOrdering.Provider() {
+
+            @Override
+            public boolean available(EntityPlayerMP player) {
+                return player == s.player;
+            }
+
+            @Override
+            public String submit(EntityPlayerMP player, NBTTagCompound request) {
+                requests.add(request);
+                return "fixture order accepted";
+            }
+        });
+        try {
+            NBTTagCompound action = presetAction(s, "orderMissingMaterials");
+            action.setLong("placementReviewNonce", s.placementReviewNonce);
+            NBTTagCompound state = new NBTTagCompound();
+            HologramMaterialWorkflow.writeState(s, state);
+            SimpleAssert.that(!state.getBoolean("materialOrderingAvailable"), "an unreviewed projection cannot order");
+            HologramMaterialWorkflow.action(s, action, "orderMissingMaterials");
+            SimpleAssert.eq(0, requests.size(), "opening a controller alone does not permit placing orders");
+
+            s.operationReviewSequence = s.uiSequence;
+            HologramMaterialWorkflow.writeState(s, state);
+            SimpleAssert.that(state.getBoolean("materialOrderingAvailable"), "the reviewed controller enables AE ordering");
+            NBTTagCompound stale = (NBTTagCompound) action.copy();
+            stale.setLong("placementReviewNonce", s.placementReviewNonce - 1);
+            HologramMaterialWorkflow.action(s, stale, "orderMissingMaterials");
+            SimpleAssert.eq(0, requests.size(), "a stale review cannot submit an order");
+
+            HologramMaterialWorkflow.action(s, action, "orderMissingMaterials");
+            SimpleAssert.eq(1, requests.size(), "native controller submits one server-owned shortage quote");
+            NBTTagCompound request = requests.get(0);
+            net.minecraft.nbt.NBTTagList rows = request.getTagList("rows", 10);
+            long missing = 0;
+            for (int i = 0; i < rows.tagCount(); i++) {
+                NBTTagCompound row = rows.getCompoundTagAt(i);
+                if (HologramValues.same(missingItem, HologramMaterialQuote.readItem(row))) missing += row.getLong("missing");
+            }
+            SimpleAssert.that(
+                request.getString("presetId").isEmpty() && s.id.equals(request.getString("session"))
+                    && missing == 1,
+                "the controller orders the precise missing item without requiring a saved blueprint");
+        } finally {
+            s.operationReviewSequence = originalReview;
+            HologramMaterialOrdering.register(null);
+        }
+    }
+
     private static void rejectedProjectionRefresh(HologramSession s, NBTTagCompound action, String message) {
         try {
             HologramMaterialWorkflow.requireProjectionRefresh(s, action);
@@ -935,6 +988,7 @@ public final class HologramControllerCaptureRegression {
         NBTTagCompound quote = nativeDemand(s);
         SimpleAssert.eq(2L, quotedDemand(quote, energy), "prepared operation retains both real energy demands");
         SimpleAssert.eq(1L, quotedDemand(quote, muffler), "prepared operation retains the real muffler demand");
+        projectionOrdering(s, energy);
         NBTTagCompound stale = presetAction(s, "build");
         stale.setLong("planRevision", revision);
         HologramActionDispatcher.handle(s.player, stale);
@@ -1017,6 +1071,8 @@ public final class HologramControllerCaptureRegression {
             s.job == 1 && s.work.size() == 3 && s.player.inventory.mainInventory[1].stackSize == 2,
             "a current confirmed native plan with sufficient stock reaches the existing bounded placement job without prepaying: "
                 + operationState(s));
+        SimpleAssert.that(s.operationReviewSequence == -1 && s.placementReviewNonce > build.getLong("placementReviewNonce"),
+            "starting construction consumes the native material confirmation");
         // Supply committed transaction outcomes to the real job finalizer; physical placement is tested in-game.
         for (int index : s.work) s.capture.cells.get(index).status = "placed";
         s.cursor = s.completed = s.work.size();

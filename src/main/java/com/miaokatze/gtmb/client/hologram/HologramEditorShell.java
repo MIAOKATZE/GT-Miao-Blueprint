@@ -1148,6 +1148,7 @@ final class HologramEditorShell {
     boolean consumeBackLayer() {
         ModularPanel modal = topModal();
         if (modal != null) {
+            if (ui.review.consumeMaterialDialogBack(modal)) return true;
             IWidget close = modalCloseWidget();
             if (close instanceof com.cleanroommc.modularui.api.widget.Interactable) {
                 LocatedWidget located = LocatedWidget.of(close);

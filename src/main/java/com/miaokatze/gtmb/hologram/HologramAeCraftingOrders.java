@@ -75,6 +75,23 @@ public final class HologramAeCraftingOrders {
         return order != null && order.active;
     }
 
+    private static Order currentOrder(HologramSession s) {
+        Order order = ORDERS.get(s.player.getUniqueID());
+        return order != null && order.active && order.player == s.player && order.session.equals(s.id) ? order : null;
+    }
+
+    static boolean matchesActiveOrder(HologramSession s, NBTTagCompound action) {
+        Order order = currentOrder(s);
+        return order != null && action.hasKey("planRevision", 4)
+            && action.getLong("planRevision") == order.revision
+            && action.hasKey("placementReviewNonce", 4)
+            && action.getLong("placementReviewNonce") == order.reviewNonce;
+    }
+
+    static void cancelForSession(HologramSession s, String reason) {
+        if (currentOrder(s) != null) cancel(s.player, reason);
+    }
+
     /** The request must be a fresh server-owned quote; client-supplied material rows are never accepted. */
     public static String submit(EntityPlayerMP player, HologramMaterials.Settings settings, NBTTagCompound quote) {
         if (HologramDemolition.active(player)) return "拆除任务正在后台处理，请等待完成或停止后再提交 AE 缺料订单";

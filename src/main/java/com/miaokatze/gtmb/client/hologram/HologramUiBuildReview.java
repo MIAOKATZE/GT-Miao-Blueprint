@@ -9,6 +9,7 @@ import java.util.List;
 
 import net.minecraft.nbt.NBTTagCompound;
 
+import com.cleanroommc.modularui.screen.ModularPanel;
 import com.miaokatze.gtmb.client.hologram.HologramUiMemory.UiMemory;
 
 /** Internal review workflow; composed by the workstation, never part of the mod extension API. */
@@ -91,6 +92,10 @@ final class HologramUiBuildReview {
 
     boolean consumeMaterialDialogKey(int key) {
         return materialDialog != null && materialDialog.consumeKey(key);
+    }
+
+    boolean consumeMaterialDialogBack(ModularPanel panel) {
+        return materialDialog != null && materialDialog.consumeBack(panel);
     }
 
     int[] materialControlPoint(int id) {
@@ -297,12 +302,15 @@ final class HologramUiBuildReview {
                         HologramPlacementConfirmation.emptyCacheFallback(ui.session.state().data));
                     this.confirmation = false;
                     this.reviewedCacheQuote = null;
+                    long before = ui.session.sequence();
                     ui.session.send(
                         ui.session.state().data.getBoolean("blueprintAwaitingConfirmation")
                             ? "confirmBlueprintPlacement"
                             : "build",
                         n,
                         true);
+                    if (ui.workspaces.hasProjectionContent() && ui.session.sequence() > before)
+                        requestedOperationReviewSequence = ui.session.sequence();
                 }
                 return true;
             default:
@@ -345,7 +353,7 @@ final class HologramUiBuildReview {
         confirmation = false;
         reviewedCacheQuote = null;
         if (ui.session.state().data.getBoolean("virtual") || !ui.workspaces.hasProjectionContent()) return;
-        if (!wasConfirming && !ui.session.awaitingScan()) return;
+        if (!wasConfirming && !ui.session.awaitingScan() && requestedOperationReviewSequence < 0) return;
         ui.session.awaitingScan(false);
         long review = Math.max(requestedOperationReviewSequence, seenOperationReviewSequence);
         if (review < 0) return;
@@ -369,6 +377,8 @@ final class HologramUiBuildReview {
         if (next.data.getBoolean("operationReviewRequired") && next.data.getBoolean("operationPrepared")
             && next.data.getLong("planRevision") == ui.session.revision()
             && ui.session.pendingSequence() < 0
+            && requestedOperationReviewSequence >= 0
+            && next.data.getLong("uiSequence") == requestedOperationReviewSequence
             && next.data.getLong("uiSequence") > seenOperationReviewSequence) {
             seenOperationReviewSequence = next.data.getLong("uiSequence");
             confirmedRevision = ui.session.revision();
@@ -392,8 +402,7 @@ final class HologramUiBuildReview {
     void acknowledgeScan(HologramState next) {
         if (ui.session.awaitingScan() && ui.session.pendingSequence() < 0 && !next.data.getBoolean("capturePending")) {
             ui.session.awaitingScan(false);
-            if (next.data.getBoolean("supported") && (!ui.workspaces.hasProjectionContent()
-                || next.data.getBoolean("operationPrepared") && next.data.getBoolean("operationReviewRequired"))) {
+            if (next.data.getBoolean("supported") && !ui.workspaces.hasProjectionContent()) {
                 confirmedRevision = ui.session.revision();
                 materialOffset = 0;
                 confirmation = true;
@@ -525,7 +534,7 @@ final class HologramUiBuildReview {
         int job = ui.session.state().data.getInteger("job");
         if (job == 0) {
             resourceReview = state.getBoolean("resourceReview");
-            confirmation |= state.getBoolean("confirmation");
+            if (!ui.workspaces.hasProjectionContent()) confirmation |= state.getBoolean("confirmation");
         }
     }
 }

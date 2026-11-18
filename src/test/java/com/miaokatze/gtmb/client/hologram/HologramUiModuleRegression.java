@@ -296,6 +296,16 @@ public final class HologramUiModuleRegression {
                     && confirmed.getLong("placementReviewNonce") == 8,
                 "actual confirmation 55 sends only the newly prepared plan revision and review nonce");
             ui.session.pendingSequence(-1);
+            prepared = (NBTTagCompound) prepared.copy();
+            prepared.setLong("uiSequence", confirmed.getLong("uiSequence"));
+            next = new HologramState(prepared);
+            setUiField(ui.session, "state", next);
+            ui.review.acknowledgeReview(next);
+            SimpleAssert.that(ui.review.confirmation(), "the open screen can show a fresh review requested by build");
+            ui.review.dismissConfirmation();
+            ui.review.resetSession(0);
+            ui.review.acknowledgeReview(next);
+            SimpleAssert.that(!ui.review.confirmation(), "a reopened controller does not revive an old prepared review");
             ui.session.state().data.setBoolean("virtual", true);
             ui.session.state().data.setBoolean("virtualPlacement", true);
             ui.session.state().data.setBoolean("virtualLocked", true);

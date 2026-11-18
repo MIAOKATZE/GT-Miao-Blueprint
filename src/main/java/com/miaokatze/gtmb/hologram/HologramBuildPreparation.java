@@ -94,6 +94,7 @@ final class HologramBuildPreparation {
         // Consent belongs to this reviewed plan, never to a previous failed packet.
         s.forcePlacementReady = false;
         directBuild(s, false, action);
+        if (nativeReview && s.job == 1) HologramStructureProjection.dismissOperationReview(s);
     }
 
     static void calibrateCurrent(HologramSession s) {

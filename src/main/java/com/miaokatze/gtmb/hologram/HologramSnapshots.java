@@ -886,14 +886,8 @@ final class HologramSnapshots {
     }
 
     private static void writeOperationReview(HologramSession s, NBTTagCompound state) {
-        state.setBoolean("operationReviewRequired", s.operationReviewSequence == s.uiSequence);
-        state.setBoolean(
-            "operationPrepared",
-            s.capture != null && !s.capture.projectionOnly
-                && !s.capture.pending
-                && !s.capture.incomplete
-                && !s.capturePending
-                && s.captureWork == null);
+        state.setBoolean("operationReviewRequired", HologramStructureProjection.operationReviewActive(s));
+        state.setBoolean("operationPrepared", HologramStructureProjection.operationPrepared(s));
     }
 
     static NBTTagCompound basicState(HologramSession s) {

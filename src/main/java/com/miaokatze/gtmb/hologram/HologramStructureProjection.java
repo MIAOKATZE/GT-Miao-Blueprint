@@ -96,6 +96,18 @@ final class HologramStructureProjection {
         return true;
     }
 
+    static boolean operationReviewActive(HologramSession s) {
+        return s.operationReviewSequence >= 0 && s.operationReviewSequence == s.uiSequence;
+    }
+
+    static boolean operationPrepared(HologramSession s) {
+        return s.capture != null && !s.capture.projectionOnly
+            && !s.capture.pending
+            && !s.capture.incomplete
+            && !s.capturePending
+            && s.captureWork == null;
+    }
+
     static void finishHatchConfiguration(HologramSession s) {
         NBTTagCompound request = s.projectionHatchConfiguration;
         HologramCapture capture = s.projectionHatchCapture;

@@ -58,6 +58,7 @@ final class HologramWorkspace {
     }
 
     static void retireFieldProjection(HologramSession projection, String reason) {
+        HologramAeCraftingOrders.cancelForSession(projection, "现场已失效，AE 缺料订单已取消");
         if (projection.job == 1 || projection.job == 2) {
             projection.job = 4;
             projection.phase = "STOPPED";

@@ -52,6 +52,7 @@ final class HologramMaterialConfirmationDialog {
     private final Map<Integer, BooleanSupplier> enabledControls = new HashMap<>();
     private final Map<Integer, IntSupplier> controlAccents = new HashMap<>();
     private Runnable lessonClose;
+    private MaterialPanel livePanel;
 
     /** Reuses the actual review tree; the isolated lesson replaces only its command boundary. */
     ModularPanel buildLesson(Runnable closeLesson) {
@@ -154,15 +155,20 @@ final class HologramMaterialConfirmationDialog {
 
     boolean consumeKey(int key) {
         if (!isOpen()) return false;
-        if (key == Keyboard.KEY_ESCAPE || key == Keyboard.KEY_E) {
-            if (orderActive()) ui.router.closeRoot();
-            else {
-                ui.review.dismissConfirmation();
-                close();
-            }
-        }
+        if (key == Keyboard.KEY_ESCAPE || key == Keyboard.KEY_E) back();
         // Enter never silently confirms a material transaction; the green button is explicit.
         return true;
+    }
+
+    boolean consumeBack(ModularPanel panel) {
+        if (panel != livePanel || !isOpen()) return false;
+        back();
+        return true;
+    }
+
+    private void back() {
+        if (orderActive()) ui.router.closeRoot();
+        else action(54);
     }
 
     private NBTTagCompound state() {
@@ -197,6 +203,7 @@ final class HologramMaterialConfirmationDialog {
         MaterialPanel panel = new MaterialPanel(
             lessonClose == null ? "gtmb_material_confirmation" : ui.panelName(HologramEditorMaterialLesson.PANEL_NAME),
             lessonClose != null);
+        if (lessonClose == null) livePanel = panel;
         panel.size(WIDTH, HEIGHT)
             .background(HologramMuiTheme.CLOTH);
         HologramMuiTheme
@@ -425,7 +432,12 @@ final class HologramMaterialConfirmationDialog {
             .tagCount() == 0) return "本图没有需要绑定的量子网络。";
         if (id == 211 && !ui.identity.hasPlacementIdentityChoices()) return "本图没有可调整的身份与外部绑定数据。";
         if (id == 215 && ui.review.materialBlockers() == 0) return "本次范围没有需要移除的阻塞物。";
-        if (id == 162 && !orderActive() && !materials.hasItemShortage()) return "本次没有可由 AE 补齐的缺失物品。";
+        if (id == 162 && !orderActive()) {
+            if (!materials.ready() || ui.session.materialReviewPending()) return "正在核对本次材料，请等待报价更新。";
+            if (!materials.hasItemShortage()) return "本次没有缺少的物品。";
+            if (!state().getBoolean("materialOrderingAvailable"))
+                return "请启用 ME 材料来源，使用已连接且在范围内的无线终端，并确认有合成、提取和存入权限。";
+        }
         if (id == 245 && !voucherSelected()) {
             if (!voucherEnabled()) return "服务器配置已禁用猫猫装饰抵用券。";
             if (!hasVoucherDemand()) return "本次没有可抵扣的建筑材料需求。";

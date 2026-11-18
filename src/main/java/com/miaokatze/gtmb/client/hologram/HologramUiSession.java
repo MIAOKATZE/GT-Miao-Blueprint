@@ -112,6 +112,7 @@ final class HologramUiSession {
         Integer previousChoice = ui.identity.prepareSnapshot(library.sourceChanged);
         boolean newSession = !state.session.equals(next.session);
         if (newSession) {
+            awaitingScan = false;
             ui.textBoxes.reset();
             ui.identity.resetSession();
             ui.memory.rememberUi();

@@ -49,6 +49,7 @@ final class HologramUiRouter {
     void onGuiClosed() {
         ui.tutorial.closeWithoutProgress();
         ui.tools.closeTransient();
+        if (ui.workspaces.hasProjectionContent()) ui.review.dismissConfirmation();
         ui.canvas.layout()
             .release();
         if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
