@@ -566,6 +566,8 @@ final class HologramSnapshots {
         progress.setLong("planRevision", s.planRevision);
         progress.setLong("uiSequence", s.uiSequence);
         progress.setString("outcome", "running");
+        long controllerOpenId = HologramControllerOpen.pendingId(s);
+        if (controllerOpenId > 0) progress.setLong("controllerOpenId", controllerOpenId);
         HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
         if (area != null && area.importing) {
             HologramAreaPreparation.Progress current = area.progressSnapshot();

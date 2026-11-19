@@ -19,6 +19,7 @@ final class HologramClientProgress {
         final HologramProgress.Tracker preparation = new HologramProgress.Tracker();
         String session = "", request = "";
         long sequence = Long.MIN_VALUE, command = -1, revision = -1;
+        long controllerOpenId, snapshotSequence = -1;
     }
 
     private static final Map<String, Entry> views = new HashMap<>();
@@ -33,6 +34,7 @@ final class HologramClientProgress {
         Entry entry = views.get(scope);
         long command = event.hasKey("uiSequence") ? event.getLong("uiSequence") : -1;
         String request = event.getString("requestId");
+        long controllerOpenId = event.getLong("controllerOpenId");
         if ("rejected".equals(event.getString("outcome"))) {
             // Unrelated denials cannot finish another command or an uncorrelated byte transfer.
             if (entry != null && entry.session.equals(session)
@@ -42,6 +44,7 @@ final class HologramClientProgress {
             return;
         }
         if ("server".equals(scope) && retiredServerSessions.contains(session)) return;
+        if (entry != null && controllerOpenId > 0 && controllerOpenId < entry.controllerOpenId) return;
         boolean newSession = entry != null && !session.equals(entry.session);
         if (newSession && "server".equals(scope) && !entry.session.isEmpty()) {
             retiredServerSessions.add(entry.session);
@@ -55,7 +58,8 @@ final class HologramClientProgress {
         if ("server".equals(scope) && entry.revision >= 0 && revision < entry.revision) return;
         long sequence = event.getLong("sequence");
         if (command <= entry.command && sequence < entry.sequence) return;
-        if ("server".equals(scope) && (command != entry.command || revision > entry.revision)) {
+        if ("server".equals(scope)
+            && (command != entry.command || revision > entry.revision || controllerOpenId != entry.controllerOpenId)) {
             entry.tracker.clear();
             entry.preparation.clear();
         }
@@ -64,6 +68,8 @@ final class HologramClientProgress {
         entry.command = command;
         entry.sequence = sequence;
         entry.revision = revision;
+        entry.controllerOpenId = controllerOpenId;
+        entry.snapshotSequence = event.hasKey("snapshotSequence", 4) ? event.getLong("snapshotSequence") : -1;
         views.put(scope, entry);
         if ("partial".equals(event.getString("outcome")) || "stopped".equals(event.getString("outcome"))) {
             entry.tracker.clear();
@@ -103,6 +109,27 @@ final class HologramClientProgress {
             && !"decode".equals(value.phase)
             && now - value.observedAt > 15000000000L) return null;
         return value;
+    }
+
+    static HologramProgress controllerOpening(long id) {
+        Entry server = views.get("server");
+        if (server == null || server.controllerOpenId != id || id <= 0) return null;
+        if (server.snapshotSequence >= 0 && server.snapshotSequence == sequence("snapshot")) {
+            HologramProgress transport = view("snapshot", "");
+            if (transport != null && !transport.complete) return transport;
+        }
+        HologramProgress preparation = server.preparation.view(System.nanoTime());
+        return preparation == null ? view("server", server.session) : preparation;
+    }
+
+    static long controllerSnapshotSequence(long id) {
+        Entry server = views.get("server");
+        return server == null || id <= 0 || server.controllerOpenId != id ? -1 : server.snapshotSequence;
+    }
+
+    static boolean controllerSession(long id, String session) {
+        Entry server = views.get("server");
+        return id > 0 && server != null && server.controllerOpenId == id && server.session.equals(session);
     }
 
     static void snapshot(NBTTagCompound state) {

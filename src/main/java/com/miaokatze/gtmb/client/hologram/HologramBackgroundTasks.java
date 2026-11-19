@@ -457,6 +457,10 @@ public final class HologramBackgroundTasks {
             OWNER.finishScanSnapshot(data, startRevision, cancelling);
     }
 
+    static boolean scanningControllerOpening(long id) {
+        return busy() && "scan".equals(operation) && HologramClientProgress.controllerSession(id, session);
+    }
+
     static void snapshot(HologramState next) {
         if (context != null && context.session.equals(next.session)) context = next;
         if (libraryTask() && HologramLibraryClient.INSTANCE.snapshot(next)) reviewSubmitted = false;

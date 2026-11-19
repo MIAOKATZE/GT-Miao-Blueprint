@@ -58,7 +58,14 @@ final class HologramActionDispatcher {
             s.snapshotPaletteProtocol = true;
         if ("requestFullSnapshot".equals(action.getString("op"))) {
             long tick = player.worldObj.getTotalWorldTime();
-            if (s.snapshotResyncTick == Long.MIN_VALUE || tick - s.snapshotResyncTick >= 20) {
+            long controllerRequest = action.getLong("controllerOpenId");
+            boolean controller = controllerRequest > 0 && controllerRequest == s.controllerOpenId;
+            if (controller && controllerRequest != s.controllerResyncId || s.snapshotResyncTick == Long.MIN_VALUE
+                || tick - s.snapshotResyncTick >= 20) {
+                if (controller) {
+                    s.controllerResyncId = controllerRequest;
+                    s.openPurpose = "controllerStructure";
+                }
                 s.snapshotResyncTick = tick;
                 s.localEdits.invalidate();
                 HologramSnapshots.send(s);

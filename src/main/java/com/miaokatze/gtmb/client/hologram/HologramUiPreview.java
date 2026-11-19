@@ -162,13 +162,14 @@ final class HologramUiPreview {
     /** Only model/ghost/selection geometry. Native controls are siblings of this bounded scene widget. */
     boolean sourcePreparing() {
         if (ui.session.isTutorial() || ui.library.browsePreviewActive()) return false;
-        return HologramClient.snapshotPreparing() || sourceSwitchWaiting(
-            ui.library.libraryNavigation(),
-            ui.session.state(),
-            ui.host.minecraft().theWorld,
-            ui.library.publicLibrary(),
-            HologramLibraryClient.INSTANCE.busy(),
-            ui.session.pendingSequence());
+        return ui.session.controllerOpening() || HologramClient.snapshotPreparing()
+            || sourceSwitchWaiting(
+                ui.library.libraryNavigation(),
+                ui.session.state(),
+                ui.host.minecraft().theWorld,
+                ui.library.publicLibrary(),
+                HologramLibraryClient.INSTANCE.busy(),
+                ui.session.pendingSequence());
     }
 
     static boolean sourceSwitchWaiting(HologramUiLibrary.LibraryNavigation navigation, HologramState state,
@@ -196,7 +197,10 @@ final class HologramUiPreview {
             if (sourcePreparing()) {
                 hovered = -1;
                 HologramRenderer.waitingPreview(ui.session.state());
-                ui.canvas.sceneText("正在准备蓝图", viewportX() + 8, viewportY() + 12, 160, 0xb9d5d4);
+                if (ui.session.controllerOpening()) {
+                    String message = HologramClient.text("controllerReading", "Checking the structure…  Esc to close");
+                    ui.canvas.sceneText(message, viewportX() + 8, viewportY() + 24, viewportWidth() - 16, 0xb9d5d4);
+                } else ui.canvas.sceneText("正在准备蓝图", viewportX() + 8, viewportY() + 12, 160, 0xb9d5d4);
                 return;
             }
             hovered = HologramRenderer.preview(

@@ -42,10 +42,14 @@ final class HologramControllerOpen {
         return current.id;
     }
 
+    static long pendingId(HologramSession s) {
+        return "controllerStructure".equals(s.openPurpose) ? s.controllerOpenId : 0;
+    }
+
     static void writePurpose(HologramSession s, NBTTagCompound state) {
         state.setString("openPurpose", s.openPurpose);
         long id = claim(s);
-        if (id == 0 && "controllerStructure".equals(s.openPurpose)) id = s.controllerOpenId;
+        if (id == 0) id = pendingId(s);
         if (id > 0) state.setLong("controllerOpenId", id);
     }
 }
