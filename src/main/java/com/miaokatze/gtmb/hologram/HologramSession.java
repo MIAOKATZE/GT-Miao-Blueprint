@@ -59,6 +59,7 @@ final class HologramSession {
     boolean jobPartialPlacement;
     /** Explicit material-review choice; the voucher is charged only by a successful covered transaction. */
     boolean jobVoucherRequested, jobVoucherConsumed;
+    boolean controllerVoucherApproved;
     boolean placementValidating;
     HologramTextWorkflow.Task attachmentTask;
     HologramCurrentPlacementPreparation currentPlacementTask;
@@ -126,6 +127,8 @@ final class HologramSession {
     HologramBlueprintProcessing.Policy processingPolicy;
     String workspaceTab = "structure";
     String openPurpose = "";
+    long controllerOpenId;
+    long controllerResyncId;
     long placementReviewNonce;
     boolean blueprintOperationSuccess;
     final List<HologramPresets.HintArea> blueprintHintAreas = new ArrayList<>();
@@ -290,6 +293,7 @@ final class HologramSession {
         s.jobPublication.clear();
         s.placementDiagnostics.clear();
         s.jobVoucherConsumed = false;
+        s.controllerVoucherApproved = false;
         s.jobPartialPlacement = partial;
         s.jobMissingCells = s.jobProtectedCells = s.jobUnsupportedCells = s.jobSkippedCells = 0;
     }

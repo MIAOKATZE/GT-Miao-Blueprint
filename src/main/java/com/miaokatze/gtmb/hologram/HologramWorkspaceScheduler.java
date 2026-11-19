@@ -127,6 +127,8 @@ final class HologramWorkspaceScheduler {
     }
 
     private static void tickSession(HologramSession s) {
+        HologramWorkspace.pruneRemovedController(s.player);
+        if (HologramWorkspace.find(s.player.getUniqueID()) != s) return;
         if (s.currentPlacementTask != null) {
             s.currentPlacementTask.tick();
             return;

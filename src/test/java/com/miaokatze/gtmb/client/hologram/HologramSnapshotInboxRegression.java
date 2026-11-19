@@ -26,7 +26,54 @@ public final class HologramSnapshotInboxRegression {
         errorDecodeRetiresWorker();
         closeDuringDecode();
         explicitRootCloseFence();
+        controllerOpening();
         loadTiming();
+    }
+
+    private static void controllerOpening() {
+        HologramControllerOpenIntent opening = new HologramControllerOpenIntent();
+        HologramState waiting = HologramScreen.controllerWaitingState(0, 1, 64, 2);
+        SimpleAssert.eq(
+            HologramEditorWorkspaces.Mode.PROJECTION,
+            HologramEditorWorkspaces.domain(waiting),
+            "first frame belongs to the normal projection workspace");
+        SimpleAssert.that(
+            waiting.data.getBoolean("snapshotPending") && !waiting.completeBaseline()
+                && waiting.session.isEmpty()
+                && waiting.cells.isEmpty(),
+            "local waiting state cannot supply a session or edit authority");
+        long first = opening.begin(0, 1, 64, 2);
+        SimpleAssert.that(opening.accepts(first), "first click can take its workspace");
+        opening.dismiss(first);
+        SimpleAssert.that(!opening.accepts(first), "Esc before the first reply retires the opening");
+        SimpleAssert.that(!opening.acceptsLegacy(0, 1, 64, 2), "Esc also fences an untagged legacy controller reply");
+        long second = opening.begin(0, 2, 64, 2);
+        SimpleAssert.that(
+            !opening.acceptsLegacy(0, 1, 64, 2) && opening.acceptsLegacy(0, 2, 64, 2),
+            "only the current legacy target may open");
+        opening.dismiss(first);
+        SimpleAssert.that(
+            !opening.accepts(first) && opening.accepts(second),
+            "late reply or dismissal for A cannot replace B, including a fresh click on the same controller");
+        NBTTagCompound reply = new NBTTagCompound();
+        reply.setString("session", "controller-session");
+        reply.setBoolean("open", true);
+        reply.setString("openPurpose", "controllerStructure");
+        reply.setInteger("x", 2);
+        reply.setInteger("y", 64);
+        reply.setInteger("z", 2);
+        reply.setLong("controllerOpenId", first);
+        SimpleAssert.that(!opening.answers(reply, second), "an earlier ID cannot open the same controller");
+        reply.removeTag("controllerOpenId");
+        SimpleAssert.that(opening.answers(reply, second), "an older server can reply for the exact clicked target");
+        opening.expectLegacyBaseline(reply);
+        reply.setBoolean("open", false);
+        reply.setString("openPurpose", "");
+        reply.setTag("cells", new NBTTagList());
+        SimpleAssert.that(opening.answers(reply, second), "a matching legacy resync can supply the complete baseline");
+        opening.dismiss(second);
+        SimpleAssert
+            .that(opening.hidesLegacyBaseline(reply), "Esc also fences a legacy resync which carries no open flag");
     }
 
     private static void loadTiming() {

@@ -94,6 +94,18 @@ final class HologramTaskOwner {
             detail);
     }
 
+    boolean finishScanSnapshot(net.minecraft.nbt.NBTTagCompound snapshot, long startRevision, boolean cancelling) {
+        if (snapshot.getBoolean("capturePending") || !snapshot.hasKey("uiSequence", 4)) return false;
+        Result result = cancelling ? Result.CANCELLED
+            : snapshot.getBoolean("supported") && snapshot.getLong("planRevision") > startRevision ? Result.SUCCESS
+                : Result.FAILURE;
+        return finishReceipt(
+            "server",
+            snapshot.getString("session") + ":" + snapshot.getLong("uiSequence"),
+            result,
+            snapshot.getString("status"));
+    }
+
     boolean finishAreaSnapshot(net.minecraft.nbt.NBTTagCompound snapshot, long startRevision, boolean cancelling) {
         if (!snapshot.hasKey("uiSequence", 4)
             || !matches("server", snapshot.getString("session") + ":" + snapshot.getLong("uiSequence"))) return false;

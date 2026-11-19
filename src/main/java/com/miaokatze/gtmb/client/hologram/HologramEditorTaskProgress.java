@@ -38,12 +38,14 @@ final class HologramEditorTaskProgress extends Widget<HologramEditorTaskProgress
         observations.clear();
         if (!ui.session.isTutorial()) {
             add(ui.session.progress());
-            add(HologramBackgroundTasks.progress());
-            add(HologramClientProgress.view("server", ui.session.state().session));
-            add(HologramClientProgress.view("snapshot", ""));
-            add(HologramLibraryClient.INSTANCE.progress());
-            if (ui.workspaces.isCut()) add(cut.get());
-            add(ui.textBoxes.progress());
+            if (!ui.session.controllerOpening()) {
+                add(HologramBackgroundTasks.progress());
+                add(HologramClientProgress.view("server", ui.session.state().session));
+                add(HologramClientProgress.view("snapshot", ""));
+                add(HologramLibraryClient.INSTANCE.progress());
+                if (ui.workspaces.isCut()) add(cut.get());
+                add(ui.textBoxes.progress());
+            }
         }
         setEnabled(!observations.isEmpty());
     }

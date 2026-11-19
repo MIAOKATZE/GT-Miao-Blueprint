@@ -75,6 +75,7 @@ final class HologramStructureProjection {
     /** Prepare a new native plan for review; consent to the previous projection never starts placement. */
     static void requestOperationReview(HologramSession s) {
         s.operationReviewSequence = -1;
+        s.jobVoucherRequested = false;
         if (showing(s)) prepareOperation(s);
         else {
             HologramSnapshotPreparation.cancel(s);
@@ -86,6 +87,27 @@ final class HologramStructureProjection {
         if (s.capture == null || s.capture.projectionOnly || s.capture.incomplete) return;
         s.operationReviewSequence = s.uiSequence;
         s.status = s.capturePending ? "正在准备施工计划；完成后请核对材料与位置" : "施工计划已准备，请核对材料与位置后确认施工";
+    }
+
+    static boolean dismissOperationReview(HologramSession s) {
+        if (s.operationReviewSequence < 0 || !HologramEditorWorkspaceRegistry.physicalProjection(s)) return false;
+        s.operationReviewSequence = -1;
+        if (s.job != 1 && s.job != 2) s.jobVoucherRequested = false;
+        s.placementReviewNonce++;
+        s.forcePlacementReady = false;
+        return true;
+    }
+
+    static boolean operationReviewActive(HologramSession s) {
+        return s.operationReviewSequence >= 0 && s.operationReviewSequence == s.uiSequence;
+    }
+
+    static boolean operationPrepared(HologramSession s) {
+        return s.capture != null && !s.capture.projectionOnly
+            && !s.capture.pending
+            && !s.capture.incomplete
+            && !s.capturePending
+            && s.captureWork == null;
     }
 
     static void finishHatchConfiguration(HologramSession s) {
@@ -222,7 +244,7 @@ final class HologramStructureProjection {
         state.setLong("editorWorkspaceSequenceFloor", HologramEditorWorkspaceRegistry.sequenceFloor(s));
         state.setString("editorWorkspace", "projection");
         state.setString("workspaceTab", "structure");
-        state.setString("openPurpose", s.openPurpose);
+        HologramControllerOpen.writePurpose(s, state);
         state.setBoolean("open", s.open);
         if (s.presentationTransition != null)
             state.setString("editorWorkspacePreviousSession", s.presentationTransition.originId);

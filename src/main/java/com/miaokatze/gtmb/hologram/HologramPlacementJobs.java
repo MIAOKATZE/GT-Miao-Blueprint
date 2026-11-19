@@ -248,12 +248,16 @@ final class HologramPlacementJobs {
         s.replacementAuthorized = s.mode == 1;
         s.cursor = 0;
         s.completed = 0;
+        boolean approvedVoucher = !s.virtual && reviewedAction != null
+            && reviewedAction.getBoolean("useDecorationVoucher")
+            && HologramMaterialAccess.voucherSelected(s);
         s.job = 1;
         if (s.virtual) {
             s.placementReviewNonce++;
             if (s.materialQuote != null) s.materialQuote.setLong("placementReviewNonce", s.placementReviewNonce);
         }
         HologramSession.resetJobCounts(s, partial);
+        s.controllerVoucherApproved = approvedVoucher;
         s.phase = "RUNNING";
         s.status = "正在直接施工";
 

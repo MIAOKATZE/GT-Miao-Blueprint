@@ -566,6 +566,8 @@ final class HologramSnapshots {
         progress.setLong("planRevision", s.planRevision);
         progress.setLong("uiSequence", s.uiSequence);
         progress.setString("outcome", "running");
+        long controllerOpenId = HologramControllerOpen.pendingId(s);
+        if (controllerOpenId > 0) progress.setLong("controllerOpenId", controllerOpenId);
         HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
         if (area != null && area.importing) {
             HologramAreaPreparation.Progress current = area.progressSnapshot();
@@ -704,7 +706,7 @@ final class HologramSnapshots {
         state.setBoolean("workspaceHasCapture", s.capture != null);
         state.setBoolean("workspaceCapturePending", s.capturePending);
         state.setBoolean("snapshotPending", s.capture != null || s.capturePending);
-        state.setString("openPurpose", s.openPurpose);
+        HologramControllerOpen.writePurpose(s, state);
         if ("controllerStructure".equals(s.openPurpose)) s.workspaceTab = "structure";
         else if ("blueprintEdit".equals(s.openPurpose) || "blueprintBrowse".equals(s.openPurpose)
             || "blueprintPlacement".equals(s.openPurpose)
@@ -807,6 +809,7 @@ final class HologramSnapshots {
         state.setBoolean("forcePlacementReady", s.forcePlacementReady);
         state.setBoolean("blueprintSavePending", !s.blueprintSaveReceipt.isEmpty());
         state.setLong("placementReviewNonce", s.placementReviewNonce);
+        writeOperationReview(s, state);
         state.setBoolean("discardConfirmationRequired", s.discardConfirmationRequired);
         state.setString("discardTargetOp", s.discardTargetOp);
         state.setString("discardTargetId", s.discardTargetId);
@@ -884,18 +887,16 @@ final class HologramSnapshots {
         HologramSnapshotPreparation.start(s);
     }
 
+    private static void writeOperationReview(HologramSession s, NBTTagCompound state) {
+        state.setBoolean("operationReviewRequired", HologramStructureProjection.operationReviewActive(s));
+        state.setBoolean("operationPrepared", HologramStructureProjection.operationPrepared(s));
+    }
+
     static NBTTagCompound basicState(HologramSession s) {
         if (s.open && !s.cancelled && s.libraryWorld == s.player.worldObj && HologramSessionPolicy.valid(s))
             s.libraryUiActive = true;
         NBTTagCompound state = new NBTTagCompound();
-        state.setBoolean("operationReviewRequired", s.operationReviewSequence == s.uiSequence);
-        state.setBoolean(
-            "operationPrepared",
-            s.capture != null && !s.capture.projectionOnly
-                && !s.capture.pending
-                && !s.capture.incomplete
-                && !s.capturePending
-                && s.captureWork == null);
+        writeOperationReview(s, state);
         state.setString("captureIntent", s.captureIntent.name());
         if (s.capture != null) {
             s.capture.sourceCurrent();
@@ -913,7 +914,7 @@ final class HologramSnapshots {
         state.setBoolean("open", s.open);
         state.setString("quickToken", s.libraryQuickToken);
         state.setLong("quickClientTaskToken", s.libraryQuickClientTaskToken);
-        state.setString("openPurpose", s.openPurpose);
+        HologramControllerOpen.writePurpose(s, state);
         state.setString("cutWorkspaceRequestId", s.cutWorkspaceRequestId);
         state.setBoolean("blueprintEditing", s.blueprintEditing && HologramSessionPolicy.authoring(s));
         s.cutWorkspaceRequestId = "";

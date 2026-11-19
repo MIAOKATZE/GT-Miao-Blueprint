@@ -21,6 +21,10 @@ final class HologramUiMemory {
 
     private static final java.util.Map<String, UiMemory> UI_MEMORY = new java.util.LinkedHashMap<>();
 
+    static void forget(String session) {
+        UI_MEMORY.remove(session);
+    }
+
     private static HologramUiTabMemory tabMemory;
 
     private boolean initialEditHint = true;

@@ -229,8 +229,7 @@ public final class HologramMaterialQuote {
 
     static void project(HologramSession s) throws IOException {
         if (!cached(s)) throw new IOException("材料需求缓存已失效，请等待完整计划");
-        s.materialQuote = (NBTTagCompound) (s.jobVoucherRequested && HologramDecorationVoucher.enabled()
-            ? s.materialQuoteCache.voucher
+        s.materialQuote = (NBTTagCompound) (HologramMaterialAccess.voucherSelected(s) ? s.materialQuoteCache.voucher
             : s.materialQuoteCache.ordinary).copy();
         stamp(s, s.materialQuote);
         long missing = 0;
@@ -253,7 +252,7 @@ public final class HologramMaterialQuote {
         quote.setString("session", s.id);
         quote.setLong("planRevision", s.planRevision);
         quote.setLong("placementReviewNonce", s.placementReviewNonce);
-        quote.setBoolean("useDecorationVoucher", s.jobVoucherRequested && HologramDecorationVoucher.enabled());
+        quote.setBoolean("useDecorationVoucher", HologramMaterialAccess.voucherSelected(s));
         quote.setBoolean("creativePaymentsFree", s.player.capabilities.isCreativeMode);
         if (!quote.hasKey("inventoryCheck", 8)) quote.setString("inventoryCheck", "cached");
         quote.setString("validation", "库存以确认施工时为准");
@@ -575,7 +574,7 @@ public final class HologramMaterialQuote {
                 try {
                     project(s);
                 } catch (IOException incomplete) {
-                    s.materialQuote = s.jobVoucherRequested && HologramDecorationVoucher.enabled() ? voucher : ordinary;
+                    s.materialQuote = HologramMaterialAccess.voucherSelected(s) ? voucher : ordinary;
                 }
                 result = (NBTTagCompound) s.materialQuote.copy();
                 index = 1;

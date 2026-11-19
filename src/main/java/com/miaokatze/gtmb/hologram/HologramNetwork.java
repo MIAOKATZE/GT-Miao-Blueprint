@@ -71,6 +71,13 @@ public final class HologramNetwork {
 
     private HologramNetwork() {}
 
+    static void controllerOpenUnavailable(EntityPlayerMP player, long id) {
+        if (channel == null || !progressConnected(player)) return;
+        NBTTagCompound state = new NBTTagCompound();
+        state.setLong("controllerOpenUnavailable", id);
+        channel.sendTo(new State(state), player);
+    }
+
     static void clearServerQueues() {
         HologramAttachmentUpload.clearServer();
         actionGate.clear();
@@ -93,6 +100,17 @@ public final class HologramNetwork {
         state.setBoolean("cancelled", true);
         state.setString("status", reason);
         channel.sendTo(new State(state), player);
+    }
+
+    static void sendControllerProjectionRetired(HologramSession projection, String reason) {
+        if (channel == null || !progressConnected(projection.player)) return;
+        NBTTagCompound state = new NBTTagCompound();
+        state.setString("session", projection.id);
+        state.setBoolean("cancelled", true);
+        state.setBoolean("controllerProjectionRetired", true);
+        state.setLong("controllerOpenId", projection.controllerOpenId);
+        state.setString("status", reason);
+        channel.sendTo(new State(state), projection.player);
     }
 
     public static void init() {
@@ -710,6 +728,8 @@ public final class HologramNetwork {
             NBTTagCompound state = new NBTTagCompound();
             state.setBoolean("transportError", true);
             state.setString("session", session);
+            HologramSession failed = HologramWorkspace.find(player.getUniqueID());
+            if (failed != null && failed.id.equals(session)) state.setLong("controllerOpenId", failed.controllerOpenId);
             if (clientTask > 0) state.setLong("clientTaskToken", clientTask);
             if (uiSequence != Long.MIN_VALUE) state.setLong("uiSequence", uiSequence);
             state.setString("errorCode", code);
@@ -1398,7 +1418,8 @@ public final class HologramNetwork {
             // because their textual representation exceeds an unrelated string budget.
             net.minecraft.world.World world = player.worldObj;
             ServerTaskScheduler
-                .scheduleServerTask(() -> runQueuedAction(player, world, lease, () -> dispatch(player, msg.tag)));
+                .scheduleServerTask(() -> runQueuedAction(player, world, lease,
+                    () -> HologramControllerOpen.dispatch(player, msg.tag, () -> dispatch(player, msg.tag))));
             return null;
         }
     }
@@ -1504,7 +1525,8 @@ public final class HologramNetwork {
                 return null;
             }
             if (msg.tag.hasKey("progress", 10)) observeProgress(msg.tag.getCompoundTag("progress"));
-            if (msg.tag.getBoolean("cancelled") || msg.tag.getBoolean("transportError")) librarySnapshots.clear();
+            if (msg.tag.getBoolean("cancelled") && !msg.tag.getBoolean("controllerProjectionRetired")
+                || msg.tag.getBoolean("transportError")) librarySnapshots.clear();
             Consumer<NBTTagCompound> current = receiver;
             if (current != null) current.accept(msg.tag);
             return null;

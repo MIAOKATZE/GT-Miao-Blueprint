@@ -80,21 +80,39 @@ final class HologramDraftPersistence {
             .read(key.isEmpty() ? legacyDraftKey(s) : key);
     }
 
+    static boolean ownsProjectionDraft(HologramSession s) {
+        ItemStack tool = HologramSessionPolicy.currentTool(s);
+        if (tool == null) return false;
+        NBTTagCompound draft = tool.getTagCompound()
+            .getCompoundTag(HologramSessionKeys.DRAFT);
+        return draftMatches(s, draft) && s.id.equals(draft.getString("draftSession"));
+    }
+
     static void forgetProjection(HologramSession s) {
-        ItemStack held = HologramSessionPolicy.currentTool(s);
-        if (held == null) return;
         if (s.libraryWorld.perWorldStorage != null) {
             HologramDraftStorage storage = HologramDraftStorage.get(s.libraryWorld);
-            storage.remove(draftKey(s));
-            storage.remove(legacyDraftKey(s));
+            String key = draftKey(s), legacy = legacyDraftKey(s);
+            if (discardMatches(s, storage.read(key))) storage.remove(key);
+            if (discardMatches(s, storage.read(legacy))) storage.remove(legacy);
         }
-        NBTTagCompound draft = held.getTagCompound()
-            .getCompoundTag(HologramSessionKeys.DRAFT);
-        if (draftMatches(s, draft)) {
-            held.getTagCompound()
-                .removeTag(HologramSessionKeys.DRAFT);
-            s.player.inventory.markDirty();
-        }
+        boolean changed = forgetToolProjection(s, s.boundTool);
+        for (ItemStack tool : s.player.inventory.mainInventory) changed |= forgetToolProjection(s, tool);
+        if (changed) s.player.inventory.markDirty();
+    }
+
+    private static boolean forgetToolProjection(HologramSession s, ItemStack tool) {
+        if (tool == null || tool.getItem() != s.tool || !tool.hasTagCompound()) return false;
+        NBTTagCompound tag = tool.getTagCompound();
+        if (!s.toolId.equals(tag.getString(HologramSessionKeys.TOOL_ID))) return false;
+        NBTTagCompound draft = tag.getCompoundTag(HologramSessionKeys.DRAFT);
+        if (!discardMatches(s, draft)) return false;
+        tag.removeTag(HologramSessionKeys.DRAFT);
+        return true;
+    }
+
+    private static boolean discardMatches(HologramSession s, NBTTagCompound draft) {
+        String owner = draft.getString("draftSession");
+        return draftMatches(s, draft) && (owner.isEmpty() || owner.equals(s.id));
     }
 
     static void writeDraft(HologramSession s, ItemStack held) {
@@ -105,6 +123,7 @@ final class HologramDraftPersistence {
         draft.setInteger("y", s.y);
         draft.setInteger("z", s.z);
         draft.setString("controllerType", HologramSessionPolicy.controllerType(s));
+        draft.setString("draftSession", s.id);
         draft.setString("blueprintPrompt", s.blueprintPrompt);
         draft.setString("blueprintSavedId", s.blueprintSavedId);
         NBTTagList annotations = new NBTTagList();
@@ -186,6 +205,7 @@ final class HologramDraftPersistence {
             reference.setInteger("y", s.y);
             reference.setInteger("z", s.z);
             reference.setString("controllerType", HologramSessionPolicy.controllerType(s));
+            reference.setString("draftSession", s.id);
             held.getTagCompound()
                 .setTag(HologramSessionKeys.DRAFT, reference);
         } else held.getTagCompound()

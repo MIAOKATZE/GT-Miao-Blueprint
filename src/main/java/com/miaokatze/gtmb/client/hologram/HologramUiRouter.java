@@ -49,6 +49,7 @@ final class HologramUiRouter {
     void onGuiClosed() {
         ui.tutorial.closeWithoutProgress();
         ui.tools.closeTransient();
+        if (ui.workspaces.hasProjectionContent()) ui.review.dismissConfirmation();
         ui.canvas.layout()
             .release();
         if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
@@ -75,6 +76,9 @@ final class HologramUiRouter {
     }
 
     void closeRoot() {
+        if (ui.session.controllerOpening() && ui.host.parent()
+            .closeControllerOpening()) return;
+        if (ui.workspaces.hasProjectionContent()) ui.review.dismissConfirmation();
         if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
             ui.memory.rememberUi();
             HologramBackgroundTasks.rememberUi(ui);
@@ -937,7 +941,7 @@ final class HologramUiRouter {
             } else if (ui.preview.inventory()) ui.preview.inventory(false);
             else if (ui.config.hatchDrawer()) ui.config.hatchDrawer(false);
             else if (ui.config.presetDrawer()) ui.config.presetDrawer(false);
-            else if (ui.review.confirmation()) ui.review.confirmation(false);
+            else if (ui.review.confirmation()) ui.review.dismissConfirmation();
             else if (ui.position.positionDrawer()) ui.position.positionDrawer(false);
             else if (ui.config.sourceDrawer()) ui.config.sourceDrawer(false);
             else if (!ui.config.optionChannel()

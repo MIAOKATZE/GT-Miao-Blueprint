@@ -85,6 +85,15 @@ final class HologramBuildPreparation {
             s.status = "请等待完整结构采集，再核对材料确认施工";
             return;
         }
+        if (nativeReview) {
+            try {
+                HologramMaterialWorkflow.validateVoucherChoice(s, action);
+            } catch (java.io.IOException invalid) {
+                if (s.operationReviewSequence >= 0) HologramMaterialWorkflow.updatedReview(s, invalid.getMessage());
+                else s.status = invalid.getMessage();
+                return;
+            }
+        }
         if (!HologramPlanPolicy.planCurrent(s)) {
             s.forcePlacementReady = false;
             HologramResourcePlanner.refreshPlan(s);
@@ -94,6 +103,7 @@ final class HologramBuildPreparation {
         // Consent belongs to this reviewed plan, never to a previous failed packet.
         s.forcePlacementReady = false;
         directBuild(s, false, action);
+        if (nativeReview && s.job == 1) HologramStructureProjection.dismissOperationReview(s);
     }
 
     static void calibrateCurrent(HologramSession s) {

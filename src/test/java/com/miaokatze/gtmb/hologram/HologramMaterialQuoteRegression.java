@@ -606,11 +606,12 @@ final class HologramMaterialQuoteRegression {
 
     /** Real server review/projection and the successful placement transaction share the creative no-debit rule. */
     private static void creativeVoucherSelectionAndCommittedPlacement() throws Exception {
-        voucherSelectionAndCommittedPlacement(true);
-        voucherSelectionAndCommittedPlacement(false);
+        voucherSelectionAndCommittedPlacement(true, false);
+        voucherSelectionAndCommittedPlacement(false, false);
+        voucherSelectionAndCommittedPlacement(false, true);
     }
 
-    private static void voucherSelectionAndCommittedPlacement(boolean creative) throws Exception {
+    private static void voucherSelectionAndCommittedPlacement(boolean creative, boolean controller) throws Exception {
         java.lang.reflect.Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
         unsafeField.setAccessible(true);
         sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
@@ -654,17 +655,23 @@ final class HologramMaterialQuoteRegression {
             voucher.stackSize = 2;
             player.inventory.mainInventory[1] = voucher;
             HologramSession session = new HologramSession(player, 0, 64, 0, false, 1);
-            session.virtual = session.virtualPlacement = session.virtualLocked = true;
-            session.blueprintAwaitingConfirmation = session.placementReviewIssued = true;
-            session.virtualPreset = new HologramPresets.Preset();
-            session.virtualPreset.schema = 2;
-            session.virtualPreset.deidentificationLevel = 1;
+            if (controller) {
+                world.controller = new net.minecraft.tileentity.TileEntity();
+                session.target = world.controller;
+                session.operationReviewSequence = session.uiSequence;
+                HologramWorkspace.activate(identity, session);
+            } else {
+                session.virtual = session.virtualPlacement = session.virtualLocked = true;
+                session.blueprintAwaitingConfirmation = session.placementReviewIssued = true;
+                session.virtualPreset = new HologramPresets.Preset();
+                session.virtualPreset.schema = 2;
+                session.virtualPreset.deidentificationLevel = 1;
+            }
             session.materialSettings.containers = session.materialSettings.me = false;
             session.materialContext = mainSource(player);
-            session.capture = new HologramCapture(null, new ItemStack(Items.feather));
+            session.capture = new HologramCapture(null, HologramSessionPolicy.trigger(session));
             ItemStack stone = new ItemStack(net.minecraft.init.Blocks.stone);
-            // Match physical saved-blueprint projection; exercise the actual ItemBlock payment path.
-            HologramCapture.Cell cell = new HologramCapture.Cell(null, 0, 64, 0);
+            HologramCapture.Cell cell = new HologramCapture.Cell(null, 1, 64, 0);
             cell.block = net.minecraft.init.Blocks.stone;
             cell.blueprintBlock = cell.blueprintItem = "minecraft:stone";
             cell.userPosition = true;
@@ -768,7 +775,10 @@ final class HologramMaterialQuoteRegression {
                     action.setLong("placementReviewNonce", session.placementReviewNonce);
                     boolean paymentRejected = false;
                     try {
-                        HologramMaterialWorkflow.validateConfirmation(session, action);
+                        if (controller) {
+                            action.setBoolean("useDecorationVoucher", true);
+                            HologramMaterialWorkflow.validateVoucherChoice(session, action);
+                        } else HologramMaterialWorkflow.validateConfirmation(session, action);
                     } catch (java.io.IOException expected) {
                         paymentRejected = true;
                     }
@@ -786,12 +796,40 @@ final class HologramMaterialQuoteRegression {
             require(
                 session.materialQuoteCache == cache && session.planRevision == revision
                     && inventoryReads[0] == observations
-                    && world.reads == worldReads
+                    && (controller || world.reads == worldReads)
                     && !HologramSnapshotPreparation.pending(session),
                 "creative voucher actions do not rescan inventory, replan geometry or enqueue a full snapshot");
+            if (controller) {
+                require(
+                    !session.blueprintAwaitingConfirmation && !session.placementReviewIssued,
+                    "native voucher selection retains the native review lifecycle");
+                NBTTagCompound confirmation = new NBTTagCompound();
+                confirmation.setString("session", session.id);
+                confirmation.setLong("planRevision", session.planRevision);
+                confirmation.setLong("placementReviewNonce", session.placementReviewNonce);
+                session.uiSequence++;
+                HologramBuildPreparation.reviewedBuild(session, confirmation);
+                require(
+                    session.job == 0 && HologramStructureProjection.operationReviewActive(session)
+                        && session.placementReviewNonce > confirmation.getLong("placementReviewNonce"),
+                    "native review requires explicit voucher consent and stays open if it is absent");
+                confirmation.setLong("placementReviewNonce", session.placementReviewNonce);
+                confirmation.setBoolean("useDecorationVoucher", true);
+                session.expectedBlocks.add(net.minecraft.init.Blocks.air);
+                session.expectedMeta.add(0);
+                session.expectedTiles.add(null);
+                session.planStatus.add("pending");
+                session.uiSequence++;
+                HologramBuildPreparation.reviewedBuild(session, confirmation);
+                require(
+                    session.job == 1 && session.controllerVoucherApproved
+                        && session.work.size() == 1
+                        && !HologramStructureProjection.operationReviewActive(session),
+                    "accepted native build keeps its voucher after closing the material review: " + session.status);
+            }
             require(
                 HologramWorldTransactions.operateChecked(session, cell, 0),
-                "creative voucher placement commits successfully");
+                "voucher placement commits successfully");
             require(
                 "placed".equals(cell.status) && world.placed == net.minecraft.init.Blocks.stone
                     && world.writes == 1
@@ -801,8 +839,18 @@ final class HologramMaterialQuoteRegression {
                     && HologramDecorationVoucher.available(player) == (creative ? 2 : 1)
                     && player.inventory.mainInventory[2].stackSize == 64,
                 "voucher placement preserves stocked shells; survival pays one voucher and creative pays none");
+            if (controller) {
+                world.placed = null;
+                cell.status = "pending";
+                require(
+                    HologramWorldTransactions.operateChecked(session, cell, 0) && world.writes == 2
+                        && voucher.stackSize == 1
+                        && player.inventory.mainInventory[2].stackSize == 64,
+                    "subsequent native placements reuse the voucher payment");
+            }
             if (creative) staticAeDecorationPlacement(world, player);
         } finally {
+            if (controller) HologramWorkspace.clear();
             config.set(null, previousConfig);
             com.miaokatze.gtmb.register.DecorationVoucherRegistry.voucher = previousVoucher;
         }
@@ -843,6 +891,7 @@ final class HologramMaterialQuoteRegression {
     private static final class CreativeVoucherWorld extends net.minecraft.world.WorldServer {
 
         net.minecraft.block.Block placed;
+        net.minecraft.tileentity.TileEntity controller;
         int reads, writes;
 
         private CreativeVoucherWorld() {
@@ -873,7 +922,7 @@ final class HologramMaterialQuoteRegression {
 
         public net.minecraft.tileentity.TileEntity getTileEntity(int x, int y, int z) {
             reads++;
-            return null;
+            return x == 0 && y == 64 && z == 0 ? controller : null;
         }
 
         public boolean canMineBlock(net.minecraft.entity.player.EntityPlayer player, int x, int y, int z) {

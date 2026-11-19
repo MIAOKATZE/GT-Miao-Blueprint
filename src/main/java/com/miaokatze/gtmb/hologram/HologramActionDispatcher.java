@@ -15,10 +15,23 @@ final class HologramActionDispatcher {
     private HologramActionDispatcher() {}
 
     static void handle(EntityPlayerMP player, NBTTagCompound action) {
+        HologramWorkspace.pruneRemovedController(player);
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
         if (s == null || s.player != player || s.cancelled || !s.id.equals(action.getString("session"))) return;
         if (action.hasKey("editorWorkspaceEpoch") && (!action.hasKey("editorWorkspaceEpoch", 4)
             || action.getLong("editorWorkspaceEpoch") != s.editorWorkspaceEpoch)) return;
+        if ("dismissOperationReview".equals(action.getString("op"))) {
+            if (HologramSessionPolicy.currentTool(s) != null && action.hasKey("reviewSequence", 4)
+                && action.getLong("reviewSequence") == s.operationReviewSequence
+                && HologramStructureProjection.dismissOperationReview(s)) HologramSnapshots.sendUi(s);
+            return;
+        }
+        if ("leaveControllerProjection".equals(action.getString("op"))) {
+            if (HologramEditorWorkspaceRegistry.physicalProjection(s) && HologramSessionPolicy.currentTool(s) != null
+                && HologramEditorWorkspaceRegistry.idle(s))
+                HologramWorkspace.retireFieldProjection(s, "已切换功能，原控制器现场规划已清除");
+            return;
+        }
         if ("cancelAttachment".equals(action.getString("op"))) {
             if (!HologramAttachmentUpload.cancellationMatches(s, action)) return;
             boolean cancelled = HologramAttachmentUpload.cancel(s, action);
@@ -45,7 +58,14 @@ final class HologramActionDispatcher {
             s.snapshotPaletteProtocol = true;
         if ("requestFullSnapshot".equals(action.getString("op"))) {
             long tick = player.worldObj.getTotalWorldTime();
-            if (s.snapshotResyncTick == Long.MIN_VALUE || tick - s.snapshotResyncTick >= 20) {
+            long controllerRequest = action.getLong("controllerOpenId");
+            boolean controller = controllerRequest > 0 && controllerRequest == s.controllerOpenId;
+            if (controller && controllerRequest != s.controllerResyncId || s.snapshotResyncTick == Long.MIN_VALUE
+                || tick - s.snapshotResyncTick >= 20) {
+                if (controller) {
+                    s.controllerResyncId = controllerRequest;
+                    s.openPurpose = "controllerStructure";
+                }
                 s.snapshotResyncTick = tick;
                 s.localEdits.invalidate();
                 HologramSnapshots.send(s);
@@ -313,6 +333,7 @@ final class HologramActionDispatcher {
                 return;
             }
             HologramAuthoringWorkflow.clearSourceSwitch(s);
+            HologramStructureProjection.dismissOperationReview(s);
             s.libraryQuickToken = "";
             HologramProjectorWorkflow.dismissPresetBrowse(s);
             HologramProjectorWorkflow.libraryCloseUi(s);
@@ -589,6 +610,7 @@ final class HologramActionDispatcher {
                     HologramSnapshots.send(s);
                     return;
                 }
+                if (!s.virtual) s.jobVoucherRequested = false;
                 HologramResourcePlanner.refreshResources(s);
                 if (s.planMissing > 0 || !s.planRecoveryFits) {
                     s.status = s.planMissing > 0 ? "整份计划材料不足，请补齐后重新确认" : "背包无法容纳预计回收，请整理后重新确认";

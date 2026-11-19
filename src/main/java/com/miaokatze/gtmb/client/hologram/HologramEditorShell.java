@@ -62,6 +62,7 @@ final class HologramEditorShell {
     private Flow launchers;
     private boolean launchersExpanded, launchersCompact;
     private HologramEditorTaskProgress taskProgress;
+    private ButtonWidget<?> headerExit;
     private IWidget footer;
     private IFocusedWidget savedFocus;
     private boolean paused;
@@ -121,6 +122,7 @@ final class HologramEditorShell {
             .childPadding(0)
             .background(IDrawable.NONE);
         taskProgress = new HologramEditorTaskProgress(ui, () -> cut == null ? null : cut.progress());
+        if (ui.session.controllerOpening()) taskProgress.refresh();
         presentation.child(buildDocumentBar());
         Flow top = HologramEditorNativeTheme.collapsingFlow(GuiAxis.X)
             .widthRel(1f)
@@ -318,6 +320,7 @@ final class HologramEditorShell {
             .deferAction(action);
         ButtonWidget<?> button = (major ? HologramEditorNativeTheme.button(() -> name, icon, invoke)
             : HologramEditorNativeTheme.iconButton(icon, () -> name, invoke, () -> true, () -> false)).sizeRel(1f);
+        if ("back".equals(icon)) headerExit = button;
         if ("save".equals(icon)) HologramEditorNativeTheme.guided(
             button,
             () -> actionAccent(140, () -> true),
@@ -332,6 +335,10 @@ final class HologramEditorShell {
             .height(major ? 20 : HologramEditorNativeTheme.ICON_BUTTON)
             .setEnabledIf(w -> visible.getAsBoolean())
             .child(button);
+    }
+
+    boolean controllerOpeningExitHovered(int button) {
+        return button == 0 && headerExit != null && headerExit.isHovering();
     }
 
     private String workspaceHint() {
@@ -1148,6 +1155,7 @@ final class HologramEditorShell {
     boolean consumeBackLayer() {
         ModularPanel modal = topModal();
         if (modal != null) {
+            if (ui.review.consumeMaterialDialogBack(modal)) return true;
             IWidget close = modalCloseWidget();
             if (close instanceof com.cleanroommc.modularui.api.widget.Interactable) {
                 LocatedWidget located = LocatedWidget.of(close);

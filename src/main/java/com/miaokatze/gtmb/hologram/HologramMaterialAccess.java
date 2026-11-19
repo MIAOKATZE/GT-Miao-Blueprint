@@ -102,13 +102,16 @@ final class HologramMaterialAccess {
                 && HologramGtswnPlacementMaterials.freeShell(cell.block, sample);
     }
 
-    /** Selection changes the quotation only; the real transaction still reserves one clean voucher before commit. */
+    static boolean voucherSupported(HologramSession s) {
+        return s.virtual ? s.mode != 2 && s.virtualPreset != null && s.virtualPreset.schema >= 2
+            : s.mode == 0 && HologramEditorWorkspaceRegistry.physicalProjection(s);
+    }
+
+    /** A live controller only keeps the waiver for its review or the job that explicitly accepted it. */
     static boolean voucherSelected(HologramSession s) {
-        return s.mode != 2 && s.virtual
-            && s.virtualPreset != null
-            && s.virtualPreset.schema >= 2
-            && s.jobVoucherRequested
-            && HologramDecorationVoucher.enabled();
+        return voucherSupported(s) && s.jobVoucherRequested
+            && HologramDecorationVoucher.enabled()
+            && (s.virtual || (s.job == 1 || s.job == 2 ? s.controllerVoucherApproved : s.operationReviewSequence >= 0));
     }
 
     static HologramDecorMaterials.Descriptor payableDecoration(HologramSession s, HologramCapture.Cell cell,

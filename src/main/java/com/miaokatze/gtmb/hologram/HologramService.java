@@ -10,11 +10,27 @@ import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
+import net.minecraft.tileentity.TileEntity;
+
+import com.gtnewhorizon.structurelib.alignment.constructable.IConstructable;
+
+import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
+import gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase;
 
 /** Stable protocol facade. Domain workflows own state, policy, planning, persistence and transactions. */
 public final class HologramService {
 
     private HologramService() {}
+
+    public static boolean supportsController(TileEntity tile) {
+        // The GT base tile is a provider even on single-block machines.
+        if (tile instanceof IGregTechTileEntity gt) {
+            Object machine = gt.getMetaTileEntity();
+            return machine instanceof IConstructable || machine instanceof MTEEnhancedMultiBlockBase<?> multi
+                && HologramStructureDiscovery.captureSupported(multi);
+        }
+        return HologramStructureDiscovery.supports(tile);
+    }
 
     public static void open(EntityPlayerMP player, int x, int y, int z, int side) {
         if (demolitionBusy(player)) return;

@@ -384,6 +384,7 @@ final class HologramCutClient {
 
     void beginSelection() {
         if (HologramBackgroundTasks.busy() || blueprintBusy()) return;
+        HologramClient.leaveControllerProjection();
         cutMode = true;
         demolitionMode = false;
         continuous.enter();
@@ -393,6 +394,7 @@ final class HologramCutClient {
 
     private void beginDemolitionSelection() {
         if (HologramBackgroundTasks.busy() || blueprintBusy() || requests.writing()) return;
+        HologramClient.leaveControllerProjection();
         cutMode = false;
         demolitionMode = true;
         continuous.enter();
@@ -615,9 +617,9 @@ final class HologramCutClient {
     }
 
     /** Every ordinary cut-management entry shares the real editor root and server session route. */
-    private void openStorageWorkspace() {
+    void openStorageWorkspace() {
         if (!held()) return;
-        if (mc().currentScreen instanceof HologramScreen screen) {
+        if (mc().currentScreen instanceof HologramScreen screen && !screen.ui.workspaces.hasProjectionContent()) {
             screen.ui.workspaces.tryActivateCut();
             return;
         }

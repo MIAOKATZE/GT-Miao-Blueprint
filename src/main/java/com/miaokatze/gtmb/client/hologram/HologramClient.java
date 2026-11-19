@@ -31,6 +31,7 @@ import com.gtnewhorizon.structurelib.alignment.constructable.IMultiblockInfoCont
 import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
 import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
+import com.miaokatze.gtmb.hologram.HologramService;
 import com.miaokatze.gtmb.hologram.HologramSnapshotAssembly;
 import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
 import com.miaokatze.gtmb.hologram.HologramWorldFlow;
@@ -132,6 +133,7 @@ public final class HologramClient {
         HologramSnapshotCodec::decode);
     private static long lastDecodeNotice;
     private static final HologramRootCloseFence rootCloseFence = new HologramRootCloseFence();
+    static final HologramControllerOpenIntent controllerOpen = new HologramControllerOpenIntent();
     private static final HologramPendingPositionLock pendingPositionLock = new HologramPendingPositionLock();
     private static HologramState.Preparation preparingSnapshot;
     private static HologramSnapshotInbox.Result<NBTTagCompound> preparingResult;
@@ -174,6 +176,8 @@ public final class HologramClient {
             minecraft.func_152344_a(() -> {
                 if (world != minecraft.theWorld || connection != minecraft.getNetHandler()) return;
                 if (receiveSnapshotFlow(nbt)) return;
+                if ("rejected".equals(nbt.getString("outcome")))
+                    dismissControllerOpening(nbt.getLong("controllerOpenId"));
                 if (retiredSessions.contains(nbt.getString("session"))) return;
                 HologramLibraryClient.INSTANCE.preparationProgress(nbt);
                 if (nbt.getBoolean("materialQuoteOnly")) {
@@ -214,7 +218,11 @@ public final class HologramClient {
                         if (nbt.getBoolean("workspaceUiOnly") && nbt.getBoolean("open")
                             && state != null
                             && state.session.equals(nbt.getString("session"))
-                            && state.data.getBoolean("snapshotPending")) requestFullSnapshot(state.session);
+                            && state.data.getBoolean("snapshotPending")) {
+                            boolean controller = "controllerStructure".equals(nbt.getString("openPurpose"));
+                            if (!controller || !nbt.getBoolean("workspaceCapturePending"))
+                                requestFullSnapshot(state.session, controller ? nbt.getLong("controllerOpenId") : 0);
+                        }
                     }
                     return;
                 }
@@ -441,10 +449,11 @@ public final class HologramClient {
             return;
         }
         if (HologramBackgroundTasks.busy()) {
-            if (usePressFence.consume()) HologramBackgroundTasks.reopen();
-            return;
-        }
-        if (HologramBackgroundTasks.reopen()) return;
+            if (!controllerOpen.canOpenWhileScanning() || !controllerClick(input)) {
+                if (usePressFence.consume()) HologramBackgroundTasks.reopen();
+                return;
+            }
+        } else if (HologramBackgroundTasks.reopen()) return;
         if (HologramCutClient.INSTANCE.interceptsUse()) return;
         if (worldStage() == HologramWorldFlow.Stage.AREA && !areaProjectorWorld()) return;
         if (HologramIsometricCamera.INSTANCE.blocksVanillaTarget()) {
@@ -519,19 +528,46 @@ public final class HologramClient {
                 if (!pendingPositionLock
                     .begin(state.data, anchor, HologramBackgroundTasks.commandSequence(state.session), input)) return;
             } else {
-                if (intent == HologramWorldFlow.Intent.OPEN) openCachedWorkspace();
+                if (intent == HologramWorldFlow.Intent.OPEN) {
+                    TileEntity tile = air ? null
+                        : mc.theWorld
+                            .getTileEntity(input.getInteger("x"), input.getInteger("y"), input.getInteger("z"));
+                    if (worldStage() == HologramWorldFlow.Stage.WORKSPACE && HologramService.supportsController(tile)) {
+                        rootCloseFence.clear();
+                        syncSnapshotWorld();
+                        fullSnapshotRequested = false;
+                        long id = controllerOpen.begin(mc.thePlayer.dimension, tile.xCoord, tile.yCoord, tile.zCoord);
+                        input.setLong("controllerOpenId", id);
+                        new HologramScreen(tile, mc.thePlayer.dimension, id).openFrom(mc.currentScreen);
+                    } else {
+                        controllerOpen.forgetTarget();
+                        openCachedWorkspace();
+                    }
+                }
                 input.setString("action", air ? "useAir" : "useBlock");
             }
         try {
             HologramClient.stampSemanticRevision(input);
             HologramNetwork.sendAction(input);
         } catch (RuntimeException failure) {
+            dismissControllerOpening(input.getLong("controllerOpenId"));
             if (pendingPositionLock.rejected(input)) {
                 positionLockNotice(
                     text("worldGuideLockFailed", "Position could not be locked; adjust the preview and try again"));
                 com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Position lock request failed", failure);
             } else throw failure;
         }
+    }
+
+    private static boolean controllerClick(NBTTagCompound input) {
+        if (input.getBoolean("air") || shiftHeld()
+            || Keyboard.isKeyDown(Keyboard.KEY_LMENU)
+            || Keyboard.isKeyDown(Keyboard.KEY_RMENU)
+            || HologramIsometricCamera.INSTANCE.active()
+            || worldStage() != HologramWorldFlow.Stage.WORKSPACE) return false;
+        return HologramService.supportsController(
+            Minecraft.getMinecraft().theWorld
+                .getTileEntity(input.getInteger("x"), input.getInteger("y"), input.getInteger("z")));
     }
 
     private final HologramWorldFlow.KeyEdge rotationKey = new HologramWorldFlow.KeyEdge();
@@ -1638,6 +1674,10 @@ public final class HologramClient {
     private static void receive(NBTTagCompound nbt) {
         syncSnapshotWorld();
         if (Minecraft.getMinecraft().theWorld == null) return;
+        if (nbt.hasKey("controllerOpenUnavailable", 4)) {
+            dismissControllerOpening(nbt.getLong("controllerOpenUnavailable"));
+            return;
+        }
         if (nbt.getBoolean("voucherEditor")) {
             HologramVoucherScreen.show(nbt);
             return;
@@ -1648,6 +1688,7 @@ public final class HologramClient {
             return;
         }
         if (nbt.getBoolean("transportError")) {
+            dismissControllerOpening(nbt.getLong("controllerOpenId"));
             pendingPositionLock.rejected(nbt);
             Minecraft mc = Minecraft.getMinecraft();
             boolean taskFailed = HologramLibraryClient.INSTANCE.transportFailed(nbt)
@@ -1802,6 +1843,7 @@ public final class HologramClient {
         Object connection = Minecraft.getMinecraft()
             .getNetHandler();
         if (world == assemblyWorld && connection == assemblyConnection) return;
+        controllerOpen.forgetTarget();
         boolean connectionChanged = connection != assemblyConnection;
         previewDistance.sync(false, null, "");
         assembly = new HologramSnapshotAssembly();
@@ -1836,6 +1878,11 @@ public final class HologramClient {
     private static void installDecoded(HologramSnapshotInbox.Result<NBTTagCompound> result) {
         if (result == null) return;
         if (result.failure != null) {
+            HologramScreen opening = openingControllerScreen();
+            if (opening != null && result.transportSequence >= 0
+                && HologramClientProgress.controllerSnapshotSequence(opening.controllerRequest())
+                    == result.transportSequence)
+                opening.closeControllerOpening();
             snapshotHandled(result, false);
             com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Hologram snapshot decoding failed", result.failure);
             decodeNotice("decodeError", "Hologram snapshot decoding failed; the previous preview was retained.");
@@ -1843,6 +1890,10 @@ public final class HologramClient {
         }
         NBTTagCompound nbt = result.value;
         if (!validSnapshotIdentity(nbt)) {
+            snapshotHandled(result, true);
+            return;
+        }
+        if (hideControllerSnapshot(nbt)) {
             snapshotHandled(result, true);
             return;
         }
@@ -2018,11 +2069,16 @@ public final class HologramClient {
     }
 
     private static boolean requestFullSnapshot(String session) {
+        return requestFullSnapshot(session, 0);
+    }
+
+    private static boolean requestFullSnapshot(String session, long controllerRequest) {
         if (fullSnapshotRequested) return false;
         fullSnapshotRequested = true;
         NBTTagCompound recovery = new NBTTagCompound();
         recovery.setString("op", "requestFullSnapshot");
         recovery.setString("session", session);
+        if (controllerRequest > 0) recovery.setLong("controllerOpenId", controllerRequest);
         recovery.setLong("planRevision", state == null ? -1 : state.data.getLong("planRevision"));
         HologramClient.stampSemanticRevision(recovery);
         HologramNetwork.sendAction(recovery);
@@ -2032,6 +2088,16 @@ public final class HologramClient {
     /** Registry lookups, world access, GUI and rendering resources remain on the client thread. */
     private static boolean fullSnapshotRequested;
 
+    static void leaveControllerProjection() {
+        if (state == null || !state.data.getBoolean("target")
+            || HologramEditorWorkspaces.domain(state) != HologramEditorWorkspaces.Mode.PROJECTION) return;
+        NBTTagCompound action = new NBTTagCompound();
+        action.setString("op", "leaveControllerProjection");
+        action.setString("session", state.session);
+        action.setLong("editorWorkspaceEpoch", state.data.getLong("editorWorkspaceEpoch"));
+        HologramNetwork.sendAction(action);
+    }
+
     private static void installSnapshot(NBTTagCompound nbt) {
         installSnapshot(nbt, null);
     }
@@ -2040,13 +2106,61 @@ public final class HologramClient {
         installSnapshot(nbt, prepared, -1);
     }
 
+    private static boolean hideControllerSnapshot(NBTTagCompound nbt) {
+        if (nbt.getBoolean("cancelled")) return false;
+        long request = nbt.getLong("controllerOpenId");
+        boolean hidden = request > 0 ? !controllerOpen.accepts(request)
+            : controllerOpen.hidesLegacyBaseline(nbt)
+                || nbt.getBoolean("open") && "controllerStructure".equals(nbt.getString("openPurpose"))
+                    && !controllerOpen.acceptsLegacy(
+                        nbt.getInteger("dimension"),
+                        nbt.getInteger("x"),
+                        nbt.getInteger("y"),
+                        nbt.getInteger("z"));
+        // A discarded view can still carry the completion of the scan that produced it.
+        if (hidden) HologramBackgroundTasks.hiddenControllerSnapshot(nbt);
+        return hidden;
+    }
+
     private static void installSnapshot(NBTTagCompound nbt, HologramState prepared, long transportSequence) {
+        long controllerRequest = nbt.getLong("controllerOpenId");
         boolean openingCutWorkspace = "cutWorkspace".equals(nbt.getString("openPurpose"));
         if (openingCutWorkspace && !acceptsCutWorkspaceOpening(nbt)) return;
         if (nbt.getBoolean("cancelled")) {
-            retire(nbt.getString("session"));
-            HologramBackgroundTasks.cancelled(nbt.getString("session"));
-            if (state != null && state.session.equals(nbt.getString("session"))) clearProjection(false);
+            dismissControllerOpening(controllerRequest);
+            String cancelled = nbt.getString("session");
+            HologramScreen opening = openingControllerScreen();
+            if (controllerRequest == 0 && opening != null
+                && HologramClientProgress.controllerSession(opening.controllerRequest(), cancelled))
+                opening.closeControllerOpening();
+            boolean controllerRetired = nbt.getBoolean("controllerProjectionRetired");
+            retire(cancelled);
+            HologramBackgroundTasks.cancelled(cancelled);
+            if (state != null && state.session.equals(cancelled)) {
+                long epoch = editorWorkspaceEpoch, sequence = editorSequence;
+                clearProjection(false);
+                if (controllerRetired) {
+                    editorWorkspaceEpoch = epoch;
+                    editorSequence = sequence;
+                    Minecraft mc = Minecraft.getMinecraft();
+                    if (mc.currentScreen instanceof HologramScreen screen
+                        && screen.ui.session.state().session.equals(cancelled)
+                        || mc.currentScreen instanceof HologramSettingsScreen) mc.displayGuiScreen(null);
+                    if (mc.thePlayer != null && !nbt.getString("status")
+                        .isEmpty())
+                        mc.thePlayer.addChatMessage(new net.minecraft.util.ChatComponentText(nbt.getString("status")));
+                }
+            }
+            if (controllerRetired) HologramUiMemory.forget(cancelled);
+            return;
+        }
+        if (hideControllerSnapshot(nbt)) return;
+        HologramScreen opening = openingControllerScreen();
+        boolean controllerAnswer = opening != null && controllerOpen.answers(nbt, opening.controllerRequest());
+        if (controllerAnswer
+            && (!opening.controllerOpeningCurrent() || !opening.acceptsControllerTool(nbt.getString("toolId")))) {
+            opening.closeControllerOpening();
+            HologramBackgroundTasks.hiddenControllerSnapshot(nbt);
             return;
         }
         String session = nbt.getString("session");
@@ -2141,6 +2255,15 @@ public final class HologramClient {
         if (rootCloseFence
             .suppress(next.session, nbt.getLong("uiSequence"), nbt.getBoolean("open"), nbt.getBoolean("areaImporting")))
             return;
+        if (opening != null) {
+            if (!controllerAnswer || nbt.getBoolean("partial")) return;
+            if (next.data.getBoolean("snapshotPending") && "controllerStructure".equals(nbt.getString("openPurpose"))) {
+                controllerOpen.expectLegacyBaseline(nbt);
+                return;
+            }
+            opening.controllerOpened();
+            controllerOpen.installed();
+        }
         if (openingCutWorkspace) {
             clearCutWorkspaceOpening();
             if (mc.currentScreen instanceof HologramScreen editor) {
@@ -2188,7 +2311,8 @@ public final class HologramClient {
                 // The MUI2 stack preserves this child while NEI temporarily owns the vanilla screen.
                 HologramAeContainerScreen.activeForSession(next.session)
                     .updateState(next);
-            } else if (mc.currentScreen instanceof HologramScreen && (same || nbt.getLong("editorWorkspaceEpoch") > 0
+            } else if (mc.currentScreen instanceof HologramScreen && (opening != null || same
+                || nbt.getLong("editorWorkspaceEpoch") > 0
                 || ((HologramScreen) mc.currentScreen).acceptsLibraryNavigation(next))) {
                     ((HologramScreen) mc.currentScreen).updateState(next);
                 } else if (!same || nbt.getBoolean("open")) {
@@ -2288,6 +2412,17 @@ public final class HologramClient {
         editorSequence = 0;
         snapshotWorld = null;
         acceptedBatch = -1;
+    }
+
+    private static HologramScreen openingControllerScreen() {
+        return Minecraft.getMinecraft().currentScreen instanceof HologramScreen screen && screen.controllerRequest() > 0
+            ? screen
+            : null;
+    }
+
+    private static void dismissControllerOpening(long request) {
+        HologramScreen opening = openingControllerScreen();
+        if (opening != null && request == opening.controllerRequest()) opening.closeControllerOpening();
     }
 
     static String text(String key, String fallback) {

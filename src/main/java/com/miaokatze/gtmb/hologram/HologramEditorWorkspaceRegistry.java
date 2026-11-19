@@ -43,6 +43,16 @@ final class HologramEditorWorkspaceRegistry {
         remember(session);
     }
 
+    static HologramSession retained(UUID owner, String mode) {
+        Map<String, HologramSession> owned = WORKSPACES.get(owner);
+        return owned == null ? null : owned.get(mode);
+    }
+
+    static HologramSession availableBlueprint(EntityPlayerMP player) {
+        HologramSession retained = retained(player.getUniqueID(), "blueprint");
+        return cutOwned(retained, player) && HologramSessionPolicy.tickValid(retained) ? retained : null;
+    }
+
     static long sequenceFloor(HologramSession session) {
         long sequence = session.uiSequence;
         Map<String, HologramSession> owned = WORKSPACES.get(session.player.getUniqueID());
@@ -74,22 +84,18 @@ final class HologramEditorWorkspaceRegistry {
         if (player == null || player.isDead
             || !com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector.isProjector(player.getHeldItem()))
             return null;
+        HologramWorkspace.pruneRemovedController(player);
         HologramSession active = HologramWorkspace.find(player.getUniqueID());
         if (active != null && active.player == player && !idle(active)) return null;
-        // A world entry needs a complete snapshot; its preparation enforces tickValid().
-        // An already open root can browse Cut locally without re-encoding its read-only plan.
-        if (cutOwned(active, player) && HologramSessionPolicy.tickValid(active)) return active;
+        // Cut can share an author or empty workspace. A live controller plan ends when Cut takes over.
+        if (cutOwned(active, player) && !physicalProjection(active) && HologramSessionPolicy.tickValid(active))
+            return active;
         boolean preserveBlueprint = cutOwned(active, player) && "blueprint".equals(mode(active));
-        Map<String, HologramSession> owned = WORKSPACES.get(player.getUniqueID());
-        if (owned != null) for (String domain : new String[] { "blueprint", "projection" }) {
-            HologramSession retained = owned.get(domain);
-            if (cutOwned(retained, player)) {
-                if ("blueprint".equals(domain)) preserveBlueprint = true;
-                if (!HologramSessionPolicy.tickValid(retained)) continue;
-                if (!idle(retained)) return null;
-                HologramWorkspace.activate(player.getUniqueID(), retained);
-                return retained;
-            }
+        HologramSession retained = retained(player.getUniqueID(), "blueprint");
+        if (cutOwned(retained, player)) {
+            if (!HologramSessionPolicy.tickValid(retained) || !idle(retained)) return null;
+            HologramWorkspace.activate(player.getUniqueID(), retained);
+            return retained;
         }
         if (preserveBlueprint) return null;
         HologramSession created = HologramWorkspace.create(
@@ -320,12 +326,20 @@ final class HologramEditorWorkspaceRegistry {
         }
     }
 
-    /** Called only after the full target baseline commits; rollback retains the source unchanged. */
+    /** Retire only the identified field owner and its continuations. */
     static void discardProjection(HologramSession source) {
         Map<String, HologramSession> owned = WORKSPACES.get(source.player.getUniqueID());
-        if (owned != null && owned.get("projection") == source) owned.remove("projection");
+        boolean retained = owned != null && owned.get("projection") == source;
+        if (source.cancelled && !retained) return;
+        if (retained) owned.remove("projection");
+        if (source.currentPlacementTask != null) source.currentPlacementTask.cancel();
+        source.presentationTransition = null;
+        source.projectionPersistPending = false;
+        if (source.projectionAreaImportDiscard) HologramAreaWorkflow.cancelAreaImport(source);
         HologramDraftPersistence.forgetProjection(source);
         HologramAuthoringWorkflow.clearSourceSwitch(source);
+        HologramProjectorWorkflow.libraryCloseUi(source);
+        HologramStructureProjection.dismissOperationReview(source);
         HologramDeferredPlanRefresh.cancel(source);
         HologramSnapshotPreparation.cancel(source);
         HologramSession.cancelCaptureRetry(source);

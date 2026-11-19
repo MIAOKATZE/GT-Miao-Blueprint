@@ -30,6 +30,12 @@ final class HologramWorkspace {
         if (!player.equals(session.player.getUniqueID())) throw new IllegalArgumentException("Session owner mismatch");
         HologramSession previous = SESSIONS.get(player);
         if (previous != null) HologramEditorWorkspaceRegistry.remember(previous);
+        HologramSession projection = HologramEditorWorkspaceRegistry.retained(player, "projection");
+        if (projection != null && projection != session
+            && HologramEditorWorkspaceRegistry.physicalProjection(projection)) {
+            HologramEditorWorkspaceRegistry.discardProjection(projection);
+            HologramNetwork.sendControllerProjectionRetired(projection, "");
+        }
         if (previous != null && previous != session) {
             if (previous.currentPlacementTask != null) previous.currentPlacementTask.cancel();
             previous.presentationTransition = null;
@@ -40,6 +46,28 @@ final class HologramWorkspace {
         }
         SESSIONS.put(player, session);
         HologramEditorWorkspaceRegistry.activated(session);
+    }
+
+    static void pruneRemovedController(EntityPlayerMP player) {
+        HologramSession projection = HologramEditorWorkspaceRegistry.retained(player.getUniqueID(), "projection");
+        if (projection == null || projection.player != player
+            || projection.libraryWorld != player.worldObj
+            || !HologramEditorWorkspaceRegistry.physicalProjection(projection)
+            || !HologramSessionPolicy.controllerReplaced(projection)) return;
+        retireFieldProjection(projection, "原控制器已拆除或更换，现场规划已清除");
+    }
+
+    static void retireFieldProjection(HologramSession projection, String reason) {
+        HologramAeCraftingOrders.cancelForSession(projection, "现场已失效，AE 缺料订单已取消");
+        if (projection.job == 1 || projection.job == 2) {
+            projection.job = 4;
+            projection.phase = "STOPPED";
+            projection.status = "施工已停止：" + reason + "；已施工方块保留";
+            HologramSnapshots.sendStoppedJob(projection);
+        }
+        HologramEditorWorkspaceRegistry.discardProjection(projection);
+        SESSIONS.remove(projection.player.getUniqueID(), projection);
+        HologramNetwork.sendControllerProjectionRetired(projection, reason);
     }
 
     /** A preset preview is provisional until its first complete baseline is accepted by the encoder. */
@@ -150,6 +178,11 @@ final class HologramWorkspace {
         if (transition == null || !transition.matchesTarget(player, session, sequence)
             || !presentationAllowed(target)
             || !presentationAllowed(transition.origin)) return null;
+        if (HologramEditorWorkspaceRegistry.physicalProjection(transition.origin)
+            && HologramSessionPolicy.controllerReplaced(transition.origin)) {
+            pruneRemovedController(player);
+            return null;
+        }
         HologramNetwork.retirePresentationState(target);
         HologramSnapshotPreparation.cancel(target);
         target.presentationTransition = null;

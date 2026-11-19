@@ -83,13 +83,14 @@ final class HologramSnapshotPreparation {
         if (previous != null && previous.valid()) return;
         if (previous != null) cancel(previous);
         if (TASKS.size() >= MAX_TASKS) {
-            if (s.presentationTransition != null) HologramNetwork.transportFailure(
-                s.player,
-                s.id,
-                s.uiSequence,
-                "snapshot.queue",
-                s.blueprintClientTaskToken,
-                new IllegalStateException("snapshot preparation queue full"));
+            if (s.presentationTransition != null || HologramControllerOpen.pendingId(s) > 0)
+                HologramNetwork.transportFailure(
+                    s.player,
+                    s.id,
+                    s.uiSequence,
+                    "snapshot.queue",
+                    s.blueprintClientTaskToken,
+                    new IllegalStateException("snapshot preparation queue full"));
             return;
         }
         HologramNetwork.SnapshotTicket ticket = HologramNetwork.reserveOwnedState(s);
@@ -215,6 +216,7 @@ final class HologramSnapshotPreparation {
         final World world;
         final String session, phase, active;
         final long revision, ui, batch, planGeneration, clientTask;
+        final long controllerOpenId, controllerToken;
         final long voucherRevision = DecorationVoucherConfig.revision();
         final long declarationGeneration = HologramDeclarationAdapters.generation();
         final HologramDeclarationAdapters.Bindings declarationBindings = new HologramDeclarationAdapters.Bindings();
@@ -262,6 +264,8 @@ final class HologramSnapshotPreparation {
             revision = s.planRevision;
             ui = s.uiSequence;
             clientTask = s.blueprintClientTaskToken;
+            controllerOpenId = HologramControllerOpen.pendingId(s);
+            controllerToken = s.controllerOpenId;
             batch = s.batchSeq;
             planGeneration = s.localPlanGeneration;
             authoring = HologramSessionPolicy.authoring(s);
@@ -280,6 +284,7 @@ final class HologramSnapshotPreparation {
                 && declarationGeneration == HologramDeclarationAdapters.generation()
                 && declarationBindings.validityFailure() == null
                 && session.equals(s.id)
+                && controllerToken == s.controllerOpenId
                 && s.player.worldObj == world
                 && capture == s.capture
                 && size == (s.capture == null ? 0 : s.capture.cells.size())
@@ -701,6 +706,10 @@ final class HologramSnapshotPreparation {
             progress.setLong("planRevision", revision);
             progress.setLong("uiSequence", ui);
             progress.setLong("clientTaskToken", clientTask);
+            if (controllerOpenId > 0) {
+                progress.setLong("controllerOpenId", controllerOpenId);
+                progress.setLong("snapshotSequence", ticket.sequence());
+            }
             progress.setString("phase", phase);
             progress.setString("detail", detail);
             progress.setLong("done", done);

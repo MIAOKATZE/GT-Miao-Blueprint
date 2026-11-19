@@ -248,11 +248,7 @@ final class HologramWorldTransactions {
         String placementStage = "reserve";
         try {
             decorDescriptor = HologramCellPolicy.decoration(s, c);
-            boolean voucher = s.mode != 2 && s.virtual
-                && s.virtualPreset != null
-                && s.virtualPreset.schema >= 2
-                && s.jobVoucherRequested
-                && HologramDecorationVoucher.enabled();
+            boolean voucher = HologramMaterialAccess.voucherSelected(s);
             voucherShell = voucher && decorDescriptor == null
                 && !HologramRecovery.hasSeal(energyTarget)
                 && HologramDecorationVoucher.covered(c.block, energyTarget);
@@ -726,8 +722,8 @@ final class HologramWorldTransactions {
                     s.blueprintEnergyNotice += "；" + cacheNotice;
                 s.status = cacheNotice;
             }
-            if (voucherReserved) s.jobVoucherConsumed = true;
             transaction.commit();
+            if (voucherReserved) s.jobVoucherConsumed = true;
         } catch (java.io.IOException | RuntimeException | LinkageError e) {
             if (Boolean.getBoolean("gtmb.v0111.nativeContractsOnly")) e.printStackTrace(System.err);
             HologramPlacementDiagnostics.failure(s, c, index, placementStage, e);
