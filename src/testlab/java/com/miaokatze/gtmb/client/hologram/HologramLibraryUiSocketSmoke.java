@@ -95,7 +95,8 @@ final class HologramLibraryUiSocketSmoke {
                     return false;
                 case 1:
                     if (!nativeLevel("op3", 3, mc)) return false;
-                    library.open();
+                    library.refreshServer(0);
+                    library.refreshServerConfig();
                     stage = 2;
                     return false;
                 case 2:
@@ -121,7 +122,8 @@ final class HologramLibraryUiSocketSmoke {
                     return false;
                 case 3:
                     if (!nativeLevel("op4", 4, mc)) return false;
-                    library.open();
+                    library.refreshServer(0);
+                    library.refreshServerConfig();
                     stage = 4;
                     return false;
                 case 4:
