@@ -5,7 +5,10 @@ package com.miaokatze.gtmb.client.hologram;
 
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.Comparator;
 
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
@@ -19,9 +22,11 @@ public final class HologramLocalPreviewRegression {
         admissionReceipts();
         compactDisplay();
         sourceReuse();
+        coldPortableRecentSource();
         earlyDisplay();
         displayPicture();
         uploadRepresentation();
+        frozenPlacement();
         NBTTagCompound review = HologramLocalPlacement.reviewOptions();
         SimpleAssert.eq(true, review.getBoolean("openReview"), "second world use opens the existing server review");
         SimpleAssert.eq(false, review.getBoolean("executeIntent"), "opening review cannot request construction");
@@ -143,6 +148,53 @@ public final class HologramLocalPreviewRegression {
             .that(first.regions != complete.regions, "the mutable builder is never published as an early region index");
     }
 
+    private static void coldPortableRecentSource() throws Exception {
+        Path game = Files.createTempDirectory("gtmb-recent-portable-");
+        try {
+            HologramClientLibrary original = new HologramClientLibrary(game);
+            Path member = Files.createDirectories(original.directory())
+                .resolve("Arbitrary portable name.json");
+            byte[] json = "{\"blueprint\":{\"name\":\"Recent\",\"cells\":[{\"block\":\"unavailable:fixture\"}]}}"
+                .getBytes(StandardCharsets.UTF_8);
+            Files.write(member, json);
+            Path png = com.miaokatze.gtmb.hologram.HologramBlueprintArtifact.previewPath(member);
+            Files.write(png, new byte[] { 1 }); // Placement does not attempt to open the optional picture.
+            String id = original.list()
+                .get(0).id;
+            original.rememberLocal("integrated", id);
+
+            HologramClientLibrary restarted = new HologramClientLibrary(game);
+            SimpleAssert.that(
+                !restarted.savedPath(id)
+                    .equals(member),
+                "cold store has no transient display path");
+            HologramLibraryClient client = new HologramLibraryClient();
+            HologramLibraryClient.DisplaySource source = client
+                .readRecentLocalSource(restarted, restarted.lastSource("integrated"));
+            SimpleAssert
+                .that(source != null && Arrays.equals(json, source.json), "cold Alt placement restores a portable ID");
+            SimpleAssert.eq("", source.hash, "reopening preview does not hash the saved blueprint");
+            SimpleAssert.eq(false, source.thumbnailRead, "reopening placement does not read the saved picture");
+            HologramState.Preparation preparation = new HologramState.Preparation(source.snapshot, true);
+            while (!preparation.step(Integer.MAX_VALUE, Long.MAX_VALUE)) {}
+            HologramState state = preparation.result();
+            SimpleAssert
+                .eq("minecraft:wool", state.cells.get(0).wantId, "missing private material has a display placeholder");
+            SimpleAssert.that(Arrays.equals(json, source.json), "placement still submits the exact original source");
+            SimpleAssert.eq(false, state.data.hasKey("planRevision"), "display never grants a server plan revision");
+            Files.delete(member);
+            SimpleAssert.eq(
+                null,
+                client.readRecentLocalSource(restarted, restarted.lastSource("integrated")),
+                "deleted recent file yields no ghost and leaves the fallback usable");
+        } finally {
+            try (java.util.stream.Stream<Path> paths = Files.walk(game)) {
+                for (Path path : (Iterable<Path>) paths.sorted(Comparator.reverseOrder())::iterator)
+                    Files.deleteIfExists(path);
+            }
+        }
+    }
+
     private static void displayPicture() throws Exception {
         java.awt.image.BufferedImage original = new java.awt.image.BufferedImage(
             32,
@@ -222,6 +274,42 @@ public final class HologramLocalPreviewRegression {
             "a known ID still needs a valid server content digest");
         SimpleAssert
             .eq(true, serverHeld.accept(19, 19, "known-id", first), "server-held source supplies its admission digest");
+    }
+
+    private static void frozenPlacement() {
+        HologramLibraryClient.DisplaySource source = new HologramLibraryClient.DisplaySource(
+            "private-fixture",
+            "file-stamp",
+            new byte[] { 1 },
+            new NBTTagCompound(),
+            "local_fixture",
+            "",
+            "",
+            "fixture-revision");
+        int[] anchor = { 12, 64, -9 };
+        com.miaokatze.gtmb.hologram.HologramPreviewPose pose = new com.miaokatze.gtmb.hologram.HologramPreviewPose()
+            .turn(true)
+            .turn(false);
+        NBTTagCompound options = HologramLocalPlacement.reviewOptions();
+        HologramLocalPlacement.Submission submission = new HologramLocalPlacement.Submission(
+            source,
+            "",
+            anchor,
+            pose,
+            options);
+        anchor[0] = -500;
+        options.setBoolean("executeIntent", true);
+        NBTTagCompound issued = submission.request("admitted-digest");
+        issued.setInteger("placementZ", 900);
+        issued.getIntArray("previewPose")[0] = 9;
+        NBTTagCompound retry = submission.request("admitted-digest");
+        SimpleAssert.that(submission.source == source, "the exact displayed file is bound to the review request");
+        SimpleAssert.eq(12, retry.getInteger("x"), "the first valid submission freezes its original locked anchor");
+        SimpleAssert.eq(-9, retry.getInteger("placementZ"), "request packet mutation cannot move the frozen target");
+        SimpleAssert.that(Arrays.equals(pose.recipe(), retry.getIntArray("previewPose")), "submission freezes pose");
+        SimpleAssert.eq("fixture-revision", retry.getString("sourceRevision"), "source revision crosses admission");
+        SimpleAssert.eq("admitted-digest", retry.getString("jsonHash"), "only admitted digest binds the server intent");
+        SimpleAssert.eq(false, retry.getBoolean("executeIntent"), "review intent cannot become a build after freezing");
     }
 
     private static void expectFailure(String json) throws Exception {

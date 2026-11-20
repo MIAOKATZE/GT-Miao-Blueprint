@@ -256,6 +256,7 @@ final class HologramLibraryServiceRegression {
             bootstrap.setInteger("y", 0);
             bootstrap.setInteger("z", 0);
             bootstrap.setInteger("side", 1);
+            bootstrap.setLong("clientTaskToken", 25);
             NBTTagCompound ticket = HologramService.libraryQuickBootstrap(owner, bootstrap);
             Object quickSession = sessions.get(ownerId);
             SimpleAssert.that(!(Boolean) get(quickSession, "open"), "quick bootstrap creates no open UI");
@@ -266,6 +267,11 @@ final class HologramLibraryServiceRegression {
             SimpleAssert.that(
                 HologramService.librarySessionCurrent(owner, ticket),
                 "closed bootstrap accepts exact place token");
+            ticket.setLong("clientTaskToken", 26);
+            SimpleAssert.that(
+                !HologramService.librarySessionCurrent(owner, ticket),
+                "an old quick capability cannot be used to activate a different placement task");
+            ticket.setLong("clientTaskToken", bootstrap.getLong("clientTaskToken"));
             ticket.setString("action", "edit");
             SimpleAssert
                 .that(!HologramService.librarySessionCurrent(owner, ticket), "quick capability cannot open editor");

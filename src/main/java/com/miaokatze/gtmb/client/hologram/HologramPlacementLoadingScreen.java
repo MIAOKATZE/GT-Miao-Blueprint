@@ -5,6 +5,8 @@ package com.miaokatze.gtmb.client.hologram;
 
 import net.minecraft.client.Minecraft;
 
+import org.lwjgl.input.Keyboard;
+
 import com.cleanroommc.modularui.screen.viewport.ModularGuiContext;
 import com.cleanroommc.modularui.theme.WidgetThemeEntry;
 import com.cleanroommc.modularui.widget.Widget;
@@ -28,12 +30,26 @@ final class HologramPlacementLoadingScreen extends HologramMuiScreen {
         panel().child(
             HologramMuiTheme.button(
                 () -> "返回世界，后台继续",
-                112,
+                25,
                 128,
-                206,
+                180,
                 20,
-                () -> Minecraft.getMinecraft()
-                    .displayGuiScreen(null)));
+                () -> deferAction(
+                    () -> Minecraft.getMinecraft()
+                        .displayGuiScreen(null))));
+        panel().child(HologramMuiTheme.button(() -> "取消本次核对", 225, 128, 180, 20, () -> deferAction(this::cancel)));
+    }
+
+    @Override
+    protected boolean muiKey(char character, int key) {
+        if (key != Keyboard.KEY_ESCAPE) return false;
+        deferAction(this::cancel);
+        return true;
+    }
+
+    private void cancel() {
+        if (!HologramLibraryClient.INSTANCE.cancelQuickPlacement()) Minecraft.getMinecraft()
+            .displayGuiScreen(null);
     }
 
     private static final class Progress extends Widget<Progress> {

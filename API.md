@@ -1,5 +1,16 @@
 # GTMB 社区 API（0.3.10 / contract 1）
 
+## MiaoVisonLite 客户端实验接口
+
+实验分支在 GTMB 中提供区域几何提交接口 [MiaoVisonLite](src/main/java/com/miaokatze/gtmb/client/miaovisonlite/MiaoVisonLite.java)。它供持有当前 GL 上下文的客户端渲染线程使用。同一套区域顶点可用于窗口和世界投影。调用方提供材质图集、相机、世界变换和可见区域，GTMB 的方块适配示例见 [HologramLiteRender](src/main/java/com/miaokatze/gtmb/client/hologram/HologramLiteRender.java)。
+
+1. 在渲染线程检查 `MiaoVisonLite.available()`，创建 `Scene`，用 `region(x, y, z)` 登记区域原点。
+2. 按区域局部坐标写入 `Writer`。材质顶点含位置、图集 UV 与 RGBA，每四个顶点组成一面。轮廓每两个位置组成一条线。按剩余容量提交完整图元，使用 `scene.publish(region, layer, writer)` 上传并复用暂存区。
+3. 通过 `try (MiaoVisonLite.Frame frame = scene.beginFrame())` 建立绘制范围。调用方设置视图或模型变换，`frame.draw(region, layer)` 自动叠加区域原点并提交该图层。相机移动可以复用已上传的几何。
+4. 资源重载、模型替换或退出时在所属线程释放场景和暂存区。资源重载后重新取得图集 UV。业务文档、编辑历史、材料审核和世界施工由消费方维护。
+
+此接口随实验分支迭代。面向已发布版本的集成继续使用以下社区扩展契约。
+
 新集成应依赖 `com.miaokatze.gtmb.api`。`GTMBApi.getExtensionContractVersion()` 返回扩展契约版本；原有投影仪身份和 legacy mapping 契约保持兼容。API 使用宿主的 Minecraft、GTNH 和 StructureLib 类型。
 
 API 开放结构来源、声明解释、旋转、原生持久化与材料核算、显示、静态渲染，以及快照检查和处理报告。它不暴露 `HologramSession`、可变内部 Cell 或服务器世界操作入口。第三方代码是受信任的进程内 Java 代码，这些契约不构成代码沙箱。

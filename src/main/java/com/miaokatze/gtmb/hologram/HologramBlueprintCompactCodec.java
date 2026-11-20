@@ -63,6 +63,61 @@ public final class HologramBlueprintCompactCodec {
         return parse(new String(bytes, StandardCharsets.UTF_8), limit);
     }
 
+    /** A validated display view over the original per-coordinate references, without expanded JSON cell objects. */
+    public static DisplayRows displayRows(byte[] bytes) throws IOException {
+        int limit = HologramBlueprintArtifact.MAX_JSON_BYTES;
+        if (bytes == null || bytes.length == 0 || bytes.length > limit)
+            throw new IOException("Blueprint JSON byte budget");
+        JsonObject root = parse(new String(bytes, StandardCharsets.UTF_8), limit, false);
+        if (!root.has("blueprint")) throw new IOException("Blueprint display requires one exported blueprint");
+        return new DisplayRows(
+            object(root.get("blueprint")),
+            root.has("encoding") ? array(root.get("materials")) : null);
+    }
+
+    public static final class DisplayRows {
+
+        public final JsonObject blueprint;
+        private final JsonArray rows, materials;
+
+        private DisplayRows(JsonObject blueprint, JsonArray materials) throws IOException {
+            this.blueprint = blueprint;
+            this.materials = materials;
+            rows = array(blueprint.get("cells"));
+        }
+
+        public boolean compact() {
+            return materials != null;
+        }
+
+        public int cells() {
+            return rows.size();
+        }
+
+        public int materials() {
+            return materials == null ? 0 : materials.size();
+        }
+
+        public JsonObject position(int index) {
+            JsonElement row = rows.get(index);
+            return compact() ? row.getAsJsonArray()
+                .get(1)
+                .getAsJsonObject() : row.getAsJsonObject();
+        }
+
+        public int materialIndex(int row) {
+            return rows.get(row)
+                .getAsJsonArray()
+                .get(0)
+                .getAsInt();
+        }
+
+        public JsonObject material(int index) {
+            return materials.get(index)
+                .getAsJsonObject();
+        }
+    }
+
     /** Storage-only migration. Preserve every JSON field and NBT string without model/policy conversion. */
     public static byte[] recompress(byte[] bytes, int limit) throws IOException {
         return recompress(bytes, limit, () -> true);
@@ -145,6 +200,10 @@ public final class HologramBlueprintCompactCodec {
     }
 
     static JsonObject parse(String text, int limit) throws IOException {
+        return parse(text, limit, true);
+    }
+
+    private static JsonObject parse(String text, int limit, boolean expand) throws IOException {
         HologramBlueprintSharing.boundedJson(text, limit);
         try {
             JsonElement value = new JsonParser().parse(text);
@@ -221,6 +280,11 @@ public final class HologramBlueprintCompactCodec {
                 total += size;
                 if (total > limit) throw new IOException("Expanded blueprint collection byte budget");
             }
+            if (!expand) {
+                for (JsonObject blueprint : blueprints) resolveNbt(blueprint, nbt);
+                for (JsonElement material : materials) resolveNbt(material.getAsJsonObject(), nbt);
+                return root;
+            }
             for (JsonObject blueprint : blueprints) {
                 resolveNbt(blueprint, nbt);
                 for (String field : new String[] { "cells", "palette" }) {
@@ -269,22 +333,25 @@ public final class HologramBlueprintCompactCodec {
                     if (row.size() != 2) throw new IOException("Invalid blueprint cell reference");
                     int ref = index(row.get(0), materials.size());
                     JsonObject coordinates = object(row.get(1));
+                    int coordinateSize = 2;
                     for (Map.Entry<String, JsonElement> coordinate : coordinates.entrySet()) {
-                        if (!coordinate.getKey()
-                            .matches("[xyz]")) throw new IOException("Invalid compact coordinate field");
+                        String axis = coordinate.getKey();
+                        if (!axis.equals("x") && !axis.equals("y") && !axis.equals("z"))
+                            throw new IOException("Invalid compact coordinate field");
                         JsonElement number = coordinate.getValue();
                         if (!number.isJsonPrimitive() || !number.getAsJsonPrimitive()
-                            .isNumber()
-                            || !number.getAsString()
-                                .matches("-?[0-9]+"))
+                            .isNumber()) throw new IOException("Invalid compact coordinate");
+                        String valueText = number.getAsString();
+                        if (!decimalDigits(valueText, valueText.startsWith("-") ? 1 : 0))
                             throw new IOException("Invalid compact coordinate");
                         try {
-                            Integer.parseInt(number.getAsString());
+                            Integer.parseInt(valueText);
                         } catch (NumberFormatException invalid) {
                             throw new IOException("Compact coordinate range", invalid);
                         }
+                        if (coordinateSize > 2) coordinateSize++;
+                        coordinateSize += 4 + valueText.length();
                     }
-                    long coordinateSize = measure(coordinates);
                     boolean a = materials.get(ref)
                         .getAsJsonObject()
                         .entrySet()
@@ -331,13 +398,20 @@ public final class HologramBlueprintCompactCodec {
     private static int index(JsonElement value, int count) throws IOException {
         if (value == null || !value.isJsonPrimitive()
             || !value.getAsJsonPrimitive()
-                .isNumber()
-            || !value.getAsString()
-                .matches("0|[1-9][0-9]{0,9}"))
+                .isNumber())
             throw new IOException("Invalid blueprint dictionary reference");
-        long index = Long.parseLong(value.getAsString());
+        String text = value.getAsString();
+        if (text.length() > 10 || !decimalDigits(text, 0) || text.length() > 1 && text.charAt(0) == '0')
+            throw new IOException("Invalid blueprint dictionary reference");
+        long index = Long.parseLong(text);
         if (index >= count) throw new IOException("Blueprint dictionary reference out of range");
         return (int) index;
+    }
+
+    private static boolean decimalDigits(String text, int start) {
+        if (start >= text.length()) return false;
+        for (int i = start; i < text.length(); i++) if (text.charAt(i) < '0' || text.charAt(i) > '9') return false;
+        return true;
     }
 
     private static JsonArray array(JsonElement value) throws IOException {

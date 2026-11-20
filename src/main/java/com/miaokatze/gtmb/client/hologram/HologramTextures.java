@@ -163,6 +163,11 @@ final class HologramTextures {
         return material;
     }
 
+    /** The resident preview owns its palette and does not retain one cache entry per cell. */
+    static Material materialUntracked(HologramState.Cell cell, boolean current) {
+        return resolve(cell, current);
+    }
+
     @SuppressWarnings("unchecked")
     private static Material resolve(HologramState.Cell cell, boolean current) {
         List<Sample>[] sides = (List<Sample>[]) new List<?>[6];

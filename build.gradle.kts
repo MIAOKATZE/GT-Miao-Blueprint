@@ -73,6 +73,8 @@ tasks.register<JavaExec>("runHologramTest") {
 tasks.named("check") { dependsOn("runHologramTest") }
 
 mapOf(
+    "runPrivateBlueprintRegression" to "com.miaokatze.gtmb.client.hologram.HologramPrivateBlueprintRegression",
+    "runMiaoVisonLiteRegression" to "com.miaokatze.gtmb.client.hologram.HologramLiteCompactRegression",
     "runUnsavedPlacementRegression" to "com.miaokatze.gtmb.hologram.HologramUnsavedPlacementRegression",
     "runAttachmentSnapshotRegression" to "com.miaokatze.gtmb.hologram.HologramAttachmentSnapshotRegression",
     "runCookingCompatibilityTest" to "com.miaokatze.gtmb.compat.cookingforblockheads.CookingForBlockheadsRegression",
@@ -92,6 +94,14 @@ mapOf(
         doFirst { scratchDir.get().asFile.mkdirs() }
     }
     tasks.named("check") { dependsOn(taskName) }
+}
+
+tasks.named<JavaExec>("runPrivateBlueprintRegression") {
+    providers.gradleProperty("privateBlueprintSampleDirectory").orNull?.let { args(it) }
+}
+
+tasks.named<JavaExec>("runMiaoVisonLiteRegression") {
+    providers.gradleProperty("miaovisonLiteBlueprint").orNull?.let { args(it) }
 }
 
 // The unsaved-placement contract exercises the native LittleTiles host, including mixed-material geometry.

@@ -14,6 +14,7 @@ import java.util.function.BiConsumer;
 
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagList;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.server.management.UserListOpsEntry;
 
@@ -90,6 +91,25 @@ public final class HologramLibraryFacade {
         if (bytes == null || bytes.length > HologramBlueprintSharing.MAX_BYTES)
             throw new IOException("Invalid native blueprint byte budget");
         HologramBlueprintSharing.decode(new String(bytes, StandardCharsets.UTF_8));
+    }
+
+    /** Retire claims invalidated by a detached geometry edit without normalizing unknown transport tags. */
+    public static String invalidatePrivateGeometryReceipt(String encoded) throws IOException {
+        NBTTagCompound receipt = HologramBlueprintNbt.decodeData(encoded);
+        if (receipt == null) return encoded;
+        receipt.setBoolean("complete", false);
+        if (receipt.hasKey("policy", 10)) {
+            NBTTagCompound policy = receipt.getCompoundTag("policy");
+            NBTTagList confirmed = policy.getTagList("confirmedStages", 8);
+            int validPrefix = 0;
+            int coordinates = HologramBlueprintProcessing.STAGES.indexOf("coordinates");
+            while (validPrefix < coordinates && validPrefix < confirmed.tagCount()
+                && HologramBlueprintProcessing.STAGES.get(validPrefix)
+                    .equals(confirmed.getStringTagAt(validPrefix)))
+                validPrefix++;
+            while (confirmed.tagCount() > validPrefix) confirmed.removeTag(confirmed.tagCount() - 1);
+        }
+        return HologramBlueprintNbt.encodeData(receipt);
     }
 
     public static UUID actorId(EntityPlayerMP player) {

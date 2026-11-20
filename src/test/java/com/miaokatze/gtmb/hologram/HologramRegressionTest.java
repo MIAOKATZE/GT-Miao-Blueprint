@@ -365,6 +365,9 @@ public final class HologramRegressionTest {
             }
         });
         cases.put(
+            "local_controller_route_and_optional_display_are_isolated",
+            com.miaokatze.gtmb.client.hologram.HologramControllerStandardRegression::run);
+        cases.put(
             "local_material_estimates_never_grant_payment_or_inventory_authority",
             HologramStaticMaterialsRegression::run);
         cases.put("rotation_cycles_all_six_legal_fronts", HologramRegressionTest::faceRotation);

@@ -113,6 +113,8 @@ final class HologramLibraryWorkflow {
     static boolean libraryQuickCurrent(HologramSession s, NBTTagCompound request) {
         return s.libraryQuickPending && !s.libraryQuickToken.isEmpty()
             && s.libraryQuickToken.equals(request.getString("quickToken"))
+            && (s.libraryQuickClientTaskToken <= 0
+                || s.libraryQuickClientTaskToken == request.getLong("clientTaskToken"))
             && "place".equals(request.getString("action"));
     }
 
@@ -180,10 +182,7 @@ final class HologramLibraryWorkflow {
             if (!pending && s.virtual
                 && s.virtualPlacement
                 && (!s.virtualLocked || s.libraryQuickClientTaskToken > 0)) {
-                NBTTagCompound cancel = new NBTTagCompound();
-                cancel.setString("session", s.id);
-                cancel.setLong("planRevision", s.planRevision);
-                HologramWorldPlacementWorkflow.cancelWorldPlacement(player, cancel);
+                HologramWorldPlacementWorkflow.cancelQuickWorldPlacement(s);
             }
         }
     }
@@ -253,6 +252,8 @@ final class HologramLibraryWorkflow {
         s = HologramWorkspace.find(player.getUniqueID());
         if (s == null || s.virtualPreset == null || !staged.id.equals(s.virtualPreset.id))
             throw new java.io.IOException("Blueprint activation failed");
+        // Past activation, a matching cancellation must retire this placement even if rotation or lock fails.
+        if (request.getBoolean("quickPlace")) s.libraryQuickPending = false;
         for (int index = 0; index < pose.length; index++) if (!HologramWorldPlacementWorkflow
             .transformVirtual(s, s.x, s.y, s.z, true, pose[index] == 1, index == pose.length - 1))
             throw new java.io.IOException("This blueprint cannot represent the selected orientation");
@@ -272,7 +273,6 @@ final class HologramLibraryWorkflow {
             s.player.inventory.markDirty();
         }
         if (request.getBoolean("quickPlace")) {
-            s.libraryQuickPending = false;
             s.libraryQuickClientTaskToken = request.getLong("clientTaskToken");
             if (s.libraryQuickClientTaskToken > 0) {
                 int x = request.hasKey("placementX", 3) ? request.getInteger("placementX") : s.x;

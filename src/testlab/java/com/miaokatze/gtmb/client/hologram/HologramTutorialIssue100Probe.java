@@ -161,7 +161,17 @@ public final class HologramTutorialIssue100Probe {
                     return;
                 require(!mc.thePlayer.capabilities.isCreativeMode, "Business actor must remain survival");
                 inventoryBefore = inventory(mc);
-                HologramLocalPlacement.INSTANCE.install(localFixture(), "issue100-fixture", "", "", "");
+                HologramLibraryClient.DisplaySource source = new HologramLibraryClient.DisplaySource(
+                    "issue100-fixture",
+                    "",
+                    null,
+                    null,
+                    "issue100-fixture",
+                    "",
+                    "",
+                    "");
+                source.state = localFixture();
+                HologramLocalPlacement.INSTANCE.install(source, "");
                 background = HologramLocalPlacement.INSTANCE.display();
                 mc.thePlayer.rotationPitch = 65;
                 startFrame = frame;

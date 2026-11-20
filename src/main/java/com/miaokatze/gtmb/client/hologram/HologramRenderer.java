@@ -31,6 +31,7 @@ import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL14;
 
 import com.gtnewhorizon.gtnhlib.client.renderer.DirectTessellator;
+import com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLite;
 import com.miaokatze.miaokatzecore.client.render.ScreenLineStream;
 import com.miaokatze.miaokatzecore.client.render.TessellatorSlice;
 
@@ -41,13 +42,12 @@ import gregtech.common.blocks.ItemMachines;
 /** Cached static schematic geometry; rendering never ticks machines or reads live world cells. */
 final class HologramRenderer {
 
-    private static final int[][] FACES = { { 0, 1, 5, 4 }, { 3, 7, 6, 2 }, { 0, 3, 2, 1 }, { 4, 5, 6, 7 },
-        { 0, 4, 7, 3 }, { 1, 2, 6, 5 } };
-    private static final int[][] NORMALS = { { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 }, { -1, 0, 0 },
-        { 1, 0, 0 } };
-    private static final int[][] EDGES = { { 0, 1 }, { 1, 2 }, { 2, 3 }, { 3, 0 }, { 4, 5 }, { 5, 6 }, { 6, 7 },
-        { 7, 4 }, { 0, 4 }, { 1, 5 }, { 2, 6 }, { 3, 7 } };
-    private static final double[][] VERTICES = { { -.5, -.5, -.5 }, { .5, -.5, -.5 }, { .5, .5, -.5 }, { -.5, .5, -.5 },
+    static final int[][] FACES = { { 0, 1, 5, 4 }, { 3, 7, 6, 2 }, { 0, 3, 2, 1 }, { 4, 5, 6, 7 }, { 0, 4, 7, 3 },
+        { 1, 2, 6, 5 } };
+    static final int[][] NORMALS = { { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 }, { -1, 0, 0 }, { 1, 0, 0 } };
+    static final int[][] EDGES = { { 0, 1 }, { 1, 2 }, { 2, 3 }, { 3, 0 }, { 4, 5 }, { 5, 6 }, { 6, 7 }, { 7, 4 },
+        { 0, 4 }, { 1, 5 }, { 2, 6 }, { 3, 7 } };
+    static final double[][] VERTICES = { { -.5, -.5, -.5 }, { .5, -.5, -.5 }, { .5, .5, -.5 }, { -.5, .5, -.5 },
         { -.5, -.5, .5 }, { .5, -.5, .5 }, { .5, .5, .5 }, { -.5, .5, .5 } };
 
     private HologramRenderer() {}
@@ -58,6 +58,10 @@ final class HologramRenderer {
     private static long worldRenderGeneration;
     static int lastPreviewRoleMarkers, lastPreviewAnchorMarkers;
     private static HologramState previewState, worldState;
+    private static HologramLiteRender liteScene, liteGhost;
+    private static HologramState unrenderableLiteScene, unrenderableLiteGhost;
+    private static boolean litePresented;
+    private static final List<LiteLabelBounds> liteLabels = new ArrayList<>();
     private static String previewKey = "";
     private static List<Face> cachedFaces = new ArrayList<>();
     private static PreviewSubmission previewSubmission;
@@ -146,6 +150,8 @@ final class HologramRenderer {
     private static boolean visibleEmptyCells;
 
     static void release() {
+        closeLiteScene();
+        closeLiteGhost();
         projectedFrame = presentedFrame = null;
         projectedRequest = presentedRequest = null;
         cameraOnlyProjection = previewCameraMoving = false;
@@ -278,6 +284,7 @@ final class HologramRenderer {
     }
 
     static boolean previewMeshReady(HologramState state) {
+        if (liteScene != null && liteScene.state == state && litePresented) return liteScene.submitted;
         return state != null && previewState == state
             && previewPreparation != null
             && previewPreparation.state == state
@@ -292,6 +299,7 @@ final class HologramRenderer {
     }
 
     static boolean previewPreparing(HologramState state) {
+        if (liteScene != null && liteScene.state == state && litePresented) return !liteScene.submitted;
         return previewPreparation != null && previewPreparation.state == state && !previewMeshReady(state);
     }
 
@@ -319,6 +327,7 @@ final class HologramRenderer {
     }
 
     static void sceneClosed() {
+        closeLiteScene();
         invalidatePreviewDrawCache();
         closePreviewLineStream();
         displayedState = null;
@@ -336,6 +345,7 @@ final class HologramRenderer {
     }
 
     static boolean previewMeshVisible(HologramState state) {
+        if (liteScene != null && liteScene.state == state && litePresented) return liteScene.materialVisible;
         return state != null && previewState == state
             && (!cachedFaces.isEmpty() || !nativePreviewCells.isEmpty()
                 || previewPreparation != null && previewPreparation.boundary != null
@@ -343,6 +353,7 @@ final class HologramRenderer {
     }
 
     static int previewMeshCompleted(HologramState state) {
+        if (liteScene != null && liteScene.state == state && litePresented) return liteScene.completed;
         return previewPreparation != null && previewPreparation.state == state ? previewPreparation.completed : 0;
     }
 
@@ -422,6 +433,34 @@ final class HologramRenderer {
             presentedRequest = null;
             return -1;
         }
+        if (useLitePreview(state)) {
+            try {
+                return previewLite(
+                    state,
+                    x,
+                    y,
+                    width,
+                    height,
+                    yaw,
+                    pitch,
+                    zoom,
+                    panX,
+                    panY,
+                    panZ,
+                    layer,
+                    view,
+                    selected,
+                    mouseX,
+                    mouseY);
+            } catch (RuntimeException | LinkageError unavailable) {
+                closeLiteScene();
+                unrenderableLiteScene = state;
+                com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Resident blueprint preview unavailable", unavailable);
+            }
+        } else if (liteScene != null && liteScene.state != state && !HologramBlueprintPreview.cleanCapture()) {
+            closeLiteScene();
+        }
+        litePresented = false;
         HologramTextures.begin(state);
         HologramBlockRender.begin(state);
         String key = x + ":"
@@ -943,6 +982,400 @@ final class HologramRenderer {
         return hovered;
     }
 
+    private static boolean useLitePreview(HologramState state) {
+        return state != unrenderableLiteScene && !HologramBlueprintPreview.cleanCapture()
+            && (state.data.getBoolean("localBlueprintDocument") || state.data.getBoolean("localControllerPreview")
+                || state == HologramLibraryClient.INSTANCE.browsePreviewState())
+            && (selection == null || selection.size() == 0
+                || moveOffset[0] == 0 && moveOffset[1] == 0 && moveOffset[2] == 0)
+            && MiaoVisonLite.available();
+    }
+
+    static boolean litePreviewActive() {
+        return litePresented && liteScene != null;
+    }
+
+    static int litePreviewDraws() {
+        return liteScene == null ? 0 : liteScene.submittedLists;
+    }
+
+    private static void closeLiteScene() {
+        if (liteScene != null) liteScene.close();
+        liteScene = null;
+        litePresented = false;
+        liteLabels.clear();
+        unrenderableLiteScene = null;
+    }
+
+    private static void closeLiteGhost() {
+        if (liteGhost != null) liteGhost.close();
+        liteGhost = null;
+        unrenderableLiteGhost = null;
+    }
+
+    private static int previewLite(HologramState state, int x, int y, int width, int height, double yaw, double pitch,
+        double zoom, double panX, double panY, double panZ, int layer, int view, int selected, int mouseX, int mouseY) {
+        HologramTextures.installReloadListener();
+        boolean newScene = liteScene == null || !liteScene.matches(state, layer, view, showEmptyCells);
+        if (newScene) {
+            closeLiteScene();
+            liteScene = new HologramLiteRender(state, layer, view, showEmptyCells, false);
+        }
+        if (boundsState != state) {
+            boundsState = state;
+            boundsX = boundsY = boundsZ = 0;
+            boundsExtent = 1;
+            if (!state.cells.isEmpty()) {
+                int[] bounds = state.regions.bounds();
+                boundsX = (bounds[0] + (double) bounds[3]) * .5 - liteScene.x;
+                boundsY = (state.minY + (double) state.maxY) * .5;
+                boundsZ = (bounds[2] + (double) bounds[5]) * .5 - liteScene.z;
+                boundsExtent = Math.max(
+                    bounds[3] - (double) bounds[0] + 2,
+                    Math.max(bounds[5] - (double) bounds[2] + 2, state.maxY - (double) state.minY + 2));
+            }
+        }
+        boolean sameCamera = !newScene && litePresented
+            && presentedRequest != null
+            && presentedRequest.matches(
+                state,
+                x,
+                y,
+                width,
+                height,
+                yaw,
+                pitch,
+                zoom,
+                panX,
+                panY,
+                panZ,
+                layer,
+                view,
+                showEmptyCells,
+                false);
+        if (!sameCamera) projectedFrame = new HologramEditorCameraFrame(
+            x,
+            y,
+            width,
+            height,
+            yaw,
+            pitch,
+            zoom,
+            boundsX + panX,
+            boundsY + panY,
+            boundsZ + panZ,
+            boundsExtent);
+        double depthScale = 128 / boundsExtent;
+        boolean firstMaterial = !liteScene.materialObserved;
+        boolean firstReady = !liteScene.submitted;
+        Minecraft mc = Minecraft.getMinecraft();
+        liteScene.advance(PREVIEW_BUILD_NANOS);
+        GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
+        try {
+            GL11.glDisable(GL11.GL_LIGHTING);
+            if (!GL11.glIsEnabled(GL11.GL_SCISSOR_TEST)) {
+                int factor = new net.minecraft.client.gui.ScaledResolution(mc, mc.displayWidth, mc.displayHeight)
+                    .getScaleFactor();
+                GL11.glEnable(GL11.GL_SCISSOR_TEST);
+                GL11.glScissor(x * factor, mc.displayHeight - (y + height) * factor, width * factor, height * factor);
+            }
+            GL11.glEnable(GL11.GL_DEPTH_TEST);
+            GL11.glDepthFunc(GL11.GL_LEQUAL);
+            GL11.glDepthMask(true);
+            GL11.glClearDepth(1);
+            GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
+            GL11.glEnable(GL11.GL_BLEND);
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+            GL11.glEnable(GL11.GL_ALPHA_TEST);
+            GL11.glAlphaFunc(GL11.GL_GREATER, .01f);
+            float outline = state == HologramLibraryClient.INSTANCE.browsePreviewState() ? 0
+                : .45f * previewOutlineDensity();
+            GL11.glPushMatrix();
+            try {
+                applyLitePreviewTransform(liteScene, projectedFrame, depthScale);
+                liteScene.draw(projectedFrame, outline, 0x33b3cc, liteScene.viewport(projectedFrame));
+            } finally {
+                GL11.glPopMatrix();
+            }
+            drawLiteSelection(state, selected, depthScale);
+            if (liteScene.submitted) {
+                if (!sameCamera || firstReady) buildStructureBoxes(state);
+                drawLiteBoxes(mouseX, mouseY);
+            } else {
+                structureBoxes.clear();
+                hintBoxes.clear();
+            }
+            drawLiteLabels(mc, x, y, width, height);
+        } finally {
+            GL11.glDepthMask(true);
+            GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
+            GL11.glPopAttrib();
+        }
+        presentedFrame = projectedFrame;
+        presentedState = state;
+        previewState = state;
+        presentedRequest = sameCamera ? presentedRequest
+            : new PreviewRequest(
+                state,
+                x,
+                y,
+                width,
+                height,
+                yaw,
+                pitch,
+                zoom,
+                panX,
+                panY,
+                panZ,
+                layer,
+                view,
+                showEmptyCells,
+                false);
+        displayedState = liteScene.materialVisible ? state : null;
+        litePresented = true;
+        if (firstMaterial && liteScene.materialVisible) {
+            liteScene.materialObserved = true;
+            com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.loadStage(
+                com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.LoadStage.CLIENT_FIRST_MATERIAL,
+                state.data,
+                -1,
+                liteScene.completed);
+        }
+        if (firstReady && liteScene.submitted) com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.loadStage(
+            com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.LoadStage.CLIENT_RENDER_READY,
+            state.data,
+            -1,
+            liteScene.completed);
+        return pick(mouseX, mouseY);
+    }
+
+    private static void applyLitePreviewTransform(HologramLiteRender scene, HologramEditorCameraFrame frame,
+        double depthScale) {
+        GL11.glTranslated(frame.coordinates.screenX(0), frame.coordinates.screenY(0), 0);
+        GL11.glScaled(frame.scale, -frame.scale, depthScale);
+        GL11.glRotated(frame.pose.pitchDegrees(), 1, 0, 0);
+        GL11.glRotated(frame.pose.yawDegrees(), 0, 1, 0);
+        GL11.glTranslated(
+            -scene.x - frame.pose.anchorX() - .5,
+            -scene.y - frame.pose.anchorY() - .5,
+            -scene.z - frame.pose.anchorZ() - .5);
+    }
+
+    private static void drawLiteSelection(HologramState state, int selected, double depthScale) {
+        GL11.glDisable(GL11.GL_TEXTURE_2D);
+        GL11.glDepthMask(false);
+        Tessellator tess = Tessellator.instance;
+        tess.startDrawing(GL11.GL_LINES);
+        int vertices = 0;
+        if (selected >= 0 && selected < state.cells.size()) {
+            tess.setColorRGBA_F(1, .92f, .5f, 1);
+            vertices += drawLiteCellBounds(tess, state.cells.get(selected), depthScale);
+        }
+        if (selection != null) {
+            tess.setColorRGBA_F(1, .92f, .5f, 1);
+            for (int index : selection.indices()) {
+                if (index == selected || index < 0 || index >= state.cells.size()) continue;
+                if (vertices >= 4000) {
+                    tess.draw();
+                    tess.startDrawing(GL11.GL_LINES);
+                    tess.setColorRGBA_F(1, .92f, .5f, 1);
+                    vertices = 0;
+                }
+                vertices += drawLiteCellBounds(tess, state.cells.get(index), depthScale);
+            }
+            tess.setColorRGBA_F(.78f, .61f, 1, 1);
+            for (int index : selection.related(state)) {
+                if (index == selected || selection.contains(index)) continue;
+                if (vertices >= 4000) {
+                    tess.draw();
+                    tess.startDrawing(GL11.GL_LINES);
+                    tess.setColorRGBA_F(.78f, .61f, 1, 1);
+                    vertices = 0;
+                }
+                vertices += drawLiteCellBounds(tess, state.cells.get(index), depthScale);
+            }
+        }
+        tess.draw();
+    }
+
+    private static int drawLiteCellBounds(Tessellator tess, HologramState.Cell cell, double depthScale) {
+        if (!liteScene.readyCell(cell)) return 0;
+        double[][] points = new double[8][];
+        for (int i = 0; i < points.length; i++) points[i] = projectedFrame
+            .project(cell.dx + VERTICES[i][0], cell.dy + VERTICES[i][1], cell.dz + VERTICES[i][2]);
+        for (int[] edge : EDGES) for (int index : edge) {
+            double[] point = points[index];
+            tess.addVertex(point[0], point[1], point[2] * depthScale + .15);
+        }
+        return 24;
+    }
+
+    private static void drawLiteBoxes(int mouseX, int mouseY) {
+        GL11.glDisable(GL11.GL_DEPTH_TEST);
+        Tessellator tess = Tessellator.instance;
+        GL11.glLineWidth(2.5f);
+        tess.startDrawing(GL11.GL_LINES);
+        int vertices = 0;
+        String hovered = pickStructure(mouseX, mouseY);
+        for (Map.Entry<String, double[][]> entry : structureBoxes.entrySet()) {
+            if (vertices >= 4000) {
+                tess.draw();
+                tess.startDrawing(GL11.GL_LINES);
+                vertices = 0;
+            }
+            String id = entry.getKey();
+            if (id.equals(hovered)) tess.setColorRGBA_F(1, 1, .8f, 1);
+            else if (id.equals(selectedStructureId)) tess.setColorRGBA_F(1, .78f, .3f, .95f);
+            else if (missingStructures.contains(id)) tess.setColorRGBA_F(.65f, .65f, .65f, .72f);
+            else if (com.miaokatze.gtmb.hologram.HologramTextBox.isAttachmentId(id))
+                tess.setColorRGBA_F(.78f, .52f, 1, .85f);
+            else tess.setColorRGBA_F(.45f, .85f, 1, .72f);
+            drawLiteBox(tess, entry.getValue());
+            vertices += 24;
+        }
+        tess.draw();
+        GL11.glLineWidth(1.5f);
+        tess.startDrawing(GL11.GL_LINES);
+        tess.setColorRGBA_F(.95f, .77f, .39f, .48f);
+        vertices = 0;
+        for (double[][] box : hintBoxes.values()) {
+            if (vertices >= 4000) {
+                tess.draw();
+                tess.startDrawing(GL11.GL_LINES);
+                tess.setColorRGBA_F(.95f, .77f, .39f, .48f);
+                vertices = 0;
+            }
+            drawLiteBox(tess, box);
+            vertices += 24;
+        }
+        tess.draw();
+    }
+
+    private static void drawLiteBox(Tessellator tess, double[][] points) {
+        for (int[] edge : EDGES) for (int i : edge) tess.addVertex(points[i][0], points[i][1], 1);
+    }
+
+    private static void drawLiteLabels(Minecraft mc, int x, int y, int width, int height) {
+        liteLabels.clear();
+        lastPreviewRoleMarkers = lastPreviewAnchorMarkers = 0;
+        GL11.glDisable(GL11.GL_DEPTH_TEST);
+        GL11.glEnable(GL11.GL_TEXTURE_2D);
+        GL11.glColor4f(1, 1, 1, 1);
+        for (HologramLiteRender.Label label : liteScene.labels()) {
+            HologramState.Cell cell = label.cell;
+            double[] point = projectedFrame.projectScreen(cell.dx, cell.dy + .5, cell.dz);
+            if (!cell.anchor && !projectedFrame.coordinates.contains(point[0], point[1])) continue;
+            float scale = cell.anchor || cell.missingBlock ? 1 : .7f;
+            int labelWidth = Math.round(mc.fontRenderer.getStringWidth(label.text) * scale);
+            int left = Math.max(x + 2, Math.min(x + width - labelWidth - 4, (int) point[0] - labelWidth / 2));
+            int top = Math.max(y + 2, Math.min(y + height - 12, (int) point[1] - 4));
+            LiteLabelBounds box = new LiteLabelBounds(
+                cell.index,
+                left - 2,
+                top - 1,
+                left + labelWidth + 2,
+                top + Math.round(9 * scale) + 1);
+            liteLabels.add(box);
+            net.minecraft.client.gui.Gui
+                .drawRect(box.left, box.top, box.right, box.bottom, cell.anchor ? 0xee514025 : 0xda102a34);
+            GL11.glPushMatrix();
+            try {
+                GL11.glTranslatef(left, top, 0);
+                GL11.glScalef(scale, scale, 1);
+                mc.fontRenderer.drawStringWithShadow(
+                    label.text,
+                    0,
+                    0,
+                    cell.sourceMissing ? 0xff7272 : cell.missingBlock ? 0xff6be4 : cell.anchor ? 0xffffbd : 0x9ceaf3);
+            } finally {
+                GL11.glPopMatrix();
+            }
+            lastPreviewRoleMarkers++;
+            if (cell.anchor) lastPreviewAnchorMarkers++;
+        }
+    }
+
+    private static final class LiteLabelBounds {
+
+        final int index, left, top, right, bottom;
+
+        LiteLabelBounds(int index, int left, int top, int right, int bottom) {
+            this.index = index;
+            this.left = left;
+            this.top = top;
+            this.right = right;
+            this.bottom = bottom;
+        }
+
+        boolean contains(int x, int y) {
+            return x >= left && x < right && y >= top && y < bottom;
+        }
+    }
+
+    private static void worldLite(HologramState state, float partialTicks, boolean witness) {
+        HologramTextures.installReloadListener();
+        Minecraft mc = Minecraft.getMinecraft();
+        Entity camera = mc.renderViewEntity;
+        if (camera == null) return;
+        int[] anchor = state.data.getBoolean("moving") ? HologramClient.movingAnchor(state) : null;
+        if (state.data.getBoolean("moving") && anchor == null) return;
+        if (liteGhost == null || !liteGhost.matches(state, projectionLayer, 0, false)) {
+            closeLiteGhost();
+            liteGhost = new HologramLiteRender(state, projectionLayer, 0, false, true);
+        }
+        liteGhost.advance(WORLD_BUILD_NANOS);
+        double px = camera.lastTickPosX + (camera.posX - camera.lastTickPosX) * partialTicks;
+        double py = camera.lastTickPosY + (camera.posY - camera.lastTickPosY) * partialTicks;
+        double pz = camera.lastTickPosZ + (camera.posZ - camera.lastTickPosZ) * partialTicks;
+        double ox = anchor == null ? 0 : anchor[0] - liteGhost.x;
+        double oy = anchor == null ? 0 : anchor[1] - liteGhost.y;
+        double oz = anchor == null ? 0 : anchor[2] - liteGhost.z;
+        Frustrum frustum = new Frustrum();
+        frustum.setPosition(px, py, pz);
+        double range = Math.max(16, mc.gameSettings.renderDistanceChunks * 16);
+        lastWorldPlacementOutlineColor = placementOutlineColor(state);
+        GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
+        GL11.glPushMatrix();
+        try {
+            GL11.glTranslated(ox - px, oy - py, oz - pz);
+            HologramLocalPlacement.INSTANCE.rotateGl();
+            GL11.glDisable(GL11.GL_LIGHTING);
+            GL11.glEnable(GL11.GL_ALPHA_TEST);
+            GL11.glAlphaFunc(GL11.GL_GREATER, .01f);
+            GL11.glEnable(GL11.GL_DEPTH_TEST);
+            GL11.glEnable(GL11.GL_BLEND);
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+            GL11.glDepthMask(false);
+            GL11.glLineWidth(1.25f);
+            liteGhost.draw(null, .65f, lastWorldPlacementOutlineColor, (gx, gy, gz) -> {
+                double[] bounds = HologramLocalPlacement.INSTANCE.bounds(gx, gy, gz);
+                double minX = bounds[0] + ox, minY = bounds[1] + oy, minZ = bounds[2] + oz;
+                double maxX = bounds[3] + ox, maxY = bounds[4] + oy, maxZ = bounds[5] + oz;
+                double dx = Math.max(minX - px, Math.max(0, px - maxX));
+                double dy = Math.max(minY - py, Math.max(0, py - maxY));
+                double dz = Math.max(minZ - pz, Math.max(0, pz - maxZ));
+                return dx * dx + dy * dy + dz * dz <= range * range
+                    && frustum.isBoundingBoxInFrustum(AxisAlignedBB.getBoundingBox(minX, minY, minZ, maxX, maxY, maxZ));
+            });
+            lastWorldGeometry = liteGhost.submittedLists > 0 ? liteGhost.drawnCells : 0;
+            lastWorldGhosts = liteGhost.materialVisible ? liteGhost.drawnCells : 0;
+            lastWorldGTGeometry = liteGhost.submittedLists > 0 ? liteGhost.drawnGtCells : 0;
+            lastWorldFallback = liteGhost.submittedLists > 0 ? liteGhost.drawnFallbackCells : 0;
+            lastWorldMatched = 0;
+            if (witness && liteGhost.submittedLists > 0) worldRenderWitness = new WorldRenderWitness(
+                state,
+                anchor,
+                ox,
+                oy,
+                oz,
+                ++worldRenderGeneration,
+                liteGhost.submittedLists);
+        } finally {
+            GL11.glPopMatrix();
+            GL11.glPopAttrib();
+        }
+    }
+
     /** A source-switch wait reuses only the already projected occupancy boundary, never the old native/face loops. */
     static void waitingPreview(HologramState state) {
         presentedState = null;
@@ -1172,6 +1605,12 @@ final class HologramRenderer {
 
     /** Use the same visible faces as selection, including the camera-facing placement side. */
     static int[] pickAdjacentVoxel(int x, int y) {
+        if (litePresented && liteScene != null && presentedFrame != null) {
+            HologramLiteRender.Hit hit = liteScene.pick(presentedFrame, x, y);
+            if (hit == null || hit.side < 0 || hit.cell.wantId.equals("minecraft:air")) return null;
+            int[] normal = NORMALS[hit.side];
+            return new int[] { hit.cell.x + normal[0], hit.cell.y + normal[1], hit.cell.z + normal[2] };
+        }
         Face hit = null;
         for (Face face : cachedFaces) if (!face.empty && face.contains(x, y)) hit = face;
         if (hit == null) return null;
@@ -1300,6 +1739,12 @@ final class HologramRenderer {
 
     static int pick(int x, int y) {
         if (presentedState == null || presentedFrame == null) return -1;
+        if (litePresented && liteScene != null) {
+            if (!liteScene.submitted) return -1;
+            for (LiteLabelBounds label : liteLabels) if (label.contains(x, y)) return label.index;
+            HologramLiteRender.Hit hit = liteScene.pick(presentedFrame, x, y);
+            return hit == null ? -1 : hit.cell.index;
+        }
         int result = -1;
         for (Face face : cachedFaces) if (face.contains(x, y)) result = face.cell.index;
         for (RoleMarker marker : cachedMarkers)
@@ -1323,10 +1768,14 @@ final class HologramRenderer {
     }
 
     private static boolean previewVisible(HologramState.Cell c, int layer, int view, boolean current) {
+        return previewVisible(c, layer, view, current, showEmptyCells);
+    }
+
+    static boolean previewVisible(HologramState.Cell c, int layer, int view, boolean current, boolean emptyCells) {
         if (c.status.equals("removed") || view == 2 && (c.completed() || c.status.equals("satisfied"))) return false;
         if (HologramBlockRender.invisible(c, current)) return false;
         boolean empty = !c.anchor && !c.iconOnly && (current ? c.id : c.wantId).equals("minecraft:air");
-        return (!empty || showEmptyCells) && (c.anchor || c.dy == layer || layer == Integer.MAX_VALUE);
+        return (!empty || emptyCells) && (c.anchor || c.dy == layer || layer == Integer.MAX_VALUE);
     }
 
     private static PreviewRegion previewRegion(HologramState state, List<HologramState.Cell> cells, int layer, int view,
@@ -1854,6 +2303,17 @@ final class HologramRenderer {
             || Boolean.getBoolean("gtmb.hologram.followupAreaClient")
             || Boolean.getBoolean("gtmb.hologram.previewCaptureWitness");
         if (witness) worldRenderWitness = null;
+        if (state.data.getBoolean("localPreview") && state != unrenderableLiteGhost && MiaoVisonLite.available()) {
+            try {
+                worldLite(state, partialTicks, witness);
+                return;
+            } catch (RuntimeException | LinkageError unavailable) {
+                closeLiteGhost();
+                unrenderableLiteGhost = state;
+                com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Resident world blueprint unavailable", unavailable);
+                return;
+            }
+        }
         HologramTextures.begin(state);
         HologramBlockRender.begin(state);
         Minecraft mc = Minecraft.getMinecraft();
@@ -2054,6 +2514,11 @@ final class HologramRenderer {
 
     /** Group lists refer to native lists, so discard them before releasing their native snapshot. */
     static void nativeSnapshotChanged() {
+        closeLiteGhost();
+        nativeModelsChanged();
+    }
+
+    static void nativeModelsChanged() {
         clearWorldGroups();
         worldState = null;
         previewState = null;
@@ -2309,12 +2774,12 @@ final class HologramRenderer {
         return true;
     }
 
-    private static double textureU(IIcon icon, int side, double[] point) {
+    static double textureU(IIcon icon, int side, double[] point) {
         double u = side == 4 ? point[2] + .5 : side == 5 ? .5 - point[2] : side == 2 ? .5 - point[0] : point[0] + .5;
         return icon.getMinU() + (icon.getMaxU() - icon.getMinU()) * u;
     }
 
-    private static double textureV(IIcon icon, int side, double[] point) {
+    static double textureV(IIcon icon, int side, double[] point) {
         double v = side == 0 ? point[2] + .5 : side == 1 ? .5 - point[2] : .5 - point[1];
         return icon.getMinV() + (icon.getMaxV() - icon.getMinV()) * v;
     }

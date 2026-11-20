@@ -62,6 +62,13 @@ public final class HologramTestLabUiProfile {
     private HologramLibraryAdminEditor permissionsEditor;
     private int originalDisplayWidth, originalDisplayHeight;
     private boolean narrowReopenRequested;
+    private final boolean verifyLite = Boolean.getBoolean("gtmb.testlab.clientUiLiteRender");
+    private final boolean verifyControllerWorld = Boolean.getBoolean("gtmb.testlab.clientUiControllerWorld");
+    private HologramControllerStandardProbe.OwnedWorld controllerWorld;
+    private HologramLitePreviewProbe liteProbe;
+    private Map<String, Object> liteReceipt;
+    private HologramPrivateBlueprintProbe privateProbe;
+    private long privateGuiPostFrame = -1;
 
     private HologramTestLabUiProfile(Path output) {
         this.output = output;
@@ -92,6 +99,10 @@ public final class HologramTestLabUiProfile {
             diagnostic(mc);
             if (System.nanoTime() - started > timeout)
                 throw new IllegalStateException("Native UI profile timeout at stage " + stage);
+            if (stage == 40) {
+                verifyControllerWorld(mc);
+                return;
+            }
             if (stage == 0) {
                 boolean readyWorld = mc.theWorld != null && mc.thePlayer != null && mc.currentScreen == null;
                 if (!readyTitle(mc.currentScreen) && !readyWorld) return;
@@ -110,6 +121,7 @@ public final class HologramTestLabUiProfile {
                     previous == null ? ""
                         : previous.getClass()
                             .getName());
+                receipt.put("standardControllerMenu", HologramControllerStandardProbe.run());
                 snapshot = fixture();
                 screen = new HologramScreen(snapshot);
                 screen.openFrom(previous);
@@ -261,7 +273,20 @@ public final class HologramTestLabUiProfile {
                     narrowReopenRequested = true;
                     receipt.put("permissionsNarrowReopened", true);
                     requestedGuiPost = guiPostSerial;
-                }
+                } else if (stage == 12) {
+                    if (mc.currentScreen != screen) throw new IllegalStateException("Workbench ownership changed");
+                    receipt.put("terminalNativeLayout", nativeLayout());
+                    mc.displayGuiScreen(previous);
+                    if (originalDisplayWidth > 0) {
+                        mc.resize(originalDisplayWidth, originalDisplayHeight);
+                        originalDisplayWidth = 0;
+                    }
+                    Map<String, Object> evidence = new LinkedHashMap<>();
+                    receipt.put("privateBlueprintGui", evidence);
+                    privateProbe = new HologramPrivateBlueprintProbe(previous, evidence);
+                    privateProbe.open();
+                    stage = 13;
+                } else if (stage == 13) privateProbe.check();
         } catch (Throwable failure) {
             fail(failure);
         }
@@ -309,6 +334,8 @@ public final class HologramTestLabUiProfile {
 
     @SubscribeEvent(priority = EventPriority.LOWEST)
     public void guiPost(GuiScreenEvent.DrawScreenEvent.Post event) {
+        if (privateProbe != null && privateProbe.owns(event.gui)
+            && privateProbe.owns(Minecraft.getMinecraft().currentScreen)) privateGuiPostFrame = frameSerial;
         if (!finished && screen != null && event.gui == screen && Minecraft.getMinecraft().currentScreen == screen) {
             guiPostSerial++;
             lastGuiPostFrame = frameSerial;
@@ -377,6 +404,14 @@ public final class HologramTestLabUiProfile {
         frameSerial++;
         Minecraft mc = Minecraft.getMinecraft();
         try {
+            if (stage == 13) {
+                if (privateGuiPostFrame == frameSerial - 1 && privateProbe.frame(this::capturePng)) {
+                    privateProbe.close();
+                    privateProbe = null;
+                    finishVerifiedMenu();
+                }
+                return;
+            }
             boolean currentGuiPost = screen != null && mc.currentScreen == screen
                 && lastGuiPostFrame == frameSerial - 1;
             if (!initialDiagnosticWritten && currentGuiPost) {
@@ -451,9 +486,11 @@ public final class HologramTestLabUiProfile {
                         "permissionsNarrowSaveEnabled",
                         screen.ui.library.nativeAdmin() && permissionsEditor.canSave());
                     receipt.put("permissionsNarrowCloseBounds", close);
-                    finish(
-                        true,
-                        "Real native library and permission-group dialog rendered; Add Group, reopen and narrow footer verified. No server permission or TCP claim.");
+                    if (verifyLite) {
+                        if (litePreview()) stage = 12;
+                        return;
+                    }
+                    finishVerifiedMenu();
                 }
                 return;
             }
@@ -517,9 +554,26 @@ public final class HologramTestLabUiProfile {
         }
     }
 
+    private boolean litePreview() throws java.io.IOException {
+        if (liteProbe == null) {
+            liteReceipt = new LinkedHashMap<>();
+            liteReceipt.put("source", "synthetic detached local blueprint");
+            liteReceipt.put("passed", false);
+            receipt.put("litePreview", liteReceipt);
+            liteProbe = new HologramLitePreviewProbe();
+        }
+        if (!liteProbe.frame(liteReceipt)) return false;
+        liteReceipt.put("passed", true);
+        return true;
+    }
+
     private Map<String, Object> capturePng(String name) throws Exception {
+        return capturePng(screen, name);
+    }
+
+    private Map<String, Object> capturePng(net.minecraft.client.gui.GuiScreen owner, String name) throws Exception {
         Minecraft mc = Minecraft.getMinecraft();
-        if (mc.currentScreen != screen) throw new IllegalStateException("Screenshot target screen ownership changed");
+        if (mc.currentScreen != owner) throw new IllegalStateException("Screenshot target screen ownership changed");
         GL11.glFinish();
         ScreenShotHelper.saveScreenshot(output.toFile(), name, mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
         Path png = output.resolve("screenshots")
@@ -653,6 +707,11 @@ public final class HologramTestLabUiProfile {
     }
 
     private void fail(Throwable failure) {
+        if (controllerWorld != null) try {
+            controllerWorld.close();
+        } catch (java.io.IOException | RuntimeException cleanup) {
+            receipt.put("controllerWorldCleanupFailure", failureStack(cleanup));
+        }
         receipt.put(
             "exceptionClass",
             failure.getClass()
@@ -707,6 +766,41 @@ public final class HologramTestLabUiProfile {
         return new HologramState(state);
     }
 
+    private void finishVerifiedMenu() throws java.io.IOException {
+        if (verifyControllerWorld) {
+            writeJson("gtmb-client-ui-menu.json", receipt);
+            stage = 40;
+            return;
+        }
+        finish(
+            true,
+            "Real native library and permission-group dialog rendered; Add Group, reopen and narrow footer verified. No server permission or TCP claim.");
+    }
+
+    private void verifyControllerWorld(Minecraft mc) throws java.io.IOException {
+        if (controllerWorld == null) {
+            if (mc.currentScreen == screen) mc.displayGuiScreen(previous);
+            if (!readyTitle(mc.currentScreen))
+                throw new IllegalStateException("Expected restored main menu before opening a new owned world");
+            controllerWorld = new HologramControllerStandardProbe.OwnedWorld(mc, mc.currentScreen, output);
+            receipt.put(
+                "standardControllerOwnedSave",
+                controllerWorld.save()
+                    .toString());
+            writeJson("gtmb-client-ui-menu.json", receipt);
+            controllerWorld.launch();
+            return;
+        }
+        Map<String, Object> result = controllerWorld.tick();
+        if (result == null) return;
+        receipt.put("standardController", result);
+        boolean passed = "PASS".equals(result.get("status")) && Boolean.TRUE.equals(result.get("titleRestored"));
+        finish(
+            passed,
+            passed ? "Native menu/renderer and owned-world standard electric blast furnace verified"
+                : "Standard controller owned-world probe failed: " + result.get("reason"));
+    }
+
     private void finish(boolean passed, String detail) {
         if (finished) return;
         finished = true;
@@ -716,6 +810,7 @@ public final class HologramTestLabUiProfile {
         MinecraftForge.EVENT_BUS.unregister(this);
         try {
             Minecraft mc = Minecraft.getMinecraft();
+            if (privateProbe != null) privateProbe.close();
             if (previousLibraryConfig != null) {
                 java.lang.reflect.Field field = HologramLibraryClient.class.getDeclaredField("config");
                 field.setAccessible(true);

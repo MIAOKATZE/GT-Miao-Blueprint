@@ -178,6 +178,9 @@ final class HologramState {
         private int minY, maxY, minWorldX, maxWorldX, minWorldY, maxWorldY, minWorldZ, maxWorldZ;
         private HologramState result;
         private final boolean displayRows;
+        private final HologramBlueprintPreview.PackedDisplay compactDisplay;
+        private final DescriptorTemplate[] displayMaterials;
+        private final int cellCount;
         private final NBTTagCompound source;
         private final boolean packed;
         private final boolean projection;
@@ -199,7 +202,12 @@ final class HologramState {
             fullBaseline = fullBaseline(source);
             data = metadata(source, false);
             rows = source.getTagList("cells", 10);
-            if (!HologramBlueprintLimits.accepts(rows.tagCount()))
+            compactDisplay = source instanceof HologramBlueprintPreview.PackedDisplay
+                ? (HologramBlueprintPreview.PackedDisplay) source
+                : null;
+            displayMaterials = compactDisplay == null ? null : new DescriptorTemplate[compactDisplay.materials.length];
+            cellCount = compactDisplay == null ? rows.tagCount() : compactDisplay.cells;
+            if (!HologramBlueprintLimits.accepts(cellCount))
                 throw new IllegalArgumentException("Blueprint cell count exceeds limit");
             materialRows = source.getTagList("materials", 10);
             minWorldX = maxWorldX = data.getInteger("x");
@@ -215,19 +223,12 @@ final class HologramState {
             while (stage < 4 && lastStepWork < maxWork
                 && (lastStepWork == 0 || System.nanoTime() - started < maxNanos)) {
                 if (stage == 0) {
-                    if (cellPosition == rows.tagCount()) {
+                    if (cellPosition == cellCount) {
                         stage++;
                         continue;
                     }
-                    NBTTagCompound row = rows.getCompoundTagAt(cellPosition);
-                    if (displayRows) try {
-                        HologramBlueprintPreview.completeCell(row);
-                    } catch (java.io.IOException invalid) {
-                        throw new IllegalArgumentException(invalid.getMessage(), invalid);
-                    }
-                    Cell cell = packed ? new Cell(cellPosition, descriptor(row), row)
-                        : new Cell(cellPosition, row, null, true, projection);
-                    if ((cellPosition & 255) == 0) pages.add(new Cell[Math.min(256, rows.tagCount() - cellPosition)]);
+                    Cell cell = prepareCell(cellPosition);
+                    if ((cellPosition & 255) == 0) pages.add(new Cell[Math.min(256, cellCount - cellPosition)]);
                     pages.get(cellPosition >> 8)[cellPosition & 255] = cell;
                     regions.add(cell);
                     for (String id : membershipIds(cell)) members.computeIfAbsent(id, unused -> new ArrayList<>())
@@ -269,6 +270,36 @@ final class HologramState {
             return stage == 4;
         }
 
+        private Cell prepareCell(int index) {
+            if (compactDisplay != null) {
+                int material = compactDisplay.position(index, 3);
+                DescriptorTemplate template = displayMaterials[material];
+                if (template == null) {
+                    NBTTagCompound row = (NBTTagCompound) compactDisplay.materials[material].copy();
+                    completeDisplay(row);
+                    template = new DescriptorTemplate(row, true);
+                    displayMaterials[material] = template;
+                }
+                return new Cell(
+                    index,
+                    template,
+                    compactDisplay.position(index, 0),
+                    compactDisplay.position(index, 1),
+                    compactDisplay.position(index, 2));
+            }
+            NBTTagCompound row = rows.getCompoundTagAt(index);
+            if (displayRows) completeDisplay(row);
+            return packed ? new Cell(index, descriptor(row), row) : new Cell(index, row, null, true, projection);
+        }
+
+        private void completeDisplay(NBTTagCompound row) {
+            try {
+                HologramBlueprintPreview.completeCell(row, data.getBoolean("localBlueprintDocument"));
+            } catch (java.io.IOException invalid) {
+                throw new IllegalArgumentException(invalid.getMessage(), invalid);
+            }
+        }
+
         private DescriptorTemplate descriptor(NBTTagCompound row) {
             NBTTagCompound raw = HologramSnapshotPalette.descriptor(source, row);
             DescriptorTemplate template = descriptors.get(raw);
@@ -290,7 +321,7 @@ final class HologramState {
         }
 
         int total() {
-            return stage == 0 ? rows.tagCount()
+            return stage == 0 ? cellCount
                 : stage == 1 ? regions.pending.size() : stage == 2 ? materialRows.tagCount() : members.size();
         }
 
@@ -302,7 +333,7 @@ final class HologramState {
             if (stage != 4) throw new IllegalStateException("Client snapshot is incomplete");
             if (result == null) {
                 result = new HologramState(this);
-                if (packed) HologramRuntimeMetrics.clientDescriptorsPrepared(descriptors.size(), rows.tagCount());
+                if (packed) HologramRuntimeMetrics.clientDescriptorsPrepared(descriptors.size(), cellCount);
             }
             return result;
         }
@@ -804,6 +835,24 @@ final class HologramState {
 
         /** Only a negotiated packed preparation shares parsing; mutable per-cell values remain detached. */
         private Cell(int index, DescriptorTemplate template, NBTTagCompound positions) {
+            this(
+                index,
+                template,
+                positions,
+                positions.getInteger("x"),
+                positions.getInteger("y"),
+                positions.getInteger("z"),
+                positions.getInteger("dx"),
+                positions.getInteger("dy"),
+                positions.getInteger("dz"));
+        }
+
+        private Cell(int index, DescriptorTemplate template, int x, int y, int z) {
+            this(index, template, null, x, y, z, x, y, z);
+        }
+
+        private Cell(int index, DescriptorTemplate template, NBTTagCompound positions, int x, int y, int z, int dx,
+            int dy, int dz) {
             Cell value = template.values;
             raw = value.raw;
             coordinates = positions;
@@ -812,12 +861,12 @@ final class HologramState {
             actualBlock = value.actualBlock;
             targetBlock = value.targetBlock;
             this.index = index;
-            x = positions.getInteger("x");
-            y = positions.getInteger("y");
-            z = positions.getInteger("z");
-            dx = positions.getInteger("dx");
-            dy = positions.getInteger("dy");
-            dz = positions.getInteger("dz");
+            this.x = x;
+            this.y = y;
+            this.z = z;
+            this.dx = dx;
+            this.dy = dy;
+            this.dz = dz;
             meta = value.meta;
             wantMeta = value.wantMeta;
             chosenChoice = value.chosenChoice;
@@ -886,6 +935,14 @@ final class HologramState {
                     key,
                     coordinates.getTag(key)
                         .copy());
+            }
+            else if (descriptorTemplate != null) {
+                result.setInteger("x", x);
+                result.setInteger("y", y);
+                result.setInteger("z", z);
+                result.setInteger("dx", dx);
+                result.setInteger("dy", dy);
+                result.setInteger("dz", dz);
             }
             return result;
         }

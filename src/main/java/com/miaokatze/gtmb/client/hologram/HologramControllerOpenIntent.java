@@ -3,10 +3,64 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import net.minecraft.client.Minecraft;
+import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.world.World;
+
+import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
+import com.miaokatze.gtmb.hologram.HologramWorldFlow.Stage;
 
 /** Esc can retire a click before any server session exists on the client. */
 final class HologramControllerOpenIntent {
+
+    enum Route {
+        CONTROLLER_PREVIEW,
+        PRIVATE_LIBRARY,
+        SERVER_WORKSPACE
+    }
+
+    static Route route(Stage stage, boolean air, boolean constructable) {
+        if (stage != Stage.WORKSPACE) return Route.SERVER_WORKSPACE;
+        if (air) return Route.PRIVATE_LIBRARY;
+        return constructable ? Route.CONTROLLER_PREVIEW : Route.SERVER_WORKSPACE;
+    }
+
+    /** A local screen may send a deliberate server action only for the projector and world that opened it. */
+    static final class Context {
+
+        private final World world;
+        private final EntityPlayer player;
+        private final Object connection;
+        private final int slot;
+        private final ItemStack equipped;
+        private final String toolId;
+
+        Context(Minecraft client) {
+            world = client.theWorld;
+            player = client.thePlayer;
+            connection = client.getNetHandler();
+            slot = player.inventory.currentItem;
+            equipped = player.getHeldItem();
+            toolId = toolId(equipped);
+        }
+
+        boolean current(Minecraft client) {
+            if (client.theWorld != world || client.thePlayer != player
+                || client.getNetHandler() != connection
+                || player.inventory.currentItem != slot) return false;
+            ItemStack held = player.getHeldItem();
+            return ItemNekoHologramProjector.isProjector(held)
+                && (toolId.isEmpty() ? held == equipped : toolId.equals(toolId(held)));
+        }
+
+        private static String toolId(ItemStack stack) {
+            return stack == null || !stack.hasTagCompound() ? ""
+                : stack.getTagCompound()
+                    .getString("gtitHologramToolId");
+        }
+    }
 
     private long latest;
     private boolean dismissed;

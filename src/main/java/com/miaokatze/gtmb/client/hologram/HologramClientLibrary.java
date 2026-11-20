@@ -243,11 +243,16 @@ final class HologramClientLibrary {
     /** Save validation and actual readback remain separate from display-only catalog hints. */
     LocalSave prepareLocalSave(byte[] data, byte[] preview, String id, java.util.function.BooleanSupplier stillCurrent)
         throws IOException {
-        JsonObject blueprint = blueprint(data);
+        return prepareLocalSave(data, preview, id, stillCurrent, true);
+    }
+
+    private LocalSave prepareLocalSave(byte[] data, byte[] preview, String id,
+        java.util.function.BooleanSupplier stillCurrent, boolean serverReviewed) throws IOException {
+        JsonObject blueprint = serverReviewed ? blueprint(data) : privateBlueprint(data);
         Path previous = file(id);
         if (!Files.exists(previous) && list().size() >= MAX_ENTRIES) throw new IOException("客户端蓝图库已满（128 项）");
         Path target = HologramBlueprintFiles.target(directory, id, data);
-        if (string(blueprint, "authorName").isEmpty() || string(blueprint, "authorUuid").isEmpty())
+        if (serverReviewed && (string(blueprint, "authorName").isEmpty() || string(blueprint, "authorUuid").isEmpty()))
             throw new IOException("蓝图缺少服务器确认的作者信息");
         HologramBlueprintArtifact.PairWrite written = pairIo.write(target, data, preview, stillCurrent);
         try {
@@ -266,6 +271,61 @@ final class HologramClientLibrary {
             }
             throw failure;
         }
+    }
+
+    HologramBlueprintArtifact.Artifact privatePair(String id) throws IOException {
+        return pairIo.read(file(id));
+    }
+
+    static final class DocumentSave {
+
+        final String id, jsonHash, pngHash;
+
+        DocumentSave(String id, String jsonHash, String pngHash) {
+            this.id = id;
+            this.jsonHash = jsonHash;
+            this.pngHash = pngHash;
+        }
+    }
+
+    /** Private edits preserve the existing logical entry and verify its original pair before replacing it. */
+    DocumentSave saveDocument(byte[] json, byte[] png, String id, String originalJsonHash, String originalPngHash,
+        java.util.function.BooleanSupplier current) throws IOException {
+        if (id.isEmpty()) {
+            String newId = "local_" + UUID.randomUUID();
+            LocalSave saved = prepareLocalSave(json, png, newId, current, false);
+            saved.write.commit();
+            return new DocumentSave(newId, saved.jsonHash, saved.pngHash);
+        }
+        Path target = file(id);
+        JsonObject blueprint = privateBlueprint(json);
+        synchronized (HologramBlueprintArtifact.class) {
+            HologramBlueprintArtifact.Artifact original = pairIo.read(target);
+            if (!originalJsonHash.equals(original.jsonSha256) || !originalPngHash.equals(original.pngSha256))
+                throw new IOException("原蓝图文件已变化，请另存副本或重新打开");
+            HologramBlueprintArtifact.PairWrite written = pairIo.write(target, json, png, current);
+            try {
+                HologramBlueprintArtifact.Artifact actual = pairIo.read(target);
+                if (!written.jsonSha256.equals(actual.jsonSha256) || !written.pngSha256.equals(actual.pngSha256))
+                    throw new IOException("保存后的蓝图与写入内容不一致");
+                if (!current.getAsBoolean()) throw new IOException("蓝图保存已取消");
+                entryCache
+                    .put(target.toString(), new CachedEntry(new Entry(id, blueprint, actual.json.length), target));
+                written.commit();
+                return new DocumentSave(id, actual.jsonSha256, actual.pngSha256);
+            } catch (IOException | RuntimeException failure) {
+                try {
+                    written.rollback();
+                } catch (IOException rollback) {
+                    failure.addSuppressed(rollback);
+                }
+                throw failure;
+            }
+        }
+    }
+
+    private static JsonObject privateBlueprint(byte[] json) throws IOException {
+        return blueprint(com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.parse(json));
     }
 
     String save(byte[] data, byte[] preview, String replaceId) throws IOException {

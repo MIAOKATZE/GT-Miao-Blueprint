@@ -59,7 +59,7 @@ final class HologramBlockRender {
 
     static void begin(HologramState state) {
         if (snapshot == state) return;
-        HologramRenderer.nativeSnapshotChanged();
+        HologramRenderer.nativeModelsChanged();
         clear();
         snapshot = state;
         HologramLinkNodePreview.begin();
@@ -124,6 +124,12 @@ final class HologramBlockRender {
         int side = current ? 1 : 0;
         if (pair[side] == null) pair[side] = compile(cell, current);
         return pair[side].list != 0 || pair[side].acceptedEmpty || pair[side].invisible;
+    }
+
+    static boolean cachedOrPrepare(HologramState.Cell cell, boolean current, long deadline) {
+        boolean actual = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
+        Model[] pair = MODELS.get(cell);
+        return (pair != null && pair[actual ? 1 : 0] != null || System.nanoTime() < deadline) && ready(cell, actual);
     }
 
     static void draw(HologramState.Cell cell, boolean current) {

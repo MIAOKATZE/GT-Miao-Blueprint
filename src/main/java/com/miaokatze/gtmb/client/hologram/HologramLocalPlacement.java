@@ -4,6 +4,9 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.entity.EntityClientPlayerMP;
+import net.minecraft.client.multiplayer.WorldClient;
+import net.minecraft.client.network.NetHandlerPlayClient;
 import net.minecraft.nbt.NBTTagCompound;
 
 import com.miaokatze.gtmb.hologram.HologramPreviewPose;
@@ -13,11 +16,15 @@ final class HologramLocalPlacement {
 
     static final HologramLocalPlacement INSTANCE = new HologramLocalPlacement();
     private HologramState display;
-    private Object world;
-    private boolean locked, submitting;
+    private WorldClient world;
+    private EntityClientPlayerMP player;
+    private NetHandlerPlayClient connection;
+    private boolean locked;
     private int[] anchor;
     private HologramPreviewPose pose = new HologramPreviewPose();
-    private String localId = "", publicId = "", jsonHash = "", sourceRevision = "";
+    private HologramLibraryClient.DisplaySource source;
+    private String admittedHash;
+    private Submission submission;
     private final com.miaokatze.gtmb.hologram.HologramWorldFlow.KeyRepeat[] nudgeKeys = {
         new com.miaokatze.gtmb.hologram.HologramWorldFlow.KeyRepeat(),
         new com.miaokatze.gtmb.hologram.HologramWorldFlow.KeyRepeat(),
@@ -26,7 +33,7 @@ final class HologramLocalPlacement {
 
     void input(boolean inWorld, boolean contextChanged) {
         Minecraft mc = Minecraft.getMinecraft();
-        boolean enabled = inWorld && locked && !submitting && anchor != null;
+        boolean enabled = inWorld && locked && !submitting() && anchor != null;
         int[] keys = { org.lwjgl.input.Keyboard.KEY_UP, org.lwjgl.input.Keyboard.KEY_DOWN,
             org.lwjgl.input.Keyboard.KEY_LEFT, org.lwjgl.input.Keyboard.KEY_RIGHT };
         int fired = -1, pressed = 0;
@@ -59,7 +66,7 @@ final class HologramLocalPlacement {
     }
 
     boolean submitting() {
-        return submitting;
+        return submission != null;
     }
 
     HologramState display() {
@@ -100,40 +107,45 @@ final class HologramLocalPlacement {
         return bounds;
     }
 
-    void install(HologramState prepared, String localId, String publicId, String hash, String revision) {
+    void install(HologramLibraryClient.DisplaySource source, String admittedHash) {
         clear();
-        this.localId = localId;
-        this.publicId = publicId;
-        this.jsonHash = hash;
-        this.sourceRevision = revision;
-        world = Minecraft.getMinecraft().theWorld;
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.theWorld == null || mc.thePlayer == null) return;
+        this.source = source;
+        this.admittedHash = admittedHash;
+        world = mc.theWorld;
+        player = mc.thePlayer;
+        connection = mc.getNetHandler();
         NBTTagCompound metadata = new NBTTagCompound();
         metadata.setString("session", "local-preview");
         metadata.setBoolean("localPreview", true);
         metadata.setBoolean("virtual", true);
         metadata.setBoolean("virtualPlacement", true);
         metadata.setBoolean("moving", true);
-        metadata.setInteger("dimension", Minecraft.getMinecraft().thePlayer.dimension);
+        metadata.setInteger("dimension", player.dimension);
         metadata.setInteger("x", 0);
         metadata.setInteger("y", 0);
         metadata.setInteger("z", 0);
-        display = prepared.withMetadata(metadata);
-        Minecraft.getMinecraft()
-            .displayGuiScreen(null);
+        display = source.state.withMetadata(metadata);
+        mc.displayGuiScreen(null);
     }
 
     void tick() {
-        if (active() && (Minecraft.getMinecraft().theWorld != world || Minecraft.getMinecraft().thePlayer == null))
-            clear();
+        if (active() && !currentContext()) clear();
+    }
+
+    private boolean currentContext() {
+        Minecraft mc = Minecraft.getMinecraft();
+        return mc.theWorld == world && mc.thePlayer == player && mc.getNetHandler() == connection && !player.isDead;
     }
 
     void turn(boolean vertical) {
-        if (!active() || submitting) return;
+        if (!active() || submitting()) return;
         pose = pose.turn(vertical);
     }
 
     void use(boolean shift) {
-        if (display == null || submitting) return;
+        if (display == null || submitting()) return;
         if (shift && locked) {
             locked = false;
             anchor = null;
@@ -150,14 +162,19 @@ final class HologramLocalPlacement {
     }
 
     void submit(NBTTagCompound options) {
-        if (!active() || submitting) return;
-        submitting = HologramLibraryClient.INSTANCE.prepareLocalPlacement(this, options);
-        if (submitting) Minecraft.getMinecraft()
+        if (!active() || !locked || anchor == null || submitting() || !currentContext()) return;
+        submission = new Submission(source, admittedHash, anchor, pose, options);
+        if (!HologramLibraryClient.INSTANCE.prepareLocalPlacement(submission)) submission = null;
+        if (submitting()) Minecraft.getMinecraft()
             .displayGuiScreen(new HologramPlacementLoadingScreen());
     }
 
-    void retry() {
-        submitting = false;
+    boolean owns(Submission candidate) {
+        return candidate != null && submission == candidate && currentContext();
+    }
+
+    void retry(Submission candidate) {
+        if (submission == candidate) submission = null;
     }
 
     static NBTTagCompound reviewOptions() {
@@ -167,46 +184,50 @@ final class HologramLocalPlacement {
         return options;
     }
 
-    String localId() {
-        return localId;
-    }
+    /** The review click freezes one source and world target across hashing, transfer and server validation. */
+    static final class Submission {
 
-    String publicId() {
-        return publicId;
-    }
+        final HologramLibraryClient.DisplaySource source;
+        final String admittedHash;
+        private final NBTTagCompound intent;
 
-    String hash() {
-        return jsonHash;
-    }
+        Submission(HologramLibraryClient.DisplaySource source, String admittedHash, int[] anchor,
+            HologramPreviewPose pose, NBTTagCompound options) {
+            this.source = source;
+            this.admittedHash = admittedHash;
+            intent = (NBTTagCompound) options.copy();
+            intent.setInteger("x", anchor[0]);
+            intent.setInteger("y", anchor[1]);
+            intent.setInteger("z", anchor[2]);
+            intent.setInteger("placementX", anchor[0]);
+            intent.setInteger("placementY", anchor[1]);
+            intent.setInteger("placementZ", anchor[2]);
+            intent.setInteger("side", 1);
+            intent.setIntArray("previewPose", pose.recipe());
+            intent.setString("sourceRevision", source.revision);
+            intent.setString("id", source.publicId);
+            intent.setString("publicPresetId", source.publicId);
+            if (!intent.hasKey("openReview", 1)) intent.setBoolean("openReview", true);
+        }
 
-    String revision() {
-        return sourceRevision;
-    }
-
-    void intent(NBTTagCompound request) {
-        int[] at = anchor();
-        request.setInteger("x", at[0]);
-        request.setInteger("y", at[1]);
-        request.setInteger("z", at[2]);
-        request.setInteger("placementX", at[0]);
-        request.setInteger("placementY", at[1]);
-        request.setInteger("placementZ", at[2]);
-        request.setInteger("side", 1);
-        request.setIntArray("previewPose", pose.recipe());
-        request.setString("jsonHash", jsonHash);
-        request.setString("sourceHash", jsonHash);
-        request.setString("sourceRevision", sourceRevision);
-        request.setString("id", publicId);
-        request.setString("publicPresetId", publicId);
-        request.setBoolean("openReview", true);
+        NBTTagCompound request(String hash) {
+            NBTTagCompound request = (NBTTagCompound) intent.copy();
+            request.setString("jsonHash", hash);
+            request.setString("sourceHash", hash);
+            return request;
+        }
     }
 
     void clear() {
         if (display != null) HologramRenderer.nativeSnapshotChanged();
         display = null;
         world = null;
-        localId = publicId = jsonHash = sourceRevision = "";
-        locked = submitting = false;
+        player = null;
+        connection = null;
+        source = null;
+        admittedHash = null;
+        submission = null;
+        locked = false;
         anchor = null;
         pose = new HologramPreviewPose();
         for (com.miaokatze.gtmb.hologram.HologramWorldFlow.KeyRepeat key : nudgeKeys) key.sample(false, false, true, 0);

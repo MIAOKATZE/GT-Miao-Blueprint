@@ -461,6 +461,18 @@ final class HologramWorldPlacementWorkflow {
 
     /** Escape exits to the world, revokes placement authority and retains the draft without changing paid blocks. */
     static void cancelWorldPlacement(EntityPlayerMP player, NBTTagCompound request) {
+        cancelWorldPlacement(player, request, false);
+    }
+
+    /** Quick capability was checked on the server; tool changes must still allow its staged lock to retire. */
+    static void cancelQuickWorldPlacement(HologramSession s) {
+        NBTTagCompound request = new NBTTagCompound();
+        request.setString("session", s.id);
+        request.setLong("planRevision", s.planRevision);
+        cancelWorldPlacement(s.player, request, s.libraryWorld == s.player.worldObj);
+    }
+
+    private static void cancelWorldPlacement(EntityPlayerMP player, NBTTagCompound request, boolean quickRevoked) {
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
         boolean cancellingLock = s != null && request.hasKey("positionLockSequence", 4)
             && request.getLong("positionLockSequence") > 0
@@ -471,7 +483,8 @@ final class HologramWorldPlacementWorkflow {
             || !s.id.equals(request.getString("session"))
             || !request.hasKey("planRevision", 4)
             || s.planRevision != request.getLong("planRevision") && !cancellingLock
-            || !HologramSessionPolicy.valid(s) && !(cancellingLock && !player.isDead && player.dimension == s.dimension)
+            || !HologramSessionPolicy.valid(s)
+                && !((cancellingLock || quickRevoked) && !player.isDead && player.dimension == s.dimension)
             || s.cancelled
             || !s.virtual
             || !s.virtualPlacement
