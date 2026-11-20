@@ -95,6 +95,8 @@ final class HologramWorkbenchStagesWitness {
                     if (installed == 0) installed = at;
                 }
                 case "CLIENT_FIRST_MATERIAL" -> {
+                    // During recapture the previous model can still submit geometry until the new target arrives.
+                    if (preceding != null && target == 0) continue;
                     if (firstMaterial == 0) {
                         firstMaterial = at;
                         firstMaterialBeforeInstall = installed == 0;
