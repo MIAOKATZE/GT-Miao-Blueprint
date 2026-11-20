@@ -52,27 +52,33 @@ final class HologramNativePreviewItems implements IItemSource {
     }
 
     List<ItemStack> catalog() {
-        if (catalog == null) {
+        if (catalog != null) return catalog;
+        long started = HologramRuntimeMetrics.start();
+        try {
             List<ItemStack> result = new ArrayList<>();
-            if (!readNeiCatalog(result)) {
-                for (IMetaTileEntity machine : GregTechAPI.METATILEENTITIES) {
-                    if (machine != null) add(result, machine.getStackForm(1));
-                }
-                for (Object entry : Item.itemRegistry) {
-                    if (!(entry instanceof ItemBlock item) || item instanceof ItemMachines) continue;
-                    List<ItemStack> items = new ArrayList<>();
-                    try {
-                        item.getSubItems(item, item.getCreativeTab(), items);
-                    } catch (RuntimeException | LinkageError unavailable) {
-                        // One unenumerable item must not discard the rest of the local catalog.
-                    }
-                    if (items.isEmpty()) items.add(new ItemStack(item, 1, 0));
-                    for (ItemStack stack : items) add(result, stack);
-                }
-            }
+            if (!readNeiCatalog(result)) readRegistry(result);
             catalog = result;
+            return catalog;
+        } finally {
+            HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_CATALOG, started);
         }
-        return catalog;
+    }
+
+    private static void readRegistry(List<ItemStack> result) {
+        for (IMetaTileEntity machine : GregTechAPI.METATILEENTITIES) {
+            if (machine != null) add(result, machine.getStackForm(1));
+        }
+        for (Object entry : Item.itemRegistry) {
+            if (!(entry instanceof ItemBlock item) || item instanceof ItemMachines) continue;
+            List<ItemStack> items = new ArrayList<>();
+            try {
+                item.getSubItems(item, item.getCreativeTab(), items);
+            } catch (RuntimeException | LinkageError unavailable) {
+                // One unenumerable item must not discard the rest of the local catalog.
+            }
+            if (items.isEmpty()) items.add(new ItemStack(item, 1, 0));
+            for (ItemStack stack : items) add(result, stack);
+        }
     }
 
     private static boolean readNeiCatalog(List<ItemStack> result) {

@@ -239,12 +239,24 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         if (boundary != null) throw new IOException(boundary);
         if (!alreadyDetached && !matches(world, dimension)) throw new IOException("LOCAL_CONTROLLER_CHANGED");
         long started = System.nanoTime();
-        if (declared == null && nativePlacements == null && !prepareGeometry(started + maxNanos)) return null;
+        if (declared == null && nativePlacements == null) {
+            long geometry = HologramRuntimeMetrics.start();
+            try {
+                if (!prepareGeometry(started + maxNanos)) return null;
+            } finally {
+                HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_GEOMETRY, geometry);
+            }
+        }
+        long rowStart = HologramRuntimeMetrics.start();
         int work = 0;
-        while (hasNext() && work++ < maxRows && (work == 1 || System.nanoTime() - started < maxNanos)) {
-            HologramCapture.Cell cell = declared == null ? nativePreview.cell(nativePlacements.next())
-                : declared.next();
-            rows.appendTag(row(cell));
+        try {
+            while (hasNext() && work++ < maxRows && (work == 1 || System.nanoTime() - started < maxNanos)) {
+                HologramCapture.Cell cell = declared == null ? nativePreview.cell(nativePlacements.next())
+                    : declared.next();
+                rows.appendTag(row(cell));
+            }
+        } finally {
+            HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_ROWS, rowStart);
         }
         if (hasNext()) return null;
         if (nativePlacements != null) rows.appendTag(row(anchor()));
@@ -255,7 +267,12 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
             state.setTag("structureDescription", nativePreview.description());
             report = nativePreview.channels();
         }
-        state.setTag("capabilities", capabilities(report));
+        long capabilityStart = HologramRuntimeMetrics.start();
+        try {
+            state.setTag("capabilities", capabilities(report));
+        } finally {
+            HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_CAPABILITIES, capabilityStart);
+        }
         close();
         return state;
     }
@@ -500,7 +517,14 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
             nbt.setIntArray("hintTint", tint);
         }
         nbt.setInteger("hintIndex", cell.hintIndex);
-        if (!alreadyDetached && world.isRemote) observeLoadedCell(nbt);
+        if (!alreadyDetached && world.isRemote) {
+            long observation = HologramRuntimeMetrics.start();
+            try {
+                observeLoadedCell(nbt);
+            } finally {
+                HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_WORLD, observation);
+            }
+        }
         return nbt;
     }
 
@@ -508,11 +532,13 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         int bx = row.getInteger("x"), by = row.getInteger("y"), bz = row.getInteger("z");
         int cx = bx >> 4, cz = bz >> 4;
         if (by < 0 || by >= world.getHeight() || !world.getChunkProvider().chunkExists(cx, cz)) {
+            row.setBoolean("localObservationMissing", true);
             row.setString("reason", "客户端尚未读到此位置的现场数据");
             return;
         }
         Chunk chunk = world.getChunkFromChunkCoords(cx, cz);
         if (chunk == null || chunk instanceof EmptyChunk) {
+            row.setBoolean("localObservationMissing", true);
             row.setString("reason", "客户端尚未读到此位置的现场数据");
             return;
         }

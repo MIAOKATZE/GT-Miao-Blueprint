@@ -128,21 +128,26 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
                 boolean repeat = false;
                 do {
                     repeat = false;
-                    if (constructable instanceof ISurvivalConstructable survival) {
-                        int result = survival.survivalConstruct(trigger, Integer.MAX_VALUE, survivalEnvironment);
-                        rounds++;
-                        if (structureCompat && result == -2) {
+                    long passStart = HologramRuntimeMetrics.start();
+                    try {
+                        if (constructable instanceof ISurvivalConstructable survival) {
+                            int result = survival.survivalConstruct(trigger, Integer.MAX_VALUE, survivalEnvironment);
+                            rounds++;
+                            if (structureCompat && result == -2) {
+                                constructable.construct(trigger, false);
+                                break;
+                            }
+                            if (memory == null ? blockRenderer.takeChanged() : memory.takeChanged()) {
+                                if (rounds >= MAX_ROUNDS) throw new IOException("LOCAL_NATIVE_PREVIEW_UNSTABLE");
+                                repeat = true;
+                                continue;
+                            }
+                        } else {
                             constructable.construct(trigger, false);
-                            break;
+                            rounds++;
                         }
-                        if (memory == null ? blockRenderer.takeChanged() : memory.takeChanged()) {
-                            if (rounds >= MAX_ROUNDS) throw new IOException("LOCAL_NATIVE_PREVIEW_UNSTABLE");
-                            repeat = true;
-                            continue;
-                        }
-                    } else {
-                        constructable.construct(trigger, false);
-                        rounds++;
+                    } finally {
+                        HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_NATIVE_PASSES, passStart);
                     }
                     break;
                 } while (System.nanoTime() < deadline);
@@ -234,6 +239,7 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
             return cell;
         }
         HologramChannelTrace.Scope trace = HologramChannelTrace.begin(context);
+        long candidateStart = HologramRuntimeMetrics.start();
         try {
             controller.setWorldObj(world);
             boolean first = observedMaterials.put(element, Boolean.TRUE) == null;
@@ -245,13 +251,14 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
             if (blocks != null) readCandidates(cell, blocks, isChain(element));
             boolean hatch = "hatch".equals(HologramElementCatalog.hatchRole(element));
             if (hatch) cell.role = "hatch";
-            if (first && blocks != null && reusablePreviewOptions(element)) sharedOptions.put(
+            if (first && reusablePreviewOptions(element)) sharedOptions.put(
                 element, new PreviewOptions(cell.candidates, cell.candidateComplete, cell.candidateBoundary, hatch));
         } catch (RuntimeException | LinkageError unavailable) {
             cell.candidateBoundary = "原生结构元素未提供可读取选项";
         } finally {
             controller.setWorldObj(emptyWorld);
             channels = HologramChannelTrace.merge(channels, HologramChannelTrace.end(trace));
+            HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_CANDIDATES, candidateStart);
         }
         return cell;
     }

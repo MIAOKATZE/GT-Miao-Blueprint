@@ -141,7 +141,7 @@ public final class HologramRuntimeMetrics {
         }
     }
 
-    enum Activity {
+    public enum Activity {
 
         SNAPSHOT_BUILD("snapshotBuild"),
         SNAPSHOT_COMPRESS("snapshotCompress"),
@@ -151,7 +151,16 @@ public final class HologramRuntimeMetrics {
         PLAN_STEP("planStep"),
         PLAN_CLASSIFY("planClassify"),
         PLAN_RESOURCES("planResources"),
-        CELL_ROW("cellRow");
+        CELL_ROW("cellRow"),
+        LOCAL_CONTROLLER_GEOMETRY("localControllerGeometry"),
+        LOCAL_CONTROLLER_NATIVE_PASSES("localControllerNativePasses"),
+        LOCAL_CONTROLLER_CATALOG("localControllerCatalog"),
+        LOCAL_CONTROLLER_ROWS("localControllerRows"),
+        LOCAL_CONTROLLER_CANDIDATES("localControllerCandidates"),
+        LOCAL_CONTROLLER_WORLD("localControllerWorld"),
+        LOCAL_CONTROLLER_CAPABILITIES("localControllerCapabilities"),
+        LOCAL_CONTROLLER_PREPARE("localControllerPrepare"),
+        LOCAL_CONTROLLER_INSTALL("localControllerInstall");
 
         final String key;
 
@@ -320,11 +329,11 @@ public final class HologramRuntimeMetrics {
         NETWORK.addAndGet(index + 1, Math.max(0, bytes));
     }
 
-    static long start() {
+    public static long start() {
         return enabled ? System.nanoTime() : 0;
     }
 
-    static void finish(Activity activity, long started) {
+    public static void finish(Activity activity, long started) {
         if (!enabled || started == 0) return;
         long elapsed = Math.max(0, System.nanoTime() - started);
         int index = activity.ordinal() * 3;

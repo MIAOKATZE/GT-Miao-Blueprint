@@ -14,9 +14,12 @@ import net.minecraft.tileentity.TileEntity;
 
 import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 import com.miaokatze.gtmb.hologram.HologramLocalControllerCapture;
+import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 
 /** Minecraft screen adapter. Domain state and behavior live in composed workflow modules. */
 public final class HologramScreen extends HologramMuiCanvasScreen implements HologramUiHost {
+
+    private static final long LOCAL_CONTROLLER_TICK_NANOS = 3_000_000L;
 
     HologramUiModules ui = new HologramUiModules(this);
     private final HologramEditorWorkspaces.Graphs workspaceGraphs = new HologramEditorWorkspaces.Graphs();
@@ -123,6 +126,11 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     boolean localControllerStandard() {
         return ui.session.state().data.getBoolean("localStandardController");
+    }
+
+    HologramLocalMachineState localMachineState() {
+        if (!localControllerStandard() || !controllerContextCurrent(false)) return HologramLocalMachineState.UNKNOWN;
+        return HologramLocalMachineState.read(openingController);
     }
 
     boolean localWorkspaceView() {
@@ -510,16 +518,31 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             if (!controllerContextCurrent(false)
                 || !localController.matches(client.theWorld, client.thePlayer.dimension))
                 throw new java.io.IOException("LOCAL_CONTROLLER_CHANGED");
+            long deadline = System.nanoTime() + LOCAL_CONTROLLER_TICK_NANOS;
             if (localControllerPreparation == null) {
-                NBTTagCompound snapshot = localController.step(2048, 3_000_000L);
+                NBTTagCompound snapshot = localController.step(2048, LOCAL_CONTROLLER_TICK_NANOS);
                 if (snapshot == null) return;
                 snapshot.setString("status", HologramClient.text("controllerLocalStandard", "本地标准结构"));
                 localControllerPreparation = new HologramState.Preparation(snapshot);
-                return;
             }
-            if (!localControllerPreparation.step(2048, 3_000_000L)) return;
-            localControllerBaseline = localControllerPreparation.result();
-            updateState(localControllerBaseline);
+            long remaining = deadline - System.nanoTime();
+            if (remaining <= 0) return;
+            long preparation = HologramRuntimeMetrics.start();
+            try {
+                if (!localControllerPreparation.step(2048, remaining)) return;
+                localControllerBaseline = localControllerPreparation.result();
+            } finally {
+                HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_PREPARE, preparation);
+            }
+            long install = HologramRuntimeMetrics.start();
+            try {
+                updateState(localControllerBaseline);
+                HologramRuntimeMetrics.loadStage(
+                    HologramRuntimeMetrics.LoadStage.CLIENT_INSTALL, localControllerBaseline.data, -1,
+                    localControllerBaseline.cells.size());
+            } finally {
+                HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_INSTALL, install);
+            }
             if (pendingControllerToolSettings != null) localControllerToolSettings = pendingControllerToolSettings;
         } catch (java.io.IOException | RuntimeException | LinkageError failure) {
             com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG
@@ -568,6 +591,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             || client.getNetHandler() != openingConnection
             || client.theWorld != openingController.getWorldObj()
             || client.thePlayer.inventory.currentItem != openingSlot
+            || !client.theWorld.blockExists(openingController.xCoord, openingController.yCoord, openingController.zCoord)
             || client.theWorld
                 .getTileEntity(openingController.xCoord, openingController.yCoord, openingController.zCoord)
                 != openingController)

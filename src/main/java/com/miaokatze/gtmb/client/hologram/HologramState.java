@@ -1107,6 +1107,10 @@ final class HologramState {
             return specialHint == null ? "" : specialHint.getString(key);
         }
 
+        boolean localObservationMissing() {
+            return raw.getBoolean("localObservationMissing");
+        }
+
         String hintIcon(int side) {
             return hintIcons == null ? "" : hintIcons[side];
         }

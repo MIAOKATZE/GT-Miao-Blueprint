@@ -1,5 +1,10 @@
 item.neko_hologram_projector.name=Neko Blueprint Hologram Projector
 gtmb.hologram.controllerOpening=Reading controller
+gtmb.hologram.localMachineUnknown=Machine status unknown
+gtmb.hologram.localMachineActive=Machine running
+gtmb.hologram.localMachineIdle=Machine enabled, idle
+gtmb.hologram.localMachineDisabled=Machine disabled
+gtmb.hologram.localMachineTier=Current tier %d
 gtmb.hologram.controllerReading=Checking the structure…  Esc to close
 item.neko_hologram_projector.description.0=§7Import a controller structure or §bblueprint§7 and preview its §bhologram§7 in the world.§r
 item.neko_hologram_projector.description.1=§7Select world regions to edit §bblueprints§7 or §dcut and move§7 complete structures.§r

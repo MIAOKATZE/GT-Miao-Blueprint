@@ -51,6 +51,7 @@ import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramMaterialQuote;
 import com.miaokatze.gtmb.hologram.HologramNativeControllerBrowserReference;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
+import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 import com.miaokatze.gtmb.hologram.HologramSnapshotPalette;
 import com.miaokatze.gtmb.register.ProjectorRegistry;
 
@@ -59,6 +60,7 @@ import gregtech.api.GregTechAPI;
 import gregtech.api.enums.ItemList;
 import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
 import gregtech.api.metatileentity.BaseMetaTileEntity;
+import gregtech.api.metatileentity.GregTechTileClientEvents;
 import gregtech.common.blocks.ItemMachines;
 import gregtech.common.tileentities.machines.multi.MTEElectricBlastFurnace;
 import io.netty.channel.Channel;
@@ -101,6 +103,10 @@ final class HologramLocalPreviewStagesProbe {
     private volatile Throwable fixtureFailure;
     private volatile ItemStack controllerItem;
     private int parityPass;
+    private volatile boolean solarTelemetryRequested;
+    private boolean solarTelemetrySent;
+    private long parityDataReady;
+    private NBTTagCompound activityBeforeParityEdit = new NBTTagCompound();
     private Map<String, String> firstParityCells;
     private volatile boolean submitInput;
     private volatile NBTTagCompound projectedPlacement;
@@ -175,6 +181,13 @@ final class HologramLocalPreviewStagesProbe {
             }
             if (fixtureReady || fixtureFailure != null) {
                 if (construction && serverActor != null) observeWorld(world);
+                if (solarTelemetryRequested && !solarTelemetrySent) {
+                    BaseMetaTileEntity base = (BaseMetaTileEntity) world.getTileEntity(x, y, z);
+                    base.enableWorking();
+                    // Exercise the normal incoming GT event without having to build all tiers in the fixture world.
+                    world.addBlockEvent(x, y, z, world.getBlock(x, y, z), GregTechTileClientEvents.CHANGE_CUSTOM_DATA, 6);
+                    solarTelemetrySent = true;
+                }
                 return;
             }
             EntityPlayer actor = world.getPlayerEntityByName(actorName);
@@ -192,6 +205,8 @@ final class HologramLocalPreviewStagesProbe {
                     && fixtureController(base),
                 "Native controller fixture identity mismatch");
             ((BaseMetaTileEntity) world.getTileEntity(x, y, z)).setFrontFacing(north);
+            if (parity == NativeParity.SOLAR || parity == NativeParity.ENTANGLER)
+                ((BaseMetaTileEntity) world.getTileEntity(x, y, z)).disableWorking();
             world.markBlockForUpdate(x, y, z);
             if (construction) {
                 require(
@@ -236,6 +251,7 @@ final class HologramLocalPreviewStagesProbe {
             look(mc, x + .5, y + .5, z + .5);
             require(hitAt(mc, x, y, z), "EntityRenderer crosshair missed the real controller");
             controllerClicked = System.nanoTime();
+            if (parity != null) HologramRuntimeMetrics.setEnabled(true);
             controllerClickTick = mc.thePlayer.ticksExisted;
             controllerDrawsAtStart = MiaoVisonLiteRenderer.previewDirectMeshDraws;
             if (postFocus) HologramScreen.localController(base, mc.thePlayer.dimension, mc.objectMouseOver.sideHit)
@@ -443,12 +459,62 @@ final class HologramLocalPreviewStagesProbe {
         int main = state.data.getInteger("main");
         int signal = "main".equals(parity.channel) ? main : channels.getInteger(parity.channel);
         if (parityPass == 1 && signal != parity.nextSignal) return false;
+        if (parityDataReady == 0) parityDataReady = System.nanoTime();
+        boolean fixed = parity == NativeParity.SOLAR || parity == NativeParity.ENTANGLER;
+        HologramLocalMachineState telemetry = controller.localMachineState();
+        NBTTagCompound metrics = HologramRuntimeMetrics.snapshot();
+        NBTTagList stages = metrics.getTagList("loadStages", 10);
+        long installed = 0, firstDraw = 0;
+        for (int i = 0; i < stages.tagCount(); i++) {
+            NBTTagCompound mark = stages.getCompoundTagAt(i);
+            long at = mark.getLong("atNanos");
+            if (at < controllerClicked || !state.session.equals(mark.getString("session"))) continue;
+            if (mark.getString("stage").equals("CLIENT_INSTALL")) installed = at;
+            if (installed > 0 && mark.getString("stage").equals("CLIENT_FIRST_MATERIAL")) {
+                firstDraw = at;
+                break;
+            }
+        }
+        if (fixed) {
+            evidence.put("pendingTelemetry", telemetry.caption());
+            evidence.put("pendingNativeDataReadyNanos", parityDataReady - controllerClicked);
+            evidence.put("pendingNativeMeshDraws", MiaoVisonLiteRenderer.previewDirectMeshDraws - controllerDrawsAtStart);
+            boolean synced = parityPass == 0 ? telemetry.operation() == HologramLocalMachineState.Operation.DISABLED
+                : telemetry.operation() == HologramLocalMachineState.Operation.IDLE && telemetry.tier() == 3;
+            if (!synced) {
+                require(System.nanoTime() - parityDataReady < 4_000_000_000L,
+                    "Native data published but the expected machine sync is missing: " + evidence);
+                return false;
+            }
+            if (firstDraw == 0 && System.nanoTime() - parityDataReady < 500_000_000L) return false;
+        }
 
         Map<String, Object> proof = new LinkedHashMap<>();
         NBTTagCompound capability = controller.ui.config.capability(parity.channel);
         proof.put("channel", parity.channel);
         proof.put("signal", signal);
         proof.put("effectiveSignal", capability == null ? null : capability.getInteger("current"));
+        proof.put("dataReadyNanos", (installed > 0 ? installed : parityDataReady) - controllerClicked);
+        if (fixed) {
+            proof.put("firstMaterialDrawNanos", firstDraw > 0 ? firstDraw - controllerClicked : null);
+            proof.put("observedOperation", telemetry.operation().name());
+            proof.put("observedTier", telemetry.tier());
+            proof.put("observedCaption", telemetry.caption());
+        }
+        NBTTagCompound measured = metrics.getCompoundTag("activity");
+        Map<String, Map<String, Long>> timings = new LinkedHashMap<>();
+        for (Object key : measured.func_150296_c()) {
+            String name = (String) key;
+            if (!name.startsWith("localController")) continue;
+            NBTTagCompound timer = measured.getCompoundTag(name);
+            NBTTagCompound before = activityBeforeParityEdit.getCompoundTag(name);
+            Map<String, Long> values = new LinkedHashMap<>();
+            values.put("calls", timer.getLong("calls") - before.getLong("calls"));
+            values.put("totalNanos", timer.getLong("totalNanos") - before.getLong("totalNanos"));
+            if (parityPass == 0) values.put("maxNanos", timer.getLong("maxNanos"));
+            timings.put(name, values);
+        }
+        proof.put("localReadTimings", timings);
         evidence.put(parityPass == 0 ? "nativeBeforeChannelEdit" : "nativeAfterChannelEdit", proof);
         Map<String, String> actual = requireNativeFootprint(state, proof);
         if (parity == NativeParity.CENTER) {
@@ -460,7 +526,7 @@ final class HologramLocalPreviewStagesProbe {
             require(((Integer) proof.get("maximumRelativeY")) > 127, "Critical Solar preview lost its upper structure");
         requireLiveController(mc);
 
-        if (parity == NativeParity.SOLAR || parity == NativeParity.ENTANGLER) {
+        if (fixed) {
             int checked = 0;
             for (HologramState.Cell cell : state.cells) {
                 if (cell.anchor || !mc.theWorld.blockExists(cell.x, cell.y, cell.z)) continue;
@@ -472,7 +538,19 @@ final class HologramLocalPreviewStagesProbe {
             }
             require(checked > 0, "The fixture provided no loaded positions for the live comparison");
             proof.put("loadedPositionsMatched", checked);
-            proof.put("dataReadyNanos", System.nanoTime() - controllerClicked);
+            if (parity == NativeParity.SOLAR && parityPass == 0) {
+                solarTelemetryRequested = true;
+                firstParityCells = actual;
+                beginParityEdit();
+                controller.ui.config.configure("main", parity.nextSignal);
+                zero("nativeChannelChanged");
+                return false;
+            }
+            if (parity == NativeParity.SOLAR) {
+                boolean changed = !firstParityCells.equals(actual);
+                proof.put("geometryChanged", changed);
+                require(changed, "Solar tier selection did not change its preview targets");
+            }
             zero("nativeFixedStructurePresented");
             mc.displayGuiScreen(null);
             zero("nativeFixedStructureClosed");
@@ -495,8 +573,8 @@ final class HologramLocalPreviewStagesProbe {
                 }
             }
             require(index >= 0, "Native channel choice missing: " + parity.nextSignal);
+            beginParityEdit();
             controller.ui.config.chooseOption(capability, index);
-            parityPass++;
             zero("nativeChannelChanged");
         } else {
             boolean changed = !firstParityCells.equals(actual);
@@ -513,6 +591,14 @@ final class HologramLocalPreviewStagesProbe {
             return true;
         }
         return false;
+    }
+
+    private void beginParityEdit() {
+        parityPass++;
+        parityDataReady = 0;
+        controllerDrawsAtStart = MiaoVisonLiteRenderer.previewDirectMeshDraws;
+        activityBeforeParityEdit = HologramRuntimeMetrics.snapshot().getCompoundTag("activity");
+        controllerClicked = System.nanoTime();
     }
 
     private Map<String, String> requireNativeFootprint(HologramState state, Map<String, Object> proof) throws Exception {
@@ -539,8 +625,10 @@ final class HologramLocalPreviewStagesProbe {
         }
         proof.put("controllerAnchors", anchors);
         require(anchors == 1, "Native structure screen must retain the exact controller anchor");
+        long referenceStarted = System.nanoTime();
         Map<String, String> reference = HologramNativeControllerBrowserReference.cells(
             controllerItem, ForgeDirection.NORTH, state.data.getInteger("main"), state.data.getCompoundTag("channels"));
+        proof.put("blockRendererReferenceNanos", System.nanoTime() - referenceStarted);
         proof.put("nativeCells", actual.size());
         proof.put("blockRendererCells", reference.size());
         proof.put("machineCells", ports);

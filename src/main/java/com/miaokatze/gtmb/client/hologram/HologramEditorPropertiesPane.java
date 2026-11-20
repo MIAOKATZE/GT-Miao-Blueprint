@@ -57,7 +57,8 @@ final class HologramEditorPropertiesPane {
         target.child(label(() -> {
             HologramState.Cell cell = ui.session.selectedCell();
             return cell == null ? ""
-                : "位置 " + cell.dx + "," + cell.dy + "," + cell.dz + " · 当前：" + ui.preview.cellName(cell, true);
+                : "位置 " + cell.dx + "," + cell.dy + "," + cell.dz + " · 当前："
+                    + (cell.localObservationMissing() ? "未读取到现场" : ui.preview.cellName(cell, true));
         }));
         target.child(label(() -> {
             HologramState.Cell cell = ui.session.selectedCell();
@@ -152,6 +153,11 @@ final class HologramEditorPropertiesPane {
         ListWidget<IWidget, ?> list = list("structure");
         Flow source = section();
         source.child(label(() -> "来源：" + sourceLabel(ui, ui.config.selectedStructureId())));
+        Flow observed = row();
+        observed.setEnabledIf(w -> ui.host.parent().localControllerStandard());
+        observed.child(label(() -> ui.host.parent().localMachineState().caption()));
+        sizingSections.add(observed);
+        source.child(observed);
         source.child(
             label(
                 () -> ui.session.selectedCell() != null && ui.session.selectedCell().sourceMissing
