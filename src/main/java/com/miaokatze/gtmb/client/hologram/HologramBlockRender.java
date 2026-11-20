@@ -5,6 +5,8 @@ package com.miaokatze.gtmb.client.hologram;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -35,11 +37,17 @@ import cpw.mods.fml.relauncher.ReflectionHelper;
 /** Produces Lite compatibility draws from audited static renderers and detached snapshot tiles. */
 final class HologramBlockRender {
 
-    private static final Map<HologramState.Cell, Model[]> MODELS = new IdentityHashMap<>();
-    private static final Map<String, String> FAILURES = new HashMap<>();
+    static final class Cache {
+
+        final Map<HologramState.Cell, Model[]> models = new IdentityHashMap<>();
+        final Map<String, String> failures = new HashMap<>();
+        HologramState snapshot;
+        int compiled;
+        HologramBlockAccess target, actual;
+        VertexScratch scratch;
+    }
+
     private static final Set<String> WARNED_FAILURES = new HashSet<>();
-    private static HologramState snapshot;
-    private static HologramBlockAccess target, actual;
     private static final Field DRAWING = field(Tessellator.class, "isDrawing", "field_78415_z");
     private static final Field OFFSET_X = field(Tessellator.class, "xOffset", "field_78408_v");
     private static final Field OFFSET_Y = field(Tessellator.class, "yOffset", "field_78407_w");
@@ -56,54 +64,59 @@ final class HologramBlockRender {
         field(Tessellator.class, "isColorDisabled", "field_78410_t"),
         field(Tessellator.class, "drawMode", "field_78409_u") };
 
-    static int compiled, vertices;
-
     private HologramBlockRender() {}
 
+    private static Cache cache() {
+        return HologramPreviewAssets.active().blocks;
+    }
+
     static void begin(HologramState state) {
-        if (snapshot == state) return;
-        HologramRenderer.nativeSnapshotChanged();
+        Cache cache = cache();
+        if (cache.snapshot == state) return;
+        if (HologramPreviewAssets.active() == HologramPreviewAssets.EDITOR) HologramRenderer.editorNativeSnapshotChanged();
+        beginViewport(state);
+    }
+
+    static void beginViewport(HologramState state) {
+        Cache cache = cache();
+        if (cache.snapshot == state) return;
         clear();
-        snapshot = state;
+        cache.snapshot = state;
         HologramLinkNodePreview.begin();
-        target = new HologramBlockAccess(state, false);
-        actual = new HologramBlockAccess(state, true);
+        cache.target = new HologramBlockAccess(state, false);
+        cache.actual = new HologramBlockAccess(state, true);
     }
 
     static void clear() {
-        for (Model[] pair : MODELS.values()) for (Model model : pair) if (model != null) model.close();
-        MODELS.clear();
-        FAILURES.clear();
-        snapshot = null;
-        target = actual = null;
-        compiled = vertices = 0;
-    }
-
-    static boolean releaseSnapshot(HologramState state) {
-        if (snapshot != state) return false;
-        clear();
-        return true;
+        Cache cache = cache();
+        for (Model[] pair : cache.models.values()) for (Model model : pair) if (model != null) model.close();
+        cache.models.clear();
+        cache.failures.clear();
+        cache.snapshot = null;
+        cache.target = cache.actual = null;
+        cache.compiled = 0;
     }
 
     static void advance(HologramState previous, HologramState next, Set<HologramRegionCache.Key> dirty) {
-        if (snapshot != previous) return;
+        Cache cache = cache();
+        if (cache.snapshot != previous) return;
         for (HologramRegionCache.Key key : dirty) {
             List<HologramState.Cell> cells = previous.regions.regions.get(key);
             if (cells == null) continue;
             for (HologramState.Cell cell : cells) {
-                Model[] pair = MODELS.remove(cell);
+                Model[] pair = cache.models.remove(cell);
                 if (pair == null) continue;
                 for (Model model : pair) if (model != null) model.close();
             }
         }
-        snapshot = next;
+        cache.snapshot = next;
         // The spatial index is shared; constructing these views does not walk all cells.
-        target = new HologramBlockAccess(next, false);
-        actual = new HologramBlockAccess(next, true);
+        cache.target = new HologramBlockAccess(next, false);
+        cache.actual = new HologramBlockAccess(next, true);
     }
 
     static String failure(HologramState.Cell cell, boolean current) {
-        return FAILURES.getOrDefault((current ? cell.id : cell.wantId), "");
+        return cache().failures.getOrDefault((current ? cell.id : cell.wantId), "");
     }
 
     static boolean invisible(HologramState.Cell cell, boolean current) {
@@ -126,10 +139,10 @@ final class HologramBlockRender {
     }
 
     static boolean ready(HologramState.Cell cell, boolean current) {
-        if (snapshot == null) return false;
+        if (cache().snapshot == null) return false;
         current = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
         if (!HologramNativeTiles.supported(cell.block(current))) return false;
-        Model[] pair = MODELS.computeIfAbsent(cell, unused -> new Model[2]);
+        Model[] pair = cache().models.computeIfAbsent(cell, unused -> new Model[2]);
         int side = current ? 1 : 0;
         if (pair[side] == null) pair[side] = compile(cell, current);
         return pair[side].packet != null || pair[side].acceptedEmpty || pair[side].invisible;
@@ -137,7 +150,7 @@ final class HologramBlockRender {
 
     static void draw(HologramState.Cell cell, boolean current) {
         current = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
-        Model[] pair = MODELS.get(cell);
+        Model[] pair = cache().models.get(cell);
         if (pair == null || pair[current ? 1 : 0] == null) return;
         Model model = pair[current ? 1 : 0];
         if (model.packet == null) return;
@@ -157,36 +170,36 @@ final class HologramBlockRender {
     }
 
     static int vertexCount(HologramState.Cell cell, boolean current) {
-        Model[] pair = MODELS.get(cell);
+        Model[] pair = cache().models.get(cell);
         return pair == null || pair[current ? 1 : 0] == null ? 0 : pair[current ? 1 : 0].vertices;
     }
 
     static int uniquePositions(HologramState.Cell cell, boolean current) {
-        Model[] pair = MODELS.get(cell);
+        Model[] pair = cache().models.get(cell);
         return pair == null || pair[current ? 1 : 0] == null ? 0 : pair[current ? 1 : 0].positions;
     }
 
     static boolean missingTexture(HologramState.Cell cell, boolean current) {
-        Model[] pair = MODELS.get(cell);
+        Model[] pair = cache().models.get(cell);
         return pair != null && pair[current ? 1 : 0] != null && pair[current ? 1 : 0].missingTexture;
     }
 
     static List<double[]> positions(HologramState.Cell cell, boolean current) {
-        Model[] pair = MODELS.get(cell);
+        Model[] pair = cache().models.get(cell);
         return pair == null || pair[current ? 1 : 0] == null ? java.util.Collections.emptyList()
             : pair[current ? 1 : 0].points;
     }
 
     /** Opt-in AE GL evidence: detached geometry, UVs and emitted packed vertex colors. */
     static List<double[]> attributes(HologramState.Cell cell, boolean current) {
-        Model[] pair = MODELS.get(cell);
+        Model[] pair = cache().models.get(cell);
         return pair == null || pair[current ? 1 : 0] == null ? java.util.Collections.emptyList()
             : pair[current ? 1 : 0].attributes;
     }
 
     /** Smoke evidence that a nondegenerate native face used a particular atlas material. */
     static boolean usesIcon(HologramState.Cell cell, boolean current, IIcon icon) {
-        Model[] pair = MODELS.get(cell);
+        Model[] pair = cache().models.get(cell);
         if (pair == null || pair[current ? 1 : 0] == null || icon == null) return false;
         for (double[] uv : pair[current ? 1 : 0].textureCenters)
             if (uv[0] > icon.getMinU() + 1e-6 && uv[0] < icon.getMaxU() - 1e-6
@@ -198,7 +211,8 @@ final class HologramBlockRender {
     @SuppressWarnings("unchecked")
     private static Model compile(HologramState.Cell cell, boolean current) {
         Block block = cell.block(current);
-        HologramBlockAccess access = current ? actual : target;
+        Cache cache = cache();
+        HologramBlockAccess access = current ? cache.actual : cache.target;
         HologramNativeRenderRegistry.Adapter adapter = HologramNativeRenderRegistry.adapter(block);
         if (adapter != null && adapter.invisible(block, access.getBlockMetadata(cell.x, cell.y, cell.z)))
             return new Model(
@@ -258,10 +272,14 @@ final class HologramBlockRender {
         boolean invokedNative = false;
         HologramAeNativeRender.CableContext aeCableContext = null;
         HologramNativeRenderRegistry.RenderScope renderScope = null;
-        Set<String> positions = new HashSet<>();
-        List<double[]> points = new ArrayList<>();
-        List<double[]> textureCenters = new ArrayList<>();
-        List<double[]> attributes = new ArrayList<>();
+        Cache cache = cache();
+        VertexScratch scratch = cache.scratch == null ? new VertexScratch() : cache.scratch;
+        cache.scratch = null;
+        boolean captureGeometry = Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke");
+        boolean captureAttributes = captureGeometry || Boolean.getBoolean("gtmb.hologram.aeClientSmoke");
+        List<double[]> points = captureGeometry ? new ArrayList<>() : Collections.emptyList();
+        List<double[]> textureCenters = captureGeometry ? new ArrayList<>() : Collections.emptyList();
+        List<double[]> attributes = captureAttributes ? new ArrayList<>() : Collections.emptyList();
         boolean missing = false;
         int previousPass = MinecraftForgeClient.getRenderPass();
         int previousWorldPass = ForgeHooksClient.getWorldRenderPass();
@@ -328,45 +346,39 @@ final class HologramBlockRender {
                 int emitted = VERTEX_COUNT.getInt(tess);
                 count += emitted;
                 if (emitted > 0) {
-                    int[] raw = HologramVertexData.read(tess, emitted);
-                    int stride = 8;
-                    if (stride >= 3) for (int v = 0; v < emitted; v++) {
-                        int quad = v / 4 * 4;
-                        if (quad + 3 < emitted && !usableQuad(raw, stride, quad)) continue;
-                        int start = v * stride;
-                        if (positions.add(raw[start] + ":" + raw[start + 1] + ":" + raw[start + 2])
-                            && Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke"))
-                            points.add(
-                                new double[] { Float.intBitsToFloat(raw[start]), Float.intBitsToFloat(raw[start + 1]),
-                                    Float.intBitsToFloat(raw[start + 2]) });
-                    }
-                    IIcon absent = Minecraft.getMinecraft()
-                        .getTextureMapBlocks()
-                        .getAtlasSprite("missingno");
-                    if (stride >= 5) for (int v = 0; v + 3 < emitted; v += 4) {
-                        if (!usableQuad(raw, stride, v)) continue;
+                    int[] raw = scratch.raw = HologramVertexData.read(tess, emitted, scratch.raw);
+                    IIcon absent = Minecraft.getMinecraft().getTextureMapBlocks().getAtlasSprite("missingno");
+                    for (int first = 0; first < emitted; first += 4) {
+                        int corners = Math.min(4, emitted - first);
+                        if (corners == 4 && !usableQuad(raw, 8, first)) continue;
                         double u = 0, w = 0;
-                        for (int corner = 0; corner < 4; corner++) {
-                            u += Float.intBitsToFloat(raw[(v + corner) * stride + 3]) / 4.0;
-                            w += Float.intBitsToFloat(raw[(v + corner) * stride + 4]) / 4.0;
+                        for (int vertex = first; vertex < first + corners; vertex++) {
+                            int start = vertex * 8;
+                            boolean added = scratch.add(raw[start], raw[start + 1], raw[start + 2]);
+                            if (added && captureGeometry)
+                                points.add(new double[] {
+                                    Float.intBitsToFloat(raw[start]),
+                                    Float.intBitsToFloat(raw[start + 1]),
+                                    Float.intBitsToFloat(raw[start + 2]) });
+                            if (corners == 4) {
+                                float textureU = Float.intBitsToFloat(raw[start + 3]);
+                                float textureV = Float.intBitsToFloat(raw[start + 4]);
+                                u += textureU / 4.0;
+                                w += textureV / 4.0;
+                                if (captureAttributes) attributes.add(new double[] {
+                                    Float.intBitsToFloat(raw[start]),
+                                    Float.intBitsToFloat(raw[start + 1]),
+                                    Float.intBitsToFloat(raw[start + 2]),
+                                    textureU, textureV, raw[start + 5] });
+                            }
                         }
-                        if (Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke"))
-                            textureCenters.add(new double[] { u, w });
-                        if (u > absent.getMinU() + 1e-6 && u < absent.getMaxU() - 1e-6
-                            && w > absent.getMinV() + 1e-6
-                            && w < absent.getMaxV() - 1e-6) missing = true;
+                        if (corners == 4) {
+                            if (captureGeometry) textureCenters.add(new double[] { u, w });
+                            if (u > absent.getMinU() + 1e-6 && u < absent.getMaxU() - 1e-6
+                                && w > absent.getMinV() + 1e-6 && w < absent.getMaxV() - 1e-6) missing = true;
+                        }
                     }
-                    if (stride >= 6 && (Boolean.getBoolean("gtmb.hologram.aeClientSmoke")
-                        || Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke")))
-                        for (int v = 0; v < emitted; v++) {
-                            int quad = v / 4 * 4;
-                            if (quad + 3 >= emitted || !usableQuad(raw, stride, quad)) continue;
-                            int offset = v * stride;
-                            attributes.add(
-                                new double[] { Float.intBitsToFloat(raw[offset]), Float.intBitsToFloat(raw[offset + 1]),
-                                    Float.intBitsToFloat(raw[offset + 2]), Float.intBitsToFloat(raw[offset + 3]),
-                                    Float.intBitsToFloat(raw[offset + 4]), raw[offset + 5] });
-                        }
+
                 }
                 tess.draw();
             }
@@ -374,7 +386,7 @@ final class HologramBlockRender {
             opened = false;
             // EnderIO deliberately emits a zero-area quad in its empty alpha pass.
             // That sentinel alone is not a usable native preview model.
-            if (count == 0 || positions.size() < 3) {
+            if (count == 0 || scratch.size < 3) {
                 if (!sourceReference && count == 0
                     && adapter != null
                     && adapter.allowsEmptyGeometry(
@@ -384,17 +396,16 @@ final class HologramBlockRender {
                         cell.x,
                         cell.y,
                         cell.z)) {
-                    compiled++;
+                    cache.compiled++;
                     return new Model(null, 0, 0, points, textureCenters, missing, attributes, true);
                 }
                 if (sourceReference) return new Model(null, 0, 0, points, textureCenters, missing, attributes);
                 return failed(cell, current, "native renderer produced no usable geometry");
             }
             if (!sourceReference) {
-                compiled++;
-                vertices += count;
+                cache.compiled++;
             }
-            Model model = new Model(packet, count, positions.size(), points, textureCenters, missing, attributes);
+            Model model = new Model(packet, count, scratch.size, points, textureCenters, missing, attributes);
             retained = true;
             return model;
         } catch (ReflectiveOperationException | RuntimeException | LinkageError failedNative) {
@@ -410,6 +421,8 @@ final class HologramBlockRender {
                     .getSimpleName() + ": "
                     + failedNative.getMessage());
         } finally {
+            scratch.reset();
+            cache.scratch = scratch;
             if (!retained && packet != null) packet.close();
             if (invokedNative && adapter == null) MiaoVisonLiteRenderScope.releaseNativeContext(block);
             if (aeCableContext != null) aeCableContext.close();
@@ -440,7 +453,7 @@ final class HologramBlockRender {
     private static Model failed(HologramState.Cell cell, boolean current, String message) {
         String id = current ? cell.id : cell.wantId;
         int meta = current ? cell.meta : cell.wantMeta;
-        FAILURES.put(id, message);
+        cache().failures.put(id, message);
         String diagnostic = id + ":" + meta + " " + message;
         // Keep diagnostics useful across snapshot changes without logging once per missing block/frame.
         if (WARNED_FAILURES.size() < 128 && WARNED_FAILURES.add(diagnostic))
@@ -455,6 +468,46 @@ final class HologramBlockRender {
 
     private static Field field(Class<?> type, String... names) {
         return ReflectionHelper.findField(type, names);
+    }
+
+    /** Reused raw vertex storage and an exact set of the three position bit patterns. */
+    private static final class VertexScratch {
+
+        private static final int MAX_RETAINED_INTS = 1 << 16;
+        int[] raw = new int[0];
+        private int[] slots = new int[128];
+        int size;
+
+        boolean add(int x, int y, int z) {
+            if (size >= slots.length / 8) {
+                int[] previous = slots;
+                slots = new int[previous.length * 2];
+                size = 0;
+                for (int at = 0; at < previous.length; at += 4)
+                    if (previous[at] != 0) add(previous[at + 1], previous[at + 2], previous[at + 3]);
+            }
+            int hash = Integer.rotateLeft(x, 11) ^ Integer.rotateLeft(y, 22) ^ z;
+            hash = it.unimi.dsi.fastutil.HashCommon.mix(hash);
+            int mask = slots.length - 1;
+            int at = (hash * 4) & mask;
+            while (slots[at] != 0) {
+                if (slots[at + 1] == x && slots[at + 2] == y && slots[at + 3] == z) return false;
+                at = (at + 4) & mask;
+            }
+            slots[at] = 1;
+            slots[at + 1] = x;
+            slots[at + 2] = y;
+            slots[at + 3] = z;
+            size++;
+            return true;
+        }
+
+        void reset() {
+            if (slots.length > MAX_RETAINED_INTS) slots = new int[128];
+            else Arrays.fill(slots, 0);
+            if (raw.length > MAX_RETAINED_INTS) raw = new int[0];
+            size = 0;
+        }
     }
 
     private static boolean usableQuad(int[] raw, int stride, int first) {

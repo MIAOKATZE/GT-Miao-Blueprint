@@ -91,7 +91,7 @@ public final class HologramPreviewUvRegression {
                 "valid").invoke(batches(submission).get(0)),
             "an unknown endpoint is ineligible in the same draw");
         SimpleAssert.that(
-            !field(submission.getClass(), "unsupported").getBoolean(submission),
+            !field(coreSubmission(submission).getClass(), "unsupported").getBoolean(coreSubmission(submission)),
             "dynamic endpoint changes do not permanently reject Core capture");
         wrapper.setOriginal(base);
         compare(
@@ -136,7 +136,7 @@ public final class HologramPreviewUvRegression {
         installSentinel(submission, batches.get(1), 64);
         Object unchanged = field(
             batches.get(0)
-                .getClass(),
+                .getClass().getSuperclass(),
             "slice").get(batches.get(0));
         Object versions = field(
             batches.get(1)
@@ -146,32 +146,32 @@ public final class HologramPreviewUvRegression {
         prepare(submission);
         SimpleAssert.eq(
             32,
-            field(submission.getClass(), "retainedInts").getInt(submission),
+            field(coreSubmission(submission).getClass(), "retainedInts").getInt(coreSubmission(submission)),
             "only the changed dependency's slice is deducted, exactly once");
         SimpleAssert.that(
             unchanged == field(
                 batches.get(0)
-                    .getClass(),
+                    .getClass().getSuperclass(),
                 "slice").get(batches.get(0)),
             "an unrelated slice is retained");
         prepare(submission);
         SimpleAssert.eq(
             32,
-            field(submission.getClass(), "retainedInts").getInt(submission),
+            field(coreSubmission(submission).getClass(), "retainedInts").getInt(coreSubmission(submission)),
             "repeated invalidation cannot double-deduct");
         installSentinel(submission, batches.get(1), 96);
         wrapper.setOriginal(sprite(3));
         prepare(submission);
         SimpleAssert.eq(
             32,
-            field(submission.getClass(), "retainedInts").getInt(submission),
+            field(coreSubmission(submission).getClass(), "retainedInts").getInt(coreSubmission(submission)),
             "a new same-UV endpoint still invalidates the old identity after a replacement slice");
         installSentinel(submission, batches.get(1), 128);
         wrapper.setOriginal(new FlippableIcon(base));
         prepare(submission);
         SimpleAssert.eq(
             32,
-            field(submission.getClass(), "retainedInts").getInt(submission),
+            field(coreSubmission(submission).getClass(), "retainedInts").getInt(coreSubmission(submission)),
             "nested endpoints cannot retain an old slice");
         wrapper.setOriginal(base);
         prepare(submission);
@@ -188,18 +188,25 @@ public final class HologramPreviewUvRegression {
                 "versions").get(batches.get(1)),
             "captured-version arrays are reused");
         SimpleAssert.that(
-            !field(submission.getClass(), "unsupported").getBoolean(submission),
+            !field(coreSubmission(submission).getClass(), "unsupported").getBoolean(coreSubmission(submission)),
             "dependency invalidation is distinct from actual Core unsupported");
         Field live = field(MiaoVisonLiteRenderer.class, "previewSubmission");
-        Object saved = live.get(null);
+        MiaoVisonLiteRenderer viewport = HologramRenderer.editor();
+        Object saved = live.get(viewport);
+        com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteSession<?, ?> session =
+            (com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteSession<?, ?>)
+                field(MiaoVisonLiteRenderer.class, "session").get(viewport);
         try {
-            live.set(null, submission);
-            method(MiaoVisonLiteRenderer.class, "invalidatePreviewDrawCache").invoke(null);
+            live.set(viewport, submission);
+            session.replaceSubmission((com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteSubmission<?>) coreSubmission(submission));
+            method(MiaoVisonLiteRenderer.class, "invalidatePreviewDrawCache").invoke(HologramRenderer.editor());
             SimpleAssert.that(
-                live.get(null) == null,
+                live.get(HologramRenderer.editor()) == null,
                 "the existing reload/close invalidation owns all icon records and slices");
+            SimpleAssert.eq(0, field(coreSubmission(submission).getClass(), "retainedInts").getInt(coreSubmission(submission)),
+                "the viewport releases retained CPU geometry");
         } finally {
-            live.set(null, saved);
+            live.set(HologramRenderer.editor(), saved);
         }
     }
 
@@ -208,10 +215,10 @@ public final class HologramPreviewUvRegression {
         Constructor<?> constructor = TessellatorSlice.class.getDeclaredConstructors()[0];
         constructor.setAccessible(true);
         Object slice = constructor.newInstance(new int[ints], new byte[ints / 8], null, null);
-        field(batch.getClass(), "slice").set(batch, slice);
+        field(batch.getClass().getSuperclass(), "slice").set(batch, slice);
         method(batch.getClass(), "captureVersions").invoke(batch);
-        Field retained = field(submission.getClass(), "retainedInts");
-        retained.setInt(submission, retained.getInt(submission) + ints);
+        Field retained = field(coreSubmission(submission).getClass(), "retainedInts");
+        retained.setInt(coreSubmission(submission), retained.getInt(coreSubmission(submission)) + ints);
     }
 
     private static void conservativeFallbacks() throws ReflectiveOperationException {
@@ -224,7 +231,7 @@ public final class HologramPreviewUvRegression {
             "browse/partial legacy submission has no new live-record map");
         compare(fixture.oracle(), draw(legacy, true).vertices, "legacy wrapper fallback remains unchanged");
         SimpleAssert.that(
-            !field(legacy.getClass(), "unsupported").getBoolean(legacy),
+            !field(coreSubmission(legacy).getClass(), "unsupported").getBoolean(coreSubmission(legacy)),
             "legacy wrapper is not sent to Core capture");
         for (IIcon unsupported : new IIcon[] { new TextureAtlasSprite("fixture:subclass") {},
             new FlippableIcon(base) {}, new FlippableIcon(new FlippableIcon(base)) }) {
@@ -232,14 +239,14 @@ public final class HologramPreviewUvRegression {
             Object submission = submission(unknown.faces, true);
             compare(unknown.oracle(), draw(submission, true).vertices, "subclass/nested fallback emits once");
             SimpleAssert.that(
-                !field(submission.getClass(), "unsupported").getBoolean(submission),
+                !field(coreSubmission(submission).getClass(), "unsupported").getBoolean(coreSubmission(submission)),
                 "ineligible icons do not poison Core unsupported");
         }
         Object foreign = submission(fixture.faces, true);
         RecordingTessellator actual = draw(foreign, true);
         compare(fixture.oracle(), actual.vertices, "foreign Core capture fallback still emits once");
         SimpleAssert.that(
-            field(foreign.getClass(), "unsupported").getBoolean(foreign),
+            field(coreSubmission(foreign).getClass(), "unsupported").getBoolean(coreSubmission(foreign)),
             "only a real unsupported Core capture enters persistent fallback");
         compare(
             fixture.oracle(),
@@ -307,7 +314,7 @@ public final class HologramPreviewUvRegression {
             inputConstructor.setAccessible(true);
             Class<?> face = Class.forName(MiaoVisonLiteRenderer.class.getName() + "$Face");
             Constructor<?> faceConstructor = face
-                .getDeclaredConstructor(input, double[][].class, int.class, HologramGeometry.Surface.class);
+                .getDeclaredConstructor(input, double[].class, int.class, HologramGeometry.Surface.class);
             faceConstructor.setAccessible(true);
             for (int repeat = 0; repeat < repeats; repeat++)
                 for (int partial = 0; partial < 2; partial++) for (int side = 0; side < 6; side++) {
@@ -325,7 +332,10 @@ public final class HologramPreviewUvRegression {
                         points[vertex] = new double[] { repeat * 11.25 + surface.vertices[vertex][0] * 7.5,
                             surface.vertices[vertex][1] * -13.25, surface.vertices[vertex][2] * 3.125 + side };
                     Object prepared = inputConstructor.newInstance(cell, 63, "", 0, material, false, false);
-                    faces.add(faceConstructor.newInstance(prepared, points, side, surface));
+                    double[] packed = new double[24];
+                    for (int vertex = 0; vertex < points.length; vertex++)
+                        System.arraycopy(points[vertex], 0, packed, vertex * 3, 3);
+                    faces.add(faceConstructor.newInstance(prepared, packed, side, surface));
                     expected.add(new ExpectedFace(side, points, surface.vertices, sides[side], diagnostic));
                 }
         }
@@ -380,6 +390,10 @@ public final class HologramPreviewUvRegression {
         Constructor<?> constructor = type.getDeclaredConstructor(List.class, double.class, boolean.class);
         constructor.setAccessible(true);
         return constructor.newInstance(faces, 2d, snapshots);
+    }
+
+    private static Object coreSubmission(Object adapter) throws ReflectiveOperationException {
+        return field(adapter.getClass(), "submission").get(adapter);
     }
 
     private static void prepare(Object submission) throws ReflectiveOperationException {

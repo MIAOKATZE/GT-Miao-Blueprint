@@ -80,7 +80,7 @@ public final class HologramInteractionClientSmoke {
     private boolean lockedEscapeChecked;
     private String lockedEscapeSession;
     private long lockedEscapeNonce, lockedEscapeStartedAt;
-    private HologramRenderer.WorldRenderWitness lastConsumedWorldWitness;
+    private MiaoVisonLiteRenderer.WorldRenderWitness lastConsumedWorldWitness;
     private HologramState lastRenderedProjectionState;
     private int[] lastRenderedMovingAnchor, aimedMovingAnchor;
     private int observedWorldGeometry, observedWorldGhosts, observedWorldOutline;
@@ -113,7 +113,7 @@ public final class HologramInteractionClientSmoke {
     public void worldRendered(net.minecraftforge.client.event.RenderWorldLastEvent event)
         throws ReflectiveOperationException {
         renderedWorldFrames++;
-        lastConsumedWorldWitness = HologramRenderer.lastWorldRenderWitness();
+        lastConsumedWorldWitness = MiaoVisonLiteRenderer.lastWorldRenderWitness();
         lastRenderedProjectionState = lastConsumedWorldWitness == null ? null : lastConsumedWorldWitness.state;
         observedWorldGeometry = lastConsumedWorldWitness == null ? 0 : lastConsumedWorldWitness.geometry;
         observedWorldGhosts = lastConsumedWorldWitness == null ? 0 : lastConsumedWorldWitness.ghosts;
@@ -271,9 +271,9 @@ public final class HologramInteractionClientSmoke {
             if (stage == 30) {
                 if (renderedWorldFrames <= closedAtWorldFrame) return;
                 waitTicks = 0;
-                require(HologramRenderer.lastWorldGeometry > 0, "cached_world_material_geometry_" + stage);
-                require(HologramRenderer.lastWorldGTGeometry > 0, "world_renders_GT_material_models_" + stage);
-                require(HologramRenderer.lastWorldGhosts > 0, "real_world_has_ghost_cells_" + stage);
+                require(MiaoVisonLiteRenderer.lastWorldGeometry > 0, "cached_world_material_geometry_" + stage);
+                require(MiaoVisonLiteRenderer.lastWorldGTGeometry > 0, "world_renders_GT_material_models_" + stage);
+                require(MiaoVisonLiteRenderer.lastWorldGhosts > 0, "real_world_has_ghost_cells_" + stage);
                 screenshot(mc, "world-materials");
                 reopenWithRightClick(mc);
                 stage = 3;
@@ -353,7 +353,7 @@ public final class HologramInteractionClientSmoke {
                             .tagCount() == 36,
                     "real_C08_state_opens_full_EBF_GUI");
                 awaitControl(screen, 81);
-                require(HologramRenderer.lastPreviewAnchorMarkers > 0, "controller_marker_drawn_in_real_preview");
+                require(HologramRenderer.editor().lastPreviewAnchorMarkers > 0, "controller_marker_drawn_in_real_preview");
                 verifyAnimatedItemAtlas(mc);
                 String guidance = HologramGuidance.next(new HologramState(state), -1, libraryTab(screen), false);
                 require(
@@ -1230,8 +1230,8 @@ public final class HologramInteractionClientSmoke {
                 return true;
             if (!awaitAimedMovingWorldFrame(mc)) return true;
             require(
-                HologramRenderer.lastWorldGeometry > 0 && HologramRenderer.lastWorldGhosts > 0
-                    && HologramRenderer.lastWorldPlacementOutlineColor == 0x70e69a,
+                MiaoVisonLiteRenderer.lastWorldGeometry > 0 && MiaoVisonLiteRenderer.lastWorldGhosts > 0
+                    && MiaoVisonLiteRenderer.lastWorldPlacementOutlineColor == 0x70e69a,
                 "post_complete_Alt_new_world_ghost_is_actually_rendered_green");
             screenshot(mc, "v007-post-complete-Alt-green-" + afterRepeatStage);
             saveObservation("post-complete-Alt-green-receipt-" + afterRepeatStage + ".nbt", receipt());
@@ -1505,8 +1505,8 @@ public final class HologramInteractionClientSmoke {
             java.util.Arrays.equals(aimedMovingAnchor, HologramClient.movingAnchor(latest)),
             "latest_moving_snapshot_camera_target_equals_actual_rendered_world_anchor");
         require(
-            HologramRenderer.lastWorldGeometry > 0 && HologramRenderer.lastWorldGhosts > 0
-                && HologramRenderer.lastWorldPlacementOutlineColor == 0x70e69a,
+            MiaoVisonLiteRenderer.lastWorldGeometry > 0 && MiaoVisonLiteRenderer.lastWorldGhosts > 0
+                && MiaoVisonLiteRenderer.lastWorldPlacementOutlineColor == 0x70e69a,
             "latest_aimed_world_frame_has_actual_ghost_geometry_and_green_outline");
         NBTTagCompound consumed = new NBTTagCompound();
         consumed.setBoolean("actualGlListConsumed", true);
@@ -1741,7 +1741,7 @@ public final class HologramInteractionClientSmoke {
                 receipt().getInteger("blueprintPlaced") == (sufficientBlueprintPass ? 0 : 1),
                 "moving_ghost_never_builds_stage_" + stage);
             require(
-                HologramRenderer.lastWorldGeometry > 0 && HologramRenderer.lastWorldGhosts > 0,
+                MiaoVisonLiteRenderer.lastWorldGeometry > 0 && MiaoVisonLiteRenderer.lastWorldGhosts > 0,
                 "actual_world_render_draws_blueprint_ghost_stage_" + stage);
             mc.objectMouseOver = null;
             if (!airPlacementPrepared) {
@@ -1774,7 +1774,7 @@ public final class HologramInteractionClientSmoke {
             }
             if (renderedWorldFrames <= airPreparedFrame) return true;
             require(
-                HologramRenderer.lastWorldPlacementOutlineColor == 0x70e69a,
+                MiaoVisonLiteRenderer.lastWorldPlacementOutlineColor == 0x70e69a,
                 "actual_moving_world_ghost_outline_is_green_stage_" + stage);
             require(
                 java.util.Arrays.equals(expectedAirAnchor, HologramClient.movingAnchor(HologramClient.state)),
@@ -1804,7 +1804,7 @@ public final class HologramInteractionClientSmoke {
                 "server_owned_receipt_observes_air_target_cells_stage_" + stage);
             if (++waitTicks < 4 || renderedWorldFrames <= airPreparedFrame) return true;
             require(
-                HologramRenderer.lastWorldGeometry > 0 && HologramRenderer.lastWorldPlacementOutlineColor == 0x66d9ef,
+                MiaoVisonLiteRenderer.lastWorldGeometry > 0 && MiaoVisonLiteRenderer.lastWorldPlacementOutlineColor == 0x66d9ef,
                 "actual_first_locked_world_ghost_outline_is_cyan_stage_" + stage);
             require(
                 authoritative.getInteger("blueprintPlaced") == (sufficientBlueprintPass ? 0 : 1),
@@ -1840,7 +1840,7 @@ public final class HologramInteractionClientSmoke {
                 "Shift_right_unlock_invalidates_old_review_nonce");
             if (++waitTicks < 4 || renderedWorldFrames <= airPreparedFrame) return true;
             require(
-                HologramRenderer.lastWorldGeometry > 0 && HologramRenderer.lastWorldPlacementOutlineColor == 0x70e69a,
+                MiaoVisonLiteRenderer.lastWorldGeometry > 0 && MiaoVisonLiteRenderer.lastWorldPlacementOutlineColor == 0x70e69a,
                 "actual_Shift_right_unlocked_world_ghost_returns_to_green");
             screenshot(mc, "v007-shift-right-green-unlocked-review-" + reviewStage);
             mc.objectMouseOver = null;
@@ -1863,7 +1863,7 @@ public final class HologramInteractionClientSmoke {
                 "relock_uses_exact_rendered_air_anchor");
             if (++waitTicks < 4 || renderedWorldFrames <= airPreparedFrame) return true;
             require(
-                HologramRenderer.lastWorldGeometry > 0 && HologramRenderer.lastWorldPlacementOutlineColor == 0x66d9ef,
+                MiaoVisonLiteRenderer.lastWorldGeometry > 0 && MiaoVisonLiteRenderer.lastWorldPlacementOutlineColor == 0x66d9ef,
                 "actual_relocked_world_ghost_returns_to_cyan");
             screenshot(mc, "v007-relocked-cyan-before-RIGHT2-review-" + reviewStage);
             if (sufficientBlueprintPass && !nudgeChecked) {
@@ -1991,8 +1991,8 @@ public final class HologramInteractionClientSmoke {
                 require(mc.currentScreen == null, "locked_Escape_draft_Place_returns_to_world_ghost");
                 if (!awaitAimedMovingWorldFrame(mc)) return true;
                 require(
-                    HologramRenderer.lastWorldGeometry > 0
-                        && HologramRenderer.lastWorldPlacementOutlineColor == 0x70e69a,
+                    MiaoVisonLiteRenderer.lastWorldGeometry > 0
+                        && MiaoVisonLiteRenderer.lastWorldPlacementOutlineColor == 0x70e69a,
                     "locked_Escape_draft_Place_renders_actual_green_ghost");
                 mc.objectMouseOver = null;
                 expectedAirAnchor = HologramClient.movingAnchor(HologramClient.state);
@@ -2400,15 +2400,15 @@ public final class HologramInteractionClientSmoke {
         File image = new File(new File(mc.mcDataDir, "screenshots"), filename);
         require(image.isFile() && image.length() > 0, "saved_real_network_screenshot_" + name);
         System.out.println(
-            "[GTMB-HOLOGRAM-INTERACTION-CLIENT] RENDER geometry=" + HologramRenderer.lastWorldGeometry
+            "[GTMB-HOLOGRAM-INTERACTION-CLIENT] RENDER geometry=" + MiaoVisonLiteRenderer.lastWorldGeometry
                 + " GTgeometry="
-                + HologramRenderer.lastWorldGTGeometry
+                + MiaoVisonLiteRenderer.lastWorldGTGeometry
                 + " fallback="
-                + HologramRenderer.lastWorldFallback
+                + MiaoVisonLiteRenderer.lastWorldFallback
                 + " ghost="
-                + HologramRenderer.lastWorldGhosts
+                + MiaoVisonLiteRenderer.lastWorldGhosts
                 + " matched="
-                + HologramRenderer.lastWorldMatched
+                + MiaoVisonLiteRenderer.lastWorldMatched
                 + " screenshot="
                 + image.getAbsolutePath());
     }

@@ -80,7 +80,9 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
     @Override
     public void updateScreen() {
         nameField.updateCursorCounter();
-        HologramState next = HologramClient.state;
+        boolean local = editor.ui.session.localDocument();
+        if (local) editor.ui.library.tickLocalWorkspace();
+        HologramState next = local ? editor.ui.session.state() : HologramClient.state;
         if (next == null || world != mc.theWorld || !model.session.equals(next.session)) {
             stale = true;
             notice = "预览会话已改变，请取消并重新打开分类";
@@ -88,7 +90,7 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
         }
         if (next == state) return;
         state = next;
-        editor.updateState(next);
+        if (!local) editor.updateState(next);
         if (pending >= 0 && next.data.getLong("uiSequence") >= pending) {
             pending = -1;
             NBTTagCompound processing = next.data.getCompoundTag("processing");
@@ -103,6 +105,10 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
         }
         stale = model.revision != next.data.getLong("planRevision");
         if (stale) notice = "蓝图版本已改变，请取消并重新打开分类";
+    }
+
+    boolean editorIs(HologramScreen owner) {
+        return owner == editor;
     }
 
     @Override
@@ -207,10 +213,7 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
             .filter(index -> index >= 0)
             .toArray();
         previewSelection.load(selected, -1, state.cells.size());
-        HologramSelection previousSelection = HologramRenderer.selection;
-        String previousStructure = HologramRenderer.selectedStructureId;
-        boolean previousEmpty = HologramRenderer.showEmptyCells;
-        int previousLayer = HologramRenderer.projectionLayer;
+        MiaoVisonLiteRenderer viewport = HologramRenderer.quantum();
         int factor = new net.minecraft.client.gui.ScaledResolution(mc, mc.displayWidth, mc.displayHeight)
             .getScaleFactor();
         GL11.glPushAttrib(GL11.GL_SCISSOR_BIT);
@@ -221,11 +224,8 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
             Math.round(VW * scale * factor),
             Math.round(VH * scale * factor));
         try {
-            HologramRenderer.selection = previewSelection;
-            HologramRenderer.selectedStructureId = "";
-            HologramRenderer.showEmptyCells = false;
-            HologramRenderer.projectionLayer = Integer.MAX_VALUE;
-            hovered = HologramRenderer.preview(
+            viewport.selection = previewSelection;
+            hovered = viewport.preview(
                 state,
                 VX,
                 VY,
@@ -244,7 +244,7 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
                 HologramQuantumGroupsModel.Node node = model.nodes.get(i);
                 if (node.cell < 0) continue;
                 HologramState.Cell cell = state.cells.get(node.cell);
-                double[] point = HologramRenderer.project(cell.dx, cell.dy, cell.dz);
+                double[] point = viewport.project(cell.dx, cell.dy, cell.dz);
                 int x = (int) point[0], y = (int) point[1];
                 int group = 0;
                 while (group < model.groups.size() && !model.groups.get(group).id.equals(node.group)) group++;
@@ -275,10 +275,6 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
                 }
             }
         } finally {
-            HologramRenderer.selection = previousSelection;
-            HologramRenderer.selectedStructureId = previousStructure;
-            HologramRenderer.showEmptyCells = previousEmpty;
-            HologramRenderer.projectionLayer = previousLayer;
             GL11.glPopAttrib();
         }
         markerRenderGeneration = renderGeneration + 1;
@@ -338,7 +334,7 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
             dragX = mx;
             dragY = my;
         } else if (button == 0 && editable()) {
-            int picked = HologramRenderer.pick(mx, my);
+            int picked = HologramRenderer.quantum().pick(mx, my);
             for (int i = 0; i < model.nodes.size(); i++) if (model.nodes.get(i).cell == picked) {
                 model.click(i, controlHeld);
                 break;
@@ -462,6 +458,7 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
 
     @Override
     protected void onMuiClose() {
+        HologramRenderer.quantum().close();
         Keyboard.enableRepeatEvents(false);
     }
 
@@ -487,7 +484,7 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
         requireSmoke();
         int cell = model.nodes.get(index).cell;
         for (int y = VY + 1; y < VY + VH - 1; y++)
-            for (int x = VX + 1; x < VX + VW - 1; x++) if (HologramRenderer.pick(x, y) == cell) return point(x, y);
+            for (int x = VX + 1; x < VX + VW - 1; x++) if (HologramRenderer.quantum().pick(x, y) == cell) return point(x, y);
         throw new IllegalStateException("No actual visible quantum node hit region " + index);
     }
 

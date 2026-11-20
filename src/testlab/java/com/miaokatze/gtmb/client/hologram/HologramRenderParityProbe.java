@@ -492,7 +492,7 @@ public final class HologramRenderParityProbe {
         if (giantMemory) memoryPeakHeap = Math.max(memoryPeakHeap, heapUsedBytes());
         long elapsed = System.nanoTime() - giantStarted;
         if (!giantEvidence.containsKey("firstMaterialNanos")) {
-            NBTTagCompound inspection = HologramRenderer.lessonInspection(snapshot);
+            NBTTagCompound inspection = HologramRenderer.viewportFor(snapshot).lessonInspection(snapshot);
             int materialCells = inspection.getInteger("renderedCellCount");
             if (materialCells > 0) {
                 giantEvidence.put("firstMaterialNanos", elapsed);
@@ -501,7 +501,7 @@ public final class HologramRenderParityProbe {
                 giantEvidence.put("firstPreparedCells", HologramRenderer.previewMeshCompleted(snapshot));
                 giantEvidence.put("firstStageTiming", previewTiming());
                 giantEvidence.put("firstWorkerCounters", workerCounters());
-                giantEvidence.put("firstNativeModelCompiles", HologramBlockRender.compiled);
+                giantEvidence.put("firstNativeModelCompiles", HologramRenderer.viewportFor(snapshot).assets().blocks.compiled);
                 if (!giantPerformance) {
                     String file = "giant-first-full.png";
                     captureFramebuffer(file);
@@ -556,7 +556,7 @@ public final class HologramRenderParityProbe {
         }
         giantEvidence.put("warmCachedDisplayStateReused", warmCacheReuse);
         giantEvidence.put("cells", snapshot.cells.size());
-        NBTTagCompound presented = HologramRenderer.lessonInspection(snapshot);
+        NBTTagCompound presented = HologramRenderer.viewportFor(snapshot).lessonInspection(snapshot);
         int nativeModels = presented.getInteger("nativeModelCellCount");
         int stacks = 0;
         int tileData = 0;
@@ -568,7 +568,7 @@ public final class HologramRenderParityProbe {
         giantEvidence.put("targetNativeTileCells", tileData);
         giantEvidence.put("firstCompleteNativeModelCells", nativeModels);
         giantEvidence.put("completeWorkerCounters", workerCounters());
-        giantEvidence.put("completeNativeModelCompiles", HologramBlockRender.compiled);
+        giantEvidence.put("completeNativeModelCompiles", HologramRenderer.viewportFor(snapshot).assets().blocks.compiled);
         require(stacks > 0 && tileData > 0 && nativeModels > 0, "Private browse did not hydrate native model inputs");
         Map<?, ?> local = (Map<?, ?>) diagnosticField(HologramLibraryClient.class, "localPreviews")
             .get(HologramLibraryClient.INSTANCE);
@@ -577,11 +577,11 @@ public final class HologramRenderParityProbe {
             source = (HologramLibraryClient.DisplaySource) local.get("local:" + giantLibraryId);
         }
         Path stagedJson = isolatedLibrary.savedPath(giantLibraryId);
-        if (source == null && giantMemory) {
+        if (source == null) {
             HologramLibraryClient library = HologramLibraryClient.INSTANCE;
             require(
-                library.browsePreviewState() == snapshot && library.browsePreviewImage() != null,
-                "Uncached private browse lost its published state or image");
+                library.browsePreviewState() == snapshot && giantEvidence.containsKey("thumbnailAvailableNanos"),
+                "Uncached private browse did not publish the exact state and its early thumbnail");
             giantEvidence.put("sourceJsonSha256", HologramBlueprintArtifact.hash(Files.readAllBytes(stagedJson)));
             giantEvidence.put("sourceBytes", Files.size(stagedJson));
         } else {
@@ -616,7 +616,7 @@ public final class HologramRenderParityProbe {
             sample.put("fixtureCachedCells", cached == null || cached.state == null ? 0 : cached.state.cells.size());
         }
         HologramState active = library.browsePreviewState();
-        HologramState displayed = HologramRenderer.previewDisplayState();
+        HologramState displayed = HologramRenderer.browse().previewDisplayState();
         sample.put("activeBrowseCells", active == null ? 0 : active.cells.size());
         sample.put("rendererDisplayedCells", displayed == null ? 0 : displayed.cells.size());
         sample.put("heapProbeRetainsColdSnapshot", coldBrowseState != null);
@@ -679,7 +679,7 @@ public final class HologramRenderParityProbe {
         for (int y = area[1] + area[3] / 4; y < area[1] + area[3] * 3 / 4; y += 4) {
             for (int x = area[0] + area[2] / 4; x < area[0] + area[2] * 3 / 4; x += 4) {
                 int[] local = screen.ui.shell.sceneLocalPoint(x, y);
-                int index = local == null ? -1 : HologramRenderer.pick(local[0], local[1]);
+                int index = local == null ? -1 : HologramRenderer.viewportFor(snapshot).pick(local[0], local[1]);
                 if (index < 0) continue;
                 clickCell = index;
                 clickPoint = new int[] { x, y };
@@ -711,7 +711,7 @@ public final class HologramRenderParityProbe {
         for (int row = 1; row < rows; row++) {
             for (int col = 1; col < columns; col++) {
                 int x = scene.getArea().width * col / columns, y = scene.getArea().height * row / rows;
-                picks.add(HologramRenderer.pick(x, y));
+                picks.add(HologramRenderer.viewportFor(snapshot).pick(x, y));
             }
         }
         require(
@@ -719,7 +719,7 @@ public final class HologramRenderParityProbe {
                 .anyMatch(index -> index >= 0),
             name + " returned no valid native picks");
         frame.put("picks", picks);
-        NBTTagCompound inspection = HologramRenderer.lessonInspection(snapshot);
+        NBTTagCompound inspection = HologramRenderer.viewportFor(snapshot).lessonInspection(snapshot);
         require(inspection.getBoolean("snapshotPresented"), name + " had no presented snapshot");
         int nativeCells = inspection.getInteger("nativeModelCellCount");
         if (scenario == 1 || scenario == 2) require(nativeCells > 0, name + " used no native tile-model draws");
@@ -743,7 +743,7 @@ public final class HologramRenderParityProbe {
         if (giant()) {
             frame.put("rendererStages", previewTiming());
             frame.put("workerRendererCounters", workerCounters());
-            frame.put("nativeModelCompiles", HologramBlockRender.compiled);
+            frame.put("nativeModelCompiles", HologramRenderer.viewportFor(snapshot).assets().blocks.compiled);
         }
         frame.put("scene", cropScene(output, file, name + "-scene.png", screen.ui));
         if (giant()) giantFrames.add(frame);
@@ -780,7 +780,7 @@ public final class HologramRenderParityProbe {
 
     private static Object previewTiming() throws ReflectiveOperationException {
         try {
-            java.lang.reflect.Method method = HologramRenderer.class.getSuperclass()
+            java.lang.reflect.Method method = MiaoVisonLiteRenderer.class
                 .getDeclaredMethod("previewTiming");
             method.setAccessible(true);
             return method.invoke(null);
@@ -791,7 +791,7 @@ public final class HologramRenderParityProbe {
 
     private static Map<String, Long> rendererCounters(String... names) throws IllegalAccessException {
         Map<String, Long> counters = new LinkedHashMap<>();
-        Class<?> renderer = HologramRenderer.class.getSuperclass();
+        Class<?> renderer = MiaoVisonLiteRenderer.class;
         for (String name : names) {
             try {
                 Field count = renderer.getDeclaredField(name);

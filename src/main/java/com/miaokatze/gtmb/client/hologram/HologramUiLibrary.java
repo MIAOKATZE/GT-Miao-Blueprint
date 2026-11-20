@@ -39,6 +39,18 @@ final class HologramUiLibrary {
         return localWorkspace.busy();
     }
 
+    void openCapture(com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument document, String notice) {
+        localWorkspace.openCapture(document, notice);
+    }
+
+    void cancelLocalAttachment(long request) {
+        localWorkspace.cancelAttachment(request);
+    }
+
+    void tickLocalWorkspace() {
+        localWorkspace.tick();
+    }
+
     boolean editLocalDocument(String operation, NBTTagCompound request) {
         return localWorkspace.edit(operation, request);
     }
@@ -90,14 +102,12 @@ final class HologramUiLibrary {
 
     private boolean libraryDrawer;
     private boolean browsePreview;
-    private String browseServerPresetId = "";
 
     boolean browsePreviewActive() {
         return libraryDrawer && browsePreview;
     }
 
     private String selectedServerPresetId() {
-        if (!browseServerPresetId.isEmpty()) return browseServerPresetId;
         String localId = HologramLibraryClient.INSTANCE.selectedRow(false)
             .getString("id");
         return localId.isEmpty() ? ui.session.state().data.getString("selectedPresetId") : localId;
@@ -383,18 +393,7 @@ final class HologramUiLibrary {
     NBTTagList nativeRows() {
         if (ui.session.isTutorial()) return ui.session.state().data.getTagList("presets", 10);
         HologramLibraryClient library = HologramLibraryClient.INSTANCE;
-        if (dedicatedLibrary()) return library.rows(publicLibrary);
-        NBTTagList privateRows = library.rows(false);
-        if (ui.session.localDocument()) return privateRows;
-        NBTTagList legacy = ui.session.state().data.getTagList("presets", 10);
-        NBTTagList visible = (NBTTagList) privateRows.copy();
-        for (int i = 0; i < legacy.tagCount(); i++) {
-            NBTTagCompound row = legacy.getCompoundTagAt(i);
-            // Collection-only templates still use the integrated catalog; paired files are indexed locally.
-            if (row.getString("gtmbVersion")
-                .isEmpty()) visible.appendTag(row.copy());
-        }
-        return visible;
+        return library.rows(dedicatedLibrary() && publicLibrary);
     }
 
     void nativeBindRow(int slot, NBTTagCompound row) {
@@ -1200,7 +1199,7 @@ final class HologramUiLibrary {
             case 203:
                 if (!nativeCanTransferSelected()) return true;
                 if (this.publicLibrary) library.downloadSelected();
-                else library.sendLocal(ui.session.state(), "preview", true);
+                else library.publishSelected();
                 return true;
             case 205:
                 NBTTagCompound row = library.selectedRow(this.publicLibrary);
@@ -1228,15 +1227,14 @@ final class HologramUiLibrary {
                 if (this.deletePresetId.startsWith("public_")) {
                     library.select(true, this.deletePresetId);
                     library.deleteSelected(true);
-                } else if (privateFileId(this.deletePresetId)) localWorkspace.deletePreset(this.deletePresetId);
+                } else if (privateFileId(this.deletePresetId) || this.deletePresetId.startsWith("legacy:"))
+                    localWorkspace.deletePreset(this.deletePresetId);
                 this.deletePresetId = this.deletePresetName = "";
                 return true;
             case 141:
             case 139:
                 if (id == 139) browsePreview = false;
-                if (id == 139 && (this.publicLibrary || !library.busy()))
-                    ui.library.rememberLibraryNavigation(library.selected(this.publicLibrary), "blueprintEdit");
-                else if (id == 141) ui.library.cancelLibraryNavigation();
+                if (id == 141) ui.library.cancelLibraryNavigation();
                 if (this.publicLibrary && !library.canReadPublic()) return true;
                 sendPresetSwitch(
                     id == 141 ? "choosePlacementPreset" : "editPreset",
@@ -1484,50 +1482,26 @@ final class HologramUiLibrary {
             return;
         }
         if ("previewPreset".equals(operation)) {
-            browsePreset(target, !privateFileId(target));
+            browsePreset(target, target.startsWith("public_"));
             return;
         }
         if ("choosePlacementPreset".equals(operation)) {
             HologramLibraryClient library = HologramLibraryClient.INSTANCE;
-            if (privateFileId(target)) library.previewLocal(target, true);
-            else library.previewPublic(target, true);
+            if (target.startsWith("public_")) library.previewPublic(target, true);
+            else library.previewLocal(target, true);
             return;
         }
         if ("editPreset".equals(operation)) {
             browsePreview = false;
             blueprintTab = libraryDrawer = true;
             if (presetNameField != null) presetNameField.setFocused(false);
-            if (privateFileId(target)) {
-                cancelLibraryNavigation();
-                publicLibrary = false;
-                localWorkspace.openPreset(target);
-                return;
-            }
-            browseServerPresetId = target;
-            if (ui.session.localDocument()) {
-                ui.session.leaveLocalDocument();
-                if (ui.session.localDocument()) return;
-            }
+            cancelLibraryNavigation();
+            publicLibrary = target.startsWith("public_");
+            keepLibraryOffset = true;
+            HologramLibraryClient.INSTANCE.select(publicLibrary, target);
+            if (publicLibrary) localWorkspace.openPublic(target);
+            else localWorkspace.openPreset(target);
         }
-        if (dedicatedLibrary()) {
-            HologramLibraryClient library = HologramLibraryClient.INSTANCE;
-            // Public IDs already carry their namespace; a refreshed view cannot redirect a confirmed local target.
-            boolean publicTarget = target.startsWith("public_");
-            publicLibrary = publicTarget;
-            library.select(publicTarget, target);
-            if (!"choosePlacementPreset".equals(operation))
-                rememberLibraryNavigation(target, "editPreset".equals(operation) ? "blueprintEdit" : "blueprintBrowse");
-            else cancelLibraryNavigation();
-        }
-        if (!dedicatedLibrary() && "editPreset".equals(operation)) {
-            HologramLibraryClient.INSTANCE.select(false, "");
-            rememberLibraryNavigation(target, "blueprintEdit");
-        }
-        NBTTagCompound request = new NBTTagCompound();
-        request.setString("presetId", target);
-        request.setBoolean("confirmDiscard", confirmDiscard);
-        keepLibraryOffset = true;
-        ui.session.send(operation, request, true);
     }
 
     boolean toggleOverwriteMode(int id) {
@@ -1594,6 +1568,10 @@ final class HologramUiLibrary {
         }
         if (this.overwriteMode && id >= 14000 && id < 15000) {
             NBTTagCompound row = clickedRow;
+            if (!privateFileId(row.getString("id"))) {
+                ui.session.notice("请选择可覆盖的客户端蓝图文件");
+                return true;
+            }
             this.overwriteTarget = row.getString("id");
             this.overwriteName = row.getString("name");
             this.overwriteManualName |= !this.presetNameField.getText()
@@ -1737,7 +1715,7 @@ final class HologramUiLibrary {
                 return true;
             case 176:
                 if (!ui.session.editable() || this.deletePresetId.isEmpty()) return true;
-                if (privateFileId(this.deletePresetId)) {
+                if (privateFileId(this.deletePresetId) || this.deletePresetId.startsWith("legacy:")) {
                     localWorkspace.deletePreset(this.deletePresetId);
                     this.deletePresetId = this.deletePresetName = "";
                     return true;
@@ -1937,7 +1915,6 @@ final class HologramUiLibrary {
 
     void restoreSession(HologramState next, SnapshotTransition change) {
         browsePreview = false;
-        browseServerPresetId = "";
         UiMemory memory = HologramUiMemory.UI_MEMORY()
             .get(next.session);
         blueprintTab = memory == null ? next.data.getBoolean("presetBrowseForPlacement") || HologramUiMemory.tabMemory()

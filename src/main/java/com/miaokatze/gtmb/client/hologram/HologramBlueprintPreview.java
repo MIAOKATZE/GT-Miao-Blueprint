@@ -65,7 +65,6 @@ public final class HologramBlueprintPreview {
     private static final AtomicLong CAPTURE_GENERATION = new AtomicLong();
     private static volatile NBTTagCompound captureWitness = new NBTTagCompound();
     private static volatile boolean installed;
-    private static boolean capturing;
 
     private HologramBlueprintPreview() {}
 
@@ -82,8 +81,7 @@ public final class HologramBlueprintPreview {
         byte[] sourceJson = witness ? exactJson.clone() : exactJson;
         try {
             JsonObject share = HologramBlueprintCompactCodec.parse(sourceJson);
-            JsonObject blueprint = share.getAsJsonObject("blueprint");
-            if (blueprint == null) throw new IOException("Blueprint preview requires the exact exported share file");
+            JsonObject blueprint = HologramBlueprintCompactCodec.documentBlueprint(share);
             JsonArray sourceCells = blueprint.getAsJsonArray("cells");
             NBTTagCompound data = expandedDisplay(blueprint, sourceCells, progress);
             if (witness) rememberSource(data, HologramBlueprintArtifact.hash(sourceJson));
@@ -97,7 +95,7 @@ public final class HologramBlueprintPreview {
     static DisplayInput displayInput(byte[] bytes, java.util.function.BiConsumer<Integer, Integer> progress)
         throws IOException {
         try {
-            HologramBlueprintCompactCodec.DisplayRows view = HologramBlueprintCompactCodec.displayRows(bytes);
+            HologramBlueprintCompactCodec.DisplayRows view = HologramBlueprintCompactCodec.displayGeometry(bytes);
             if (!view.compact()) return new DisplayInput(
                 expandedDisplay(view.blueprint, view.blueprint.getAsJsonArray("cells"), progress),
                 null);
@@ -116,8 +114,9 @@ public final class HologramBlueprintPreview {
                     excluded[material] = true;
                     continue;
                 }
-                JsonObject position = view.position(index);
-                int x = coordinate(position, "x"), y = coordinate(position, "y"), z = coordinate(position, "z");
+                int x = checkedCoordinate(view.coordinate(index, 0), 60000000L);
+                int y = checkedCoordinate(view.coordinate(index, 1), 256L);
+                int z = checkedCoordinate(view.coordinate(index, 2), 60000000L);
                 if (known == null) {
                     long before = payloads.total;
                     cells.materials[material] = displayMaterial(definition, payloads);
@@ -241,9 +240,11 @@ public final class HologramBlueprintPreview {
     }
 
     private static int coordinate(JsonObject source, String axis) throws IOException {
-        int value = integer(source, axis, 0);
-        if (Math.abs((long) value) > (axis.equals("y") ? 256L : 60000000L))
-            throw new IOException("Blueprint preview coordinate out of range");
+        return checkedCoordinate(integer(source, axis, 0), axis.equals("y") ? 256L : 60000000L);
+    }
+
+    private static int checkedCoordinate(int value, long limit) throws IOException {
+        if (Math.abs((long) value) > limit) throw new IOException("Blueprint preview coordinate out of range");
         return value;
     }
 
@@ -321,9 +322,6 @@ public final class HologramBlueprintPreview {
     }
 
     /** The renderer uses this scoped flag to omit editor outlines, role labels, selection, and annotations. */
-    static boolean cleanCapture() {
-        return capturing;
-    }
 
     /**
      * Read-only opt-in evidence from an actual successful END capture. RGB SHA-256 packs unsigned R, G, B bytes,
@@ -455,16 +453,15 @@ public final class HologramBlueprintPreview {
         if (witness) request.preexistingErrorCount = clearPreexistingErrors();
         if (!OpenGlHelper.isFramebufferEnabled()) throw new IOException("Native framebuffer previews are unavailable");
         HologramState state = completeSnapshot(request.snapshot);
+        MiaoVisonLiteRenderer viewport = new MiaoVisonLiteRenderer(
+            new HologramPreviewAssets(),
+            MiaoVisonLiteRenderer.View.CAPTURE);
         MiaoVisonLiteRenderScope.ClientTessState tess = new MiaoVisonLiteRenderScope.ClientTessState(
             Tessellator.instance);
         MiaoVisonLiteRenderScope saved = MiaoVisonLiteRenderScope.enter();
-        MiaoVisonLiteTarget framebuffer = null;
-        boolean oldEmpty = MiaoVisonLiteRenderer.showEmptyCells;
-        HologramSelection oldSelection = MiaoVisonLiteRenderer.selection;
-        String oldStructure = MiaoVisonLiteRenderer.selectedStructureId;
-        try {
+        try (HologramPreviewAssets.Scope ignored = viewport.assets().enter()) {
             OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit);
-            framebuffer = new MiaoVisonLiteTarget(SIZE, SIZE);
+            MiaoVisonLiteTarget framebuffer = viewport.target(SIZE, SIZE);
             framebuffer.bind(true);
             if (!framebuffer.complete()) throw new IOException("Native preview framebuffer is incomplete");
             GL11.glViewport(0, 0, SIZE, SIZE);
@@ -500,13 +497,9 @@ public final class HologramBlueprintPreview {
             GL11.glMatrixMode(GL11.GL_TEXTURE);
             GL11.glLoadIdentity();
             GL11.glMatrixMode(GL11.GL_MODELVIEW);
-            MiaoVisonLiteRenderer.showEmptyCells = false;
-            MiaoVisonLiteRenderer.selection = null;
-            MiaoVisonLiteRenderer.selectedStructureId = "";
-            capturing = true;
             request.requireCurrent();
-            MiaoVisonLiteRenderer
-                .preview(state, 0, 0, SIZE, SIZE, request.yaw, request.pitch, 1, Integer.MAX_VALUE, 0, -1, -1, -1, -1);
+            viewport.preview(
+                state, 0, 0, SIZE, SIZE, request.yaw, request.pitch, 1, Integer.MAX_VALUE, 0, -1, -1, -1, -1);
             // A native shape must never be silently replaced with the renderer's diagnostic cube fallback.
             for (HologramState.Cell cell : state.cells) {
                 Block block = cell.block(false);
@@ -549,17 +542,8 @@ public final class HologramBlueprintPreview {
             image.setRGB(0, 0, SIZE, SIZE, colors, 0, SIZE);
             return image;
         } finally {
-            capturing = false;
-            MiaoVisonLiteRenderer.showEmptyCells = oldEmpty;
-            MiaoVisonLiteRenderer.selection = oldSelection;
-            MiaoVisonLiteRenderer.selectedStructureId = oldStructure;
             try {
-                // Release detached tiles and display lists; the next live preview rebuilds its normal caches.
-                try {
-                    MiaoVisonLiteRenderer.release();
-                } finally {
-                    if (framebuffer != null) framebuffer.close();
-                }
+                viewport.close();
             } finally {
                 try {
                     saved.close();

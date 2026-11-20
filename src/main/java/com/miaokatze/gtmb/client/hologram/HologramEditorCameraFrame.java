@@ -33,7 +33,7 @@ final class HologramEditorCameraFrame {
         centerY = y + height / 2.0;
     }
 
-    /** Existing face arrays are the only per-vertex allocation; Core's orthonormal basis is reused. */
+    /** Projects a single point with the viewport's orthonormal basis. */
     double[] project(double x, double y, double z) {
         double[] result = new double[3];
         project(x, y, z, result);
@@ -51,28 +51,28 @@ final class HologramEditorCameraFrame {
     }
 
     /** Projects the four vertical edges in the same corner order and arithmetic as individual vertices. */
-    void projectVoxel(double x, double y, double z, double[][] points) {
+    void projectVoxel(double x, double y, double z, double[] points, int at) {
         double left = x - .5 - pose.anchorX(), right = x + .5 - pose.anchorX();
         double bottom = y - .5 - pose.anchorY(), top = y + .5 - pose.anchorY();
         double near = z - .5 - pose.anchorZ(), far = z + .5 - pose.anchorZ();
         double bottomUp = basis.upY() * bottom, topUp = basis.upY() * top;
         double bottomDepth = basis.forwardY() * bottom, topDepth = basis.forwardY() * top;
-        projectVerticalEdge(left, near, bottomUp, topUp, bottomDepth, topDepth, points[0], points[3]);
-        projectVerticalEdge(right, near, bottomUp, topUp, bottomDepth, topDepth, points[1], points[2]);
-        projectVerticalEdge(left, far, bottomUp, topUp, bottomDepth, topDepth, points[4], points[7]);
-        projectVerticalEdge(right, far, bottomUp, topUp, bottomDepth, topDepth, points[5], points[6]);
+        projectVerticalEdge(left, near, bottomUp, topUp, bottomDepth, topDepth, points, at, at + 9);
+        projectVerticalEdge(right, near, bottomUp, topUp, bottomDepth, topDepth, points, at + 3, at + 6);
+        projectVerticalEdge(left, far, bottomUp, topUp, bottomDepth, topDepth, points, at + 12, at + 21);
+        projectVerticalEdge(right, far, bottomUp, topUp, bottomDepth, topDepth, points, at + 15, at + 18);
     }
 
     private void projectVerticalEdge(double x, double z, double bottomUp, double topUp, double bottomDepth,
-        double topDepth, double[] bottom, double[] top) {
+        double topDepth, double[] points, int bottom, int top) {
         double localUpX = basis.upX() * x, localUpZ = basis.upZ() * z;
         double localDepthX = basis.forwardX() * x, localDepthZ = basis.forwardZ() * z;
         double screenX = centerX + (basis.rightX() * x + basis.rightZ() * z) * scale;
-        bottom[0] = top[0] = screenX;
-        bottom[1] = centerY - (localUpX + bottomUp + localUpZ) * scale;
-        top[1] = centerY - (localUpX + topUp + localUpZ) * scale;
-        bottom[2] = -(localDepthX + bottomDepth + localDepthZ);
-        top[2] = -(localDepthX + topDepth + localDepthZ);
+        points[bottom] = points[top] = screenX;
+        points[bottom + 1] = centerY - (localUpX + bottomUp + localUpZ) * scale;
+        points[top + 1] = centerY - (localUpX + topUp + localUpZ) * scale;
+        points[bottom + 2] = -(localDepthX + bottomDepth + localDepthZ);
+        points[top + 2] = -(localDepthX + topDepth + localDepthZ);
     }
 
     double[] projectScreen(double x, double y, double z) {

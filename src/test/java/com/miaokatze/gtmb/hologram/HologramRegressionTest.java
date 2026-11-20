@@ -53,6 +53,8 @@ public final class HologramRegressionTest {
             "native_structure_projection_reads_hatch_chain_without_callbacks",
             HologramProjectionChainRegression::run);
         cases.put("native_constructable_provider_falls_through", HologramStructureDiscoveryRegression::run);
+        cases.put("native_structure_preview_converges_and_preserves_latest_elements", HologramStructureDiscoveryRegression::runNativePreview);
+        cases.put("file_structure_channels_refresh_only_the_selected_native_group", HologramLocalBlueprintStructureRegression::run);
         cases.put(
             "direct_world_gestures_keep_source_and_plan_revisions",
             com.miaokatze.gtmb.client.hologram.HologramSemanticRequestRegression::run);

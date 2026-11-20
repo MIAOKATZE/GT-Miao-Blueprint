@@ -32,6 +32,9 @@ final class HologramSession {
 
     final HologramNetworkBindings.State networkBindings = new HologramNetworkBindings.State();
     boolean networkBindingRequested;
+    String executionRequestId = "";
+    final Map<String, NBTTagCompound> executionNetworks = new LinkedHashMap<>();
+    HologramExecutionReview.Start executionStart;
 
     final EntityPlayerMP player;
     final World libraryWorld;

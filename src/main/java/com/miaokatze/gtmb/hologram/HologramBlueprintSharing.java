@@ -19,6 +19,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonIOException;
+import com.google.gson.JsonObject;
 
 /** Independent share files; client supplied names never become arbitrary filesystem paths. */
 final class HologramBlueprintSharing {
@@ -210,6 +211,15 @@ final class HologramBlueprintSharing {
 
     /** Structural JSON admission only; caller must run the canonical safety boundary before use. */
     static HologramPresets.Preset decodeUnchecked(String json) throws IOException {
+        return decodeUnchecked(json, false);
+    }
+
+    /** Historic documents have no provenance header. Construction still admits their actual operations. */
+    static HologramPresets.Preset decodePlacementSource(String json) throws IOException {
+        return decodeUnchecked(json, true);
+    }
+
+    private static HologramPresets.Preset decodeUnchecked(String json, boolean historical) throws IOException {
         boundedJson(json);
         try {
             JsonElement root = HologramBlueprintCompactCodec.parse(json, MAX_BYTES);
@@ -230,9 +240,8 @@ final class HologramBlueprintSharing {
             validatePresetSchema(
                 root.getAsJsonObject()
                     .get("blueprint"));
-            HologramBlueprintVersions.validateJson(
-                root.getAsJsonObject()
-                    .get("blueprint"));
+            JsonObject blueprint = root.getAsJsonObject().getAsJsonObject("blueprint");
+            if (!historical || blueprint.has("nativeBlueprint")) HologramBlueprintVersions.validateJson(blueprint);
             Share share = GSON.fromJson(root, Share.class);
             return share.blueprint;
         } catch (RuntimeException invalid) {

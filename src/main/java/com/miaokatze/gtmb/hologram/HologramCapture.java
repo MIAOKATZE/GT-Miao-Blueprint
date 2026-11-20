@@ -381,6 +381,23 @@ public final class HologramCapture {
         return capture;
     }
 
+    static Cell nativePreviewCell(HologramNativePreviewWorld.Placement placement, IStructureElement<?> element,
+        ItemStack trigger) {
+        Cell cell = new Cell(element, placement.x(), placement.y(), placement.z(), trigger, true);
+        cell.block = placement.block();
+        cell.meta = placement.meta();
+        if (placement.tile() instanceof IGregTechTileEntity nativeTile && nativeTile.getMetaTileEntity() != null) {
+            cell.previewStack = new ItemStack(cell.block, 1, nativeTile.getMetaTileID());
+            cell.previewFacing = nativeTile.getFrontFacing()
+                .ordinal();
+            cell.targetDisplay = HologramDisplaySnapshot.projection(placement.tile());
+            cell.renderKind = "item";
+            if (nativeTile.getMetaTileEntity() instanceof gregtech.api.metatileentity.implementations.MTEHatch)
+                cell.role = "hatch";
+        }
+        return cell;
+    }
+
     private void bindSource(MTEEnhancedMultiBlockBase<?> machine, ExtendedFacing facing) {
         sourceFacing = facing;
         sourceMetadata.setString("sourceId", sourceResolution.sourceId);
@@ -1143,6 +1160,8 @@ public final class HologramCapture {
         String family = "";
         String renderKind = "block";
         ItemStack actualStack;
+        ItemStack previewStack;
+        int previewFacing = -1;
         net.minecraft.nbt.NBTTagCompound actualDisplay;
         net.minecraft.nbt.NBTTagCompound targetDisplay;
         int actualFacing = -1;

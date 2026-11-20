@@ -146,6 +146,7 @@ final class HologramWorkspaceScheduler {
             HologramProjectorWorkflow.libraryCloseUi(s);
             if (!HologramWorkspace.areaSessionOwned(s)) HologramWorkspace.clearAreaSelection(s);
         }
+        if (HologramExecutionReview.tick(s)) return;
         HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
         if (area != null && area.importing && !HologramSessionPolicy.valid(s) && HologramWorkspace.areaSessionOwned(s))
             return;

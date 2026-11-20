@@ -631,6 +631,9 @@ public final class HologramUiModuleRegression {
     private static void confirmedLibraryTargets() {
         java.lang.reflect.Field singleton = null;
         Object previous = null;
+        HologramLibraryClient library = HologramLibraryClient.INSTANCE;
+        NBTTagList savedCatalog = library.rows(false);
+        String savedSelection = library.selected(false);
         try {
             for (java.lang.reflect.Field field : net.minecraft.client.Minecraft.class.getDeclaredFields())
                 if (field.getType() == net.minecraft.client.Minecraft.class
@@ -648,7 +651,7 @@ public final class HologramUiModuleRegression {
                 HologramState state = ui.session.state();
                 // The compatibility button may address a separately browsed item. Ordinary rows instead use
                 // the immutable identity captured when their native control was drawn.
-                if (action == 139) setUiField(ui.library, "browseServerPresetId", "chosen-target");
+                if (action == 139) HologramLibraryClient.INSTANCE.select(false, "chosen-target");
                 NBTTagCompound originalView = ui.preview.backgroundUiState();
                 ui.router.activate(action);
                 SimpleAssert.that(
@@ -677,36 +680,29 @@ public final class HologramUiModuleRegression {
                     (NBTTagCompound) reordered.getCompoundTagAt(1)
                         .copy());
                 ui.router.activate(224);
-                NBTTagCompound confirmed = (NBTTagCompound) uiField(ui.diagnostics, "capturedRenderSmokeAction");
-                SimpleAssert
-                    .eq("chosen-target", confirmed.getString("presetId"), "confirmation retains the clicked identity");
-                SimpleAssert.eq("editPreset", confirmed.getString("op"), "confirmation retains the original operation");
+                SimpleAssert.eq("chosen-target", HologramLibraryClient.INSTANCE.selected(false),
+                    "confirmation retains the clicked identity");
                 SimpleAssert.that(
-                    confirmed.getBoolean("confirmDiscard") && ui.session.sequence() == 1 && !ui.library.discardReview(),
-                    "one confirmation submits the switch through the existing discard gate without a separate discard command");
+                    ui.session.sequence() == 0 && !ui.library.discardReview()
+                        && uiField(ui.diagnostics, "capturedRenderSmokeAction") == null,
+                    "confirming the private-library switch issues no server draft request");
                 SimpleAssert.that(
-                    originalView.equals(ui.preview.backgroundUiState())
-                        && "chosen-target".equals(ui.library.libraryNavigation().targetId),
-                    "confirmed handoff keeps the camera and the originally captured navigation target");
+                    originalView.equals(ui.preview.backgroundUiState()),
+                    "confirmed handoff keeps the camera while the local file is requested");
             }
 
             HologramUiModules clean = librarySwitchUi();
             clean.session.state().data.setBoolean("blueprintDirty", false);
             NBTTagCompound cleanView = clean.preview.backgroundUiState();
             clean.router.activate(14001);
-            NBTTagCompound cleanRequest = (NBTTagCompound) uiField(clean.diagnostics, "capturedRenderSmokeAction");
             SimpleAssert.that(
-                !clean.library.discardReview() && clean.session.sequence() == 1
-                    && "editPreset".equals(cleanRequest.getString("op"))
-                    && "chosen-target".equals(cleanRequest.getString("presetId"))
-                    && !cleanRequest.getBoolean("confirmDiscard"),
-                "a clean row directly enters the real editPreset chain without an extra edit or discard action");
+                !clean.library.discardReview() && clean.session.sequence() == 0
+                    && "chosen-target".equals(HologramLibraryClient.INSTANCE.selected(false))
+                    && uiField(clean.diagnostics, "capturedRenderSmokeAction") == null,
+                "a clean row opens the local library without an edit or discard packet");
             SimpleAssert.that(
-                cleanView.equals(clean.preview.backgroundUiState()) && !clean.library.browsePreviewActive()
-                    && "blueprintEdit".equals(clean.library.libraryNavigation().purpose)
-                    && !clean.library.libraryNavigation().local,
-                "integrated-library row handoff is an editable server session and preserves the current camera");
-            NBTTagCompound nextData = (NBTTagCompound) clean.session.state().data.copy();
+                cleanView.equals(clean.preview.backgroundUiState()) && !clean.library.browsePreviewActive(),
+                "opening a private file keeps the current camera");
             HologramUiModules overwrite = librarySwitchUi();
             overwrite.session.state().data.setBoolean("blueprintProcessingRequired", true);
             overwrite.session.state().data.setBoolean("blueprintProcessingComplete", false);
@@ -717,22 +713,6 @@ public final class HologramUiModuleRegression {
             SimpleAssert.that(
                 overwrite.library.prepareLibraryNavigation(140) && overwrite.library.overwriteReview(),
                 "explicit overwrite reaches target confirmation before server-owned saved-policy rechecking");
-            nextData.setString("session", "loaded-target");
-            nextData.setString("generation", "loaded-target");
-            nextData.setString("libraryLocalId", "");
-            nextData.setString("selectedPresetId", "chosen-target");
-            nextData.setBoolean("open", true);
-            HologramState next = new HologramState(nextData);
-            SimpleAssert.that(
-                clean.library.acceptsLibraryNavigation(next),
-                "the real integrated-library response is accepted in the existing screen instead of reopening it");
-            clean.preview.resetSession(next);
-            NBTTagCompound nextView = clean.preview.backgroundUiState();
-            for (String field : new String[] { "yaw", "pitch", "zoom", "cameraX", "cameraZ" }) SimpleAssert.eq(
-                cleanView.getDouble(field),
-                nextView.getDouble(field),
-                "same-screen row response preserves editor camera " + field);
-
             for (boolean localIdentity : new boolean[] { false, true }) {
                 HologramUiModules same = librarySwitchUi();
                 if (!localIdentity) same.session.state().data.setString("libraryLocalId", "");
@@ -780,7 +760,7 @@ public final class HologramUiModuleRegression {
                 "display layer controls and denied edits preserve the authoritative state and original selection");
             for (int action : new int[] { 139, 14001 }) {
                 HologramUiModules cancelled = librarySwitchUi();
-                if (action == 139) setUiField(cancelled.library, "browseServerPresetId", "chosen-target");
+                if (action == 139) HologramLibraryClient.INSTANCE.select(false, "chosen-target");
                 HologramState draft = cancelled.session.state();
                 NBTTagCompound originalView = cancelled.preview.backgroundUiState();
                 cancelled.router.activate(action);
@@ -814,16 +794,21 @@ public final class HologramUiModuleRegression {
                 .that(rejected.library.discardReview(), "the existing scalar server discard reply offers confirmation");
             rejected.session.state().data.setString("selectedPresetId", "original");
             rejected.router.activate(224);
-            NBTTagCompound retry = (NBTTagCompound) uiField(rejected.diagnostics, "capturedRenderSmokeAction");
             SimpleAssert.that(
-                "editPreset".equals(retry.getString("op")) && "chosen-target".equals(retry.getString("presetId"))
-                    && retry.getBoolean("confirmDiscard")
-                    && rejected.session.sequence() == 1,
-                "a server-requested confirmation retries its exact target and operation once");
+                "chosen-target".equals(HologramLibraryClient.INSTANCE.selected(false))
+                    && uiField(rejected.diagnostics, "capturedRenderSmokeAction") == null
+                    && rejected.session.sequence() == 0,
+                "a legacy server-sourced proposal selects its exact target through the local file path");
             libraryCatalogControlsPreservePreview();
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("cannot exercise library discard confirmation", failure);
         } finally {
+            try {
+                setUiField(library, "local", savedCatalog);
+                library.select(false, savedSelection);
+            } catch (ReflectiveOperationException failure) {
+                throw new AssertionError("cannot restore detached library catalog", failure);
+            }
             if (singleton != null) try {
                 singleton.set(null, previous);
             } catch (IllegalAccessException failure) {
@@ -858,6 +843,8 @@ public final class HologramUiModuleRegression {
             rows.appendTag(row);
         }
         data.setTag("presets", rows);
+        setUiField(HologramLibraryClient.INSTANCE, "local", rows);
+        HologramLibraryClient.INSTANCE.select(false, "original");
         setUiField(ui.session, "state", new HologramState(data));
         setUiField(ui.diagnostics, "captureRenderSmokeAction", true);
         ui.library.libraryDrawer(true);

@@ -13,6 +13,7 @@ import org.lwjgl.opengl.GL14;
 import org.lwjgl.opengl.GL30;
 
 import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteRenderScope;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteSession;
 import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteTarget;
 
 /** Composite native geometry once: native vertex colors/TESRs cannot override the final ghost opacity. */
@@ -20,6 +21,7 @@ final class HologramCutRawPreviewGhost {
 
     private static final float OPACITY = .65f;
     private static final float[] TINT = { .90f, .97f, 1 };
+    private final MiaoVisonLiteSession<Void, Void> lite = new MiaoVisonLiteSession<>();
     private MiaoVisonLiteTarget layer;
     private int destination = -1, width, height, priorGlError, copyGlError;
     private long composites, depthCopies;
@@ -51,7 +53,7 @@ final class HologramCutRawPreviewGhost {
         if (allocate) {
             // Forge's Framebuffer uses getStencilBits() to choose DEPTH24 or DEPTH24_STENCIL8, exactly as
             // Minecraft's scene framebuffer does. A mod-replaced incompatible target fails the checked copy below.
-            layer = new MiaoVisonLiteTarget(width, height);
+            layer = lite.target(width, height);
             // Nearest filtering keeps the coverage mask and native texels exact at this 1:1 screen composite.
             layer.nearestFiltering();
         }
@@ -174,7 +176,7 @@ final class HologramCutRawPreviewGhost {
         }
         try (MiaoVisonLiteRenderScope ignored = MiaoVisonLiteRenderScope.enter()) {
             // Vanilla deletion unbinds the active texture and framebuffer; cancellation must not leak those changes.
-            layer.close();
+            lite.releaseTarget();
         } finally {
             layer = null;
             diagnostics.reset();

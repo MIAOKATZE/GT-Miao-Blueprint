@@ -383,10 +383,10 @@ public final class HologramProductionPreviewSmoke {
             HologramScreen screen = (HologramScreen) mc.currentScreen;
             NBTTagCompound ui = screen.smokeLibraryUiState();
             boolean current = renderStage == 2;
-            int renderedView = field(MiaoVisonLiteRenderer.class, "visibleView").getInt(null);
-            int renderedMode = field(MiaoVisonLiteRenderer.class, "visibleMode").getInt(null);
+            int renderedView = field(MiaoVisonLiteRenderer.class, "visibleView").getInt(HologramRenderer.editor());
+            int renderedMode = field(MiaoVisonLiteRenderer.class, "visibleMode").getInt(HologramRenderer.editor());
             if (HologramTestLabUiDiagnostics.readDiagnosticField(screen, "state") != state
-                || field(MiaoVisonLiteRenderer.class, "previewState").get(null) != state
+                || field(MiaoVisonLiteRenderer.class, "previewState").get(HologramRenderer.editor()) != state
                 || !state.session.equals(ui.getString("session"))
                 || state.data.getLong("planRevision") != ui.getLong("planRevision")
                 || ui.getLong("renderGeneration") <= 0

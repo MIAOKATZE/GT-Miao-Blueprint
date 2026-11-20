@@ -87,7 +87,8 @@ final class HologramBusyReplies {
                     proof.setString("code", "busy");
                     proof.setString("message", "服务器蓝图库请求繁忙，请稍后重试");
                     HologramNetwork.sendLibraryReply(player, proof);
-                } else if (kind == Kind.ACTION && "projectedPlacement".equals(proof.getString("action"))
+                } else if (kind == Kind.ACTION && ("projectedPlacement".equals(proof.getString("action"))
+                    || "checkPlacementMaterials".equals(proof.getString("action")))
                     && proof.getString("placementRequestId")
                         .length() == 36) {
                             HologramProjectedPlacementService

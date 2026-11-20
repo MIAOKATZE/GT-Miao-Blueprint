@@ -314,6 +314,26 @@ public final class HologramBlueprintArtifact {
         return new Artifact(json, png);
     }
 
+    /** Historical client documents may predate paired PNGs and their digest fields. */
+    public static synchronized byte[] readLocalJson(Path jsonPath) throws IOException {
+        byte[] json = readBounded(jsonPath, MAX_JSON_BYTES);
+        Path pngPath = previewPath(jsonPath);
+        String expected = HologramBlueprintPreviewBinding.pngSha256(json);
+        if (!expected.isEmpty() || Files.isRegularFile(pngPath, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            byte[] png;
+            Png info;
+            try {
+                png = readBounded(pngPath, MAX_PNG_BYTES);
+                info = inspectPng(png);
+            } catch (IOException unavailable) {
+                if (expected.isEmpty()) return json;
+                throw unavailable;
+            }
+            if (info.source != null || !expected.isEmpty()) requireSource(json, png, info);
+        }
+        return json;
+    }
+
     public static synchronized void writePair(Path jsonPath, byte[] json, byte[] png) throws IOException {
         writePair(jsonPath, json, png, () -> true, HologramBlueprintArtifact::atomicReplace, false);
     }

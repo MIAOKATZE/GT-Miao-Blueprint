@@ -130,7 +130,9 @@ public final class HologramRuntimeMetrics {
         LIBRARY_REPLY("libraryReply"),
         LIBRARY_SNAPSHOT("librarySnapshot"),
         CUT_ACTION("cutAction"),
-        CUT_FRAGMENT("cutFragment");
+        CUT_FRAGMENT("cutFragment"),
+        PLACEMENT_FRAGMENT("placementFragment"),
+        PLACEMENT_ACK("placementAck");
 
         final String key;
 

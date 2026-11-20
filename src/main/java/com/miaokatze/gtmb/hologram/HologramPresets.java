@@ -216,6 +216,9 @@ final class HologramPresets {
         String block, tileNbt, itemNbt, prompt, structureId;
         List<String> structureIds;
         List<Target> allowedTargets;
+        String structureRole, structureFamily, structureHint;
+        Boolean structureCandidatesComplete;
+        int[] structureHatchFacings;
         int metadata;
         boolean excluded;
         int defaultDamage;

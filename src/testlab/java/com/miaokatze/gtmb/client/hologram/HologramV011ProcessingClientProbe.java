@@ -453,7 +453,7 @@ public final class HologramV011ProcessingClientProbe {
         renderedState.setAccessible(true);
         HologramState source = HologramClient.state;
         return source != null && ((Object) HologramTestLabUiDiagnostics.readDiagnosticField(screen, "state")) == source
-            && renderedState.get(null) == source
+            && renderedState.get(HologramRenderer.editor()) == source
             && source.session.equals(ui.getString("session"))
             && source.data.getLong("planRevision") == ui.getLong("planRevision");
     }

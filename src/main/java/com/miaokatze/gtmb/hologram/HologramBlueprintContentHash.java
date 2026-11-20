@@ -18,10 +18,16 @@ public final class HologramBlueprintContentHash {
     private HologramBlueprintContentHash() {}
 
     public static String of(byte[] json) throws IOException {
+        return of(json, null);
+    }
+
+    /** Match the exact public member as well as the descriptive-field-independent content identity. */
+    public static String of(byte[] json, String publicId) throws IOException {
         try {
-            JsonElement blueprint = HologramBlueprintCompactCodec.parse(json)
-                .get("blueprint");
-            if (blueprint == null || !blueprint.isJsonObject()) throw new IOException("Missing blueprint content");
+            com.google.gson.JsonObject blueprint = HologramBlueprintCompactCodec.documentBlueprint(
+                HologramBlueprintCompactCodec.parse(json));
+            if (publicId != null && (!blueprint.has("id") || !publicId.equals(blueprint.get("id").getAsString())))
+                throw new IOException("Public blueprint ID differs from the downloaded artwork");
             return ofBlueprint(blueprint);
         } catch (RuntimeException malformed) {
             throw new IOException("Invalid blueprint content JSON", malformed);

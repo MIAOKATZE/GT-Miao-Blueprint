@@ -63,7 +63,7 @@ public final class NativeInvisibleRegression {
             visible.setAccessible(true);
             SimpleAssert.eq(
                 false,
-                visible.invoke(null, state.cells.get(0), Integer.MAX_VALUE, 0, false),
+                visible.invoke(HologramRenderer.editor(), state.cells.get(0), Integer.MAX_VALUE, 0, false),
                 "data-only cell produces no fallback cube, outline or label");
             SimpleAssert.that(
                 !HologramBlockRender.missingTexture(state.cells.get(0), false),

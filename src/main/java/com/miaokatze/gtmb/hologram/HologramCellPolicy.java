@@ -1325,7 +1325,11 @@ final class HologramCellPolicy {
         }
     }
 
-    static String candidateRole(HologramSession s, HologramCapture.Cell c, ItemStack stack) {
+    static String candidateRole(HologramSession session, HologramCapture.Cell c, ItemStack stack) {
+        return candidateRole(c, stack);
+    }
+
+    static String candidateRole(HologramCapture.Cell c, ItemStack stack) {
         Declarations.PureElement<?> declaration = HologramElementCatalog.pure(c.element);
         if (declaration != null) return declaration.candidateRoleLabel(stack);
         if (hatchTier(stack) == Integer.MAX_VALUE) return "外壳/方块";

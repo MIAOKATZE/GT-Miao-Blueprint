@@ -28,19 +28,26 @@ final class HologramVertexData {
 
     /** Canonical vanilla layout: position, atlas UV, packed color, normal and light. */
     static int[] read(Tessellator tess, int vertices) throws IllegalAccessException {
+        return read(tess, vertices, null);
+    }
+
+    /** Only the first {@code vertices * 8} values are defined. The caller owns the supplied scratch buffer. */
+    static int[] read(Tessellator tess, int vertices, int[] scratch) throws IllegalAccessException {
         if (vertices <= 0) return new int[0];
-        if (tess instanceof DirectTessellator) return readDirect((DirectTessellator) tess, vertices);
+        if (tess instanceof DirectTessellator) return readDirect((DirectTessellator) tess, vertices, scratch);
         int[] raw = (int[]) RAW_BUFFER.get(tess);
         int used = RAW_INDEX.getInt(tess);
         if (raw == null || used > raw.length || used % vertices != 0 || used / vertices < 8)
             throw new IllegalStateException("inconsistent native Tessellator vertex buffer");
         int stride = used / vertices;
-        int[] copy = new int[Math.multiplyExact(vertices, 8)];
-        for (int vertex = 0; vertex < vertices; vertex++) System.arraycopy(raw, vertex * stride, copy, vertex * 8, 8);
+        int[] copy = scratch(vertices, scratch);
+        if (stride == 8) System.arraycopy(raw, 0, copy, 0, used);
+        else for (int vertex = 0; vertex < vertices; vertex++)
+            System.arraycopy(raw, vertex * stride, copy, vertex * 8, 8);
         return copy;
     }
 
-    private static int[] readDirect(DirectTessellator tess, int vertices) {
+    private static int[] readDirect(DirectTessellator tess, int vertices, int[] scratch) {
         VertexFormat format = tess.getVertexFormat();
         if (format == null || tess.getVertexCount() != vertices)
             throw new IllegalStateException("inconsistent native DirectTessellator vertex count");
@@ -48,16 +55,21 @@ final class HologramVertexData {
             .duplicate();
         // DirectTessellator writes from its base address, independent of the shared buffer's position.
         data.position(0);
-        return decode(data, format, vertices);
+        return decode(data, format, vertices, scratch);
     }
 
     static int[] decode(ByteBuffer buffer, VertexFormat format, int vertices) {
+        return decode(buffer, format, vertices, null);
+    }
+
+    private static int[] decode(ByteBuffer buffer, VertexFormat format, int vertices, int[] scratch) {
         ByteBuffer data = buffer.duplicate()
             .order(ByteOrder.nativeOrder());
         int stride = format.getVertexSize();
         if (data.remaining() != Math.multiplyExact(vertices, stride))
             throw new IllegalStateException("inconsistent native DirectTessellator vertex buffer");
-        int[] copy = new int[Math.multiplyExact(vertices, 8)];
+        int[] copy = scratch(vertices, scratch);
+        if (copy == scratch) java.util.Arrays.fill(copy, 0, vertices * 8, 0);
         int position = -1;
         int offset = 0;
         for (VertexFormatElement element : format.elementsArray) {
@@ -100,6 +112,12 @@ final class HologramVertexData {
         if (position < 0 || offset != stride)
             throw new IllegalStateException("native DirectTessellator format has no usable position");
         return copy;
+    }
+
+    private static int[] scratch(int vertices, int[] scratch) {
+        int count = Math.multiplyExact(vertices, 8);
+        return scratch == null ? new int[count]
+            : scratch.length >= count ? scratch : new int[Math.max(count, scratch.length + scratch.length / 2)];
     }
 
     private static void require(VertexFormatElement element, Type type, int count) {

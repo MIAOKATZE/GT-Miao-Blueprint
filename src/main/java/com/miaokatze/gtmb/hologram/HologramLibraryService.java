@@ -15,7 +15,6 @@ public final class HologramLibraryService {
     private HologramLibraryService() {}
 
     public static void init() {
-        HologramLibraryFacade.setPrivateReceiver(HologramService::libraryActivate);
         HologramLibraryFacade.setDraftReceiver((player, request) -> {
             try {
                 HologramService.libraryExportDraft(player, request);
@@ -27,16 +26,9 @@ public final class HologramLibraryService {
 
     /** No callback from a completed transfer can recreate or reopen a closed/replaced session. */
     public static boolean sessionCurrent(EntityPlayerMP player, NBTTagCompound request) {
-        return (HologramLibraryFacade.enabled() || request != null && ("privateBegin".equals(request.getString("op"))
-            || "publicPrepare".equals(request.getString("op")) && !request.getString("integratedPresetId")
-                .isEmpty()))
+        return HologramLibraryFacade.enabled()
             && connectedProjector(player)
             && HologramService.librarySessionCurrent(player, request);
-    }
-
-    /** Content preparation is owner/connection bound and deliberately has no workspace or placement admission. */
-    static boolean contentCurrent(EntityPlayerMP player, NBTTagCompound request) {
-        return request != null && request.getLong("clientTaskToken") > 0 && connectedProjector(player);
     }
 
     static boolean saveCurrent(EntityPlayerMP player, NBTTagCompound request) {
@@ -60,46 +52,6 @@ public final class HologramLibraryService {
             && player.playerNetServerHandler != null
             && player.playerNetServerHandler.netManager != null
             && player.playerNetServerHandler.netManager.isChannelOpen();
-    }
-
-    public static void quickBootstrap(EntityPlayerMP player, NBTTagCompound request) {
-        if (!connectedProjector(player)) return;
-        try {
-            HologramNetwork.sendLibraryReply(player, HologramService.libraryQuickBootstrap(player, request));
-        } catch (IOException | RuntimeException invalid) {
-            HologramLibraryFacade.error(player, invalid.getMessage(), request.getLong("clientTaskToken"));
-        }
-    }
-
-    public static void quickCancel(EntityPlayerMP player, NBTTagCompound request) {
-        if (request != null) HologramService.libraryQuickCancel(player, request.getString("quickToken"));
-    }
-
-    static void quickFallback(EntityPlayerMP player, NBTTagCompound request) {
-        try {
-            if (!sessionCurrent(player, request)) throw new IOException("Quick blueprint capability changed");
-            HologramSession previous = HologramWorkspace.find(player.getUniqueID());
-            if (previous.libraryQuickClientTaskToken <= 0
-                || previous.libraryQuickClientTaskToken != request.getLong("clientTaskToken"))
-                throw new IOException("Quick blueprint task changed");
-            String sourceSession = previous.id;
-            HologramWorldPlacementWorkflow.quickPlaceLastBlueprint(player, request);
-            HologramSession placed = HologramWorkspace.find(player.getUniqueID());
-            if (placed == previous || placed == null || !placed.virtualPlacement || placed.virtualPreset == null)
-                throw new IOException(previous.status);
-            placed.libraryQuickToken = request.getString("quickToken");
-            placed.libraryQuickClientTaskToken = request.getLong("clientTaskToken");
-            HologramWorldPlacementWorkflow.lockVirtual(player, placed.x, placed.y, placed.z, placed.side);
-            if (!placed.virtualLocked) throw new IOException(placed.status);
-            NBTTagCompound reply = HologramLibraryProtocol.reply("quickPlacement");
-            reply.setString("quickToken", placed.libraryQuickToken);
-            reply.setLong("clientTaskToken", placed.libraryQuickClientTaskToken);
-            reply.setString("previousSession", sourceSession);
-            reply.setString("session", placed.id);
-            HologramNetwork.sendLibraryReply(player, reply);
-        } catch (IOException | RuntimeException invalid) {
-            HologramLibraryFacade.error(player, invalid.getMessage(), request.getLong("clientTaskToken"));
-        }
     }
 
     static String quickToken(String token) throws IOException {

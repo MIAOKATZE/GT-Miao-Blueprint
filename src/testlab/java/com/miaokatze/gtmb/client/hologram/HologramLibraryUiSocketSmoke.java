@@ -247,7 +247,7 @@ final class HologramLibraryUiSocketSmoke {
                         || !publicId.equals(state.getString("selectedPresetId"))) return false;
                     if (!worldRendered.getAsBoolean()) return false;
                     require(
-                        !state.getBoolean("virtualLocked") && HologramRenderer.lastWorldGeometry > 0,
+                        !state.getBoolean("virtualLocked") && MiaoVisonLiteRenderer.lastWorldGeometry > 0,
                         "direct public choice becomes actual world ghost");
                     require(
                         worldReceipt.getInteger("blueprintStock") == stock

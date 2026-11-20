@@ -42,9 +42,12 @@ final class HologramLocalBlueprintWorkspace {
         final HologramLocalBlueprintDocument draft;
         volatile long revision;
         HologramState.Preparation preparation;
+        HologramLocalBlueprintDocument.StructureTask structure;
         String message;
         HologramLocalBlueprintDocument destination;
         String notice;
+        String operation = "";
+        long sequence, attachmentRequest;
 
         Task(HologramState source, Object world, HologramLocalBlueprintDocument draft) {
             this.source = source;
@@ -78,8 +81,27 @@ final class HologramLocalBlueprintWorkspace {
     void openPreset(String id) {
         if (!catalogAvailable()) return;
         HologramClientLibrary store = HologramLibraryClient.INSTANCE.privateStore();
+        if (id.startsWith("legacy:")) {
+            open(() -> store.readLegacyDocument(id), "");
+            return;
+        }
         String localId = id.startsWith("local_") ? id : "local_" + id;
-        open(() -> store.read(localId), localId);
+        open(() -> store.readPrivateDocument(localId), localId);
+    }
+
+    void openCapture(HologramLocalBlueprintDocument document, String notice) {
+        Task current = begin("正在准备本地蓝图");
+        if (current != null) work(current, () -> prepareView(current, document, notice));
+    }
+
+    void openPublic(String id) {
+        Task current = begin("正在读取服务器蓝图");
+        if (current == null) return;
+        HologramLibraryClient.INSTANCE.openPublic(
+            id,
+            json -> work(current, () -> prepareView(
+                current, HologramLocalBlueprintDocument.open(json, ""), "已打开服务器蓝图的本地副本")),
+            reason -> failed(current, new IOException(reason)));
     }
 
     void importNamed(String name) {
@@ -87,7 +109,7 @@ final class HologramLocalBlueprintWorkspace {
         Path directory = ui.host.minecraft().mcDataDir.toPath()
             .resolve("MiaoBlueprints");
         open(
-            () -> HologramBlueprintArtifact.readPair(HologramBlueprintFiles.resolve(directory, shareName(name))).json,
+            () -> HologramBlueprintArtifact.readLocalJson(HologramBlueprintFiles.resolve(directory, shareName(name))),
             "");
     }
 
@@ -100,8 +122,19 @@ final class HologramLocalBlueprintWorkspace {
             .resolve("MiaoBlueprints");
         work(current, () -> {
             String alias = shareName(name);
+            if (id.startsWith("legacy:")) {
+                HologramBlueprintFiles.exportHistoricShare(directory, alias, store.readLegacyDocument(id), () -> current(current));
+                main(() -> exported(current));
+                return;
+            }
             String localId = id.startsWith("local_") ? id : "local_" + id;
-            HologramBlueprintArtifact.Artifact pair = HologramBlueprintArtifact.readPair(store.savedPath(localId));
+            Path source = store.savedPath(localId);
+            if (!java.nio.file.Files.isRegularFile(HologramBlueprintArtifact.previewPath(source))) {
+                HologramBlueprintFiles.exportHistoricShare(directory, alias, store.readPrivateDocument(localId), () -> current(current));
+                main(() -> exported(current));
+                return;
+            }
+            HologramBlueprintArtifact.Artifact pair = HologramBlueprintArtifact.readPair(source);
             Path target = HologramBlueprintFiles.target(directory, alias, pair.json);
             HologramBlueprintArtifact.PairWrite staged = HologramBlueprintArtifact
                 .writePairPending(target, pair.json, pair.png, () -> current(current));
@@ -117,13 +150,15 @@ final class HologramLocalBlueprintWorkspace {
                 }
                 throw failure;
             }
-            main(() -> {
-                if (task != current) return;
-                task = null;
-                HologramLibraryClient.INSTANCE.refreshLocal();
-                if (screenCurrent(current)) ui.session.notice("蓝图已导出到客户端");
-            });
+            main(() -> exported(current));
         });
+    }
+
+    private void exported(Task current) {
+        if (task != current) return;
+        task = null;
+        HologramLibraryClient.INSTANCE.refreshLocal();
+        if (screenCurrent(current)) ui.session.notice("蓝图已导出到客户端");
     }
 
     void deletePreset(String localId) {
@@ -184,7 +219,7 @@ final class HologramLocalBlueprintWorkspace {
                             .prepareSave(json, output.toByteArray());
                         HologramLocalBlueprintDocument saved = HologramLocalBlueprintDocument.open(pair.json, id);
                         HologramClientLibrary.LocalSave staged = store
-                            .prepareLocalSave(pair.json, pair.png, id, () -> current(current));
+                            .preparePrivateDocumentSave(pair.json, pair.png, id, () -> current(current));
                         try {
                             if (!current(current)) throw new IOException("蓝图已修改，请重新保存");
                             staged.write.commit();
@@ -221,25 +256,46 @@ final class HologramLocalBlueprintWorkspace {
         if (!HologramLocalBlueprintDocument.handles(op) || ui.session.document() == null) return false;
         Task current = begin("");
         if (current == null) return true;
+        current.operation = op;
+        current.sequence = request.getLong("uiSequence");
+        current.attachmentRequest = request.getLong("textRequest");
         NBTTagCompound action = (NBTTagCompound) request.copy();
+        try {
+            current.structure = current.draft.beginStructureCommand(op, action);
+            if (current.structure != null) {
+                current.message = "正在读取所选结构的原生声明";
+                ui.session.notice(current.message);
+                return true;
+            }
+        } catch (IOException failure) {
+            failed(current, failure);
+            return true;
+        }
         work(current, () -> {
             long previous = current.revision;
-            current.draft.apply(op, action);
-            current.revision = current.draft.revision();
-            if (current.revision != previous) prepareView(current, current.draft, "");
-            else {
-                NBTTagCompound metadata = current.draft.snapshotMetadata();
-                main(() -> {
-                    if (task != current) return;
-                    task = null;
-                    if (screenCurrent(current)) ui.session.publishLocalDocument(
-                        current.draft,
-                        ui.session.state()
-                            .withMetadata(metadata));
-                });
-            }
+            current.draft.apply(op, action, () -> current(current));
+            finishEdit(current, previous);
         });
         return true;
+    }
+
+    private void finishEdit(Task current, long previous) throws IOException {
+        current.revision = current.draft.revision();
+        if (current.revision != previous) prepareView(current, current.draft, "");
+        else {
+            NBTTagCompound metadata = commandResult(current, current.draft.snapshotMetadata(), true, "");
+            main(() -> {
+                if (task != current) return;
+                task = null;
+                if (screenCurrent(current))
+                    ui.session.publishLocalDocument(current.draft, ui.session.state().withMetadata(metadata));
+            });
+        }
+    }
+
+    void cancelAttachment(long request) {
+        Task current = task;
+        if (current != null && current.attachmentRequest == request && current(current)) task = null;
     }
 
     void placeCurrent() {
@@ -257,7 +313,7 @@ final class HologramLocalBlueprintWorkspace {
     }
 
     private void prepareView(Task current, HologramLocalBlueprintDocument document, String notice) throws IOException {
-        NBTTagCompound snapshot = document.snapshot();
+        NBTTagCompound snapshot = commandResult(current, document.snapshot(), true, "");
         main(() -> {
             if (task != current) return;
             if (!current(current) || !screenCurrent(current)) {
@@ -278,9 +334,14 @@ final class HologramLocalBlueprintWorkspace {
 
     void tick() {
         Task current = task;
-        if (current == null || current.preparation == null) return;
+        if (current == null || current.preparation == null && current.structure == null) return;
         if (!current(current) || !screenCurrent(current)) {
+            if (current.structure != null) current.structure.close();
             task = null;
+            return;
+        }
+        if (current.structure != null) {
+            advanceStructure(current);
             return;
         }
         try {
@@ -301,6 +362,25 @@ final class HologramLocalBlueprintWorkspace {
         }
     }
 
+    private void advanceStructure(Task current) {
+        HologramLocalBlueprintDocument.StructureTask structure = current.structure;
+        try {
+            if (!structure.step(512, 2_000_000L)) return;
+            current.structure = null;
+            work(current, () -> {
+                try (structure) {
+                    long previous = current.revision;
+                    structure.commit(() -> current(current));
+                    finishEdit(current, previous);
+                }
+            });
+        } catch (IOException | RuntimeException failure) {
+            structure.close();
+            current.structure = null;
+            failed(current, failure);
+        }
+    }
+
     private Task begin(String message) {
         if (busy()) return null;
         Task current = new Task(ui.session.state(), ui.host.minecraft().theWorld, ui.session.document());
@@ -317,7 +397,9 @@ final class HologramLocalBlueprintWorkspace {
     private boolean screenCurrent(Task candidate) {
         Minecraft mc = ui.host.minecraft();
         HologramState active = ui.session.state();
-        return mc.currentScreen == ui.host.parent() && mc.theWorld == candidate.world
+        return (mc.currentScreen == ui.host.parent()
+            || mc.currentScreen instanceof HologramQuantumGroupsScreen quantum && quantum.editorIs(ui.host.parent()))
+            && mc.theWorld == candidate.world
             && active.session.equals(candidate.source.session)
             && active.data.getLong("planRevision") == candidate.source.data.getLong("planRevision");
     }
@@ -326,8 +408,31 @@ final class HologramLocalBlueprintWorkspace {
         main(() -> {
             if (task != current) return;
             task = null;
-            if (screenCurrent(current)) ui.session.notice(HologramUiText.reason(failure.getMessage()));
+            if (!screenCurrent(current)) return;
+            String reason = HologramUiText.reason(failure.getMessage());
+            if (current.draft != null && !current.operation.isEmpty()) ui.session.publishLocalDocument(
+                current.draft, ui.session.state().withMetadata(commandResult(current, new NBTTagCompound(), false, reason)));
+            else ui.session.notice(reason);
         });
+    }
+
+    private static NBTTagCompound commandResult(Task current, NBTTagCompound metadata, boolean accepted, String reason) {
+        if (current.operation.isEmpty()) return metadata;
+        metadata.setLong("uiSequence", current.sequence);
+        if (!accepted) metadata.setString("status", reason);
+        if ("placeTextBox".equals(current.operation) && !accepted) {
+            NBTTagCompound receipt = new NBTTagCompound();
+            receipt.setLong("request", current.attachmentRequest);
+            receipt.setBoolean("accepted", false);
+            receipt.setString("message", reason);
+            metadata.setTag("textPlacementAck", receipt);
+        }
+        if (HologramLocalBlueprintDocument.processingCommand(current.operation)) {
+            metadata.setString("processingPresetOperation", current.operation);
+            metadata.setBoolean("processingPresetOperationSuccess", accepted);
+            if ("configureBlueprintQuantumGroups".equals(current.operation)) metadata.setBoolean("quantumGroupsOperationSuccess", accepted);
+        }
+        return metadata;
     }
 
     private void work(Task current, FileWork operation) {

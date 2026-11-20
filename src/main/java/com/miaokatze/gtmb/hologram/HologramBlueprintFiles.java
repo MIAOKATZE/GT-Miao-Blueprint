@@ -36,6 +36,35 @@ public final class HologramBlueprintFiles {
         return member == null ? child(root, id + ".json") : child(root, member);
     }
 
+    /** Pre-pair shares can be exported as exact JSON under their requested local name. */
+    public static synchronized void exportHistoricShare(Path directory, String alias, byte[] json,
+        java.util.function.BooleanSupplier current) throws IOException {
+        Path target = resolve(directory, alias);
+        if (Files.exists(HologramBlueprintArtifact.previewPath(target), LinkOption.NOFOLLOW_LINKS))
+            throw new IOException("同名文件已有预览，请换一个导出名称");
+        requireCurrent(current);
+        Files.createDirectories(target.getParent());
+        replace(target, json);
+    }
+
+    /** Remove only the selected row, preserving every other field and member of the historic file. */
+    public static void deleteHistoricMember(Path path, String memberId) throws IOException {
+        int limit = HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES;
+        byte[] original = read(path, limit);
+        JsonObject catalog = HologramBlueprintCompactCodec.parse(original, limit);
+        com.google.gson.JsonArray remaining = new com.google.gson.JsonArray();
+        boolean removed = false;
+        for (com.google.gson.JsonElement row : catalog.getAsJsonArray("presets")) {
+            JsonObject member = row.getAsJsonObject();
+            if (!removed && member.has("id") && memberId.equals(member.get("id").getAsString())) removed = true;
+            else remaining.add(row);
+        }
+        if (!removed) throw new IOException("本地旧合集蓝图不存在");
+        catalog.add("presets", remaining);
+        byte[] expanded = HologramBlueprintSharing.encodeBounded(new com.google.gson.Gson(), catalog, limit);
+        HologramPresets.replaceCompressedCatalog(path, original, HologramBlueprintCompactCodec.recompress(expanded, limit));
+    }
+
     public static Map<String, Path> managed(Path directory) throws IOException {
         adoptPortablePairs(
             directory.toAbsolutePath()
@@ -54,7 +83,9 @@ public final class HologramBlueprintFiles {
                 String name = path.getFileName()
                     .toString();
                 if (name.equals("hologram-presets.json") || known.contains(path)
-                    || !Files.isRegularFile(HologramBlueprintArtifact.previewPath(path))) continue;
+                    || name.matches("public_[a-fA-F0-9-]{36}\\.json")
+                    || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
+                    || !Files.isRegularFile(HologramBlueprintArtifact.previewPath(path), LinkOption.NOFOLLOW_LINKS)) continue;
                 result.put(name.substring(0, name.length() - 5), path);
             }
         }

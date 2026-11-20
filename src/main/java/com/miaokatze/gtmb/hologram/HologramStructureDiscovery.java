@@ -10,6 +10,7 @@ import com.gtnewhorizon.structurelib.alignment.IAlignment;
 import com.gtnewhorizon.structurelib.alignment.constructable.IConstructable;
 import com.gtnewhorizon.structurelib.alignment.constructable.IConstructableProvider;
 import com.gtnewhorizon.structurelib.alignment.constructable.IMultiblockInfoContainer;
+import com.gtnewhorizon.structurelib.alignment.constructable.ISurvivalConstructable;
 import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
 import com.miaokatze.gtmb.api.StructureSources;
 
@@ -37,6 +38,22 @@ final class HologramStructureDiscovery {
     static boolean captureSupported(MTEEnhancedMultiBlockBase<?> controller) {
         return controller != null
             && (controller instanceof IConstructable || StructureSources.hasSource(controller.getClass()));
+    }
+
+    static boolean supportsLocal(TileEntity tile) {
+        if (!(tile instanceof IGregTechTileEntity)) return supports(tile);
+        Object controller = context(tile);
+        return controller instanceof IConstructable || controller instanceof IConstructableProvider
+            || tile instanceof IConstructable
+            || IMultiblockInfoContainer.contains(tile.getClass())
+            || controller instanceof MTEEnhancedMultiBlockBase<?> multi && captureSupported(multi);
+    }
+
+    static IConstructable localConstructable(TileEntity tile, Object controller, ExtendedFacing facing) {
+        if (tile instanceof IGregTechTileEntity && controller instanceof ISurvivalConstructable survival) return survival;
+        IMultiblockInfoContainer<TileEntity> container = IMultiblockInfoContainer.get(tile.getClass());
+        if (!(tile instanceof IGregTechTileEntity) && container != null) return container.toConstructable(tile, facing);
+        return constructable(tile, controller, facing.getDirection().ordinal());
     }
 
     static IConstructable constructable(TileEntity tile, Object controller, int side) {

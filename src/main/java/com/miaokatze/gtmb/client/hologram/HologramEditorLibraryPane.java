@@ -425,8 +425,8 @@ final class HologramEditorLibraryPane {
             action(
                 161,
                 () -> "导入命名文件",
-                () -> idle() && !ui.library.nativeDedicated(),
-                () -> "在保存页名称框填写文件名，沿用原文件准入与换稿确认。").widthRel(1f)
+                this::idle,
+                () -> "在保存页名称框填写客户端文件名。").widthRel(1f)
                     .height(18));
         list.child(
             action(150, () -> "来源版本", () -> true, () -> "查看来源与依赖。").widthRel(1f)

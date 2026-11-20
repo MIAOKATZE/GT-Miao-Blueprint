@@ -359,11 +359,53 @@ final class HologramUiSession {
             return;
         }
         if (controllerOpening()) return;
-        if (state.data.getBoolean("localStandardController")) {
-            if ("scan".equals(op)) {
-                HologramScreen root = ui.host.parent();
-                if (root != null) root.readLiveController();
+        HologramScreen localRoot = ui.host == null ? null : ui.host.parent();
+        if (localRoot != null && (state.data.getBoolean("localWorkspace")
+            || state.data.getBoolean("localStandardController") || localDocument())) {
+            if ("close".equals(op)) return;
+            if ("switchEditorWorkspace".equals(op) && request != null) {
+                localRoot.switchLocalWorkspace(request);
+                return;
             }
+            if ("cancelSourceSwitch".equals(op)) {
+                localRoot.cancelLocalSourceSwitch();
+                return;
+            }
+            if ("clearWorkspace".equals(op) || "discardBlueprint".equals(op)) {
+                localRoot.clearLocalWorkspace(request);
+                return;
+            }
+            if ("scan".equals(op) && request != null && request.getBoolean("operationPreflight")) {
+                request.setInteger("selected", ui.preview.selected());
+                request.setIntArray("selectedIndices", ui.preview.selection().indices());
+                localRoot.reviewLocalConstruction(request);
+                awaitingScan(false);
+                return;
+            }
+            if ("scan".equals(op)) {
+                localRoot.rescanDisplayedStructure();
+                awaitingScan(false);
+                return;
+            }
+            if ("refreshMaterialChoices".equals(op)) {
+                ui.config.syncTargetSelectors();
+                return;
+            }
+            if (!localDocument() && !ui.library.localBusy() && (HologramLocalControllerEdits.handles(op)
+                || "exportDraft".equals(op) || "addPosition".equals(op))) {
+                NBTTagCompound prepared = request == null ? new NBTTagCompound() : (NBTTagCompound) request.copy();
+                buildOutgoingRequest(
+                    op, prepared, ui.preview.selected(), () -> ui.preview.selection().indices(),
+                    state.data.getString("activeStructure"), state.session);
+                if (localRoot.startEditableBlueprint(op, prepared)) return;
+            }
+        }
+        if (state.data.getBoolean("localStandardController")) {
+            if (localRoot != null && "configure".equals(op) && request != null) localRoot.refreshLocalController(request);
+            return;
+        }
+        if (state.data.getBoolean("localWorkspace")) {
+            if ("configure".equals(op) && request != null) updateState(state.withMetadata(request));
             return;
         }
         if (localDocument() && ui.library.localBusy()) return;

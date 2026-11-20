@@ -200,7 +200,8 @@ final class HologramSnapshots {
     }
 
     static void writeBlueprintState(HologramSession s, NBTTagCompound state) {
-        try {
+        if (!s.executionRequestId.isEmpty()) HologramExecutionReview.writeNetworks(s, state);
+        else try {
             HologramPresets.Preset networkView = s.virtualPreset;
             if (s.virtualPreset != null && s.capture != null) {
                 networkView = new HologramPresets.Preset();
@@ -732,7 +733,7 @@ final class HologramSnapshots {
         state.setBoolean("blueprintProcessingComplete", s.processingReviewed);
         state.setBoolean("blueprintProcessingRequired", !s.processingReviewed);
         state.setBoolean("localPlanPending", s.localPlanPending);
-        state.setBoolean("placementValidating", s.placementValidating);
+        state.setBoolean("placementValidating", s.placementValidating || s.executionStart != null);
         state.setBoolean("planIncomplete", s.localPlanPending);
         state.setString("localPlanError", s.localPlanError);
         state.setString("quickToken", s.libraryQuickToken);
@@ -764,6 +765,7 @@ final class HologramSnapshots {
         HologramMaterialWorkflow.writeState(s, state);
         state.setInteger("missing", s.planMissing);
         state.setString("blueprintResourceMissing", s.blueprintResourceMissing);
+        if (!s.executionRequestId.isEmpty()) HologramExecutionReview.writeNetworks(s, state);
         if (s.open && s.libraryWorld == s.player.worldObj && HologramSessionPolicy.valid(s)) s.libraryUiActive = true;
         NBTTagCompound envelope = new NBTTagCompound();
         envelope.setBoolean("progressOnly", true);
@@ -779,6 +781,7 @@ final class HologramSnapshots {
 
     static NBTTagCompound areaSelection(HologramSession s) {
         NBTTagCompound state = new NBTTagCompound();
+        if (!s.executionRequestId.isEmpty()) state.setString("executionRequestId", s.executionRequestId);
         state.setBoolean("areaSelectionOnly", true);
         state.setString("session", s.id);
         state.setString("generation", s.id);
@@ -896,6 +899,7 @@ final class HologramSnapshots {
         if (s.open && !s.cancelled && s.libraryWorld == s.player.worldObj && HologramSessionPolicy.valid(s))
             s.libraryUiActive = true;
         NBTTagCompound state = new NBTTagCompound();
+        if (!s.executionRequestId.isEmpty()) state.setString("executionRequestId", s.executionRequestId);
         writeOperationReview(s, state);
         state.setString("captureIntent", s.captureIntent.name());
         if (s.capture != null) {
@@ -910,7 +914,7 @@ final class HologramSnapshots {
         state.setBoolean("attachmentPending", s.attachmentTask != null);
         state.setBoolean("currentPlacementPending", s.currentPlacementTask != null);
         state.setTag("textPlacementAck", s.textPlacementAck.copy());
-        state.setBoolean("placementValidating", s.placementValidating);
+        state.setBoolean("placementValidating", s.placementValidating || s.executionStart != null);
         state.setBoolean("open", s.open);
         state.setString("quickToken", s.libraryQuickToken);
         state.setLong("quickClientTaskToken", s.libraryQuickClientTaskToken);
@@ -952,7 +956,7 @@ final class HologramSnapshots {
         state.setLong("captureRetryDue", s.captureRetryDue);
         state.setLong("planRevision", s.planRevision);
         state.setBoolean("localPlanPending", s.localPlanPending);
-        state.setBoolean("placementValidating", s.placementValidating);
+        state.setBoolean("placementValidating", s.placementValidating || s.executionStart != null);
         state.setString("localPlanError", s.localPlanError);
         state.setBoolean("planIncomplete", s.localPlanPending);
         state.setTag("progress", progress(s));
@@ -1073,6 +1077,7 @@ final class HologramSnapshots {
         state.setBoolean(
             "geometryEditable",
             s.virtual && s.virtualPreset != null
+                && s.executionRequestId.isEmpty()
                 && s.virtualPreset.schema >= 2
                 && s.capture != null
                 && !s.capture.incomplete

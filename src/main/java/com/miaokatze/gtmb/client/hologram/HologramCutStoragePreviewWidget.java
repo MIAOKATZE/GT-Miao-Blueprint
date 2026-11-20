@@ -16,12 +16,14 @@ import com.cleanroommc.modularui.screen.viewport.ModularGuiContext;
 import com.cleanroommc.modularui.theme.WidgetThemeEntry;
 import com.cleanroommc.modularui.widget.Widget;
 import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteRenderScope;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteSession;
 import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteTarget;
 
 /** An isolated GUI camera over the same native raw ghost used in the world. Never ticks tile entities. */
 final class HologramCutStoragePreviewWidget extends Widget<HologramCutStoragePreviewWidget> implements Interactable {
 
     private final HologramCutStoragePreviewView preview;
+    private final MiaoVisonLiteSession<Void, Void> lite = new MiaoVisonLiteSession<>();
     private MiaoVisonLiteTarget target;
     private float yaw = -35, pitch = 24, zoom = 1;
     private int dragX, dragY;
@@ -92,7 +94,7 @@ final class HologramCutStoragePreviewWidget extends Widget<HologramCutStoragePre
         try (MiaoVisonLiteRenderScope ignored = MiaoVisonLiteRenderScope.enter()) {
             if (target == null || !target.sizeMatches(mc.displayWidth, mc.displayHeight)) {
                 deleteTarget();
-                target = new MiaoVisonLiteTarget(mc.displayWidth, mc.displayHeight);
+                target = lite.target(mc.displayWidth, mc.displayHeight);
                 target.nearestFiltering();
             }
             target.bind(false);
@@ -184,7 +186,7 @@ final class HologramCutStoragePreviewWidget extends Widget<HologramCutStoragePre
 
     private void deleteTarget() {
         if (target == null) return;
-        target.close();
+        lite.releaseTarget();
         target = null;
     }
 

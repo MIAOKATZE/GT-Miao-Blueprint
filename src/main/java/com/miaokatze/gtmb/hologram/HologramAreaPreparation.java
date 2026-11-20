@@ -54,10 +54,20 @@ final class HologramAreaPreparation {
 
     /** Only this method reads source networks. It runs on the server thread with the world's normal tick budget. */
     boolean captureNetworks(HologramPresets.Preset source, int budget, long deadline) throws IOException {
+        return captureIdentities(source, budget, deadline, true);
+    }
+
+    /** Client area imports use captured anchor coordinates when a live server grid is unavailable. */
+    boolean captureLocalShells(HologramPresets.Preset source, int budget, long deadline) throws IOException {
+        return captureIdentities(source, budget, deadline, false);
+    }
+
+    private boolean captureIdentities(HologramPresets.Preset source, int budget, long deadline, boolean liveGrid)
+        throws IOException {
         for (int work = 0; networkCursor < source.cells.size() && work < budget; work++) {
             if (work > 0 && System.nanoTime() >= deadline) break;
             HologramPresets.Cell cell = source.cells.get(networkCursor);
-            HologramNetworkBindings.captureNetwork(cell, networks, identities);
+            if (liveGrid) HologramNetworkBindings.captureNetwork(cell, networks, identities);
             HologramAePolicy.captureNativeShell(cell, nativeShells);
             networkCursor++;
         }

@@ -194,7 +194,7 @@ public final class HologramTutorialIssue100Probe {
                     require(HologramLocalPlacement.INSTANCE.locked(), "Native local placement could not lock a target");
                     return;
                 }
-                HologramRenderer.WorldRenderWitness witness = HologramRenderer.lastWorldRenderWitness();
+                MiaoVisonLiteRenderer.WorldRenderWitness witness = MiaoVisonLiteRenderer.lastWorldRenderWitness();
                 if (witness == null || witness.state != background || witness.lists <= 0) return;
                 beforeGeneration = witness.generation;
                 receipt.put("backgroundBeforeGeneration", beforeGeneration);
@@ -218,7 +218,7 @@ public final class HologramTutorialIssue100Probe {
                         engine.getInteger("selectedCellCount") > 0 && engine.getInteger("presentedVisibleCellCount") > 0
                             && engine.getInteger("renderedCellCount") > 0,
                         "SELECT_CELL did not select visible rendered material");
-                    HologramRenderer.WorldRenderWitness witness = HologramRenderer.lastWorldRenderWitness();
+                    MiaoVisonLiteRenderer.WorldRenderWitness witness = MiaoVisonLiteRenderer.lastWorldRenderWitness();
                     require(
                         witness != null && !activeWorldConflict && witness.generation == activeWorldGeneration,
                         "Background projection was submitted while the tutorial owned the native snapshot");
@@ -232,7 +232,7 @@ public final class HologramTutorialIssue100Probe {
                     transition(4);
                 }
             } else if (stage == 4) {
-                HologramRenderer.WorldRenderWitness witness = HologramRenderer.lastWorldRenderWitness();
+                MiaoVisonLiteRenderer.WorldRenderWitness witness = MiaoVisonLiteRenderer.lastWorldRenderWitness();
                 if (witness == null || witness.state != background || witness.generation <= activeWorldLastGeneration)
                     return;
                 restoredGeneration = witness.generation;
@@ -264,7 +264,7 @@ public final class HologramTutorialIssue100Probe {
         if (complete || stage != 3 || Minecraft.getMinecraft().currentScreen != screen || !screen.ui.tutorial.active())
             return;
         observedWorldEvent = event;
-        HologramRenderer.WorldRenderWitness witness = HologramRenderer.lastWorldRenderWitness();
+        MiaoVisonLiteRenderer.WorldRenderWitness witness = MiaoVisonLiteRenderer.lastWorldRenderWitness();
         worldGenerationBeforeHandler = witness == null || witness.state != background ? -1 : witness.generation;
     }
 
@@ -273,7 +273,7 @@ public final class HologramTutorialIssue100Probe {
         if (complete || stage < 2 || stage > 4) return;
         worldFrames++;
         if (observedWorldEvent == event) {
-            HologramRenderer.WorldRenderWitness witness = HologramRenderer.lastWorldRenderWitness();
+            MiaoVisonLiteRenderer.WorldRenderWitness witness = MiaoVisonLiteRenderer.lastWorldRenderWitness();
             if (witness == null || witness.state != background || worldGenerationBeforeHandler < 0)
                 activeWorldConflict = true;
             else {
@@ -484,7 +484,7 @@ public final class HologramTutorialIssue100Probe {
         status.put(
             "localPlacementAnchor",
             HologramLocalPlacement.INSTANCE.locked() ? HologramLocalPlacement.INSTANCE.anchor() : null);
-        HologramRenderer.WorldRenderWitness witness = HologramRenderer.lastWorldRenderWitness();
+        MiaoVisonLiteRenderer.WorldRenderWitness witness = MiaoVisonLiteRenderer.lastWorldRenderWitness();
         status.put("worldWitnessGeneration", witness == null ? null : witness.generation);
         status.put("worldWitnessMatchesFixture", witness != null && witness.state == background);
         status.put(

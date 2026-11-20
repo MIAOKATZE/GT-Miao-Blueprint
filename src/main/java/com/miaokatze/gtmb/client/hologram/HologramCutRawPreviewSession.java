@@ -44,6 +44,7 @@ import org.lwjgl.opengl.GL14;
 
 import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteDisplayList;
 import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteRenderScope;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteSession;
 
 import cpw.mods.fml.client.registry.ISimpleBlockRenderingHandler;
 import cpw.mods.fml.client.registry.RenderingRegistry;
@@ -59,7 +60,8 @@ final class HologramCutRawPreviewSession {
     private static final int REGION_SIZE = 8, CACHED_REGIONS = 64, COMPILE_PER_FRAME = 192;
     private static final boolean CHECK_RENDER_STATE = Boolean.getBoolean("gtmb.hologram.cutNativeClient")
         || Boolean.getBoolean("gtmb.hologram.cutRenderStateWitness");
-    private final Map<String, Region> REGIONS = new LinkedHashMap<>();
+    private final MiaoVisonLiteSession<String, Region> lite = new MiaoVisonLiteSession<>();
+    private final Map<String, Region> REGIONS = lite.regions();
     private final Map<String, Region> RESIDENT = new LinkedHashMap<>(16, .75f, true);
     private final Map<String, String> FAILURES = new LinkedHashMap<>();
     private NBTTagCompound source;
@@ -115,6 +117,7 @@ final class HologramCutRawPreviewSession {
 
     /** World anchor coordinates, with the normal RenderWorldLast view transform already installed by Minecraft. */
     public void render(double anchorX, double anchorY, double anchorZ, float partialTicks) {
+        if (lite.contextChanged()) reload();
         if (world == null) return;
         Minecraft mc = Minecraft.getMinecraft();
         Entity camera = mc.renderViewEntity;
@@ -142,6 +145,7 @@ final class HologramCutRawPreviewSession {
 
     /** Local camera supplied by a GUI framebuffer; shares the exact native world ghost renderer. */
     void renderLocal(float partialTicks) {
+        if (lite.contextChanged()) reload();
         if (world == null) return;
         renderRegions(new ArrayList<>(REGIONS.values()), new HashSet<>(REGIONS.keySet()), 0, 0, 0, partialTicks);
     }
@@ -679,7 +683,7 @@ final class HologramCutRawPreviewSession {
         outlineCells = stateChecks = stateMismatches = 0;
         for (Region region : REGIONS.values()) region.clear();
         RESIDENT.clear();
-        REGIONS.clear();
+        lite.close();
         FAILURES.clear();
         if (world != null) world.release();
         world = null;

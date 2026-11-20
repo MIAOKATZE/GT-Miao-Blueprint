@@ -14,6 +14,8 @@ import java.util.concurrent.TimeUnit;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.WorldClient;
 import net.minecraft.init.Blocks;
+import net.minecraft.init.Items;
+import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.tileentity.TileEntity;
@@ -26,6 +28,7 @@ import com.miaokatze.gtmb.hologram.HologramLocalControllerCapture;
 import com.miaokatze.gtmb.hologram.HologramSnapshotAssembly;
 import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
+import com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor;
 
 /** Calls the production bind/snapshot/reopen and saturated receive paths with a detached Minecraft owner. */
 public final class HologramClientP0Regression {
@@ -54,6 +57,7 @@ public final class HologramClientP0Regression {
             try {
                 singleton.set(null, minecraft);
                 localControllerHeader();
+                localControllerSignals();
                 actualCaptureLifecycle();
                 nonblockingReceive(unsafe, minecraft);
             } finally {
@@ -64,6 +68,34 @@ public final class HologramClientP0Regression {
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("client P0 production lifecycle", failure);
         }
+    }
+
+    private static void localControllerSignals() throws ReflectiveOperationException {
+        ItemStack projector = new ItemStack(Items.stick, 1);
+        ChannelDataAccessor.setChannelData(projector, "coil", 4);
+        ChannelDataAccessor.setChannelData(projector, "width", 8);
+        projector.getTagCompound().setInteger("gtitHologramMain", 3);
+        projector.getTagCompound().setString("gtitHologramDraft", "server owned");
+        NBTTagCompound initial = HologramLocalControllerCapture.toolSettings(projector);
+        SimpleAssert.eq(3, initial.getInteger("main"), "unstackable projector uses its saved master signal");
+        SimpleAssert.eq(4, initial.getCompoundTag("channels").getInteger("coil"), "native child signal is shown");
+        NBTTagCompound active = (NBTTagCompound) initial.copy();
+        active.getCompoundTag("channels").removeTag("coil");
+        ChannelDataAccessor.setChannelData(projector, "coil", 5);
+        ChannelDataAccessor.setChannelData(projector, "width", 9);
+        ChannelDataAccessor.setChannelData(projector, "glass", 2);
+        HologramScreen.rebaseControllerChannels(active, initial, HologramLocalControllerCapture.toolSettings(projector));
+        Method make = HologramLocalControllerCapture.class.getDeclaredMethod("previewTrigger", ItemStack.class,
+            NBTTagCompound.class);
+        make.setAccessible(true);
+        ItemStack preview = (ItemStack) make.invoke(null, projector, active);
+        SimpleAssert.that(preview.getItem() == projector.getItem(), "standard preview keeps actual trigger item");
+        SimpleAssert.eq(3, preview.stackSize, "the copied trigger receives the selected master signal");
+        SimpleAssert.eq(3, ChannelDataAccessor.getChannelData(preview, "coil"), "cleared child inherits master");
+        SimpleAssert.eq(9, ChannelDataAccessor.getChannelData(preview, "width"), "rescan reads newer inherited values");
+        SimpleAssert.eq(2, ChannelDataAccessor.getChannelData(preview, "glass"), "new live tool channel is included");
+        SimpleAssert.eq(5, ChannelDataAccessor.getChannelData(projector, "coil"), "preview did not edit held item");
+        SimpleAssert.that(!preview.getTagCompound().hasKey("gtitHologramDraft"), "server draft data stays out of trigger");
     }
 
     private static void localControllerHeader() {

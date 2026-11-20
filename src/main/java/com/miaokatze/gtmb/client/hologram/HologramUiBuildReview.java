@@ -394,6 +394,10 @@ final class HologramUiBuildReview {
         }
     }
 
+    void expectOperationReview(long sequence) {
+        requestedOperationReviewSequence = sequence;
+    }
+
     void acknowledgeMaterialQuote(HologramState next) {
         // A quote receipt changes the reviewed nonce and amounts while retaining the current presentation.
         // It never opens a review that the player has already dismissed.

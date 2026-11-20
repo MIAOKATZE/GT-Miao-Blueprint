@@ -78,19 +78,17 @@ final class HologramLibraryClient {
     private Object libraryWorld, quickTool;
     private String quickToolId = "";
     private int quickSlot;
-    private final HologramLibraryQuickState quick = new HologramLibraryQuickState();
-    private String quickLocal = "", quickSession = "", observedPublic = "";
-    private NBTTagCompound quickFallback;
+    private boolean quickPreview;
     private HologramLocalPlacement.Submission placementSubmission;
     private volatile UUID placementRequest;
     private boolean placementRequestSent;
-    private NBTTagCompound incomingPreview;
-    private final java.util.LinkedHashMap<String, PublicPreview> publicPreviews = new java.util.LinkedHashMap<>(
+    private PublicRead publicRead;
+    private PublicIdentity incomingPublic;
+    private final java.util.LinkedHashMap<PublicIdentity, HologramBlueprintArtifact.Artifact> publicArtifacts = new java.util.LinkedHashMap<>(
         16,
         .75f,
         true);
-    private int publicPreviewBytes;
-    private boolean publicPreviewPlacement;
+    private long publicArtifactBytes;
     private DisplaySource displayPreparing;
     private final java.util.LinkedHashMap<String, DisplaySource> localPreviews = new java.util.LinkedHashMap<>(
         4,
@@ -104,9 +102,6 @@ final class HologramLibraryClient {
     private boolean browseRendering;
     private long browseStartedAt;
     private final HologramLibraryPreviewImage previewImage = new HologramLibraryPreviewImage();
-    private String activePublicPreviewId = "";
-    private long activePublicPreviewEpoch;
-    private String browseImageHash = "", browseImageRevision = "";
     private HologramState.Preparation browsePreparation;
     private HologramState browseState;
     private long browseEpoch;
@@ -132,19 +127,23 @@ final class HologramLibraryClient {
         }
     }
 
-    private static final class PublicPreview {
+    private enum PublicUse { BROWSE, PLACE, EDIT, COPY }
 
-        final byte[] bytes;
-        final String hash, revision;
-        DisplaySource display;
-        BufferedImage thumbnail;
+    @com.github.bsideup.jabel.Desugar
+    private record PublicIdentity(String id, String hash, long revision) {
 
-        PublicPreview(byte[] bytes, String hash, String revision) {
-            this.bytes = bytes;
-            this.hash = hash;
-            this.revision = revision;
+        static PublicIdentity from(NBTTagCompound row) {
+            return new PublicIdentity(row.getString("id"), row.getString("sourceHash"), row.getLong("sourceRevision"));
+        }
+
+        boolean complete() {
+            return id.matches("public_[a-fA-F0-9-]{36}") && hash.matches("[a-f0-9]{64}") && revision > 0;
         }
     }
+
+    @com.github.bsideup.jabel.Desugar
+    private record PublicRead(PublicIdentity identity, PublicUse use, long browseEpoch,
+        java.util.function.Consumer<byte[]> open, java.util.function.Consumer<String> failure) {}
 
     /** A frozen display source. File stamps are reuse hints, never server admission receipts. */
     static final class DisplaySource {
@@ -172,7 +171,7 @@ final class HologramLibraryClient {
         }
     }
 
-    private boolean outgoingQuick, downloadExpected, configWritePending, draftPending;
+    private boolean downloadExpected, configWritePending, draftPending;
     private String pendingConfigRequestId = "";
     private long confirmedConfigRevision = -1;
     private boolean incomingCapturePreview;
@@ -443,7 +442,7 @@ final class HologramLibraryClient {
 
     static boolean dedicated() {
         Minecraft mc = Minecraft.getMinecraft();
-        return mc.theWorld != null && !mc.isIntegratedServerRunning();
+        return mc != null && mc.theWorld != null && !mc.isIntegratedServerRunning();
     }
 
     void install() {
@@ -496,7 +495,6 @@ final class HologramLibraryClient {
             selectedServer = "";
             config = new NBTTagCompound();
             page = 0;
-            observedPublic = "";
             knownQuickSource = -1;
             HologramLocalPlacement.INSTANCE.clear();
             clearBrowsePreview();
@@ -505,11 +503,12 @@ final class HologramLibraryClient {
                 synchronized (localPreviews) {
                     localPreviews.clear();
                 }
-                publicPreviews.clear();
-                publicPreviewBytes = 0;
+                publicArtifacts.clear();
+                publicArtifactBytes = 0;
             }
         }
         tickBrowsePreview();
+        if (quickPreview && (!sameQuickTool(mc) || !quickScreenAllowed(mc))) cancelQuickPlacement();
         if (placementSubmission != null && (!placementSubmission.current() || !sameQuickTool(mc)))
             cancelProjectedPlacement("蓝图放置来源或投影仪已变化，请重新确认");
         if ((previewCapture != null || pendingPreviewStart != null
@@ -546,32 +545,6 @@ final class HologramLibraryClient {
             query.setString("op", "saveStatus");
             lastSaveStatus = System.nanoTime();
             HologramNetwork.sendLibrary(query);
-        }
-        if (quick.active()) {
-            if (HologramClient.state != null && HologramClient.state.data.getBoolean("virtualLocked")
-                && !(outgoingQuick && outgoing != null)
-                && quick.snapshotMatches(
-                    HologramClient.state.data.getString("quickToken"),
-                    backgroundTaskToken,
-                    HologramClient.state.data.getLong("quickClientTaskToken"))
-                && quick.commitLockedSession(HologramClient.state.session)) {
-                quickFallback = null;
-                placementSubmission = null;
-                preparing = false;
-                progressCompleted();
-                finishBackgroundTask(backgroundTaskToken, true, "蓝图已在原目标位置准备就绪");
-                HologramLocalPlacement.INSTANCE.clear();
-            } else if (!sameQuickTool(mc) || !quickScreenAllowed(mc)) cancelQuickPlacement();
-        }
-        if (dedicated() && HologramClient.state != null) {
-            String selected = HologramClient.state.data.getString("selectedPresetId");
-            if (selected.startsWith("public_") && selected.equals(selectedServer)
-                && !selectedRow(true).getString("id")
-                    .isEmpty()
-                && !selected.equals(observedPublic)) {
-                observedPublic = selected;
-                rememberPublic(selected);
-            }
         }
         UpgradeTask upgrading = upgradeTask;
         if (upgrading != null && upgrading.task == backgroundTaskToken
@@ -660,22 +633,18 @@ final class HologramLibraryClient {
             || !com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector
                 .isProjector(mc.thePlayer.getHeldItem()))
             return false;
-        if (!dedicated()) {
-            net.minecraft.item.ItemStack held = mc.thePlayer.getHeldItem();
-            String id = !lastIntegratedPreview.isEmpty() ? lastIntegratedPreview
-                : held.hasTagCompound() ? held.getTagCompound()
-                    .getString("gtitHologramPreset") : "";
-            if (id.isEmpty() && HologramClient.state != null)
-                id = HologramClient.state.data.getString("selectedPresetId");
-            if (id.isEmpty()) HologramClient.localPlacementNotice("没有可预览的最近蓝图");
-            else previewIntegrated(id, true);
-            return true;
-        }
-        return previewLastLocal();
+        if (busy()) return true;
+        net.minecraft.item.ItemStack held = mc.thePlayer.getHeldItem();
+        quickTool = held;
+        quickSlot = mc.thePlayer.inventory.currentItem;
+        quickToolId = held.hasTagCompound() ? held.getTagCompound().getString("gtitHologramToolId") : "";
+        String fallback = !lastIntegratedPreview.isEmpty() ? lastIntegratedPreview
+            : held.hasTagCompound() ? held.getTagCompound().getString("gtitHologramPreset") : "";
+        return previewLastLocal(dedicated() ? "" : fallback);
     }
 
     boolean quickInProgress() {
-        return quick.active();
+        return quickPreview;
     }
 
     private boolean quickScreenAllowed(Minecraft mc) {
@@ -700,32 +669,8 @@ final class HologramLibraryClient {
     }
 
     boolean cancelQuickPlacement() {
-        if (!quick.active()) return false;
-        long cancelledTask = backgroundTaskToken;
-        String token = quick.cancel();
-        NBTTagCompound request = request("quickCancel");
-        request.setLong("clientTaskToken", cancelledTask);
-        request.setString("quickToken", token);
-        HologramNetwork.sendLibrary(request);
-        if (!quickSession.isEmpty()) HologramClient.dismissRootView(quickSession, 0);
-        if (outgoingQuick && outgoing != null) {
-            NBTTagCompound cancel = request("cancel");
-            cancel.setString("transfer", outgoingId);
-            HologramNetwork.sendLibrary(cancel);
-            outgoing = null;
-            uploadWindow = null;
-            outgoingId = "";
-            ready = inFlight = false;
-        }
-        advanceGeneration();
-        quickFallback = null;
-        placementSubmission = null;
-        HologramLocalPlacement.INSTANCE.retry();
-        quickLocal = quickSession = "";
-        outgoingQuick = false;
-        preparing = false;
-        finishBackgroundTask(cancelledTask, false, "快速放置已取消");
-        status = "快捷放置已取消";
+        if (!quickPreview) return false;
+        cancel("快捷放置已取消", true);
         return true;
     }
 
@@ -738,7 +683,13 @@ final class HologramLibraryClient {
         localCatalogProgress.update(operation, "library.index", 0, 0, "", false, System.nanoTime());
         work(() -> {
             NBTTagList labels = new NBTTagList();
-            for (HologramClientLibrary.Entry entry : store.list()) {
+            java.util.List<HologramClientLibrary.Entry> entries = store.list();
+            try {
+                entries.addAll(store.listLegacy());
+            } catch (java.io.IOException | RuntimeException unavailable) {
+                com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Unable to read historical blueprint catalog", unavailable);
+            }
+            for (HologramClientLibrary.Entry entry : entries) {
                 NBTTagCompound row = new NBTTagCompound();
                 row.setString("id", entry.id);
                 row.setString("name", entry.name);
@@ -752,7 +703,7 @@ final class HologramLibraryClient {
                 row.setInteger("structures", entry.structures);
                 row.setInteger("schema", 2);
                 row.setLong("bytes", entry.bytes);
-                row.setBoolean("mine", true);
+                row.setBoolean("mine", !entry.id.startsWith("legacy:"));
                 labels.appendTag(row);
             }
             int source = -1;
@@ -936,15 +887,12 @@ final class HologramLibraryClient {
     NBTTagCompound smokeQuickState() {
         Minecraft mc = Minecraft.getMinecraft();
         NBTTagCompound observed = new NBTTagCompound();
-        observed.setBoolean("active", quick.active());
-        observed.setString("token", quick.token());
-        observed.setString("acknowledgedSession", quickSession);
-        observed.setString("localId", quickLocal);
+        observed.setBoolean("active", quickPreview);
+        observed.setLong("token", backgroundTaskToken);
         observed.setString("status", status);
         observed.setLong("generation", generation);
         observed.setBoolean("preparing", preparing);
         observed.setBoolean("loading", loading);
-        observed.setBoolean("outgoingQuick", outgoingQuick);
         observed.setBoolean("ready", ready);
         observed.setBoolean("inFlight", inFlight);
         observed.setBoolean("bytesAwaitingBootstrap", false);
@@ -981,7 +929,7 @@ final class HologramLibraryClient {
             || loading
             || preparing
             || pendingDiskSave != null
-            || quick.active();
+            || quickPreview;
     }
 
     int progressBytes() {
@@ -1063,14 +1011,14 @@ final class HologramLibraryClient {
             transferProgress.update(identity, "library.prepare", 0, 0, "", false, now);
         } else if (preparing && upgradeTask == null)
             transferProgress.update(identity, localProgressPhase, 0, 0, "", false, now);
-        else if (quick.active()) transferProgress.update(identity, "library.session", 0, 0, "", false, now);
+        else if (quickPreview) transferProgress.update(identity, "library.read", 0, 0, "", false, now);
         else if (deletingServer) transferProgress.update(identity, "library.delete", 0, 0, "", false, now);
         HologramProgress transfer = transferProgress.view(now);
         if (transfer != null && !transfer.complete
             && !busy()
             && !downloadExpected
             && !draftPending
-            && !quick.active()
+            && !quickPreview
             && !deletingServer) {
             transferProgress.clear();
             transfer = null;
@@ -1212,6 +1160,7 @@ final class HologramLibraryClient {
         preparationProgress.clear();
         backgroundTaskToken = 0;
         localDisplayTask = false;
+        quickPreview = false;
         draftSave = null;
         savePreviewPose = null;
         HologramBackgroundTasks.finishLibrary(token, success, detail, cancelled);
@@ -1376,54 +1325,39 @@ final class HologramLibraryClient {
         lastActivity = System.nanoTime();
     }
 
-    void sendLocal(HologramState state, String action, boolean upload) {
-        sendLocal(state, action, upload, false);
-    }
-
-    void sendLocal(HologramState state, String action, boolean upload, boolean confirmDiscard) {
-        if (upload && !canPublishPublic()) {
+    void publishSelected() {
+        if (!canPublishPublic()) {
             status = "你所在的权限组不允许发布公共蓝图";
             return;
         }
-        if (!upload && ("place".equals(action) || "preview".equals(action))) {
-            previewLocal(selectedLocal, "place".equals(action));
-            return;
-        }
-        if (busy() || selectedLocal.isEmpty()) return;
-        if (!beginBackgroundTask(upload ? "上传蓝图" : "读取蓝图")) return;
+        if (busy() || selectedLocal.isEmpty() || !beginBackgroundTask("上传蓝图")) return;
+        ensureStore();
         String id = selectedLocal;
         long token = generation;
         String targetServer = connection;
         preparing = true;
         localProgressPhase = "library.read";
-        status = upload ? "正在读取客户端蓝图，准备上传" : "正在读取客户端蓝图，准备" + actionLabel(action);
+        status = "正在读取客户端蓝图，准备上传";
         work(() -> {
-            byte[] bytes = store.artifact(id);
+            byte[] bytes = store.previewArtifact(id);
             String hash = HologramBlueprintArtifact.hash(bytes);
-            String replaceId = upload ? store.uploadedId(targetServer, id) : "";
+            String replaceId = store.uploadedId(targetServer, id);
             main(() -> {
                 if (generation != token) return;
                 preparing = false;
                 outgoing = bytes;
-                outgoingId = UUID.randomUUID()
-                    .toString();
-                outgoingOp = upload ? "upload" : "private";
-                outgoingQuick = false;
+                outgoingId = UUID.randomUUID().toString();
+                outgoingOp = "upload";
                 outgoingLocal = id;
                 nextChunk = sentBytes = 0;
                 ready = inFlight = false;
-                NBTTagCompound begin = request(outgoingOp + "Begin");
+                NBTTagCompound begin = request("uploadBegin");
                 begin.setString("transfer", outgoingId);
                 begin.setInteger("total", bytes.length);
                 begin.setString("hash", hash);
                 begin.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
-                begin.setString("session", state.session);
-                begin.setLong("planRevision", state.data.getLong("planRevision"));
-                begin.setString("action", action);
-                begin.setBoolean("confirmDiscard", confirmDiscard);
-                begin.setString("localId", id);
-                if (upload && !replaceId.isEmpty()) begin.setString("replaceId", replaceId);
-                status = upload ? "上传中 · 等待服务器接收" : "传输中 · " + actionLabel(action);
+                if (!replaceId.isEmpty()) begin.setString("replaceId", replaceId);
+                status = "上传中 · 等待服务器接收";
                 lastActivity = System.nanoTime();
                 uploadWindow = new HologramLibraryProtocol.UploadWindow(begin);
                 HologramNetwork.sendLibrary(begin);
@@ -1433,6 +1367,10 @@ final class HologramLibraryClient {
 
     /** Display reads use file identity; content admission starts only for a placement action. */
     void previewLocal(String id, boolean placement) {
+        if (id != null && id.startsWith("legacy:")) {
+            previewIntegrated(id, placement);
+            return;
+        }
         if (busy() || id == null || id.isEmpty() || !beginBackgroundTask("读取蓝图预览")) return;
         localDisplayTask = true;
         ensureStore();
@@ -1486,17 +1424,18 @@ final class HologramLibraryClient {
         long token = generation, total = java.nio.file.Files.size(path);
         if (observed) observeDisplay(token, "library.read", 0, total, "bytes");
         if (total > maximum) throw new java.io.IOException("Blueprint display byte budget");
-        try (java.io.InputStream input = java.nio.file.Files.newInputStream(path);
-            java.io.ByteArrayOutputStream output = new java.io.ByteArrayOutputStream()) {
-            byte[] buffer = new byte[8192];
-            for (int count; (count = input.read(buffer)) != -1;) {
-                if (count > maximum - output.size()) throw new java.io.IOException("Blueprint display byte budget");
-                output.write(buffer, 0, count);
-                if (observed && (output.size() & 65535) == 0)
-                    observeDisplay(token, "library.read", output.size(), total, "bytes");
+        byte[] bytes = new byte[(int) total];
+        try (java.io.InputStream input = java.nio.file.Files.newInputStream(path)) {
+            int offset = 0;
+            while (offset < bytes.length) {
+                int count = input.read(bytes, offset, Math.min(65536, bytes.length - offset));
+                if (count < 0) throw new java.io.IOException("蓝图文件已变化，请重试");
+                offset += count;
+                if (observed) observeDisplay(token, "library.read", offset, total, "bytes");
             }
-            if (observed) observeDisplay(token, "library.read", output.size(), total, "bytes");
-            return output.toByteArray();
+            if (input.read() != -1) throw new java.io.IOException("蓝图文件已变化，请重试");
+            if (observed && bytes.length == 0) observeDisplay(token, "library.read", 0, total, "bytes");
+            return bytes;
         }
     }
 
@@ -1521,8 +1460,9 @@ final class HologramLibraryClient {
         return source;
     }
 
-    private boolean previewLastLocal() {
+    private boolean previewLastLocal(String legacyFallback) {
         if (busy() || !beginBackgroundTask("读取最近蓝图预览")) return true;
+        quickPreview = true;
         localDisplayTask = true;
         ensureStore();
         preparing = true;
@@ -1539,7 +1479,13 @@ final class HologramLibraryClient {
                 else {
                     preparing = false;
                     finishBackgroundTask(backgroundTaskToken, true, "最近蓝图已读取");
-                    if (!source.publicId.isEmpty()) previewPublic(source.publicId);
+                    if (!source.publicId.isEmpty()) {
+                        previewPublic(source.publicId);
+                        quickPreview = preparing;
+                    } else if (!legacyFallback.isEmpty()) {
+                        previewIntegrated(legacyFallback, true);
+                        quickPreview = preparing;
+                    }
                     else HologramClient.localPlacementNotice("没有可预览的最近蓝图，请先从蓝图库选择");
                 }
             });
@@ -1552,41 +1498,120 @@ final class HologramLibraryClient {
     }
 
     void previewPublic(String id, boolean placement) {
-        if (!canReadPublic()) {
-            status = "你所在的权限组不允许读取公共蓝图";
-            return;
-        }
         if (!dedicated()) {
             previewIntegrated(id, placement);
             return;
         }
-        if (busy() || id == null || id.isEmpty() || !beginBackgroundTask("读取服务器蓝图预览")) return;
-        publicPreviewPlacement = placement;
-        long epoch = beginBrowsePreview(placement);
-        activePublicPreviewId = id;
-        activePublicPreviewEpoch = epoch;
-        PublicPreview cached = publicPreviews.get(id);
-        if (cached != null) for (int i = 0; i < server.tagCount(); i++) {
-            NBTTagCompound row = server.getCompoundTagAt(i);
-            if (!id.equals(row.getString("id")) || !row.hasKey("sourceHash", 8)) continue;
-            if (!cached.hash.equals(row.getString("sourceHash"))
-                || !cached.revision.equals(String.valueOf(row.getLong("sourceRevision")))) {
-                PublicPreview retired = publicPreviews.remove(id);
-                publicPreviewBytes -= retired.bytes.length;
-                cached = null;
-            }
-            break;
-        }
-        if (cached != null && cached.display != null && cached.display.state != null) {
-            localDisplayTask = true;
-            previewImage.replace(cached.thumbnail);
-            startDisplay(cached.display, placement, epoch);
+        readPublic(id, placement ? PublicUse.PLACE : PublicUse.BROWSE, null, null);
+    }
+
+    void openPublic(String id, java.util.function.Consumer<byte[]> open, java.util.function.Consumer<String> failure) {
+        readPublic(id, PublicUse.EDIT, open, failure);
+    }
+
+    private void readPublic(String id, PublicUse use, java.util.function.Consumer<byte[]> open,
+        java.util.function.Consumer<String> failure) {
+        if (!canReadPublic()) {
+            status = "你所在的权限组不允许读取公共蓝图";
+            if (failure != null) failure.accept(status);
             return;
         }
-        NBTTagCompound request = request("preview");
+        if (busy() || id == null || !id.matches("public_[a-fA-F0-9-]{36}")
+            || !beginBackgroundTask("读取服务器蓝图")) {
+            if (failure != null) failure.accept("当前无法读取服务器蓝图，请重试");
+            return;
+        }
+        ensureStore();
+        PublicIdentity identity = new PublicIdentity(id, "", 0);
+        for (int i = 0; i < server.tagCount(); i++) {
+            NBTTagCompound row = server.getCompoundTagAt(i);
+            if (!id.equals(row.getString("id"))) continue;
+            PublicIdentity listed = PublicIdentity.from(row);
+            if (listed.complete()) identity = listed;
+            break;
+        }
+        long epoch = use == PublicUse.BROWSE || use == PublicUse.PLACE ? beginBrowsePreview(use == PublicUse.PLACE)
+            : browseEpoch;
+        PublicRead read = new PublicRead(identity, use, epoch, open, failure);
+        publicRead = read;
+        preparing = true;
+        HologramBlueprintArtifact.Artifact cached = publicArtifacts.get(identity);
+        if (cached != null) {
+            localDisplayTask = true;
+            long token = generation;
+            String serverKey = connection;
+            work(() -> usePublicArtifact(read, read.identity(), cached, token, serverKey));
+            return;
+        }
+        NBTTagCompound request = request("download");
         request.setString("id", id);
-        downloadExpected = preparing = true;
+        if (identity.complete()) {
+            request.setString("sourceHash", identity.hash());
+            request.setLong("sourceRevision", identity.revision());
+        }
+        downloadExpected = true;
+        status = "正在获取服务器蓝图文件";
         HologramNetwork.sendLibrary(request);
+    }
+
+    private void usePublicArtifact(PublicRead read, PublicIdentity identity, HologramBlueprintArtifact.Artifact artifact,
+        long token, String serverKey) throws Exception {
+        if (token != generation) return;
+        if (read.use() == PublicUse.COPY) {
+            main(() -> retainPublicArtifact(identity, artifact, token));
+            persistArtifact(artifact.json, artifact.png, "", "", "", 0, token, serverKey);
+            return;
+        }
+        if (read.use() == PublicUse.EDIT) {
+            main(() -> {
+                if (token != generation || publicRead != read) return;
+                retainPublicArtifact(identity, artifact, token);
+                publicRead = null;
+                preparing = false;
+                finishBackgroundTask(backgroundTaskToken, true, "服务器蓝图已读取");
+                read.open().accept(artifact.json);
+            });
+            return;
+        }
+        String key = "public:" + identity.id();
+        String stamp = identity.hash() + ":" + identity.revision();
+        DisplaySource cached;
+        synchronized (localPreviews) {
+            cached = localPreviews.get(key);
+        }
+        if (cached == null || !stamp.equals(cached.stamp)) {
+            HologramBlueprintPreview.DisplayInput input = HologramBlueprintPreview.displayInput(
+                artifact.json,
+                (done, total) -> observeDisplay(token, "library.parse", done, total, "cells"));
+            cached = new DisplaySource(
+                key, stamp, artifact.json, input.snapshot, "", identity.id(), identity.hash(),
+                String.valueOf(identity.revision()));
+            cached.compactCells = input.cells;
+            cached.thumbnail = decodeDisplayImage(artifact.png);
+        }
+        DisplaySource display = cached;
+        main(() -> {
+            if (token != generation || publicRead != read) return;
+            publicRead = null;
+            retainPublicArtifact(identity, artifact, token);
+            boolean placement = read.use() == PublicUse.PLACE;
+            if (discardedBrowse(token, read.browseEpoch(), placement)) return;
+            startDisplay(display, placement, read.browseEpoch());
+            rememberPublic(identity.id());
+        });
+    }
+
+    private void retainPublicArtifact(PublicIdentity identity, HologramBlueprintArtifact.Artifact artifact, long token) {
+        if (token != generation) return;
+        HologramBlueprintArtifact.Artifact previous = publicArtifacts.put(identity, artifact);
+        if (previous != null) publicArtifactBytes -= previous.json.length + previous.png.length;
+        publicArtifactBytes += artifact.json.length + artifact.png.length;
+        java.util.Iterator<HologramBlueprintArtifact.Artifact> entries = publicArtifacts.values().iterator();
+        while (publicArtifacts.size() > 16 || publicArtifactBytes > 64L * 1024 * 1024) {
+            HologramBlueprintArtifact.Artifact retired = entries.next();
+            publicArtifactBytes -= retired.json.length + retired.png.length;
+            entries.remove();
+        }
     }
 
     HologramState browsePreviewState() {
@@ -1655,23 +1680,6 @@ final class HologramLibraryClient {
 
     void releaseBrowseImage() {
         previewImage.clear();
-        browseImageHash = browseImageRevision = "";
-    }
-
-    private void trimPublicPreviews() {
-        long retained = 0;
-        for (PublicPreview preview : publicPreviews.values())
-            retained += preview.bytes.length + (preview.display == null || preview.display.state == null ? 0L
-                : preview.display.state.cells.size() * 512L);
-        while (publicPreviews.size() > 1 && (publicPreviews.size() > 16 || retained > 64L * 1024 * 1024)) {
-            String eldest = publicPreviews.keySet()
-                .iterator()
-                .next();
-            PublicPreview retired = publicPreviews.remove(eldest);
-            publicPreviewBytes -= retired.bytes.length;
-            retained -= retired.bytes.length + (retired.display == null || retired.display.state == null ? 0L
-                : retired.display.state.cells.size() * 512L);
-        }
     }
 
     String browsePreviewStatus() {
@@ -1695,14 +1703,49 @@ final class HologramLibraryClient {
         return true;
     }
 
+    private void previewIntegrated(String id, boolean placement) {
+        if (busy() || id == null || id.isEmpty() || !beginBackgroundTask("读取本地旧蓝图")) return;
+        localDisplayTask = true;
+        ensureStore();
+        long token = generation, epoch = beginBrowsePreview(placement);
+        preparing = true;
+        localProgressPhase = "library.read";
+        work(() -> {
+            DisplaySource source;
+            String localId = id.startsWith("local_") ? id : "local_" + id;
+            if (localId.matches("local_[a-fA-F0-9-]{36}") && java.nio.file.Files.isRegularFile(store.savedPath(localId)))
+                source = readDisplaySource("local:" + localId, store.savedPath(localId), localId, "");
+            else {
+                String key = id.startsWith("legacy:") ? id : "legacy:" + id;
+                String stamp = fileStamp(store.legacyCatalogPath());
+                synchronized (localPreviews) {
+                    source = localPreviews.get(key);
+                }
+                if (source == null || !stamp.equals(source.stamp)) {
+                    byte[] json = store.readLegacyDocument(id);
+                    if (!stamp.equals(fileStamp(store.legacyCatalogPath()))) throw new java.io.IOException("蓝图库已变化，请重试");
+                    HologramBlueprintPreview.DisplayInput input = HologramBlueprintPreview.displayInput(
+                        json, (done, total) -> observeDisplay(token, "library.parse", done, total, "cells"));
+                    source = new DisplaySource(key, stamp, json, input.snapshot, "", "", "", "");
+                    source.compactCells = input.cells;
+                }
+            }
+            DisplaySource readySource = source;
+            main(() -> {
+                if (discardedBrowse(token, epoch, placement)) return;
+                startDisplay(readySource, placement, epoch);
+                if (placement) lastIntegratedPreview = id;
+            });
+        });
+    }
+
     void clearBrowsePreview() {
-        MiaoVisonLiteRenderer.cancelBrowseTopology(browseState);
+        HologramRenderer.cancelBrowseTopology(browseState);
         if (browseState != null && browseState.cells.size() * ESTIMATED_CELL_BYTES > LOCAL_PREVIEW_CACHE_BYTES)
-            MiaoVisonLiteRenderer.releaseInactiveBrowse(browseState);
+            HologramRenderer.releaseInactiveBrowse(browseState);
         browseEpoch++;
         browseRendering = false;
         releaseBrowseImage();
-        activePublicPreviewId = "";
         if (!displayPlacement) {
             if (displayPreparing != null) {
                 preparing = false;
@@ -1713,71 +1756,6 @@ final class HologramLibraryClient {
         }
         browseState = null;
         browseStatus = "";
-    }
-
-    private void previewIntegrated(String id, boolean placement) {
-        if (busy() || id == null || !id.matches("[a-zA-Z0-9_-]{1,96}") || !beginBackgroundTask("读取蓝图预览")) return;
-        localDisplayTask = true;
-        ensureStore();
-        long token = generation, epoch = beginBrowsePreview(placement);
-        java.nio.file.Path directory = Minecraft.getMinecraft().mcDataDir.toPath()
-            .resolve("MiaoBlueprints");
-        preparing = true;
-        localProgressPhase = "library.read";
-        work(() -> {
-            java.nio.file.Path member = com.miaokatze.gtmb.hologram.HologramBlueprintFiles
-                .resolve(directory, "local_" + id);
-            DisplaySource source;
-            if (java.nio.file.Files.isRegularFile(member))
-                source = readDisplaySource("integrated:" + id, member, "local_" + id, "");
-            else {
-                java.nio.file.Path collection = directory.resolve("hologram-presets.json");
-                String stamp = fileStamp(collection);
-                synchronized (localPreviews) {
-                    source = localPreviews.get("integrated:" + id);
-                }
-                if (source == null || !stamp.equals(source.stamp)) {
-                    byte[] catalogBytes = readDisplayBytes(
-                        collection,
-                        HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES);
-                    observeDisplay(token, "library.parse", 0, 0, "");
-                    com.google.gson.JsonObject root = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec
-                        .parse(catalogBytes, HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES);
-                    com.google.gson.JsonObject selected = null;
-                    for (com.google.gson.JsonElement row : root.getAsJsonArray("presets")) {
-                        com.google.gson.JsonObject preset = row.getAsJsonObject();
-                        if (preset.has("id") && id.equals(
-                            preset.get("id")
-                                .getAsString()))
-                            selected = preset;
-                    }
-                    if (selected == null) throw new java.io.IOException("本地蓝图不存在");
-                    com.google.gson.JsonObject share = new com.google.gson.JsonObject();
-                    share.addProperty("schema", 2);
-                    share.add("blueprint", selected);
-                    byte[] json = share.toString()
-                        .getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                    if (!stamp.equals(fileStamp(collection))) throw new java.io.IOException("蓝图库已变化，请重试");
-                    source = new DisplaySource(
-                        "integrated:" + id,
-                        stamp,
-                        json,
-                        HologramBlueprintPreview.snapshot(
-                            json,
-                            (done, total) -> observeDisplay(token, "library.parse", done, total, "cells")),
-                        "",
-                        id,
-                        "",
-                        "");
-                }
-            }
-            DisplaySource readySource = source;
-            main(() -> {
-                if (discardedBrowse(token, epoch, placement)) return;
-                startDisplay(readySource, placement, epoch);
-                if (placement) lastIntegratedPreview = id;
-            });
-        });
     }
 
     private void startDisplay(DisplaySource source, boolean placement, long epoch) {
@@ -1807,7 +1785,6 @@ final class HologramLibraryClient {
         preparing = false;
         source.snapshot = null;
         source.compactCells = null;
-        trimPublicPreviews();
         retainDisplaySource(source);
         if (placement) {
             Minecraft mc = Minecraft.getMinecraft();
@@ -1915,11 +1892,6 @@ final class HologramLibraryClient {
         HologramLocalPlacement.Submission submission = placement.freeze(options);
         if (submission == null || busy()) return false;
         DisplaySource source = submission.source();
-        if (source.json == null) {
-            status = "请先下载这份公共蓝图，再从客户端蓝图库放置";
-            HologramClient.localPlacementNotice(status);
-            return false;
-        }
         if (!beginBackgroundTask("准备施工并核对材料")) return false;
         Minecraft mc = Minecraft.getMinecraft();
         UUID request = UUID.randomUUID();
@@ -1944,7 +1916,7 @@ final class HologramLibraryClient {
         work(() -> {
             com.miaokatze.gtmb.hologram.HologramProjectedPlacement.Plan plan = com.miaokatze.gtmb.hologram.HologramProjectedPlacement
                 .compile(
-                    source.json,
+                    com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.portableDocument(source.json),
                     anchor,
                     pose,
                     worldHeight,
@@ -2014,20 +1986,7 @@ final class HologramLibraryClient {
     }
 
     void downloadSelected() {
-        if (!canReadPublic()) {
-            status = "你所在的权限组不允许下载公共蓝图";
-            return;
-        }
-        if (busy() || selectedServer.isEmpty()) return;
-        if (!beginBackgroundTask("下载蓝图")) return;
-        captureActor();
-        NBTTagCompound request = request("download");
-        request.setString("id", selectedServer);
-        preparing = true;
-        downloadExpected = true;
-        lastActivity = System.nanoTime();
-        status = "下载中 · 保存副本到客户端";
-        HologramNetwork.sendLibrary(request);
+        readPublic(selectedServer, PublicUse.COPY, null, null);
     }
 
     void deleteSelected(boolean publicLibrary) {
@@ -2122,10 +2081,9 @@ final class HologramLibraryClient {
             || inFlight
             || downloadExpected
             || draftPending
-            || quick.active()
+            || quickPreview
             || pendingDiskSave != null;
         if (activeTransfer && !incomingSaveReceipt.isEmpty()) traceSave("cancel_before_clear");
-        cancelQuickPlacement();
         if (previewCapture != null) previewCapture.cancel();
         previewCapture = null;
         pendingPreviewStart = null;
@@ -2162,7 +2120,10 @@ final class HologramLibraryClient {
         if (incoming != null) incoming.cancel();
         incoming = null;
         outgoingId = incomingId = "";
-        incomingPreview = null;
+        PublicRead abandoned = publicRead;
+        publicRead = null;
+        incomingPublic = null;
+        if (abandoned != null && abandoned.failure() != null) abandoned.failure().accept(reason);
         displayPreparing = null;
         browsePreparation = null;
         workerDisplayProgress = null;
@@ -2183,35 +2144,6 @@ final class HologramLibraryClient {
 
     private void receive(NBTTagCompound reply) {
         String op = reply.getString("op");
-        // Retired hash-probe replies cannot extend an unrelated operation's idle timeout.
-        if ("contentReady".equals(op) || "contentMissing".equals(op) || "needUpload".equals(op)) return;
-        if ("previewThumbnail".equals(op)) {
-            if (!matchesTransferTask(reply) || !activePublicPreviewId.equals(reply.getString("publicId"))) return;
-            byte[] png = reply.getByteArray("thumbnailPng");
-            if (png.length == 0 || png.length > 16384) return;
-            long token = generation, epoch = activePublicPreviewEpoch;
-            String id = activePublicPreviewId, hash = reply.getString("sourceHash");
-            String revision = String.valueOf(reply.getLong("sourceRevision"));
-            work(() -> {
-                BufferedImage image;
-                try {
-                    image = decodeDisplayImage(png);
-                    if (image.getWidth() > 160 || image.getHeight() > 160) return;
-                } catch (java.io.IOException | RuntimeException unavailable) {
-                    return;
-                }
-                main(() -> {
-                    if (token != generation || epoch != browseEpoch || !id.equals(activePublicPreviewId)) return;
-                    previewImage.replace(image);
-                    browseImageHash = hash;
-                    browseImageRevision = revision;
-                    PublicPreview retained = publicPreviews.get(id);
-                    if (retained != null && retained.hash.equals(hash) && retained.revision.equals(revision))
-                        retained.thumbnail = image;
-                });
-            });
-            return;
-        }
         if ("upgradeLibraryResult".equals(op)) {
             receiveUpgradeResult(reply);
             return;
@@ -2234,28 +2166,11 @@ final class HologramLibraryClient {
         if (("error".equals(op) || "downloadBegin".equals(op)
             || "downloadChunk".equals(op)
             || "downloadDone".equals(op)) && !matchesTransferTask(reply)) return;
-        if (!("chunkAck".equals(op) || "uploadReady".equals(op)
-            || "privateReady".equals(op)
-            || "previewReady".equals(op)
-            || "uploaded".equals(op)
-            || "privateImported".equals(op)
-            || "privateCached".equals(op)
-            || "previewVerified".equals(op)
-            || "downloadBegin".equals(op)
-            || "downloadChunk".equals(op)
-            || "downloadDone".equals(op)) && !(draftPending && ("list".equals(op) || "config".equals(op))))
+        if ("error".equals(op) || "deleted".equals(op) || "saveCommitted".equals(op) || "saveRejected".equals(op)
+            || !draftPending && ("list".equals(op) || "config".equals(op)))
             lastActivity = System.nanoTime();
         if ("saveCommitted".equals(op) || "saveRejected".equals(op)) {
             finishDiskSave(reply, "saveCommitted".equals(op));
-        } else if ("quickPlacement".equals(op)) {
-            if (!matchesTransferTask(reply) || !quick.placement(
-                reply.getString("quickToken"),
-                reply.getString("previousSession"),
-                reply.getString("session"))) return;
-            quickSession = reply.getString("session");
-            quickFallback = null;
-        } else if ("queued".equals(op)) {
-            status = reply.getString("message");
         } else if ("list".equals(op)) {
             server = reply.getTagList("entries", 10);
             page = reply.getInteger("page");
@@ -2275,6 +2190,17 @@ final class HologramLibraryClient {
                 .isEmpty()) settingsProgress.finish(System.nanoTime());
             else if (confirmsWrite) settingsProgress.clear();
             config = (NBTTagCompound) reply.copy();
+            if (!canReadPublic()) {
+                publicArtifacts.clear();
+                publicArtifactBytes = 0;
+                synchronized (localPreviews) {
+                    localPreviews.keySet().removeIf(key -> key.startsWith("public:"));
+                }
+                if (publicRead != null) {
+                    cancel("权限组已变更，公共蓝图读取已取消", false);
+                    clearBrowsePreview();
+                }
+            }
             if (!config.getString("libraryError")
                 .isEmpty()) status = "服务器蓝图库只读：" + config.getString("libraryError");
             else if (confirmsWrite) status = "服务器设置已确认 · 修订 " + config.getLong("configRevision");
@@ -2282,7 +2208,7 @@ final class HologramLibraryClient {
                 confirmedConfigRevision = config.getLong("configRevision");
                 configWritePending = false;
             }
-        } else if ("uploadReady".equals(op) || "privateReady".equals(op) || "previewReady".equals(op)) {
+        } else if ("uploadReady".equals(op) || "previewReady".equals(op)) {
             if (!matchesOutgoing(reply) || uploadWindow == null) return;
             try {
                 if (uploadWindow.ready(reply)) {
@@ -2361,49 +2287,22 @@ final class HologramLibraryClient {
                 }
             }
             inFlight = uploadWindow.inFlight();
-        } else if ("uploaded".equals(op) || "privateImported".equals(op) || "privateCached".equals(op)) {
-            if (!matchesOutgoing(reply) || !"privateCached".equals(op) && !completedUpload(reply)) return;
-            lastActivity = System.nanoTime();
+        } else if ("uploaded".equals(op)) {
+            if (!matchesOutgoing(reply) || !completedUpload(reply)) return;
             long completedTask = backgroundTaskToken;
-            boolean quickUpload = outgoingQuick;
-            boolean uploaded = "uploaded".equals(op);
             outgoing = null;
             uploadWindow = null;
             outgoingId = "";
             ready = inFlight = false;
-            status = uploaded ? "已上传至服务器蓝图库" : "蓝图已传输，服务器正在打开预览";
+            status = "已上传至服务器蓝图库";
             progressCompleted();
-            if ("projectionDiscardPending".equals(reply.getString("id"))) {
-                status = "蓝图已准备好，请确认是否丢弃当前投影";
-                outgoingQuick = false;
-                preparing = false;
-                quick.committed();
-                quickFallback = null;
-                finishBackgroundTask(completedTask, true, status);
-                return;
-            }
-            if (uploaded) {
-                selectedServer = reply.getString("id");
-                String serverKey = connection, localId = outgoingLocal, publicId = selectedServer;
-                work(() -> {
-                    store.uploadedId(serverKey, localId, publicId);
-                    main(() -> finishBackgroundTask(completedTask, true, "蓝图已上传"));
-                });
-                refreshServer(page);
-            } else {
-                String serverKey = connection, localId = outgoingLocal;
-                long sourceGeneration = generation;
-                work(() -> {
-                    store.rememberLocal(serverKey, localId);
-                    main(() -> {
-                        if (sourceGeneration == generation) knownQuickSource = 1;
-                        if (!quickUpload) finishBackgroundTask(completedTask, true, "蓝图已载入");
-                    });
-                });
-                status = outgoingQuick ? "上一张客户端蓝图已进入世界定位" : "蓝图已传输，服务器正在打开预览";
-                outgoingQuick = false;
-                if (quickUpload && quick.active()) preparing = true;
-            }
+            selectedServer = reply.getString("id");
+            String serverKey = connection, localId = outgoingLocal, publicId = selectedServer;
+            work(() -> {
+                store.uploadedId(serverKey, localId, publicId);
+                main(() -> finishBackgroundTask(completedTask, true, "蓝图已上传"));
+            });
+            refreshServer(page);
         } else if ("deleted".equals(op)) {
             deletingServer = false;
             knownQuickSource = -1;
@@ -2414,7 +2313,6 @@ final class HologramLibraryClient {
             selectedServer = "";
             refreshServer(page);
         } else if ("downloadBegin".equals(op)) {
-            incomingPreview = reply.getBoolean("previewOnly") ? (NBTTagCompound) reply.copy() : null;
             downloadBeginObserved = true;
             downloadHeaderRevision = reply.getLong("planRevision");
             boolean nativeDraft = HologramLibraryDownload.taskMatches(backgroundTaskToken, reply)
@@ -2427,6 +2325,16 @@ final class HologramLibraryClient {
                 return;
             }
             if (!downloadExpected && !nativeDraft) return;
+            if (!nativeDraft) {
+                PublicIdentity offered = PublicIdentity.from(reply);
+                if (publicRead == null || !"public".equals(reply.getString("purpose")) || !offered.complete()
+                    || !offered.id().equals(publicRead.identity().id())
+                    || publicRead.identity().complete() && !publicRead.identity().equals(offered)) {
+                    failTask("download.source.rejected", "服务器蓝图来源已变化，请刷新公库后重试");
+                    return;
+                }
+                incomingPublic = offered;
+            }
             ensureStore();
             if (nativeDraft) captureActor();
             downloadExpected = false;
@@ -2522,10 +2430,9 @@ final class HologramLibraryClient {
             String expected = incomingHash;
             String replace = "draft".equals(incomingPurpose) ? incomingLocal : "";
             String saveReceipt = incomingSaveReceipt, saveSession = incomingSaveSession;
-            NBTTagCompound previewHeader = incomingPreview;
-            boolean placementPreview = publicPreviewPlacement;
-            long previewEpoch = browseEpoch;
-            incomingPreview = null;
+            PublicRead publicRequest = publicRead;
+            PublicIdentity publicIdentity = incomingPublic;
+            incomingPublic = null;
             boolean capturePreview = incomingCapturePreview;
             boolean localSaveReceipt = incomingLocalSaveReceipt;
             long saveRevision = incomingSaveRevision;
@@ -2546,41 +2453,12 @@ final class HologramLibraryClient {
                 if (encoded.length != expectedTotal) throw new java.io.IOException("下载校验失败");
                 byte[] bytes = HologramLibraryDownload.decode(encoded, encoding, decodedTotal, expected);
                 if (token != generation) return;
-                if (previewHeader != null) {
-                    NBTTagCompound preview = com.miaokatze.gtmb.hologram.HologramSnapshotCodec.decode(bytes);
-                    String id = previewHeader.getString("publicId");
-                    String sourceHash = previewHeader.getString("sourceHash");
-                    String sourceRevision = previewHeader.hasKey("sourceRevision", 8)
-                        ? previewHeader.getString("sourceRevision")
-                        : String.valueOf(previewHeader.getLong("sourceRevision"));
-                    main(() -> {
-                        if (token != generation) return;
-                        if (previewHeader.getBoolean("materialsOnly")) return;
-                        if (discardedBrowse(token, previewEpoch, placementPreview)) return;
-                        DisplaySource display = new DisplaySource(
-                            "public:" + id,
-                            sourceRevision,
-                            null,
-                            preview,
-                            "",
-                            id,
-                            sourceHash,
-                            sourceRevision);
-                        PublicPreview cached = new PublicPreview(bytes, sourceHash, sourceRevision);
-                        cached.display = display;
-                        if (sourceHash.equals(browseImageHash) && sourceRevision.equals(browseImageRevision))
-                            cached.thumbnail = display.thumbnail = previewImage.image();
-                        else if (!browseImageHash.isEmpty()) releaseBrowseImage();
-                        PublicPreview old = publicPreviews.put(id, cached);
-                        if (old != null) publicPreviewBytes -= old.bytes.length;
-                        publicPreviewBytes += bytes.length;
-                        trimPublicPreviews();
-                        startDisplay(display, placementPreview, previewEpoch);
-                        rememberPublic(id);
-                    });
-                    return;
-                }
-                if (capturePreview) {
+                if (publicRequest != null && publicIdentity != null) {
+                    HologramBlueprintArtifact.Artifact artifact = HologramBlueprintArtifact.decode(bytes);
+                    if (!com.miaokatze.gtmb.hologram.HologramBlueprintContentHash.of(artifact.json, publicIdentity.id())
+                        .equals(publicIdentity.hash())) throw new java.io.IOException("服务器蓝图内容摘要不匹配");
+                    usePublicArtifact(publicRequest, publicIdentity, artifact, token, serverKey);
+                } else if (capturePreview) {
                     com.miaokatze.gtmb.hologram.HologramLibraryFacade.validateNativeJson(bytes);
                     NBTTagCompound snapshot = HologramBlueprintPreview.snapshot(bytes);
                     main(() -> {
@@ -2629,18 +2507,7 @@ final class HologramLibraryClient {
                             traceSave("waiting_exact_state");
                         } else failSave("蓝图来源已变化，请重新保存", null);
                     });
-                } else {
-                    HologramBlueprintArtifact.Artifact artifact = HologramBlueprintArtifact.decode(bytes);
-                    persistArtifact(
-                        artifact.json,
-                        artifact.png,
-                        replace,
-                        "",
-                        saveSession,
-                        saveRevision,
-                        token,
-                        serverKey);
-                }
+                } else throw new java.io.IOException("下载没有对应的蓝图请求");
             });
         } else if ("error".equals(op)) {
             HologramLocalPlacement.INSTANCE.retry();
@@ -2863,8 +2730,17 @@ final class HologramLibraryClient {
         long originalBackgroundToken = backgroundTaskToken;
         boolean reviewedSave = !receipt.isEmpty();
         if (token != generation || reviewedSave && !saveBytesCurrent(token, session, revision)) return;
-        String saved = reviewedSave ? replace : store.save(json, preview, replace, () -> token == generation);
-        byte[] artifact = reviewedSave ? HologramBlueprintArtifact.encode(json, preview) : store.artifact(saved);
+        String saved = reviewedSave || !replace.isEmpty() ? replace : "local_" + UUID.randomUUID();
+        if (!reviewedSave) {
+            HologramClientLibrary.LocalSave local = store
+                .preparePrivateDocumentSave(json, preview, saved, () -> token == generation);
+            if (token != generation) {
+                local.write.rollback();
+                return;
+            }
+            local.write.commit();
+        }
+        byte[] artifact = reviewedSave ? HologramBlueprintArtifact.encode(json, preview) : store.previewArtifact(saved);
         HologramBlueprintArtifact.Artifact actual = HologramBlueprintArtifact.decode(artifact);
         String actualJsonHash = HologramBlueprintArtifact.hash(actual.json);
         String actualPreviewHash = HologramBlueprintArtifact.hash(actual.png);
@@ -2879,6 +2755,7 @@ final class HologramLibraryClient {
             if (token != generation || originalBackgroundToken != backgroundTaskToken
                 || reviewedSave && !saveSourceCurrent(token, session, revision)) return;
             if (!reviewedSave) {
+                publicRead = null;
                 progressCompleted();
                 selectedLocal = saved;
                 knownQuickSource = 1;
@@ -2912,7 +2789,6 @@ final class HologramLibraryClient {
                 .toString();
             outgoingOp = "preview";
             outgoingLocal = saved;
-            outgoingQuick = false;
             nextChunk = sentBytes = 0;
             ready = inFlight = false;
             NBTTagCompound begin = request("previewBegin");
@@ -2998,21 +2874,6 @@ final class HologramLibraryClient {
     }
 
     /** Topology preparation shares the bounded worker and yields to any pending library operation. */
-    boolean tryPreviewTopology(java.util.concurrent.FutureTask<Void> work) {
-        if (worker.getActiveCount() != 0 || !worker.getQueue()
-            .isEmpty()) return false;
-        try {
-            worker.execute(work);
-            return true;
-        } catch (java.util.concurrent.RejectedExecutionException busy) {
-            return false;
-        }
-    }
-
-    void removePreviewTopology(java.util.concurrent.FutureTask<Void> work) {
-        worker.remove(work);
-    }
-
     private void durableWork(Job job) {
         enqueueSaveWork(job, true);
     }
@@ -3046,18 +2907,11 @@ final class HologramLibraryClient {
     private NBTTagCompound request(String op) {
         NBTTagCompound request = HologramLibraryProtocol.request(op);
         if (op.endsWith("Begin") || op.endsWith("Chunk")
-            || op.startsWith("quick")
             || "download".equals(op)
-            || "preview".equals(op)
-            || "previewMaterials".equals(op)
             || "exportDraft".equals(op)
             || "cancel".equals(op)
             || "ackBlueprintSaved".equals(op)) request.setLong("clientTaskToken", backgroundTaskToken);
         return request;
-    }
-
-    private static String actionLabel(String action) {
-        return "place".equals(action) ? "放置" : "edit".equals(action) ? "编辑" : "预览";
     }
 
     static String bytes(long bytes) {

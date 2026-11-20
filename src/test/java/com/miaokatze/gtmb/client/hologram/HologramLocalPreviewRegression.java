@@ -20,6 +20,7 @@ public final class HologramLocalPreviewRegression {
         admissionReceipts();
         compactDisplay();
         compactDirectDisplay();
+        compactCoordinateCompatibility();
         compactDenseRegion();
         sharedPlainDisplay();
         sourceReuse();
@@ -273,6 +274,25 @@ public final class HologramLocalPreviewRegression {
             "dense compact lookup preserves cell identity and empty positions");
     }
 
+    private static void compactCoordinateCompatibility() throws Exception {
+        String start = "{\"encoding\":\"gtmb-dictionary-1\",\"blueprint\":{\"cells\":[";
+        String end = "]},\"materials\":[{\"block\":\"minecraft:stone\"}],\"nbt\":[]}";
+        for (String position : new String[] { "{\"z\":-9,\"x\":2}", "{\"x\":8,\"x\":2,\"z\":-9}" }) {
+            byte[] encoded = (start + "[0," + position + "]" + end).getBytes(StandardCharsets.UTF_8);
+            HologramBlueprintPreview.CompactCells cells = HologramBlueprintPreview.displayInput(encoded, null).cells;
+            SimpleAssert.eq(2, cells.coordinate(0, 0), "compact preview preserves the selected axis value");
+            SimpleAssert.eq(0, cells.coordinate(0, 1), "missing historical axis defaults to zero");
+            SimpleAssert.eq(-9, cells.coordinate(0, 2), "compact preview preserves signed positions");
+        }
+        for (String row : new String[] { "[1,{}]", "[0,{\"x\":1.0}]", "[0,{\"x\":2147483648}]", "[0,{},0]" }) {
+            byte[] encoded = (start + row + end).getBytes(StandardCharsets.UTF_8);
+            try {
+                HologramBlueprintPreview.displayInput(encoded, null);
+                throw new AssertionError("invalid compact coordinate or reference accepted: " + row);
+            } catch (IOException expected) {}
+        }
+    }
+
     private static void compactPayloadBudget() throws Exception {
         NBTTagCompound large = new NBTTagCompound();
         large.setByteArray("expanded", new byte[1024 * 1024]);
@@ -352,9 +372,7 @@ public final class HologramLocalPreviewRegression {
             "shared display NBT remains privately mutable");
         SimpleAssert.that(!HologramTextures.partial(second, false), "ordinary visibility needs no atlas access");
 
-        java.lang.reflect.Field nodes = HologramLinkNodePreview.class.getDeclaredField("NODES");
-        nodes.setAccessible(true);
-        java.util.Map<?, ?> entries = (java.util.Map<?, ?>) nodes.get(null);
+        java.util.Map<?, ?> entries = HologramPreviewAssets.EDITOR.linkNodes.nodes;
         int before = entries.size();
         SimpleAssert.that(
             HologramLinkNodePreview.prepare(first, false)

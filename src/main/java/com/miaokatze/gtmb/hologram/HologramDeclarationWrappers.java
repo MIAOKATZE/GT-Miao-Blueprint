@@ -270,15 +270,33 @@ final class HologramDeclarationWrappers {
     }
 
     static void observeMaterials(IStructureElement<?> element) {
+        observeMaterials(element, false);
+    }
+
+    /** A reviewed advisory adapter can describe local preview options without giving them placement authority. */
+    static void observePreviewMaterials(IStructureElement<?> element) {
+        observeMaterials(element, true);
+    }
+
+    private static void observeMaterials(IStructureElement<?> element, boolean advisory) {
         for (IStructureElement<?> part : HologramElementCatalog.parts(element)) {
             try {
                 String channel = channel(part);
-                if (channel != null) HologramChannelTrace.declareMaterials(channel, materials(backing(part)));
+                if (channel != null) HologramChannelTrace.declareMaterials(channel, materials(backing(part), advisory));
             } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {}
         }
     }
 
     private static List<ItemStack> materials(IStructureElement<?> root) throws ReflectiveOperationException {
+        return materials(root, false);
+    }
+
+    private static List<ItemStack> materials(IStructureElement<?> root, boolean advisory)
+        throws ReflectiveOperationException {
+        if (advisory) {
+            HologramDeclarationAdapters.Declaration declaration = HologramDeclarationAdapters.declaration(root);
+            if (declaration != null && declaration.previewMaterialOptions) root = declaration.backing();
+        }
         List<ItemStack> result = new ArrayList<>();
         for (IStructureElement<?> part : HologramElementCatalog.parts(root, false)) {
             Method factory = factory(part.getClass());
