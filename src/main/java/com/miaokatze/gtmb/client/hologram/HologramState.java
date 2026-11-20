@@ -527,7 +527,7 @@ final class HologramState {
             Cell cell = new Cell(cellPosition, template, null, true, x, y, z, x, y, z);
             if (!seenCompactMaterials[material]) {
                 seenCompactMaterials[material] = true;
-                if (template.compactPlain) plainDisplayExamples.add(cell);
+                if (template.plainRenderExample) plainDisplayExamples.add(cell);
             }
             return cell;
         }
@@ -544,7 +544,7 @@ final class HologramState {
                 } catch (java.io.IOException invalid) {
                     throw new IllegalArgumentException(invalid.getMessage(), invalid);
                 }
-                template = new DescriptorTemplate(definition, true, anonymousCompact && withoutPayload);
+                template = new DescriptorTemplate(definition, true, withoutPayload, anonymousCompact);
                 compactMaterials[material] = template;
             }
             return template;
@@ -1051,17 +1051,20 @@ final class HologramState {
 
         private final Cell values;
         private final ItemStack actualStack, targetStack;
-        private final boolean compactPlain;
+        private final boolean compactPlain, plainRenderExample;
 
         DescriptorTemplate(NBTTagCompound raw, boolean resolvedBlocks) {
-            this(raw, resolvedBlocks, false);
+            this(raw, resolvedBlocks, false, false);
         }
 
-        DescriptorTemplate(NBTTagCompound raw, boolean resolvedBlocks, boolean compactWithoutPayload) {
+        DescriptorTemplate(NBTTagCompound raw, boolean resolvedBlocks, boolean withoutPayload, boolean anonymous) {
             values = new Cell(-1, raw, null, true, resolvedBlocks);
             actualStack = values.actualStack;
             targetStack = values.targetStack;
-            compactPlain = compactWithoutPayload && plainTarget();
+            // Anonymous browse cells can borrow empty arrays/tags. Editor cells always retain their own
+            // mutable fields, even when one immutable appearance suffices for target-view topology.
+            plainRenderExample = withoutPayload && plainTarget();
+            compactPlain = anonymous && plainRenderExample;
         }
 
         boolean plainTarget() {

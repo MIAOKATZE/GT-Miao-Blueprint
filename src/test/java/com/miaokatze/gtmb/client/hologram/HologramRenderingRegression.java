@@ -3,6 +3,8 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
@@ -12,6 +14,9 @@ import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
+import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
+import com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec;
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument;
 import com.miaokatze.gtmb.hologram.HologramPreviewPose;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteSpatialIndex;
@@ -27,6 +32,7 @@ public final class HologramRenderingRegression {
         completePreviewMaterial();
         occupancyBoundary();
         detachedTopologyRuns();
+        editorDescriptorOwnership();
         worldRegionCandidates();
         sourceSwitchFence();
         cameraNavigationWhilePreparing();
@@ -176,6 +182,32 @@ public final class HologramRenderingRegression {
             }
             for (int sample = 0; sample < 512; sample++)
                 assertLocalBoundary(center[0], center[1], center[2], random.nextInt(1 << 27) | 1 << 13);
+        }
+    }
+
+    private static void editorDescriptorOwnership() {
+        String json = "{\"schema\":2,\"blueprint\":{\"schema\":2,\"cells\":["
+            + "{\"x\":15,\"y\":0,\"z\":0,\"block\":\"minecraft:stone\"},"
+            + "{\"x\":16,\"y\":0,\"z\":0,\"block\":\"minecraft:stone\"}],\"palette\":[]}}";
+        try {
+            byte[] exact = HologramBlueprintCompactCodec.recompress(
+                json.getBytes(StandardCharsets.UTF_8), HologramBlueprintArtifact.MAX_JSON_BYTES);
+            var editor = HologramLocalBlueprintDocument.openForEditor(exact, "", () -> true).editor();
+            HologramState.Preparation prep = new HologramState.Preparation(
+                editor.metadata(), true, new HologramBlueprintPreview.CompactCells(editor));
+            prep.step(1, Long.MAX_VALUE);
+            SimpleAssert.that(prep.firstDisplay().plainDisplayExamples.isEmpty(), "never schedule a partial editor");
+            while (!prep.step(2, Long.MAX_VALUE)) {}
+            HologramState state = prep.result();
+            SimpleAssert.eq(1, state.plainDisplayExamples.size(), "one frozen appearance, even across region seams");
+            HologramState.Cell first = state.cells.get(0), second = state.cells.get(1);
+            SimpleAssert.that(first.descriptorIdentity() == second.descriptorIdentity(), "same template for topology");
+            SimpleAssert.that(first.display(false) != second.display(false) && first.hintIcons != second.hintIcons
+                && first.candidates != second.candidates, "editor still owns its per-cell mutable values");
+            first.display(false).setInteger("test", 7);
+            SimpleAssert.that(!second.display(false).hasKey("test"), "editing a row cannot modify its neighbor");
+        } catch (IOException invalid) {
+            throw new AssertionError(invalid);
         }
     }
 

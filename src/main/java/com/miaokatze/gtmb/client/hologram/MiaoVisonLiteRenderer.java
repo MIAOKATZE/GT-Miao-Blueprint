@@ -1705,18 +1705,20 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         result.visible.add(c);
         if (!HologramLinkNodePreview.prepare(c, current)
             .isEmpty()) result.linked.add(c);
-        int exposed = 0;
-        for (int side = 0; side < 6; side++) {
-            int[] n = NORMALS[side];
-            HologramState.Cell neighbor = state.regions.at(c.x + n[0], c.y + n[1], c.z + n[2]);
-            if (neighbor == null || !previewVisible(neighbor, layer, view, current) || !occludes(neighbor, current))
-                exposed |= 1 << side;
-        }
         boolean empty = !c.anchor && !c.iconOnly && (current ? c.id : c.wantId).equals("minecraft:air");
         boolean nativeModel = !empty && HologramBlockRender.ready(c, current);
         HologramTextures.Material material = empty ? null : HologramTextures.material(c, current);
         String role = previewRole(c, current, empty, nativeModel, material);
-        if (nativeModel || !empty && material.partial) exposed = 63;
+        int exposed = 63;
+        if (!nativeModel && (empty || !material.partial)) {
+            exposed = 0;
+            for (int side = 0; side < 6; side++) {
+                int[] n = NORMALS[side];
+                HologramState.Cell neighbor = state.regions.at(c.x + n[0], c.y + n[1], c.z + n[2]);
+                if (neighbor == null || !previewVisible(neighbor, layer, view, current) || !occludes(neighbor, current))
+                    exposed |= 1 << side;
+            }
+        }
         if (exposed != 0 || !role.isEmpty())
             result.cells.add(new PreviewCell(c, exposed, role, result.prepared + 1, material, empty, nativeModel));
     }
@@ -1809,7 +1811,9 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     /** Only render-thread code resolves an appearance. Lite receives the region view and the resolved flags. */
     private MiaoVisonLiteTopology<HologramRegionCache.Key, HologramState.Cell, PreviewCell> startDetached(
         HologramState state, int layer, int view, boolean current) {
-        if (!browseViewport || state.data.getBoolean("displayPartial")
+        boolean localEditor = assets == HologramPreviewAssets.EDITOR && state.data.getBoolean("localBlueprintDocument")
+            && state.cells.size() >= LARGE_BROWSE_CELLS;
+        if ((!browseViewport && !localEditor) || state.data.getBoolean("displayPartial")
             || state.plainDisplayExamples.isEmpty()
             || state.plainDisplayExamples.size() > 64
             || layer != Integer.MAX_VALUE
