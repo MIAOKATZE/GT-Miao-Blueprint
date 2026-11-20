@@ -143,6 +143,7 @@ final class HologramControllerStandardProbe {
             JsonObject environment = environment();
             if (result == null) {
                 if (client.theWorld == null || client.thePlayer == null
+                    || client.thePlayer.ticksExisted < 60
                     || environment == null
                     || !flag(environment, "policyOwnsWorld")) return null;
                 server = requireOwned();
@@ -162,6 +163,13 @@ final class HologramControllerStandardProbe {
                 }
                 result.put("ownedSave", save.toString());
                 result.put("corePolicyObserved", true);
+                result.put("actorTicksExisted", client.thePlayer.ticksExisted);
+                Files.write(
+                    evidence.resolve("gtmb-controller-standard.json"),
+                    new com.google.gson.GsonBuilder().setPrettyPrinting()
+                        .create()
+                        .toJson(result)
+                        .getBytes(StandardCharsets.UTF_8));
                 close();
                 return null;
             }

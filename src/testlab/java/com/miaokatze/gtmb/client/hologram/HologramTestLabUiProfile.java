@@ -62,10 +62,13 @@ public final class HologramTestLabUiProfile {
     private HologramLibraryAdminEditor permissionsEditor;
     private int originalDisplayWidth, originalDisplayHeight;
     private boolean narrowReopenRequested;
-    private final boolean verifyLite = Boolean.getBoolean("gtmb.testlab.clientUiLiteRender");
+    private static final int LITE_GIANT_STAGE = 14;
+    private final boolean verifyLiteGiant = Boolean.getBoolean("gtmb.testlab.clientUiLiteGiant");
+    private final boolean verifyLite = verifyLiteGiant || Boolean.getBoolean("gtmb.testlab.clientUiLiteRender");
     private final boolean verifyControllerWorld = Boolean.getBoolean("gtmb.testlab.clientUiControllerWorld");
     private HologramControllerStandardProbe.OwnedWorld controllerWorld;
     private HologramLitePreviewProbe liteProbe;
+    private HologramLiteGiantProbe liteGiant;
     private Map<String, Object> liteReceipt;
     private HologramPrivateBlueprintProbe privateProbe;
     private long privateGuiPostFrame = -1;
@@ -96,13 +99,17 @@ public final class HologramTestLabUiProfile {
         if (finished || event.phase != TickEvent.Phase.END) return;
         Minecraft mc = Minecraft.getMinecraft();
         try {
-            diagnostic(mc);
             if (System.nanoTime() - started > timeout)
                 throw new IllegalStateException("Native UI profile timeout at stage " + stage);
+            if (stage == LITE_GIANT_STAGE) {
+                liteGiant.tick();
+                return;
+            }
             if (stage == 40) {
                 verifyControllerWorld(mc);
                 return;
             }
+            diagnostic(mc);
             if (stage == 0) {
                 boolean readyWorld = mc.theWorld != null && mc.thePlayer != null && mc.currentScreen == null;
                 if (!readyTitle(mc.currentScreen) && !readyWorld) return;
@@ -408,6 +415,14 @@ public final class HologramTestLabUiProfile {
                 if (privateGuiPostFrame == frameSerial - 1 && privateProbe.frame(this::capturePng)) {
                     privateProbe.close();
                     privateProbe = null;
+                    finishVerifiedMenu();
+                }
+                return;
+            }
+            if (stage == LITE_GIANT_STAGE) {
+                if (liteGiant.frame()) {
+                    liteGiant.close();
+                    liteGiant = null;
                     finishVerifiedMenu();
                 }
                 return;
@@ -767,6 +782,13 @@ public final class HologramTestLabUiProfile {
     }
 
     private void finishVerifiedMenu() throws java.io.IOException {
+        if (verifyLiteGiant && !receipt.containsKey("liteGiant")) {
+            Map<String, Object> evidence = new LinkedHashMap<>();
+            receipt.put("liteGiant", evidence);
+            liteGiant = new HologramLiteGiantProbe(Minecraft.getMinecraft().currentScreen, evidence);
+            stage = LITE_GIANT_STAGE;
+            return;
+        }
         if (verifyControllerWorld) {
             writeJson("gtmb-client-ui-menu.json", receipt);
             stage = 40;
@@ -811,6 +833,7 @@ public final class HologramTestLabUiProfile {
         try {
             Minecraft mc = Minecraft.getMinecraft();
             if (privateProbe != null) privateProbe.close();
+            if (liteGiant != null) liteGiant.close();
             if (previousLibraryConfig != null) {
                 java.lang.reflect.Field field = HologramLibraryClient.class.getDeclaredField("config");
                 field.setAccessible(true);
