@@ -61,15 +61,18 @@ dependencies {
     }
 }
 
-// An isolated Core dev JAR can be used to compile an unpublished integration candidate.
+// Use the matching sibling build for local Core integration before trying the published coordinate.
 dependencies {
+    def coreVersion = providers.gradleProperty("miaokatzeCoreVersion").getOrElse("0.2.30")
     def coreDevJar = providers.gradleProperty("miaokatzeCoreDevJar").orNull
+    def siblingDevJar = file("../MIAOKATZE-Core/build/libs/miaokatzecore-v${coreVersion}-dev.jar")
     if (coreDevJar != null) {
         def candidate = file(coreDevJar)
         if (!candidate.isFile()) throw new GradleException("Core development JAR does not exist: " + candidate)
         api(files(candidate))
+    } else if (!providers.gradleProperty("miaokatzeCoreRepository").isPresent() && siblingDevJar.isFile()) {
+        api(files(siblingDevJar))
     } else {
-        def coreVersion = providers.gradleProperty("miaokatzeCoreVersion").getOrElse("0.2.27")
         api("com.miaokatze.miaokatzecore:miaokatzecore:${coreVersion}:dev") { transitive = false }
     }
 }
