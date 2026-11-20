@@ -34,6 +34,7 @@ final class HologramState {
     final int[] changedIndices;
     final int parsedCells;
     private final boolean fullBaseline;
+    final List<Cell> plainDisplayExamples;
     List<Cell> changedPreviousCells = Collections.emptyList();
     boolean topologyChanged;
     final java.util.Map<String, List<Integer>> structureMembers;
@@ -42,6 +43,7 @@ final class HologramState {
 
     HologramState(NBTTagCompound source) {
         fullBaseline = fullBaseline(source);
+        plainDisplayExamples = Collections.emptyList();
         parentIdentity = null;
         changedIndices = new int[0];
         data = metadata(source);
@@ -93,6 +95,7 @@ final class HologramState {
 
     private HologramState(Preparation ready) {
         fullBaseline = ready.fullBaseline;
+        plainDisplayExamples = Collections.unmodifiableList(ready.plainDisplayExamples);
         parentIdentity = null;
         changedIndices = new int[0];
         data = ready.data;
@@ -117,6 +120,7 @@ final class HologramState {
         data = decorated.data;
         session = decorated.session;
         cells = decorated.cells;
+        plainDisplayExamples = decorated.plainDisplayExamples;
         materials = decorated.materials;
         regions = decorated.regions;
         structureMembers = decorated.structureMembers;
@@ -139,6 +143,7 @@ final class HologramState {
     /** One bounded early view shares completed cells and owns its small spatial index. */
     private HologramState(Preparation ready, int count) {
         fullBaseline = false;
+        plainDisplayExamples = Collections.emptyList();
         parentIdentity = null;
         changedIndices = new int[0];
         data = metadata(ready.data, false);
@@ -197,11 +202,15 @@ final class HologramState {
         private int minY, maxY, minWorldX, maxWorldX, minWorldY, maxWorldY, minWorldZ, maxWorldZ;
         private HologramState result;
         private final boolean displayRows;
+        private final HologramBlueprintPreview.CompactCells compactCells;
+        private final DescriptorTemplate[] compactMaterials;
+        private final int cellCount;
         private final NBTTagCompound source;
         private final boolean packed;
         private final boolean projection;
         private final java.util.IdentityHashMap<NBTTagCompound, DescriptorTemplate> descriptors;
         private final Map<DisplayMaterial, DescriptorTemplate> displayDescriptors;
+        private final List<Cell> plainDisplayExamples = new ArrayList<>();
         private final boolean fullBaseline;
         int lastStepWork;
 
@@ -211,16 +220,23 @@ final class HologramState {
         }
 
         Preparation(NBTTagCompound source, boolean displayRows) {
+            this(source, displayRows, null);
+        }
+
+        Preparation(NBTTagCompound source, boolean displayRows, HologramBlueprintPreview.CompactCells compactCells) {
             this.source = source;
             packed = HologramSnapshotPalette.isPacked(source);
             projection = source.getBoolean("structureProjection");
             descriptors = packed ? new java.util.IdentityHashMap<>() : null;
-            displayDescriptors = displayRows && !packed ? new HashMap<>() : null;
+            displayDescriptors = displayRows && !packed && compactCells == null ? new HashMap<>() : null;
             this.displayRows = displayRows;
-            fullBaseline = fullBaseline(source);
+            this.compactCells = compactCells;
+            compactMaterials = compactCells == null ? null : new DescriptorTemplate[compactCells.materialCount()];
+            fullBaseline = compactCells != null || fullBaseline(source);
             data = metadata(source, false);
             rows = source.getTagList("cells", 10);
-            if (!HologramBlueprintLimits.accepts(rows.tagCount()))
+            cellCount = compactCells == null ? rows.tagCount() : compactCells.size();
+            if (!HologramBlueprintLimits.accepts(cellCount))
                 throw new IllegalArgumentException("Blueprint cell count exceeds limit");
             materialRows = source.getTagList("materials", 10);
             minWorldX = maxWorldX = data.getInteger("x");
@@ -236,13 +252,13 @@ final class HologramState {
             while (stage < 4 && lastStepWork < maxWork
                 && (lastStepWork == 0 || System.nanoTime() - started < maxNanos)) {
                 if (stage == 0) {
-                    if (cellPosition == rows.tagCount()) {
+                    if (cellPosition == cellCount) {
                         stage++;
                         continue;
                     }
-                    NBTTagCompound row = rows.getCompoundTagAt(cellPosition);
-                    Cell cell = prepareCell(row);
-                    if ((cellPosition & 255) == 0) pages.add(new Cell[Math.min(256, rows.tagCount() - cellPosition)]);
+                    Cell cell = compactCells == null ? prepareCell(rows.getCompoundTagAt(cellPosition))
+                        : prepareCompactCell();
+                    if ((cellPosition & 255) == 0) pages.add(new Cell[Math.min(256, cellCount - cellPosition)]);
                     pages.get(cellPosition >> 8)[cellPosition & 255] = cell;
                     regions.add(cell);
                     for (String id : membershipIds(cell)) members.computeIfAbsent(id, unused -> new ArrayList<>())
@@ -296,6 +312,30 @@ final class HologramState {
                 : new Cell(cellPosition, row, null, true, projection);
         }
 
+        private Cell prepareCompactCell() {
+            int material = compactCells.coordinate(cellPosition, 3);
+            DescriptorTemplate template = compactMaterials[material];
+            boolean plain = false;
+            if (template == null) {
+                NBTTagCompound definition = compactCells.copyMaterial(material);
+                try {
+                    HologramBlueprintPreview.completeCell(definition);
+                } catch (java.io.IOException invalid) {
+                    throw new IllegalArgumentException(invalid.getMessage(), invalid);
+                }
+                template = new DescriptorTemplate(definition, true);
+                compactMaterials[material] = template;
+                plain = !definition.hasKey("previewTile", 10) && !definition.hasKey("previewItemTag", 10)
+                    && template.plainTarget();
+            }
+            int x = compactCells.coordinate(cellPosition, 0);
+            int y = compactCells.coordinate(cellPosition, 1);
+            int z = compactCells.coordinate(cellPosition, 2);
+            Cell cell = new Cell(cellPosition, template, null, true, x, y, z, x, y, z);
+            if (plain) plainDisplayExamples.add(cell);
+            return cell;
+        }
+
         /** Share only the known detached source rows with no tile/item payload or additional cell data. */
         private Cell plainDisplayCell(NBTTagCompound row) throws java.io.IOException {
             java.util.Set<?> keys = row.func_150296_c();
@@ -304,6 +344,7 @@ final class HologramState {
                 || !row.hasKey("targetFacing", 3)) return null;
             DisplayMaterial material = new DisplayMaterial(row);
             DescriptorTemplate template = displayDescriptors.get(material);
+            boolean newTemplate = false;
             if (template == null && displayDescriptors.size() < 4096 && !displayDescriptors.containsKey(material)) {
                 NBTTagCompound descriptor = new NBTTagCompound();
                 descriptor.setString("wantId", material.block);
@@ -313,15 +354,18 @@ final class HologramState {
                 descriptor.setInteger("previewDamage", material.damage);
                 HologramBlueprintPreview.completeCell(descriptor);
                 DescriptorTemplate candidate = new DescriptorTemplate(descriptor, true);
-                if (!candidate.values.targetDisplay.hasKey("nativeTile", 10)
-                    && (candidate.targetStack == null || !(candidate.targetStack.getItem() instanceof ItemMachines)))
+                if (candidate.plainTarget()) {
                     template = candidate;
+                    newTemplate = true;
+                }
                 displayDescriptors.put(material, template);
             }
             if (template == null) return null;
             NBTTagCompound position = new NBTTagCompound();
             for (String axis : COORDINATES) position.setTag(axis, row.getTag(axis));
-            return new Cell(cellPosition, template, position, true);
+            Cell cell = new Cell(cellPosition, template, position, true);
+            if (newTemplate) plainDisplayExamples.add(cell);
+            return cell;
         }
 
         private DescriptorTemplate descriptor(NBTTagCompound row) {
@@ -345,7 +389,7 @@ final class HologramState {
         }
 
         int total() {
-            return stage == 0 ? rows.tagCount()
+            return stage == 0 ? cellCount
                 : stage == 1 ? regions.pending.size() : stage == 2 ? materialRows.tagCount() : members.size();
         }
 
@@ -405,6 +449,7 @@ final class HologramState {
 
     private HologramState(HologramState base, NBTTagCompound patch, boolean decoration) {
         fullBaseline = decoration && base.fullBaseline;
+        plainDisplayExamples = decoration ? base.plainDisplayExamples : Collections.emptyList();
         parentIdentity = base.identity;
         data = new NBTTagCompound();
         // Published metadata values are read-only. Share unchanged values; copy only incoming replacements.
@@ -771,6 +816,11 @@ final class HologramState {
             actualStack = values.actualStack;
             targetStack = values.targetStack;
         }
+
+        boolean plainTarget() {
+            return !values.targetDisplay.hasKey("nativeTile", 10)
+                && (targetStack == null || !(targetStack.getItem() instanceof ItemMachines));
+        }
     }
 
     static final class Cell {
@@ -895,6 +945,21 @@ final class HologramState {
 
         /** Shared parsing retains each cell's independently mutable values. */
         private Cell(int index, DescriptorTemplate template, NBTTagCompound positions, boolean local) {
+            this(
+                index,
+                template,
+                positions,
+                local,
+                positions.getInteger("x"),
+                positions.getInteger("y"),
+                positions.getInteger("z"),
+                positions.getInteger("dx"),
+                positions.getInteger("dy"),
+                positions.getInteger("dz"));
+        }
+
+        private Cell(int index, DescriptorTemplate template, NBTTagCompound positions, boolean local, int x, int y,
+            int z, int dx, int dy, int dz) {
             Cell value = template.values;
             raw = value.raw;
             coordinates = positions;
@@ -903,12 +968,12 @@ final class HologramState {
             actualBlock = value.actualBlock;
             targetBlock = value.targetBlock;
             this.index = index;
-            x = positions.getInteger("x");
-            y = positions.getInteger("y");
-            z = positions.getInteger("z");
-            dx = positions.getInteger("dx");
-            dy = positions.getInteger("dy");
-            dz = positions.getInteger("dz");
+            this.x = x;
+            this.y = y;
+            this.z = z;
+            this.dx = dx;
+            this.dy = dy;
+            this.dz = dz;
             meta = value.meta;
             wantMeta = value.wantMeta;
             chosenChoice = value.chosenChoice;
@@ -977,6 +1042,15 @@ final class HologramState {
                     key,
                     coordinates.getTag(key)
                         .copy());
+            }
+            else if (descriptorTemplate != null) {
+                // Compact local sources materialize position NBT only if an existing consumer asks for a row.
+                result.setInteger("x", x);
+                result.setInteger("y", y);
+                result.setInteger("z", z);
+                result.setInteger("dx", dx);
+                result.setInteger("dy", dy);
+                result.setInteger("dz", dz);
             }
             return result;
         }

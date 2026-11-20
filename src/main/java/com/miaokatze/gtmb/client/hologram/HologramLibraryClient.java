@@ -167,6 +167,7 @@ final class HologramLibraryClient {
         final String key, stamp, localId, publicId, revision;
         final byte[] json;
         NBTTagCompound snapshot;
+        HologramBlueprintPreview.CompactCells compactCells;
         volatile HologramState state;
         String hash;
         byte[] artifact;
@@ -1505,9 +1506,10 @@ final class HologramLibraryClient {
         byte[] json = readDisplayBytes(path, HologramBlueprintArtifact.MAX_JSON_BYTES);
         if (!stamp.equals(fileStamp(path))) throw new java.io.IOException("蓝图文件已变化，请重试");
         observeDisplay(token, "library.parse", 0, 0, "");
-        NBTTagCompound snapshot = HologramBlueprintPreview
-            .snapshot(json, (done, total) -> observeDisplay(token, "library.parse", done, total, "cells"));
-        DisplaySource source = new DisplaySource(key, stamp, json, snapshot, localId, publicId, "", "");
+        HologramBlueprintPreview.DisplayInput input = HologramBlueprintPreview
+            .displayInput(json, (done, total) -> observeDisplay(token, "library.parse", done, total, "cells"));
+        DisplaySource source = new DisplaySource(key, stamp, json, input.snapshot, localId, publicId, "", "");
+        source.compactCells = input.cells;
         source.thumbnail = thumbnail;
         return source;
     }
@@ -1685,6 +1687,7 @@ final class HologramLibraryClient {
     }
 
     void clearBrowsePreview() {
+        MiaoVisonLiteRenderer.cancelBrowseTopology(browseState);
         browseEpoch++;
         browseRendering = false;
         releaseBrowseImage();
@@ -1776,7 +1779,10 @@ final class HologramLibraryClient {
         if (source.state != null) {
             if (!placement) browseState = source.state;
             displayReady();
-        } else browsePreparation = new HologramState.Preparation(source.snapshot, source.json != null);
+        } else browsePreparation = new HologramState.Preparation(
+            source.snapshot,
+            source.json != null,
+            source.compactCells);
     }
 
     private void displayReady() {
@@ -1787,6 +1793,7 @@ final class HologramLibraryClient {
         displayPlacement = false;
         preparing = false;
         source.snapshot = null;
+        source.compactCells = null;
         trimPublicPreviews();
         retainDisplaySource(source);
         if (placement) {
@@ -3073,6 +3080,22 @@ final class HologramLibraryClient {
 
     private void work(Job job, java.util.function.Consumer<Exception> failure) {
         enqueueWork(job, false, failure);
+    }
+
+    /** Topology preparation shares the bounded worker and yields to any pending library operation. */
+    boolean tryPreviewTopology(java.util.concurrent.FutureTask<Void> work) {
+        if (worker.getActiveCount() != 0 || !worker.getQueue()
+            .isEmpty()) return false;
+        try {
+            worker.execute(work);
+            return true;
+        } catch (java.util.concurrent.RejectedExecutionException busy) {
+            return false;
+        }
+    }
+
+    void removePreviewTopology(java.util.concurrent.FutureTask<Void> work) {
+        worker.remove(work);
     }
 
     private void durableWork(Job job) {

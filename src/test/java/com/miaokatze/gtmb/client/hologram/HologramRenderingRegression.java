@@ -13,6 +13,7 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
 import com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLiteSpatialIndex;
+import com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLiteTopology;
 import com.miaokatze.gtmb.hologram.HologramPreviewPose;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
@@ -25,6 +26,7 @@ public final class HologramRenderingRegression {
         previewOutlineDensity();
         completePreviewMaterial();
         occupancyBoundary();
+        detachedTopologyRuns();
         worldRegionCandidates();
         sourceSwitchFence();
         cameraNavigationWhilePreparing();
@@ -175,6 +177,104 @@ public final class HologramRenderingRegression {
             for (int sample = 0; sample < 512; sample++)
                 assertLocalBoundary(center[0], center[1], center[2], random.nextInt(1 << 27) | 1 << 13);
         }
+    }
+
+    private static void detachedTopologyRuns() {
+        NBTTagCompound source = boundarySource("detached-topology");
+        NBTTagList rows = new NBTTagList();
+        for (int x = -19; x <= -13; x++) {
+            for (int y = -1; y <= 1; y++) for (int z = -1; z <= 1; z++)
+                rows.appendTag(boundaryCell(x, y, z, x == -16 ? "minecraft:glass" : "minecraft:stone"));
+        }
+        source.setTag("cells", rows);
+        HologramState state = new HologramState(source);
+        MiaoVisonLiteRenderer.OrdinaryTemplate opaque = new MiaoVisonLiteRenderer.OrdinaryTemplate(
+            true,
+            true,
+            "",
+            null);
+        MiaoVisonLiteRenderer.OrdinaryTemplate transparent = new MiaoVisonLiteRenderer.OrdinaryTemplate(
+            true,
+            false,
+            "",
+            null);
+        java.util.Map<Object, MiaoVisonLiteRenderer.OrdinaryTemplate> material = new java.util.IdentityHashMap<>();
+        for (HologramState.Cell cell : state.cells) {
+            if (cell.x == -16 && cell.y == 0 && cell.z == 0) continue;
+            material.put(cell.descriptorIdentity(), cell.x == -16 ? transparent : opaque);
+        }
+        int ordinary = 0, fallback = 0, interior = 0;
+        MiaoVisonLiteRenderer.PreviewTopologyView topology = new MiaoVisonLiteRenderer.PreviewTopologyView(
+            state.regions,
+            material);
+        for (List<HologramState.Cell> region : state.regions.regions.values()) {
+            int next = 0;
+            for (MiaoVisonLiteTopology.Run<HologramState.Cell, MiaoVisonLiteRenderer.PreviewCell> run : MiaoVisonLiteTopology
+                .prepareRegion(region, topology)) {
+                int drawn = 0, start = next;
+                for (; next < run.end; next++) {
+                    HologramState.Cell cell = region.get(next);
+                    int exposed = 0;
+                    boolean known = material.containsKey(cell.descriptorIdentity());
+                    int[][] offset = { { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 }, { 0, 0, 1 }, { -1, 0, 0 },
+                        { 1, 0, 0 } };
+                    for (int side = 0; side < offset.length; side++) {
+                        int[] delta = offset[side];
+                        HologramState.Cell neighbor = state.regions
+                            .at(cell.x + delta[0], cell.y + delta[1], cell.z + delta[2]);
+                        if (neighbor != null && !material.containsKey(neighbor.descriptorIdentity())) known = false;
+                        if (neighbor == null || "minecraft:glass".equals(neighbor.wantId)) exposed |= 1 << side;
+                    }
+                    SimpleAssert
+                        .eq(known, run.ordinary, "unknown models and touching ordinary cells stay on the client");
+                    if (!known) {
+                        fallback++;
+                        continue;
+                    }
+                    ordinary++;
+                    SimpleAssert.that(run.visible.get(next - start) == cell, "batch preserves source cell and order");
+                    if (exposed == 0) {
+                        interior++;
+                        continue;
+                    }
+                    MiaoVisonLiteRenderer.PreviewCell face = run.faces.get(drawn++);
+                    SimpleAssert.that(face.cell == cell, "visible geometry retains the original pick identity");
+                    SimpleAssert.eq(next + 1, face.sourceOrdinal, "worker uses the original region ordinal");
+                    SimpleAssert.eq(exposed, face.exposed, "worker preserves the exact exposed-face mask");
+                }
+                SimpleAssert.eq(drawn, run.faces.size(), "only cells with visible faces enter the depth ordering");
+            }
+            SimpleAssert.eq(region.size(), next, "every region source row is admitted exactly once");
+        }
+        SimpleAssert.eq(7, fallback, "special fallback includes only the unknown cell and its six immediate neighbors");
+        SimpleAssert.eq(state.cells.size() - fallback, ordinary, "remaining cells complete in ordinary runs");
+        SimpleAssert.that(interior > 0, "covered ordinary cells skip projections even across negative region seams");
+        java.util.Deque<java.util.concurrent.FutureTask<Void>> queue = new java.util.ArrayDeque<>();
+        HologramRegionCache.Key first = state.regions.regions.keySet()
+            .iterator()
+            .next();
+        try (
+            MiaoVisonLiteTopology<HologramRegionCache.Key, HologramState.Cell, MiaoVisonLiteRenderer.PreviewCell> job = MiaoVisonLiteTopology
+                .start(state.regions.regions, topology, queue::offer, queue::remove)) {
+            SimpleAssert.that(!job.done() && job.take(first) == null, "frame never waits for queued topology");
+            queue.remove()
+                .run();
+            SimpleAssert
+                .that(job.done() && job.take(first) != null, "finished region is available to the render thread");
+            SimpleAssert.eq(null, job.take(first), "each finished region can transfer ownership only once");
+        }
+        MiaoVisonLiteTopology<HologramRegionCache.Key, HologramState.Cell, MiaoVisonLiteRenderer.PreviewCell> cancelled = MiaoVisonLiteTopology
+            .start(state.regions.regions, topology, queue::offer, queue::remove);
+        java.util.concurrent.FutureTask<Void> abandoned = queue.element();
+        cancelled.close();
+        abandoned.run();
+        SimpleAssert.that(
+            queue.isEmpty() && cancelled.done() && cancelled.take(first) == null,
+            "closing removes queued work and an old task can never publish into the next preview");
+        SimpleAssert.eq(
+            null,
+            MiaoVisonLiteTopology.start(state.regions.regions, topology, task -> false, queue::remove),
+            "a busy shared worker falls through to the render-thread cursor");
     }
 
     private static void assertLocalBoundary(int cx, int cy, int cz, int occupied) {

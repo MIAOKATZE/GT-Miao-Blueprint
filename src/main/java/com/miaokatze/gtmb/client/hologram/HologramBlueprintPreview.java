@@ -45,6 +45,7 @@ import com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLiteRenderScope;
 import com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLiteTarget;
 import com.miaokatze.gtmb.hologram.HologramAeNativePreview;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
+import com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec;
 import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
 
 import cpw.mods.fml.common.FMLCommonHandler;
@@ -80,70 +81,184 @@ public final class HologramBlueprintPreview {
         boolean witness = Boolean.getBoolean("gtmb.hologram.previewCaptureWitness");
         byte[] sourceJson = witness ? exactJson.clone() : exactJson;
         try {
-            JsonObject share = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.parse(sourceJson);
+            JsonObject share = HologramBlueprintCompactCodec.parse(sourceJson);
             JsonObject blueprint = share.getAsJsonObject("blueprint");
             if (blueprint == null) throw new IOException("Blueprint preview requires the exact exported share file");
             JsonArray sourceCells = blueprint.getAsJsonArray("cells");
-            if (sourceCells == null || sourceCells.size() == 0) throw new IOException("Blueprint preview has no cells");
-            NBTTagCompound data = new NBTTagCompound();
-            data.setString("session", "blueprint-artifact");
-            data.setInteger("mode", 0);
-            data.setBoolean("localMaterialPolicyPresent", blueprint.has("retainNbt"));
-            data.setBoolean(
-                "retainNbt",
-                !blueprint.has("retainNbt") || blueprint.get("retainNbt")
-                    .getAsBoolean());
-            data.setBoolean(
-                "retainCovers",
-                !blueprint.has("retainCovers") || blueprint.get("retainCovers")
-                    .getAsBoolean());
-            if (blueprint.has("retainedNbtKeys") && blueprint.get("retainedNbtKeys")
-                .isJsonArray()) {
-                NBTTagList retained = new NBTTagList();
-                for (JsonElement key : blueprint.getAsJsonArray("retainedNbtKeys"))
-                    retained.appendTag(new net.minecraft.nbt.NBTTagString(key.getAsString()));
-                data.setTag("retainedNbtKeys", retained);
-            }
-            NBTTagList cells = new NBTTagList();
-            Payloads payloads = new Payloads();
-            int processed = 0;
-            if (progress != null) progress.accept(0, sourceCells.size());
-            for (JsonElement row : sourceCells) {
-                if (progress != null && (++processed & 255) == 0) progress.accept(processed, sourceCells.size());
-                JsonObject source = row.getAsJsonObject();
-                JsonElement excluded = source.get("excluded");
-                if (excluded != null && excluded.isJsonPrimitive()
-                    && excluded.getAsJsonPrimitive()
-                        .isBoolean()
-                    && excluded.getAsBoolean()) continue;
-                NBTTagCompound cell = new NBTTagCompound();
-                for (String axis : new String[] { "x", "y", "z" }) {
-                    int coordinate = integer(source, axis, 0);
-                    if (Math.abs((long) coordinate) > (axis.equals("y") ? 256L : 60000000L))
-                        throw new IOException("Blueprint preview coordinate out of range");
-                    cell.setInteger(axis, coordinate);
-                    cell.setInteger("d" + axis, coordinate);
-                }
-                cell.setString("wantId", string(source, "block"));
-                cell.setInteger("wantMeta", integer(source, "metadata", 0));
-                cell.setInteger("targetFacing", integer(source, "facing", -1));
-                cell.setString("previewItem", string(source, "item"));
-                cell.setInteger("previewDamage", integer(source, "damage", 0));
-                NBTTagCompound tile = payloads.decode(string(source, "tileNbt"));
-                NBTTagCompound item = payloads.decode(string(source, "itemNbt"));
-                if (tile != null) cell.setTag("previewTile", tile.copy());
-                if (item != null) cell.setTag("previewItemTag", item.copy());
-                // Controller cells use their target data too; anchor labels belong to the editor.
-                cells.appendTag(cell);
-            }
-            if (cells.tagCount() == 0) throw new IOException("Blueprint preview has no buildable cells");
-            data.setTag("cells", cells);
-            if (progress != null) progress.accept(sourceCells.size(), sourceCells.size());
+            NBTTagCompound data = expandedDisplay(blueprint, sourceCells, progress);
             if (witness) rememberSource(data, HologramBlueprintArtifact.hash(sourceJson));
             return data;
         } catch (RuntimeException invalid) {
             throw new IOException("Invalid blueprint preview JSON", invalid);
         }
+    }
+
+    /** Worker-side local file decoding. Native resolution remains in the client preparation cursor. */
+    static DisplayInput displayInput(byte[] bytes, java.util.function.BiConsumer<Integer, Integer> progress)
+        throws IOException {
+        try {
+            HologramBlueprintCompactCodec.DisplayRows view = HologramBlueprintCompactCodec.displayRows(bytes);
+            if (!view.compact()) return new DisplayInput(
+                expandedDisplay(view.blueprint, view.blueprint.getAsJsonArray("cells"), progress),
+                null);
+            CompactCells cells = new CompactCells(view.cells(), view.materials());
+            Payloads payloads = new Payloads();
+            boolean[] excluded = new boolean[view.materials()];
+            long[] materialBytes = new long[view.materials()];
+            if (progress != null) progress.accept(0, view.cells());
+            for (int index = 0; index < view.cells(); index++) {
+                if (progress != null && ((index + 1) & 255) == 0) progress.accept(index + 1, view.cells());
+                int material = view.materialIndex(index);
+                if (excluded[material]) continue;
+                NBTTagCompound known = cells.materials[material];
+                JsonObject definition = known == null ? view.material(material) : null;
+                if (definition != null && excluded(definition)) {
+                    excluded[material] = true;
+                    continue;
+                }
+                JsonObject position = view.position(index);
+                int x = coordinate(position, "x"), y = coordinate(position, "y"), z = coordinate(position, "z");
+                if (known == null) {
+                    long before = payloads.total;
+                    cells.materials[material] = displayMaterial(definition, payloads);
+                    materialBytes[material] = payloads.total - before;
+                } else payloads.account(materialBytes[material]);
+                cells.add(x, y, z, material);
+            }
+            if (cells.size() == 0) throw new IOException("Blueprint preview has no buildable cells");
+            if (progress != null) progress.accept(view.cells(), view.cells());
+            return new DisplayInput(displayMetadata(view.blueprint), cells);
+        } catch (RuntimeException invalid) {
+            throw new IOException("Invalid blueprint preview JSON", invalid);
+        }
+    }
+
+    static final class DisplayInput {
+
+        final NBTTagCompound snapshot;
+        final CompactCells cells;
+
+        DisplayInput(NBTTagCompound snapshot, CompactCells cells) {
+            this.snapshot = snapshot;
+            this.cells = cells;
+        }
+    }
+
+    /** Each cell occupies four integers. Material data remains detached and unmodified until client preparation. */
+    static final class CompactCells {
+
+        private final int[] locations;
+        private final NBTTagCompound[] materials;
+        private int size;
+
+        CompactCells(int cells, int materials) {
+            locations = new int[Math.multiplyExact(cells, 4)];
+            this.materials = new NBTTagCompound[materials];
+        }
+
+        private void add(int x, int y, int z, int material) {
+            int at = size++ * 4;
+            locations[at] = x;
+            locations[at + 1] = y;
+            locations[at + 2] = z;
+            locations[at + 3] = material;
+        }
+
+        int size() {
+            return size;
+        }
+
+        int coordinate(int row, int dimension) {
+            return locations[row * 4 + dimension];
+        }
+
+        int materialCount() {
+            return materials.length;
+        }
+
+        NBTTagCompound copyMaterial(int index) {
+            return (NBTTagCompound) materials[index].copy();
+        }
+    }
+
+    private static NBTTagCompound expandedDisplay(JsonObject blueprint, JsonArray sourceCells,
+        java.util.function.BiConsumer<Integer, Integer> progress) throws IOException {
+        if (sourceCells == null || sourceCells.size() == 0) throw new IOException("Blueprint preview has no cells");
+        NBTTagCompound data = displayMetadata(blueprint);
+        NBTTagList cells = new NBTTagList();
+        Payloads payloads = new Payloads();
+        int processed = 0;
+        if (progress != null) progress.accept(0, sourceCells.size());
+        for (JsonElement row : sourceCells) {
+            if (progress != null && (++processed & 255) == 0) progress.accept(processed, sourceCells.size());
+            JsonObject source = row.getAsJsonObject();
+            if (excluded(source)) continue;
+            int x = coordinate(source, "x"), y = coordinate(source, "y"), z = coordinate(source, "z");
+            NBTTagCompound cell = displayMaterial(source, payloads);
+            cell.setInteger("x", x);
+            cell.setInteger("y", y);
+            cell.setInteger("z", z);
+            cell.setInteger("dx", x);
+            cell.setInteger("dy", y);
+            cell.setInteger("dz", z);
+            cells.appendTag(cell);
+        }
+        if (cells.tagCount() == 0) throw new IOException("Blueprint preview has no buildable cells");
+        data.setTag("cells", cells);
+        if (progress != null) progress.accept(sourceCells.size(), sourceCells.size());
+        return data;
+    }
+
+    private static NBTTagCompound displayMetadata(JsonObject blueprint) {
+        NBTTagCompound data = new NBTTagCompound();
+        data.setString("session", "blueprint-artifact");
+        data.setInteger("mode", 0);
+        data.setBoolean("localMaterialPolicyPresent", blueprint.has("retainNbt"));
+        data.setBoolean(
+            "retainNbt",
+            !blueprint.has("retainNbt") || blueprint.get("retainNbt")
+                .getAsBoolean());
+        data.setBoolean(
+            "retainCovers",
+            !blueprint.has("retainCovers") || blueprint.get("retainCovers")
+                .getAsBoolean());
+        if (blueprint.has("retainedNbtKeys") && blueprint.get("retainedNbtKeys")
+            .isJsonArray()) {
+            NBTTagList retained = new NBTTagList();
+            for (JsonElement key : blueprint.getAsJsonArray("retainedNbtKeys"))
+                retained.appendTag(new net.minecraft.nbt.NBTTagString(key.getAsString()));
+            data.setTag("retainedNbtKeys", retained);
+        }
+        return data;
+    }
+
+    private static boolean excluded(JsonObject source) {
+        JsonElement value = source.get("excluded");
+        return value != null && value.isJsonPrimitive()
+            && value.getAsJsonPrimitive()
+                .isBoolean()
+            && value.getAsBoolean();
+    }
+
+    private static int coordinate(JsonObject source, String axis) throws IOException {
+        int value = integer(source, axis, 0);
+        if (Math.abs((long) value) > (axis.equals("y") ? 256L : 60000000L))
+            throw new IOException("Blueprint preview coordinate out of range");
+        return value;
+    }
+
+    private static NBTTagCompound displayMaterial(JsonObject source, Payloads payloads) throws IOException {
+        NBTTagCompound cell = new NBTTagCompound();
+        cell.setString("wantId", string(source, "block"));
+        cell.setInteger("wantMeta", integer(source, "metadata", 0));
+        cell.setInteger("targetFacing", integer(source, "facing", -1));
+        cell.setString("previewItem", string(source, "item"));
+        cell.setInteger("previewDamage", integer(source, "damage", 0));
+        NBTTagCompound tile = payloads.decode(string(source, "tileNbt"));
+        NBTTagCompound item = payloads.decode(string(source, "itemNbt"));
+        if (tile != null) cell.setTag("previewTile", tile.copy());
+        if (item != null) cell.setTag("previewItemTag", item.copy());
+        return cell;
     }
 
     /** Structural decoding bounds only, deliberately independent of construction policy. */
@@ -610,9 +725,13 @@ public final class HologramBlueprintPreview {
                 expanded.put(encoded, size);
                 decoded.put(encoded, HologramSnapshotCodec.decode(bytes));
             }
-            total += expanded.get(encoded);
-            if (total > 64L * 1024 * 1024) throw new IOException("Blueprint preview total NBT byte budget");
+            account(expanded.get(encoded));
             return decoded.get(encoded);
+        }
+
+        void account(long bytes) throws IOException {
+            total += bytes;
+            if (total > 64L * 1024 * 1024) throw new IOException("Blueprint preview total NBT byte budget");
         }
     }
 

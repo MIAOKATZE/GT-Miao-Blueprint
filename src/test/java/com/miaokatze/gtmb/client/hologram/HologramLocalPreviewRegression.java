@@ -19,6 +19,7 @@ public final class HologramLocalPreviewRegression {
     public static void run() throws Exception {
         admissionReceipts();
         compactDisplay();
+        compactDirectDisplay();
         sharedPlainDisplay();
         sourceReuse();
         earlyDisplay();
@@ -83,6 +84,124 @@ public final class HologramLocalPreviewRegression {
             HologramBlueprintPreview.snapshot(legacy.getBytes(StandardCharsets.UTF_8)),
             HologramBlueprintPreview.snapshot(compact.getBytes(StandardCharsets.UTF_8)),
             "compact material and NBT references produce exactly the same detached display");
+    }
+
+    private static void compactDirectDisplay() throws Exception {
+        com.google.gson.JsonObject root = new com.google.gson.JsonObject();
+        com.google.gson.JsonObject blueprint = new com.google.gson.JsonObject();
+        root.add("blueprint", blueprint);
+        com.google.gson.JsonArray rows = new com.google.gson.JsonArray();
+        blueprint.add("cells", rows);
+        NBTTagCompound payload = new NBTTagCompound();
+        payload.setInteger("configuration", 9);
+        payload.setByteArray("unknownBytes", new byte[] { 3, -9, 0, 127 });
+        String tag = java.util.Base64.getEncoder()
+            .encodeToString(com.miaokatze.gtmb.hologram.HologramSnapshotCodec.compress(payload));
+        for (int i = 0; i < 128; i++) {
+            com.google.gson.JsonObject row = new com.google.gson.JsonObject();
+            row.addProperty("x", i - 16);
+            row.addProperty("y", i % 3 - 1);
+            row.addProperty("z", -16);
+            row.addProperty("block", i % 2 == 0 ? "minecraft:stonebrick" : "minecraft:stained_glass");
+            row.addProperty("item", i % 2 == 0 ? "minecraft:stonebrick" : "minecraft:stained_glass");
+            row.addProperty("metadata", i % 2);
+            row.addProperty("damage", i % 2);
+            if (i % 4 == 1) {
+                row.addProperty("tileNbt", tag);
+                row.addProperty("itemNbt", tag);
+                row.addProperty("unknownMaterialField", "present only in portable source");
+            }
+            if (i == 17) row.addProperty("excluded", true);
+            rows.add(row);
+        }
+        byte[] legacy = root.toString()
+            .getBytes(StandardCharsets.UTF_8);
+        byte[] exact = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec
+            .recompress(legacy, com.miaokatze.gtmb.hologram.HologramBlueprintArtifact.MAX_JSON_BYTES);
+        byte[] original = exact.clone();
+        HologramBlueprintPreview.DisplayInput direct = HologramBlueprintPreview.displayInput(exact, null);
+        SimpleAssert.that(
+            direct.cells != null && !direct.snapshot.hasKey("cells"),
+            "compact local display keeps position records outside NBT");
+        SimpleAssert.eq(127, direct.cells.size(), "excluded rows do not enter coordinates or native preparation");
+        HologramState.Preparation task = new HologramState.Preparation(direct.snapshot, true, direct.cells);
+        SimpleAssert.that(!task.step(5, Long.MAX_VALUE), "compact preparation cooperatively publishes a prefix");
+        HologramState early = task.firstDisplay();
+        SimpleAssert.eq(5, early.cells.size(), "first compact display retains bounded early publication");
+        while (!task.step(17, Long.MAX_VALUE)) {}
+        HologramState rendered = task.result();
+        SimpleAssert.eq(
+            2,
+            rendered.plainDisplayExamples.size(),
+            "compact display exposes one marked topology example per ordinary appearance");
+        SimpleAssert.that(
+            early.plainDisplayExamples.isEmpty(),
+            "partial library preview stays on the existing incremental render path");
+        SimpleAssert.that(
+            !early.completeBaseline() && rendered.completeBaseline(),
+            "only the final compact display has complete baseline provenance");
+
+        NBTTagCompound expanded = HologramBlueprintPreview.snapshot(exact);
+        NBTTagList expandedRows = expanded.getTagList("cells", 10);
+        for (int i = 0; i < expandedRows.tagCount(); i++)
+            HologramBlueprintPreview.completeCell(expandedRows.getCompoundTagAt(i));
+        SimpleAssert.eq(
+            new HologramState(expanded).fullData(),
+            rendered.fullData(),
+            "direct compact display reconstructs every coordinate and native descriptor exactly");
+        SimpleAssert
+            .that(early.cells.get(0) == rendered.cells.get(0), "early and final states share completed cell identity");
+        SimpleAssert.that(
+            rendered.cells.get(1)
+                .descriptorIdentity()
+                == rendered.cells.get(5)
+                    .descriptorIdentity(),
+            "identical packed NBT data resolves once without sharing mutable tile payloads");
+        rendered.cells.get(1).targetDisplay.getCompoundTag("nativeTile")
+            .setInteger("configuration", 123);
+        rendered.cells.get(1).targetStack.getTagCompound()
+            .setInteger("configuration", 456);
+        SimpleAssert.eq(
+            payload,
+            rendered.cells.get(5).targetDisplay.getCompoundTag("nativeTile"),
+            "another cell retains its independent exact tile payload");
+        SimpleAssert.eq(
+            payload,
+            rendered.cells.get(5).targetStack.getTagCompound(),
+            "another cell retains its independent exact item payload");
+        SimpleAssert
+            .that(Arrays.equals(original, exact), "direct display retains the portable source bytes for admission");
+
+        compactPayloadBudget();
+    }
+
+    private static void compactPayloadBudget() throws Exception {
+        NBTTagCompound large = new NBTTagCompound();
+        large.setByteArray("expanded", new byte[1024 * 1024]);
+        String value = java.util.Base64.getEncoder()
+            .encodeToString(com.miaokatze.gtmb.hologram.HologramSnapshotCodec.compress(large));
+        StringBuilder source = new StringBuilder(
+            "{\"encoding\":\"gtmb-dictionary-1\",\"materials\":[{\"block\":\"minecraft:stone\",\"tileNbt\":0}],\"nbt\":[\"");
+        source.append(value)
+            .append("\"],\"blueprint\":{\"cells\":[");
+        for (int i = 0; i < 65; i++) {
+            if (i != 0) source.append(',');
+            source.append("[0,{\"x\":")
+                .append(i)
+                .append("}]");
+        }
+        byte[] bytes = source.append("]}}")
+            .toString()
+            .getBytes(StandardCharsets.UTF_8);
+        try {
+            HologramBlueprintPreview.displayInput(bytes, null);
+            throw new AssertionError("repeated compact payload bypassed cumulative expanded NBT budget");
+        } catch (IOException expected) {
+            SimpleAssert.that(
+                expected.getMessage()
+                    .contains("total NBT byte budget"),
+                "every compact coordinate is charged for its expanded NBT payload");
+        }
     }
 
     private static void sharedPlainDisplay() throws Exception {

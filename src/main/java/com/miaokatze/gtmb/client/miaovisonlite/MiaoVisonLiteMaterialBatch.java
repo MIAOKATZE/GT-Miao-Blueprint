@@ -12,6 +12,7 @@ import java.util.Map;
 import net.minecraft.client.renderer.Tessellator;
 
 import org.joml.Vector3f;
+import org.joml.Vector4f;
 import org.lwjgl.opengl.ContextCapabilities;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL13;
@@ -21,6 +22,10 @@ import org.lwjgl.opengl.GL32;
 import org.lwjgl.opengl.GLContext;
 
 import com.gtnewhorizon.gtnhlib.client.renderer.TessellatorManager;
+import com.gtnewhorizon.gtnhlib.client.renderer.vertex.DefaultVertexFormat;
+import com.gtnewhorizon.gtnhlib.client.renderer.vertex.VertexFlags;
+import com.gtnewhorizon.gtnhlib.client.renderer.vertex.VertexFormat;
+import com.miaokatze.miaokatzecore.client.render.internal.AngelicaFfpBridge;
 import com.miaokatze.miaokatzecore.client.render.internal.TessellatorCapture;
 import com.miaokatze.miaokatzecore.mixin.render.TessellatorAccessor;
 
@@ -94,6 +99,56 @@ public final class MiaoVisonLiteMaterialBatch implements AutoCloseable {
             return GLContext.getCapabilities();
         } catch (IllegalStateException noContext) {
             return null;
+        }
+    }
+
+    static OutlineFrame outlineFrame(Tessellator tess) {
+        if (!Loader.isModLoaded("angelica") || AngelicaFfpBridge.isSDLGPU() || !Angelica.widensLines()) return null;
+        Frame frame = currentFrame(tess);
+        if (frame == null || !frame.angelica) return null;
+        return Angelica.outlineDefaults(frame, (TessellatorAccessor) tess);
+    }
+
+    static void expandOutline(Tessellator tess, Frame frame) {
+        if (frame.defaults == null) return;
+        Angelica.fillMissingAttributes(tess);
+        TessellatorAccessor access = (TessellatorAccessor) tess;
+        access.miaokatze$setHasTexture(true);
+        access.miaokatze$setHasBrightness(true);
+        access.miaokatze$setHasNormals(true);
+    }
+
+    /** Exact defaults read by Angelica's live outline expansion, including the Tessellator's translation. */
+    static final class OutlineFrame {
+
+        final Frame frame;
+        final int bytesPerVertex;
+        private final int textureU, textureV, width;
+        private final long x, y, z;
+
+        OutlineFrame(Frame frame, int bytesPerVertex, Vector4f tex, TessellatorAccessor tess) {
+            this.frame = frame;
+            this.bytesPerVertex = bytesPerVertex;
+            textureU = frame.defaults == null ? 0 : Float.floatToRawIntBits(tex.x);
+            textureV = frame.defaults == null ? 0 : Float.floatToRawIntBits(tex.y);
+            width = Float.floatToRawIntBits(GL11.glGetFloat(GL11.GL_LINE_WIDTH));
+            x = bits(tess.miaokatze$getXOffset());
+            y = bits(tess.miaokatze$getYOffset());
+            z = bits(tess.miaokatze$getZOffset());
+        }
+
+        boolean matches(OutlineFrame next) {
+            return frame.context == next.frame.context && frame.sameDefaults(next.frame)
+                && textureU == next.textureU
+                && textureV == next.textureV
+                && width == next.width
+                && x == next.x
+                && y == next.y
+                && z == next.z;
+        }
+
+        boolean currentContext() {
+            return boundContext() == frame.context;
         }
     }
 
@@ -279,6 +334,37 @@ public final class MiaoVisonLiteMaterialBatch implements AutoCloseable {
             Tessellator.class);
         private static final Method BRIGHTNESS = method(GLSM + "hooks.GLSMConfig", "packedLastBrightness");
         private static final Method NORMAL = method(GLSM + "ffp.ShaderManager", "getCurrentNormal");
+        private static final Method TEXTURE = method(GLSM + "ffp.ShaderManager", "getCurrentTexCoord");
+        private static final Method WIDENS_LINES = method(GLSM + "GLSMDraws", "ffpWidensLineQuads");
+        private static final Method QUAD_FORMAT = method(
+            GLSM + "streaming.LineQuads",
+            "quadFormat",
+            VertexFormat.class);
+
+        private static boolean widensLines() {
+            if (WIDENS_LINES == null || QUAD_FORMAT == null) return false;
+            try {
+                return (boolean) WIDENS_LINES.invoke(null);
+            } catch (ReflectiveOperationException | LinkageError unavailable) {
+                return false;
+            }
+        }
+
+        private static OutlineFrame outlineDefaults(Frame frame, TessellatorAccessor tess) {
+            if (frame.defaults != null && TEXTURE == null) return null;
+            try {
+                VertexFormat format = DefaultVertexFormat.ALL_FORMATS[frame.defaults == null ? VertexFlags.COLOR_BIT
+                    : VertexFlags.COLOR_BIT | VertexFlags.TEXTURE_BIT
+                        | VertexFlags.NORMAL_BIT
+                        | VertexFlags.BRIGHTNESS_BIT];
+                VertexFormat wide = (VertexFormat) QUAD_FORMAT.invoke(null, format);
+                int bytesPerVertex = format.getVertexSize() + 3 * wide.getVertexSize();
+                Vector4f tex = frame.defaults == null ? null : (Vector4f) TEXTURE.invoke(null);
+                return new OutlineFrame(frame, bytesPerVertex, tex, tess);
+            } catch (ReflectiveOperationException | LinkageError unavailable) {
+                return null;
+            }
+        }
 
         private static Frame inspect(ContextCapabilities caps) {
             if (IRIS == null || CACHING == null

@@ -50,6 +50,7 @@ public final class HologramRenderParityProbe {
     private static final String GIANT_LIBRARY_ID = "gtmb.testlab.renderParityGiantLibraryId";
     private static final String ANIMATION_WITNESS = "gtmb.testlab.renderParityAnimationWitness";
     private static final String GIANT_PERFORMANCE = "gtmb.testlab.renderParityGiantPerformance";
+    private static final String GIANT_COLD_ONLY = "gtmb.testlab.renderParityGiantColdOnly";
     private static final String COMBINED = "gtmb.testlab.renderParityCombined";
     private static final String EDITOR_RECEIPT = "gtmb-render-parity-editor.json";
     private static final String CLIENT_RECEIPT = "gtmb-client-ui.json";
@@ -66,6 +67,7 @@ public final class HologramRenderParityProbe {
     private final Map<String, Object> receipt = new LinkedHashMap<>();
     private final String giantSource = System.getProperty(GIANT_SOURCE, "");
     private final boolean giantPerformance = Boolean.getBoolean(GIANT_PERFORMANCE);
+    private final boolean giantColdOnly = Boolean.getBoolean(GIANT_COLD_ONLY);
     private final String giantLibraryId = System.getProperty(GIANT_LIBRARY_ID, "");
     private final List<Map<String, Object>> giantLoads = new ArrayList<>();
     private Map<String, Object> giantEvidence;
@@ -101,6 +103,7 @@ public final class HologramRenderParityProbe {
             receipt.put("profile", "giant-performance-after-issue100");
             receipt.put("lightingAdmission", "Issue100 world rendered and unloaded; same mixed editor control");
             receipt.put("giantLoads", giantLoads);
+            receipt.put("giantColdOnly", giantColdOnly);
         }
     }
 
@@ -199,7 +202,7 @@ public final class HologramRenderParityProbe {
     }
 
     private int requiredGiantLoads() {
-        return giantSource.isEmpty() ? 0 : giantPerformance ? 2 : 1;
+        return giantSource.isEmpty() ? 0 : giantPerformance && !giantColdOnly ? 2 : 1;
     }
 
     private boolean orbitalCase() {
@@ -467,6 +470,8 @@ public final class HologramRenderParityProbe {
                 giantEvidence.put("firstMaterialWasComplete", ready);
                 giantEvidence.put("firstPreparedCells", HologramRenderer.previewMeshCompleted(snapshot));
                 giantEvidence.put("firstStageTiming", previewTiming());
+                giantEvidence.put("firstWorkerCounters", workerCounters());
+                giantEvidence.put("firstNativeModelCompiles", HologramBlockRender.compiled);
                 if (!giantPerformance) {
                     String file = "giant-first-full.png";
                     captureFramebuffer(file);
@@ -523,6 +528,8 @@ public final class HologramRenderParityProbe {
         giantEvidence.put("targetStackCells", stacks);
         giantEvidence.put("targetNativeTileCells", tileData);
         giantEvidence.put("firstCompleteNativeModelCells", nativeModels);
+        giantEvidence.put("completeWorkerCounters", workerCounters());
+        giantEvidence.put("completeNativeModelCompiles", HologramBlockRender.compiled);
         require(stacks > 0 && tileData > 0 && nativeModels > 0, "Private browse did not hydrate native model inputs");
         Map<?, ?> local = (Map<?, ?>) diagnosticField(HologramLibraryClient.class, "localPreviews")
             .get(HologramLibraryClient.INSTANCE);
@@ -611,7 +618,11 @@ public final class HologramRenderParityProbe {
         frame.put("visibleCellCount", inspection.getInteger("presentedVisibleCellCount"));
         frame.put("residentRendererCounters", residentCounters());
         frame.put("cameraRendererCounters", cameraCounters());
-        if (giant()) frame.put("rendererStages", previewTiming());
+        if (giant()) {
+            frame.put("rendererStages", previewTiming());
+            frame.put("workerRendererCounters", workerCounters());
+            frame.put("nativeModelCompiles", HologramBlockRender.compiled);
+        }
         frame.put("scene", cropScene(output, file, name + "-scene.png", screen.ui));
         if (giant()) giantFrames.add(frame);
         else frames.add(frame);
@@ -629,6 +640,13 @@ public final class HologramRenderParityProbe {
 
     private static Map<String, Long> cameraCounters() throws IllegalAccessException {
         return rendererCounters("previewCameraReprojects", "previewCameraOrderReuses", "previewCameraOrderSorts");
+    }
+
+    private static Map<String, Long> workerCounters() throws IllegalAccessException {
+        return rendererCounters(
+            "previewGeometryPublications",
+            "previewWorkerCompletedRuns",
+            "previewWorkerSpecialFallbacks");
     }
 
     private static Object previewTiming() throws ReflectiveOperationException {
