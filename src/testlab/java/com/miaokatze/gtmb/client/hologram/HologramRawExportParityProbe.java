@@ -14,10 +14,13 @@ import java.util.Map;
 
 import javax.imageio.ImageIO;
 
+import net.minecraft.block.Block;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.renderer.OpenGlHelper;
 import net.minecraft.client.shader.Framebuffer;
+import net.minecraft.item.Item;
+import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.tileentity.TileEntityChest;
@@ -29,6 +32,7 @@ import org.lwjgl.opengl.GL30;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.miaokatze.gtmb.hologram.HologramBlockIdentity;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramLibraryFacade;
 import com.miaokatze.miaokatzecore.api.testlab.ArtifactIdentity;
@@ -265,7 +269,7 @@ public final class HologramRawExportParityProbe {
         return row;
     }
 
-    private static byte[] exportFixture() {
+    private static byte[] exportFixture() throws IOException {
         JsonObject blueprint = new JsonObject();
         blueprint.addProperty("schema", 2);
         blueprint.addProperty("id", "local_33333333-3333-3333-3333-333333333333");
@@ -282,16 +286,22 @@ public final class HologramRawExportParityProbe {
         blueprint.add("nativeBlueprint", version);
         JsonArray cells = new JsonArray();
         for (int i = 0; i < BLOCKS.length; i++) {
+            Block block = Block.getBlockFromName(BLOCKS[i]);
+            require(block != null, "Missing export fixture block " + BLOCKS[i]);
+            int metadata = CELLS[i][3];
+            ItemStack material = HologramBlockIdentity.materialStack(block, block.damageDropped(metadata));
+            require(material != null, "Missing export fixture material " + BLOCKS[i]);
+            Item item = material.getItem();
             JsonObject row = new JsonObject();
-            row.addProperty("item", BLOCKS[i]);
+            row.addProperty("item", Item.itemRegistry.getNameForObject(item));
             row.addProperty("block", BLOCKS[i]);
             row.addProperty("count", 1);
             row.addProperty("facing", -1);
             row.addProperty("x", CELLS[i][0]);
             row.addProperty("y", CELLS[i][1]);
             row.addProperty("z", CELLS[i][2]);
-            row.addProperty("metadata", CELLS[i][3]);
-            row.addProperty("damage", CELLS[i][3]);
+            row.addProperty("metadata", metadata);
+            row.addProperty("damage", item.getHasSubtypes() ? material.getItemDamage() : 0);
             cells.add(row);
         }
         blueprint.add("cells", cells);
