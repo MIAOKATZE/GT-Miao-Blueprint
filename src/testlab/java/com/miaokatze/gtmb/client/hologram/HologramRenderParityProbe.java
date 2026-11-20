@@ -635,7 +635,13 @@ public final class HologramRenderParityProbe {
     }
 
     private static Map<String, Long> residentCounters() throws IllegalAccessException {
-        return rendererCounters("previewResidentCaptures", "previewResidentDraws");
+        return rendererCounters(
+            "previewResidentCaptures",
+            "previewResidentDraws",
+            "previewDirectMeshUploads",
+            "previewDirectMeshDraws",
+            "worldDirectMeshUploads",
+            "worldDirectMeshDraws");
     }
 
     private static Map<String, Long> cameraCounters() throws IllegalAccessException {
@@ -646,7 +652,8 @@ public final class HologramRenderParityProbe {
         return rendererCounters(
             "previewGeometryPublications",
             "previewWorkerCompletedRuns",
-            "previewWorkerSpecialFallbacks");
+            "previewWorkerSpecialFallbacks",
+            "previewWorkerProjectedCells");
     }
 
     private static Object previewTiming() throws ReflectiveOperationException {
@@ -675,7 +682,7 @@ public final class HologramRenderParityProbe {
 
     private static Object residentDiagnostics() throws ReflectiveOperationException {
         try {
-            return Class.forName("com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLiteMaterialBatch")
+            return Class.forName("com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteMaterialBatch")
                 .getMethod("diagnostics")
                 .invoke(null);
         } catch (ClassNotFoundException expectedOnBaseline) {

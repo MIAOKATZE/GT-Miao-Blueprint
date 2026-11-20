@@ -61,8 +61,15 @@ dependencies {
     }
 }
 
-// Shared library API; immutable candidate versions may be supplied for isolated integration builds.
+// An isolated Core dev JAR can be used to compile an unpublished integration candidate.
 dependencies {
-    def coreVersion = project.findProperty("miaokatzeCoreVersion") ?: "0.2.25"
-    api("com.miaokatze.miaokatzecore:miaokatzecore:${coreVersion}:dev") { transitive = false }
+    def coreDevJar = providers.gradleProperty("miaokatzeCoreDevJar").orNull
+    if (coreDevJar != null) {
+        def candidate = file(coreDevJar)
+        if (!candidate.isFile()) throw new GradleException("Core development JAR does not exist: " + candidate)
+        api(files(candidate))
+    } else {
+        def coreVersion = providers.gradleProperty("miaokatzeCoreVersion").getOrElse("0.2.27")
+        api("com.miaokatze.miaokatzecore:miaokatzecore:${coreVersion}:dev") { transitive = false }
+    }
 }

@@ -249,6 +249,9 @@ public final class HologramRegressionTest {
                 throw new RuntimeException(failure);
             }
         });
+        cases.put(
+            "projected_placement_wire_carries_only_operations_and_matching_consumables",
+            HologramPlacementRequestRegression::run);
         cases.put("network_energy_quotes_consume_once_and_refund_only_actual_debits", HologramEnergyRegression::run);
         cases.put("decor_fractional_materials_pay_once_and_refund_failed_cells", HologramDecorMaterialsRegression::run);
         cases.put(

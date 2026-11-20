@@ -12,10 +12,10 @@ import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
-import com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLiteSpatialIndex;
-import com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLiteTopology;
 import com.miaokatze.gtmb.hologram.HologramPreviewPose;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteSpatialIndex;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteTopology;
 
 /** Validates front-face identity without a GL context or mutable GT prototypes. */
 public final class HologramRenderingRegression {

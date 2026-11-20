@@ -5,6 +5,8 @@ package com.miaokatze.gtmb.client.hologram;
 
 import net.minecraft.client.Minecraft;
 
+import org.lwjgl.input.Keyboard;
+
 import com.cleanroommc.modularui.screen.viewport.ModularGuiContext;
 import com.cleanroommc.modularui.theme.WidgetThemeEntry;
 import com.cleanroommc.modularui.widget.Widget;
@@ -14,6 +16,15 @@ final class HologramPlacementLoadingScreen extends HologramMuiScreen {
 
     HologramPlacementLoadingScreen() {
         super("placement_validation", 430, 164);
+    }
+
+    @Override
+    protected boolean muiKey(char character, int key) {
+        if (key != Keyboard.KEY_ESCAPE) return false;
+        HologramLibraryClient.INSTANCE.cancelProjectedPlacement();
+        Minecraft.getMinecraft()
+            .displayGuiScreen(null);
+        return true;
     }
 
     @Override

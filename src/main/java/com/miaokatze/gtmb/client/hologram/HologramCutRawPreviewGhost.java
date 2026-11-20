@@ -12,8 +12,8 @@ import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL14;
 import org.lwjgl.opengl.GL30;
 
-import com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLiteRenderScope;
-import com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLiteTarget;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteRenderScope;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteTarget;
 
 /** Composite native geometry once: native vertex colors/TESRs cannot override the final ghost opacity. */
 final class HologramCutRawPreviewGhost {

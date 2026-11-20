@@ -31,12 +31,13 @@ import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL14;
 
 import com.gtnewhorizon.gtnhlib.client.renderer.DirectTessellator;
-import com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLiteDisplayList;
-import com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLiteMaterialBatch;
-import com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLiteOutline;
-import com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLiteSpatialIndex;
-import com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLiteTopology;
 import com.miaokatze.gtmb.hologram.HologramPreviewPose;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteDisplayList;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteMaterialBatch;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteMesh;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteOutline;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteSpatialIndex;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteTopology;
 import com.miaokatze.miaokatzecore.client.render.ScreenLineStream;
 import com.miaokatze.miaokatzecore.client.render.TessellatorSlice;
 
@@ -75,9 +76,12 @@ abstract class MiaoVisonLiteRenderer {
         previewSliceFallbackFrames;
     static long previewSliceCapturedInts;
     static long previewResidentCaptures, previewResidentDraws;
+    static long previewDirectMeshUploads, previewDirectMeshDraws;
+    static long worldDirectMeshUploads, worldDirectMeshDraws;
     static long previewCameraReprojects, previewCameraOrderReuses, previewCameraOrderSorts;
     static long previewBrowseSurfaceReuses;
     static long previewGeometryPublications, previewWorkerCompletedRuns, previewWorkerSpecialFallbacks;
+    static long previewWorkerProjectedCells, previewBoundaryOverlapFrames;
     static long previewHoverScans;
     private static final PreviewTimings PREVIEW_TIMINGS = Boolean.getBoolean("gtmb.testlab.renderParity")
         ? new PreviewTimings()
@@ -1243,6 +1247,16 @@ abstract class MiaoVisonLiteRenderer {
         int exposed = previewCell.exposed & facing;
         String role = previewCell.role;
         if (exposed == 0 && role.isEmpty()) return;
+        HologramEditorCameraFrame workerFrame = previewCell.workerFrame;
+        previewCell.workerFrame = null;
+        if (workerFrame == projectedFrame) {
+            region.projectedInputs.add(previewCell);
+            region.outlines.add(previewCell.outline);
+            for (long surfaces = previewCell.browseSurfaces; surfaces != 0; surfaces &= surfaces - 1)
+                region.faces.add(previewCell.faces[Long.numberOfTrailingZeros(surfaces)]);
+            previewWorkerProjectedCells++;
+            return;
+        }
         if (previewCell.outline == null) {
             previewCell.outline = new Face(previewCell, new double[8][3], 0, null);
             previewCell.faces = new Face[previewCell.nativeModel || previewCell.empty ? 6
@@ -1672,7 +1686,7 @@ abstract class MiaoVisonLiteRenderer {
         return templates.isEmpty() ? null
             : MiaoVisonLiteTopology.start(
                 state.regions.regions,
-                new PreviewTopologyView(state.regions, templates),
+                new PreviewTopologyView(state.regions, templates, projectedFrame),
                 library::tryPreviewTopology,
                 library::removePreviewTopology);
     }
@@ -1682,12 +1696,18 @@ abstract class MiaoVisonLiteRenderer {
         final int flags;
         final String role;
         final HologramTextures.Material material;
+        final Boolean completeMaterial;
 
         OrdinaryTemplate(boolean visible, boolean opaque, String role, HologramTextures.Material material) {
             flags = MiaoVisonLiteTopology.KNOWN | (visible ? MiaoVisonLiteTopology.VISIBLE : 0)
                 | (opaque ? MiaoVisonLiteTopology.OPAQUE : 0);
             this.role = role;
             this.material = material;
+            // Resolve appearance on the client. Custom icon names can change and are queried on every draw.
+            completeMaterial = role.isEmpty() && material != null
+                && !material.partial
+                && material.geometry.size() <= Long.SIZE
+                && hasStableMaterialNames(material) ? completePreviewMaterial(material) : null;
         }
     }
 
@@ -1695,10 +1715,19 @@ abstract class MiaoVisonLiteRenderer {
 
         private final HologramRegionCache regions;
         private final Map<Object, OrdinaryTemplate> templates;
+        private final HologramEditorCameraFrame frame;
+        private final int facing;
 
         PreviewTopologyView(HologramRegionCache regions, Map<Object, OrdinaryTemplate> templates) {
+            this(regions, templates, null);
+        }
+
+        PreviewTopologyView(HologramRegionCache regions, Map<Object, OrdinaryTemplate> templates,
+            HologramEditorCameraFrame frame) {
             this.regions = regions;
             this.templates = templates;
+            this.frame = frame;
+            facing = frame == null ? 0 : previewFacing(frame);
         }
 
         @Override
@@ -1730,8 +1759,38 @@ abstract class MiaoVisonLiteRenderer {
         @Override
         public PreviewCell faceInput(HologramState.Cell cell, int exposed, int sourceOrdinal) {
             OrdinaryTemplate appearance = templates.get(cell.descriptorIdentity());
-            return exposed == 0 && appearance.role.isEmpty() ? null
-                : new PreviewCell(cell, exposed, appearance.role, sourceOrdinal, appearance.material, false, false);
+            if (exposed == 0 && appearance.role.isEmpty()) return null;
+            PreviewCell input = new PreviewCell(
+                cell,
+                exposed,
+                appearance.role,
+                sourceOrdinal,
+                appearance.material,
+                false,
+                false);
+            input.cachedCompleteMaterial = appearance.completeMaterial;
+            int facingSurfaces = exposed & facing;
+            if (facingSurfaces == 0 || appearance.completeMaterial == null) return input;
+            // This worker owns its arrays until Core publishes the region. Only immutable topology and camera
+            // values are read. Matrix and depth arithmetic match the adapter's render-thread path.
+            double[][] points = new double[8][3];
+            frame.projectVoxel(cell.dx, cell.dy, cell.dz, points);
+            input.outline = new Face(input, points, 0, null);
+            input.outline.updateDepth();
+            input.outline.fadeDefault = !cell.sourceMissing && appearance.completeMaterial;
+            List<HologramGeometry.Surface> surfaces = appearance.material.geometry;
+            input.faces = new Face[surfaces.size()];
+            input.browseExposed = facingSurfaces;
+            for (int at = 0; at < surfaces.size(); at++) {
+                HologramGeometry.Surface surface = surfaces.get(at);
+                if ((facingSurfaces & 1 << surface.side) == 0) continue;
+                Face face = new Face(input, points, surface.side, surface);
+                face.updateDepth();
+                input.faces[at] = face;
+                input.browseSurfaces |= 1L << at;
+            }
+            input.workerFrame = frame;
+            return input;
         }
     }
 
@@ -1766,12 +1825,17 @@ abstract class MiaoVisonLiteRenderer {
                 detachedAttempted = true;
                 detached = startDetached(state, layer, view, current);
             }
+            boolean waitingForBoundary = false;
             if (boundary != null) {
                 boundary.advance(layer, view, current, Integer.MAX_VALUE, start + PREVIEW_BUILD_NANOS);
                 boundary.project(key, projectedFrame, Integer.MAX_VALUE, start + PREVIEW_BUILD_NANOS);
-                if (!boundary.presented && (!boundary.complete() || !boundary.cells.isEmpty())) return;
+                waitingForBoundary = !boundary.presented && (!boundary.complete() || !boundary.cells.isEmpty());
+                // Only the immutable library job can safely work ahead of first presentation. The tutorial and
+                // world can retire each other's unpublished native snapshot before the next frame.
+                if (waitingForBoundary && detached == null) return;
                 start = System.nanoTime();
             }
+            int before = completed;
             int work = 0;
             while (completed < state.cells.size() && (work == 0 || System.nanoTime() - start < PREVIEW_BUILD_NANOS)) {
                 if (entry == null || cell == entry.getValue()
@@ -1832,7 +1896,10 @@ abstract class MiaoVisonLiteRenderer {
             if (region != null && cell == entry.getValue()
                 .size()) region.complete = true;
             projection.advance(current, Integer.MAX_VALUE, System.nanoTime() + PREVIEW_BUILD_NANOS);
-            projection.publish();
+            // Build material and pick inputs while the outline is still being prepared. Keep the first boundary
+            // presentation before material publication, including when the worker has already produced a full mesh.
+            if (!waitingForBoundary) projection.publish();
+            else if (completed != before) previewBoundaryOverlapFrames++;
             if (completed == state.cells.size()) closeDetached();
         }
 
@@ -2230,6 +2297,7 @@ abstract class MiaoVisonLiteRenderer {
         Face[] faces;
         int browseExposed = -1;
         long browseSurfaces;
+        HologramEditorCameraFrame workerFrame;
         private Boolean cachedCompleteMaterial;
         private boolean liveMaterialNames;
 
@@ -2248,18 +2316,22 @@ abstract class MiaoVisonLiteRenderer {
             if (cachedCompleteMaterial != null) return cachedCompleteMaterial;
             boolean complete = completePreviewMaterial(material);
             if (liveMaterialNames) return complete;
-            if (material != null) for (HologramGeometry.Surface surface : material.geometry) {
-                for (HologramTextures.Sample sample : material.samples(surface)) {
-                    if (sample.icon != null && sample.icon.getClass() != TextureAtlasSprite.class) {
-                        liveMaterialNames = true;
-                        return complete;
-                    }
-                }
+            if (!hasStableMaterialNames(material)) {
+                liveMaterialNames = true;
+                return complete;
             }
             // AtlasSprite's name is final. Custom icons can change their answer and retain the live lookup.
             cachedCompleteMaterial = complete;
             return complete;
         }
+    }
+
+    private static boolean hasStableMaterialNames(HologramTextures.Material material) {
+        if (material == null) return true;
+        for (HologramGeometry.Surface surface : material.geometry)
+            for (HologramTextures.Sample sample : material.samples(surface))
+                if (sample.icon != null && sample.icon.getClass() != TextureAtlasSprite.class) return false;
+        return true;
     }
 
     private static final class RoleMarker {
@@ -2387,6 +2459,7 @@ abstract class MiaoVisonLiteRenderer {
             GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
             GL11.glDepthMask(false);
             GL11.glLineWidth(1.25f);
+            MiaoVisonLiteMaterialBatch.Frame meshFrame = MiaoVisonLiteMesh.currentFrame(Tessellator.instance);
             for (WorldGroup group : candidates) {
                 double gx = group.x + offsetX, gy = group.y + offsetY, gz = group.z + offsetZ;
                 double ex = gx + 16, ey = gy + 16, ez = gz + 16;
@@ -2404,13 +2477,15 @@ abstract class MiaoVisonLiteRenderer {
                 double dz = Math.max(gz - pz, Math.max(0, pz - ez));
                 if (dx * dx + dy * dy + dz * dz > range * range
                     || !frustum.isBoundingBoxInFrustum(AxisAlignedBB.getBoundingBox(gx, gy, gz, ex, ey, ez))) continue;
+                if (group.directGeometry != null && !group.directGeometry.belongsTo(meshFrame))
+                    invalidateWorldGroup(group);
                 // Finish occupancy first so faces shared by different groups stay hidden.
                 if (worldIndex == state.cells.size()) {
                     while (group.built < group.cells.size() && System.nanoTime() < deadline) {
-                        if (!compileWorldGroup(group, state.data.getInteger("mode") == 2)) break;
+                        if (!compileWorldGroup(group, state.data.getInteger("mode") == 2, meshFrame)) break;
                     }
                 }
-                for (MiaoVisonLiteDisplayList batch : group.batches) {
+                for (WorldBatch batch : group.batches) {
                     batch.draw();
                     if (witness) drawnLists++;
                 }
@@ -2582,7 +2657,8 @@ abstract class MiaoVisonLiteRenderer {
         }
     }
 
-    private static boolean compileWorldGroup(WorldGroup group, boolean removal) {
+    private static boolean compileWorldGroup(WorldGroup group, boolean removal,
+        MiaoVisonLiteMaterialBatch.Frame meshFrame) {
         int beforeGeometry = lastWorldGeometry, beforeGT = lastWorldGTGeometry, beforeFallback = lastWorldFallback,
             beforeGhosts = lastWorldGhosts;
         int end = Math.min(group.built + WORLD_MESH_BATCH, group.cells.size());
@@ -2596,18 +2672,33 @@ abstract class MiaoVisonLiteRenderer {
         }
         MiaoVisonLiteDisplayList batch = MiaoVisonLiteDisplayList.allocate();
         if (batch == null) return false;
+        MiaoVisonLiteMesh mesh = null;
         try {
+            int vertices = meshFrame == null ? 0 : worldMaterialVertices(cells);
+            if (vertices > 0) {
+                MiaoVisonLiteMesh.Builder geometry = MiaoVisonLiteMesh.liveBuilder(Tessellator.instance, vertices);
+                emitWorldMaterials(cells, null, geometry);
+                mesh = MiaoVisonLiteMesh.upload(meshFrame, geometry, MiaoVisonLiteMesh.Quads.RECORDED);
+            }
             batch.begin();
-            compileWorldGeometry(cells, removal);
+            compileWorldGeometry(cells, removal, mesh == null);
             batch.finish();
-            group.batches.add(batch);
+            group.batches.add(new WorldBatch(mesh, batch));
         } catch (RuntimeException | Error failure) {
-            batch.close();
+            try {
+                batch.close();
+            } finally {
+                if (mesh != null) mesh.close();
+            }
             lastWorldGeometry = beforeGeometry;
             lastWorldGTGeometry = beforeGT;
             lastWorldFallback = beforeFallback;
             lastWorldGhosts = beforeGhosts;
             throw failure;
+        }
+        if (mesh != null) {
+            group.directGeometry = mesh;
+            worldDirectMeshUploads++;
         }
         group.built = end;
         group.geometry += lastWorldGeometry - beforeGeometry;
@@ -2617,10 +2708,31 @@ abstract class MiaoVisonLiteRenderer {
         return true;
     }
 
-    private static void compileWorldGeometry(List<HologramState.Cell> cells, boolean removal) {
-        Tessellator t = Tessellator.instance;
-        GL11.glEnable(GL11.GL_TEXTURE_2D);
-        t.startDrawingQuads();
+    private static int worldMaterialVertices(List<HologramState.Cell> cells) {
+        int vertices = 0;
+        for (HologramState.Cell cell : cells) {
+            if (!worldGhosts.contains(coordinate(cell.x, cell.y, cell.z)) || HologramBlockRender.ready(cell, false))
+                continue;
+            HologramTextures.Material material = HologramTextures.material(cell, false);
+            for (HologramGeometry.Surface surface : material.geometry) {
+                if (!worldFaceVisible(cell, material, NORMALS[surface.side])) continue;
+                for (HologramTextures.Sample sample : material.samples(surface)) {
+                    if (!stablePreviewIcon(sample.icon)) return 0;
+                    vertices += 4;
+                    if (vertices > MiaoVisonLiteMesh.MAX_VERTICES) return 0;
+                }
+            }
+        }
+        return vertices;
+    }
+
+    private static boolean worldFaceVisible(HologramState.Cell cell, HologramTextures.Material material, int[] normal) {
+        return material.partial
+            || !worldOccluders.contains(coordinate(cell.x + normal[0], cell.y + normal[1], cell.z + normal[2]));
+    }
+
+    private static void emitWorldMaterials(List<HologramState.Cell> cells, Tessellator t,
+        MiaoVisonLiteMesh.Builder mesh) {
         for (HologramState.Cell c : cells) {
             if (!worldGhosts.contains(coordinate(c.x, c.y, c.z))) continue;
             if (HologramBlockRender.ready(c, false)) {
@@ -2634,26 +2746,38 @@ abstract class MiaoVisonLiteRenderer {
             for (HologramGeometry.Surface surface : material.geometry) {
                 int side = surface.side;
                 int[] normal = NORMALS[side];
-                if (!material.partial
-                    && worldOccluders.contains(coordinate(c.x + normal[0], c.y + normal[1], c.z + normal[2]))) continue;
+                if (!worldFaceVisible(c, material, normal)) continue;
+                float shade = side == 1 ? 1 : side == 0 ? .65f : .85f;
                 int sampleIndex = 0;
                 for (HologramTextures.Sample sample : material.samples(surface)) {
-                    setSampleColor(t, sample, side == 1 ? 1 : side == 0 ? .65f : .85f, .38f);
+                    if (mesh == null) setSampleColor(t, sample, shade, .38f);
+                    else setMeshSampleColor(mesh, sample, shade, .38f);
                     for (int vertex : FACES[side]) {
                         double[] point = surface.vertices[vertex];
                         double offset = .002 + sampleIndex * .0005;
-                        t.addVertexWithUV(
-                            c.x + .5 + point[0] + normal[0] * offset,
-                            c.y + .5 + point[1] + normal[1] * offset,
-                            c.z + .5 + point[2] + normal[2] * offset,
-                            textureU(sample.icon, side, point),
-                            textureV(sample.icon, side, point));
+                        double x = c.x + .5 + point[0] + normal[0] * offset;
+                        double y = c.y + .5 + point[1] + normal[1] * offset;
+                        double z = c.z + .5 + point[2] + normal[2] * offset;
+                        double u = textureU(sample.icon, side, point);
+                        double v = textureV(sample.icon, side, point);
+                        if (mesh == null) t.addVertexWithUV(x, y, z, u, v);
+                        else mesh.vertex(x, y, z, u, v);
                     }
                     sampleIndex++;
                 }
             }
         }
-        t.draw();
+    }
+
+    private static void compileWorldGeometry(List<HologramState.Cell> cells, boolean removal,
+        boolean includeMaterials) {
+        Tessellator t = Tessellator.instance;
+        GL11.glEnable(GL11.GL_TEXTURE_2D);
+        if (includeMaterials) {
+            t.startDrawingQuads();
+            emitWorldMaterials(cells, t, null);
+            t.draw();
+        }
         GL11.glPushAttrib(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_ENABLE_BIT);
         GL14.glBlendColor(1, 1, 1, .38f);
         GL11.glBlendFunc(0x8003, 0x8004); // GL_CONSTANT_ALPHA / GL_ONE_MINUS_CONSTANT_ALPHA
@@ -2719,7 +2843,8 @@ abstract class MiaoVisonLiteRenderer {
 
         final int x, y, z;
         final List<HologramState.Cell> cells = new ArrayList<>();
-        final List<MiaoVisonLiteDisplayList> batches = new ArrayList<>();
+        final List<WorldBatch> batches = new ArrayList<>();
+        MiaoVisonLiteMesh directGeometry;
         int built;
         int geometry, gt, fallback, ghosts;
         final Set<Integer> matchedIndices = new HashSet<>();
@@ -2741,8 +2866,38 @@ abstract class MiaoVisonLiteRenderer {
         }
 
         void releaseBatches() {
-            for (MiaoVisonLiteDisplayList batch : batches) batch.close();
+            for (WorldBatch batch : batches) batch.close();
             batches.clear();
+            directGeometry = null;
+        }
+    }
+
+    private static final class WorldBatch implements AutoCloseable {
+
+        final MiaoVisonLiteMesh mesh;
+        final MiaoVisonLiteDisplayList effects;
+
+        WorldBatch(MiaoVisonLiteMesh mesh, MiaoVisonLiteDisplayList effects) {
+            this.mesh = mesh;
+            this.effects = effects;
+        }
+
+        void draw() {
+            if (mesh != null) {
+                GL11.glEnable(GL11.GL_TEXTURE_2D);
+                mesh.draw();
+                worldDirectMeshDraws++;
+            }
+            effects.draw();
+        }
+
+        @Override
+        public void close() {
+            try {
+                effects.close();
+            } finally {
+                if (mesh != null) mesh.close();
+            }
         }
     }
 
@@ -2750,6 +2905,16 @@ abstract class MiaoVisonLiteRenderer {
         float alpha) {
         int color = sample.color;
         tessellator.setColorRGBA_F(
+            ((color >> 16) & 255) / 255f * shade,
+            ((color >> 8) & 255) / 255f * shade,
+            (color & 255) / 255f * shade,
+            alpha);
+    }
+
+    private static void setMeshSampleColor(MiaoVisonLiteMesh.Builder mesh, HologramTextures.Sample sample, float shade,
+        float alpha) {
+        int color = sample.color;
+        mesh.color(
             ((color >> 16) & 255) / 255f * shade,
             ((color >> 8) & 255) / 255f * shade,
             (color & 255) / 255f * shade,
@@ -3065,19 +3230,52 @@ abstract class MiaoVisonLiteRenderer {
             MiaoVisonLiteMaterialBatch.Frame residentFrame = !allowResident || !drawn
                 || batches.isEmpty()
                 || HologramBlueprintPreview.cleanCapture() ? null : MiaoVisonLiteMaterialBatch.currentFrame(tess);
+            boolean direct = MiaoVisonLiteMesh.supported(residentFrame);
             int recordings = 0;
             for (int at = 0; at < batches.size(); at++) {
                 PreviewBatch batch = batches.get(at);
-                if (residentFrame != null && batch.resident != null && !batch.resident.belongsTo(residentFrame)) {
+                if (residentFrame != null && batch.hasResident()
+                    && (batch.mesh != null ? !batch.mesh.belongsTo(residentFrame)
+                        : !batch.resident.belongsTo(residentFrame))) {
                     batch.releaseResident();
                     residentBatches--;
                 }
                 tess.startDrawingQuads();
+                if (direct && batch.mesh != null && batch.mesh.drawInEmptyBatch(tess, residentFrame)) {
+                    previewResidentDraws++;
+                    previewDirectMeshDraws++;
+                    continue;
+                }
                 if (batch.resident != null && batch.resident.replay(tess, residentFrame)) {
                     previewResidentDraws++;
                     continue;
                 }
                 boolean stable = batch.stable && batch.valid();
+                boolean canRecord = allowCapture && stable
+                    && !batch.hasResident()
+                    && residentBatches < MAX_RESIDENT_BATCHES
+                    && recordings < MAX_FRAME_RECORDINGS;
+                if (direct && canRecord) {
+                    MiaoVisonLiteMesh.Builder vertices = MiaoVisonLiteMesh.liveBuilder(tess, batch.quads * 4);
+                    emitMesh(vertices, batch);
+                    MiaoVisonLiteMesh mesh = MiaoVisonLiteMesh
+                        .upload(residentFrame, vertices, MiaoVisonLiteMesh.Quads.LIVE);
+                    try {
+                        if (mesh.drawInEmptyBatch(tess, residentFrame)) {
+                            batch.captureVersions();
+                            batch.mesh = mesh;
+                            recordings++;
+                            residentBatches++;
+                            previewResidentCaptures++;
+                            previewResidentDraws++;
+                            previewDirectMeshUploads++;
+                            previewDirectMeshDraws++;
+                            continue;
+                        }
+                    } finally {
+                        if (batch.mesh != mesh) mesh.close();
+                    }
+                }
                 if (stable && !unsupported) {
                     if (batch.slice != null && batch.slice.replay(tess)) {
                         if (com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.isEnabled()) {
@@ -3109,11 +3307,7 @@ abstract class MiaoVisonLiteRenderer {
                         emit(tess, batch);
                 } else emit(tess, batch);
                 if (!stable) MiaoVisonLiteMaterialBatch.count("live-material-batch");
-                if (residentFrame != null && allowCapture
-                    && stable
-                    && batch.resident == null
-                    && residentBatches < MAX_RESIDENT_BATCHES
-                    && recordings < MAX_FRAME_RECORDINGS) {
+                if (residentFrame != null && canRecord) {
                     batch.resident = MiaoVisonLiteMaterialBatch.record(tess, residentFrame, batch.quads * 4);
                     if (batch.resident != null) {
                         batch.captureVersions();
@@ -3135,7 +3329,7 @@ abstract class MiaoVisonLiteRenderer {
             for (PreviewIcon icon : iconRecords) icon.refresh();
             for (int at = 0; at < batches.size(); at++) {
                 PreviewBatch batch = batches.get(at);
-                if ((batch.slice != null || batch.resident != null) && !batch.current()) {
+                if ((batch.slice != null || batch.hasResident()) && !batch.current()) {
                     if (batch.slice != null) {
                         retainedInts -= batch.slice.retainedInts();
                         batch.slice = null;
@@ -3170,6 +3364,33 @@ abstract class MiaoVisonLiteRenderer {
                     snapshotUvs ? icons.get(samples.get(sample).icon) : null);
             }
         }
+
+        private void emitMesh(MiaoVisonLiteMesh.Builder vertices, PreviewBatch batch) {
+            for (int at = batch.firstFace; at <= batch.lastFace; at++) {
+                Face face = faces.get(at);
+                if (face.empty || face.nativeModel) continue;
+                List<HologramTextures.Sample> samples = face.samples();
+                int first = at == batch.firstFace ? batch.firstSample : 0;
+                int last = at == batch.lastFace ? batch.lastSample : samples.size();
+                for (int sample = first; sample < last; sample++) {
+                    HologramTextures.Sample material = samples.get(sample);
+                    PreviewIcon icon = snapshotUvs ? icons.get(material.icon) : null;
+                    float shade = face.side == 1 ? 1 : face.side < 2 ? .6f : .8f;
+                    if (face.cell.sourceMissing && !face.cell.missingBlock) vertices.color(.55f, .55f, .55f, .78f);
+                    else setMeshSampleColor(vertices, material, shade, .96f);
+                    for (int vertex : FACES[face.side]) {
+                        double[] point = face.points[vertex];
+                        double[] local = face.local(vertex);
+                        vertices.vertex(
+                            point[0],
+                            point[1],
+                            point[2] * depthScale + sample * .015,
+                            icon == null ? textureU(material.icon, face.side, local) : icon.u(face.side, local),
+                            icon == null ? textureV(material.icon, face.side, local) : icon.v(face.side, local));
+                    }
+                }
+            }
+        }
     }
 
     private static final class PreviewBatch {
@@ -3180,6 +3401,7 @@ abstract class MiaoVisonLiteRenderer {
         final long[] versions;
         TessellatorSlice slice;
         MiaoVisonLiteMaterialBatch resident;
+        MiaoVisonLiteMesh mesh;
 
         PreviewBatch(int firstFace, int firstSample, int lastFace, int lastSample, int quads, boolean stable,
             List<PreviewIcon> dependencies) {
@@ -3209,11 +3431,21 @@ abstract class MiaoVisonLiteRenderer {
                 for (int at = 0; at < dependencies.length; at++) versions[at] = dependencies[at].version;
         }
 
+        boolean hasResident() {
+            return mesh != null || resident != null;
+        }
+
         boolean releaseResident() {
-            if (resident == null) return false;
-            resident.close();
-            resident = null;
-            return true;
+            boolean present = hasResident();
+            if (mesh != null) {
+                mesh.close();
+                mesh = null;
+            }
+            if (resident != null) {
+                resident.close();
+                resident = null;
+            }
+            return present;
         }
     }
 

@@ -115,6 +115,11 @@ public final class HologramClient {
     }
 
     private static net.minecraft.world.World snapshotWorld;
+
+    static boolean currentSnapshotWorld(net.minecraft.world.World world) {
+        return world != null && snapshotWorld == world;
+    }
+
     static boolean worldPreview = true;
     private static long receivedAt;
     private static final HologramProjectionLifetime projectionLifetime = new HologramProjectionLifetime();
@@ -529,12 +534,9 @@ public final class HologramClient {
                         : mc.theWorld
                             .getTileEntity(input.getInteger("x"), input.getInteger("y"), input.getInteger("z"));
                     if (worldStage() == HologramWorldFlow.Stage.WORKSPACE && HologramService.supportsController(tile)) {
-                        rootCloseFence.clear();
-                        syncSnapshotWorld();
-                        fullSnapshotRequested = false;
-                        long id = controllerOpen.begin(mc.thePlayer.dimension, tile.xCoord, tile.yCoord, tile.zCoord);
-                        input.setLong("controllerOpenId", id);
-                        new HologramScreen(tile, mc.thePlayer.dimension, id).openFrom(mc.currentScreen);
+                        HologramScreen.localController(tile, mc.thePlayer.dimension, input.getInteger("side"))
+                            .openFrom(mc.currentScreen);
+                        return;
                     } else {
                         controllerOpen.forgetTarget();
                         openCachedWorkspace();
@@ -552,6 +554,42 @@ public final class HologramClient {
                     text("worldGuideLockFailed", "Position could not be locked; adjust the preview and try again"));
                 com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Position lock request failed", failure);
             } else throw failure;
+        }
+    }
+
+    /** Explicitly replace the local view with a server-owned real-world read. */
+    static boolean readLiveController(TileEntity tile, int side) {
+        Minecraft mc = Minecraft.getMinecraft();
+        if (side < 0 || side > 5
+            || tile == null
+            || mc.thePlayer == null
+            || mc.theWorld == null
+            || tile.getWorldObj() != mc.theWorld
+            || !HologramService.supportsController(tile)) return false;
+        rootCloseFence.clear();
+        syncSnapshotWorld();
+        fullSnapshotRequested = false;
+        long id = controllerOpen.begin(mc.thePlayer.dimension, tile.xCoord, tile.yCoord, tile.zCoord);
+        NBTTagCompound request = new NBTTagCompound();
+        request.setString("action", "useBlock");
+        request.setInteger("x", tile.xCoord);
+        request.setInteger("y", tile.yCoord);
+        request.setInteger("z", tile.zCoord);
+        request.setInteger("side", side);
+        request.setLong("controllerOpenId", id);
+        try {
+            HologramScreen opening = new HologramScreen(tile, mc.thePlayer.dimension, id);
+            opening.openFrom(mc.currentScreen);
+            if (mc.currentScreen != opening) {
+                controllerOpen.dismiss(id);
+                return false;
+            }
+            stampSemanticRevision(request);
+            HologramNetwork.sendAction(request);
+            return true;
+        } catch (RuntimeException failure) {
+            dismissControllerOpening(id);
+            throw failure;
         }
     }
 
@@ -1668,6 +1706,7 @@ public final class HologramClient {
     }
 
     private static void receive(NBTTagCompound nbt) {
+        if (HologramLibraryClient.INSTANCE.acceptProjectedPlacement(nbt)) return;
         syncSnapshotWorld();
         if (Minecraft.getMinecraft().theWorld == null) return;
         if (nbt.hasKey("controllerOpenUnavailable", 4)) {
@@ -2248,6 +2287,8 @@ public final class HologramClient {
         Minecraft mc = Minecraft.getMinecraft();
         snapshotWorld = mc.theWorld;
         if (HologramBackgroundTasks.detached()) return;
+        if (mc.currentScreen instanceof HologramScreen screen
+            && (screen.localControllerStandard() || screen.ui.session.localDocument())) return;
         if (rootCloseFence
             .suppress(next.session, nbt.getLong("uiSequence"), nbt.getBoolean("open"), nbt.getBoolean("areaImporting")))
             return;

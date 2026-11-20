@@ -50,6 +50,7 @@ public final class HologramTutorialIssue100Probe {
     private volatile Thread serverThread;
     private volatile boolean exactWorldOwned;
     private volatile String serverFailure;
+    private volatile HologramLocalPreviewStagesProbe localPreviewStages;
     private Path save;
     private GuiScreen originalMenu;
     private HologramScreen screen;
@@ -79,7 +80,12 @@ public final class HologramTutorialIssue100Probe {
 
     @SubscribeEvent
     public void serverTick(TickEvent.ServerTickEvent event) {
-        if (complete || exactWorldOwned || stage == 0 || event.phase != TickEvent.Phase.END) return;
+        if (complete || stage == 0 || event.phase != TickEvent.Phase.END) return;
+        if (exactWorldOwned) {
+            HologramLocalPreviewStagesProbe local = localPreviewStages;
+            if (local != null) local.setup(server);
+            return;
+        }
         try {
             MinecraftServer actual = FMLCommonHandler.instance()
                 .getMinecraftServerInstance();
@@ -160,8 +166,23 @@ public final class HologramTutorialIssue100Probe {
                 if (!exactWorldOwned || mc.theWorld == null || mc.thePlayer == null || mc.thePlayer.ticksExisted < 60)
                     return;
                 require(!mc.thePlayer.capabilities.isCreativeMode, "Business actor must remain survival");
+                if (HologramLocalPreviewStagesProbe.enabled()) {
+                    if (localPreviewStages == null)
+                        localPreviewStages = new HologramLocalPreviewStagesProbe(mc, output, receipt);
+                    if (!localPreviewStages.step(mc)) return;
+                }
                 inventoryBefore = inventory(mc);
-                HologramLocalPlacement.INSTANCE.install(localFixture(), "issue100-fixture", "", "", "");
+                HologramLibraryClient.DisplaySource source = new HologramLibraryClient.DisplaySource(
+                    "issue100-fixture",
+                    "",
+                    null,
+                    null,
+                    "issue100-fixture",
+                    "",
+                    "",
+                    "");
+                source.state = localFixture();
+                HologramLocalPlacement.INSTANCE.install(source);
                 background = HologramLocalPlacement.INSTANCE.display();
                 mc.thePlayer.rotationPitch = 65;
                 startFrame = frame;
@@ -356,6 +377,7 @@ public final class HologramTutorialIssue100Probe {
 
     private void closeWorld(Minecraft mc) throws Exception {
         if (!unloadRequested) {
+            if (localPreviewStages != null && !localPreviewStages.finish(mc)) return;
             if (screen != null) {
                 receipt.put(
                     "terminalTutorialDiagnostic",

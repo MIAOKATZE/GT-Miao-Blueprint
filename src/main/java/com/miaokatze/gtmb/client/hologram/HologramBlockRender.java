@@ -25,8 +25,8 @@ import net.minecraftforge.client.MinecraftForgeClient;
 
 import org.lwjgl.opengl.GL11;
 
-import com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLiteDisplayList;
-import com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLiteRenderScope;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteDisplayList;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteRenderScope;
 
 import cpw.mods.fml.client.registry.ISimpleBlockRenderingHandler;
 import cpw.mods.fml.client.registry.RenderingRegistry;

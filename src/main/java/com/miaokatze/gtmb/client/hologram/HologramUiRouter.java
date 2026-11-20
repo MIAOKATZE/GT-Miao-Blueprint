@@ -30,7 +30,8 @@ final class HologramUiRouter {
 
     void initGui() {
         ui.shortcuts.activity();
-        ui.library.prepareInitialization();
+        if (!ui.session.state().data.getBoolean("localStandardController") && !ui.session.localDocument())
+            ui.library.prepareInitialization();
         Keyboard.enableRepeatEvents(true);
         ui.shortcuts.loadBindings();
         ui.canvas.resize();
@@ -76,8 +77,13 @@ final class HologramUiRouter {
     }
 
     void closeRoot() {
-        if (ui.session.controllerOpening() && ui.host.parent()
-            .closeControllerOpening()) return;
+        HologramScreen root = ui.host.parent();
+        if (root != null && (root.localControllerStandard() || ui.session.localDocument())) {
+            ui.host.minecraft()
+                .displayGuiScreen(null);
+            return;
+        }
+        if (ui.session.controllerOpening() && root != null && root.closeControllerOpening()) return;
         if (ui.workspaces.hasProjectionContent()) ui.review.dismissConfirmation();
         if (HologramBackgroundTasks.busy() && !ui.diagnostics.captureRenderSmokeAction()) {
             ui.memory.rememberUi();

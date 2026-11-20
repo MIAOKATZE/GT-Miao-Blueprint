@@ -162,6 +162,7 @@ final class HologramUiPreview {
     /** Only model/ghost/selection geometry. Native controls are siblings of this bounded scene widget. */
     boolean sourcePreparing() {
         if (ui.session.isTutorial() || ui.library.browsePreviewActive()) return false;
+        if (ui.session.state().data.getBoolean("localStandardController")) return false;
         return ui.session.controllerOpening() || HologramClient.snapshotPreparing()
             || sourceSwitchWaiting(
                 ui.library.libraryNavigation(),
@@ -194,6 +195,18 @@ final class HologramUiPreview {
         GL11.glEnable(GL11.GL_SCISSOR_TEST);
         applyViewportScissor();
         try {
+            HologramState snapshot = ui.session.state();
+            if (snapshot.data.getBoolean("localStandardController") && snapshot.cells.isEmpty()) {
+                hovered = -1;
+                HologramRenderer.waitingPreview(snapshot);
+                ui.canvas.sceneText(
+                    snapshot.data.getString("status"),
+                    viewportX() + 8,
+                    viewportY() + 24,
+                    Math.max(150, viewportWidth() - 16),
+                    0xb9d5d4);
+                return;
+            }
             if (sourcePreparing()) {
                 hovered = -1;
                 HologramRenderer.waitingPreview(ui.session.state());
@@ -204,7 +217,7 @@ final class HologramUiPreview {
                 return;
             }
             hovered = HologramRenderer.preview(
-                ui.session.state(),
+                snapshot,
                 0,
                 0,
                 viewportWidth(),

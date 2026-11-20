@@ -88,6 +88,7 @@ public final class HologramService {
     }
 
     public static void clear() {
+        HologramProjectedPlacementService.clear();
         HologramWorkspace.clear();
     }
 

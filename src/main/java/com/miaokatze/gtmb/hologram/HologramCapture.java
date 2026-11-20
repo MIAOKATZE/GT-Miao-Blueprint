@@ -251,16 +251,39 @@ public final class HologramCapture {
         return collect(machine, trigger, facing, intent, resumed, true);
     }
 
-    @SuppressWarnings({ "rawtypes", "unchecked" })
     private static HologramCapture collect(MTEEnhancedMultiBlockBase<?> machine, ItemStack trigger,
         ExtendedFacing facing, StructureSources.CaptureIntent intent, HologramCapture resumed, boolean projectionOnly) {
+        return collect(machine, trigger, facing, intent, resumed, projectionOnly, 0);
+    }
+
+    /** Client-local templates walk a registered, fresh controller with an independent client budget. */
+    static HologramCapture collectLocalProjection(MTEEnhancedMultiBlockBase<?> machine, ItemStack trigger,
+        ExtendedFacing facing, HologramCapture resumed, long sliceNanos) {
+        if (sliceNanos <= 0 || !(machine.getBaseMetaTileEntity()
+            .getWorld() instanceof HologramResourceWorld))
+            throw new IllegalArgumentException("Local structure capture requires a bounded detached controller");
+        return collect(
+            machine,
+            trigger,
+            facing,
+            StructureSources.CaptureIntent.NEW_TEMPLATE,
+            resumed,
+            true,
+            sliceNanos);
+    }
+
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    private static HologramCapture collect(MTEEnhancedMultiBlockBase<?> machine, ItemStack trigger,
+        ExtendedFacing facing, StructureSources.CaptureIntent intent, HologramCapture resumed, boolean projectionOnly,
+        long localSliceNanos) {
         HologramCapture capture = resumed == null ? new HologramCapture(machine, trigger, intent, projectionOnly)
             : resumed;
         if (capture.projectionOnly != projectionOnly) {
             capture.invalidateSource("SOURCE_CAPTURE_MODE_CHANGED");
             return capture;
         }
-        capture.deadline = System.nanoTime() + CAPTURE_TIME_NS;
+        long slice = localSliceNanos == 0 ? CAPTURE_TIME_NS : Math.min(localSliceNanos, CAPTURE_TIME_NS);
+        capture.deadline = System.nanoTime() + slice;
         capture.pending = false;
         if (resumed != null && !capture.resumeCurrent(machine, trigger, facing, intent)) return capture;
         if (capture.walkingComplete) {
@@ -307,6 +330,10 @@ public final class HologramCapture {
             if (!capture.sourceCurrent()) return capture;
             IStructureDefinition definition = capture.definition;
             capture.refreshInterpretationGeneration();
+            if (localSliceNanos > 0 && (definition == null || !HologramStructureCursor.supports(definition))) {
+                capture.invalidateSource("LOCAL_STRUCTURE_WALK_UNAVAILABLE");
+                return capture;
+            }
             final World world = machine.getBaseMetaTileEntity()
                 .getWorld();
             int x = machine.getBaseMetaTileEntity()

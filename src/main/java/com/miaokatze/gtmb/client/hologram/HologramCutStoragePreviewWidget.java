@@ -15,8 +15,8 @@ import com.cleanroommc.modularui.api.widget.Interactable;
 import com.cleanroommc.modularui.screen.viewport.ModularGuiContext;
 import com.cleanroommc.modularui.theme.WidgetThemeEntry;
 import com.cleanroommc.modularui.widget.Widget;
-import com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLiteRenderScope;
-import com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLiteTarget;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteRenderScope;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteTarget;
 
 /** An isolated GUI camera over the same native raw ghost used in the world. Never ticks tile entities. */
 final class HologramCutStoragePreviewWidget extends Widget<HologramCutStoragePreviewWidget> implements Interactable {

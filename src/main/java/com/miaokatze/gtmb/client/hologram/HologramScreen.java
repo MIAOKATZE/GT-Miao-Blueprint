@@ -13,6 +13,7 @@ import net.minecraft.nbt.NBTTagList;
 import net.minecraft.tileentity.TileEntity;
 
 import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
+import com.miaokatze.gtmb.hologram.HologramLocalControllerCapture;
 
 /** Minecraft screen adapter. Domain state and behavior live in composed workflow modules. */
 public final class HologramScreen extends HologramMuiCanvasScreen implements HologramUiHost {
@@ -33,6 +34,10 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     private ItemStack openingTool;
     private String openingToolId;
     private int openingSlot;
+    private HologramLocalControllerCapture localController;
+    private HologramState.Preparation localControllerPreparation;
+    private int localControllerSide;
+    private boolean localControllerPublished;
 
     HologramScreen(HologramState state) {
         super("workstation");
@@ -42,13 +47,72 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     HologramScreen(TileEntity tile, int dimension, long request) {
         this(controllerWaitingState(dimension, tile.xCoord, tile.yCoord, tile.zCoord));
-        Minecraft client = minecraft();
         controllerRequest = request;
+        rememberControllerContext(tile);
+    }
+
+    static HologramScreen localController(TileEntity tile, int dimension, int side) {
+        HologramLocalControllerCapture capture = new HologramLocalControllerCapture(tile, dimension, side);
+        NBTTagCompound opening = capture.opening();
+        opening.setString("status", HologramClient.text("controllerLocalPreparing", "正在读取本地标准结构…"));
+        HologramScreen screen = new HologramScreen(new HologramState(opening));
+        screen.localController = capture;
+        screen.localControllerSide = side;
+        screen.rememberControllerContext(tile);
+        return screen;
+    }
+
+    private void rememberControllerContext(TileEntity tile) {
+        Minecraft client = minecraft();
         openingController = tile;
         openingConnection = client.getNetHandler();
         openingTool = client.thePlayer.getHeldItem();
         openingToolId = toolId(openingTool);
         openingSlot = client.thePlayer.inventory.currentItem;
+    }
+
+    boolean localControllerStandard() {
+        return ui.session.state().data.getBoolean("localStandardController");
+    }
+
+    boolean readLiveController() {
+        if (!localControllerStandard() || !controllerContextCurrent(false)) {
+            ui.session.notice(HologramClient.text("controllerLocalChanged", "控制器或手持投影仪已变化"));
+            return false;
+        }
+        return tryDeferAction(() -> {
+            if (minecraft().currentScreen != this || !controllerContextCurrent(false)) return;
+            if (!HologramClient.readLiveController(openingController, localControllerSide))
+                ui.session.notice(HologramClient.text("controllerLocalChanged", "控制器或手持投影仪已变化"));
+        });
+    }
+
+    private void advanceLocalController() {
+        if (!localControllerStandard() || localControllerPublished || localController == null) return;
+        try {
+            Minecraft client = minecraft();
+            if (!controllerContextCurrent(false)
+                || !localController.matches(client.theWorld, client.thePlayer.dimension))
+                throw new java.io.IOException("LOCAL_CONTROLLER_CHANGED");
+            if (localControllerPreparation == null) {
+                NBTTagCompound snapshot = localController.step(2048, 3_000_000L);
+                if (snapshot == null) return;
+                snapshot.setString("status", HologramClient.text("controllerLocalStandard", "本地标准结构 · 默认参数"));
+                localControllerPreparation = new HologramState.Preparation(snapshot);
+                return;
+            }
+            if (!localControllerPreparation.step(2048, 3_000_000L)) return;
+            updateState(localControllerPreparation.result());
+        } catch (java.io.IOException | RuntimeException | LinkageError failure) {
+            com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG
+                .debug("Local controller standard structure unavailable", failure);
+            updateState(
+                new HologramState(
+                    localController.unavailable(HologramClient.text("controllerLocalUnavailable", "此控制器没有可用的本地标准结构"))));
+        }
+        localControllerPublished = true;
+        localController = null;
+        localControllerPreparation = null;
     }
 
     static HologramState controllerWaitingState(int dimension, int x, int y, int z) {
@@ -72,9 +136,13 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     }
 
     boolean controllerOpeningCurrent() {
+        return controllerRequest > 0 && HologramClient.controllerOpen.accepts(controllerRequest)
+            && controllerContextCurrent(true);
+    }
+
+    private boolean controllerContextCurrent(boolean assignedToolAllowed) {
         Minecraft client = minecraft();
-        if (controllerRequest == 0 || !HologramClient.controllerOpen.accepts(controllerRequest)
-            || client.thePlayer == null
+        if (openingController == null || client.thePlayer == null
             || client.theWorld == null
             || client.getNetHandler() != openingConnection
             || client.theWorld != openingController.getWorldObj()
@@ -87,7 +155,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         if (!ItemNekoHologramProjector.isProjector(held)) return false;
         String heldId = toolId(held);
         // Opening an unlinked projector assigns its ID server-side and can replace the local stack on sync.
-        if (openingToolId.isEmpty()) return held == openingTool || !heldId.isEmpty();
+        if (openingToolId.isEmpty()) return held == openingTool || assignedToolAllowed && !heldId.isEmpty();
         return openingToolId.equals(heldId);
     }
 
@@ -201,7 +269,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         if (detached) return;
         if (websiteConfirmationResumePending) websiteConfirmationResumePending = false;
         ui.canvas.resize();
-        if (controllerRequest == 0) HologramBackgroundTasks.restoreUi(ui);
+        if (controllerRequest == 0 && !localControllerStandard()) HologramBackgroundTasks.restoreUi(ui);
     }
 
     void resumeAfterWebsiteConfirmation() {
@@ -217,9 +285,12 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             if (detached) {
                 ui.tutorial.closeWithoutProgress();
                 endTutorialFields();
-            } else if (controllerRequest == 0) ui.router.onGuiClosed();
+            } else if (controllerRequest == 0 && !localControllerStandard() && !ui.session.localDocument())
+                ui.router.onGuiClosed();
             else org.lwjgl.input.Keyboard.enableRepeatEvents(false);
         } finally {
+            localController = null;
+            localControllerPreparation = null;
             // This hook runs on final MUI panel disposal, unlike onGuiClosed's
             // temporary website/NEI suspensions. Dormant graph GPU resources end here.
             java.util.Set<HologramUiModules> graphs = java.util.Collections
@@ -258,6 +329,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             HologramClient.controllerOpen.dismiss(controllerRequest);
             return;
         }
+        if (localControllerStandard() || ui.session.localDocument()) return;
         ui.memory.rememberUi();
         HologramBackgroundTasks.rememberUi(ui);
         if (ui.ae.aePreviewTransition()) ui.ae.aePreviewTransition(false);
@@ -272,6 +344,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     }
 
     public void updateScreen() {
+        if (minecraft().currentScreen == this) advanceLocalController();
         if (controllerRequest > 0) {
             if (!controllerOpeningCurrent()) closeControllerOpening();
             else try (FieldGraph ignored = fieldGraph(ui)) {

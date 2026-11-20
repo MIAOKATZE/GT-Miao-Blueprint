@@ -10,6 +10,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 
 import com.miaokatze.gtmb.client.hologram.HologramUiMemory.UiMemory;
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
 
 /** Internal session workflow; composed by the workstation, never part of the mod extension API. */
@@ -22,6 +23,38 @@ final class HologramUiSession {
     }
 
     private HologramState state;
+    private HologramLocalBlueprintDocument document;
+
+    boolean localDocument() {
+        return document != null && state.data.getBoolean("localBlueprintDocument");
+    }
+
+    HologramLocalBlueprintDocument document() {
+        return localDocument() ? document : null;
+    }
+
+    void installLocalDocument(HologramLocalBlueprintDocument document, HologramState initial) {
+        HologramScreen root = ui.host.parent();
+        if (root == null || !initial.data.getBoolean("localBlueprintDocument")) return;
+        root.updateState(initial);
+        root.ui.session.document = document;
+    }
+
+    void publishLocalDocument(HologramLocalBlueprintDocument document, HologramState next) {
+        if (document() == document) updateState(next);
+    }
+
+    void leaveLocalDocument() {
+        HologramScreen root = ui.host.parent();
+        if (!localDocument() || root == null) return;
+        HologramState previous = HologramClient.state;
+        if (previous != null && HologramClient.currentSnapshotWorld(ui.host.minecraft().theWorld)) {
+            document = null;
+            root.updateState(previous);
+        } else root.deferAction(
+            () -> ui.host.minecraft()
+                .displayGuiScreen(null));
+    }
 
     private java.util.function.BiConsumer<String, NBTTagCompound> tutorialSink;
     private final HologramTutorialGeneration tutorialGeneration = new HologramTutorialGeneration();
@@ -274,6 +307,7 @@ final class HologramUiSession {
     }
 
     boolean editable() {
+        if (localDocument() && ui.library.localBusy()) return false;
         if (HologramBackgroundTasks.busy()) return false;
         int job = this.state.data.getInteger("job");
         return !ui.session.areaImporting() && !this.state.data.getBoolean("targetClosed")
@@ -325,6 +359,14 @@ final class HologramUiSession {
             return;
         }
         if (controllerOpening()) return;
+        if (state.data.getBoolean("localStandardController")) {
+            if ("scan".equals(op)) {
+                HologramScreen root = ui.host.parent();
+                if (root != null) root.readLiveController();
+            }
+            return;
+        }
+        if (localDocument() && ui.library.localBusy()) return;
         if (!ui.diagnostics.captureRenderSmokeAction() && !HologramBackgroundTasks.commandAllowed(op)) return;
         sequence = Math.max(sequence, HologramBackgroundTasks.commandSequence(state.session));
         if ("switchEditorWorkspace".equals(op)) sequence = Math.max(sequence, HologramClient.editorWorkspaceSequence());
@@ -360,6 +402,10 @@ final class HologramUiSession {
         n.setLong("uiSequence", ++sequence);
         n.setLong("editorWorkspaceEpoch", state.data.getLong("editorWorkspaceEpoch"));
         ui.preview.recordSelectionCommand(op, sequence);
+        if (localDocument()) {
+            if (!ui.library.editLocalDocument(op, n) && !"close".equals(op)) notice("当前操作尚未接入本地蓝图工作台");
+            return;
+        }
         if (pending) {
             notice = "";
             pendingSequence(sequence);

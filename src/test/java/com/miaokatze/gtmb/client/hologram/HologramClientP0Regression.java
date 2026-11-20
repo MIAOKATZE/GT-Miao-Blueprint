@@ -13,13 +13,16 @@ import java.util.concurrent.TimeUnit;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.WorldClient;
+import net.minecraft.init.Blocks;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
+import net.minecraft.tileentity.TileEntity;
 
 import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
+import com.miaokatze.gtmb.hologram.HologramLocalControllerCapture;
 import com.miaokatze.gtmb.hologram.HologramSnapshotAssembly;
 import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
@@ -50,6 +53,7 @@ public final class HologramClientP0Regression {
             Minecraft minecraft = (Minecraft) unsafe.allocateInstance(new DetachedLoader().minecraftClass());
             try {
                 singleton.set(null, minecraft);
+                localControllerHeader();
                 actualCaptureLifecycle();
                 nonblockingReceive(unsafe, minecraft);
             } finally {
@@ -60,6 +64,33 @@ public final class HologramClientP0Regression {
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("client P0 production lifecycle", failure);
         }
+    }
+
+    private static void localControllerHeader() {
+        TileEntity source = new TileEntity() {
+
+            @Override
+            public net.minecraft.block.Block getBlockType() {
+                return Blocks.furnace;
+            }
+        };
+        source.xCoord = 17;
+        source.yCoord = 62;
+        source.zCoord = -8;
+        HologramLocalControllerCapture task = new HologramLocalControllerCapture(source, 4, 2);
+        NBTTagCompound opening = task.opening();
+        SimpleAssert.that(opening.getBoolean("localStandardController"), "native workbench recognizes local source");
+        SimpleAssert.that(opening.getBoolean("capturePending"), "local geometry generation temporarily gates edits");
+        SimpleAssert.eq("projection", opening.getString("editorWorkspace"), "preserve original structure workspace");
+        SimpleAssert.eq(-8, opening.getInteger("z"), "display follows the source controller anchor");
+        for (String serverField : new String[] { "controllerOpenId", "controllerOpening", "snapshotPending",
+            "planRevision", "placementReviewNonce", "toolId" })
+            SimpleAssert.that(!opening.hasKey(serverField), "local preview cannot invent " + serverField);
+        NBTTagCompound unavailable = task.unavailable("local fixture unsupported");
+        SimpleAssert.that(unavailable.getBoolean("localStructureUnavailable"), "unavailable stays in the local view");
+        SimpleAssert.that(!unavailable.getBoolean("capturePending"), "unavailable result retires the local task");
+        SimpleAssert
+            .eq(opening.getString("session"), unavailable.getString("session"), "unavailable stays in workbench");
     }
 
     private static void actualCaptureLifecycle() {

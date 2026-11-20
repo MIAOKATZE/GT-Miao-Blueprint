@@ -197,6 +197,26 @@ public final class HologramNetwork {
         else channel.sendToServer(new Action(tag));
     }
 
+    /** Complete compression on the client worker before committing the explicit placement request. */
+    public static Action prepareProjectedPlacement(NBTTagCompound tag) throws IOException {
+        if (!"projectedPlacement".equals(tag.getString("action"))) throw new IOException("未知的施工请求");
+        Action action = new Action(tag);
+        byte[] bytes = CompressedStreamTools.compress(action.tag);
+        // The GZIP trailer of the buffer we just produced contains its uncompressed byte count.
+        int trailer = bytes.length - 4;
+        long expanded = (bytes[trailer] & 255L) | (bytes[trailer + 1] & 255L) << 8
+            | (bytes[trailer + 2] & 255L) << 16
+            | (bytes[trailer + 3] & 255L) << 24;
+        if (bytes.length > MAX_BYTES || expanded > action.expandedBudget())
+            throw new IOException("本次施工请求超过单包上限，请缩小施工选区");
+        ((Packet) action).prepared = bytes;
+        return action;
+    }
+
+    public static void sendPreparedPlacement(Action action) {
+        if (channel != null && ((Packet) action).prepared != null) channel.sendToServer(action);
+    }
+
     static void clientActionFailure(NBTTagCompound action, String reason) {
         NBTTagCompound state = new NBTTagCompound();
         state.setBoolean("transportError", true);
@@ -525,8 +545,8 @@ public final class HologramNetwork {
 
     public static void sendState(EntityPlayerMP player, NBTTagCompound tag) {
         if (channel == null) return;
-        // Configuration replies have no workspace nonce and must not replace its snapshot outbox.
-        if (tag.getBoolean("voucherEditor")) {
+        // Standalone replies have no workspace nonce and must not replace its snapshot outbox.
+        if (tag.getBoolean("voucherEditor") || tag.hasKey("placementRequestId", 8)) {
             if (progressConnected(player)) channel.sendTo(new State(tag), player);
             return;
         }
@@ -1319,6 +1339,7 @@ public final class HologramNetwork {
     public static class Packet implements IMessage {
 
         NBTTagCompound tag = new NBTTagCompound();
+        private byte[] prepared;
 
         public Packet() {}
 
@@ -1350,7 +1371,7 @@ public final class HologramNetwork {
 
         public void toBytes(ByteBuf buf) {
             try {
-                byte[] bytes = CompressedStreamTools.compress(tag);
+                byte[] bytes = prepared == null ? CompressedStreamTools.compress(tag) : prepared;
                 if (bytes.length > MAX_BYTES) throw new IllegalArgumentException("hologram packet size");
                 buf.writeInt(bytes.length);
                 buf.writeBytes(bytes);
@@ -1417,8 +1438,11 @@ public final class HologramNetwork {
             // Packet decompression is already bounded. Large index selections must not be rejected
             // because their textual representation exceeds an unrelated string budget.
             net.minecraft.world.World world = player.worldObj;
-            ServerTaskScheduler
-                .scheduleServerTask(() -> runQueuedAction(player, world, lease,
+            ServerTaskScheduler.scheduleServerTask(
+                () -> runQueuedAction(
+                    player,
+                    world,
+                    lease,
                     () -> HologramControllerOpen.dispatch(player, msg.tag, () -> dispatch(player, msg.tag))));
             return null;
         }
@@ -1442,6 +1466,14 @@ public final class HologramNetwork {
     private static void dispatch(EntityPlayerMP player, NBTTagCompound tag) {
         if (snapshotFlowAction(player, tag)) return;
         String action = tag.getString("action");
+        if ("projectedPlacement".equals(action)) {
+            HologramProjectedPlacementService.receive(player, tag);
+            return;
+        }
+        if ("cancelProjectedPlacement".equals(action)) {
+            HologramProjectedPlacementService.cancel(player, tag.getString("placementRequestId"));
+            return;
+        }
         if (HologramDemolition.active(player) && !action.isEmpty()) {
             HologramBusyReplies.reject(player, tag, HologramBusyReplies.Kind.ACTION);
             player.addChatMessage(new net.minecraft.util.ChatComponentText("拆除正在进行，请等待完成或按 Esc 取消"));

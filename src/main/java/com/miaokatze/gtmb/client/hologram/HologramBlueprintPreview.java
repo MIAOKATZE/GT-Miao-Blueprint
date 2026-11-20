@@ -41,12 +41,12 @@ import org.lwjgl.opengl.GL11;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLiteRenderScope;
-import com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLiteTarget;
 import com.miaokatze.gtmb.hologram.HologramAeNativePreview;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec;
 import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteRenderScope;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteTarget;
 
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.EventPriority;
