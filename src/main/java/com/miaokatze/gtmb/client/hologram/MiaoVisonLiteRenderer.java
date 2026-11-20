@@ -2162,11 +2162,6 @@ abstract class MiaoVisonLiteRenderer {
                         stage++;
                         if (stage == 1) regions = state.regions.regions.entrySet()
                             .iterator();
-                        else {
-                            occupancy.clear();
-                            bits = null;
-                            java.util.Arrays.fill(neighbors, null);
-                        }
                         entry = null;
                         continue;
                     }
@@ -2229,6 +2224,11 @@ abstract class MiaoVisonLiteRenderer {
         void discardProjectedPoints() {
             projectedPages = null;
             projectedBytes = 0;
+            if (complete()) {
+                occupancy.clear();
+                bits = null;
+                java.util.Arrays.fill(neighbors, null);
+            }
         }
 
         private void writePoints(HologramEditorCameraFrame frame, HologramState.Cell cell, double[] output, int at) {
