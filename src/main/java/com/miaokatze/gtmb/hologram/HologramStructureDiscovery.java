@@ -40,16 +40,24 @@ final class HologramStructureDiscovery {
     }
 
     static IConstructable constructable(TileEntity tile, Object controller, int side) {
-        if (tile instanceof IConstructableProvider) return ((IConstructableProvider) tile).getConstructable();
+        if (tile instanceof IConstructableProvider provider) {
+            IConstructable supplied = provider.getConstructable();
+            if (supplied != null) return supplied;
+        }
         if (tile instanceof IConstructable) return (IConstructable) tile;
-        if (tile != null && IMultiblockInfoContainer.contains(tile.getClass())) {
+        IMultiblockInfoContainer<TileEntity> container = tile == null ? null
+            : IMultiblockInfoContainer.get(tile.getClass());
+        if (container != null) {
             ExtendedFacing facing = tile instanceof IAlignment ? ((IAlignment) tile).getExtendedFacing()
                 : ExtendedFacing.of(ForgeDirection.getOrientation(side));
-            return IMultiblockInfoContainer.<TileEntity>get(tile.getClass())
-                .toConstructable(tile, facing);
+            IConstructable supplied = container.toConstructable(tile, facing);
+            if (supplied != null) return supplied;
         }
-        if (controller instanceof IConstructableProvider)
-            return ((IConstructableProvider) controller).getConstructable();
+        if (controller == tile) return null;
+        if (controller instanceof IConstructableProvider provider) {
+            IConstructable supplied = provider.getConstructable();
+            if (supplied != null) return supplied;
+        }
         return controller instanceof IConstructable ? (IConstructable) controller : null;
     }
 }

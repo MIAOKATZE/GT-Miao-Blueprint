@@ -23,12 +23,8 @@ import net.minecraftforge.common.util.ForgeDirection;
 import org.lwjgl.input.Keyboard;
 
 import com.gtnewhorizon.structurelib.StructureLibAPI;
-import com.gtnewhorizon.structurelib.alignment.IAlignment;
 import com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor;
 import com.gtnewhorizon.structurelib.alignment.constructable.IConstructable;
-import com.gtnewhorizon.structurelib.alignment.constructable.IConstructableProvider;
-import com.gtnewhorizon.structurelib.alignment.constructable.IMultiblockInfoContainer;
-import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
 import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 import com.miaokatze.gtmb.hologram.HologramService;
@@ -2354,15 +2350,7 @@ public final class HologramClient {
             || mc.thePlayer.dimension != snapshot.data.getInteger("dimension")) return;
         TileEntity tile = mc.theWorld
             .getTileEntity(snapshot.data.getInteger("x"), snapshot.data.getInteger("y"), snapshot.data.getInteger("z"));
-        IConstructable target = null;
-        if (tile instanceof IConstructableProvider) target = ((IConstructableProvider) tile).getConstructable();
-        else if (tile instanceof IConstructable) target = (IConstructable) tile;
-        else if (tile != null && IMultiblockInfoContainer.contains(tile.getClass())) {
-            ExtendedFacing facing = tile instanceof IAlignment ? ((IAlignment) tile).getExtendedFacing()
-                : ExtendedFacing.of(ForgeDirection.getOrientation(snapshot.data.getInteger("side")));
-            target = IMultiblockInfoContainer.<TileEntity>get(tile.getClass())
-                .toConstructable(tile, facing);
-        }
+        IConstructable target = HologramService.nativeConstructable(tile, snapshot.data.getInteger("side"));
         ItemStack held = mc.thePlayer.getHeldItem();
         if (target == null || held == null) return;
         ItemStack trigger = held.copy();
