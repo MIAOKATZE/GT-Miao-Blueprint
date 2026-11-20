@@ -95,6 +95,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     private String previewKey = "";
     private List<Face> cachedFaces = new ArrayList<>();
     private PreviewSubmission previewSubmission;
+    private final HologramScreenLinePrefix editorLines = new HologramScreenLinePrefix();
     private List<Face> hoverFaces;
     private MaterialPresentation materialPresentation;
     private long materialSerial;
@@ -222,6 +223,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     }
 
     private void releasePreview() {
+        editorLines.close();
         projectedFrame = presentedFrame = null;
         projectedRequest = presentedRequest = null;
         cameraOnlyProjection = previewCameraMoving = false;
@@ -420,6 +422,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     }
 
     void sceneClosed() {
+        editorLines.close();
         if (previewPreparation != null) previewPreparation.closeDetached();
         invalidatePreviewDrawCache();
         session.clearPresentation();
@@ -952,11 +955,27 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                     lineLimit = previewLineBatchLimit(t);
                 }
             }
+            boolean reuseEditorLines = streamedLines && assets == HologramPreviewAssets.EDITOR
+                && allowCapture && !cameraChanged && !displaced && state.data.getBoolean("localBlueprintDocument")
+                && !state.data.getBoolean("displayPartial") && state.cells.size() >= LARGE_BROWSE_CELLS
+                && cachedOutlines.size() >= HologramScreenLinePrefix.BOXES;
             try {
+                if (reuseEditorLines) {
+                    firstOutline = editorLines.begin(t, state.identity, projectedFrame, cachedOutlines,
+                        cachedOutlines.size(), selection, selection == null ? 0 : selection.version(),
+                        selected, outlineDensity, depthScale);
+                    outlinedCells = editorLines.replayedVertices / 24;
+                    outlineDrawn = outlinedCells != 0;
+                } else editorLines.close();
                 if (!streamedLines) t.startDrawing(GL11.GL_LINES);
                 if (selection != null) selection.related(state);
                 if (!cleanCapture)
                     for (int at = firstOutline; at < cachedOutlines.size(); at++) {
+                        if (reuseEditorLines && at == editorLines.packetEnd() && editorLines.recording()) {
+                            editorLines.finishPacket();
+                            lineVertices = 0;
+                        }
+                        boolean recording = reuseEditorLines && editorLines.recording();
                         Face face = cachedOutlines.get(at);
                         boolean chosen = face.cell.index == selected
                             || selection != null && selection.contains(face.cell.index);
@@ -981,13 +1000,17 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                         float red = chosen ? 1 : relatedCasing ? .78f : .2f,
                             green = chosen ? .92f : relatedCasing ? .61f : .7f,
                             blue = chosen ? .5f : relatedCasing ? 1 : .8f;
-                        if (streamedLines) previewLineStream.color(red, green, blue, alpha);
+                        if (recording) editorLines.color(red, green, blue, alpha);
+                        else if (streamedLines) previewLineStream.color(red, green, blue, alpha);
                         else t.setColorRGBA_F(red, green, blue, alpha);
                         for (int corner = 0; corner < cornerDepths.length; corner++)
                             cornerDepths[corner] = face.points[corner * 3 + 2] * depthScale + .15;
                         for (int[] edge : EDGES) {
                             int a = edge[0] * 3, b = edge[1] * 3;
-                            if (streamedLines) previewLineStream.line(
+                            if (recording) {
+                                editorLines.vertex(face.points[a], face.points[a + 1], cornerDepths[edge[0]]);
+                                editorLines.vertex(face.points[b], face.points[b + 1], cornerDepths[edge[1]]);
+                            } else if (streamedLines) previewLineStream.line(
                                 face.points[a], face.points[a + 1], cornerDepths[edge[0]],
                                 face.points[b], face.points[b + 1], cornerDepths[edge[1]]);
                             else {
@@ -1000,10 +1023,14 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                         lineVertices += 24;
                         if (PREVIEW_TIMINGS != null) outlinedCells++;
                     }
+                if (reuseEditorLines && editorLines.recording()) editorLines.finishPacket();
                 if (!streamedLines && (residentOutline == null || lineLimit == 0
                     || lineVertices != lineLimit
                     || !residentOutline.record(t, lineVertices, cachedOutlines.size()))) t.draw();
                 if (residentOutline != null && lineVertices == 0) residentOutline.restoreEmptyTail(t);
+            } catch (RuntimeException | Error failed) {
+                if (reuseEditorLines) editorLines.close();
+                throw failed;
             } finally {
                 if (streamedLines) previewLineStream.end();
             }
@@ -1015,7 +1042,8 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                     outlinedCells * 24,
                     streamedLines,
                     boundaryVertices,
-                    residentOutline);
+                    residentOutline,
+                    reuseEditorLines ? editorLines : null);
             }
             if (budgeted && outlineDrawn && !previewPreparation.outlineObserved) {
                 previewPreparation.outlineObserved = true;
@@ -1187,7 +1215,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         }
 
         void outline(float density, float width, int vertices, boolean stream, int boundary,
-            MiaoVisonLiteOutline cache) {
+            MiaoVisonLiteOutline cache, HologramScreenLinePrefix editor) {
             outlineDensity = density;
             lineWidth = width;
             outlineVertices = vertices;
@@ -1196,6 +1224,11 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             replayedOutlineVertices = cache == null ? 0 : cache.replayedVertices();
             recordedOutlineBatches = cache == null ? 0 : cache.recordings();
             residentOutlineBytes = cache == null ? 0 : cache.retainedBytes();
+            if (editor != null) {
+                replayedOutlineVertices = editor.replayedVertices;
+                recordedOutlineBatches = editor.recordings;
+                residentOutlineBytes = editor.retainedBytes();
+            }
         }
 
         void end(boolean complete, PreviewBoundary boundary) {

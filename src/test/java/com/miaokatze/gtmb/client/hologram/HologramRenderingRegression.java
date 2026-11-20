@@ -33,6 +33,7 @@ public final class HologramRenderingRegression {
         occupancyBoundary();
         detachedTopologyRuns();
         editorDescriptorOwnership();
+        HologramScreenLinePrefixRegression.run();
         worldRegionCandidates();
         sourceSwitchFence();
         cameraNavigationWhilePreparing();
