@@ -94,6 +94,10 @@ final class HologramTextures {
         snapshot = null;
     }
 
+    static void releaseSnapshot(HologramState state) {
+        if (snapshot == state) clear();
+    }
+
     static void begin(HologramState state) {
         installReloadListener();
         if (snapshot != state) {
@@ -128,8 +132,7 @@ final class HologramTextures {
         installReloadListener();
         current = current || cell.anchor || (cell.status.equals("protected") && cell.actualStack != null);
         ItemStack stack = current ? cell.actualStack : cell.targetStack;
-        NBTTagCompound display = current ? cell.actualDisplay : cell.targetDisplay;
-        if (!cell.iconOnly && !machine(stack) && !display.hasKey("gt.covers", 9)) {
+        if (!cell.iconOnly && !machine(stack) && !cell.hasDisplayTag(current, "gt.covers", 9)) {
             // This part of resolve reads only the registered block and metadata. A repeated ordinary
             // block does not need a per-cell entry or a serialized copy of its display and item tags.
             Map<Integer, Material> variants = PLAIN
@@ -159,11 +162,11 @@ final class HologramTextures {
             + ":"
             + cell.iconOnly
             + ":"
-            + Arrays.toString(cell.hintIcons)
+            + cell.hintIconKey()
             + ":"
             + Arrays.toString(cell.hintTint);
         key += ":" + (current ? cell.actualFacing : cell.targetFacing);
-        key += ":" + (current ? cell.actualDisplay : cell.targetDisplay);
+        key += ":" + cell.display(current);
         Material material = CACHE.get(key);
         if (material == null) {
             material = resolve(cell, current);
@@ -202,12 +205,12 @@ final class HologramTextures {
         int meta = current || cell.anchor ? cell.meta : cell.wantMeta;
         ItemStack stack = current || cell.anchor ? cell.actualStack : cell.targetStack;
         boolean gt = machine(stack);
-        NBTTagCompound display = current ? cell.actualDisplay : cell.targetDisplay;
+        NBTTagCompound display = gt || cell.hasDisplayTag(current, "gt.covers", 9) ? cell.display(current) : null;
         boolean pipe = false;
         float thickness = 1;
         ITexture[][] textures = null;
         int front = current ? cell.actualFacing : cell.targetFacing;
-        if (front < 0 && display.hasKey("facing")) front = display.getInteger("facing");
+        if (front < 0) front = cell.displayInteger(current, "facing", front);
         int[] textureSides = { 0, 1, 2, 3, 4, 5 };
         try {
             if (gt) {
@@ -235,8 +238,10 @@ final class HologramTextures {
                 if (textures != null && side < textures.length && textures[side] != null)
                     for (ITexture texture : textures[side]) append(sides[side], texture, sourceSide, 0);
                 if (gt && sides[side].isEmpty()) fallback = true;
-                if (sides[side].isEmpty() && cell.iconOnly && !cell.hintIcons[side].isEmpty())
-                    sides[side].add(new Sample(atlas.getAtlasSprite(cell.hintIcons[side]), cell.textureColor()));
+                if (sides[side].isEmpty() && cell.iconOnly
+                    && !cell.hintIcon(side)
+                        .isEmpty())
+                    sides[side].add(new Sample(atlas.getAtlasSprite(cell.hintIcon(side)), cell.textureColor()));
                 if (sides[side].isEmpty() && block != null && block != Blocks.air) {
                     IIcon icon = block.getIcon(side, meta);
                     if (icon != null) sides[side].add(new Sample(icon, block.getRenderColor(meta)));
@@ -250,8 +255,8 @@ final class HologramTextures {
             }
         }
         int coverMask = 0;
-        NBTTagList rows = display.getTagList("gt.covers", 10);
-        for (int i = 0; i < rows.tagCount(); i++) {
+        NBTTagList rows = display == null ? null : display.getTagList("gt.covers", 10);
+        for (int i = 0; rows != null && i < rows.tagCount(); i++) {
             NBTTagCompound row = rows.getCompoundTagAt(i);
             int side = row.getByte("s");
             if (side < 0 || side >= 6) continue;

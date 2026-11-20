@@ -96,6 +96,8 @@ final class HologramLibraryClient {
         4,
         .75f,
         true);
+    private static final long LOCAL_PREVIEW_CACHE_BYTES = 32L * 1024 * 1024;
+    private static final long ESTIMATED_CELL_BYTES = 512L;
     private boolean displayPlacement, localDisplayTask;
     private long displayEpoch;
     private boolean displayFirstPublished;
@@ -1695,6 +1697,8 @@ final class HologramLibraryClient {
 
     void clearBrowsePreview() {
         MiaoVisonLiteRenderer.cancelBrowseTopology(browseState);
+        if (browseState != null && browseState.cells.size() * ESTIMATED_CELL_BYTES > LOCAL_PREVIEW_CACHE_BYTES)
+            MiaoVisonLiteRenderer.releaseInactiveBrowse(browseState);
         browseEpoch++;
         browseRendering = false;
         releaseBrowseImage();
@@ -1835,23 +1839,25 @@ final class HologramLibraryClient {
 
     void retainDisplaySource(DisplaySource source) {
         if (source.json != null) synchronized (localPreviews) {
+            localPreviews.remove(source.key);
+            // Reject an over-budget source even when it would be the only cache entry.
+            if (retainedPreviewBytes(source) > LOCAL_PREVIEW_CACHE_BYTES) return;
             localPreviews.put(source.key, source);
             long retained = 0;
-            for (DisplaySource entry : localPreviews.values()) retained += entry.json.length
-                + (entry.artifact == null ? 0L : entry.artifact.length)
-                + (entry.state == null ? 0L : entry.state.cells.size() * 512L)
-                + (entry.thumbnail == null ? 0L : (long) entry.thumbnail.getWidth() * entry.thumbnail.getHeight() * 4);
+            for (DisplaySource entry : localPreviews.values()) retained += retainedPreviewBytes(entry);
             java.util.Iterator<DisplaySource> entries = localPreviews.values()
                 .iterator();
-            while (localPreviews.size() > 1 && (localPreviews.size() > 4 || retained > 64L * 1024 * 1024)) {
-                DisplaySource retired = entries.next();
-                retained -= retired.json.length + (retired.artifact == null ? 0L : retired.artifact.length)
-                    + (retired.state == null ? 0L : retired.state.cells.size() * 512L)
-                    + (retired.thumbnail == null ? 0L
-                        : (long) retired.thumbnail.getWidth() * retired.thumbnail.getHeight() * 4);
+            while (localPreviews.size() > 4 || retained > LOCAL_PREVIEW_CACHE_BYTES) {
+                retained -= retainedPreviewBytes(entries.next());
                 entries.remove();
             }
         }
+    }
+
+    private static long retainedPreviewBytes(DisplaySource source) {
+        return source.json.length + (source.artifact == null ? 0L : source.artifact.length)
+            + (source.state == null ? 0L : source.state.cells.size() * ESTIMATED_CELL_BYTES)
+            + (source.thumbnail == null ? 0L : (long) source.thumbnail.getWidth() * source.thumbnail.getHeight() * 4);
     }
 
     /** A miss may compress its in-memory transport representation; the source file stays byte-exact. */

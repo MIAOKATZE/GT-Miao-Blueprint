@@ -209,7 +209,8 @@ final class HologramAeNativePreviewSmoke {
         HologramBlockAccess access = new HologramBlockAccess(state, current);
         StringBuilder receipt = new StringBuilder();
         for (HologramState.Cell cell : state.cells) {
-            NBTTagCompound before = (NBTTagCompound) (current ? cell.actualDisplay : cell.targetDisplay).copy();
+            NBTTagCompound before = (NBTTagCompound) cell.display(current)
+                .copy();
             Block block = cell.block(current);
             BlockRenderInfo info = ((AEBaseBlock) block).getRendererInstance();
             @SuppressWarnings("unchecked")
@@ -249,9 +250,7 @@ final class HologramAeNativePreviewSmoke {
                         .usesIcon(cell, current, ((BlockInterface) block).getRenderTexture(1, iface.getColor())),
                     "native colored directional Interface arrow atlas");
             }
-            check(
-                before.equals(current ? cell.actualDisplay : cell.targetDisplay),
-                "render leaves complete snapshot unchanged");
+            check(before.equals(cell.display(current)), "render leaves complete snapshot unchanged");
             receipt.append(cell.wantId)
                 .append("@")
                 .append(cell.index)

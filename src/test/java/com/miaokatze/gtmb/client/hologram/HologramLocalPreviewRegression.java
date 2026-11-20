@@ -20,6 +20,7 @@ public final class HologramLocalPreviewRegression {
         admissionReceipts();
         compactDisplay();
         compactDirectDisplay();
+        compactDenseRegion();
         sharedPlainDisplay();
         sourceReuse();
         earlyDisplay();
@@ -106,11 +107,13 @@ public final class HologramLocalPreviewRegression {
             row.addProperty("item", i % 2 == 0 ? "minecraft:stonebrick" : "minecraft:stained_glass");
             row.addProperty("metadata", i % 2);
             row.addProperty("damage", i % 2);
+            row.addProperty("facing", i % 2 == 0 ? 4 : 2);
             if (i % 4 == 1) {
                 row.addProperty("tileNbt", tag);
                 row.addProperty("itemNbt", tag);
                 row.addProperty("unknownMaterialField", "present only in portable source");
             }
+            if (i == 3 || i == 7) row.addProperty("itemNbt", tag);
             if (i == 17) row.addProperty("excluded", true);
             rows.add(row);
         }
@@ -173,19 +176,32 @@ public final class HologramLocalPreviewRegression {
             "distance outside the merged negative and positive regions matches the expanded source");
         SimpleAssert
             .that(early.cells.get(0) == rendered.cells.get(0), "early and final states share completed cell identity");
+        for (HologramState.Cell cell : rendered.cells) {
+            SimpleAssert.that(
+                rendered.regions.at(cell.x, cell.y, cell.z) == cell,
+                "each sparse compact lookup returns the original cell at signed coordinates");
+            SimpleAssert.that(
+                rendered.regions.at(cell.x, cell.y, cell.z + 1) == null,
+                "sparse compact lookup distinguishes unoccupied neighboring positions");
+        }
+        compactDisplayOwnership(early, rendered, payload);
         SimpleAssert.that(
             rendered.cells.get(1)
                 .descriptorIdentity()
                 == rendered.cells.get(5)
                     .descriptorIdentity(),
             "identical packed NBT data resolves once without sharing mutable tile payloads");
-        rendered.cells.get(1).targetDisplay.getCompoundTag("nativeTile")
+        rendered.cells.get(1)
+            .display(false)
+            .getCompoundTag("nativeTile")
             .setInteger("configuration", 123);
         rendered.cells.get(1).targetStack.getTagCompound()
             .setInteger("configuration", 456);
         SimpleAssert.eq(
             payload,
-            rendered.cells.get(5).targetDisplay.getCompoundTag("nativeTile"),
+            rendered.cells.get(5)
+                .display(false)
+                .getCompoundTag("nativeTile"),
             "another cell retains its independent exact tile payload");
         SimpleAssert.eq(
             payload,
@@ -195,6 +211,66 @@ public final class HologramLocalPreviewRegression {
             .that(Arrays.equals(original, exact), "direct display retains the portable source bytes for admission");
 
         compactPayloadBudget();
+    }
+
+    private static void compactDisplayOwnership(HologramState early, HologramState rendered, NBTTagCompound payload)
+        throws ReflectiveOperationException {
+        HologramState.Cell first = early.cells.get(0), second = rendered.cells.get(2);
+        SimpleAssert.that(first.descriptorIdentity() == second.descriptorIdentity(), "plain rows reuse the prototype");
+        SimpleAssert.eq(4, first.displayInteger(false, "facing", -1), "lazy scalar read keeps target facing");
+        SimpleAssert.that(!first.hasDisplayTag(false, "nativeTile", 10), "lazy native-route test keeps absence");
+        SimpleAssert.that(!first.hasDisplayTag(true, "color", 3), "lazy scalar read keeps actual display empty");
+        SimpleAssert.eq("", first.specialHint("hint"), "compact rows have no hint text");
+        SimpleAssert.eq("", first.hintIcon(0), "compact rows have no hint icons");
+        SimpleAssert.that(
+            first.hintIcons == null && first.hintTint == second.hintTint && first.candidates == second.candidates,
+            "plain compact rows allocate no per-cell hint arrays or candidate lists");
+        for (String key : Arrays.asList("targetDisplay", "actualDisplay", "specialHint")) {
+            java.lang.reflect.Field field = HologramState.Cell.class.getDeclaredField(key);
+            field.setAccessible(true);
+            SimpleAssert.that(
+                field.get(first) == null && field.get(second) == null,
+                "compact read-only checks create no per-cell display tree");
+        }
+        NBTTagCompound target = first.display(false);
+        target.setInteger("color", 7);
+        first.display(true)
+            .setInteger("color", 19);
+        SimpleAssert.that(first.display(false) == target, "promoted mutable display is stable for its own cell");
+        SimpleAssert.eq(7, first.displayInteger(false, "color", 0), "the owning cell sees its mutable display");
+        SimpleAssert.eq(-1, second.displayInteger(false, "color", 0), "promotion never mutates the common descriptor");
+        SimpleAssert.that(!second.hasDisplayTag(true, "color", 3), "actual display promotion remains independent");
+        SimpleAssert.that(first.targetStack != second.targetStack, "plain target stacks stay independently mutable");
+        first.targetStack.setItemDamage(3);
+        SimpleAssert.eq(0, second.targetStack.getItemDamage(), "changing a plain target stack stays local");
+
+        HologramState.Cell itemFirst = rendered.cells.get(3), itemSecond = rendered.cells.get(7);
+        SimpleAssert.that(
+            !itemFirst.hasDisplayTag(false, "nativeTile", 10)
+                && itemFirst.descriptorIdentity() == itemSecond.descriptorIdentity(),
+            "identical item-only payloads reuse a descriptor without entering the plain route");
+        itemFirst.targetStack.getTagCompound()
+            .setInteger("configuration", 28);
+        SimpleAssert.eq(payload, itemSecond.targetStack.getTagCompound(), "item-only payload ownership stays separate");
+    }
+
+    private static void compactDenseRegion() {
+        HologramRegionCache.Builder builder = new HologramRegionCache.Builder(true);
+        HologramState.Cell[] expected = new HologramState.Cell[4096];
+        for (int i = 0; i < 1025; i++) {
+            int local = (i * 113) & 4095;
+            NBTTagCompound row = new NBTTagCompound();
+            row.setInteger("x", -16 + (local >> 8));
+            row.setInteger("y", -32 + (local >> 4 & 15));
+            row.setInteger("z", -48 + (local & 15));
+            expected[local] = new HologramState.Cell(i, row);
+            builder.add(expected[local]);
+        }
+        SimpleAssert.that(builder.sealNext() && !builder.sealNext(), "one dense compact region seals once");
+        HologramRegionCache region = builder.finish();
+        for (int local = 0; local < expected.length; local++) SimpleAssert.that(
+            region.at(-16 + (local >> 8), -32 + (local >> 4 & 15), -48 + (local & 15)) == expected[local],
+            "dense compact lookup preserves cell identity and empty positions");
     }
 
     private static void compactPayloadBudget() throws Exception {
@@ -266,9 +342,14 @@ public final class HologramLocalPreviewRegression {
                 .descriptorIdentity() == shared.cells.get(4),
             "unrecognized descriptor fields follow the independent path");
         first.targetStack.setItemDamage(3);
-        first.targetDisplay.setInteger("color", 7);
+        first.display(false)
+            .setInteger("color", 7);
         SimpleAssert.eq(0, second.targetStack.getItemDamage(), "shared display stacks remain privately mutable");
-        SimpleAssert.eq(-1, second.targetDisplay.getInteger("color"), "shared display NBT remains privately mutable");
+        SimpleAssert.eq(
+            -1,
+            second.display(false)
+                .getInteger("color"),
+            "shared display NBT remains privately mutable");
         SimpleAssert.that(!HologramTextures.partial(second, false), "ordinary visibility needs no atlas access");
 
         java.lang.reflect.Field nodes = HologramLinkNodePreview.class.getDeclaredField("NODES");

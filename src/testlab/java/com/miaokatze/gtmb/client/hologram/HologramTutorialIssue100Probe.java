@@ -289,6 +289,7 @@ public final class HologramTutorialIssue100Probe {
 
     @SubscribeEvent
     public void guiPost(GuiScreenEvent.DrawScreenEvent.Post event) {
+        if (!complete && stage == 1 && localPreviewStages != null) localPreviewStages.guiPost(event.gui, frame);
         if (!complete && stage == 3 && event.gui == screen) postFrame = frame;
     }
 
@@ -296,6 +297,14 @@ public final class HologramTutorialIssue100Probe {
     public void render(TickEvent.RenderTickEvent event) {
         if (complete || event.phase != TickEvent.Phase.END) return;
         frame++;
+        if (stage == 1 && localPreviewStages != null) {
+            try {
+                localPreviewStages.renderTail(frame);
+            } catch (Exception problem) {
+                if (failure == null) failure = problem.toString();
+                transition(6);
+            }
+        }
         if (stage != 3 || Minecraft.getMinecraft().currentScreen != screen || postFrame != frame - 1) return;
         try {
             NBTTagCompound state = screen.ui.tutorial.diagnosticState();
@@ -462,6 +471,7 @@ public final class HologramTutorialIssue100Probe {
         Map<String, Object> status = new LinkedHashMap<>();
         status.put("runId", run);
         status.put("stage", stage);
+        if (localPreviewStages != null) status.put("localPreviewStages", localPreviewStages.progress());
         status.put("frame", frame);
         status.put("worldFrames", worldFrames);
         status.put("activeTutorialWorldFrames", activeWorldFrames);

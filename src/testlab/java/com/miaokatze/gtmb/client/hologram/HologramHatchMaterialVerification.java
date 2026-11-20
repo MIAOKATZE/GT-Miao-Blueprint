@@ -85,7 +85,11 @@ public final class HologramHatchMaterialVerification {
                     row.setInteger("step", step);
                     row.setInteger("texturePage", PAGE);
                     row.setInteger("textureIndex", casing);
-                    row.setTag("capturedNativeDisplay", state.cells.get(0).targetDisplay.copy());
+                    row.setTag(
+                        "capturedNativeDisplay",
+                        state.cells.get(0)
+                            .display(false)
+                            .copy());
                     row.setTag("nativeAtlasFaces", nativeFaces(material));
                     sequences.appendTag(row);
                 }

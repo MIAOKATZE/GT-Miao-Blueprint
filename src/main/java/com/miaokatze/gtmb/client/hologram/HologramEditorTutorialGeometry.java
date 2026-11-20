@@ -44,10 +44,10 @@ final class HologramEditorTutorialGeometry {
             boolean actual = cell.anchor && cell.actualStack != null;
             row.setString("block", actual ? cell.id : cell.wantId);
             row.setInteger("meta", actual ? cell.meta : cell.wantMeta);
-            NBTTagCompound display = actual ? cell.actualDisplay : cell.targetDisplay;
-            if (display.hasKey("nativeTile", 10)) row.setTag(
+            if (cell.hasDisplayTag(actual, "nativeTile", 10)) row.setTag(
                 "tile",
-                display.getCompoundTag("nativeTile")
+                cell.display(actual)
+                    .getCompoundTag("nativeTile")
                     .copy());
             row.setTag("observedCell", cell.tag());
             cells.appendTag(row);

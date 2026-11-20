@@ -496,9 +496,11 @@ final class HologramUiAeReview {
 
     NBTTagCompound aePreviewPayload(HologramState.Cell cell) {
         // Read only the existing server-issued display snapshot. Recognition must not run native analysis.
-        if (cell.targetDisplay.hasKey("nativeTile", 10)) return cell.targetDisplay.getCompoundTag("nativeTile");
-        if (cell.wantId.equals(cell.id) && cell.wantMeta == cell.meta)
-            return cell.actualDisplay.getCompoundTag("nativeTile");
+        if (cell.hasDisplayTag(false, "nativeTile", 10)) return cell.display(false)
+            .getCompoundTag("nativeTile");
+        if (cell.wantId.equals(cell.id) && cell.wantMeta == cell.meta && cell.hasDisplayTag(true, "nativeTile", 10))
+            return cell.display(true)
+                .getCompoundTag("nativeTile");
         return new NBTTagCompound();
     }
 

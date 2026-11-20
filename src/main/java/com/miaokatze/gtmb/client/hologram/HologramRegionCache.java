@@ -12,6 +12,7 @@ import java.util.Map;
 /** Immutable 16-cube spatial index. A patch replaces only the regions containing changed cells. */
 final class HologramRegionCache {
 
+    private static final int REGION_CELLS = 4096;
     final Map<Key, List<HologramState.Cell>> regions;
     private final int[] bounds;
 
@@ -26,18 +27,18 @@ final class HologramRegionCache {
         final Map<Key, List<HologramState.Cell>> result = new LinkedHashMap<>();
         final int[] bounds = { Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE,
             Integer.MIN_VALUE, Integer.MIN_VALUE };
-        private final boolean boundsFromRegions;
+        private final boolean compact;
         java.util.Iterator<Map.Entry<Key, MutableRegion>> sealing;
 
-        Builder(boolean boundsFromRegions) {
-            this.boundsFromRegions = boundsFromRegions;
+        Builder(boolean compact) {
+            this.compact = compact;
         }
 
         void add(HologramState.Cell cell) {
-            MutableRegion region = pending.computeIfAbsent(key(cell), unused -> new MutableRegion());
+            MutableRegion region = pending.computeIfAbsent(key(cell), unused -> new MutableRegion(compact));
             region.cells.add(cell);
+            if (compact) return;
             region.positions.put(local(cell.x, cell.y, cell.z), cell);
-            if (boundsFromRegions) return;
             bounds[0] = Math.min(bounds[0], cell.x);
             bounds[1] = Math.min(bounds[1], cell.y);
             bounds[2] = Math.min(bounds[2], cell.z);
@@ -52,9 +53,9 @@ final class HologramRegionCache {
             if (!sealing.hasNext()) return false;
             Map.Entry<Key, MutableRegion> entry = sealing.next();
             MutableRegion region = entry.getValue();
-            Region sealed = new Region(region.cells, region.positions);
+            Region sealed = new Region(region.cells, region.positions, compact);
             result.put(entry.getKey(), sealed);
-            if (boundsFromRegions) for (int axis = 0; axis < 3; axis++) {
+            if (compact) for (int axis = 0; axis < 3; axis++) {
                 bounds[axis] = Math.min(bounds[axis], sealed.bounds[axis]);
                 bounds[axis + 3] = Math.max(bounds[axis + 3], sealed.bounds[axis + 3]);
             }
@@ -69,7 +70,11 @@ final class HologramRegionCache {
     private static final class MutableRegion {
 
         final List<HologramState.Cell> cells = new ArrayList<>();
-        final Map<Integer, HologramState.Cell> positions = new java.util.HashMap<>();
+        final Map<Integer, HologramState.Cell> positions;
+
+        MutableRegion(boolean compact) {
+            positions = compact ? null : new java.util.HashMap<>();
+        }
     }
 
     HologramRegionCache(List<HologramState.Cell> cells) {
@@ -133,7 +138,7 @@ final class HologramRegionCache {
 
     HologramState.Cell at(int x, int y, int z) {
         List<HologramState.Cell> region = regions.get(new Key(x >> 4, y >> 4, z >> 4));
-        return region == null ? null : ((Region) region).positions.get(local(x, y, z));
+        return region == null ? null : ((Region) region).at(local(x, y, z));
     }
 
     boolean withinMargin(int x, int y, int z) {
@@ -152,6 +157,7 @@ final class HologramRegionCache {
 
         final List<HologramState.Cell> cells;
         final Map<Integer, HologramState.Cell> positions;
+        final int[] compactPositions;
         final int[] bounds;
 
         Region(List<HologramState.Cell> cells) {
@@ -161,16 +167,25 @@ final class HologramRegionCache {
         Region(List<HologramState.Cell> cells, boolean topology) {
             this.cells = Collections.unmodifiableList(cells);
             positions = new java.util.HashMap<>();
+            compactPositions = null;
             for (HologramState.Cell cell : cells)
                 if (positions.put(local(cell.x, cell.y, cell.z), cell) != null && topology)
                     throw new IllegalArgumentException("Duplicate topology coordinates");
             bounds = regionBounds(cells);
         }
 
-        Region(List<HologramState.Cell> cells, Map<Integer, HologramState.Cell> positions) {
+        Region(List<HologramState.Cell> cells, Map<Integer, HologramState.Cell> positions, boolean compact) {
             this.cells = Collections.unmodifiableList(cells);
-            this.positions = Collections.unmodifiableMap(positions);
+            this.positions = compact ? null : Collections.unmodifiableMap(positions);
+            compactPositions = compact ? compactPositions(cells) : null;
             bounds = regionBounds(cells);
+        }
+
+        HologramState.Cell at(int local) {
+            if (compactPositions == null) return positions.get(local);
+            int row = compactPositions.length == REGION_CELLS ? compactPositions[local]
+                : compactPositions[compactSlot(compactPositions, local)] & (REGION_CELLS - 1);
+            return row == 0 ? null : cells.get(row - 1);
         }
 
         @Override
@@ -182,6 +197,29 @@ final class HologramRegionCache {
         public int size() {
             return cells.size();
         }
+    }
+
+    /** Dense regions index rows directly. Sparse regions use a half-full table of packed local keys and row numbers. */
+    private static int[] compactPositions(List<HologramState.Cell> cells) {
+        int size = cells.size();
+        boolean dense = size > REGION_CELLS / 4;
+        int[] positions = new int[dense ? REGION_CELLS : Integer.highestOneBit(size * 2 - 1) << 1];
+        for (int i = 0; i < size; i++) {
+            HologramState.Cell cell = cells.get(i);
+            int local = local(cell.x, cell.y, cell.z);
+            int row = i + 1;
+            if (dense) positions[local] = row;
+            else positions[compactSlot(positions, local)] = local * REGION_CELLS + row;
+        }
+        return positions;
+    }
+
+    private static int compactSlot(int[] positions, int local) {
+        int shift = Integer.numberOfLeadingZeros(positions.length) + 1;
+        int slot = (local * 0x9e3779b9) >>> shift;
+        while (positions[slot] != 0 && positions[slot] / REGION_CELLS != local)
+            slot = (slot + 1) & (positions.length - 1);
+        return slot;
     }
 
     private static int[] regionBounds(List<HologramState.Cell> cells) {

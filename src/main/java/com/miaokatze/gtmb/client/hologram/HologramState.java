@@ -331,24 +331,24 @@ final class HologramState {
         private Cell prepareCompactCell() {
             int material = compactCells.coordinate(cellPosition, 3);
             DescriptorTemplate template = compactMaterials[material];
-            boolean plain = false;
-            if (template == null) {
+            boolean first = template == null;
+            if (first) {
                 NBTTagCompound definition = compactCells.copyMaterial(material);
+                boolean withoutPayload = !definition.hasKey("previewTile", 10)
+                    && !definition.hasKey("previewItemTag", 10);
                 try {
                     HologramBlueprintPreview.completeCell(definition);
                 } catch (java.io.IOException invalid) {
                     throw new IllegalArgumentException(invalid.getMessage(), invalid);
                 }
-                template = new DescriptorTemplate(definition, true);
+                template = new DescriptorTemplate(definition, true, withoutPayload);
                 compactMaterials[material] = template;
-                plain = !definition.hasKey("previewTile", 10) && !definition.hasKey("previewItemTag", 10)
-                    && template.plainTarget();
             }
             int x = compactCells.coordinate(cellPosition, 0);
             int y = compactCells.coordinate(cellPosition, 1);
             int z = compactCells.coordinate(cellPosition, 2);
             Cell cell = new Cell(cellPosition, template, null, true, x, y, z, x, y, z);
-            if (plain) plainDisplayExamples.add(cell);
+            if (first && template.compactPlain) plainDisplayExamples.add(cell);
             return cell;
         }
 
@@ -852,11 +852,17 @@ final class HologramState {
 
         private final Cell values;
         private final ItemStack actualStack, targetStack;
+        private final boolean compactPlain;
 
         DescriptorTemplate(NBTTagCompound raw, boolean resolvedBlocks) {
+            this(raw, resolvedBlocks, false);
+        }
+
+        DescriptorTemplate(NBTTagCompound raw, boolean resolvedBlocks, boolean compactWithoutPayload) {
             values = new Cell(-1, raw, null, true, resolvedBlocks);
             actualStack = values.actualStack;
             targetStack = values.targetStack;
+            compactPlain = compactWithoutPayload && plainTarget();
         }
 
         boolean plainTarget() {
@@ -867,6 +873,7 @@ final class HologramState {
 
     static final class Cell {
 
+        private static final int[] EMPTY_HINT_TINT = new int[0];
         private final NBTTagCompound raw;
         private final NBTTagCompound coordinates;
         private final DescriptorTemplate descriptorTemplate;
@@ -877,17 +884,17 @@ final class HologramState {
         final String id, wantId, status, pinScope, role, family, renderKind, operation, exactIdentity;
         final String prompt, structureId, sourceMod, sourceVersion, sourceClass, sourceWarning;
         final String networkGroup;
-        final NBTTagCompound specialHint;
+        private final NBTTagCompound specialHint;
         final List<String> structureIds;
         final boolean anchor, iconOnly, excluded, missingBlock, sourceMissing, inScope;
         final boolean candidateComplete;
         final String candidateBoundary;
         final ItemStack actualStack, targetStack;
-        final NBTTagCompound actualDisplay, targetDisplay;
-        final String[] hintIcons = new String[6];
+        private NBTTagCompound actualDisplay, targetDisplay;
+        final String[] hintIcons;
         final int hintIndex;
         final int[] hintTint;
-        final List<ItemStack> candidates = new ArrayList<>();
+        final List<ItemStack> candidates;
 
         Cell(int index, NBTTagCompound n) {
             this(index, n, false);
@@ -973,8 +980,10 @@ final class HologramState {
             int[] tint = n.getIntArray("hintTint");
             hintTint = tint.length == 0 ? tint : tint.clone();
             NBTTagList icons = n.getTagList("hintIcons", 8);
+            hintIcons = new String[6];
             for (int i = 0; i < 6; i++) hintIcons[i] = i < icons.tagCount() ? icons.getStringTagAt(i) : "";
             NBTTagList list = n.getTagList("candidates", 10);
+            candidates = new ArrayList<>();
             for (int i = 0; i < list.tagCount(); i++) {
                 ItemStack stack = readStack(list.getCompoundTagAt(i));
                 if (stack != null) candidates.add(stack);
@@ -1003,6 +1012,7 @@ final class HologramState {
         private Cell(int index, DescriptorTemplate template, NBTTagCompound positions, boolean local, int x, int y,
             int z, int dx, int dy, int dz) {
             Cell value = template.values;
+            boolean compactPlain = template.compactPlain;
             raw = value.raw;
             coordinates = positions;
             descriptorTemplate = template;
@@ -1038,7 +1048,7 @@ final class HologramState {
             sourceClass = value.sourceClass;
             sourceWarning = value.sourceWarning;
             networkGroup = value.networkGroup;
-            specialHint = local ? (NBTTagCompound) value.specialHint.copy() : value.specialHint;
+            specialHint = compactPlain ? null : local ? (NBTTagCompound) value.specialHint.copy() : value.specialHint;
             structureIds = value.structureIds;
             anchor = value.anchor;
             iconOnly = value.iconOnly;
@@ -1050,17 +1060,59 @@ final class HologramState {
             candidateBoundary = value.candidateBoundary;
             actualStack = template.actualStack == null ? null : template.actualStack.copy();
             targetStack = template.targetStack == null ? null : template.targetStack.copy();
-            actualDisplay = local ? (NBTTagCompound) value.actualDisplay.copy() : value.actualDisplay;
-            targetDisplay = local ? (NBTTagCompound) value.targetDisplay.copy() : value.targetDisplay;
+            actualDisplay = compactPlain ? null
+                : local ? (NBTTagCompound) value.actualDisplay.copy() : value.actualDisplay;
+            targetDisplay = compactPlain ? null
+                : local ? (NBTTagCompound) value.targetDisplay.copy() : value.targetDisplay;
             hintIndex = value.hintIndex;
-            hintTint = value.hintTint.clone();
-            System.arraycopy(value.hintIcons, 0, hintIcons, 0, hintIcons.length);
-            for (ItemStack candidate : value.candidates) candidates.add(candidate.copy());
+            hintTint = compactPlain ? EMPTY_HINT_TINT : value.hintTint.clone();
+            hintIcons = compactPlain ? null : value.hintIcons.clone();
+            candidates = compactPlain ? Collections.emptyList() : new ArrayList<>();
+            if (!compactPlain) for (ItemStack candidate : value.candidates) candidates.add(candidate.copy());
         }
 
         /** Exact within this preparation only; the token exposes neither the descriptor nor its private prototype. */
         Object descriptorIdentity() {
             return descriptorTemplate == null ? this : descriptorTemplate;
+        }
+
+        private NBTTagCompound displayValue(boolean actual) {
+            NBTTagCompound owned = actual ? actualDisplay : targetDisplay;
+            if (owned != null) return owned;
+            Cell prototype = descriptorTemplate.values;
+            return actual ? prototype.actualDisplay : prototype.targetDisplay;
+        }
+
+        boolean hasDisplayTag(boolean actual, String key, int type) {
+            return displayValue(actual).hasKey(key, type);
+        }
+
+        int displayInteger(boolean actual, String key, int fallback) {
+            NBTTagCompound value = displayValue(actual);
+            return value.hasKey(key) ? value.getInteger(key) : fallback;
+        }
+
+        /** Exposed local display NBT remains independently mutable. Only scalar reads use the private prototype. */
+        NBTTagCompound display(boolean actual) {
+            NBTTagCompound owned = actual ? actualDisplay : targetDisplay;
+            if (owned == null) {
+                owned = (NBTTagCompound) displayValue(actual).copy();
+                if (actual) actualDisplay = owned;
+                else targetDisplay = owned;
+            }
+            return owned;
+        }
+
+        String specialHint(String key) {
+            return specialHint == null ? "" : specialHint.getString(key);
+        }
+
+        String hintIcon(int side) {
+            return hintIcons == null ? "" : hintIcons[side];
+        }
+
+        String hintIconKey() {
+            return hintIcons == null ? "[, , , , , ]" : java.util.Arrays.toString(hintIcons);
         }
 
         private static ItemStack readStack(NBTTagCompound source) {
@@ -1102,8 +1154,8 @@ final class HologramState {
         }
 
         boolean quantumNetworkHint() {
-            return "quantumNetwork".equals(specialHint.getString("type")) && networkGroup.matches("q[1-9][0-9]*")
-                && networkGroup.equals(specialHint.getString("group"));
+            return "quantumNetwork".equals(specialHint("type")) && networkGroup.matches("q[1-9][0-9]*")
+                && networkGroup.equals(specialHint("group"));
         }
 
         boolean completed() {

@@ -79,6 +79,12 @@ final class HologramBlockRender {
         compiled = vertices = 0;
     }
 
+    static boolean releaseSnapshot(HologramState state) {
+        if (snapshot != state) return false;
+        clear();
+        return true;
+    }
+
     static void advance(HologramState previous, HologramState next, Set<HologramRegionCache.Key> dirty) {
         if (snapshot != previous) return;
         for (HologramRegionCache.Key key : dirty) {

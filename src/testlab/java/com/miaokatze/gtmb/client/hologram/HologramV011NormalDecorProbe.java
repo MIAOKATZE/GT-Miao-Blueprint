@@ -324,7 +324,8 @@ final class HologramV011NormalDecorProbe {
         for (int shape : shapes) required.add(shape);
         NBTTagList rows = new NBTTagList();
         for (HologramState.Cell cell : state.cells) {
-            NBTTagCompound tile = (current ? cell.actualDisplay : cell.targetDisplay).getCompoundTag("nativeTile");
+            NBTTagCompound tile = cell.display(current)
+                .getCompoundTag("nativeTile");
             int shape = tile.getInteger("cbMetadata");
             // The two original wedge controls are separate from the seven new source cells inside the floor area.
             if (!required.contains(shape) || cell.dz + 8 < 11

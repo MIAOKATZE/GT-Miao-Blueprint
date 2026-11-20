@@ -24,6 +24,7 @@ import javax.imageio.ImageIO;
 
 import net.minecraft.block.Block;
 import net.minecraft.client.Minecraft;
+import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.init.Blocks;
@@ -33,6 +34,7 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.util.MathHelper;
 import net.minecraft.util.MovingObjectPosition;
+import net.minecraft.util.ScreenShotHelper;
 import net.minecraft.world.WorldServer;
 import net.minecraftforge.client.event.MouseEvent;
 import net.minecraftforge.common.MinecraftForge;
@@ -95,6 +97,9 @@ final class HologramLocalPreviewStagesProbe {
         movedGeneration;
     private int[] firstAnchor, lockedAnchor;
     private HologramScreen controller;
+    private HologramState controllerDrawn;
+    private long controllerDrawSerial, ownDrawTail = -1, controllerDrawsAtStart, controllerPreviousDraws;
+    private boolean controllerFrameCaptured;
     private HologramState ghost;
     private HologramClientLibrary originalStore, fixtureStore;
     private Channel channel;
@@ -215,6 +220,7 @@ final class HologramLocalPreviewStagesProbe {
             require(hitAt(mc, x, y, z), "EntityRenderer crosshair missed the real controller");
             controllerClicked = System.nanoTime();
             controllerClickTick = mc.thePlayer.ticksExisted;
+            controllerDrawsAtStart = HologramRenderer.previewDirectMeshDraws;
             if (postFocus) HologramScreen.localController(base, mc.thePlayer.dimension, mc.objectMouseOver.sideHit)
                 .openFrom(mc.currentScreen);
             else rightClick(mc);
@@ -237,12 +243,13 @@ final class HologramLocalPreviewStagesProbe {
                 mc.currentScreen == controller && controller.localControllerStandard(),
                 "Controller screen retired");
             HologramState state = controller.ui.session.state();
+            evidence.put("controllerProjectionDataComplete", state.data.getBoolean("projectionDataComplete"));
+            evidence.put("controllerCapturePending", state.data.getBoolean("capturePending"));
+            evidence.put("controllerCurrentCells", state.cells.size());
+            evidence.put("controllerStatus", state.data.getString("status"));
             require(!state.data.getBoolean("localStructureUnavailable"), "Local standard declaration unavailable");
-            if (!state.data.getBoolean("projectionDataComplete") || state.cells.isEmpty()) return false;
-            NBTTagCompound drawn = HologramRenderer.lessonInspection(state);
-            if (!drawn.getBoolean("snapshotPresented") || drawn.getInteger("renderedCellCount") == 0) return false;
+            if (controllerDrawn != state || !controllerFrameCaptured) return false;
             evidence.put("controllerCells", state.cells.size());
-            evidence.put("controllerRenderedCells", drawn.getInteger("renderedCellCount"));
             evidence.put("controllerPresentedNanos", System.nanoTime() - controllerClicked);
             zero("controllerPresented");
             mc.displayGuiScreen(null);
@@ -346,6 +353,62 @@ final class HologramLocalPreviewStagesProbe {
             return true;
         }
         return false;
+    }
+
+    void guiPost(GuiScreen gui, long frame) {
+        if (finished || stage != 1 || controller == null || gui != controller) return;
+        HologramState state = controller.ui.session.state();
+        NBTTagCompound witness = HologramRenderer.lessonInspection(state);
+        boolean complete = state.data.getBoolean("projectionDataComplete");
+        boolean ready = HologramRenderer.previewMeshReady(state);
+        boolean displayed = HologramRenderer.previewDisplayState() == state;
+        long materialDraws = HologramRenderer.previewDirectMeshDraws - controllerDrawsAtStart;
+        long newMaterialDraws = materialDraws - controllerPreviousDraws;
+        controllerPreviousDraws = materialDraws;
+        Map<String, Integer> roles = new LinkedHashMap<>();
+        for (HologramState.Cell cell : state.cells) roles.merge(cell.role, 1, Integer::sum);
+        evidence.put("controllerRoles", roles);
+        evidence.put("controllerGuiPostFrames", ++controllerDrawSerial);
+        evidence.put("controllerProjectionDataComplete", complete);
+        evidence.put("controllerMeshReady", ready);
+        evidence.put("controllerExactDisplayState", displayed);
+        evidence.put("controllerScopeMaterialMeshDraws", materialDraws);
+        evidence.put("controllerOwnGuiFrameMaterialDraws", newMaterialDraws);
+        evidence.put("controllerLessonSnapshotPresented", witness.getBoolean("snapshotPresented"));
+        evidence.put("controllerLessonVisibleCells", witness.getInteger("presentedVisibleCellCount"));
+        evidence.put("controllerLessonRenderedCells", witness.getInteger("renderedCellCount"));
+        evidence.put("controllerLastGuiPostNanos", System.nanoTime() - controllerClicked);
+        if (complete && !state.data.getBoolean("capturePending")
+            && state.cells.size() == 36
+            && roles.getOrDefault("controller", 0) == 1
+            && newMaterialDraws > 0) {
+            controllerDrawn = state;
+            ownDrawTail = frame;
+        }
+    }
+
+    void renderTail(long frame) throws Exception {
+        if (finished || stage != 1
+            || controllerDrawn == null
+            || controllerFrameCaptured
+            || ownDrawTail != frame - 1
+            || Minecraft.getMinecraft().currentScreen != controller) return;
+        String name = "gtmb-local-standard-controller.png";
+        Minecraft mc = Minecraft.getMinecraft();
+        Files.createDirectories(output.resolve("screenshots"));
+        ScreenShotHelper.saveScreenshot(output.toFile(), name, mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
+        require(
+            Files.isRegularFile(
+                output.resolve("screenshots")
+                    .resolve(name)),
+            "Controller proof screenshot missing");
+        evidence.put("controllerFramebuffer", "screenshots/" + name);
+        evidence.put("controllerRenderTailFrame", frame);
+        controllerFrameCaptured = true;
+    }
+
+    Map<String, Object> progress() {
+        return new LinkedHashMap<>(evidence);
     }
 
     private boolean constructionStep(Minecraft mc) throws Exception {
@@ -528,7 +591,11 @@ final class HologramLocalPreviewStagesProbe {
             png = pair.png;
         } else {
             ByteArrayOutputStream buffer = new ByteArrayOutputStream();
-            require(ImageIO.write(new BufferedImage(8, 8, BufferedImage.TYPE_INT_RGB), "png", buffer), "PNG required");
+            BufferedImage thumbnail = new BufferedImage(
+                HologramBlueprintArtifact.WIDTH,
+                HologramBlueprintArtifact.HEIGHT,
+                BufferedImage.TYPE_INT_RGB);
+            require(ImageIO.write(thumbnail, "png", buffer), "PNG required");
             HologramBlueprintArtifact.Artifact pair = HologramBlueprintArtifact
                 .prepareSave(stoneBlueprint(), buffer.toByteArray());
             json = pair.json;

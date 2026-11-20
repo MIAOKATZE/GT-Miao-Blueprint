@@ -463,7 +463,7 @@ public final class HologramProductionPreviewSmoke {
             Block block = cell.block(current);
             String type = block.getClass()
                 .getName();
-            NBTTagCompound nativeTile = (current ? cell.actualDisplay : cell.targetDisplay)
+            NBTTagCompound nativeTile = cell.display(current)
                 .getCompoundTag("nativeTile");
             if (type.equals("com.carpentersblocks.block.BlockCarpentersSlope")) {
                 int sourceX = cell.dx + 8, sourceY = cell.dy + (adjacentProfile ? 79 : 80), sourceZ = cell.dz + 8;

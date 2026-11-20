@@ -128,14 +128,16 @@ public final class HologramAnnotationMarkersRegression {
         SimpleAssert.eq("q1", state.cells.get(0).networkGroup, "network group survives actual snapshot codec");
         SimpleAssert.eq(
             "Connect furnace network",
-            state.cells.get(0).specialHint.getString("hint"),
+            state.cells.get(0)
+                .specialHint("hint"),
             "specialized group hint survives snapshot codec and client state decoding");
         cells.getCompoundTagAt(0)
             .getCompoundTag("specialHint")
             .setString("hint", "mutated source");
         SimpleAssert.eq(
             "Connect furnace network",
-            state.cells.get(0).specialHint.getString("hint"),
+            state.cells.get(0)
+                .specialHint("hint"),
             "client hint owns an independent copy of the incoming DTO");
         List<HologramAnnotationMarkers.Marker> markers = HologramAnnotationMarkers.collect(state);
         SimpleAssert
