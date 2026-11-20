@@ -460,6 +460,27 @@ final class HologramLocalPreviewStagesProbe {
             require(((Integer) proof.get("maximumRelativeY")) > 127, "Critical Solar preview lost its upper structure");
         requireLiveController(mc);
 
+        if (parity == NativeParity.SOLAR || parity == NativeParity.ENTANGLER) {
+            int checked = 0;
+            for (HologramState.Cell cell : state.cells) {
+                if (cell.anchor || !mc.theWorld.blockExists(cell.x, cell.y, cell.z)) continue;
+                String actualId = net.minecraft.block.Block.blockRegistry
+                    .getNameForObject(mc.theWorld.getBlock(cell.x, cell.y, cell.z));
+                require(actualId.equals(cell.id) && mc.theWorld.getBlockMetadata(cell.x, cell.y, cell.z) == cell.meta,
+                    "Local preview did not preserve the loaded position's actual block and metadata");
+                checked++;
+            }
+            require(checked > 0, "The fixture provided no loaded positions for the live comparison");
+            proof.put("loadedPositionsMatched", checked);
+            proof.put("dataReadyNanos", System.nanoTime() - controllerClicked);
+            zero("nativeFixedStructurePresented");
+            mc.displayGuiScreen(null);
+            zero("nativeFixedStructureClosed");
+            require(finish(mc), "Fixed structure fixture cleanup must complete without server inventory");
+            evidence.put("passed", true);
+            return true;
+        }
+
         if (parityPass == 0) {
             firstParityCells = actual;
             require(capability != null && capability.getBoolean("editable"), "Native channel is unavailable: " + parity.channel);
@@ -498,6 +519,7 @@ final class HologramLocalPreviewStagesProbe {
         Map<String, String> actual = new TreeMap<>();
         int anchors = 0, ports = 0, maximumRelativeY = 0;
         for (HologramState.Cell cell : state.cells) {
+            require(cell.prompt.isEmpty(), "Native structure text reached the player annotation layer");
             if (cell.anchor) {
                 anchors++;
                 require(cell.x == x && cell.y == y && cell.z == z && cell.dx == 0 && cell.dy == 0 && cell.dz == 0
@@ -548,6 +570,10 @@ final class HologramLocalPreviewStagesProbe {
         CENTER("com.miaokatze.gtsr.common.machine.orecenter.MTEMineralIntegrationCenter",
             "gtsr.ore_integration_center", "ore_center_sectors", 6),
         CRITICAL("com.miaokatze.gtsr.common.machine.MTECriticalMachine", "gtsr.critical.solar", "main", 2),
+        SOLAR("com.miaokatze.gtsr.common.machine.MTELargeSolarOverpressureArray",
+            "gtsr.large.solar.overpressure.array", "main", 2),
+        ENTANGLER("com.miaokatze.gtsr.common.machine.MTESteamSingularityEntangler",
+            "gtsr.steam.singularity.entangler", "main", 1),
         CHEMICAL("gtPlusPlus.xmod.gregtech.common.tileentities.machines.multi.production.chemplant.MTEChemicalPlant",
             "", "casing", 8),
         EBF(MTEElectricBlastFurnace.class.getName(), "", "coil", 2);

@@ -15,6 +15,8 @@ import net.minecraft.nbt.NBTTagList;
 import net.minecraft.nbt.NBTTagString;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.World;
+import net.minecraft.world.chunk.Chunk;
+import net.minecraft.world.chunk.EmptyChunk;
 import net.minecraftforge.common.util.ForgeDirection;
 
 import com.gtnewhorizon.structurelib.StructureLibAPI;
@@ -32,7 +34,7 @@ import gregtech.api.metatileentity.BaseMetaTileEntity;
 import gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase;
 import gregtech.common.blocks.ItemMachines;
 
-/** Read-only standard geometry for the original workbench; this does not create a server session. */
+/** Read-only declaration and loaded client data for the original workbench. */
 public final class HologramLocalControllerCapture implements AutoCloseable {
 
     private final Thread owner = Thread.currentThread();
@@ -498,6 +500,37 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
             nbt.setIntArray("hintTint", tint);
         }
         nbt.setInteger("hintIndex", cell.hintIndex);
+        if (!alreadyDetached && world.isRemote) observeLoadedCell(nbt);
         return nbt;
+    }
+
+    private void observeLoadedCell(NBTTagCompound row) {
+        int bx = row.getInteger("x"), by = row.getInteger("y"), bz = row.getInteger("z");
+        int cx = bx >> 4, cz = bz >> 4;
+        if (by < 0 || by >= world.getHeight() || !world.getChunkProvider().chunkExists(cx, cz)) {
+            row.setString("reason", "客户端尚未读到此位置的现场数据");
+            return;
+        }
+        Chunk chunk = world.getChunkFromChunkCoords(cx, cz);
+        if (chunk == null || chunk instanceof EmptyChunk) {
+            row.setString("reason", "客户端尚未读到此位置的现场数据");
+            return;
+        }
+
+        Block current = world.getBlock(bx, by, bz);
+        int metadata = world.getBlockMetadata(bx, by, bz);
+        TileEntity currentTile = current.hasTileEntity(metadata) ? world.getTileEntity(bx, by, bz) : null;
+        row.setString("id", Block.blockRegistry.getNameForObject(current));
+        row.setInteger("meta", metadata);
+        row.removeTag("actualStack");
+        ItemStack stack = null;
+        if (currentTile instanceof IGregTechTileEntity gt && gt.getMetaTileEntity() != null) {
+            stack = new ItemStack(current, 1, gt.getMetaTileID());
+            row.setInteger("actualFacing", gt.getFrontFacing().ordinal());
+            row.setTag("actualDisplay", HologramDisplaySnapshot.projection(currentTile));
+        } else if (current != Blocks.air && current != GregTechAPI.sBlockMachines) {
+            stack = HologramBlockIdentity.materialStack(current, metadata);
+        }
+        if (stack != null) row.setTag("actualStack", stack.writeToNBT(new NBTTagCompound()));
     }
 }

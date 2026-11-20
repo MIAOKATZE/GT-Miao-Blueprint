@@ -5,6 +5,8 @@ package com.miaokatze.gtmb.hologram;
 
 import java.io.IOException;
 import java.lang.reflect.Constructor;
+import java.util.Collections;
+import java.util.List;
 
 import net.minecraft.init.Blocks;
 import net.minecraft.init.Items;
@@ -21,7 +23,9 @@ import com.gtnewhorizon.structurelib.alignment.constructable.IConstructableProvi
 import com.gtnewhorizon.structurelib.alignment.constructable.IMultiblockInfoContainer;
 import com.gtnewhorizon.structurelib.alignment.constructable.ISurvivalConstructable;
 import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
+import com.gtnewhorizon.structurelib.structure.AutoPlaceEnvironment;
 import com.gtnewhorizon.structurelib.structure.IStructureElement;
+import com.gtnewhorizon.structurelib.structure.IStructureElementNoPlacement;
 import com.gtnewhorizon.structurelib.structure.ISurvivalBuildEnvironment;
 import com.gtnewhorizon.structurelib.structure.StructureUtility;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
@@ -128,6 +132,7 @@ final class HologramStructureDiscoveryRegression {
             SimpleAssert.eq(Blocks.stone, observed.block, "actual placed block is preserved");
             SimpleAssert.that(!placements.hasNext(), "controller anchor is excluded from native placements");
             SimpleAssert.eq(fixture.latest, observed.element, "latest instrumented XYZ element supersedes the previous visit");
+            SimpleAssert.eq("", observed.prompt, "native element descriptions do not become player annotations");
             SimpleAssert.that(observed.candidateComplete && observed.candidates.size() == 1
                 && observed.candidates.get(0).getItem() == new ItemStack(Blocks.cobblestone).getItem(),
                 "native getBlocksToPlace supplies the final declaration candidates");
@@ -165,7 +170,29 @@ final class HologramStructureDiscoveryRegression {
         private final boolean fallback;
         private final boolean gregTech;
         private final IStructureElement<PreviewFixture> first = StructureUtility.ofBlock(Blocks.stone, 0);
-        private final IStructureElement<PreviewFixture> latest = StructureUtility.ofBlock(Blocks.cobblestone, 0);
+        private final IStructureElement<PreviewFixture> latest = new IStructureElementNoPlacement<>() {
+
+            @Override
+            public boolean check(PreviewFixture fixture, World world, int x, int y, int z) {
+                return world.getBlock(x, y, z) == Blocks.cobblestone;
+            }
+
+            @Override
+            public boolean spawnHint(PreviewFixture fixture, World world, int x, int y, int z, ItemStack trigger) {
+                return false;
+            }
+
+            @Override
+            public BlocksToPlace getBlocksToPlace(PreviewFixture fixture, World world, int x, int y, int z,
+                ItemStack trigger, AutoPlaceEnvironment environment) {
+                return BlocksToPlace.create(Blocks.cobblestone, 0);
+            }
+
+            @Override
+            public List<String> getDescription(PreviewFixture fixture) {
+                return Collections.singletonList("GT5U.MBTT.InputHatch");
+            }
+        };
         private int rounds;
         private int constructs;
         private int previewsStarted;
@@ -200,6 +227,9 @@ final class HologramStructureDiscoveryRegression {
                     StructureUtility.survivalPlaceBlock(
                         Blocks.stone, 0, world, 1, 128, 0, environment.getSource(), environment.getActor()),
                     "detached creative source and actor can execute native survival placement");
+                // The Large Solar Overpressure Array queries sky visibility inside its first build pass.
+                SimpleAssert.that(world.canBlockSeeTheSky(1, 129, 0), "preview queries can see the empty sky");
+                SimpleAssert.that(!world.canBlockSeeTheSky(1, -1, 0), "preview below the empty height map has no sky");
             }
             return 0;
         }

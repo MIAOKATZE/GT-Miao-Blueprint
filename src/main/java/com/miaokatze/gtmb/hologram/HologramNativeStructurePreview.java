@@ -71,6 +71,7 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
     private final NBTTagList description = new NBTTagList();
     private final Map<Position, IStructureElement<?>> elements = new HashMap<>();
     private final Map<IStructureElement<?>, Boolean> observedMaterials = new IdentityHashMap<>();
+    private final Map<IStructureElement<?>, PreviewOptions> sharedOptions = new IdentityHashMap<>();
     private HologramChannelTrace.Report channels;
     private IStructureDefinition<?> definition;
     private Iterator<HologramNativePreviewWorld.Placement> placements;
@@ -224,17 +225,28 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
             cell.candidateBoundary = "此格由原生预览直接写入";
             return cell;
         }
+        PreviewOptions cached = sharedOptions.get(element);
+        if (cached != null) {
+            cell.candidates = cached.candidates();
+            cell.candidateComplete = cached.complete();
+            cell.candidateBoundary = cached.boundary();
+            if (cached.hatch()) cell.role = "hatch";
+            return cell;
+        }
         HologramChannelTrace.Scope trace = HologramChannelTrace.begin(context);
         try {
             controller.setWorldObj(world);
-            if (observedMaterials.put(element, Boolean.TRUE) == null)
+            boolean first = observedMaterials.put(element, Boolean.TRUE) == null;
+            if (first)
                 HologramDeclarationWrappers.observePreviewMaterials(element);
             // Like the multiblock browser, inspect the final visited element against an empty detached world.
             IStructureElement.BlocksToPlace blocks = element.getBlocksToPlace(
                 context, emptyWorld, cell.x, cell.y, cell.z, trigger.copy(), candidateEnvironment);
             if (blocks != null) readCandidates(cell, blocks, isChain(element));
-            if ("hatch".equals(HologramElementCatalog.hatchRole(element))) cell.role = "hatch";
-            readElementDescription(cell, element);
+            boolean hatch = "hatch".equals(HologramElementCatalog.hatchRole(element));
+            if (hatch) cell.role = "hatch";
+            if (first && blocks != null && reusablePreviewOptions(element)) sharedOptions.put(
+                element, new PreviewOptions(cell.candidates, cell.candidateComplete, cell.candidateBoundary, hatch));
         } catch (RuntimeException | LinkageError unavailable) {
             cell.candidateBoundary = "原生结构元素未提供可读取选项";
         } finally {
@@ -244,14 +256,11 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
         return cell;
     }
 
-    @SuppressWarnings({ "rawtypes", "unchecked" })
-    private void readElementDescription(HologramCapture.Cell cell, IStructureElement element) {
+    private static boolean reusablePreviewOptions(IStructureElement<?> element) {
         try {
-            List<String> lines = element.getDescription(context);
-            if (lines != null && !lines.isEmpty())
-                cell.prompt = bounded(String.join("\n", lines.subList(0, Math.min(8, lines.size()))), 512);
-        } catch (RuntimeException | LinkageError unavailable) {
-            // A missing description leaves the independently observed candidates available.
+            return HologramDeclarationWrappers.reusablePreviewOptions(element, 8);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+            return false;
         }
     }
 
@@ -308,8 +317,12 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
         closed = true;
         elements.clear();
         observedMaterials.clear();
+        sharedOptions.clear();
         placements = Collections.<HologramNativePreviewWorld.Placement>emptyList().iterator();
     }
+
+    @Desugar
+    private record PreviewOptions(List<ItemStack> candidates, boolean complete, String boundary, boolean hatch) {}
 
     @Desugar
     private record Position(int x, int y, int z) {}

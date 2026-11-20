@@ -80,6 +80,12 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
     }
 
     @Override
+    public boolean canBlockSeeTheSky(int x, int y, int z) {
+        // BlockRenderer's detached preview keeps geometry outside its empty chunks and their height maps.
+        return y >= 0;
+    }
+
+    @Override
     public boolean checkNoEntityCollision(AxisAlignedBB bounds, Entity excluded) {
         return true;
     }

@@ -116,6 +116,27 @@ final class HologramDeclarationWrappers {
         return (IStructureElement<?>[]) array.get(element);
     }
 
+    /** These native candidate readers depend on the settled controller and trigger, without reading a position. */
+    static boolean reusablePreviewOptions(IStructureElement<?> element, int depth) throws ReflectiveOperationException {
+        if (element == null || depth == 0) return false;
+        if (element instanceof IStructureElementChain<?> chain) {
+            IStructureElement<?>[] children = nativeChainChildren(chain);
+            if (children == null || children.length == 0 || children.length > 64) return false;
+            for (IStructureElement<?> child : children) if (!reusablePreviewOptions(child, depth - 1)) return false;
+            return true;
+        }
+        Method method = factory(element.getClass());
+        if (method == null) return false;
+        if (method.getDeclaringClass() == HatchElementBuilder.class) return "build".equals(method.getName());
+        if (method.getDeclaringClass() != StructureUtility.class) return false;
+        return switch (method.getName()) {
+            case "ofBlocksTiered" -> true;
+            case "onElementPass", "onElementFail", "withDescription" ->
+                reusablePreviewOptions(nativeBacking(element), depth - 1);
+            default -> false;
+        };
+    }
+
     static boolean isLazy(IStructureElement<?> element) {
         return element != null && element.getClass()
             .getName()
