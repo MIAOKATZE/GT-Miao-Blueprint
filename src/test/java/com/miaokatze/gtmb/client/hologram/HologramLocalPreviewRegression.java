@@ -145,10 +145,32 @@ public final class HologramLocalPreviewRegression {
         NBTTagList expandedRows = expanded.getTagList("cells", 10);
         for (int i = 0; i < expandedRows.tagCount(); i++)
             HologramBlueprintPreview.completeCell(expandedRows.getCompoundTagAt(i));
+        HologramState expandedState = new HologramState(expanded);
         SimpleAssert.eq(
-            new HologramState(expanded).fullData(),
+            expandedState.fullData(),
             rendered.fullData(),
             "direct compact display reconstructs every coordinate and native descriptor exactly");
+        SimpleAssert.eq(
+            expandedState.structureMembers,
+            rendered.structureMembers,
+            "implicit membership still exposes each accepted cell index in order");
+        SimpleAssert.eq(
+            Arrays.asList(0, 1, 2, 3, 4),
+            early.structureMembers.get(""),
+            "early publication owns only its bounded membership prefix");
+        SimpleAssert.that(
+            Arrays.equals(expandedState.regions.bounds(), rendered.regions.bounds()),
+            "sealed compact regions give the same exact content bounds");
+        SimpleAssert.eq(expandedState.minY, rendered.minY, "compact minimum relative Y");
+        SimpleAssert.eq(expandedState.maxY, rendered.maxY, "compact maximum relative Y");
+        SimpleAssert.eq(
+            expandedState.distanceSquared(0, 0, 0),
+            rendered.distanceSquared(0, 0, 0),
+            "world distance includes the source anchor outside this fixture's occupied Z plane");
+        SimpleAssert.eq(
+            expandedState.distanceSquared(-30, 20, 40),
+            rendered.distanceSquared(-30, 20, 40),
+            "distance outside the merged negative and positive regions matches the expanded source");
         SimpleAssert
             .that(early.cells.get(0) == rendered.cells.get(0), "early and final states share completed cell identity");
         SimpleAssert.that(

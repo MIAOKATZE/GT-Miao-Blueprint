@@ -26,12 +26,18 @@ final class HologramRegionCache {
         final Map<Key, List<HologramState.Cell>> result = new LinkedHashMap<>();
         final int[] bounds = { Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE,
             Integer.MIN_VALUE, Integer.MIN_VALUE };
+        private final boolean boundsFromRegions;
         java.util.Iterator<Map.Entry<Key, MutableRegion>> sealing;
+
+        Builder(boolean boundsFromRegions) {
+            this.boundsFromRegions = boundsFromRegions;
+        }
 
         void add(HologramState.Cell cell) {
             MutableRegion region = pending.computeIfAbsent(key(cell), unused -> new MutableRegion());
             region.cells.add(cell);
             region.positions.put(local(cell.x, cell.y, cell.z), cell);
+            if (boundsFromRegions) return;
             bounds[0] = Math.min(bounds[0], cell.x);
             bounds[1] = Math.min(bounds[1], cell.y);
             bounds[2] = Math.min(bounds[2], cell.z);
@@ -46,7 +52,12 @@ final class HologramRegionCache {
             if (!sealing.hasNext()) return false;
             Map.Entry<Key, MutableRegion> entry = sealing.next();
             MutableRegion region = entry.getValue();
-            result.put(entry.getKey(), new Region(region.cells, region.positions));
+            Region sealed = new Region(region.cells, region.positions);
+            result.put(entry.getKey(), sealed);
+            if (boundsFromRegions) for (int axis = 0; axis < 3; axis++) {
+                bounds[axis] = Math.min(bounds[axis], sealed.bounds[axis]);
+                bounds[axis + 3] = Math.max(bounds[axis + 3], sealed.bounds[axis + 3]);
+            }
             return true;
         }
 

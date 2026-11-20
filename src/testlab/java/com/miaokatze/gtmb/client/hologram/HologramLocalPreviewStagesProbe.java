@@ -22,8 +22,12 @@ import java.util.stream.Collectors;
 
 import javax.imageio.ImageIO;
 
+import net.minecraft.block.Block;
 import net.minecraft.client.Minecraft;
 import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.entity.player.EntityPlayerMP;
+import net.minecraft.init.Blocks;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.server.MinecraftServer;
@@ -32,10 +36,12 @@ import net.minecraft.util.MovingObjectPosition;
 import net.minecraft.world.WorldServer;
 import net.minecraftforge.client.event.MouseEvent;
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.common.util.FakePlayer;
 import net.minecraftforge.common.util.ForgeDirection;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
 import com.miaokatze.gtmb.register.ProjectorRegistry;
@@ -72,7 +78,9 @@ final class HologramLocalPreviewStagesProbe {
     private final Map<String, Integer> outbound = new LinkedHashMap<>();
     private final long started = System.nanoTime();
     private final Path output;
-    private final int x, y, z, toolSlot;
+    private final boolean construction = Boolean.getBoolean(FLAG + "Construction");
+    private final boolean postFocus = construction || Boolean.getBoolean(FLAG + "PostFocus");
+    private final int x, y, z, toolSlot, stoneSlot;
     private final String actorName;
     private final String localId = "local_" + UUID.fromString(System.getProperty("miaotest.host.runId"));
     private final ItemStack originalTool, fixtureTool;
@@ -92,6 +100,13 @@ final class HologramLocalPreviewStagesProbe {
     private Channel channel;
     private boolean cancelling;
     private volatile boolean finished;
+    private EntityPlayerMP serverActor;
+    private ItemStack serverToolBefore, serverStoneBefore;
+    private volatile boolean restoreServerInventory, serverInventoryRestored;
+    private volatile int serverObservationRequest;
+    private volatile Map<String, Object> beforeConfirm, afterConstruction;
+    private HologramScreen constructionReview;
+    private String constructionSession;
 
     static boolean enabled() {
         return Boolean.getBoolean(FLAG);
@@ -107,21 +122,40 @@ final class HologramLocalPreviewStagesProbe {
         pitch = mc.thePlayer.rotationPitch;
         actorName = mc.thePlayer.getCommandSenderName();
         toolSlot = mc.thePlayer.inventory.currentItem;
+        stoneSlot = (toolSlot + 1) % 9;
         originalTool = mc.thePlayer.getHeldItem();
         originalHit = mc.objectMouseOver;
         fixtureTool = new ItemStack(ProjectorRegistry.projector);
         evidence.put("schema", "gtmb-local-preview-stages-v1");
         evidence.put("passed", false);
         evidence.put("controllerPosition", new int[] { x, y, z });
-        evidence.put("input", "native PlayerControllerMP right click, synthetic game input, no OS input");
+        evidence.put(
+            "input",
+            postFocus ? "production business callbacks after the world-focus gate"
+                : "native PlayerControllerMP right click, synthetic game input, no OS input");
+        evidence.put("nativeWorldInputExercised", !postFocus);
+        evidence.put("constructionRequested", construction);
         evidence.put("observer", "actual FML client outbound IMessage pipeline, GTMB mod channel only");
     }
 
     /** Called only after Issue100 has verified the exact marker-owned environment, on its server thread. */
     void setup(MinecraftServer server) {
-        if (finished || fixtureReady || fixtureFailure != null) return;
+        if (finished) return;
         try {
             WorldServer world = server.worldServerForDimension(0);
+            if (restoreServerInventory) {
+                if (!serverInventoryRestored && serverActor != null) {
+                    serverActor.inventory.setInventorySlotContents(toolSlot, serverToolBefore);
+                    serverActor.inventory.setInventorySlotContents(stoneSlot, serverStoneBefore);
+                    serverActor.inventoryContainer.detectAndSendChanges();
+                }
+                serverInventoryRestored = true;
+                return;
+            }
+            if (fixtureReady || fixtureFailure != null) {
+                if (construction && serverActor != null) observeWorld(world);
+                return;
+            }
             EntityPlayer actor = world.getPlayerEntityByName(actorName);
             require(
                 actor != null && world.blockExists(x, y, z) && world.isAirBlock(x, y, z),
@@ -138,6 +172,19 @@ final class HologramLocalPreviewStagesProbe {
                 "Native EBF fixture identity mismatch");
             ((BaseMetaTileEntity) world.getTileEntity(x, y, z)).setFrontFacing(north);
             world.markBlockForUpdate(x, y, z);
+            if (construction) {
+                require(
+                    actor instanceof EntityPlayerMP && !(actor instanceof FakePlayer)
+                        && !actor.capabilities.isCreativeMode
+                        && stones(actor) == 0,
+                    "Construction proof requires the real survival actor with no existing stones");
+                serverActor = (EntityPlayerMP) actor;
+                serverToolBefore = actor.inventory.getStackInSlot(toolSlot);
+                serverStoneBefore = actor.inventory.getStackInSlot(stoneSlot);
+                actor.inventory.setInventorySlotContents(toolSlot, new ItemStack(ProjectorRegistry.projector));
+                actor.inventory.setInventorySlotContents(stoneSlot, new ItemStack(Blocks.stone));
+                actor.inventoryContainer.detectAndSendChanges();
+            }
             fixtureReady = true;
         } catch (RuntimeException | LinkageError problem) {
             fixtureFailure = problem;
@@ -158,14 +205,19 @@ final class HologramLocalPreviewStagesProbe {
         if (stage == 0) {
             if (!fixtureReady || !(mc.theWorld.getTileEntity(x, y, z) instanceof BaseMetaTileEntity base)
                 || !(base.getMetaTileEntity() instanceof MTEElectricBlastFurnace)
-                || !HologramClient.worldInputFocused()) return false;
+                || !postFocus && !HologramClient.worldInputFocused()) return false;
+            if (construction
+                && (!ItemNekoHologramProjector.isProjector(mc.thePlayer.getHeldItem()) || stones(mc.thePlayer) != 1))
+                return false;
             observeOutbound();
-            mc.thePlayer.inventory.setInventorySlotContents(toolSlot, fixtureTool);
+            if (!construction) mc.thePlayer.inventory.setInventorySlotContents(toolSlot, fixtureTool);
             look(mc, x + .5, y + .5, z + .5);
             require(hitAt(mc, x, y, z), "EntityRenderer crosshair missed the real controller");
             controllerClicked = System.nanoTime();
             controllerClickTick = mc.thePlayer.ticksExisted;
-            rightClick(mc);
+            if (postFocus) HologramScreen.localController(base, mc.thePlayer.dimension, mc.objectMouseOver.sideHit)
+                .openFrom(mc.currentScreen);
+            else rightClick(mc);
             evidence.put("controllerScreenOpenedDuringClick", mc.currentScreen instanceof HologramScreen);
             zero("controllerOpening");
             stage++;
@@ -198,7 +250,7 @@ final class HologramLocalPreviewStagesProbe {
         } else if (stage == 2) {
             zero("controllerClosed");
             if (HologramLibraryClient.INSTANCE.busy() || HologramBackgroundTasks.busy()
-                || !HologramClient.worldInputFocused()) return false;
+                || !postFocus && !HologramClient.worldInputFocused()) return false;
             stagePrivatePair(mc);
             look(mc, x + .5, y + .5, z + .5);
             privateRequested = System.nanoTime();
@@ -239,10 +291,14 @@ final class HologramLocalPreviewStagesProbe {
                 || moved == null
                 || Arrays.equals(firstAnchor, moved)
                 || !Arrays.equals(witness.anchor(), moved)) return false;
-            require(HologramClient.worldInputFocused(), "Native lock requires world focus");
+            if (construction) require(
+                mc.theWorld.blockExists(moved[0], moved[1], moved[2])
+                    && mc.theWorld.isAirBlock(moved[0], moved[1], moved[2]),
+                "Construction target must be loaded air");
+            require(postFocus || HologramClient.worldInputFocused(), "Native lock requires world focus");
             evidence.put("movingSecondAnchor", moved);
             evidence.put("movingSecondLists", witness.lists);
-            rightClick(mc);
+            placementUse(mc);
             HologramLocalPlacement placement = HologramLocalPlacement.INSTANCE;
             require(
                 placement.locked() && !placement.submitting() && Arrays.equals(moved, placement.anchor()),
@@ -267,25 +323,122 @@ final class HologramLocalPreviewStagesProbe {
             evidence.put("lockedWorldTicks", mc.theWorld.getTotalWorldTime() - lockedTick);
             zero("privateLockedPresented");
             submitInput = true;
-            rightClick(mc);
+            placementUse(mc);
             require(HologramLocalPlacement.INSTANCE.submitting(), "Explicit second right-click did not submit");
             stage++;
         } else if (stage == 6) {
             if (projectedPlacement == null || !libraryWorkerIdle()) return false;
+            Map<String, Integer> sent = packets();
             require(
-                Collections.singletonMap("action:projectedPlacement", 1)
-                    .equals(packets()) && HologramLocalPlacement.INSTANCE.submitting(),
+                sent.getOrDefault("action:projectedPlacement", 0) == 1
+                    && (construction || Collections.singletonMap("action:projectedPlacement", 1)
+                        .equals(sent) && HologramLocalPlacement.INSTANCE.submitting()),
                 "Unexpected traffic after explicit submission");
             verifyProjectedPlacement();
-            evidence.put("explicitSubmitOutbound", packets());
-            evidence.put("serverValidationDelivered", false);
+            evidence.put("explicitSubmitOutbound", Collections.singletonMap("action:projectedPlacement", 1));
+            evidence.put("allOutboundAtPositiveControl", sent);
+            evidence.put("serverValidationDelivered", construction);
             stage++;
         } else if (stage == 7) {
+            if (construction) return constructionStep(mc);
             if (!finish(mc)) return false;
             evidence.put("passed", true);
             return true;
         }
         return false;
+    }
+
+    private boolean constructionStep(Minecraft mc) throws Exception {
+        HologramState state = HologramClient.state;
+        if (constructionReview == null) {
+            if (!(mc.currentScreen instanceof HologramScreen review) || state == null
+                || !state.data.getBoolean("blueprintAwaitingConfirmation")
+                || !review.ui.review.materialControlEnabled(55)) return false;
+            require(
+                !review.localControllerStandard() && state.data.getBoolean("virtualLocked")
+                    && state.data.getLong("placementReviewNonce") > 0
+                    && state.data.getInteger("missing") == 0,
+                "Original material review did not accept the locked single-stone placement");
+            require(state.session.equals(review.ui.session.state().session), "Material review is for another session");
+            require(
+                state.materials.size() == 1 && state.materials.get(0).stack != null
+                    && state.materials.get(0).stack.getItem() == Item.getItemFromBlock(Blocks.stone)
+                    && state.materials.get(0).stack.getItemDamage() == 0
+                    && state.materials.get(0).required == 1
+                    && state.materials.get(0).available == 1,
+                "Authoritative material review must request exactly the one available stone");
+            constructionReview = review;
+            constructionSession = state.session;
+            evidence.put("materialReviewRequiredStone", 1);
+            evidence.put("materialReviewAvailableStone", 1);
+            evidence.put("materialReviewMissing", 0);
+            serverObservationRequest = 1;
+        }
+        if (serverObservationRequest == 1) {
+            Map<String, Object> before = beforeConfirm;
+            if (before == null) return false;
+            require(
+                Boolean.TRUE.equals(before.get("air")) && Integer.valueOf(1)
+                    .equals(before.get("playerStone"))
+                    && mc.currentScreen == constructionReview
+                    && constructionReview.ui.review.materialControlEnabled(55),
+                "World or inventory changed before confirmation");
+            evidence.put("authoritativeBeforeConfirm", before);
+            long sequence = constructionReview.ui.session.sequence();
+            require(
+                constructionReview.ui.review.activateControl(55) && constructionReview.ui.session.sequence() > sequence,
+                "Actual material confirm did not issue a command");
+            serverObservationRequest = 2;
+        }
+        if (serverObservationRequest == 2) {
+            if (state == null || !constructionSession.equals(state.session) || state.data.getInteger("job") != 3)
+                return false;
+            evidence.put("constructionCompletedJob", true);
+            serverObservationRequest = 3;
+        }
+        Map<String, Object> after = afterConstruction;
+        if (after == null) return false;
+        require(
+            packets().getOrDefault("action:confirmBlueprintPlacement", 0) == 1,
+            "Construction did not use exactly one ordinary material confirmation");
+        require(
+            Boolean.FALSE.equals(after.get("air")) && "minecraft:stone".equals(after.get("block"))
+                && Integer.valueOf(0)
+                    .equals(after.get("metadata"))
+                && Integer.valueOf(0)
+                    .equals(after.get("playerStone")),
+            "Construction did not place and pay for one stone in the real server world");
+        evidence.put("authoritativeAfterConstruction", after);
+        if (!finish(mc)) return false;
+        evidence.put("constructionPassed", true);
+        evidence.put("passed", true);
+        return true;
+    }
+
+    private void observeWorld(WorldServer world) {
+        int request = serverObservationRequest;
+        if (request == 1 && beforeConfirm != null || request == 3 && afterConstruction != null
+            || request != 1 && request != 3) return;
+        require(serverActor.worldObj == world && lockedAnchor != null, "Construction witness lost its owned world");
+        int[] at = lockedAnchor;
+        require(world.blockExists(at[0], at[1], at[2]), "Construction target chunk unloaded");
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("air", world.isAirBlock(at[0], at[1], at[2]));
+        snapshot
+            .put("block", String.valueOf(Block.blockRegistry.getNameForObject(world.getBlock(at[0], at[1], at[2]))));
+        snapshot.put("metadata", world.getBlockMetadata(at[0], at[1], at[2]));
+        snapshot.put("playerStone", stones(serverActor));
+        snapshot.put("worldTick", world.getTotalWorldTime());
+        if (request == 1) beforeConfirm = snapshot;
+        else afterConstruction = snapshot;
+    }
+
+    private static int stones(EntityPlayer actor) {
+        int total = 0;
+        for (ItemStack stack : actor.inventory.mainInventory)
+            if (stack != null && stack.getItem() == Item.getItemFromBlock(Blocks.stone) && stack.getItemDamage() == 0)
+                total += stack.stackSize;
+        return total;
     }
 
     private void verifyProjectedPlacement() {
@@ -351,6 +504,11 @@ final class HologramLocalPreviewStagesProbe {
         else mc.playerController.sendUseItem(mc.thePlayer, mc.theWorld, mc.thePlayer.getHeldItem());
     }
 
+    private void placementUse(Minecraft mc) throws Exception {
+        if (postFocus) HologramLocalPlacement.INSTANCE.use(false);
+        else rightClick(mc);
+    }
+
     private void stagePrivatePair(Minecraft mc) throws Exception {
         Path root = Files.createDirectory(output.resolve("local-stage-private-library"));
         require(
@@ -363,6 +521,7 @@ final class HologramLocalPreviewStagesProbe {
         Path path = library.resolve(localId + ".json");
         byte[] json, png;
         String supplied = System.getProperty(SOURCE, "");
+        require(!construction || supplied.isEmpty(), "Paid one-stone proof requires its own construction document");
         if (!supplied.isEmpty()) {
             HologramBlueprintArtifact.Artifact pair = HologramBlueprintArtifact.readPair(Paths.get(supplied));
             json = pair.json;
@@ -400,7 +559,8 @@ final class HologramLocalPreviewStagesProbe {
         version.addProperty("gtnhVersionSource", "unavailable");
         blueprint.add("nativeBlueprint", version);
         JsonArray cells = new JsonArray();
-        for (int x = 0; x < 3; x++) {
+        int size = construction ? 1 : 3;
+        for (int x = 0; x < size; x++) {
             JsonObject cell = new JsonObject();
             cell.addProperty("item", "minecraft:stone");
             cell.addProperty("block", "minecraft:stone");
@@ -451,9 +611,11 @@ final class HologramLocalPreviewStagesProbe {
                         outbound.merge(name, 1, Integer::sum);
                         if (placement != null) projectedPlacement = placement;
                     }
-                    // This fixture has no authorization to start server validation or submission.
-                    io.netty.util.ReferenceCountUtil.release(message);
-                    promise.setSuccess();
+                    if (construction && submitInput) context.write(message, promise);
+                    else {
+                        io.netty.util.ReferenceCountUtil.release(message);
+                        promise.setSuccess();
+                    }
                 }
             });
     }
@@ -480,6 +642,12 @@ final class HologramLocalPreviewStagesProbe {
 
     boolean finish(Minecraft mc) throws Exception {
         if (finished) return true;
+        if (construction) {
+            restoreServerInventory = true;
+            if (mc.thePlayer != null && (!serverInventoryRestored
+                || !ItemStack.areItemStacksEqual(originalTool, mc.thePlayer.inventory.getStackInSlot(toolSlot))))
+                return false;
+        }
         if (fixtureStore != null) {
             if (!cancelling && HologramLibraryClient.INSTANCE.busy()) {
                 HologramLibraryClient.INSTANCE.cancel();
@@ -505,7 +673,9 @@ final class HologramLocalPreviewStagesProbe {
             mc.objectMouseOver = originalHit;
         }
         if (controller != null && mc.currentScreen == controller
+            || constructionReview != null && mc.currentScreen == constructionReview
             || mc.currentScreen instanceof HologramPlacementLoadingScreen) mc.displayGuiScreen(null);
+        if (construction) HologramClient.clearProjection();
         if (channel != null && channel.pipeline()
             .get(HANDLER) != null) channel.pipeline()
                 .remove(HANDLER);

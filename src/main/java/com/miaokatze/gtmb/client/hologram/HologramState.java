@@ -103,16 +103,29 @@ final class HologramState {
         parsedCells = ready.cellPosition;
         cells = new CellPages(ready.pages.toArray(new Cell[ready.pages.size()][]), parsedCells);
         regions = ready.regions.finish();
-        structureMembers = Collections.unmodifiableMap(ready.members);
+        boolean compact = ready.compactCells != null;
+        structureMembers = compact ? anonymousMembers(parsedCells) : Collections.unmodifiableMap(ready.members);
         materials = Collections.unmodifiableList(ready.materials);
-        minY = ready.minY;
-        maxY = ready.maxY;
-        minWorldX = ready.minWorldX;
-        maxWorldX = ready.maxWorldX;
-        minWorldY = ready.minWorldY;
-        maxWorldY = ready.maxWorldY;
-        minWorldZ = ready.minWorldZ;
-        maxWorldZ = ready.maxWorldZ;
+        if (compact && parsedCells != 0) {
+            int[] bounds = regions.bounds();
+            minY = bounds[1];
+            maxY = bounds[4];
+            minWorldX = Math.min(ready.minWorldX, bounds[0]);
+            maxWorldX = Math.max(ready.maxWorldX, bounds[3]);
+            minWorldY = Math.min(ready.minWorldY, bounds[1]);
+            maxWorldY = Math.max(ready.maxWorldY, bounds[4]);
+            minWorldZ = Math.min(ready.minWorldZ, bounds[2]);
+            maxWorldZ = Math.max(ready.maxWorldZ, bounds[5]);
+        } else {
+            minY = ready.minY;
+            maxY = ready.maxY;
+            minWorldX = ready.minWorldX;
+            maxWorldX = ready.maxWorldX;
+            minWorldY = ready.minWorldY;
+            maxWorldY = ready.maxWorldY;
+            minWorldZ = ready.minWorldZ;
+            maxWorldZ = ready.maxWorldZ;
+        }
     }
 
     /** Metadata decorators share geometry; preserve the incoming publication's renderer and selection obligations. */
@@ -154,7 +167,7 @@ final class HologramState {
         for (int i = 0; i < count; i++) prefix.add(ready.pages.get(i >> 8)[i & 255]);
         cells = new CellPages(prefix);
         regions = new HologramRegionCache(cells);
-        structureMembers = memberships(cells);
+        structureMembers = ready.compactCells == null ? memberships(cells) : anonymousMembers(count);
         materials = Collections.emptyList();
         Cell first = cells.get(0);
         minY = maxY = first.dy;
@@ -194,7 +207,7 @@ final class HologramState {
         private final NBTTagCompound data;
         private final NBTTagList rows, materialRows;
         private final List<Cell[]> pages = new ArrayList<>();
-        private final HologramRegionCache.Builder regions = new HologramRegionCache.Builder();
+        private final HologramRegionCache.Builder regions;
         private final java.util.Map<String, List<Integer>> members = new java.util.LinkedHashMap<>();
         private final List<Material> materials = new ArrayList<>();
         private java.util.Iterator<java.util.Map.Entry<String, List<Integer>>> memberIterator;
@@ -231,6 +244,7 @@ final class HologramState {
             displayDescriptors = displayRows && !packed && compactCells == null ? new HashMap<>() : null;
             this.displayRows = displayRows;
             this.compactCells = compactCells;
+            regions = new HologramRegionCache.Builder(compactCells != null);
             compactMaterials = compactCells == null ? null : new DescriptorTemplate[compactCells.materialCount()];
             fullBaseline = compactCells != null || fullBaseline(source);
             data = metadata(source, false);
@@ -261,17 +275,19 @@ final class HologramState {
                     if ((cellPosition & 255) == 0) pages.add(new Cell[Math.min(256, cellCount - cellPosition)]);
                     pages.get(cellPosition >> 8)[cellPosition & 255] = cell;
                     regions.add(cell);
-                    for (String id : membershipIds(cell)) members.computeIfAbsent(id, unused -> new ArrayList<>())
-                        .add(cell.index);
-                    minWorldX = Math.min(minWorldX, cell.x);
-                    maxWorldX = Math.max(maxWorldX, cell.x);
-                    minWorldY = Math.min(minWorldY, cell.y);
-                    maxWorldY = Math.max(maxWorldY, cell.y);
-                    minWorldZ = Math.min(minWorldZ, cell.z);
-                    maxWorldZ = Math.max(maxWorldZ, cell.z);
-                    if (cellPosition == 0) minY = maxY = cell.dy;
-                    minY = Math.min(minY, cell.dy);
-                    maxY = Math.max(maxY, cell.dy);
+                    if (compactCells == null) {
+                        for (String id : membershipIds(cell)) members.computeIfAbsent(id, unused -> new ArrayList<>())
+                            .add(cell.index);
+                        minWorldX = Math.min(minWorldX, cell.x);
+                        maxWorldX = Math.max(maxWorldX, cell.x);
+                        minWorldY = Math.min(minWorldY, cell.y);
+                        maxWorldY = Math.max(maxWorldY, cell.y);
+                        minWorldZ = Math.min(minWorldZ, cell.z);
+                        maxWorldZ = Math.max(maxWorldZ, cell.z);
+                        if (cellPosition == 0) minY = maxY = cell.dy;
+                        minY = Math.min(minY, cell.dy);
+                        maxY = Math.max(maxY, cell.dy);
+                    }
                     cellPosition++;
                 } else if (stage == 1) {
                     if (!regions.sealNext()) {
@@ -709,6 +725,32 @@ final class HologramState {
 
     private static List<String> membershipIds(Cell cell) {
         return cell.structureIds.isEmpty() ? Collections.singletonList("") : cell.structureIds;
+    }
+
+    /** Compact library display rows have one implicit group and use their accepted row order as cell indices. */
+    private static Map<String, List<Integer>> anonymousMembers(int count) {
+        return count == 0 ? Collections.emptyMap() : Collections.singletonMap("", new CellIndexRange(count));
+    }
+
+    private static final class CellIndexRange extends java.util.AbstractList<Integer>
+        implements java.util.RandomAccess {
+
+        private final int size;
+
+        CellIndexRange(int size) {
+            this.size = size;
+        }
+
+        @Override
+        public Integer get(int index) {
+            if (index < 0 || index >= size) throw new IndexOutOfBoundsException();
+            return index;
+        }
+
+        @Override
+        public int size() {
+            return size;
+        }
     }
 
     private static java.util.Map<String, List<Integer>> memberships(HologramState base, List<Cell> cells, int[] changed,
