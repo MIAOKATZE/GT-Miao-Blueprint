@@ -320,6 +320,7 @@ public final class HologramRawExportParityProbe {
         }
         result.put("outcome", failure == null ? "PASS" : "FAIL");
         result.put("failure", failure == null ? "" : failure);
+        boolean recorded = false;
         try {
             Files.createDirectories(output);
             Files.write(
@@ -328,10 +329,14 @@ public final class HologramRawExportParityProbe {
                     .create()
                     .toJson(result)
                     .getBytes(StandardCharsets.UTF_8));
+            recorded = true;
         } catch (IOException error) {
             throw new IllegalStateException("Cannot publish RAW/export parity receipt", error);
         } finally {
-            HologramTestLabUiProfile.install();
+            String combinedFailure = !recorded ? "Could not publish the RAW/export receipt"
+                : failure != null ? "RAW/export probe failed: " + failure : null;
+            if (!HologramRenderParityProbe.completeCombined(output, combinedFailure))
+                HologramTestLabUiProfile.install();
         }
     }
 

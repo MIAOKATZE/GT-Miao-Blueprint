@@ -73,6 +73,7 @@ abstract class MiaoVisonLiteRenderer {
     static long previewSliceCapturedInts;
     static long previewResidentCaptures, previewResidentDraws;
     static long previewCameraReprojects, previewCameraOrderReuses, previewCameraOrderSorts;
+    static long previewBrowseSurfaceReuses;
     static long previewHoverScans;
 
     private static void invalidatePreviewDrawCache() {
@@ -1082,7 +1083,8 @@ abstract class MiaoVisonLiteRenderer {
         return facing;
     }
 
-    private static void projectPreviewCell(PreviewCell previewCell, PreviewRegion region, boolean current, int facing) {
+    private static void projectPreviewCell(PreviewCell previewCell, PreviewRegion region, boolean current, int facing,
+        boolean cacheBrowseSurfaces) {
         HologramState.Cell c = previewCell.cell;
         int exposed = previewCell.exposed & facing;
         String role = previewCell.role;
@@ -1110,6 +1112,18 @@ abstract class MiaoVisonLiteRenderer {
             return;
         }
         HologramTextures.Material material = outline.material;
+        boolean cache = cacheBrowseSurfaces && material.geometry.size() <= Long.SIZE;
+        if (cache && previewCell.browseExposed == exposed) {
+            for (long surfaces = previewCell.browseSurfaces; surfaces != 0; surfaces &= surfaces - 1) {
+                Face face = previewCell.faces[Long.numberOfTrailingZeros(surfaces)];
+                if (material.partial) projectPreviewSurface(face, projected);
+                face.updateDepth();
+                region.faces.add(face);
+            }
+            previewBrowseSurfaceReuses++;
+            return;
+        }
+        long surfaces = 0;
         for (int at = 0; at < material.geometry.size(); at++) {
             HologramGeometry.Surface surface = material.geometry.get(at);
             if ((exposed & 1 << surface.side) == 0) continue;
@@ -1122,6 +1136,11 @@ abstract class MiaoVisonLiteRenderer {
             if (material.partial) projectPreviewSurface(face, projected);
             face.updateDepth();
             region.faces.add(face);
+            if (cache) surfaces |= 1L << at;
+        }
+        if (cache) {
+            previewCell.browseExposed = exposed;
+            previewCell.browseSurfaces = surfaces;
         }
     }
 
@@ -1544,6 +1563,7 @@ abstract class MiaoVisonLiteRenderer {
         Map.Entry<HologramRegionCache.Key, List<HologramState.Cell>> entry;
         PreviewRegion region;
         int counted, completed, published, facing;
+        final boolean cacheBrowseSurfaces;
         final List<Face> faces, outlines;
         final List<RoleMarker> markers;
         final List<HologramState.Cell> nativeCells, linked, visible;
@@ -1556,6 +1576,8 @@ abstract class MiaoVisonLiteRenderer {
         PreviewProjection(HologramState state, String key, PreviewProjection previous) {
             this.state = state;
             this.key = key;
+            cacheBrowseSurfaces = state == HologramLibraryClient.INSTANCE.browsePreviewState()
+                && !state.data.getBoolean("displayPartial");
             regions = state.regions.regions.entrySet()
                 .iterator();
             faces = previous == null ? new ArrayList<>() : previous.faces;
@@ -1606,7 +1628,7 @@ abstract class MiaoVisonLiteRenderer {
                     PreviewCell input = region.cells.get(region.projectedCells++);
                     int firstFace = region.faces.size(), firstOutline = region.outlines.size(),
                         firstMarker = region.markers.size(), firstNative = region.nativeCells.size();
-                    projectPreviewCell(input, region, current, facing);
+                    projectPreviewCell(input, region, current, facing, cacheBrowseSurfaces);
                     for (int i = firstFace; i < region.faces.size(); i++) faces.add(region.faces.get(i));
                     for (int i = firstOutline; i < region.outlines.size(); i++) outlines.add(region.outlines.get(i));
                     for (int i = firstMarker; i < region.markers.size(); i++) markers.add(region.markers.get(i));
@@ -1851,6 +1873,8 @@ abstract class MiaoVisonLiteRenderer {
         final boolean empty, nativeModel;
         Face outline;
         Face[] faces;
+        int browseExposed = -1;
+        long browseSurfaces;
         private Boolean cachedCompleteMaterial;
         private boolean liveMaterialNames;
 
@@ -2597,7 +2621,7 @@ abstract class MiaoVisonLiteRenderer {
 
         // 64 MiB of copied raw ints; masks, scalar states and range objects are additional retained memory.
         private static final int MAX_RETAINED_INTS = 16 * 1024 * 1024;
-        // Bound resident vertex bytes to roughly 16 MiB, recording at most 512 KiB per frame.
+        // Bound resident vertex bytes to roughly 24 MiB, recording at most 768 KiB per frame.
         private static final int MAX_RESIDENT_BATCHES = 128;
         private static final int MAX_FRAME_RECORDINGS = 4;
         final List<Face> faces;

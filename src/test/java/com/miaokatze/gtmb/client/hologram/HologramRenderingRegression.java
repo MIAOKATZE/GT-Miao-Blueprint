@@ -853,7 +853,7 @@ public final class HologramRenderingRegression {
                 cell.index == 7 ? partialMaterial : diagnosticMaterial });
         String[] names = { "previewPreparation", "previewState", "cachedFaces", "cachedOutlines", "cachedMarkers",
             "projectedFrame", "previewSubmission", "hoverFaces", "previewCameraReprojects", "previewCameraOrderReuses",
-            "previewCameraOrderSorts" };
+            "previewCameraOrderSorts", "previewBrowseSurfaceReuses" };
         Object[] saved = new Object[names.length];
         for (int i = 0; i < names.length; i++) saved[i] = field(MiaoVisonLiteRenderer.class, names[i]).get(null);
         java.util.Map<Object, Object> regions = (java.util.Map<Object, Object>) field(
@@ -866,6 +866,8 @@ public final class HologramRenderingRegression {
             lists[i] = new java.util.ArrayList<>((List<?>) field(MiaoVisonLiteRenderer.class, listNames[i]).get(null));
         java.util.BitSet published = (java.util.BitSet) field(MiaoVisonLiteRenderer.class, "publishedPreviewCells")
             .get(null), savedPublished = (java.util.BitSet) published.clone();
+        java.lang.reflect.Field browseState = field(HologramLibraryClient.class, "browseState");
+        Object oldBrowseState = browseState.get(HologramLibraryClient.INSTANCE);
         try {
             java.lang.reflect.Method prepareRegion = MiaoVisonLiteRenderer.class.getDeclaredMethod(
                 "previewRegion",
@@ -907,7 +909,7 @@ public final class HologramRenderingRegression {
                 for (int path = 0; path < 5; path++) {
                     // Revisit the reference pose after a genuinely different pose mutated every owned output.
                     double currentYaw = path == 1 || yaw != 0 && path >= 3 ? yaw + .13 : yaw;
-                    double zoom = yaw == 0 && path >= 3 ? 1.2 : 1;
+                    boolean resize = yaw == 0 && path >= 3;
                     missingIcon[0] = path == 1 || path >= 3;
                     String key = yaw + ":" + path;
                     if (path == 3 && yaw == 0) {
@@ -918,8 +920,20 @@ public final class HologramRenderingRegression {
                             reproject.invoke(previousProjection, "across-facing-mask", false),
                             "a changed facing mask needs the newly exposed faces from a fresh projection");
                     }
-                    field(MiaoVisonLiteRenderer.class, "projectedFrame")
-                        .set(null, new HologramEditorCameraFrame(0, 0, 380, 321, currentYaw, .4, zoom, 15, 0, 1, 6));
+                    field(MiaoVisonLiteRenderer.class, "projectedFrame").set(
+                        null,
+                        new HologramEditorCameraFrame(
+                            0,
+                            0,
+                            resize ? 412 : 380,
+                            resize ? 365 : 321,
+                            currentYaw,
+                            .4,
+                            resize ? 1.2 : 1,
+                            15,
+                            0,
+                            1,
+                            6));
                     if (path == 3) {
                         List<?> faces = (List<?>) field(MiaoVisonLiteRenderer.class, "cachedFaces").get(null);
                         long reuseBefore = field(MiaoVisonLiteRenderer.class, "previewCameraOrderReuses").getLong(null);
@@ -933,7 +947,7 @@ public final class HologramRenderingRegression {
                         if (yaw == 0) SimpleAssert.eq(
                             reuseBefore + 1,
                             field(MiaoVisonLiteRenderer.class, "previewCameraOrderReuses").getLong(null),
-                            "zoom preserves exact equal-depth ties and skips sorting");
+                            "resize and zoom preserve exact equal-depth ties and skip sorting");
                         for (Object face : faces) reprojected.add(faceSnapshot(face));
                         for (Object outline : (List<?>) field(MiaoVisonLiteRenderer.class, "cachedOutlines").get(null))
                             SimpleAssert.eq(
@@ -947,19 +961,28 @@ public final class HologramRenderingRegression {
                     for (String name : listNames)
                         ((List<?>) field(MiaoVisonLiteRenderer.class, name).get(null)).clear();
                     published.clear();
+                    // The full read-only source can reuse local surfaces while its original cursor keeps the budget.
+                    browseState.set(HologramLibraryClient.INSTANCE, path == 1 || path == 4 ? state : oldBrowseState);
                     Object projection = reusedProjectionConstructor.newInstance(state, key, previousProjection);
                     if (previousProjection != null) SimpleAssert.that(
                         field(projectionType, "faces").get(projection)
                             == field(projectionType, "faces").get(previousProjection),
                         "retired cursor output capacity is reused without a new aggregate backing array");
                     field(preparationType, "projection").set(preparation, projection);
-                    if (path == 0) {
+                    if (path == 0 || path == 4) {
+                        long before = field(MiaoVisonLiteRenderer.class, "previewBrowseSurfaceReuses").getLong(null);
                         int steps = 0;
                         while (field(projectionType, "published").getInt(projection) < state.cells.size()
                             && steps++ < 100) {
                             advance.invoke(projection, false, 1, Long.MAX_VALUE);
                             publish.invoke(projection);
+                            if (path == 4 && steps == 1) SimpleAssert.that(
+                                field(projectionType, "published").getInt(projection) < state.cells.size(),
+                                "read-only camera navigation still respects a bounded advance");
                         }
+                        if (path == 4 && yaw != 0) SimpleAssert.that(
+                            field(MiaoVisonLiteRenderer.class, "previewBrowseSurfaceReuses").getLong(null) > before,
+                            "completed read-only source reuses the prior camera-facing local surfaces");
                     } else {
                         advance.invoke(projection, false, Integer.MAX_VALUE, Long.MAX_VALUE);
                         publish.invoke(projection);
@@ -983,7 +1006,7 @@ public final class HologramRenderingRegression {
                                 groupedTie,
                                 "equal-depth fixture distinguishes canonical region order from global cell-index sorting");
                         }
-                    } else {
+                    } else if (path != 4) {
                         SimpleAssert.that(
                             faces == field(projectionType, "faces").get(projection),
                             "complete publication transfers the sorted cursor output without a second copy");
@@ -1015,6 +1038,7 @@ public final class HologramRenderingRegression {
                     previousProjection = projection;
                 }
             }
+            browseState.set(HologramLibraryClient.INSTANCE, oldBrowseState);
             Object blueprintPreparation = preparationConstructor.newInstance(state, true);
             SimpleAssert.that(
                 field(preparationType, "boundary").get(blueprintPreparation) != null,
@@ -1050,6 +1074,7 @@ public final class HologramRenderingRegression {
                 java.util.Arrays.equals(expected.get(i), faceSnapshot(directFaces.get(i))),
                 "direct structure mesh preserves the ordinary cell, surface, depth and vertex oracle");
         } finally {
+            browseState.set(HologramLibraryClient.INSTANCE, oldBrowseState);
             for (HologramState.Cell cell : state.cells) materials.remove(cell);
             regions.clear();
             regions.putAll(savedRegions);

@@ -4,6 +4,7 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import java.awt.image.BufferedImage;
+import java.io.IOException;
 import java.lang.reflect.Field;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -30,6 +31,8 @@ import net.minecraftforge.common.MinecraftForge;
 import org.lwjgl.opengl.GL11;
 
 import com.google.gson.GsonBuilder;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.miaokatzecore.api.testlab.ArtifactIdentity;
 
@@ -44,6 +47,9 @@ public final class HologramRenderParityProbe {
     private static final String OPT_IN = "gtmb.testlab.renderParity";
     private static final String GIANT_SOURCE = "gtmb.testlab.renderParityGiantSource";
     private static final String ANIMATION_WITNESS = "gtmb.testlab.renderParityAnimationWitness";
+    private static final String COMBINED = "gtmb.testlab.renderParityCombined";
+    private static final String EDITOR_RECEIPT = "gtmb-render-parity-editor.json";
+    private static final String CLIENT_RECEIPT = "gtmb-client-ui.json";
     private static final int ANIMATION_SAMPLES = 20;
     private static final String[] CONDUIT_SPRITES = { "enderio:itemConduitCore", "enderio:itemConduitCoreAdvanced" };
     private static final int GIANT_CELLS = 123_369;
@@ -263,12 +269,17 @@ public final class HologramRenderParityProbe {
         boolean sample = now >= nextAnimationSample;
         Map<String, Object> frame = sample ? new LinkedHashMap<>() : null;
         for (String name : CONDUIT_SPRITES) {
-            TextureAtlasSprite sprite = Minecraft.getMinecraft().getTextureMapBlocks().getAtlasSprite(name);
+            TextureAtlasSprite sprite = Minecraft.getMinecraft()
+                .getTextureMapBlocks()
+                .getAtlasSprite(name);
             require(name.equals(sprite.getIconName()) && sprite.getFrameCount() > 1, "Missing animated sprite " + name);
             if (sample) frame.put(name, spritePhase(sprite));
-            // Angelica dry-runs inactive atlas sprites. Mark this known sprite as used for the next normal texture tick.
+            // Angelica dry-runs inactive atlas sprites. Mark this known sprite as used for the next normal texture
+            // tick.
             try {
-                sprite.getClass().getMethod("angelica$markNeedsAnimationUpdate").invoke(sprite);
+                sprite.getClass()
+                    .getMethod("angelica$markNeedsAnimationUpdate")
+                    .invoke(sprite);
                 receipt.put("nativeSixAnimationUsageMarked", true);
             } catch (NoSuchMethodException vanillaAnimation) {}
         }
@@ -283,7 +294,9 @@ public final class HologramRenderParityProbe {
 
     private static Object spritePhase(TextureAtlasSprite sprite) throws ReflectiveOperationException {
         try {
-            return sprite.getClass().getMethod("getFrame").invoke(sprite);
+            return sprite.getClass()
+                .getMethod("getFrame")
+                .invoke(sprite);
         } catch (NoSuchMethodException vanillaAnimation) {
             return "unavailable";
         }
@@ -565,7 +578,10 @@ public final class HologramRenderParityProbe {
                 && Integer.valueOf(GIANT_CELLS)
                     .equals(giantEvidence.get("completedCells"));
         boolean animationComplete = !animationWitness || animationFrames.size() == ANIMATION_SAMPLES;
-        boolean passed = failure == null && restored && frames.size() == 7 && inputDispatched && giantComplete
+        boolean passed = failure == null && restored
+            && frames.size() == 7
+            && inputDispatched
+            && giantComplete
             && animationComplete;
         receipt.put("completed", true);
         receipt.put("passed", passed);
@@ -584,14 +600,44 @@ public final class HologramRenderParityProbe {
             "artifact",
             ArtifactIdentity.capture(HologramRenderParityProbe.class)
                 .asMap());
+        if (passed && Boolean.getBoolean(COMBINED)) {
+            publish(output, EDITOR_RECEIPT, receipt);
+            if (HologramTutorialIssue95Probe.install()) return;
+            receipt.put("passed", false);
+            receipt.put("outcome", "FAIL");
+            receipt.put("detail", "Combined profile requires the native Issue95 playback");
+        }
+        publish(output, CLIENT_RECEIPT, receipt);
+    }
+
+    static boolean completeCombined(Path output, String failure) {
+        if (!Boolean.getBoolean(COMBINED)) return false;
+        try {
+            String editor = new String(Files.readAllBytes(output.resolve(EDITOR_RECEIPT)), StandardCharsets.UTF_8);
+            JsonObject aggregate = new JsonParser().parse(editor)
+                .getAsJsonObject();
+            aggregate.addProperty("combinedPlaybackAndRawExport", failure == null);
+            if (failure != null) {
+                aggregate.addProperty("passed", false);
+                aggregate.addProperty("outcome", "FAIL");
+                aggregate.addProperty("detail", failure);
+            }
+            publish(output, CLIENT_RECEIPT, aggregate);
+            return true;
+        } catch (IOException problem) {
+            throw new IllegalStateException("Cannot publish combined client receipt", problem);
+        }
+    }
+
+    private static void publish(Path output, String name, Object content) throws IOException {
         Path temporary = Files.createTempFile(output, "gtmb-render-parity-", ".json");
         Files.write(
             temporary,
             new GsonBuilder().setPrettyPrinting()
                 .create()
-                .toJson(receipt)
+                .toJson(content)
                 .getBytes(StandardCharsets.UTF_8));
-        Files.move(temporary, output.resolve("gtmb-client-ui.json"), StandardCopyOption.REPLACE_EXISTING);
+        Files.move(temporary, output.resolve(name), StandardCopyOption.REPLACE_EXISTING);
     }
 
     private static void require(boolean condition, String message) {

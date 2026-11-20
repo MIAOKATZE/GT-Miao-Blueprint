@@ -31,6 +31,7 @@ public final class MiaoVisonLiteMaterialBatch implements AutoCloseable {
 
     private static final boolean DIAGNOSTICS_ENABLED = Boolean.getBoolean("gtmb.testlab.renderParity");
     private static final Map<String, Long> DIAGNOSTICS = new LinkedHashMap<>();
+    private static final int[] ANGELICA_TRIANGLE_VERTICES = { 0, 1, 3, 1, 2, 3 };
     private final MiaoVisonLiteDisplayList geometry;
     private final Frame frame;
     private final long xOffset, yOffset, zOffset;
@@ -72,7 +73,7 @@ public final class MiaoVisonLiteMaterialBatch implements AutoCloseable {
         if (caps.OpenGL20 && GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM) != 0) return reject("program");
         if (GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE) != GL13.GL_TEXTURE0) return reject("texture");
         count("admitted-vanilla");
-        return new Frame(caps, null);
+        return new Frame(caps, false, null);
     }
 
     private static Frame reject(String reason) {
@@ -102,7 +103,10 @@ public final class MiaoVisonLiteMaterialBatch implements AutoCloseable {
     public static MiaoVisonLiteMaterialBatch record(Tessellator tess, Frame frame, int vertices) {
         if (frame == null) return null;
         TessellatorAccessor access = (TessellatorAccessor) tess;
-        if (!quadBatch(access, vertices) || !access.miaokatze$getHasTexture() || !access.miaokatze$getHasColor()) {
+        if (vertices <= 0 || (vertices & 3) != 0
+            || !quadBatch(access, vertices)
+            || !access.miaokatze$getHasTexture()
+            || !access.miaokatze$getHasColor()) {
             count("rejected-batch-layout");
             return null;
         }
@@ -121,7 +125,8 @@ public final class MiaoVisonLiteMaterialBatch implements AutoCloseable {
                 access.miaokatze$setHasBrightness(true);
             }
             list.begin();
-            tess.draw();
+            if (frame.angelica) drawAngelicaTriangles(tess, access, vertices);
+            else tess.draw();
             list.finish();
             // GTNHLib's recording discard clears flags the ordinary Tessellator draw leaves set.
             batch.applyAttributes(tess, access);
@@ -136,6 +141,35 @@ public final class MiaoVisonLiteMaterialBatch implements AutoCloseable {
         } finally {
             access.miaokatze$setHasBrightness(false);
             access.miaokatze$setHasNormals(false);
+        }
+    }
+
+    private static void drawAngelicaTriangles(Tessellator tess, TessellatorAccessor access, int vertices) {
+        // Live Angelica GL_QUADS shares vertex 3 between both triangles. The GTNHLib display-list EBO
+        // splits the same quads along 0–2. Record the live ordering to preserve rasterization and interpolation.
+        int[] quads = access.miaokatze$getRawBuffer();
+        int capacity = access.miaokatze$getRawBufferSize();
+        int triangleVertices = vertices / 4 * ANGELICA_TRIANGLE_VERTICES.length;
+        int[] triangles = new int[triangleVertices * 8];
+        int write = 0;
+        for (int base = 0; base < vertices * 8; base += 32) {
+            for (int corner : ANGELICA_TRIANGLE_VERTICES) {
+                System.arraycopy(quads, base + corner * 8, triangles, write, 8);
+                write += 8;
+            }
+        }
+        access.miaokatze$setRawBuffer(triangles);
+        access.miaokatze$setRawBufferSize(triangles.length);
+        access.miaokatze$setRawBufferIndex(triangles.length);
+        access.miaokatze$setAddedVertices(triangleVertices);
+        access.miaokatze$setVertexCount(triangleVertices);
+        access.miaokatze$setDrawMode(GL11.GL_TRIANGLES);
+        try {
+            tess.draw();
+        } finally {
+            access.miaokatze$setDrawMode(GL11.GL_QUADS);
+            access.miaokatze$setRawBuffer(quads);
+            access.miaokatze$setRawBufferSize(capacity);
         }
     }
 
@@ -192,15 +226,18 @@ public final class MiaoVisonLiteMaterialBatch implements AutoCloseable {
     public static final class Frame {
 
         private final ContextCapabilities context;
+        private final boolean angelica;
         private final VertexDefaults defaults;
 
-        private Frame(ContextCapabilities context, VertexDefaults defaults) {
+        private Frame(ContextCapabilities context, boolean angelica, VertexDefaults defaults) {
             this.context = context;
+            this.angelica = angelica;
             this.defaults = defaults;
         }
 
         private boolean sameDefaults(Frame current) {
-            return defaults == null ? current.defaults == null : defaults.matches(current.defaults);
+            return angelica == current.angelica
+                && (defaults == null ? current.defaults == null : defaults.matches(current.defaults));
         }
     }
 
@@ -264,13 +301,13 @@ public final class MiaoVisonLiteMaterialBatch implements AutoCloseable {
                         return reject("extended-attributes");
                 if (!EXPANDED.getBoolean(null)) {
                     count("admitted-angelica");
-                    return new Frame(caps, null);
+                    return new Frame(caps, true, null);
                 }
                 if (FILL == null || BRIGHTNESS == null || NORMAL == null) return reject("expanded-format-api");
                 Vector3f normal = (Vector3f) NORMAL.invoke(null);
                 int brightness = (int) BRIGHTNESS.invoke(null);
                 count("admitted-angelica-expanded");
-                return new Frame(caps, new VertexDefaults(brightness, normal.x, normal.y, normal.z));
+                return new Frame(caps, true, new VertexDefaults(brightness, normal.x, normal.y, normal.z));
             } catch (ReflectiveOperationException | LinkageError unavailable) {
                 return reject("angelica-linkage");
             }
