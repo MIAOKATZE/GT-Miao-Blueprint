@@ -448,7 +448,7 @@ public final class HologramV011ProcessingClientProbe {
     /** A decoded ACK can arrive between frames; only the native preview binds the current displayed snapshot. */
     private static boolean displayedSource(HologramScreen screen, NBTTagCompound ui) throws Exception {
 
-        Field renderedState = HologramRenderer.class.getDeclaredField("previewState");
+        Field renderedState = MiaoVisonLiteRenderer.class.getDeclaredField("previewState");
 
         renderedState.setAccessible(true);
         HologramState source = HologramClient.state;

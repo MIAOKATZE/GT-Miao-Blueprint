@@ -21,6 +21,7 @@ public final class HologramNativeRenderRegistry {
      * An adapter opts a family into snapshot rendering. Its factory must return a new tile,
      * and its renderer must only read the supplied access/tiles; world/player mutations,
      * tick/placement hooks and arbitrary TESRs are outside this static rendering contract.
+     * Lite captures the ordered Forge pass commands and reuses them until the region or its atlas changes.
      */
     public interface Adapter {
 

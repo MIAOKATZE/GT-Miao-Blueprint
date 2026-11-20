@@ -3,6 +3,7 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -11,6 +12,8 @@ import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
+import com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLiteSpatialIndex;
+import com.miaokatze.gtmb.hologram.HologramPreviewPose;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
 /** Validates front-face identity without a GL context or mutable GT prototypes. */
@@ -22,6 +25,7 @@ public final class HologramRenderingRegression {
         previewOutlineDensity();
         completePreviewMaterial();
         occupancyBoundary();
+        worldRegionCandidates();
         sourceSwitchFence();
         cameraNavigationWhilePreparing();
         orderedPreviewBatches();
@@ -142,6 +146,35 @@ public final class HologramRenderingRegression {
             .eq(0, boundary.projected, "building real occupancy never needs projection, textures or a native model");
     }
 
+    private static void worldRegionCandidates() {
+        MiaoVisonLiteSpatialIndex<String> regions = new MiaoVisonLiteSpatialIndex<>(16);
+        regions.add(16, 0, 0, "east");
+        for (int i = 0; i < 48; i++) regions.add(i * 16, 64, i * -16, "distant");
+        regions.add(0, -32, 0, "below");
+        regions.add(-32, 0, 0, "west");
+        SimpleAssert.eq(
+            Arrays.asList("east", "below", "west"),
+            regions.select(0, 0, 0, 16),
+            "distance boundaries preserve original region submission order");
+        SimpleAssert.eq(
+            Collections.singletonList("east"),
+            regions.select(1, 1, 0, 16),
+            "the next query excludes regions beyond the distance bounds");
+        regions.clear();
+        SimpleAssert.that(
+            regions.select(0, 0, 0, 16)
+                .isEmpty(),
+            "retiring the scene drops all indexed regions");
+
+        HologramPreviewPose pose = new HologramPreviewPose().turn(false)
+            .turn(true);
+        int[] transformed = pose.apply(-17, 5, 32);
+        double[] source = pose.inverse(transformed[0], transformed[1], transformed[2]);
+        SimpleAssert.that(
+            Arrays.equals(new double[] { -17, 5, 32 }, source),
+            "local placement culls using the inverse of its exact quarter turns");
+    }
+
     private static void sourceSwitchFence() {
         HologramState state = new HologramState(boundarySource("old"));
         Object world = new Object();
@@ -185,8 +218,8 @@ public final class HologramRenderingRegression {
             HologramUiModules ui = new HologramUiModules(headlessRenderingHost());
             java.lang.reflect.Field session = HologramUiSession.class.getDeclaredField("state"),
                 teaching = HologramUiSession.class.getDeclaredField("tutorialSink"),
-                displayed = HologramRenderer.class.getDeclaredField("displayedState"),
-                preparing = HologramRenderer.class.getDeclaredField("previewPreparation");
+                displayed = MiaoVisonLiteRenderer.class.getDeclaredField("displayedState"),
+                preparing = MiaoVisonLiteRenderer.class.getDeclaredField("previewPreparation");
             session.setAccessible(true);
             teaching.setAccessible(true);
             displayed.setAccessible(true);
@@ -194,7 +227,7 @@ public final class HologramRenderingRegression {
             session.set(ui.session, state);
             teaching
                 .set(ui.session, (java.util.function.BiConsumer<String, NBTTagCompound>) (operation, request) -> {});
-            Class<?> cursor = Class.forName(HologramRenderer.class.getName() + "$PreviewPreparation");
+            Class<?> cursor = Class.forName(MiaoVisonLiteRenderer.class.getName() + "$PreviewPreparation");
             java.lang.reflect.Constructor<?> constructor = cursor
                 .getDeclaredConstructor(HologramState.class, boolean.class);
             constructor.setAccessible(true);
@@ -283,11 +316,11 @@ public final class HologramRenderingRegression {
         String[] names = { "previewPreparation", "previewState", "presentedState", "presentedRequest",
             "projectedRequest", "previewSubmitted", "displayedState" };
         Object[] saved = new Object[names.length];
-        for (int i = 0; i < names.length; i++) saved[i] = field(HologramRenderer.class, names[i]).get(null);
+        for (int i = 0; i < names.length; i++) saved[i] = field(MiaoVisonLiteRenderer.class, names[i]).get(null);
         HologramState state = ui.session.state();
-        Class<?> preparationType = Class.forName(HologramRenderer.class.getName() + "$PreviewPreparation"),
-            projectionType = Class.forName(HologramRenderer.class.getName() + "$PreviewProjection"),
-            requestType = Class.forName(HologramRenderer.class.getName() + "$PreviewRequest");
+        Class<?> preparationType = Class.forName(MiaoVisonLiteRenderer.class.getName() + "$PreviewPreparation"),
+            projectionType = Class.forName(MiaoVisonLiteRenderer.class.getName() + "$PreviewProjection"),
+            requestType = Class.forName(MiaoVisonLiteRenderer.class.getName() + "$PreviewRequest");
         java.lang.reflect.Constructor<?> preparationConstructor = preparationType
             .getDeclaredConstructor(HologramState.class, boolean.class),
             projectionConstructor = projectionType.getDeclaredConstructor(HologramState.class, String.class),
@@ -318,15 +351,15 @@ public final class HologramRenderingRegression {
             0,
             false,
             false);
-        field(HologramRenderer.class, "previewPreparation").set(null, preparation);
+        field(MiaoVisonLiteRenderer.class, "previewPreparation").set(null, preparation);
         for (String name : new String[] { "previewState", "presentedState", "displayedState" })
-            field(HologramRenderer.class, name).set(null, state);
+            field(MiaoVisonLiteRenderer.class, name).set(null, state);
         for (String name : new String[] { "projectedRequest", "presentedRequest" })
-            field(HologramRenderer.class, name).set(null, request);
-        field(HologramRenderer.class, "previewSubmitted").setBoolean(null, true);
+            field(MiaoVisonLiteRenderer.class, name).set(null, request);
+        field(MiaoVisonLiteRenderer.class, "previewSubmitted").setBoolean(null, true);
         return () -> {
             try {
-                for (int i = 0; i < names.length; i++) field(HologramRenderer.class, names[i]).set(null, saved[i]);
+                for (int i = 0; i < names.length; i++) field(MiaoVisonLiteRenderer.class, names[i]).set(null, saved[i]);
             } catch (ReflectiveOperationException failure) {
                 throw new AssertionError("restore headless presentation", failure);
             }
@@ -338,11 +371,11 @@ public final class HologramRenderingRegression {
         String[] fields = { "previewState", "presentedState", "presentedRequest", "projectedRequest", "previewKey",
             "previewSubmitted", "previewPreparation" };
         Object[] saved = new Object[fields.length];
-        for (int i = 0; i < fields.length; i++) saved[i] = field(HologramRenderer.class, fields[i]).get(null);
+        for (int i = 0; i < fields.length; i++) saved[i] = field(MiaoVisonLiteRenderer.class, fields[i]).get(null);
         try {
             Object preparation = preparationConstructor.newInstance(state, false);
             Class<?> type = preparation.getClass();
-            Class<?> projectionType = Class.forName(HologramRenderer.class.getName() + "$PreviewProjection");
+            Class<?> projectionType = Class.forName(MiaoVisonLiteRenderer.class.getName() + "$PreviewProjection");
             java.lang.reflect.Constructor<?> projectionConstructor = projectionType
                 .getDeclaredConstructor(HologramState.class, String.class);
             projectionConstructor.setAccessible(true);
@@ -350,12 +383,12 @@ public final class HologramRenderingRegression {
             field(type, "completed").setInt(preparation, state.cells.size());
             field(projectionType, "published").setInt(projection, state.cells.size());
             field(type, "projection").set(preparation, projection);
-            field(HologramRenderer.class, "previewPreparation").set(null, preparation);
-            field(HologramRenderer.class, "previewState").set(null, state);
-            field(HologramRenderer.class, "presentedState").set(null, state);
-            field(HologramRenderer.class, "previewKey").set(null, "previous-pose");
-            field(HologramRenderer.class, "previewSubmitted").setBoolean(null, true);
-            Class<?> requestType = Class.forName(HologramRenderer.class.getName() + "$PreviewRequest");
+            field(MiaoVisonLiteRenderer.class, "previewPreparation").set(null, preparation);
+            field(MiaoVisonLiteRenderer.class, "previewState").set(null, state);
+            field(MiaoVisonLiteRenderer.class, "presentedState").set(null, state);
+            field(MiaoVisonLiteRenderer.class, "previewKey").set(null, "previous-pose");
+            field(MiaoVisonLiteRenderer.class, "previewSubmitted").setBoolean(null, true);
+            Class<?> requestType = Class.forName(MiaoVisonLiteRenderer.class.getName() + "$PreviewRequest");
             java.lang.reflect.Constructor<?> requestConstructor = requestType.getDeclaredConstructors()[0];
             requestConstructor.setAccessible(true);
             com.miaokatze.miaokatzecore.api.camera.ViewportCoordinates area = ui.canvas.viewport();
@@ -375,9 +408,9 @@ public final class HologramRenderingRegression {
                 0,
                 false,
                 false);
-            field(HologramRenderer.class, "presentedRequest").set(null, request);
-            field(HologramRenderer.class, "projectedRequest").set(null, request);
-            java.lang.reflect.Method cameraOnly = HologramRenderer.class.getDeclaredMethod(
+            field(MiaoVisonLiteRenderer.class, "presentedRequest").set(null, request);
+            field(MiaoVisonLiteRenderer.class, "projectedRequest").set(null, request);
+            java.lang.reflect.Method cameraOnly = MiaoVisonLiteRenderer.class.getDeclaredMethod(
                 "preparedCameraOnly",
                 HologramState.class,
                 String.class,
@@ -438,10 +471,10 @@ public final class HologramRenderingRegression {
             ui.preview.mouseMovedOrUp(40, 40, 0);
             SimpleAssert.eq(-1, gizmo.axis(), "stale release cancels the block gizmo without committing a move");
             SimpleAssert.eq(-1, textGizmo.axis(), "stale release also cancels the independent text capture");
-            field(HologramRenderer.class, "presentedRequest").set(null, null);
+            field(MiaoVisonLiteRenderer.class, "presentedRequest").set(null, null);
             SimpleAssert.that(!ui.preview.previewInteractive(), "a closed/unsubmitted scene cannot admit edits");
         } finally {
-            for (int i = 0; i < fields.length; i++) field(HologramRenderer.class, fields[i]).set(null, saved[i]);
+            for (int i = 0; i < fields.length; i++) field(MiaoVisonLiteRenderer.class, fields[i]).set(null, saved[i]);
         }
     }
 
@@ -505,7 +538,7 @@ public final class HologramRenderingRegression {
             try {
                 completeCameraProjection(material, materials);
                 tutorialSnapshotOwnership(material, materials);
-                Class<?> faceClass = Class.forName(HologramRenderer.class.getName() + "$Face");
+                Class<?> faceClass = Class.forName(MiaoVisonLiteRenderer.class.getName() + "$Face");
                 java.lang.reflect.Constructor<?> faceConstructor = faceClass.getDeclaredConstructor(
                     HologramState.Cell.class,
                     double[][].class,
@@ -520,7 +553,7 @@ public final class HologramRenderingRegression {
                         points[vertex] = new double[] { face * 10 + vertex, vertex, face };
                     faces.add(faceConstructor.newInstance(cell, points, 1, false, material.geometry.get(1)));
                 }
-                Class<?> submissionClass = Class.forName(HologramRenderer.class.getName() + "$PreviewSubmission");
+                Class<?> submissionClass = Class.forName(MiaoVisonLiteRenderer.class.getName() + "$PreviewSubmission");
                 java.lang.reflect.Constructor<?> submissionConstructor = submissionClass
                     .getDeclaredConstructor(List.class, double.class);
                 java.lang.reflect.Method draw = submissionClass.getDeclaredMethod("draw", Tessellator.class);
@@ -569,7 +602,7 @@ public final class HologramRenderingRegression {
                 SimpleAssert.eq(1f, (float) boundary[6], "second material layer keeps its green tint");
                 draw.invoke(submission, tess);
                 SimpleAssert.eq(16400, tess.vertices.size(), "unsupported replay does not duplicate or omit commands");
-                java.lang.reflect.Method dynamic = HologramRenderer.class.getDeclaredMethod(
+                java.lang.reflect.Method dynamic = MiaoVisonLiteRenderer.class.getDeclaredMethod(
                     "drawPreviewQuads",
                     Tessellator.class,
                     List.class,
@@ -590,9 +623,9 @@ public final class HologramRenderingRegression {
                     { 10, 0, 1 }, { 10, 10, 1 }, { 0, 10, 1 } };
                 List<Object> pickFaces = new java.util.ArrayList<>();
                 pickFaces.add(faceConstructor.newInstance(cell, pickPoints, 2, false, material.geometry.get(2)));
-                java.lang.reflect.Method hover = HologramRenderer.class
+                java.lang.reflect.Method hover = MiaoVisonLiteRenderer.class
                     .getDeclaredMethod("previewHovered", List.class, int.class, int.class, boolean.class);
-                java.lang.reflect.Method invalidate = HologramRenderer.class
+                java.lang.reflect.Method invalidate = MiaoVisonLiteRenderer.class
                     .getDeclaredMethod("invalidatePreviewDrawCache");
                 hover.setAccessible(true);
                 invalidate.setAccessible(true);
@@ -663,15 +696,15 @@ public final class HologramRenderingRegression {
             "cachedMarkers", "projectedFrame", "previewKey", "boundsState", "previewSubmitted", "presentedState",
             "presentedFrame", "presentedRequest", "previewSubmission", "hoverFaces" };
         Object[] saved = new Object[names.length];
-        for (int i = 0; i < names.length; i++) saved[i] = field(HologramRenderer.class, names[i]).get(null);
+        for (int i = 0; i < names.length; i++) saved[i] = field(MiaoVisonLiteRenderer.class, names[i]).get(null);
         java.util.Map<Object, Object> regions = (java.util.Map<Object, Object>) field(
-            HologramRenderer.class,
+            MiaoVisonLiteRenderer.class,
             "previewRegions").get(null), savedRegions = new java.util.LinkedHashMap<>(regions);
         String[] listNames = { "nativePreviewCells", "linkedPreviewCells", "visibleCells" };
         List<?>[] savedLists = new List<?>[listNames.length];
-        for (int i = 0; i < listNames.length; i++)
-            savedLists[i] = new java.util.ArrayList<>((List<?>) field(HologramRenderer.class, listNames[i]).get(null));
-        java.util.BitSet published = (java.util.BitSet) field(HologramRenderer.class, "publishedPreviewCells")
+        for (int i = 0; i < listNames.length; i++) savedLists[i] = new java.util.ArrayList<>(
+            (List<?>) field(MiaoVisonLiteRenderer.class, listNames[i]).get(null));
+        java.util.BitSet published = (java.util.BitSet) field(MiaoVisonLiteRenderer.class, "publishedPreviewCells")
             .get(null), savedPublished = (java.util.BitSet) published.clone();
         boolean worldPreview = HologramClient.worldPreview;
         try {
@@ -685,24 +718,24 @@ public final class HologramRenderingRegression {
                     HologramRenderer.previewMeshCompleted(teaching),
                     "unfenced opposing world frames repeatedly retire the lesson before material preparation");
                 SimpleAssert.that(
-                    ((List<?>) field(HologramRenderer.class, "cachedFaces").get(null)).isEmpty()
-                        && ((List<?>) field(HologramRenderer.class, "visibleCells").get(null)).isEmpty(),
+                    ((List<?>) field(MiaoVisonLiteRenderer.class, "cachedFaces").get(null)).isEmpty()
+                        && ((List<?>) field(MiaoVisonLiteRenderer.class, "visibleCells").get(null)).isEmpty(),
                     "the unfenced control reproduces the empty material and visible-cell counts");
             }
-            Object preparation = field(HologramRenderer.class, "previewPreparation").get(null);
+            Object preparation = field(MiaoVisonLiteRenderer.class, "previewPreparation").get(null);
             for (int frame = 0; frame < 6; frame++) {
                 tutorialPreparationFrame(world, teaching, ui, true);
                 SimpleAssert.that(
-                    field(HologramRenderer.class, "previewPreparation").get(null) == preparation,
+                    field(MiaoVisonLiteRenderer.class, "previewPreparation").get(null) == preparation,
                     "fenced world frames retain the lesson's cooperative preparation");
             }
             SimpleAssert.eq(1, HologramRenderer.previewMeshCompleted(teaching), "the protected mesh finishes");
             SimpleAssert.that(
-                !((List<?>) field(HologramRenderer.class, "cachedFaces").get(null)).isEmpty(),
+                !((List<?>) field(MiaoVisonLiteRenderer.class, "cachedFaces").get(null)).isEmpty(),
                 "the protected projection publishes actual stone faces");
             SimpleAssert.eq(
                 1,
-                ((List<?>) field(HologramRenderer.class, "visibleCells").get(null)).size(),
+                ((List<?>) field(MiaoVisonLiteRenderer.class, "visibleCells").get(null)).size(),
                 "the protected projection publishes the visible stone cell");
             tutorialSandbox.set(ui.tutorial, null);
             SimpleAssert
@@ -722,11 +755,11 @@ public final class HologramRenderingRegression {
         } finally {
             tutorialSandbox.set(ui.tutorial, null);
             materials.remove(teaching.cells.get(0));
-            for (int i = 0; i < names.length; i++) field(HologramRenderer.class, names[i]).set(null, saved[i]);
+            for (int i = 0; i < names.length; i++) field(MiaoVisonLiteRenderer.class, names[i]).set(null, saved[i]);
             regions.clear();
             regions.putAll(savedRegions);
             for (int i = 0; i < listNames.length; i++) {
-                List<Object> list = (List<Object>) field(HologramRenderer.class, listNames[i]).get(null);
+                List<Object> list = (List<Object>) field(MiaoVisonLiteRenderer.class, listNames[i]).get(null);
                 list.clear();
                 list.addAll(savedLists[i]);
             }
@@ -740,16 +773,16 @@ public final class HologramRenderingRegression {
         boolean fence) throws ReflectiveOperationException {
         if (!fence || !HologramClient.ownsNativeRenderSnapshot(ui)) HologramBlockRender.begin(world);
         HologramBlockRender.begin(teaching);
-        Class<?> type = Class.forName(HologramRenderer.class.getName() + "$PreviewPreparation");
-        if (field(HologramRenderer.class, "visibleState").get(null) != teaching) {
-            field(HologramRenderer.class, "visibleState").set(null, teaching);
-            ((java.util.Map<?, ?>) field(HologramRenderer.class, "previewRegions").get(null)).clear();
+        Class<?> type = Class.forName(MiaoVisonLiteRenderer.class.getName() + "$PreviewPreparation");
+        if (field(MiaoVisonLiteRenderer.class, "visibleState").get(null) != teaching) {
+            field(MiaoVisonLiteRenderer.class, "visibleState").set(null, teaching);
+            ((java.util.Map<?, ?>) field(MiaoVisonLiteRenderer.class, "previewRegions").get(null)).clear();
             java.lang.reflect.Constructor<?> constructor = type
                 .getDeclaredConstructor(HologramState.class, boolean.class);
             constructor.setAccessible(true);
-            field(HologramRenderer.class, "previewPreparation").set(null, constructor.newInstance(teaching, true));
+            field(MiaoVisonLiteRenderer.class, "previewPreparation").set(null, constructor.newInstance(teaching, true));
         }
-        java.lang.reflect.Method prepare = HologramRenderer.class.getDeclaredMethod(
+        java.lang.reflect.Method prepare = MiaoVisonLiteRenderer.class.getDeclaredMethod(
             "prepareProgressiveFrame",
             HologramState.class,
             String.class,
@@ -765,7 +798,7 @@ public final class HologramRenderingRegression {
             double.class);
         prepare.setAccessible(true);
         prepare.invoke(null, teaching, "tutorial-owner-pose", 0, 0, 380, 321, .4, .4, 1d, 0d, 0d, 0d);
-        Object preparation = field(HologramRenderer.class, "previewPreparation").get(null);
+        Object preparation = field(MiaoVisonLiteRenderer.class, "previewPreparation").get(null);
         java.lang.reflect.Method advance = type
             .getDeclaredMethod("advance", int.class, int.class, boolean.class, String.class);
         advance.setAccessible(true);
@@ -783,7 +816,8 @@ public final class HologramRenderingRegression {
         NBTTagList rows = new NBTTagList();
         // Interleaved input indices deliberately differ from region/cell generation order.
         for (int[] point : new int[][] { { 16, 0 }, { 14, 1 }, { 16, 1 }, { 15, 0 }, { 16, 2 }, { 14, 0 }, { 14, 2 },
-            { 15, 2 } }) rows.appendTag(boundaryCell(point[0], 0, point[1], "minecraft:glass"));
+            { 15, 2 }, { -16, 0 }, { -17, -1 }, { -16, -1 }, { -17, 0 } })
+            rows.appendTag(boundaryCell(point[0], 0, point[1], "minecraft:glass"));
         source.setTag("cells", rows);
         HologramState state = new HologramState(source);
         boolean[] missingIcon = { false };
@@ -818,21 +852,22 @@ public final class HologramRenderingRegression {
             new HologramTextures.Material[] { cell.index == 7 ? partialMaterial : diagnosticMaterial,
                 cell.index == 7 ? partialMaterial : diagnosticMaterial });
         String[] names = { "previewPreparation", "previewState", "cachedFaces", "cachedOutlines", "cachedMarkers",
-            "projectedFrame", "previewSubmission", "hoverFaces" };
+            "projectedFrame", "previewSubmission", "hoverFaces", "previewCameraReprojects", "previewCameraOrderReuses",
+            "previewCameraOrderSorts" };
         Object[] saved = new Object[names.length];
-        for (int i = 0; i < names.length; i++) saved[i] = field(HologramRenderer.class, names[i]).get(null);
+        for (int i = 0; i < names.length; i++) saved[i] = field(MiaoVisonLiteRenderer.class, names[i]).get(null);
         java.util.Map<Object, Object> regions = (java.util.Map<Object, Object>) field(
-            HologramRenderer.class,
+            MiaoVisonLiteRenderer.class,
             "previewRegions").get(null);
         java.util.Map<Object, Object> savedRegions = new java.util.LinkedHashMap<>(regions);
         String[] listNames = { "nativePreviewCells", "linkedPreviewCells", "visibleCells" };
         List<?>[] lists = new List<?>[listNames.length];
         for (int i = 0; i < lists.length; i++)
-            lists[i] = new java.util.ArrayList<>((List<?>) field(HologramRenderer.class, listNames[i]).get(null));
-        java.util.BitSet published = (java.util.BitSet) field(HologramRenderer.class, "publishedPreviewCells")
+            lists[i] = new java.util.ArrayList<>((List<?>) field(MiaoVisonLiteRenderer.class, listNames[i]).get(null));
+        java.util.BitSet published = (java.util.BitSet) field(MiaoVisonLiteRenderer.class, "publishedPreviewCells")
             .get(null), savedPublished = (java.util.BitSet) published.clone();
         try {
-            java.lang.reflect.Method prepareRegion = HologramRenderer.class.getDeclaredMethod(
+            java.lang.reflect.Method prepareRegion = MiaoVisonLiteRenderer.class.getDeclaredMethod(
                 "previewRegion",
                 HologramState.class,
                 List.class,
@@ -840,8 +875,8 @@ public final class HologramRenderingRegression {
                 int.class,
                 boolean.class);
             prepareRegion.setAccessible(true);
-            Class<?> preparationType = Class.forName(HologramRenderer.class.getName() + "$PreviewPreparation"),
-                projectionType = Class.forName(HologramRenderer.class.getName() + "$PreviewProjection");
+            Class<?> preparationType = Class.forName(MiaoVisonLiteRenderer.class.getName() + "$PreviewPreparation"),
+                projectionType = Class.forName(MiaoVisonLiteRenderer.class.getName() + "$PreviewProjection");
             java.lang.reflect.Constructor<?> preparationConstructor = preparationType
                 .getDeclaredConstructor(HologramState.class, boolean.class);
             java.lang.reflect.Constructor<?> reusedProjectionConstructor = projectionType
@@ -850,9 +885,11 @@ public final class HologramRenderingRegression {
             reusedProjectionConstructor.setAccessible(true);
             java.lang.reflect.Method advance = projectionType
                 .getDeclaredMethod("advance", boolean.class, int.class, long.class),
-                publish = projectionType.getDeclaredMethod("publish");
+                publish = projectionType.getDeclaredMethod("publish"),
+                reproject = projectionType.getDeclaredMethod("reprojectComplete", String.class, boolean.class);
             advance.setAccessible(true);
             publish.setAccessible(true);
+            reproject.setAccessible(true);
             regions.clear();
             for (java.util.Map.Entry<HologramRegionCache.Key, List<HologramState.Cell>> entry : state.regions.regions
                 .entrySet())
@@ -861,21 +898,54 @@ public final class HologramRenderingRegression {
                     prepareRegion.invoke(null, state, entry.getValue(), Integer.MAX_VALUE, 0, false));
             Object preparation = preparationConstructor.newInstance(state, false);
             field(preparationType, "completed").setInt(preparation, state.cells.size());
-            field(HologramRenderer.class, "previewPreparation").set(null, preparation);
+            field(MiaoVisonLiteRenderer.class, "previewPreparation").set(null, preparation);
             Object previousProjection = null;
             for (double yaw : new double[] { 0, .4, -.8, 2.1 }) {
                 List<double[]> reference = null;
+                List<double[]> reprojected = new java.util.ArrayList<>();
                 java.util.Set<Object> ownedFaces = Collections.newSetFromMap(new java.util.IdentityHashMap<>());
-                for (int path = 0; path < 3; path++) {
+                for (int path = 0; path < 5; path++) {
                     // Revisit the reference pose after a genuinely different pose mutated every owned output.
-                    double currentYaw = path == 1 ? yaw + .13 : yaw;
-                    missingIcon[0] = path == 1;
+                    double currentYaw = path == 1 || yaw != 0 && path >= 3 ? yaw + .13 : yaw;
+                    double zoom = yaw == 0 && path >= 3 ? 1.2 : 1;
+                    missingIcon[0] = path == 1 || path >= 3;
                     String key = yaw + ":" + path;
-                    field(HologramRenderer.class, "projectedFrame")
-                        .set(null, new HologramEditorCameraFrame(0, 0, 380, 321, currentYaw, .4, 1, 15, 0, 1, 6));
+                    if (path == 3 && yaw == 0) {
+                        field(MiaoVisonLiteRenderer.class, "projectedFrame")
+                            .set(null, new HologramEditorCameraFrame(0, 0, 380, 321, .13, .4, 1, 15, 0, 1, 6));
+                        SimpleAssert.eq(
+                            false,
+                            reproject.invoke(previousProjection, "across-facing-mask", false),
+                            "a changed facing mask needs the newly exposed faces from a fresh projection");
+                    }
+                    field(MiaoVisonLiteRenderer.class, "projectedFrame")
+                        .set(null, new HologramEditorCameraFrame(0, 0, 380, 321, currentYaw, .4, zoom, 15, 0, 1, 6));
+                    if (path == 3) {
+                        List<?> faces = (List<?>) field(MiaoVisonLiteRenderer.class, "cachedFaces").get(null);
+                        long reuseBefore = field(MiaoVisonLiteRenderer.class, "previewCameraOrderReuses").getLong(null);
+                        SimpleAssert.eq(
+                            true,
+                            reproject.invoke(previousProjection, key, false),
+                            "a settled projection reuses the presented face collection");
+                        SimpleAssert.that(
+                            faces == field(MiaoVisonLiteRenderer.class, "cachedFaces").get(null),
+                            "camera navigation retains the complete sorted storage");
+                        if (yaw == 0) SimpleAssert.eq(
+                            reuseBefore + 1,
+                            field(MiaoVisonLiteRenderer.class, "previewCameraOrderReuses").getLong(null),
+                            "zoom preserves exact equal-depth ties and skips sorting");
+                        for (Object face : faces) reprojected.add(faceSnapshot(face));
+                        for (Object outline : (List<?>) field(MiaoVisonLiteRenderer.class, "cachedOutlines").get(null))
+                            SimpleAssert.eq(
+                                false,
+                                field(outline.getClass(), "fadeDefault").get(outline),
+                                "reprojected outline still observes live material diagnostics");
+                        continue;
+                    }
                     for (String name : new String[] { "cachedFaces", "cachedOutlines", "cachedMarkers" })
-                        field(HologramRenderer.class, name).set(null, new java.util.ArrayList<>());
-                    for (String name : listNames) ((List<?>) field(HologramRenderer.class, name).get(null)).clear();
+                        field(MiaoVisonLiteRenderer.class, name).set(null, new java.util.ArrayList<>());
+                    for (String name : listNames)
+                        ((List<?>) field(MiaoVisonLiteRenderer.class, name).get(null)).clear();
                     published.clear();
                     Object projection = reusedProjectionConstructor.newInstance(state, key, previousProjection);
                     if (previousProjection != null) SimpleAssert.that(
@@ -898,7 +968,7 @@ public final class HologramRenderingRegression {
                         state.cells.size(),
                         field(projectionType, "published").getInt(projection),
                         "the prepared camera path publishes every source cell in its single advance/publish");
-                    List<?> faces = (List<?>) field(HologramRenderer.class, "cachedFaces").get(null);
+                    List<?> faces = (List<?>) field(MiaoVisonLiteRenderer.class, "cachedFaces").get(null);
                     SimpleAssert.that(!faces.isEmpty(), "concave transparent multi-region fixture has real faces");
                     if (path == 0) {
                         reference = new java.util.ArrayList<>();
@@ -930,7 +1000,14 @@ public final class HologramRenderingRegression {
                                 "revisiting a prepared camera reuses its actual Face outputs");
                         }
                     }
-                    for (Object outline : (List<?>) field(HologramRenderer.class, "cachedOutlines").get(null))
+                    if (path == 4) {
+                        SimpleAssert
+                            .eq(reprojected.size(), faces.size(), "reprojection keeps all camera-facing surfaces");
+                        for (int at = 0; at < faces.size(); at++) SimpleAssert.that(
+                            java.util.Arrays.equals(reprojected.get(at), faceSnapshot(faces.get(at))),
+                            "fresh projection preserves identical mixed-region vertices, exact depth ties and ordering");
+                    }
+                    for (Object outline : (List<?>) field(MiaoVisonLiteRenderer.class, "cachedOutlines").get(null))
                         SimpleAssert.eq(
                             !missingIcon[0],
                             field(outline.getClass(), "fadeDefault").get(outline),
@@ -943,7 +1020,7 @@ public final class HologramRenderingRegression {
                 field(preparationType, "boundary").get(blueprintPreparation) != null,
                 "ordinary Blueprint keeps its independent early occupancy outline");
             List<double[]> expected = new java.util.ArrayList<>();
-            for (Object face : (List<?>) field(HologramRenderer.class, "cachedFaces").get(null))
+            for (Object face : (List<?>) field(MiaoVisonLiteRenderer.class, "cachedFaces").get(null))
                 expected.add(faceSnapshot(face));
             state.data.setBoolean("structureProjection", true);
             Object direct = preparationConstructor.newInstance(state, true);
@@ -951,12 +1028,12 @@ public final class HologramRenderingRegression {
                 field(preparationType, "boundary").get(direct) == null,
                 "typed structure geometry needs no second all-cell occupancy pass");
             for (String name : new String[] { "cachedFaces", "cachedOutlines", "cachedMarkers" })
-                field(HologramRenderer.class, name).set(null, new java.util.ArrayList<>());
-            for (String name : listNames) ((List<?>) field(HologramRenderer.class, name).get(null)).clear();
+                field(MiaoVisonLiteRenderer.class, name).set(null, new java.util.ArrayList<>());
+            for (String name : listNames) ((List<?>) field(MiaoVisonLiteRenderer.class, name).get(null)).clear();
             published.clear();
             Object directProjection = reusedProjectionConstructor.newInstance(state, "direct-structure", null);
             field(preparationType, "projection").set(direct, directProjection);
-            field(HologramRenderer.class, "previewPreparation").set(null, direct);
+            field(MiaoVisonLiteRenderer.class, "previewPreparation").set(null, direct);
             java.lang.reflect.Method advancePreparation = preparationType
                 .getDeclaredMethod("advance", int.class, int.class, boolean.class, String.class);
             advancePreparation.setAccessible(true);
@@ -967,7 +1044,7 @@ public final class HologramRenderingRegression {
                 state.cells.size(),
                 field(projectionType, "published").getInt(directProjection),
                 "structure preparation reaches complete publication without awaiting an occupancy draw");
-            List<?> directFaces = (List<?>) field(HologramRenderer.class, "cachedFaces").get(null);
+            List<?> directFaces = (List<?>) field(MiaoVisonLiteRenderer.class, "cachedFaces").get(null);
             SimpleAssert.eq(expected.size(), directFaces.size(), "direct structure path keeps full geometry coverage");
             for (int i = 0; i < expected.size(); i++) SimpleAssert.that(
                 java.util.Arrays.equals(expected.get(i), faceSnapshot(directFaces.get(i))),
@@ -976,9 +1053,9 @@ public final class HologramRenderingRegression {
             for (HologramState.Cell cell : state.cells) materials.remove(cell);
             regions.clear();
             regions.putAll(savedRegions);
-            for (int i = 0; i < names.length; i++) field(HologramRenderer.class, names[i]).set(null, saved[i]);
+            for (int i = 0; i < names.length; i++) field(MiaoVisonLiteRenderer.class, names[i]).set(null, saved[i]);
             for (int i = 0; i < listNames.length; i++) {
-                List<Object> list = (List<Object>) field(HologramRenderer.class, listNames[i]).get(null);
+                List<Object> list = (List<Object>) field(MiaoVisonLiteRenderer.class, listNames[i]).get(null);
                 list.clear();
                 list.addAll(lists[i]);
             }

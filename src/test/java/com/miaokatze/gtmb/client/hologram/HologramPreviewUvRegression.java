@@ -190,11 +190,11 @@ public final class HologramPreviewUvRegression {
         SimpleAssert.that(
             !field(submission.getClass(), "unsupported").getBoolean(submission),
             "dependency invalidation is distinct from actual Core unsupported");
-        Field live = field(HologramRenderer.class, "previewSubmission");
+        Field live = field(MiaoVisonLiteRenderer.class, "previewSubmission");
         Object saved = live.get(null);
         try {
             live.set(null, submission);
-            method(HologramRenderer.class, "invalidatePreviewDrawCache").invoke(null);
+            method(MiaoVisonLiteRenderer.class, "invalidatePreviewDrawCache").invoke(null);
             SimpleAssert.that(
                 live.get(null) == null,
                 "the existing reload/close invalidation owns all icon records and slices");
@@ -295,7 +295,7 @@ public final class HologramPreviewUvRegression {
                 false,
                 false,
                 false);
-            Class<?> input = Class.forName(HologramRenderer.class.getName() + "$PreviewCell");
+            Class<?> input = Class.forName(MiaoVisonLiteRenderer.class.getName() + "$PreviewCell");
             Constructor<?> inputConstructor = input.getDeclaredConstructor(
                 HologramState.Cell.class,
                 int.class,
@@ -305,7 +305,7 @@ public final class HologramPreviewUvRegression {
                 boolean.class,
                 boolean.class);
             inputConstructor.setAccessible(true);
-            Class<?> face = Class.forName(HologramRenderer.class.getName() + "$Face");
+            Class<?> face = Class.forName(MiaoVisonLiteRenderer.class.getName() + "$Face");
             Constructor<?> faceConstructor = face
                 .getDeclaredConstructor(input, double[][].class, int.class, HologramGeometry.Surface.class);
             faceConstructor.setAccessible(true);
@@ -376,7 +376,7 @@ public final class HologramPreviewUvRegression {
     }
 
     private static Object submission(List<Object> faces, boolean snapshots) throws ReflectiveOperationException {
-        Class<?> type = Class.forName(HologramRenderer.class.getName() + "$PreviewSubmission");
+        Class<?> type = Class.forName(MiaoVisonLiteRenderer.class.getName() + "$PreviewSubmission");
         Constructor<?> constructor = type.getDeclaredConstructor(List.class, double.class, boolean.class);
         constructor.setAccessible(true);
         return constructor.newInstance(faces, 2d, snapshots);

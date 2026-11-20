@@ -25,11 +25,14 @@ import net.minecraftforge.client.MinecraftForgeClient;
 
 import org.lwjgl.opengl.GL11;
 
+import com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLiteDisplayList;
+import com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLiteRenderScope;
+
 import cpw.mods.fml.client.registry.ISimpleBlockRenderingHandler;
 import cpw.mods.fml.client.registry.RenderingRegistry;
 import cpw.mods.fml.relauncher.ReflectionHelper;
 
-/** Audited native static block models rendered from a detached snapshot, never from live tiles. */
+/** Produces Lite compatibility draws from audited static renderers and detached snapshot tiles. */
 final class HologramBlockRender {
 
     private static final Map<HologramState.Cell, Model[]> MODELS = new IdentityHashMap<>();
@@ -68,8 +71,7 @@ final class HologramBlockRender {
     }
 
     static void clear() {
-        for (Model[] pair : MODELS.values())
-            for (Model model : pair) if (model != null && model.list != 0) GL11.glDeleteLists(model.list, 1);
+        for (Model[] pair : MODELS.values()) for (Model model : pair) if (model != null) model.close();
         MODELS.clear();
         FAILURES.clear();
         snapshot = null;
@@ -85,7 +87,7 @@ final class HologramBlockRender {
             for (HologramState.Cell cell : cells) {
                 Model[] pair = MODELS.remove(cell);
                 if (pair == null) continue;
-                for (Model model : pair) if (model != null && model.list != 0) GL11.glDeleteLists(model.list, 1);
+                for (Model model : pair) if (model != null) model.close();
             }
         }
         snapshot = next;
@@ -123,7 +125,7 @@ final class HologramBlockRender {
         Model[] pair = MODELS.computeIfAbsent(cell, unused -> new Model[2]);
         int side = current ? 1 : 0;
         if (pair[side] == null) pair[side] = compile(cell, current);
-        return pair[side].list != 0 || pair[side].acceptedEmpty || pair[side].invisible;
+        return pair[side].packet != null || pair[side].acceptedEmpty || pair[side].invisible;
     }
 
     static void draw(HologramState.Cell cell, boolean current) {
@@ -131,7 +133,7 @@ final class HologramBlockRender {
         Model[] pair = MODELS.get(cell);
         if (pair == null || pair[current ? 1 : 0] == null) return;
         Model model = pair[current ? 1 : 0];
-        if (model.list == 0) return;
+        if (model.packet == null) return;
         int originalMode = GL11.glGetInteger(GL11.GL_MATRIX_MODE);
         GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
         pushMatrices();
@@ -140,7 +142,7 @@ final class HologramBlockRender {
                 .getTextureManager()
                 .bindTexture(TextureMap.locationBlocksTexture);
             if (HologramNativeRenderRegistry.doubleSided(cell.block(current))) GL11.glDisable(GL11.GL_CULL_FACE);
-            GL11.glCallList(model.list);
+            model.packet.draw();
         } finally {
             popMatrices(originalMode);
             GL11.glPopAttrib();
@@ -193,7 +195,7 @@ final class HologramBlockRender {
         HologramNativeRenderRegistry.Adapter adapter = HologramNativeRenderRegistry.adapter(block);
         if (adapter != null && adapter.invisible(block, access.getBlockMetadata(cell.x, cell.y, cell.z)))
             return new Model(
-                0,
+                null,
                 0,
                 0,
                 java.util.Collections.emptyList(),
@@ -213,12 +215,10 @@ final class HologramBlockRender {
     static List<double[]> nativeControl(HologramState.Cell cell, boolean current, IBlockAccess world) {
         if (!Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke"))
             throw new IllegalStateException("native renderer control requires extended compatibility smoke");
-        Model control = compile(cell, current, world, world.getTileEntity(cell.x, cell.y, cell.z), null);
-        try {
-            if (control.list == 0) throw new IllegalStateException("native control failed: " + failure(cell, current));
+        try (Model control = compile(cell, current, world, world.getTileEntity(cell.x, cell.y, cell.z), null)) {
+            if (control.packet == null)
+                throw new IllegalStateException("native control failed: " + failure(cell, current));
             return control.attributes;
-        } finally {
-            if (control.list != 0) GL11.glDeleteLists(control.list, 1);
         }
     }
 
@@ -226,12 +226,9 @@ final class HologramBlockRender {
     static List<double[]> drawSourceReference(HologramState.Cell cell, boolean current, IBlockAccess world) {
         if (!Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke"))
             throw new IllegalStateException("source render reference requires extended compatibility smoke");
-        Model control = compile(cell, current, world, world.getTileEntity(cell.x, cell.y, cell.z), null, true);
-        try {
-            if (control.list != 0) GL11.glCallList(control.list);
+        try (Model control = compile(cell, current, world, world.getTileEntity(cell.x, cell.y, cell.z), null, true)) {
+            if (control.packet != null) control.packet.draw();
             return control.attributes;
-        } finally {
-            if (control.list != 0) GL11.glDeleteLists(control.list, 1);
         }
     }
 
@@ -247,8 +244,10 @@ final class HologramBlockRender {
         Block block = cell.block(current);
         Tessellator tess = Tessellator.instance;
         Tessellator callerTess = tess;
-        int list = 0, count = 0;
+        MiaoVisonLiteDisplayList packet = null;
+        int count = 0;
         boolean opened = false;
+        boolean retained = false;
         boolean invokedNative = false;
         HologramAeNativeRender.CableContext aeCableContext = null;
         HologramNativeRenderRegistry.RenderScope renderScope = null;
@@ -289,12 +288,14 @@ final class HologramBlockRender {
                 renderScope = rendererAdapter.renderScope(block, tile, handler);
                 if (renderScope != null) access = renderScope.access();
             }
-            list = GL11.glGenLists(1);
-            if (list == 0) return failed(cell, current, "display list allocation failed");
+            packet = MiaoVisonLiteDisplayList.allocate();
+            if (packet == null) return failed(cell, current, "display list allocation failed");
             RenderBlocks renderer = new RenderBlocks(access);
             renderer.renderAllFaces = !sourceReference;
             renderer.enableAO = false;
-            GL11.glNewList(list, GL11.GL_COMPILE);
+            // A native handler can interleave Tessellator flushes, texture changes and other GL commands.
+            // Keep both full Forge passes in a single ordered packet. The raw vertices below are diagnostics.
+            packet.begin();
             opened = true;
             // Angelica starts a GTNHLib DirectTessellator capture in glNewList.
             // Resolve it after the list opens, just as the native renderer does.
@@ -362,12 +363,11 @@ final class HologramBlockRender {
                 }
                 tess.draw();
             }
-            GL11.glEndList();
+            packet.finish();
             opened = false;
             // EnderIO deliberately emits a zero-area quad in its empty alpha pass.
             // That sentinel alone is not a usable native preview model.
             if (count == 0 || positions.size() < 3) {
-                GL11.glDeleteLists(list, 1);
                 if (!sourceReference && count == 0
                     && adapter != null
                     && adapter.allowsEmptyGeometry(
@@ -378,26 +378,23 @@ final class HologramBlockRender {
                         cell.y,
                         cell.z)) {
                     compiled++;
-                    return new Model(0, 0, 0, points, textureCenters, missing, attributes, true);
+                    return new Model(null, 0, 0, points, textureCenters, missing, attributes, true);
                 }
-                if (sourceReference) return new Model(0, 0, 0, points, textureCenters, missing, attributes);
+                if (sourceReference) return new Model(null, 0, 0, points, textureCenters, missing, attributes);
                 return failed(cell, current, "native renderer produced no usable geometry");
             }
             if (!sourceReference) {
                 compiled++;
                 vertices += count;
             }
-            return new Model(list, count, positions.size(), points, textureCenters, missing, attributes);
+            Model model = new Model(packet, count, positions.size(), points, textureCenters, missing, attributes);
+            retained = true;
+            return model;
         } catch (ReflectiveOperationException | RuntimeException | LinkageError failedNative) {
-            if (list != 0) {
-                if (opened) {
-                    try {
-                        if (DRAWING.getBoolean(tess)) tess.draw();
-                    } catch (ReflectiveOperationException | RuntimeException ignored) {}
-                    GL11.glEndList();
-                    opened = false;
-                }
-                GL11.glDeleteLists(list, 1);
+            if (opened) {
+                try {
+                    if (DRAWING.getBoolean(tess)) tess.draw();
+                } catch (ReflectiveOperationException | RuntimeException ignored) {}
             }
             return failed(
                 cell,
@@ -406,8 +403,8 @@ final class HologramBlockRender {
                     .getSimpleName() + ": "
                     + failedNative.getMessage());
         } finally {
-            if (opened) GL11.glEndList();
-            if (invokedNative && adapter == null) releaseNativeContext(block);
+            if (!retained && packet != null) packet.close();
+            if (invokedNative && adapter == null) MiaoVisonLiteRenderScope.releaseNativeContext(block);
             if (aeCableContext != null) aeCableContext.close();
             if (renderScope != null) renderScope.close();
             callerTess.setTranslation(ox, oy, oz);
@@ -446,48 +443,11 @@ final class HologramBlockRender {
                 meta,
                 current ? "current" : "target",
                 message);
-        return new Model(0, 0, 0, java.util.Collections.emptyList(), java.util.Collections.emptyList(), false);
+        return new Model(null, 0, 0, java.util.Collections.emptyList(), java.util.Collections.emptyList(), false);
     }
 
     private static Field field(Class<?> type, String... names) {
         return ReflectionHelper.findField(type, names);
-    }
-
-    /** Exact public cleanup APIs for the three audited handlers with auxiliary render context. */
-    private static void releaseNativeContext(Block block) {
-        try {
-            String name = block.getClass()
-                .getName();
-            if (name.equals("codechicken.multipart.BlockMultipart")) {
-                Class<?> type = Class.forName("codechicken.lib.render.CCRenderState");
-                Object state = type.getMethod("instance")
-                    .invoke(null);
-                Object light = type.getField("lightMatrix")
-                    .get(state);
-                if (light != null) light.getClass()
-                    .getField("access")
-                    .set(light, null);
-                type.getMethod("resetInstance")
-                    .invoke(state);
-            } else if (name.equals("gcewing.architecture.common.block.BlockShape")) {
-                Object shader = Class.forName("gcewing.architecture.ArchitectureCraftClient")
-                    .getField("angelicaCompat")
-                    .get(null);
-                if (shader != null) shader.getClass()
-                    .getMethod("resetShaderMaterialOverride")
-                    .invoke(shader);
-            } else if (name.equals("crazypants.enderio.conduit.BlockConduitBundle")) {
-                Field facadeField = field(
-                    Class.forName("crazypants.enderio.conduit.render.ConduitBundleRenderer"),
-                    "facade");
-                Object facade = ((ThreadLocal<?>) facadeField.get(null)).get();
-                if (facade != null) facade.getClass()
-                    .getMethod("setBlockOverride", Class.forName("crazypants.enderio.conduit.IConduitBundle"))
-                    .invoke(facade, new Object[] { null });
-            }
-        } catch (ReflectiveOperationException | RuntimeException | LinkageError absentOptionalContext) {
-            // The GL/Tessellator scope below is unconditional even without an optional shader bridge.
-        }
     }
 
     private static boolean usableQuad(int[] raw, int stride, int first) {
@@ -520,33 +480,42 @@ final class HologramBlockRender {
         GL11.glMatrixMode(originalMode);
     }
 
-    private static final class Model {
+    private static final class Model implements AutoCloseable {
 
-        final int list, vertices, positions;
+        final MiaoVisonLiteDisplayList packet;
+        final int vertices, positions;
         final List<double[]> points, textureCenters;
         final List<double[]> attributes;
         final boolean missingTexture;
         final boolean acceptedEmpty;
         final boolean invisible;
 
-        Model(int list, int vertices, int positions, List<double[]> points, List<double[]> textureCenters,
-            boolean missingTexture) {
-            this(list, vertices, positions, points, textureCenters, missingTexture, java.util.Collections.emptyList());
+        Model(MiaoVisonLiteDisplayList packet, int vertices, int positions, List<double[]> points,
+            List<double[]> textureCenters, boolean missingTexture) {
+            this(
+                packet,
+                vertices,
+                positions,
+                points,
+                textureCenters,
+                missingTexture,
+                java.util.Collections.emptyList());
         }
 
-        Model(int list, int vertices, int positions, List<double[]> points, List<double[]> textureCenters,
-            boolean missingTexture, List<double[]> attributes) {
-            this(list, vertices, positions, points, textureCenters, missingTexture, attributes, false);
+        Model(MiaoVisonLiteDisplayList packet, int vertices, int positions, List<double[]> points,
+            List<double[]> textureCenters, boolean missingTexture, List<double[]> attributes) {
+            this(packet, vertices, positions, points, textureCenters, missingTexture, attributes, false);
         }
 
-        Model(int list, int vertices, int positions, List<double[]> points, List<double[]> textureCenters,
-            boolean missingTexture, List<double[]> attributes, boolean acceptedEmpty) {
-            this(list, vertices, positions, points, textureCenters, missingTexture, attributes, acceptedEmpty, false);
+        Model(MiaoVisonLiteDisplayList packet, int vertices, int positions, List<double[]> points,
+            List<double[]> textureCenters, boolean missingTexture, List<double[]> attributes, boolean acceptedEmpty) {
+            this(packet, vertices, positions, points, textureCenters, missingTexture, attributes, acceptedEmpty, false);
         }
 
-        Model(int list, int vertices, int positions, List<double[]> points, List<double[]> textureCenters,
-            boolean missingTexture, List<double[]> attributes, boolean acceptedEmpty, boolean invisible) {
-            this.list = list;
+        Model(MiaoVisonLiteDisplayList packet, int vertices, int positions, List<double[]> points,
+            List<double[]> textureCenters, boolean missingTexture, List<double[]> attributes, boolean acceptedEmpty,
+            boolean invisible) {
+            this.packet = packet;
             this.vertices = vertices;
             this.positions = positions;
             this.points = points;
@@ -555,6 +524,11 @@ final class HologramBlockRender {
             this.missingTexture = missingTexture;
             this.acceptedEmpty = acceptedEmpty;
             this.invisible = invisible;
+        }
+
+        @Override
+        public void close() {
+            if (packet != null) packet.close();
         }
     }
 }

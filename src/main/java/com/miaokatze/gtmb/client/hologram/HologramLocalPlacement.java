@@ -78,6 +78,10 @@ final class HologramLocalPlacement {
         return pose.apply(x, y, z);
     }
 
+    HologramPreviewPose previewPose() {
+        return pose;
+    }
+
     void rotateGl() {
         org.lwjgl.opengl.GL11.glTranslated(.5, .5, .5);
         int[] turns = pose.recipe();

@@ -262,6 +262,7 @@ public final class HologramTutorialIssue95Probe {
             throw new IllegalStateException("Cannot publish tutorial diagnostic receipt", failure);
         }
         // The existing profile retains its own unchanged assertions and separate receipt.
-        HologramTestLabUiProfile.install();
+        if (!"PASS".equals(outcome) || !"PASS".equals(receipt.get("outcome"))
+            || !HologramRawExportParityProbe.install(output)) HologramTestLabUiProfile.install();
     }
 }

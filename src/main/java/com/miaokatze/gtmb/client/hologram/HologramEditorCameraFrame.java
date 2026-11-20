@@ -50,6 +50,31 @@ final class HologramEditorCameraFrame {
         result[2] = -(basis.forwardX() * x + basis.forwardY() * y + basis.forwardZ() * z);
     }
 
+    /** Projects the four vertical edges in the same corner order and arithmetic as individual vertices. */
+    void projectVoxel(double x, double y, double z, double[][] points) {
+        double left = x - .5 - pose.anchorX(), right = x + .5 - pose.anchorX();
+        double bottom = y - .5 - pose.anchorY(), top = y + .5 - pose.anchorY();
+        double near = z - .5 - pose.anchorZ(), far = z + .5 - pose.anchorZ();
+        double bottomUp = basis.upY() * bottom, topUp = basis.upY() * top;
+        double bottomDepth = basis.forwardY() * bottom, topDepth = basis.forwardY() * top;
+        projectVerticalEdge(left, near, bottomUp, topUp, bottomDepth, topDepth, points[0], points[3]);
+        projectVerticalEdge(right, near, bottomUp, topUp, bottomDepth, topDepth, points[1], points[2]);
+        projectVerticalEdge(left, far, bottomUp, topUp, bottomDepth, topDepth, points[4], points[7]);
+        projectVerticalEdge(right, far, bottomUp, topUp, bottomDepth, topDepth, points[5], points[6]);
+    }
+
+    private void projectVerticalEdge(double x, double z, double bottomUp, double topUp, double bottomDepth,
+        double topDepth, double[] bottom, double[] top) {
+        double localUpX = basis.upX() * x, localUpZ = basis.upZ() * z;
+        double localDepthX = basis.forwardX() * x, localDepthZ = basis.forwardZ() * z;
+        double screenX = centerX + (basis.rightX() * x + basis.rightZ() * z) * scale;
+        bottom[0] = top[0] = screenX;
+        bottom[1] = centerY - (localUpX + bottomUp + localUpZ) * scale;
+        top[1] = centerY - (localUpX + topUp + localUpZ) * scale;
+        bottom[2] = -(localDepthX + bottomDepth + localDepthZ);
+        top[2] = -(localDepthX + topDepth + localDepthZ);
+    }
+
     double[] projectScreen(double x, double y, double z) {
         x -= pose.anchorX();
         y -= pose.anchorY();

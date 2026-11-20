@@ -206,7 +206,7 @@ public final class HologramSourcePreviewReference {
     }
 
     private static Object read(String name) throws IllegalAccessException {
-        Field field = ReflectionHelper.findField(HologramRenderer.class, name);
+        Field field = ReflectionHelper.findField(MiaoVisonLiteRenderer.class, name);
         return field.get(null);
     }
 

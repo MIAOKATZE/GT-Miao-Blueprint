@@ -929,7 +929,7 @@ final class HologramAeInteractionClientSmoke {
     private boolean selectSource(int index) throws Exception {
         if (parent.smokePending()) return false;
 
-        java.lang.reflect.Field previewState = HologramRenderer.class.getDeclaredField("previewState");
+        java.lang.reflect.Field previewState = MiaoVisonLiteRenderer.class.getDeclaredField("previewState");
 
         previewState.setAccessible(true);
         if (((Object) HologramTestLabUiDiagnostics.readDiagnosticField(parent, "state")) != previewState.get(null))
@@ -1169,7 +1169,7 @@ final class HologramAeInteractionClientSmoke {
 
         HologramState state = (HologramState) ((Object) HologramTestLabUiDiagnostics
             .readDiagnosticField(parent, "state"));
-        java.lang.reflect.Field renderedState = HologramRenderer.class.getDeclaredField("previewState");
+        java.lang.reflect.Field renderedState = MiaoVisonLiteRenderer.class.getDeclaredField("previewState");
         renderedState.setAccessible(true);
         require(renderedState.get(null) == state, "AE preview verification must observe the actual rendered state");
 

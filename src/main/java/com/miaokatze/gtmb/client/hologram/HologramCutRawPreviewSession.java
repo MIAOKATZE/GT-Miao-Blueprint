@@ -42,6 +42,9 @@ import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL13;
 import org.lwjgl.opengl.GL14;
 
+import com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLiteDisplayList;
+import com.miaokatze.gtmb.client.miaovisonlite.MiaoVisonLiteRenderScope;
+
 import cpw.mods.fml.client.registry.ISimpleBlockRenderingHandler;
 import cpw.mods.fml.client.registry.RenderingRegistry;
 import cpw.mods.fml.relauncher.ReflectionHelper;
@@ -152,11 +155,9 @@ final class HologramCutRawPreviewSession {
     private void renderRegions(List<Region> visible, Set<String> pinned, double dx, double dy, double dz,
         float partialTicks) {
         Minecraft mc = Minecraft.getMinecraft();
-        HologramCutRawPreviewScope.StateWitness witness = CHECK_RENDER_STATE
-            ? new HologramCutRawPreviewScope.StateWitness()
+        MiaoVisonLiteRenderScope.StateWitness witness = CHECK_RENDER_STATE ? new MiaoVisonLiteRenderScope.StateWitness()
             : null;
-        HologramCutRawPreviewScope.RenderState frame = new HologramCutRawPreviewScope.RenderState();
-        frame.push();
+        MiaoVisonLiteRenderScope frame = MiaoVisonLiteRenderScope.enter();
         int budget = COMPILE_PER_FRAME;
         pending = 0;
         frames++;
@@ -196,7 +197,7 @@ final class HologramCutRawPreviewSession {
                         placeholder(cell, false);
                         continue;
                     }
-                    if (model.list != 0) draw(model, cell);
+                    if (model.draw != null) draw(model, cell);
                     renderTile(cell, partialTicks);
                     if (cell.block == null || cell.staticFailed
                         || cell.dynamicFailed
@@ -222,7 +223,7 @@ final class HologramCutRawPreviewSession {
             ghost.bindDestination();
             outlines(visible, frame);
         } finally {
-            frame.restore();
+            frame.close();
             if (witness != null) {
                 stateChecks++;
                 if (!witness.matches()) stateMismatches++;
@@ -231,7 +232,7 @@ final class HologramCutRawPreviewSession {
     }
 
     /** Cell edges remain independent of native mesh colors, opacity, alpha tests and TESR state changes. */
-    private void outlines(List<Region> visible, HologramCutRawPreviewScope.RenderState scope) {
+    private void outlines(List<Region> visible, MiaoVisonLiteRenderScope scope) {
         scope.useProgram(0);
         scope.cleanTextureUnits();
         OpenGlHelper.setClientActiveTexture(OpenGlHelper.defaultTexUnit);
@@ -285,27 +286,28 @@ final class HologramCutRawPreviewSession {
     }
 
     private Model compile(HologramCutRawPreviewWorld.Cell cell) {
-        if (cell.block == null) return new Model(0, 0, false);
+        if (cell.block == null) return new Model(null, 0, false);
         TileEntitySpecialRenderer tesr = null;
-        int list = 0, vertices = 0;
+        MiaoVisonLiteDisplayList list = null;
+        int vertices = 0;
         boolean opened = false;
+        boolean retained = false;
         Block block = cell.block;
         double[] bounds = { block.getBlockBoundsMinX(), block.getBlockBoundsMinY(), block.getBlockBoundsMinZ(),
             block.getBlockBoundsMaxX(), block.getBlockBoundsMaxY(), block.getBlockBoundsMaxZ() };
         int oldPass = MinecraftForgeClient.getRenderPass(), oldWorldPass = ForgeHooksClient.getWorldRenderPass();
-        HologramCutRawPreviewScope.RenderState scope = new HologramCutRawPreviewScope.RenderState();
-        HologramCutRawPreviewScope.ClientTessState tessState = null;
+        MiaoVisonLiteRenderScope scope = MiaoVisonLiteRenderScope.enter();
+        MiaoVisonLiteRenderScope.ClientTessState tessState = null;
         HologramAeNativeRender.CableContext cableContext = null;
-        scope.push();
         try {
             TileEntity tile = world.getTileEntity(cell.x, cell.y, cell.z);
             tesr = tile == null ? null : TileEntityRendererDispatcher.instance.getSpecialRenderer(tile);
             cableContext = HologramAeNativeRender.cableContext(block, tile);
-            tessState = new HologramCutRawPreviewScope.ClientTessState(Tessellator.instance);
+            tessState = new MiaoVisonLiteRenderScope.ClientTessState(Tessellator.instance);
             prepareBlockTexture();
-            list = GL11.glGenLists(1);
-            if (list == 0) throw new IllegalStateException("Display-list allocation failed");
-            GL11.glNewList(list, GL11.GL_COMPILE);
+            list = MiaoVisonLiteDisplayList.allocate();
+            if (list == null) throw new IllegalStateException("Display-list allocation failed");
+            list.begin();
             opened = true;
             RenderBlocks renderer = new RenderBlocks(world);
             renderer.enableAO = false;
@@ -326,15 +328,13 @@ final class HologramCutRawPreviewSession {
                 vertices += VERTICES.getInt(tess);
                 tess.draw();
             }
-            GL11.glEndList();
+            list.finish();
             opened = false;
-            if (vertices == 0) {
-                GL11.glDeleteLists(list, 1);
-                list = 0;
-            } else staticRendered++;
+            if (vertices != 0) staticRendered++;
             if (vertices == 0 && tesr == null && block.getRenderType() < 0)
                 fail(cell, "static", new IllegalStateException("No native block geometry or TESR"));
-            return new Model(list, vertices, tesr != null);
+            retained = vertices != 0;
+            return new Model(retained ? list : null, vertices, tesr != null);
         } catch (Throwable failure) {
             requireRecoverable(failure);
             cell.staticFailed = true;
@@ -345,13 +345,10 @@ final class HologramCutRawPreviewSession {
                 } catch (Throwable cleanupFailure) {
                     requireRecoverable(cleanupFailure);
                 }
-                GL11.glEndList();
-                opened = false;
             }
-            if (list != 0) GL11.glDeleteLists(list, 1);
-            return new Model(0, 0, tesr != null);
+            return new Model(null, 0, tesr != null);
         } finally {
-            if (opened) GL11.glEndList();
+            if (!retained && list != null) list.close();
             try {
                 if (tessState != null) tessState.restore();
                 WORLD_PASS.setInt(null, oldWorldPass);
@@ -369,9 +366,9 @@ final class HologramCutRawPreviewSession {
             world.endRender();
             try {
                 if (cableContext != null) cableContext.close();
-                HologramCutRawPreviewScope.releaseNativeContext(block);
+                MiaoVisonLiteRenderScope.releaseNativeContext(block);
             } finally {
-                scope.restore();
+                scope.close();
             }
         }
     }
@@ -381,7 +378,7 @@ final class HologramCutRawPreviewSession {
             // A preceding TESR may have used an entity texture. Bind the terrain atlas on the unit sampled by
             // native block UVs, independently of the caller's active/client texture selectors and matrix mode.
             prepareBlockTexture();
-            GL11.glCallList(model.list);
+            model.draw.draw();
         } catch (Throwable failure) {
             requireRecoverable(failure);
             cell.staticFailed = true;
@@ -396,15 +393,14 @@ final class HologramCutRawPreviewSession {
         TileEntityRendererDispatcher dispatcher = TileEntityRendererDispatcher.instance;
         net.minecraft.world.World previousWorld = dispatcher.field_147550_f;
         net.minecraft.entity.EntityLivingBase previousCamera = dispatcher.field_147551_g;
-        HologramCutRawPreviewScope.RenderState scope = new HologramCutRawPreviewScope.RenderState();
-        scope.push();
-        HologramCutRawPreviewScope.ClientTessState tessState = null;
+        MiaoVisonLiteRenderScope scope = MiaoVisonLiteRenderScope.enter();
+        MiaoVisonLiteRenderScope.ClientTessState tessState = null;
         try {
             TileEntitySpecialRenderer renderer = dispatcher.getSpecialRenderer(cell.tile);
             if (renderer == null) return;
             dispatcher.field_147550_f = world;
             dispatcher.field_147551_g = null;
-            tessState = new HologramCutRawPreviewScope.ClientTessState(Tessellator.instance);
+            tessState = new MiaoVisonLiteRenderScope.ClientTessState(Tessellator.instance);
             for (int pass = 0; pass < 2; pass++) {
                 if (!cell.tile.shouldRenderInPass(pass)) continue;
                 ForgeHooksClient.setRenderPass(pass);
@@ -434,8 +430,8 @@ final class HologramCutRawPreviewSession {
             dispatcher.field_147550_f = previousWorld;
             dispatcher.field_147551_g = previousCamera;
             world.endRender();
-            HologramCutRawPreviewScope.releaseNativeContext(cell.block);
-            scope.restore();
+            MiaoVisonLiteRenderScope.releaseNativeContext(cell.block);
+            scope.close();
         }
     }
 
@@ -552,7 +548,8 @@ final class HologramCutRawPreviewSession {
                     fail(cell, "multipart inspection", invalid);
                 }
         }
-        for (Region region : RESIDENT.values()) for (Model model : region.models.values()) if (model.list != 0) lists++;
+        for (Region region : RESIDENT.values())
+            for (Model model : region.models.values()) if (model.draw != null) lists++;
         out.setInteger("loadedTiles", loaded);
         out.setInteger("multipartParts", parts);
         out.setInteger("displayLists", lists);
@@ -709,18 +706,19 @@ final class HologramCutRawPreviewSession {
         }
 
         void clear() {
-            for (Model model : models.values()) if (model.list != 0) GL11.glDeleteLists(model.list, 1);
+            for (Model model : models.values()) if (model.draw != null) model.draw.close();
             models.clear();
         }
     }
 
     private static final class Model {
 
-        final int list, vertices;
+        final MiaoVisonLiteDisplayList draw;
+        final int vertices;
         final boolean hasTesr;
 
-        Model(int list, int vertices, boolean hasTesr) {
-            this.list = list;
+        Model(MiaoVisonLiteDisplayList draw, int vertices, boolean hasTesr) {
+            this.draw = draw;
             this.vertices = vertices;
             this.hasTesr = hasTesr;
         }

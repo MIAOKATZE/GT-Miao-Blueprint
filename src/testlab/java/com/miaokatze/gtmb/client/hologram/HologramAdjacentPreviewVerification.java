@@ -19,16 +19,16 @@ public final class HologramAdjacentPreviewVerification {
     private HologramAdjacentPreviewVerification() {}
 
     public static NBTTagCompound verify(NBTTagCompound snapshot, boolean current) throws ReflectiveOperationException {
-        HologramState rendered = (HologramState) field(HologramRenderer.class, "previewState").get(null);
+        HologramState rendered = (HologramState) field(MiaoVisonLiteRenderer.class, "previewState").get(null);
         require(
             rendered != null && rendered.data.equals(snapshot),
             "adjacency witness requires this actual editor snapshot");
-        int renderedView = field(HologramRenderer.class, "visibleView").getInt(null);
-        int renderedMode = field(HologramRenderer.class, "visibleMode").getInt(null);
+        int renderedView = field(MiaoVisonLiteRenderer.class, "visibleView").getInt(null);
+        int renderedMode = field(MiaoVisonLiteRenderer.class, "visibleMode").getInt(null);
         require(
             (renderedView == 1 || renderedMode == 2) == current,
             "adjacency witness requires the actual displayed target/current view");
-        List<?> faces = (List<?>) field(HologramRenderer.class, "cachedFaces").get(null);
+        List<?> faces = (List<?>) field(MiaoVisonLiteRenderer.class, "cachedFaces").get(null);
         HologramState state = new HologramState(snapshot);
         NBTTagList rows = new NBTTagList();
         int floors = 0;

@@ -116,9 +116,9 @@ public final class HologramGeometryDeltaRegression {
     @SuppressWarnings("unchecked")
     private static void rendererRegionReuse(HologramState base, HologramState next) {
         try {
-            java.lang.reflect.Field cacheField = HologramRenderer.class.getDeclaredField("previewRegions"),
-                visibleField = HologramRenderer.class.getDeclaredField("visibleState"),
-                preparationField = HologramRenderer.class.getDeclaredField("previewPreparation");
+            java.lang.reflect.Field cacheField = MiaoVisonLiteRenderer.class.getDeclaredField("previewRegions"),
+                visibleField = MiaoVisonLiteRenderer.class.getDeclaredField("visibleState"),
+                preparationField = MiaoVisonLiteRenderer.class.getDeclaredField("previewPreparation");
             cacheField.setAccessible(true);
             visibleField.setAccessible(true);
             preparationField.setAccessible(true);
@@ -126,7 +126,7 @@ public final class HologramGeometryDeltaRegression {
                 .get(null);
             java.util.Map<HologramRegionCache.Key, Object> saved = new java.util.LinkedHashMap<>(cache);
             Object visible = visibleField.get(null), preparation = preparationField.get(null);
-            Class<?> regionType = Class.forName(HologramRenderer.class.getName() + "$PreviewRegion");
+            Class<?> regionType = Class.forName(MiaoVisonLiteRenderer.class.getName() + "$PreviewRegion");
             java.lang.reflect.Constructor<?> constructor = regionType.getDeclaredConstructor();
             constructor.setAccessible(true);
             Object retained = constructor.newInstance(), changed = constructor.newInstance();

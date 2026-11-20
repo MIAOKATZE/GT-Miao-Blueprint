@@ -44,6 +44,19 @@ public final class HologramEditorCameraFrameRegression {
             double[][] points = { { 0, 0, 0 }, { 1, 0, 0 }, { 0, 1, 0 }, { 0, 0, 1 }, { -.5, -.5, -.5 },
                 { .5, -.5, -.5 }, { .5, .5, -.5 }, { -.5, .5, -.5 }, { -.5, -.5, .5 }, { .5, -.5, .5 }, { .5, .5, .5 },
                 { -.5, .5, .5 } };
+            double[][] voxel = new double[8][3];
+            for (int[] center : new int[][] { { 0, 0, 0 }, { 127, -64, -207 },
+                { Integer.MIN_VALUE, 1, Integer.MAX_VALUE } }) {
+                frame.projectVoxel(center[0], center[1], center[2], voxel);
+                for (int at = 0; at < voxel.length; at++) {
+                    double[] offset = points[at + 4];
+                    double[] corner = frame
+                        .project(center[0] + offset[0], center[1] + offset[1], center[2] + offset[2]);
+                    SimpleAssert.that(
+                        java.util.Arrays.equals(corner, voxel[at]),
+                        "shared voxel projection preserves exact vertex coordinates and depth");
+                }
+            }
             for (double[] offset : points) {
                 double x = anchor[0] + offset[0], y = anchor[1] + offset[1], z = anchor[2] + offset[2];
                 double[] actual = frame.project(x, y, z);

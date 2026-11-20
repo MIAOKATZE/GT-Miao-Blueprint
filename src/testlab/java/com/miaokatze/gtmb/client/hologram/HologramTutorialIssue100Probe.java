@@ -313,6 +313,19 @@ public final class HologramTutorialIssue100Probe {
                         .resolve(name)),
                 "Natural frame PNG missing");
             step.put("png", "screenshots/" + name);
+            if (HologramRenderParityProbe.enabled()) {
+                try {
+                    step.put(
+                        "scene",
+                        HologramRenderParityProbe.cropScene(
+                            output,
+                            name,
+                            String.format("gtmb-issue100-step-%02d-scene.png", state.getInteger("step")),
+                            screen.ui.tutorial.renderUi()));
+                } catch (Exception cropFailure) {
+                    step.put("sceneCaptureFailure", cropFailure.toString());
+                }
+            }
             steps.add(step);
             capturedStep = state.getInteger("step");
         } catch (Throwable problem) {
@@ -412,7 +425,7 @@ public final class HologramTutorialIssue100Probe {
             ArtifactIdentity.capture(HologramTutorialIssue100Probe.class)
                 .asMap());
         Files.write(output.resolve("gtmb-issue100-tutorial.json"), json(receipt));
-        HologramTestLabUiProfile.install();
+        if (!HologramRenderParityProbe.install(originalMenu, output, run, failure)) HologramTestLabUiProfile.install();
     }
 
     private void transition(int next) {
