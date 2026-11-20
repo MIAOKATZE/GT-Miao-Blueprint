@@ -11,6 +11,7 @@ import net.minecraft.init.Blocks;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
 /** Exercises detached display decoding: unknown construction identities stay outside validation and authority. */
@@ -20,6 +21,8 @@ public final class HologramLocalPreviewRegression {
         admissionReceipts();
         compactDisplay();
         compactDirectDisplay();
+        frozenDraftParity();
+        singleCellAnnotation();
         compactCoordinateCompatibility();
         compactDenseRegion();
         sharedPlainDisplay();
@@ -86,6 +89,75 @@ public final class HologramLocalPreviewRegression {
             HologramBlueprintPreview.snapshot(legacy.getBytes(StandardCharsets.UTF_8)),
             HologramBlueprintPreview.snapshot(compact.getBytes(StandardCharsets.UTF_8)),
             "compact material and NBT references produce exactly the same detached display");
+    }
+
+    private static void frozenDraftParity() throws Exception {
+        NBTTagCompound payload = new NBTTagCompound();
+        payload.setByteArray("extension", new byte[] { 4, -9, 0 });
+        String encoded = java.util.Base64.getEncoder()
+            .encodeToString(com.miaokatze.gtmb.hologram.HologramSnapshotCodec.compress(payload));
+        String json = "{\"schema\":2,\"extension\":{\"opaque\":true},\"blueprint\":{\"schema\":1,\"cells\":["
+            + "{\"x\":-17,\"y\":-2,\"z\":16,\"item\":\"minecraft:stonebrick\",\"damage\":1,"
+            + "\"itemNbt\":\"" + encoded + "\",\"facing\":4},"
+            + "{\"x\":-16,\"y\":-2,\"z\":16,\"block\":\"missing:excluded\",\"excluded\":true}]}}";
+        byte[] original = json.getBytes(StandardCharsets.UTF_8);
+        HologramLocalBlueprintDocument document = HologramLocalBlueprintDocument.open(original, "");
+        var frozen = document.freeze();
+        NBTTagCompound oldCapture = HologramBlueprintPreview.snapshot(original);
+        SimpleAssert.eq(oldCapture, HologramBlueprintPreview.snapshot(frozen, () -> true),
+            "typed display preserves legacy coordinates, material, facing, policy, NBT and exclusions");
+        var input = HologramBlueprintPreview.displayInput(frozen, () -> true, null);
+        HologramState.Preparation preparation = new HologramState.Preparation(input.snapshot, true, input.cells);
+        while (!preparation.step(5, Long.MAX_VALUE)) {}
+        for (int i = 0; i < oldCapture.getTagList("cells", 10).tagCount(); i++)
+            HologramBlueprintPreview.completeCell(oldCapture.getTagList("cells", 10).getCompoundTagAt(i));
+        SimpleAssert.eq(new HologramState(oldCapture).fullData(), preparation.result().fullData(),
+            "current draft compact state matches the artifact preview's native rows");
+
+        NBTTagCompound edit = new NBTTagCompound();
+        edit.setString("prompt", "new author note");
+        document.apply("editBlueprintPrompt", edit);
+        NBTTagCompound options = new NBTTagCompound();
+        options.setString("name", "Typed save fixture");
+        String saveId = "local_11111111-1111-1111-1111-111111111111";
+        var save = document.prepareSaveDraft(options, "Author", java.util.UUID.fromString(saveId.substring(6)), saveId);
+        byte[] sourceJson = save.artifact();
+        SimpleAssert.eq(HologramBlueprintPreview.snapshot(sourceJson),
+            HologramBlueprintPreview.snapshot(save, () -> true),
+            "save PNG captures the same original geometry as decoding the save version's exact bytes");
+        document.saved(document.revision(), save, sourceJson);
+        SimpleAssert.that(!document.dirty() && Arrays.equals(sourceJson, document.artifact()),
+            "a committed frozen save installs the verified byte representation and clears dirty");
+        SimpleAssert.that(Arrays.equals(original, frozen.artifact()),
+            "the already frozen placement remains byte-exact after later edits and saves");
+    }
+
+    private static void singleCellAnnotation() throws Exception {
+        String json = "{\"cells\":[{\"x\":0,\"block\":\"minecraft:stone\"},"
+            + "{\"x\":32,\"block\":\"minecraft:stone\"}]}";
+        HologramLocalBlueprintDocument document = HologramLocalBlueprintDocument.open(
+            json.getBytes(StandardCharsets.UTF_8), "");
+        HologramState.Preparation preparation = new HologramState.Preparation(document.snapshot(), true);
+        while (!preparation.step(5, Long.MAX_VALUE)) {}
+        HologramState baseline = preparation.result();
+        NBTTagCompound request = new NBTTagCompound();
+        request.setInteger("selected", 0);
+        request.setString("prompt", "author note");
+        request.setBoolean("excluded", true);
+        document.apply("editCellFlags", request);
+        HologramState patched = HologramLocalBlueprintWorkspace.applyAnnotation(
+            baseline, document.snapshotMetadata(), document.annotationDelta());
+
+        SimpleAssert.that(patched.follows(baseline), "the annotation update preserves the local baseline lineage");
+        SimpleAssert.eq(1, patched.parsedCells, "the actual single edit parses exactly one row");
+        SimpleAssert.eq("author note", patched.cells.get(0).prompt, "the edited note replaces the displayed cell note");
+        SimpleAssert.that(patched.cells.get(0).excluded, "the dirty cell carries the edited exclusion");
+        SimpleAssert.that(patched.regions.at(0, 0, 0) == patched.cells.get(0),
+            "the existing coordinate resolves to the new cell");
+        SimpleAssert.that(patched.cells.get(1) == baseline.cells.get(1)
+            && patched.regions.regions.get(new HologramRegionCache.Key(2, 0, 0))
+                == baseline.regions.regions.get(new HologramRegionCache.Key(2, 0, 0)),
+            "an unrelated cell and region retain their identity");
     }
 
     private static void compactDirectDisplay() throws Exception {

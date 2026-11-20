@@ -41,9 +41,11 @@ import org.lwjgl.opengl.GL11;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.github.bsideup.jabel.Desugar;
 import com.miaokatze.gtmb.hologram.HologramAeNativePreview;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec;
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.FrozenDraft;
 import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
 import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteRenderScope;
 import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteTarget;
@@ -132,6 +134,46 @@ public final class HologramBlueprintPreview {
         }
     }
 
+    static DisplayInput displayInput(FrozenDraft draft, BooleanSupplier current,
+        java.util.function.BiConsumer<Integer, Integer> progress) throws IOException {
+        int total = draft.cellCount();
+        CompactCells cells = new CompactCells(total, Math.min(total, 64));
+        Map<DisplayMaterial, Integer> index = new HashMap<>();
+        Payloads payloads = new Payloads();
+        if (progress != null) progress.accept(0, total);
+        draft.visitDisplayCells((x, y, z, block, metadata, item, damage, facing, tileNbt, itemNbt) -> {
+            DisplayMaterial material = new DisplayMaterial(block, metadata, item, damage, facing, tileNbt, itemNbt);
+            Integer position = index.get(material);
+            if (position == null) {
+                position = index.size();
+                cells.putMaterial(position, displayMaterial(material, payloads));
+                index.put(material, position);
+            } else {
+                payloads.account(payloads.expanded.getOrDefault(tileNbt, 0));
+                payloads.account(payloads.expanded.getOrDefault(itemNbt, 0));
+            }
+            cells.add(checkedCoordinate(x, 60000000L), checkedCoordinate(y, 256L), checkedCoordinate(z, 60000000L),
+                position);
+            if (progress != null && (cells.size() & 255) == 0) progress.accept(cells.size(), total);
+        }, current);
+        if (cells.size() == 0) throw new IOException("Blueprint preview has no buildable cells");
+        if (progress != null) progress.accept(total, total);
+        return new DisplayInput(displayMetadata(draft), cells);
+    }
+
+    static NBTTagCompound snapshot(FrozenDraft draft, BooleanSupplier current) throws IOException {
+        NBTTagCompound data = displayMetadata(draft);
+        NBTTagList cells = new NBTTagList();
+        Payloads payloads = new Payloads();
+        draft.visitDisplayCells((x, y, z, block, metadata, item, damage, facing, tileNbt, itemNbt) ->
+            cells.appendTag(displayRow(
+                displayMaterial(new DisplayMaterial(block, metadata, item, damage, facing, tileNbt, itemNbt), payloads),
+                checkedCoordinate(x, 60000000L), checkedCoordinate(y, 256L), checkedCoordinate(z, 60000000L))), current);
+        if (cells.tagCount() == 0) throw new IOException("Blueprint preview has no buildable cells");
+        data.setTag("cells", cells);
+        return data;
+    }
+
     static final class DisplayInput {
 
         final NBTTagCompound snapshot;
@@ -147,7 +189,7 @@ public final class HologramBlueprintPreview {
     static final class CompactCells {
 
         private final int[] locations;
-        private final NBTTagCompound[] materials;
+        private NBTTagCompound[] materials;
         private int size;
 
         CompactCells(int cells, int materials) {
@@ -161,6 +203,12 @@ public final class HologramBlueprintPreview {
             locations[at + 1] = y;
             locations[at + 2] = z;
             locations[at + 3] = material;
+        }
+
+        private void putMaterial(int index, NBTTagCompound material) {
+            if (index == materials.length)
+                materials = java.util.Arrays.copyOf(materials, Math.min(locations.length / 4, materials.length * 2));
+            materials[index] = material;
         }
 
         int size() {
@@ -193,18 +241,28 @@ public final class HologramBlueprintPreview {
             JsonObject source = row.getAsJsonObject();
             if (excluded(source)) continue;
             int x = coordinate(source, "x"), y = coordinate(source, "y"), z = coordinate(source, "z");
-            NBTTagCompound cell = displayMaterial(source, payloads);
-            cell.setInteger("x", x);
-            cell.setInteger("y", y);
-            cell.setInteger("z", z);
-            cell.setInteger("dx", x);
-            cell.setInteger("dy", y);
-            cell.setInteger("dz", z);
-            cells.appendTag(cell);
+            cells.appendTag(displayRow(displayMaterial(source, payloads), x, y, z));
         }
         if (cells.tagCount() == 0) throw new IOException("Blueprint preview has no buildable cells");
         data.setTag("cells", cells);
         if (progress != null) progress.accept(sourceCells.size(), sourceCells.size());
+        return data;
+    }
+
+    private static NBTTagCompound displayRow(NBTTagCompound cell, int x, int y, int z) {
+        cell.setInteger("x", x);
+        cell.setInteger("y", y);
+        cell.setInteger("z", z);
+        cell.setInteger("dx", x);
+        cell.setInteger("dy", y);
+        cell.setInteger("dz", z);
+        return cell;
+    }
+
+    private static NBTTagCompound displayMetadata(FrozenDraft draft) {
+        NBTTagCompound data = draft.displayMetadata();
+        data.setString("session", "blueprint-artifact");
+        data.setInteger("mode", 0);
         return data;
     }
 
@@ -249,14 +307,25 @@ public final class HologramBlueprintPreview {
     }
 
     private static NBTTagCompound displayMaterial(JsonObject source, Payloads payloads) throws IOException {
+        return displayMaterial(new DisplayMaterial(
+            string(source, "block"), integer(source, "metadata", 0), string(source, "item"),
+            integer(source, "damage", 0), integer(source, "facing", -1),
+            string(source, "tileNbt"), string(source, "itemNbt")), payloads);
+    }
+
+    @Desugar
+    private record DisplayMaterial(String block, int metadata, String item, int damage, int facing, String tileNbt,
+        String itemNbt) {}
+
+    private static NBTTagCompound displayMaterial(DisplayMaterial material, Payloads payloads) throws IOException {
         NBTTagCompound cell = new NBTTagCompound();
-        cell.setString("wantId", string(source, "block"));
-        cell.setInteger("wantMeta", integer(source, "metadata", 0));
-        cell.setInteger("targetFacing", integer(source, "facing", -1));
-        cell.setString("previewItem", string(source, "item"));
-        cell.setInteger("previewDamage", integer(source, "damage", 0));
-        NBTTagCompound tile = payloads.decode(string(source, "tileNbt"));
-        NBTTagCompound item = payloads.decode(string(source, "itemNbt"));
+        cell.setString("wantId", material.block());
+        cell.setInteger("wantMeta", material.metadata());
+        cell.setInteger("targetFacing", material.facing());
+        cell.setString("previewItem", material.item());
+        cell.setInteger("previewDamage", material.damage());
+        NBTTagCompound tile = payloads.decode(material.tileNbt());
+        NBTTagCompound item = payloads.decode(material.itemNbt());
         if (tile != null) cell.setTag("previewTile", tile.copy());
         if (item != null) cell.setTag("previewItemTag", item.copy());
         return cell;
@@ -298,7 +367,18 @@ public final class HologramBlueprintPreview {
 
     static Request capture(NBTTagCompound exactSnapshot, double yaw, double pitch, BooleanSupplier current,
         Consumer<BufferedImage> done, Consumer<Throwable> failure) {
-        Request request = new Request(exactSnapshot, yaw, pitch, current, done, failure);
+        return queue(new Request(exactSnapshot, null, yaw, pitch, current, done, failure));
+    }
+
+    /** The local save worker owns the detached display rows and never mutates them after submission. */
+    static Request captureOwned(NBTTagCompound exactSnapshot, byte[] exactJson, double yaw, double pitch,
+        BooleanSupplier current, Consumer<BufferedImage> done, Consumer<Throwable> failure) {
+        String hash = Boolean.getBoolean("gtmb.hologram.previewCaptureWitness")
+            ? HologramBlueprintArtifact.hash(exactJson) : "";
+        return queue(new Request(exactSnapshot, hash, yaw, pitch, current, done, failure));
+    }
+
+    private static Request queue(Request request) {
         if (!REQUESTS.offer(request)) {
             request.fail(new IOException("Blueprint preview queue is full"));
             return request;
@@ -412,15 +492,21 @@ public final class HologramBlueprintPreview {
         private boolean nativeRendering, readbackSucceeded;
         private volatile boolean cancelled;
 
-        Request(NBTTagCompound snapshot, double yaw, double pitch, BooleanSupplier current,
+        Request(NBTTagCompound snapshot, String ownedSourceHash, double yaw, double pitch, BooleanSupplier current,
             Consumer<BufferedImage> done, Consumer<Throwable> failure) {
             if (!Double.isFinite(yaw) || !Double.isFinite(pitch))
                 throw new IllegalArgumentException("Invalid preview camera");
             this.yaw = yaw;
             this.pitch = pitch;
-            SourceReceipt source = takeSource(Objects.requireNonNull(snapshot));
-            this.sourceJsonSha256 = source == null ? "" : source.hash;
-            this.snapshot = (NBTTagCompound) (source == null ? snapshot : source.snapshot).copy();
+            Objects.requireNonNull(snapshot);
+            if (ownedSourceHash == null) {
+                SourceReceipt source = takeSource(snapshot);
+                sourceJsonSha256 = source == null ? "" : source.hash;
+                this.snapshot = (NBTTagCompound) (source == null ? snapshot : source.snapshot).copy();
+            } else {
+                sourceJsonSha256 = ownedSourceHash;
+                this.snapshot = snapshot;
+            }
             this.current = Objects.requireNonNull(current);
             this.done = Objects.requireNonNull(done);
             this.failure = Objects.requireNonNull(failure);

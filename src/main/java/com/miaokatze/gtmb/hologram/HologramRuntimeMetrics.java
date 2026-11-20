@@ -45,6 +45,7 @@ public final class HologramRuntimeMetrics {
         CLIENT_DECODE_FAILED,
         CLIENT_PREPARE_BEGIN,
         CLIENT_PREPARE_END,
+        CLIENT_CONTROLLER_TARGET,
         CLIENT_INSTALL,
         CLIENT_DISPLAY_STATE,
         CLIENT_OUTLINE_READY,
@@ -160,7 +161,15 @@ public final class HologramRuntimeMetrics {
         LOCAL_CONTROLLER_WORLD("localControllerWorld"),
         LOCAL_CONTROLLER_CAPABILITIES("localControllerCapabilities"),
         LOCAL_CONTROLLER_PREPARE("localControllerPrepare"),
-        LOCAL_CONTROLLER_INSTALL("localControllerInstall");
+        LOCAL_CONTROLLER_INSTALL("localControllerInstall"),
+        WORKBENCH_CONTROLLER_OPENING("workbenchControllerOpening"),
+        WORKBENCH_SHELL("workbenchShell"),
+        WORKBENCH_ROUTER_BINDINGS("workbenchRouterBindings"),
+        WORKBENCH_ROUTER_FIELDS("workbenchRouterFields"),
+        WORKBENCH_STRUCTURE_WIDGETS("workbenchStructureWidgets"),
+        WORKBENCH_CUT_WIDGETS("workbenchCutWidgets"),
+        WORKBENCH_MUI_RESIZE("workbenchMuiResize"),
+        WORKBENCH_MUI_PANEL_OPEN("workbenchMuiPanelOpen");
 
         final String key;
 

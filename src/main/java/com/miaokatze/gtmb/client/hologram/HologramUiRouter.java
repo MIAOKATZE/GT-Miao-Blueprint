@@ -14,6 +14,7 @@ import org.lwjgl.input.Keyboard;
 import org.lwjgl.input.Mouse;
 import org.lwjgl.opengl.GL11;
 
+import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 import com.miaokatze.miaokatzecore.api.ui.CanvasTransform;
 
 /** Internal router workflow; composed by the workstation, never part of the mod extension API. */
@@ -33,14 +34,24 @@ final class HologramUiRouter {
         if (!ui.session.state().data.getBoolean("localStandardController") && !ui.session.localDocument())
             ui.library.prepareInitialization();
         Keyboard.enableRepeatEvents(true);
-        ui.shortcuts.loadBindings();
+        long bindings = HologramRuntimeMetrics.start();
+        try {
+            ui.shortcuts.loadBindings();
+        } finally {
+            HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.WORKBENCH_ROUTER_BINDINGS, bindings);
+        }
         ui.canvas.resize();
-        ui.config.initializeFields();
-        ui.position.initializeFields();
-        ui.library.initializeFields();
-        ui.annotations.initializeFields();
-        ui.bindings.initializeFields();
-        ui.review.initializeReview();
+        long fields = HologramRuntimeMetrics.start();
+        try {
+            ui.config.initializeFields();
+            ui.position.initializeFields();
+            ui.library.initializeFields();
+            ui.annotations.initializeFields();
+            ui.bindings.initializeFields();
+            ui.review.initializeReview();
+        } finally {
+            HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.WORKBENCH_ROUTER_FIELDS, fields);
+        }
     }
 
     boolean doesGuiPauseGame() {

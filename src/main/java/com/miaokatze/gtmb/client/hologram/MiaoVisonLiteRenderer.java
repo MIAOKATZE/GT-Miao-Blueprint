@@ -298,11 +298,39 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         }
     }
 
+    /** Keep the exact frame and any unfinished render cursors when the local publication only adds editor details. */
+    void retainLocalPresentation(HologramState previous, HologramState next) {
+        if (visibleState != previous) return;
+        visibleState = next;
+        if (previewState == previous) previewState = next;
+        if (presentedState == previous) presentedState = next;
+        if (displayedState == previous) displayedState = next;
+        if (boundsState == previous) boundsState = next;
+        if (structureBoundsState == previous) structureBoundsState = next;
+        if (projectedRequest != null && projectedRequest.state == previous) projectedRequest = projectedRequest.forState(next);
+        if (presentedRequest != null && presentedRequest.state == previous) presentedRequest = presentedRequest.forState(next);
+        if (previewPreparation != null && previewPreparation.state == previous) {
+            previewPreparation.state = next;
+            if (previewPreparation.projection != null) previewPreparation.projection.state = next;
+            if (previewPreparation.boundary != null) previewPreparation.boundary.state = next;
+        }
+        advanceAssets(previous, next, java.util.Collections.emptySet(), assets);
+    }
+
     static boolean renderMetadataChanged(HologramState previous, HologramState next) {
         String[] keys = { "mode", "virtual", "virtualPlacement", "x", "y", "z", "dimension" };
         for (String key : keys) {
             Object before = previous.data.getTag(key), after = next.data.getTag(key);
             if (!java.util.Objects.equals(before, after)) return true;
+        }
+        return false;
+    }
+
+    static boolean localRenderMetadataChanged(HologramState previous, HologramState next) {
+        if (renderMetadataChanged(previous, next)) return true;
+        for (String key : new String[] { "structureProjection", "blueprintEditing", "displayPartial", "localPreview",
+            "moving", "hintAreas" }) {
+            if (!java.util.Objects.equals(previous.data.getTag(key), next.data.getTag(key))) return true;
         }
         return false;
     }
@@ -1704,6 +1732,11 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             this.clean = clean;
         }
 
+        PreviewRequest forState(HologramState next) {
+            return new PreviewRequest(next, x, y, width, height, yaw, pitch, zoom, panX, panY, panZ, layer, view,
+                empty, clean);
+        }
+
         boolean sameGeometry(HologramState state, int layer, int view, boolean empty, boolean clean) {
             return this.state == state && this.layer == layer
                 && this.view == view
@@ -1867,7 +1900,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     /** Client render-thread cursor: each cell invokes the existing native/texture path exactly once. */
     private final class PreviewPreparation {
 
-        final HologramState state;
+        HologramState state;
         final java.util.Iterator<Map.Entry<HologramRegionCache.Key, List<HologramState.Cell>>> regions;
         Map.Entry<HologramRegionCache.Key, List<HologramState.Cell>> entry;
         PreviewRegion region;
@@ -2006,7 +2039,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     /** Projects only newly prepared cells; camera changes reuse native/material preparation and restart this cursor. */
     private final class PreviewProjection {
 
-        final HologramState state;
+        HologramState state;
         String key;
         final java.util.Iterator<Map.Entry<HologramRegionCache.Key, List<HologramState.Cell>>> regions;
         Map.Entry<HologramRegionCache.Key, List<HologramState.Cell>> entry;
@@ -2190,7 +2223,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     static final class PreviewBoundary {
 
         private static final int PAGE_SHIFT = 6, PAGE_CELLS = 1 << PAGE_SHIFT, POINTS_PER_CELL = 24;
-        final HologramState state;
+        HologramState state;
         final Map<HologramRegionCache.Key, java.util.BitSet> occupancy = new java.util.HashMap<>();
         java.util.Iterator<Map.Entry<HologramRegionCache.Key, List<HologramState.Cell>>> regions;
         Map.Entry<HologramRegionCache.Key, List<HologramState.Cell>> entry;

@@ -116,6 +116,9 @@ public final class HologramRegressionTest {
             "area_import_task_uses_complete_geometry_provenance_after_metadata_stripping",
             com.miaokatze.gtmb.client.hologram.HologramAreaWorkspaceReceiptRegression::run);
         cases.put(
+            "controller_details_preserve_the_matching_rendered_target",
+            com.miaokatze.gtmb.client.hologram.HologramControllerDetailsRegression::run);
+        cases.put(
             "completed_area_capture_retires_local_gestures_before_the_next_blueprint",
             com.miaokatze.gtmb.client.hologram.HologramAreaSelectionLifecycleRegression::run);
         cases.put("server_work_budgets_packet_metrics_and_job_deltas", HologramServerLoadRegression::run);

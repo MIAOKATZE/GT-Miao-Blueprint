@@ -13,6 +13,7 @@ import net.minecraft.nbt.NBTTagList;
 import net.minecraft.tileentity.TileEntity;
 
 import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
+import com.miaokatze.gtmb.hologram.HologramControllerTarget;
 import com.miaokatze.gtmb.hologram.HologramLocalControllerCapture;
 import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 
@@ -39,6 +40,8 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     private int openingSlot;
     private HologramLocalControllerCapture localController;
     private HologramState.Preparation localControllerPreparation;
+    private HologramState.ControllerDetails localControllerDetails;
+    private HologramState localControllerTarget;
     private int localControllerSide;
     private HologramState localControllerPrevious;
     private HologramState localControllerBaseline;
@@ -101,18 +104,23 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     }
 
     static HologramScreen localController(TileEntity tile, int dimension, int side) {
-        ItemStack tool = Minecraft.getMinecraft().thePlayer.getHeldItem();
-        NBTTagCompound settings = HologramLocalControllerCapture.toolSettings(tool);
-        HologramLocalControllerCapture capture = new HologramLocalControllerCapture(
-            tile, dimension, side, tool, settings, "");
-        NBTTagCompound opening = capture.opening();
-        opening.setString("status", HologramClient.text("controllerLocalPreparing", "正在读取本地标准结构…"));
-        HologramScreen screen = new HologramScreen(new HologramState(opening));
-        screen.localController = capture;
-        screen.localControllerSide = side;
-        screen.localControllerToolSettings = settings;
-        screen.rememberControllerContext(tile);
-        return screen;
+        long started = HologramRuntimeMetrics.start();
+        try {
+            ItemStack tool = Minecraft.getMinecraft().thePlayer.getHeldItem();
+            NBTTagCompound settings = HologramLocalControllerCapture.toolSettings(tool);
+            HologramLocalControllerCapture capture = new HologramLocalControllerCapture(
+                tile, dimension, side, tool, settings, "");
+            NBTTagCompound opening = capture.opening();
+            opening.setString("status", HologramClient.text("controllerLocalPreparing", "正在读取本地标准结构…"));
+            HologramScreen screen = new HologramScreen(new HologramState(opening));
+            screen.localController = capture;
+            screen.localControllerSide = side;
+            screen.localControllerToolSettings = settings;
+            screen.rememberControllerContext(tile);
+            return screen;
+        } finally {
+            HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.WORKBENCH_CONTROLLER_OPENING, started);
+        }
     }
 
     private void rememberControllerContext(TileEntity tile) {
@@ -158,9 +166,8 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
                 updateState(current.withMetadata(changes));
                 return;
             }
-            if (localController != null) localController.close();
-            localController = null;
-            localControllerPreparation = null;
+            retireLocalController();
+            localControllerBaseline = null;
         }
         if ("projection".equals(next)) suspendedLocalBlueprint = current;
         if ("blueprint".equals(next) && suspendedLocalBlueprint != null) {
@@ -195,9 +202,8 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             updateState(current.withMetadata(changes));
             return;
         }
-        if (localController != null) localController.close();
-        localController = null;
-        localControllerPreparation = null;
+        retireLocalController();
+        localControllerBaseline = null;
         suspendedLocalBlueprint = null;
         HologramClient.rememberLocalDocument(null);
         updateState(localWorkspaceState(current.data, current.data.getInteger("dimension"), current.data.getString("editorWorkspace")));
@@ -207,6 +213,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         if (!localWorkspaceView() || ui.session.localDocument()) return false;
         try {
             HologramState current = ui.session.state();
+            if (localControllerStandard() && current.data.getBoolean("capturePending")) return true;
             if (localControllerStandard() && HologramLocalControllerEdits.handles(operation)) {
                 if ("customPin".equals(operation)) {
                     int slot = request.getInteger("inventorySlot");
@@ -241,7 +248,8 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     void checkLocalMaterials() {
         HologramState displayed = ui.session.state();
-        if (!localWorkspaceView() || displayed.cells.isEmpty() || localMaterialRequest != null) return;
+        if (!localWorkspaceView() || displayed.cells.isEmpty() || localMaterialRequest != null
+            || displayed.data.getBoolean("capturePending")) return;
         Minecraft client = minecraft();
         var connection = client.getNetHandler();
         var world = client.theWorld;
@@ -325,7 +333,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         if (!localControllerStandard() || !controllerContextCurrent(false) || localExecutionRequest != null) return;
         Minecraft client = minecraft();
         HologramState displayed = ui.session.state();
-        if (displayed.cells.isEmpty()) return;
+        if (displayed.cells.isEmpty() || displayed.data.getBoolean("capturePending")) return;
         if (displayed.data.getInteger("mode") != 0) {
             settings.setInteger("mode", displayed.data.getInteger("mode"));
             HologramClient.prepareExplicitControllerOperation(openingController, localControllerSide, settings, displayed);
@@ -513,38 +521,25 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     private void advanceLocalController() {
         if (!localControllerStandard() || localController == null) return;
+        boolean retire = false;
         try {
             Minecraft client = minecraft();
             if (!controllerContextCurrent(false)
                 || !localController.matches(client.theWorld, client.thePlayer.dimension))
                 throw new java.io.IOException("LOCAL_CONTROLLER_CHANGED");
             long deadline = System.nanoTime() + LOCAL_CONTROLLER_TICK_NANOS;
-            if (localControllerPreparation == null) {
-                NBTTagCompound snapshot = localController.step(2048, LOCAL_CONTROLLER_TICK_NANOS);
-                if (snapshot == null) return;
-                snapshot.setString("status", HologramClient.text("controllerLocalStandard", "本地标准结构"));
-                localControllerPreparation = new HologramState.Preparation(snapshot);
+            if (localControllerTarget == null) {
+                advanceLocalControllerTarget(deadline);
+                return;
             }
-            long remaining = deadline - System.nanoTime();
-            if (remaining <= 0) return;
-            long preparation = HologramRuntimeMetrics.start();
-            try {
-                if (!localControllerPreparation.step(2048, remaining)) return;
-                localControllerBaseline = localControllerPreparation.result();
-            } finally {
-                HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_PREPARE, preparation);
-            }
-            long install = HologramRuntimeMetrics.start();
-            try {
-                updateState(localControllerBaseline);
-                HologramRuntimeMetrics.loadStage(
-                    HologramRuntimeMetrics.LoadStage.CLIENT_INSTALL, localControllerBaseline.data, -1,
-                    localControllerBaseline.cells.size());
-            } finally {
-                HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_INSTALL, install);
-            }
+            HologramState completed = advanceLocalControllerDetails(deadline);
+            if (completed == null) return;
+            retire = true;
+            publishLocalController(completed, HologramRuntimeMetrics.LoadStage.CLIENT_INSTALL);
+            localControllerBaseline = completed;
             if (pendingControllerToolSettings != null) localControllerToolSettings = pendingControllerToolSettings;
         } catch (java.io.IOException | RuntimeException | LinkageError failure) {
+            retire = true;
             com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG
                 .debug("Local controller standard structure unavailable", failure);
             String status = HologramClient.text("controllerLocalUnavailable", "此控制器没有可用的本地标准结构");
@@ -552,9 +547,70 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
                 updateState(localControllerPrevious);
                 ui.session.notice(status);
             } else updateState(new HologramState(localController.unavailable(status)));
+        } finally {
+            if (retire) retireLocalController();
         }
+    }
+
+    private void advanceLocalControllerTarget(long deadline) throws java.io.IOException {
+        if (localControllerPreparation == null) {
+            HologramControllerTarget.Projection snapshot =
+                localController.stepTarget(2048, Math.max(1, deadline - System.nanoTime()));
+            if (snapshot == null) return;
+            snapshot.metadata().setString(
+                "status", HologramClient.text("controllerLocalPreparing", "正在读取本地标准结构…"));
+            localControllerPreparation = new HologramState.Preparation(snapshot);
+        }
+        long remaining = deadline - System.nanoTime();
+        if (remaining <= 0) return;
+        long preparation = HologramRuntimeMetrics.start();
+        try {
+            if (!localControllerPreparation.step(2048, remaining)) return;
+            localControllerTarget = localControllerPreparation.result();
+            localControllerPreparation = null;
+        } finally {
+            HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_PREPARE, preparation);
+        }
+        publishLocalController(localControllerTarget, HologramRuntimeMetrics.LoadStage.CLIENT_CONTROLLER_TARGET);
+    }
+
+    private HologramState advanceLocalControllerDetails(long deadline) throws java.io.IOException {
+        HologramState current = ui.session.state();
+        if (current.cells != localControllerTarget.cells
+            || !current.data.getString("generation").equals(localControllerTarget.data.getString("generation")))
+            throw new java.io.IOException("LOCAL_CONTROLLER_CHANGED");
+        if (localControllerDetails == null) {
+            NBTTagCompound details = localController.stepDetails(2048, Math.max(1, deadline - System.nanoTime()));
+            if (details == null) return null;
+            details.setString("status", HologramClient.text("controllerLocalStandard", "本地标准结构"));
+            localControllerDetails = new HologramState.ControllerDetails(current, details);
+        }
+        long remaining = deadline - System.nanoTime();
+        if (remaining <= 0) return null;
+        long preparation = HologramRuntimeMetrics.start();
+        try {
+            return localControllerDetails.step(2048, remaining) ? localControllerDetails.result() : null;
+        } finally {
+            HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_PREPARE, preparation);
+        }
+    }
+
+    private void publishLocalController(HologramState state, HologramRuntimeMetrics.LoadStage stage) {
+        long install = HologramRuntimeMetrics.start();
+        try {
+            updateState(state);
+            HologramRuntimeMetrics.loadStage(stage, state.data, -1, state.cells.size());
+        } finally {
+            HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_INSTALL, install);
+        }
+    }
+
+    private void retireLocalController() {
+        if (localController != null) localController.close();
         localController = null;
         localControllerPreparation = null;
+        localControllerDetails = null;
+        localControllerTarget = null;
         localControllerPrevious = null;
         pendingControllerToolSettings = null;
     }
@@ -740,7 +796,12 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         }
         initializedGraphs.add(ui);
         workspaceMount = new com.cleanroommc.modularui.widget.ParentWidget<>().sizeRel(1f);
-        workspaceMount.child(ui.shell.build(panel()));
+        long shell = localControllerStandard() ? HologramRuntimeMetrics.start() : 0;
+        try {
+            workspaceMount.child(ui.shell.build(panel()));
+        } finally {
+            HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.WORKBENCH_SHELL, shell);
+        }
         panel().child(workspaceMount);
         return true;
     }
@@ -794,9 +855,8 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
                 com.miaokatze.gtmb.hologram.HologramNetwork.sendAction(cancel);
             }
             localExecutionSent = false;
-            if (localController != null) localController.close();
-            localController = null;
-            localControllerPreparation = null;
+            retireLocalController();
+            localControllerBaseline = null;
             // This hook runs on final MUI panel disposal, unlike onGuiClosed's
             // temporary website/NEI suspensions. Dormant graph GPU resources end here.
             java.util.Set<HologramUiModules> graphs = java.util.Collections

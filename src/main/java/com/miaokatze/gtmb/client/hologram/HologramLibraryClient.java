@@ -26,6 +26,7 @@ import com.miaokatze.gtmb.common.util.BlueprintWebsite;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramLibraryDownload;
 import com.miaokatze.gtmb.hologram.HologramLibraryProtocol;
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.FrozenDraft;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
 
 /** One bounded disk worker and acknowledged chunks; no JSON or file IO runs on the render/tick thread. */
@@ -150,6 +151,7 @@ final class HologramLibraryClient {
 
         final String key, stamp, localId, publicId, revision;
         final byte[] json;
+        final FrozenDraft draft;
         NBTTagCompound snapshot;
         HologramBlueprintPreview.CompactCells compactCells;
         volatile HologramState state;
@@ -160,9 +162,15 @@ final class HologramLibraryClient {
 
         DisplaySource(String key, String stamp, byte[] json, NBTTagCompound snapshot, String localId, String publicId,
             String hash, String revision) {
+            this(key, stamp, json, snapshot, localId, publicId, hash, revision, null);
+        }
+
+        private DisplaySource(String key, String stamp, byte[] json, NBTTagCompound snapshot, String localId,
+            String publicId, String hash, String revision, FrozenDraft draft) {
             this.key = key;
             this.stamp = stamp;
             this.json = json;
+            this.draft = draft;
             this.snapshot = snapshot;
             this.localId = localId;
             this.publicId = publicId;
@@ -1387,17 +1395,17 @@ final class HologramLibraryClient {
         });
     }
 
-    boolean previewDraftPlacement(byte[] exactPortableJson) {
-        if (exactPortableJson == null || busy() || !beginBackgroundTask("准备当前蓝图预览")) return false;
-        byte[] json = exactPortableJson.clone();
+    boolean previewDraftPlacement(FrozenDraft draft) {
+        if (draft == null || busy() || !beginBackgroundTask("准备当前蓝图预览")) return false;
         localDisplayTask = true;
         long token = generation, epoch = beginBrowsePreview(true);
         preparing = true;
         localProgressPhase = "library.parse";
         work(() -> {
-            HologramBlueprintPreview.DisplayInput input = HologramBlueprintPreview
-                .displayInput(json, (done, total) -> observeDisplay(token, "library.parse", done, total, "cells"));
-            DisplaySource source = new DisplaySource("draft", "", json, input.snapshot, "", "", "", "");
+            HologramBlueprintPreview.DisplayInput input = HologramBlueprintPreview.displayInput(
+                draft, () -> token == generation,
+                (done, total) -> observeDisplay(token, "library.parse", done, total, "cells"));
+            DisplaySource source = new DisplaySource("draft", "", null, input.snapshot, "", "", "", "", draft);
             source.compactCells = input.cells;
             main(() -> { if (!discardedBrowse(token, epoch, true)) startDisplay(source, true, epoch); });
         }, failure -> failTask("preview.decode", "当前蓝图预览失败，" + HologramUiText.reason(failure.getMessage())));
@@ -1772,7 +1780,7 @@ final class HologramLibraryClient {
             displayReady();
         } else browsePreparation = new HologramState.Preparation(
             source.snapshot,
-            source.json != null,
+            source.json != null || source.draft != null,
             source.compactCells);
     }
 
@@ -1914,9 +1922,10 @@ final class HologramLibraryClient {
         localProgressPhase = "library.verify";
         status = "正在准备锁定位置的施工清单";
         work(() -> {
+            byte[] json = source.draft == null ? source.json : source.draft.artifact();
             com.miaokatze.gtmb.hologram.HologramProjectedPlacement.Plan plan = com.miaokatze.gtmb.hologram.HologramProjectedPlacement
                 .compile(
-                    com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.portableDocument(source.json),
+                    com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.portableDocument(json),
                     anchor,
                     pose,
                     worldHeight,

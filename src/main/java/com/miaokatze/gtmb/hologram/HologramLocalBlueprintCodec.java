@@ -39,8 +39,9 @@ final class HologramLocalBlueprintCodec {
         "deidentificationVersion", "deidentificationChosen", "aePolicyVersion", "aeIssues", "fullyVoucherCovered",
         "sourceItemFrames", "sourceItemFramesTruncated");
 
-    private final Map<Object, JsonObject> opaque = new WeakHashMap<>();
-    private JsonObject envelope;
+    private final Map<Object, JsonObject> opaque = java.util.Collections.synchronizedMap(new WeakHashMap<>());
+    private volatile JsonObject envelope;
+    private boolean explicitRetention = true;
 
     Preset read(byte[] bytes) throws IOException {
         if (bytes == null || bytes.length == 0 || bytes.length > HologramBlueprintArtifact.MAX_JSON_BYTES)
@@ -49,6 +50,7 @@ final class HologramLocalBlueprintCodec {
         JsonObject root = HologramBlueprintCompactCodec.parse(text, HologramBlueprintArtifact.MAX_JSON_BYTES);
         try {
             JsonObject blueprint = HologramBlueprintCompactCodec.documentBlueprint(root);
+            explicitRetention = blueprint.has("retainNbt");
             int envelopeSchema = number(root, "schema", 2);
             if (envelopeSchema < 1 || envelopeSchema > 2 || root.has("presets"))
                 throw new IOException("蓝图分享文件格式无效");
@@ -126,6 +128,10 @@ final class HologramLocalBlueprintCodec {
         opaque.putAll(saved.opaque);
     }
 
+    boolean explicitRetention() {
+        return explicitRetention;
+    }
+
     void processingMetadata(Preset original, Preset source) {
         JsonObject retained = opaque.get(original);
         if (retained == null) return;
@@ -171,8 +177,10 @@ final class HologramLocalBlueprintCodec {
         blueprint.add("structures", rows(preset.structures));
         blueprint.add("hintAreas", rows(preset.hintAreas));
         JsonObject output = new JsonObject();
-        if (envelope != null)
-            for (Map.Entry<String, JsonElement> field : envelope.entrySet()) output.add(field.getKey(), field.getValue());
+        JsonObject sourceEnvelope = envelope;
+        if (sourceEnvelope != null)
+            for (Map.Entry<String, JsonElement> field : sourceEnvelope.entrySet())
+                output.add(field.getKey(), field.getValue());
         output.addProperty("schema", 2);
         output.add("blueprint", blueprint);
         return HologramBlueprintCompactCodec.encodeLocalDocument(output);

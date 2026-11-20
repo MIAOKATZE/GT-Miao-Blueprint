@@ -52,6 +52,19 @@ final class HologramRenderer {
         BROWSE.sceneClosed();
     }
 
+    static void controllerDetailsPublished(HologramState previous, HologramState next) {
+        if (next.reusesControllerGeometry(previous)) EDITOR.retainLocalPresentation(previous, next);
+    }
+
+    static void localBlueprintPublished(HologramState previous, HologramState next) {
+        if (!next.follows(previous) || MiaoVisonLiteRenderer.localRenderMetadataChanged(previous, next)) return;
+        if (previous.cells == next.cells && previous.regions == next.regions) {
+            EDITOR.retainLocalPresentation(previous, next);
+        } else if (EDITOR.owns(previous) && next.changedIndices.length > 0) {
+            EDITOR.snapshotChanged(previous, next, HologramRegionCache.affected(next));
+        }
+    }
+
     static void snapshotChanged(HologramState previous, HologramState next) {
         if (!next.follows(previous) || MiaoVisonLiteRenderer.renderMetadataChanged(previous, next)) {
             EDITOR.close();

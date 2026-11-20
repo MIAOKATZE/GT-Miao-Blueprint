@@ -252,6 +252,11 @@ public final class StructureSources {
             return validityFailure(sourceRevision, status == Status.UNSUPPORTED ? failureCode : null, readSet);
         }
 
+        /** True when the source supplied a verifier for the state it read while describing the plan. */
+        public boolean hasObservedReadSet() {
+            return readSet != null;
+        }
+
         /** A lineage guard can retain this proof without retaining the declaration graph in this resolution. */
         public ReadSet validityProof() {
             long revision = sourceRevision;

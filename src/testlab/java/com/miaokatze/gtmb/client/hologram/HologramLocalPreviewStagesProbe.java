@@ -15,6 +15,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.TreeMap;
@@ -39,6 +40,7 @@ import net.minecraft.util.MathHelper;
 import net.minecraft.util.MovingObjectPosition;
 import net.minecraft.util.ScreenShotHelper;
 import net.minecraft.world.WorldServer;
+import net.minecraft.world.chunk.EmptyChunk;
 import net.minecraftforge.client.event.MouseEvent;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.common.util.FakePlayer;
@@ -55,6 +57,7 @@ import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 import com.miaokatze.gtmb.hologram.HologramSnapshotPalette;
 import com.miaokatze.gtmb.register.ProjectorRegistry;
 
+import codechicken.nei.recipe.GuiRecipe;
 import cpw.mods.fml.relauncher.Side;
 import gregtech.api.GregTechAPI;
 import gregtech.api.enums.ItemList;
@@ -93,6 +96,14 @@ final class HologramLocalPreviewStagesProbe {
     private final boolean construction = Boolean.getBoolean(FLAG + "Construction");
     private final boolean postFocus = construction || Boolean.getBoolean(FLAG + "PostFocus");
     private final NativeParity parity = NativeParity.configured();
+    private final boolean workbenchStages = Boolean.getBoolean(FLAG + "WorkbenchStages");
+    private final String timingMode = System.getProperty(FLAG + "Timing", "");
+    private final List<Map<String, Object>> timingRuns = new ArrayList<>();
+    private GuiScreen timingScreen;
+    private long reopenAtTick;
+    private volatile Map<String, Object> timingNeiFrame;
+    private Map<String, Object> timingGtmbFrame;
+    private volatile Exception timingFailure;
     private final int x, y, z, toolSlot, stoneSlot;
     private final String actorName;
     private final String localId = "local_" + UUID.fromString(System.getProperty("miaotest.host.runId"));
@@ -118,6 +129,7 @@ final class HologramLocalPreviewStagesProbe {
     private HologramState controllerDrawn;
     private long controllerDrawSerial, ownDrawTail = -1, controllerDrawsAtStart, controllerPreviousDraws;
     private boolean controllerFrameCaptured;
+    private HologramWorkbenchStagesWitness workbench;
     private HologramState ghost;
     private HologramClientLibrary originalStore, fixtureStore;
     private Channel channel;
@@ -159,6 +171,13 @@ final class HologramLocalPreviewStagesProbe {
         evidence.put("nativeWorldInputExercised", !postFocus);
         evidence.put("constructionRequested", construction);
         evidence.put("observer", "actual FML client outbound IMessage pipeline, GTMB mod channel only");
+        if (!timingMode.isEmpty()) {
+            require(("nei".equals(timingMode) || "gtmb".equals(timingMode)) && !construction,
+                "Timing mode must be 'nei' or 'gtmb' and runs separately from construction");
+            evidence.put("timingMode", timingMode);
+            evidence.put("timingRuns", timingRuns);
+            evidence.put("timingScope", "same default trigger, south facing, first open then natural close/reopen");
+        }
         if (parity != null) {
             require(!construction, "Native controller parity and the construction positive control are separate fixtures");
             evidence.put("nativeParityFixture", parity.name().toLowerCase(java.util.Locale.ROOT));
@@ -195,16 +214,16 @@ final class HologramLocalPreviewStagesProbe {
                 actor != null && world.blockExists(x, y, z) && world.isAirBlock(x, y, z),
                 "Owned-world controller fixture site unavailable");
             ItemStack item = parity == null ? ItemList.Machine_Multi_BlastFurnace.get(1) : parity.item();
-            ForgeDirection north = ForgeDirection.NORTH;
+            ForgeDirection facing = timingMode.isEmpty() ? ForgeDirection.NORTH : ForgeDirection.SOUTH;
             require(
                 item != null && item.getItem() instanceof ItemMachines machines
-                    && machines.placeBlockAt(item, actor, world, x, y, z, north.ordinal(), .5F, .5F, .5F, 0),
+                    && machines.placeBlockAt(item, actor, world, x, y, z, facing.ordinal(), .5F, .5F, .5F, 0),
                 "Native controller placement failed");
             require(
                 world.getTileEntity(x, y, z) instanceof BaseMetaTileEntity base
                     && fixtureController(base),
                 "Native controller fixture identity mismatch");
-            ((BaseMetaTileEntity) world.getTileEntity(x, y, z)).setFrontFacing(north);
+            ((BaseMetaTileEntity) world.getTileEntity(x, y, z)).setFrontFacing(facing);
             if (parity == NativeParity.SOLAR || parity == NativeParity.ENTANGLER)
                 ((BaseMetaTileEntity) world.getTileEntity(x, y, z)).disableWorking();
             world.markBlockForUpdate(x, y, z);
@@ -239,6 +258,7 @@ final class HologramLocalPreviewStagesProbe {
                 + HologramClient.worldInputFocused()
                 + ", outbound="
                 + packets());
+        if (!timingMode.isEmpty()) return timingStep(mc);
         if (stage == 0) {
             if (!fixtureReady || !(mc.theWorld.getTileEntity(x, y, z) instanceof BaseMetaTileEntity base)
                 || !fixtureController(base)
@@ -252,6 +272,7 @@ final class HologramLocalPreviewStagesProbe {
             require(hitAt(mc, x, y, z), "EntityRenderer crosshair missed the real controller");
             controllerClicked = System.nanoTime();
             if (parity != null) HologramRuntimeMetrics.setEnabled(true);
+            if (workbenchStages) workbench = new HologramWorkbenchStagesWitness(null, controllerClicked);
             controllerClickTick = mc.thePlayer.ticksExisted;
             controllerDrawsAtStart = MiaoVisonLiteRenderer.previewDirectMeshDraws;
             if (postFocus) HologramScreen.localController(base, mc.thePlayer.dimension, mc.objectMouseOver.sideHit)
@@ -394,6 +415,33 @@ final class HologramLocalPreviewStagesProbe {
     }
 
     void guiPost(GuiScreen gui, long frame) {
+        if (!timingMode.isEmpty()) {
+            if (finished || stage != 1 || gui != timingScreen || timingFailure != null) return;
+            if (gui instanceof HologramScreen shown && workbench.guiPost(shown)) {
+                try {
+                    timingGtmbFrame = new LinkedHashMap<>();
+                    timingScreenshot(Minecraft.getMinecraft(), timingGtmbFrame);
+                } catch (java.io.IOException failure) {
+                    timingFailure = failure;
+                }
+            }
+            else if (gui instanceof GuiRecipe<?> recipe && timingNeiFrame == null) {
+                long drawPost = System.nanoTime();
+                try {
+                    Map<String, Object> measured = HologramNeiFirstFrame.frame(Minecraft.getMinecraft(), recipe, controllerItem);
+                    if (measured.isEmpty()) return;
+                    timingNeiFrame = new LinkedHashMap<>(measured);
+                    timingNeiFrame.put("firstMaterialDrawPostNanos", drawPost - controllerClicked);
+                    timingScreenshot(Minecraft.getMinecraft(), timingNeiFrame);
+                } catch (Exception failed) {
+                    timingFailure = failed;
+                }
+            }
+            return;
+        }
+        if (!finished && stage == 1 && workbench != null && gui instanceof HologramScreen shown
+            && shown.localControllerStandard() && (controller == null || gui == controller))
+            workbench.guiPost(shown);
         if (finished || parity != null || stage != 1 || controller == null || gui != controller) return;
         HologramState state = controller.ui.session.state();
         NBTTagCompound witness = HologramRenderer.lessonInspection(state);
@@ -448,13 +496,94 @@ final class HologramLocalPreviewStagesProbe {
         return new LinkedHashMap<>(evidence);
     }
 
+    private boolean timingStep(Minecraft mc) throws Exception {
+        if (timingFailure != null) throw timingFailure;
+        zero("timing." + stage);
+        if (stage == 0) {
+            if (!fixtureReady || mc.currentScreen != null || mc.thePlayer.ticksExisted < reopenAtTick
+                || !postFocus && "gtmb".equals(timingMode) && !HologramClient.worldInputFocused()
+                || !(mc.theWorld.getTileEntity(x, y, z) instanceof BaseMetaTileEntity tile)
+                || !fixtureController(tile) || tile.getFrontFacing() != ForgeDirection.SOUTH) return false;
+            if (channel == null) observeOutbound();
+            look(mc, x + .5, y + .5, z + .5);
+            require(hitAt(mc, x, y, z), "The timing fixture is not at the player's crosshair");
+            controllerClicked = System.nanoTime();
+            if ("nei".equals(timingMode)) {
+                timingScreen = HologramNeiFirstFrame.open(mc, controllerItem);
+            } else {
+                if (mc.thePlayer.inventory.getStackInSlot(toolSlot) != fixtureTool)
+                    mc.thePlayer.inventory.setInventorySlotContents(toolSlot, fixtureTool);
+                HologramRuntimeMetrics.setEnabled(true);
+                workbench = new HologramWorkbenchStagesWitness(null, controllerClicked);
+                if (postFocus) HologramScreen.localController(tile, mc.thePlayer.dimension, mc.objectMouseOver.sideHit)
+                    .openFrom(mc.currentScreen);
+                else rightClick(mc);
+                require(mc.currentScreen instanceof HologramScreen, "The timing fixture did not open the workbench");
+                timingScreen = mc.currentScreen;
+            }
+            stage = 1;
+            return false;
+        }
+        require(mc.currentScreen == timingScreen, "The timed screen was retired before its receipt");
+        Map<String, Object> sample;
+        if (timingScreen instanceof HologramScreen shown) {
+            HologramState state = shown.ui.session.state();
+            workbench.observe(state);
+            if (!workbench.sawMaterial() || !state.data.getBoolean("projectionDataComplete")
+                || state.data.getBoolean("capturePending")) return false;
+            require(state.data.getInteger("main") == 1 && state.data.getCompoundTag("channels").hasNoTags(),
+                "GTMB timing fixture does not use the default trigger");
+            sample = workbench.receipt(state, HologramRuntimeMetrics.snapshot().getTagList("loadStages", 10),
+                Boolean.getBoolean(FLAG + "RequireEarly"), Boolean.getBoolean(FLAG + "RequireEarlyFrame"));
+            sample.put("screen", shown.getClass().getName());
+            sample.put("controllerMeta", controllerItem.getItemDamage());
+            sample.put("facing", ForgeDirection.SOUTH.name());
+            sample.put("main", 1);
+            sample.put("channels", Collections.singletonMap("gt_hatch", 1));
+            sample.put("targetPositions", state.cells.size());
+            sample.putAll(timingGtmbFrame);
+            timingGtmbFrame = null;
+        } else {
+            if (timingNeiFrame == null) return false;
+            sample = timingNeiFrame;
+            timingNeiFrame = null;
+        }
+        sample.put("temperature", timingRuns.isEmpty() ? "first-open-of-target-this-process" : "reopen-same-process");
+        sample.put("width", mc.displayWidth);
+        sample.put("height", mc.displayHeight);
+        sample.put("guiScale", mc.gameSettings.guiScale);
+        timingRuns.add(sample);
+        mc.displayGuiScreen(null);
+        timingScreen = null;
+        if (timingRuns.size() == 1) {
+            reopenAtTick = mc.thePlayer.ticksExisted + 5L;
+            stage = 0;
+            return false;
+        }
+        zero("timing.closed");
+        require(finish(mc), "Timing probe did not restore its world input");
+        evidence.put("passed", true);
+        return true;
+    }
+
+    private void timingScreenshot(Minecraft mc, Map<String, Object> sample) throws java.io.IOException {
+        String name = "gtmb-timing-" + timingMode + "-" + (timingRuns.isEmpty() ? "first" : "reopen") + ".png";
+        Files.createDirectories(output.resolve("screenshots"));
+        ScreenShotHelper.saveScreenshot(output.toFile(), name, mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
+        require(Files.isRegularFile(output.resolve("screenshots").resolve(name)), "Timing screenshot missing");
+        sample.put("framebuffer", "screenshots/" + name);
+        sample.put("framebufferStage", "observed first material Draw.Post");
+    }
+
     private boolean fixtureController(BaseMetaTileEntity base) {
         return parity == null ? base.getMetaTileEntity() instanceof MTEElectricBlastFurnace
             : parity.matches(base.getMetaTileEntity());
     }
 
     private boolean parityStep(Minecraft mc, HologramState state) throws Exception {
+        if (workbench != null) workbench.observe(state);
         if (!state.data.getBoolean("projectionDataComplete") || state.data.getBoolean("capturePending")) return false;
+        if (workbench != null && !workbench.sawMaterial()) return false;
         NBTTagCompound channels = state.data.getCompoundTag("channels");
         int main = state.data.getInteger("main");
         int signal = "main".equals(parity.channel) ? main : channels.getInteger(parity.channel);
@@ -469,11 +598,8 @@ final class HologramLocalPreviewStagesProbe {
             NBTTagCompound mark = stages.getCompoundTagAt(i);
             long at = mark.getLong("atNanos");
             if (at < controllerClicked || !state.session.equals(mark.getString("session"))) continue;
-            if (mark.getString("stage").equals("CLIENT_INSTALL")) installed = at;
-            if (installed > 0 && mark.getString("stage").equals("CLIENT_FIRST_MATERIAL")) {
-                firstDraw = at;
-                break;
-            }
+            if (installed == 0 && mark.getString("stage").equals("CLIENT_INSTALL")) installed = at;
+            if (firstDraw == 0 && mark.getString("stage").equals("CLIENT_FIRST_MATERIAL")) firstDraw = at;
         }
         if (fixed) {
             evidence.put("pendingTelemetry", telemetry.caption());
@@ -495,8 +621,17 @@ final class HologramLocalPreviewStagesProbe {
         proof.put("signal", signal);
         proof.put("effectiveSignal", capability == null ? null : capability.getInteger("current"));
         proof.put("dataReadyNanos", (installed > 0 ? installed : parityDataReady) - controllerClicked);
+        proof.put("firstMaterialDrawNanos", firstDraw > 0 ? firstDraw - controllerClicked : null);
+        if (workbench != null) {
+            proof.put("workbenchStages", workbench.receipt(state, stages,
+                Boolean.getBoolean(FLAG + "RequireEarly"), Boolean.getBoolean(FLAG + "RequireEarlyFrame")));
+            proof.put("orderedCandidateSamples", candidateSamples(state));
+            List<int[]> unobserved = unobservedActualSamples(mc, state);
+            proof.put("unobservedActualSamples", unobserved);
+            if (Boolean.getBoolean(FLAG + "RequireUnobservedActual"))
+                require(!unobserved.isEmpty(), "Fixture did not exercise any unobserved live positions");
+        }
         if (fixed) {
-            proof.put("firstMaterialDrawNanos", firstDraw > 0 ? firstDraw - controllerClicked : null);
             proof.put("observedOperation", telemetry.operation().name());
             proof.put("observedTier", telemetry.tier());
             proof.put("observedCaption", telemetry.caption());
@@ -505,7 +640,7 @@ final class HologramLocalPreviewStagesProbe {
         Map<String, Map<String, Long>> timings = new LinkedHashMap<>();
         for (Object key : measured.func_150296_c()) {
             String name = (String) key;
-            if (!name.startsWith("localController")) continue;
+            if (!name.startsWith("localController") && !name.startsWith("workbench")) continue;
             NBTTagCompound timer = measured.getCompoundTag(name);
             NBTTagCompound before = activityBeforeParityEdit.getCompoundTag(name);
             Map<String, Long> values = new LinkedHashMap<>();
@@ -525,6 +660,10 @@ final class HologramLocalPreviewStagesProbe {
         if (parity == NativeParity.CRITICAL)
             require(((Integer) proof.get("maximumRelativeY")) > 127, "Critical Solar preview lost its upper structure");
         requireLiveController(mc);
+        if (Boolean.getBoolean(FLAG + "ExerciseCandidates")) {
+            require(parity == NativeParity.EBF, "Use the electric blast furnace for the candidate edit fixture");
+            proof.put("candidateEdit", exerciseCandidates(state));
+        }
 
         if (fixed) {
             int checked = 0;
@@ -599,6 +738,118 @@ final class HologramLocalPreviewStagesProbe {
         controllerDrawsAtStart = MiaoVisonLiteRenderer.previewDirectMeshDraws;
         activityBeforeParityEdit = HologramRuntimeMetrics.snapshot().getCompoundTag("activity");
         controllerClicked = System.nanoTime();
+        if (workbenchStages)
+            workbench = new HologramWorkbenchStagesWitness(controller.ui.session.state(), controllerClicked);
+    }
+
+    private static List<Map<String, Object>> candidateSamples(HologramState state) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        Map<String, Integer> samples = new LinkedHashMap<>();
+        for (HologramState.Cell cell : state.cells) {
+            if (cell.anchor) continue;
+            String category = cell.candidates.isEmpty() ? cell.candidateComplete ? "empty" : "unprovenEmpty"
+                : cell.candidateComplete ? "complete" : "partial";
+            if (samples.getOrDefault(category, 0) >= 3) continue;
+            samples.merge(category, 1, Integer::sum);
+            NBTTagCompound row = cell.tag();
+            Map<String, Object> sample = new LinkedHashMap<>();
+            sample.put("category", category);
+            sample.put("index", cell.index);
+            sample.put("relative", new int[] { cell.dx, cell.dy, cell.dz });
+            sample.put("boundary", cell.candidateBoundary);
+            sample.put("role", cell.role);
+            sample.put("candidateRoles", row.getTagList("candidateRoles", 8).toString());
+            sample.put("candidateTiers", row.getIntArray("candidateTiers"));
+            sample.put("hatchFacings", row.getIntArray("hatchFacings"));
+            sample.put("chosenChoice", cell.chosenChoice);
+            sample.put("candidates", cell.candidates.stream()
+                .map(stack -> stack.writeToNBT(new NBTTagCompound()).toString()).collect(Collectors.toList()));
+            result.add(sample);
+            if (result.size() == 12) break;
+        }
+        return result;
+    }
+
+    private static List<int[]> unobservedActualSamples(Minecraft mc, HologramState state) {
+        List<int[]> result = new ArrayList<>();
+        var world = mc.theWorld;
+        for (HologramState.Cell cell : state.cells) {
+            if (cell.anchor) continue;
+            int cx = cell.x >> 4, cz = cell.z >> 4;
+            boolean loaded = cell.y >= 0 && cell.y < world.getHeight() && world.getChunkProvider().chunkExists(cx, cz);
+            if (loaded && !(world.getChunkFromChunkCoords(cx, cz) instanceof EmptyChunk)) continue;
+            NBTTagCompound row = cell.tag();
+            // Chunk availability can change after sampling; assert only observations the capture declared missing.
+            if (!row.getBoolean("localObservationMissing")) continue;
+            require(!cell.wantId.isEmpty() && cell.actualStack == null && !row.getString("reason").isEmpty(),
+                "An unreadable live position replaced or supplied a target observation");
+            result.add(new int[] { cell.dx, cell.dy, cell.dz });
+            if (result.size() == 3) break;
+        }
+        return result;
+    }
+
+    private Map<String, Object> exerciseCandidates(HologramState baseline) {
+        HologramState.Cell manual = null, batch = null;
+        int manualChoice = -1, batchChoice = -1, tier = -1;
+        for (HologramState.Cell cell : baseline.cells) {
+            if (cell.anchor || cell.candidates.isEmpty()) continue;
+            if (manual == null) {
+                for (int choice = 0; choice < cell.candidates.size(); choice++) {
+                    if (ItemStack.areItemStacksEqual(cell.targetStack, cell.candidates.get(choice))) continue;
+                    manual = cell;
+                    manualChoice = choice;
+                    break;
+                }
+                if (manual == cell) continue;
+            }
+            int[] tiers = cell.tag().getIntArray("candidateTiers");
+            for (int choice = 0; choice < Math.min(cell.candidates.size(), tiers.length); choice++) {
+                if (tiers[choice] < 0) continue;
+                batch = cell;
+                batchChoice = choice;
+                tier = tiers[choice];
+                break;
+            }
+            if (manual != null && batch != null) break;
+        }
+        require(manual != null && batch != null, "EBF candidate fixture needs two editable candidate rows");
+        NBTTagCompound pin = new NBTTagCompound();
+        pin.setInteger("selected", manual.index);
+        pin.setInteger("choiceindex", manualChoice);
+        controller.ui.session.send("pin", pin, true);
+        HologramState.Cell pinned = controller.ui.session.state().cells.get(manual.index);
+        require("manual".equals(pinned.pinScope)
+            && ItemStack.areItemStacksEqual(pinned.targetStack, manual.candidates.get(manualChoice)),
+            "Single-cell pin used a stale or reordered candidate");
+        NBTTagCompound preset = new NBTTagCompound();
+        preset.setInteger("tier", tier);
+        controller.ui.session.send("hatchPreset", preset, true);
+        HologramState planned = controller.ui.session.state();
+        HologramState.Cell presetCell = planned.cells.get(batch.index);
+        require("preset".equals(presetCell.pinScope)
+            && ItemStack.areItemStacksEqual(presetCell.targetStack, batch.candidates.get(batchChoice)),
+            "Tier preset missed its exact candidate row or picked a different item");
+        HologramState.Cell kept = planned.cells.get(manual.index);
+        require("manual".equals(kept.pinScope) && ItemStack.areItemStacksEqual(kept.targetStack, pinned.targetStack),
+            "Tier preset overwrote the manual pin");
+        controller.ui.session.send("clearHatchPreset", new NBTTagCompound(), true);
+        controller.ui.session.send("restoreCell", pin, true);
+        HologramState restored = controller.ui.session.state();
+        require(ItemStack.areItemStacksEqual(restored.cells.get(manual.index).targetStack, manual.targetStack)
+            && ItemStack.areItemStacksEqual(restored.cells.get(batch.index).targetStack, batch.targetStack),
+            "Clear and restore failed to recover the original targets");
+        require(baseline.data.getString("generation").equals(restored.data.getString("generation")),
+            "Same-geometry candidate edits retired the geometry generation");
+        zero("nativeCandidateEditsReturnedToBaseline");
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("manualIndex", manual.index);
+        result.put("manualChoice", manualChoice);
+        result.put("presetIndex", batch.index);
+        result.put("tier", tier);
+        result.put("presetChoice", batchChoice);
+        result.put("targetsRestored", true);
+        return result;
     }
 
     private Map<String, String> requireNativeFootprint(HologramState state, Map<String, Object> proof) throws Exception {
@@ -1051,6 +1302,7 @@ final class HologramLocalPreviewStagesProbe {
         }
         if (controller != null && mc.currentScreen == controller
             || constructionReview != null && mc.currentScreen == constructionReview
+            || timingScreen != null && mc.currentScreen == timingScreen
             || mc.currentScreen instanceof HologramPlacementLoadingScreen) mc.displayGuiScreen(null);
         if (construction) HologramClient.clearProjection();
         if (channel != null && channel.pipeline()

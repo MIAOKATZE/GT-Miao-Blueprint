@@ -15,10 +15,12 @@ import javax.imageio.ImageIO;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagList;
 
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramBlueprintFiles;
 import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument;
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.FrozenDraft;
 
 /** File I/O and viewport preparation for the ordinary in-client authoring workspace. */
 final class HologramLocalBlueprintWorkspace {
@@ -207,17 +209,17 @@ final class HologramLocalBlueprintWorkspace {
         NBTTagCompound saveOptions = (NBTTagCompound) options.copy();
         double yaw = ui.preview.yaw(), pitch = ui.preview.pitch();
         work(current, () -> {
-            byte[] json = current.draft.prepareSave(saveOptions, authorName, authorId, id);
-            NBTTagCompound renderSnapshot = HologramBlueprintPreview.snapshot(json);
+            var prepared = current.draft.prepareSaveDraft(saveOptions, authorName, authorId, id);
+            byte[] json = prepared.artifact();
+            NBTTagCompound renderSnapshot = HologramBlueprintPreview.snapshot(prepared, () -> current(current));
             main(() -> {
                 if (!current(current)) return;
                 HologramBlueprintPreview
-                    .capture(renderSnapshot, yaw, pitch, () -> current(current), image -> work(current, () -> {
+                    .captureOwned(renderSnapshot, json, yaw, pitch, () -> current(current), image -> work(current, () -> {
                         ByteArrayOutputStream output = new ByteArrayOutputStream();
                         if (!ImageIO.write(image, "png", output)) throw new IOException("无法编码蓝图预览 PNG");
                         HologramBlueprintArtifact.Artifact pair = HologramBlueprintArtifact
                             .prepareSave(json, output.toByteArray());
-                        HologramLocalBlueprintDocument saved = HologramLocalBlueprintDocument.open(pair.json, id);
                         HologramClientLibrary.LocalSave staged = store
                             .preparePrivateDocumentSave(pair.json, pair.png, id, () -> current(current));
                         try {
@@ -231,13 +233,13 @@ final class HologramLocalBlueprintWorkspace {
                             }
                             throw failure;
                         }
-                        main(() -> saved(current, saved, pair.json));
+                        main(() -> saved(current, prepared, pair.json));
                     }), failure -> failed(current, failure));
             });
         });
     }
 
-    private void saved(Task current, HologramLocalBlueprintDocument saved, byte[] json) {
+    private void saved(Task current, FrozenDraft saved, byte[] json) {
         if (task != current) return;
         try {
             current.draft.saved(current.revision, saved, json);
@@ -245,8 +247,8 @@ final class HologramLocalBlueprintWorkspace {
             HologramLibraryClient.INSTANCE.select(false, current.draft.fileId());
             HologramLibraryClient.INSTANCE.refreshLocal();
             HologramUiLibrary.committedSave(current.source.session);
-            if (screenCurrent(current)) work(current, () -> prepareView(current, current.draft, "蓝图已保存到客户端本地"));
-            else task = null;
+            finishEdit(current, current.revision);
+            if (screenCurrent(current)) ui.session.notice("蓝图已保存到客户端本地");
         } catch (IOException invalid) {
             failed(current, invalid);
         }
@@ -281,16 +283,40 @@ final class HologramLocalBlueprintWorkspace {
 
     private void finishEdit(Task current, long previous) throws IOException {
         current.revision = current.draft.revision();
-        if (current.revision != previous) prepareView(current, current.draft, "");
+        boolean changed = current.revision != previous;
+        NBTTagCompound annotation = changed ? current.draft.annotationDelta() : null;
+        if (changed && annotation == null && !HologramLocalBlueprintDocument.metadataOnlyEdit(current.operation))
+            prepareView(current, current.draft, "");
         else {
             NBTTagCompound metadata = commandResult(current, current.draft.snapshotMetadata(), true, "");
             main(() -> {
                 if (task != current) return;
+                if (!screenCurrent(current)) {
+                    task = null;
+                    return;
+                }
+                HologramState base = ui.session.state();
+                HologramState next;
+                try {
+                    next = annotation == null ? base.withMetadata(metadata) : applyAnnotation(base, metadata, annotation);
+                } catch (IllegalArgumentException invalidBaseline) {
+                    work(current, () -> prepareView(current, current.draft, ""));
+                    return;
+                }
                 task = null;
-                if (screenCurrent(current))
-                    ui.session.publishLocalDocument(current.draft, ui.session.state().withMetadata(metadata));
+                ui.session.publishLocalDocument(current.draft, next);
             });
         }
+    }
+
+    static HologramState applyAnnotation(HologramState base, NBTTagCompound metadata, NBTTagCompound annotation) {
+        NBTTagList rows = new NBTTagList();
+        rows.appendTag(annotation);
+        metadata.setTag("cells", rows);
+        metadata.setBoolean("partial", true);
+        metadata.setInteger("cellCount", base.cells.size());
+        metadata.setLong("baseRevision", base.data.getLong("planRevision"));
+        return HologramState.apply(base, metadata);
     }
 
     void cancelAttachment(long request) {
@@ -303,11 +329,11 @@ final class HologramLocalBlueprintWorkspace {
         Task current = begin("正在准备蓝图预览");
         if (current == null) return;
         work(current, () -> {
-            byte[] json = current.draft.artifact();
+            var draft = current.draft.freeze();
             main(() -> {
                 if (task != current) return;
                 task = null;
-                if (screenCurrent(current)) HologramLibraryClient.INSTANCE.previewDraftPlacement(json);
+                if (screenCurrent(current)) HologramLibraryClient.INSTANCE.previewDraftPlacement(draft);
             });
         });
     }

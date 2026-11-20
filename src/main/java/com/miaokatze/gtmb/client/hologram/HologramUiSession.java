@@ -41,7 +41,9 @@ final class HologramUiSession {
     }
 
     void publishLocalDocument(HologramLocalBlueprintDocument document, HologramState next) {
-        if (document() == document) updateState(next);
+        if (document() != document) return;
+        HologramRenderer.localBlueprintPublished(state, next);
+        updateState(next);
     }
 
     void leaveLocalDocument() {
@@ -160,6 +162,7 @@ final class HologramUiSession {
             libraryTaskPresetSequence = -1;
             libraryTaskSession = "";
         }
+        HologramRenderer.controllerDetailsPublished(state, next);
         state = next;
         ui.textBoxes.acknowledge(next);
         if (materialReviewSequence >= 0 && revision() != materialReviewRevision) clearMaterialReviewAction();

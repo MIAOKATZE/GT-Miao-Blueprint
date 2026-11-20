@@ -222,13 +222,30 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
         }
     }
 
-    @SuppressWarnings({ "rawtypes", "unchecked" })
+    HologramCapture.Cell targetCell(HologramNativePreviewWorld.Placement placement) {
+        return HologramCapture.nativePreviewCell(placement, null, trigger);
+    }
+
     HologramCapture.Cell cell(HologramNativePreviewWorld.Placement placement) {
-        IStructureElement element = elements.get(new Position(placement.x(), placement.y(), placement.z()));
+        IStructureElement<?> element = elements.get(new Position(placement.x(), placement.y(), placement.z()));
         HologramCapture.Cell cell = HologramCapture.nativePreviewCell(placement, element, trigger);
+        readCellCandidates(cell);
+        return cell;
+    }
+
+    HologramCapture.Cell candidateCell(int x, int y, int z, String role) {
+        HologramCapture.Cell cell = new HologramCapture.Cell(elements.get(new Position(x, y, z)), x, y, z, trigger, true);
+        cell.role = role;
+        readCellCandidates(cell);
+        return cell;
+    }
+
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    private void readCellCandidates(HologramCapture.Cell cell) {
+        IStructureElement element = cell.element;
         if (element == null) {
             cell.candidateBoundary = "此格由原生预览直接写入";
-            return cell;
+            return;
         }
         PreviewOptions cached = sharedOptions.get(element);
         if (cached != null) {
@@ -236,7 +253,7 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
             cell.candidateComplete = cached.complete();
             cell.candidateBoundary = cached.boundary();
             if (cached.hatch()) cell.role = "hatch";
-            return cell;
+            return;
         }
         HologramChannelTrace.Scope trace = HologramChannelTrace.begin(context);
         long candidateStart = HologramRuntimeMetrics.start();
@@ -260,7 +277,6 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
             channels = HologramChannelTrace.merge(channels, HologramChannelTrace.end(trace));
             HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_CANDIDATES, candidateStart);
         }
-        return cell;
     }
 
     private static boolean reusablePreviewOptions(IStructureElement<?> element) {

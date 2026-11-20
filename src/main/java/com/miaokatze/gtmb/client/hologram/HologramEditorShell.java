@@ -25,6 +25,7 @@ import com.cleanroommc.modularui.widgets.ListWidget;
 import com.cleanroommc.modularui.widgets.PagedWidget;
 import com.cleanroommc.modularui.widgets.layout.Flow;
 import com.cleanroommc.modularui.widgets.textfield.TextFieldWidget;
+import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 
 /** One persistent native widget graph per editing session. No domain state is copied into the shell. */
 final class HologramEditorShell {
@@ -139,7 +140,8 @@ final class HologramEditorShell {
         top.child(ui.tools.buildTopTools());
         presentation.child(top);
 
-        structures = new HologramEditorStructurePane(ui);
+        boolean deferHiddenPanes = !ui.session.isTutorial() && ui.workspaces.projection()
+            && ui.session.state().data.getBoolean("localStandardController");
         if (cut == null) cut = new HologramEditorCutWorkspace(ui);
         editBody = HologramEditorNativeTheme.collapsingFlow(GuiAxis.X)
             .name("editor_native_edit_body")
@@ -156,8 +158,8 @@ final class HologramEditorShell {
             .child(
                 HologramEditorNativeTheme.button(() -> "\u7ed3\u6784\u5217\u8868  \u2039", this::toggleStructures)
                     .widthRel(1f)
-                    .height(22))
-            .child(structures.build());
+                    .height(22));
+        if (!deferHiddenPanes || structuresOpen) mountStructureList();
         structureDrawer.setEnabledIf(w -> structuresOpen);
         editBody.child(structureDrawer);
         scene = sceneOverride == null ? new HologramEditorSceneWidget(ui).sizeRel(1f) : sceneOverride;
@@ -189,8 +191,9 @@ final class HologramEditorShell {
         editBody.child(buildLaunchers());
         editBody.child(buildInspector());
         editBody.child(buildLibraryDrawer());
-        cutBody = new ParentWidget<>().sizeRel(1f)
-            .child(cut.build());
+        cutBody = new ParentWidget<>().sizeRel(1f);
+        if (deferHiddenPanes) cut.captureInitialDirectory();
+        else prepareCut();
         ParentWidget<?> workspace = new ParentWidget<>().widthRel(1f)
             .heightRel(1f)
             .expanded()
@@ -587,8 +590,33 @@ final class HologramEditorShell {
     }
 
     void toggleStructures() {
+        if (!structuresOpen && structureDrawer != null) mountStructureList();
         structuresOpen = !structuresOpen;
         if (editBody != null) editBody.scheduleResize();
+    }
+
+    private void mountStructureList() {
+        if (structures != null) return;
+        long started = HologramRuntimeMetrics.start();
+        try {
+            HologramEditorStructurePane pane = new HologramEditorStructurePane(ui);
+            structureDrawer.child(pane.build());
+            structures = pane;
+        } finally {
+            HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.WORKBENCH_STRUCTURE_WIDGETS, started);
+        }
+    }
+
+    /** Mount the Cut widgets before switching visibility. A direct Cut open mounts them during build. */
+    void prepareCut() {
+        if (cutBody == null || cutBody.hasChildren()) return;
+        long started = HologramRuntimeMetrics.start();
+        try {
+            cutBody.child(cut.build());
+            if (cutBody.isValid()) cutBody.scheduleResize();
+        } finally {
+            HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.WORKBENCH_CUT_WIDGETS, started);
+        }
     }
 
     void toggleLibrary() {
@@ -628,7 +656,7 @@ final class HologramEditorShell {
         layoutSidebars();
         layoutInspector();
         properties.refresh();
-        structures.refresh();
+        if (structures != null) structures.refresh();
         library.refresh();
         settings.refresh();
         legacy.refresh();

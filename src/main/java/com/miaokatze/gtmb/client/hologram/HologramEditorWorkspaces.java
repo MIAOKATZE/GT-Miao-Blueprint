@@ -118,6 +118,7 @@ final class HologramEditorWorkspaces {
             HologramCutClient.INSTANCE.openStorageWorkspace();
             return false;
         }
+        ui.shell.prepareCut();
         cut = true;
         ui.tools.closeTransient();
         return true;

@@ -12,10 +12,12 @@ import java.util.Map;
 
 import net.minecraft.block.Block;
 import net.minecraft.item.ItemStack;
+import net.minecraft.nbt.NBTBase;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
 import com.miaokatze.gtmb.hologram.HologramBlueprintLimits;
+import com.miaokatze.gtmb.hologram.HologramControllerTarget;
 import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 import com.miaokatze.gtmb.hologram.HologramSnapshotPalette;
 
@@ -34,6 +36,7 @@ final class HologramState {
     final int[] changedIndices;
     final int parsedCells;
     private final boolean fullBaseline;
+    private final Object controllerTargetIdentity;
     final List<Cell> plainDisplayExamples;
     List<Cell> changedPreviousCells = Collections.emptyList();
     boolean topologyChanged;
@@ -43,6 +46,7 @@ final class HologramState {
 
     HologramState(NBTTagCompound source) {
         fullBaseline = fullBaseline(source);
+        controllerTargetIdentity = null;
         plainDisplayExamples = Collections.emptyList();
         parentIdentity = null;
         changedIndices = new int[0];
@@ -95,6 +99,7 @@ final class HologramState {
 
     private HologramState(Preparation ready) {
         fullBaseline = ready.fullBaseline;
+        controllerTargetIdentity = null;
         plainDisplayExamples = Collections.unmodifiableList(ready.plainDisplayExamples);
         parentIdentity = null;
         changedIndices = new int[0];
@@ -128,6 +133,100 @@ final class HologramState {
         }
     }
 
+    private HologramState(ControllerDetails ready) {
+        HologramState geometry = ready.geometry;
+        data = ready.data;
+        session = geometry.session;
+        cells = ready.enriched;
+        regions = geometry.regions.withCells(cells);
+        materials = geometry.materials;
+        structureMembers = geometry.structureMembers;
+        plainDisplayExamples = geometry.plainDisplayExamples;
+        parentIdentity = geometry.identity;
+        controllerTargetIdentity = ready.samePresentation ? geometry.identity : null;
+        changedIndices = new int[0];
+        parsedCells = ready.cursor;
+        fullBaseline = geometry.fullBaseline;
+        minY = geometry.minY;
+        maxY = geometry.maxY;
+        minWorldX = geometry.minWorldX;
+        minWorldY = geometry.minWorldY;
+        minWorldZ = geometry.minWorldZ;
+        maxWorldX = geometry.maxWorldX;
+        maxWorldY = geometry.maxWorldY;
+        maxWorldZ = geometry.maxWorldZ;
+    }
+
+    boolean reusesControllerGeometry(HologramState geometry) {
+        return geometry != null && controllerTargetIdentity == geometry.identity;
+    }
+
+    /** Adds editor details to a complete target without decoding its spatial, model or world data again. */
+    static final class ControllerDetails {
+
+        private static final java.util.Set<String> DETAIL_FIELDS = new java.util.HashSet<>(Arrays.asList(
+            "index", "role", "candidates", "candidateRoles", "candidateTiers", "chosenChoice", "candidateComplete",
+            "candidateBoundary"));
+        private static final java.util.Set<String> NON_VISUAL_METADATA = new java.util.HashSet<>(Arrays.asList(
+            "capturePending", "projectionDataComplete", "capabilities", "structureDescription", "status"));
+        private final Thread owner = Thread.currentThread();
+        private final HologramState geometry;
+        private final NBTTagCompound data;
+        private final NBTTagList rows;
+        private final CellPages enriched;
+        private boolean samePresentation = true;
+        private int cursor;
+
+        ControllerDetails(HologramState geometry, NBTTagCompound details) {
+            rows = details.getTagList("cells", 10);
+            if (!geometry.data.getBoolean("localStandardController") || !geometry.data.getBoolean("capturePending")
+                || !details.getBoolean("projectionDataComplete") || details.getBoolean("capturePending")
+                || !geometry.session.equals(details.getString("session"))
+                || !geometry.data.getString("generation").equals(details.getString("generation"))
+                || rows.tagCount() != geometry.cells.size()) throw new IllegalArgumentException("Stale controller details");
+            this.geometry = geometry;
+            enriched = new CellPages((CellPages) geometry.cells, geometry.cells.size());
+            NBTTagCompound updates = metadata(details, false);
+            data = shallow(geometry.data);
+            for (Object name : updates.func_150296_c()) {
+                String key = (String) name;
+                NBTBase value = updates.getTag(key);
+                if (!NON_VISUAL_METADATA.contains(key) && !java.util.Objects.equals(value, data.getTag(key)))
+                    samePresentation = false;
+                data.setTag(key, value);
+            }
+        }
+
+        boolean step(int maxRows, long maxNanos) {
+            if (Thread.currentThread() != owner || maxRows < 1 || maxNanos < 1)
+                throw new IllegalArgumentException("Invalid controller detail budget");
+            long started = System.nanoTime();
+            int processed = 0;
+            while (cursor < rows.tagCount() && processed < maxRows
+                && (processed == 0 || System.nanoTime() - started < maxNanos)) {
+                NBTTagCompound row = rows.getCompoundTagAt(cursor);
+                if (!DETAIL_FIELDS.containsAll(row.func_150296_c())
+                    || row.hasKey("index") && (!row.hasKey("index", 3) || row.getInteger("index") != cursor))
+                    throw new IllegalArgumentException("Invalid controller detail row");
+                if (!row.hasNoTags()) {
+                    Cell target = geometry.cells.get(cursor);
+                    Cell cell = new Cell(target, row);
+                    if (!target.role.equals(cell.role) && !("block".equals(target.role) && "hatch".equals(cell.role)))
+                        samePresentation = false;
+                    enriched.replace(cursor, cell);
+                }
+                cursor++;
+                processed++;
+            }
+            return cursor == rows.tagCount();
+        }
+
+        HologramState result() {
+            if (cursor != rows.tagCount()) throw new IllegalStateException("Controller details still pending");
+            return new HologramState(this);
+        }
+    }
+
     /** Metadata decorators share geometry; preserve the incoming publication's renderer and selection obligations. */
     private HologramState(HologramState decorated, HologramState publication) {
         data = decorated.data;
@@ -143,6 +242,7 @@ final class HologramState {
         topologyChanged = publication.topologyChanged;
         parsedCells = publication.parsedCells;
         fullBaseline = publication.fullBaseline;
+        controllerTargetIdentity = publication.controllerTargetIdentity;
         minY = decorated.minY;
         maxY = decorated.maxY;
         minWorldX = decorated.minWorldX;
@@ -156,6 +256,7 @@ final class HologramState {
     /** One bounded early view shares completed cells and owns its small spatial index. */
     private HologramState(Preparation ready, int count) {
         fullBaseline = false;
+        controllerTargetIdentity = null;
         plainDisplayExamples = Collections.emptyList();
         parentIdentity = null;
         changedIndices = new int[0];
@@ -216,6 +317,7 @@ final class HologramState {
         private HologramState result;
         private final boolean displayRows;
         private final HologramBlueprintPreview.CompactCells compactCells;
+        private final List<HologramControllerTarget.Cell> controllerCells;
         private final DescriptorTemplate[] compactMaterials;
         private final int cellCount;
         private final NBTTagCompound source;
@@ -237,6 +339,15 @@ final class HologramState {
         }
 
         Preparation(NBTTagCompound source, boolean displayRows, HologramBlueprintPreview.CompactCells compactCells) {
+            this(source, displayRows, compactCells, null);
+        }
+
+        Preparation(HologramControllerTarget.Projection target) {
+            this(target.metadata(), false, null, target.cells());
+        }
+
+        private Preparation(NBTTagCompound source, boolean displayRows, HologramBlueprintPreview.CompactCells compactCells,
+            List<HologramControllerTarget.Cell> controllerCells) {
             this.source = source;
             packed = HologramSnapshotPalette.isPacked(source);
             projection = source.getBoolean("structureProjection");
@@ -244,12 +355,14 @@ final class HologramState {
             displayDescriptors = displayRows && !packed && compactCells == null ? new HashMap<>() : null;
             this.displayRows = displayRows;
             this.compactCells = compactCells;
+            this.controllerCells = controllerCells;
             regions = new HologramRegionCache.Builder(compactCells != null);
             compactMaterials = compactCells == null ? null : new DescriptorTemplate[compactCells.materialCount()];
-            fullBaseline = compactCells != null || fullBaseline(source);
+            fullBaseline = controllerCells != null || compactCells != null || fullBaseline(source);
             data = metadata(source, false);
             rows = source.getTagList("cells", 10);
-            cellCount = compactCells == null ? rows.tagCount() : compactCells.size();
+            cellCount = controllerCells != null ? controllerCells.size()
+                : compactCells == null ? rows.tagCount() : compactCells.size();
             if (!HologramBlueprintLimits.accepts(cellCount))
                 throw new IllegalArgumentException("Blueprint cell count exceeds limit");
             materialRows = source.getTagList("materials", 10);
@@ -270,8 +383,8 @@ final class HologramState {
                         stage++;
                         continue;
                     }
-                    Cell cell = compactCells == null ? prepareCell(rows.getCompoundTagAt(cellPosition))
-                        : prepareCompactCell();
+                    Cell cell = controllerCells != null ? new Cell(cellPosition, controllerCells.get(cellPosition))
+                        : compactCells == null ? prepareCell(rows.getCompoundTagAt(cellPosition)) : prepareCompactCell();
                     if ((cellPosition & 255) == 0) pages.add(new Cell[Math.min(256, cellCount - cellPosition)]);
                     pages.get(cellPosition >> 8)[cellPosition & 255] = cell;
                     regions.add(cell);
@@ -465,6 +578,7 @@ final class HologramState {
 
     private HologramState(HologramState base, NBTTagCompound patch, boolean decoration) {
         fullBaseline = decoration && base.fullBaseline;
+        controllerTargetIdentity = null;
         plainDisplayExamples = decoration ? base.plainDisplayExamples : Collections.emptyList();
         parentIdentity = base.identity;
         data = new NBTTagCompound();
@@ -874,7 +988,11 @@ final class HologramState {
     static final class Cell {
 
         private static final int[] EMPTY_HINT_TINT = new int[0];
+        private static final String[] EMPTY_HINT_ICONS = { "", "", "", "", "", "" };
+        private static final NBTTagCompound EMPTY_DISPLAY = new NBTTagCompound();
         private final NBTTagCompound raw;
+        private final HologramControllerTarget.Cell controllerCell;
+        private final NBTTagCompound controllerDetails;
         private final NBTTagCompound coordinates;
         private final DescriptorTemplate descriptorTemplate;
         private final boolean resolvedBlocks;
@@ -913,6 +1031,8 @@ final class HologramState {
         /** Structure projections and prepared local descriptors retain their cached render identity. */
         private Cell(int index, NBTTagCompound n, NBTTagCompound positions, boolean owned, boolean resolvedBlocks) {
             raw = owned ? n : (NBTTagCompound) n.copy();
+            controllerCell = null;
+            controllerDetails = null;
             coordinates = positions;
             descriptorTemplate = null;
             this.resolvedBlocks = resolvedBlocks;
@@ -1014,6 +1134,8 @@ final class HologramState {
             Cell value = template.values;
             boolean compactPlain = template.compactPlain;
             raw = value.raw;
+            controllerCell = null;
+            controllerDetails = null;
             coordinates = positions;
             descriptorTemplate = template;
             resolvedBlocks = value.resolvedBlocks;
@@ -1071,6 +1193,141 @@ final class HologramState {
             if (!compactPlain) for (ItemStack candidate : value.candidates) candidates.add(candidate.copy());
         }
 
+        private Cell(Cell target, NBTTagCompound details) {
+            raw = target.raw;
+            controllerCell = target.controllerCell;
+            controllerDetails = details;
+            coordinates = target.coordinates;
+            descriptorTemplate = target.descriptorTemplate;
+            resolvedBlocks = target.resolvedBlocks;
+            actualBlock = target.actualBlock;
+            targetBlock = target.targetBlock;
+            index = target.index;
+            x = target.x;
+            y = target.y;
+            z = target.z;
+            dx = target.dx;
+            dy = target.dy;
+            dz = target.dz;
+            meta = target.meta;
+            wantMeta = target.wantMeta;
+            chosenChoice = details.hasKey("chosenChoice", 3) ? details.getInteger("chosenChoice") : target.chosenChoice;
+            hatchFacing = target.hatchFacing;
+            actualFacing = target.actualFacing;
+            targetFacing = target.targetFacing;
+            id = target.id;
+            wantId = target.wantId;
+            status = target.status;
+            pinScope = target.pinScope;
+            role = details.hasKey("role", 8) ? details.getString("role") : target.role;
+            family = target.family;
+            renderKind = target.renderKind;
+            operation = target.operation;
+            exactIdentity = target.exactIdentity;
+            prompt = target.prompt;
+            structureId = target.structureId;
+            sourceMod = target.sourceMod;
+            sourceVersion = target.sourceVersion;
+            sourceClass = target.sourceClass;
+            sourceWarning = target.sourceWarning;
+            networkGroup = target.networkGroup;
+            specialHint = target.specialHint;
+            structureIds = target.structureIds;
+            anchor = target.anchor;
+            iconOnly = target.iconOnly;
+            excluded = target.excluded;
+            missingBlock = target.missingBlock;
+            sourceMissing = target.sourceMissing;
+            inScope = target.inScope;
+            candidateComplete = details.hasKey("candidateComplete", 1) ? details.getBoolean("candidateComplete")
+                : target.candidateComplete;
+            candidateBoundary = details.hasKey("candidateBoundary", 8) ? details.getString("candidateBoundary")
+                : target.candidateBoundary;
+            actualStack = target.actualStack;
+            targetStack = target.targetStack;
+            actualDisplay = target.actualDisplay;
+            targetDisplay = target.targetDisplay;
+            hintIndex = target.hintIndex;
+            hintTint = target.hintTint;
+            hintIcons = target.hintIcons;
+            NBTTagList options = details.getTagList("candidates", 10);
+            if (options.tagCount() == 0) candidates = Collections.emptyList();
+            else {
+                List<ItemStack> parsed = new ArrayList<>(options.tagCount());
+                for (int i = 0; i < options.tagCount(); i++) {
+                    ItemStack stack = readStack(options.getCompoundTagAt(i));
+                    if (stack != null) parsed.add(stack);
+                }
+                candidates = Collections.unmodifiableList(parsed);
+            }
+        }
+
+        private Cell(int index, HologramControllerTarget.Cell target) {
+            raw = null;
+            controllerCell = target;
+            controllerDetails = null;
+            coordinates = null;
+            descriptorTemplate = null;
+            resolvedBlocks = true;
+            this.index = index;
+            x = target.x();
+            y = target.y();
+            z = target.z();
+            dx = target.dx();
+            dy = target.dy();
+            dz = target.dz();
+            meta = target.meta();
+            wantMeta = target.wantMeta();
+            id = target.id();
+            wantId = target.wantId();
+            actualBlock = target.actualBlock();
+            targetBlock = target.targetBlock();
+            status = target.status();
+            chosenChoice = -1;
+            hatchFacing = -1;
+            actualFacing = target.actualFacing();
+            targetFacing = target.targetFacing();
+            candidateComplete = false;
+            candidateBoundary = "";
+            pinScope = "";
+            role = target.role();
+            family = target.family();
+            exactIdentity = "";
+            renderKind = target.renderKind();
+            operation = "";
+            inScope = true;
+            prompt = target.prompt();
+            networkGroup = "";
+            specialHint = null;
+            structureId = "";
+            structureIds = Collections.emptyList();
+            sourceMod = "";
+            sourceVersion = "";
+            sourceClass = "";
+            sourceWarning = "";
+            sourceMissing = false;
+            excluded = false;
+            missingBlock = target.missingBlock() || !wantId.isEmpty() && !"minecraft:air".equals(wantId)
+                && targetBlock == null;
+            anchor = target.anchor();
+            iconOnly = target.iconOnly();
+            actualStack = target.actualStack();
+            targetStack = target.targetStack();
+            actualDisplay = target.actualDisplay();
+            targetDisplay = target.targetDisplay();
+            hintIndex = target.hintIndex();
+            hintTint = target.hintTint() == null ? EMPTY_HINT_TINT : target.hintTint();
+            if (target.hintIcons() == null) hintIcons = EMPTY_HINT_ICONS;
+            else {
+                hintIcons = new String[6];
+                for (int i = 0; i < hintIcons.length; i++) {
+                    String icon = i < target.hintIcons().length ? target.hintIcons()[i] : null;
+                    hintIcons[i] = icon == null ? "" : icon;
+                }
+            }
+            candidates = Collections.emptyList();
+        }
+
         /** Exact within this preparation only; the token exposes neither the descriptor nor its private prototype. */
         Object descriptorIdentity() {
             return descriptorTemplate == null ? this : descriptorTemplate;
@@ -1079,6 +1336,7 @@ final class HologramState {
         private NBTTagCompound displayValue(boolean actual) {
             NBTTagCompound owned = actual ? actualDisplay : targetDisplay;
             if (owned != null) return owned;
+            if (descriptorTemplate == null) return EMPTY_DISPLAY;
             Cell prototype = descriptorTemplate.values;
             return actual ? prototype.actualDisplay : prototype.targetDisplay;
         }
@@ -1108,7 +1366,7 @@ final class HologramState {
         }
 
         boolean localObservationMissing() {
-            return raw.getBoolean("localObservationMissing");
+            return controllerCell == null ? raw.getBoolean("localObservationMissing") : controllerCell.localObservationMissing();
         }
 
         String hintIcon(int side) {
@@ -1133,7 +1391,11 @@ final class HologramState {
         }
 
         NBTTagCompound tag() {
-            NBTTagCompound result = (NBTTagCompound) raw.copy();
+            NBTTagCompound result = controllerCell == null ? (NBTTagCompound) raw.copy() : controllerCell.tag();
+            if (controllerDetails != null) for (Object name : controllerDetails.func_150296_c()) {
+                String key = (String) name;
+                if (!"index".equals(key)) result.setTag(key, controllerDetails.getTag(key).copy());
+            }
             if (coordinates != null) for (Object name : coordinates.func_150296_c()) {
                 String key = (String) name;
                 if (HologramSnapshotPalette.coordinateKey(key)) result.setTag(

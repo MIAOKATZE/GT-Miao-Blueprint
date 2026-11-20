@@ -136,6 +136,13 @@ final class HologramRegionCache {
         return bounds.clone();
     }
 
+    /** Attach enriched rows to the same spatial index. Each replacement keeps its original ordinal and position. */
+    HologramRegionCache withCells(List<HologramState.Cell> cells) {
+        Map<Key, List<HologramState.Cell>> rebound = new LinkedHashMap<>();
+        regions.forEach((key, region) -> rebound.put(key, new Region((Region) region, cells)));
+        return new HologramRegionCache(rebound, bounds);
+    }
+
     HologramState.Cell at(int x, int y, int z) {
         List<HologramState.Cell> region = regions.get(new Key(x >> 4, y >> 4, z >> 4));
         return region == null ? null : ((Region) region).at(local(x, y, z));
@@ -159,6 +166,7 @@ final class HologramRegionCache {
         final Map<Integer, HologramState.Cell> positions;
         final int[] compactPositions;
         final int[] bounds;
+        final List<HologramState.Cell> rebound;
 
         Region(List<HologramState.Cell> cells) {
             this(cells, false);
@@ -166,6 +174,7 @@ final class HologramRegionCache {
 
         Region(List<HologramState.Cell> cells, boolean topology) {
             this.cells = Collections.unmodifiableList(cells);
+            rebound = null;
             positions = new java.util.HashMap<>();
             compactPositions = null;
             for (HologramState.Cell cell : cells)
@@ -176,21 +185,34 @@ final class HologramRegionCache {
 
         Region(List<HologramState.Cell> cells, Map<Integer, HologramState.Cell> positions, boolean compact) {
             this.cells = Collections.unmodifiableList(cells);
+            rebound = null;
             this.positions = compact ? null : Collections.unmodifiableMap(positions);
             compactPositions = compact ? compactPositions(cells) : null;
             bounds = regionBounds(cells);
         }
 
+        Region(Region source, List<HologramState.Cell> replacement) {
+            cells = source.cells;
+            positions = source.positions;
+            compactPositions = source.compactPositions;
+            bounds = source.bounds;
+            rebound = replacement;
+        }
+
         HologramState.Cell at(int local) {
-            if (compactPositions == null) return positions.get(local);
+            if (compactPositions == null) {
+                HologramState.Cell cell = positions.get(local);
+                return cell == null || rebound == null ? cell : rebound.get(cell.index);
+            }
             int row = compactPositions.length == REGION_CELLS ? compactPositions[local]
                 : compactPositions[compactSlot(compactPositions, local)] & (REGION_CELLS - 1);
-            return row == 0 ? null : cells.get(row - 1);
+            return row == 0 ? null : get(row - 1);
         }
 
         @Override
         public HologramState.Cell get(int index) {
-            return cells.get(index);
+            HologramState.Cell cell = cells.get(index);
+            return rebound == null ? cell : rebound.get(cell.index);
         }
 
         @Override
