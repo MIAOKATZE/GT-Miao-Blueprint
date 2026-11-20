@@ -20,7 +20,7 @@ import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 /** Minecraft screen adapter. Domain state and behavior live in composed workflow modules. */
 public final class HologramScreen extends HologramMuiCanvasScreen implements HologramUiHost {
 
-    private static final long LOCAL_CONTROLLER_TICK_NANOS = 3_000_000L;
+    private static final long LOCAL_CONTROLLER_FRAME_NANOS = 3_000_000L;
 
     HologramUiModules ui = new HologramUiModules(this);
     private final HologramEditorWorkspaces.Graphs workspaceGraphs = new HologramEditorWorkspaces.Graphs();
@@ -519,7 +519,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         }
     }
 
-    private void advanceLocalController() {
+    void advanceLocalController() {
         if (!localControllerStandard() || localController == null) return;
         boolean retire = false;
         try {
@@ -527,7 +527,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             if (!controllerContextCurrent(false)
                 || !localController.matches(client.theWorld, client.thePlayer.dimension))
                 throw new java.io.IOException("LOCAL_CONTROLLER_CHANGED");
-            long deadline = System.nanoTime() + LOCAL_CONTROLLER_TICK_NANOS;
+            long deadline = System.nanoTime() + LOCAL_CONTROLLER_FRAME_NANOS;
             if (localControllerTarget == null) {
                 advanceLocalControllerTarget(deadline);
                 return;
@@ -912,7 +912,6 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     }
 
     public void updateScreen() {
-        if (minecraft().currentScreen == this) advanceLocalController();
         if (controllerRequest > 0) {
             if (!controllerOpeningCurrent()) closeControllerOpening();
             else try (FieldGraph ignored = fieldGraph(ui)) {

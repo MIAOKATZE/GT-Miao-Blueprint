@@ -1133,7 +1133,10 @@ public final class HologramClient {
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
     public void progressFrame(TickEvent.RenderTickEvent event) {
-        if (event.phase == TickEvent.Phase.START) HologramProgressView.beginFrame();
+        if (event.phase != TickEvent.Phase.START) return;
+        HologramProgressView.beginFrame();
+        if (Minecraft.getMinecraft().currentScreen instanceof HologramScreen workbench)
+            workbench.advanceLocalController();
     }
 
     private void lockedNudge(Minecraft mc, boolean contextChanged) {

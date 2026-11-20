@@ -103,6 +103,8 @@ final class HologramLocalPreviewStagesProbe {
     private long reopenAtTick;
     private volatile Map<String, Object> timingNeiFrame;
     private Map<String, Object> timingGtmbFrame;
+    private Map<String, Object> timingFrameToCapture;
+    private long timingDrawFrame;
     private volatile Exception timingFailure;
     private final int x, y, z, toolSlot, stoneSlot;
     private final String actorName;
@@ -300,6 +302,7 @@ final class HologramLocalPreviewStagesProbe {
             evidence.put("controllerProjectionDataComplete", state.data.getBoolean("projectionDataComplete"));
             evidence.put("controllerCapturePending", state.data.getBoolean("capturePending"));
             evidence.put("controllerCurrentCells", state.cells.size());
+            evidence.put("controllerCurrentMain", state.data.getInteger("main"));
             evidence.put("controllerStatus", state.data.getString("status"));
             require(!state.data.getBoolean("localStructureUnavailable"), "Local standard declaration unavailable");
             if (parity != null) return parityStep(mc, state);
@@ -416,23 +419,20 @@ final class HologramLocalPreviewStagesProbe {
 
     void guiPost(GuiScreen gui, long frame) {
         if (!timingMode.isEmpty()) {
-            if (finished || stage != 1 || gui != timingScreen || timingFailure != null) return;
+            if (finished || stage != 1 || gui != timingScreen || timingFailure != null
+                || timingFrameToCapture != null) return;
             if (gui instanceof HologramScreen shown && workbench.guiPost(shown)) {
-                try {
-                    timingGtmbFrame = new LinkedHashMap<>();
-                    timingScreenshot(Minecraft.getMinecraft(), timingGtmbFrame);
-                } catch (java.io.IOException failure) {
-                    timingFailure = failure;
-                }
+                timingFrameToCapture = new LinkedHashMap<>();
+                timingDrawFrame = frame;
             }
             else if (gui instanceof GuiRecipe<?> recipe && timingNeiFrame == null) {
                 long drawPost = System.nanoTime();
                 try {
                     Map<String, Object> measured = HologramNeiFirstFrame.frame(Minecraft.getMinecraft(), recipe, controllerItem);
                     if (measured.isEmpty()) return;
-                    timingNeiFrame = new LinkedHashMap<>(measured);
-                    timingNeiFrame.put("firstMaterialDrawPostNanos", drawPost - controllerClicked);
-                    timingScreenshot(Minecraft.getMinecraft(), timingNeiFrame);
+                    timingFrameToCapture = new LinkedHashMap<>(measured);
+                    timingFrameToCapture.put("firstMaterialDrawPostNanos", drawPost - controllerClicked);
+                    timingDrawFrame = frame;
                 } catch (Exception failed) {
                     timingFailure = failed;
                 }
@@ -473,6 +473,13 @@ final class HologramLocalPreviewStagesProbe {
     }
 
     void renderTail(long frame) throws Exception {
+        if (!finished && stage == 1 && timingFrameToCapture != null && timingDrawFrame == frame - 1
+            && Minecraft.getMinecraft().currentScreen == timingScreen) {
+            timingScreenshot(Minecraft.getMinecraft(), timingFrameToCapture);
+            if (timingScreen instanceof HologramScreen) timingGtmbFrame = timingFrameToCapture;
+            else timingNeiFrame = timingFrameToCapture;
+            timingFrameToCapture = null;
+        }
         if (finished || stage != 1
             || controllerDrawn == null
             || controllerFrameCaptured
@@ -529,7 +536,7 @@ final class HologramLocalPreviewStagesProbe {
         if (timingScreen instanceof HologramScreen shown) {
             HologramState state = shown.ui.session.state();
             workbench.observe(state);
-            if (!workbench.sawMaterial() || !state.data.getBoolean("projectionDataComplete")
+            if (!workbench.sawMaterial() || timingGtmbFrame == null || !state.data.getBoolean("projectionDataComplete")
                 || state.data.getBoolean("capturePending")) return false;
             require(state.data.getInteger("main") == 1 && state.data.getCompoundTag("channels").hasNoTags(),
                 "GTMB timing fixture does not use the default trigger");
@@ -572,7 +579,7 @@ final class HologramLocalPreviewStagesProbe {
         ScreenShotHelper.saveScreenshot(output.toFile(), name, mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
         require(Files.isRegularFile(output.resolve("screenshots").resolve(name)), "Timing screenshot missing");
         sample.put("framebuffer", "screenshots/" + name);
-        sample.put("framebufferStage", "observed first material Draw.Post");
+        sample.put("framebufferStage", "RenderTick.END after first observed material Draw.Post");
     }
 
     private boolean fixtureController(BaseMetaTileEntity base) {
@@ -583,7 +590,6 @@ final class HologramLocalPreviewStagesProbe {
     private boolean parityStep(Minecraft mc, HologramState state) throws Exception {
         if (workbench != null) workbench.observe(state);
         if (!state.data.getBoolean("projectionDataComplete") || state.data.getBoolean("capturePending")) return false;
-        if (workbench != null && !workbench.sawMaterial()) return false;
         NBTTagCompound channels = state.data.getCompoundTag("channels");
         int main = state.data.getInteger("main");
         int signal = "main".equals(parity.channel) ? main : channels.getInteger(parity.channel);
@@ -593,14 +599,18 @@ final class HologramLocalPreviewStagesProbe {
         HologramLocalMachineState telemetry = controller.localMachineState();
         NBTTagCompound metrics = HologramRuntimeMetrics.snapshot();
         NBTTagList stages = metrics.getTagList("loadStages", 10);
-        long installed = 0, firstDraw = 0;
+        long target = 0, installed = 0, firstDraw = 0;
         for (int i = 0; i < stages.tagCount(); i++) {
             NBTTagCompound mark = stages.getCompoundTagAt(i);
             long at = mark.getLong("atNanos");
             if (at < controllerClicked || !state.session.equals(mark.getString("session"))) continue;
-            if (installed == 0 && mark.getString("stage").equals("CLIENT_INSTALL")) installed = at;
-            if (firstDraw == 0 && mark.getString("stage").equals("CLIENT_FIRST_MATERIAL")) firstDraw = at;
+            String markedStage = mark.getString("stage");
+            if (target == 0 && markedStage.equals("CLIENT_CONTROLLER_TARGET")) target = at;
+            if (installed == 0 && markedStage.equals("CLIENT_INSTALL")) installed = at;
+            if (firstDraw == 0 && markedStage.equals("CLIENT_FIRST_MATERIAL") && (target > 0 || !workbenchStages))
+                firstDraw = at;
         }
+        if (workbench != null && !workbench.sawMaterial() && firstDraw == 0) return false;
         if (fixed) {
             evidence.put("pendingTelemetry", telemetry.caption());
             evidence.put("pendingNativeDataReadyNanos", parityDataReady - controllerClicked);
@@ -682,6 +692,8 @@ final class HologramLocalPreviewStagesProbe {
                 firstParityCells = actual;
                 beginParityEdit();
                 controller.ui.config.configure("main", parity.nextSignal);
+                require(controller.ui.session.state().data.getBoolean("capturePending"),
+                    "The production configuration did not queue a new solar capture");
                 zero("nativeChannelChanged");
                 return false;
             }
