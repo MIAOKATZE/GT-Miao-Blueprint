@@ -81,11 +81,12 @@ final class HologramLinkNodePreview {
 
     @SuppressWarnings("unchecked")
     static List<Node> prepare(HologramState.Cell cell, boolean current) {
+        NBTTagCompound display = current ? cell.actualDisplay : cell.targetDisplay;
+        if (!display.hasKey("gt.covers", 9)) return java.util.Collections.emptyList();
         List<Node>[] pair = NODES.computeIfAbsent(cell, unused -> new List[2]);
         int index = current ? 1 : 0;
         if (pair[index] != null) return pair[index];
         List<Node> nodes = new ArrayList<>();
-        NBTTagCompound display = current ? cell.actualDisplay : cell.targetDisplay;
         NBTTagList covers = display.getTagList("gt.covers", 10);
         try {
             for (int i = 0; i < covers.tagCount(); i++) {

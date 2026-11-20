@@ -4,8 +4,11 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import net.minecraft.block.Block;
 import net.minecraft.item.ItemStack;
@@ -15,6 +18,8 @@ import net.minecraft.nbt.NBTTagList;
 import com.miaokatze.gtmb.hologram.HologramBlueprintLimits;
 import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 import com.miaokatze.gtmb.hologram.HologramSnapshotPalette;
+
+import gregtech.common.blocks.ItemMachines;
 
 /** Immutable client snapshot; all amounts and construction outcomes come from the server. */
 final class HologramState {
@@ -166,6 +171,20 @@ final class HologramState {
     /** Registry/item resolution and spatial indexing share a cooperative client-thread budget. */
     static final class Preparation {
 
+        private static final String[] COORDINATES = { "x", "y", "z", "dx", "dy", "dz" };
+        private static final List<String> DISPLAY_ROW_KEYS = Arrays.asList(
+            "x",
+            "y",
+            "z",
+            "dx",
+            "dy",
+            "dz",
+            "wantId",
+            "wantMeta",
+            "targetFacing",
+            "previewItem",
+            "previewDamage");
+
         private final Thread owner = Thread.currentThread();
         private final NBTTagCompound data;
         private final NBTTagList rows, materialRows;
@@ -182,6 +201,7 @@ final class HologramState {
         private final boolean packed;
         private final boolean projection;
         private final java.util.IdentityHashMap<NBTTagCompound, DescriptorTemplate> descriptors;
+        private final Map<DisplayMaterial, DescriptorTemplate> displayDescriptors;
         private final boolean fullBaseline;
         int lastStepWork;
 
@@ -195,6 +215,7 @@ final class HologramState {
             packed = HologramSnapshotPalette.isPacked(source);
             projection = source.getBoolean("structureProjection");
             descriptors = packed ? new java.util.IdentityHashMap<>() : null;
+            displayDescriptors = displayRows && !packed ? new HashMap<>() : null;
             this.displayRows = displayRows;
             fullBaseline = fullBaseline(source);
             data = metadata(source, false);
@@ -220,13 +241,7 @@ final class HologramState {
                         continue;
                     }
                     NBTTagCompound row = rows.getCompoundTagAt(cellPosition);
-                    if (displayRows) try {
-                        HologramBlueprintPreview.completeCell(row);
-                    } catch (java.io.IOException invalid) {
-                        throw new IllegalArgumentException(invalid.getMessage(), invalid);
-                    }
-                    Cell cell = packed ? new Cell(cellPosition, descriptor(row), row)
-                        : new Cell(cellPosition, row, null, true, projection);
+                    Cell cell = prepareCell(row);
                     if ((cellPosition & 255) == 0) pages.add(new Cell[Math.min(256, rows.tagCount() - cellPosition)]);
                     pages.get(cellPosition >> 8)[cellPosition & 255] = cell;
                     regions.add(cell);
@@ -269,6 +284,46 @@ final class HologramState {
             return stage == 4;
         }
 
+        private Cell prepareCell(NBTTagCompound row) {
+            if (displayRows) try {
+                Cell shared = displayDescriptors == null ? null : plainDisplayCell(row);
+                if (shared != null) return shared;
+                HologramBlueprintPreview.completeCell(row);
+            } catch (java.io.IOException invalid) {
+                throw new IllegalArgumentException(invalid.getMessage(), invalid);
+            }
+            return packed ? new Cell(cellPosition, descriptor(row), row)
+                : new Cell(cellPosition, row, null, true, projection);
+        }
+
+        /** Share only the known detached source rows with no tile/item payload or additional cell data. */
+        private Cell plainDisplayCell(NBTTagCompound row) throws java.io.IOException {
+            java.util.Set<?> keys = row.func_150296_c();
+            if (keys.size() != DISPLAY_ROW_KEYS.size() || !keys.containsAll(DISPLAY_ROW_KEYS)
+                || !row.hasKey("wantMeta", 3)
+                || !row.hasKey("targetFacing", 3)) return null;
+            DisplayMaterial material = new DisplayMaterial(row);
+            DescriptorTemplate template = displayDescriptors.get(material);
+            if (template == null && displayDescriptors.size() < 4096 && !displayDescriptors.containsKey(material)) {
+                NBTTagCompound descriptor = new NBTTagCompound();
+                descriptor.setString("wantId", material.block);
+                descriptor.setInteger("wantMeta", material.metadata);
+                descriptor.setInteger("targetFacing", material.facing);
+                descriptor.setString("previewItem", material.item);
+                descriptor.setInteger("previewDamage", material.damage);
+                HologramBlueprintPreview.completeCell(descriptor);
+                DescriptorTemplate candidate = new DescriptorTemplate(descriptor, true);
+                if (!candidate.values.targetDisplay.hasKey("nativeTile", 10)
+                    && (candidate.targetStack == null || !(candidate.targetStack.getItem() instanceof ItemMachines)))
+                    template = candidate;
+                displayDescriptors.put(material, template);
+            }
+            if (template == null) return null;
+            NBTTagCompound position = new NBTTagCompound();
+            for (String axis : COORDINATES) position.setTag(axis, row.getTag(axis));
+            return new Cell(cellPosition, template, position, true);
+        }
+
         private DescriptorTemplate descriptor(NBTTagCompound row) {
             NBTTagCompound raw = HologramSnapshotPalette.descriptor(source, row);
             DescriptorTemplate template = descriptors.get(raw);
@@ -309,6 +364,38 @@ final class HologramState {
 
         HologramState firstDisplay() {
             return cellPosition == 0 ? null : new HologramState(this, Math.min(256, cellPosition));
+        }
+    }
+
+    private static final class DisplayMaterial {
+
+        final String block, item;
+        final int metadata, facing, damage;
+
+        DisplayMaterial(NBTTagCompound row) {
+            block = row.getString("wantId");
+            item = row.getString("previewItem");
+            metadata = row.getInteger("wantMeta");
+            facing = row.getInteger("targetFacing");
+            damage = row.getInteger("previewDamage");
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (!(other instanceof DisplayMaterial)) return false;
+            DisplayMaterial value = (DisplayMaterial) other;
+            return metadata == value.metadata && facing == value.facing
+                && damage == value.damage
+                && block.equals(value.block)
+                && item.equals(value.item);
+        }
+
+        @Override
+        public int hashCode() {
+            int result = 31 * block.hashCode() + item.hashCode();
+            result = 31 * result + metadata;
+            result = 31 * result + facing;
+            return 31 * result + damage;
         }
     }
 
@@ -679,8 +766,8 @@ final class HologramState {
         private final Cell values;
         private final ItemStack actualStack, targetStack;
 
-        DescriptorTemplate(NBTTagCompound raw, boolean projection) {
-            values = new Cell(-1, raw, null, true, projection);
+        DescriptorTemplate(NBTTagCompound raw, boolean resolvedBlocks) {
+            values = new Cell(-1, raw, null, true, resolvedBlocks);
             actualStack = values.actualStack;
             targetStack = values.targetStack;
         }
@@ -691,7 +778,7 @@ final class HologramState {
         private final NBTTagCompound raw;
         private final NBTTagCompound coordinates;
         private final DescriptorTemplate descriptorTemplate;
-        private final boolean projection;
+        private final boolean resolvedBlocks;
         private final Block actualBlock, targetBlock;
 
         final int index, x, y, z, dx, dy, dz, meta, wantMeta, chosenChoice, hatchFacing, actualFacing, targetFacing;
@@ -724,12 +811,12 @@ final class HologramState {
             this(index, n, positions, owned, false);
         }
 
-        /** Structure projections retain native target choices as well as their cached render identity. */
-        private Cell(int index, NBTTagCompound n, NBTTagCompound positions, boolean owned, boolean projection) {
+        /** Structure projections and prepared local descriptors retain their cached render identity. */
+        private Cell(int index, NBTTagCompound n, NBTTagCompound positions, boolean owned, boolean resolvedBlocks) {
             raw = owned ? n : (NBTTagCompound) n.copy();
             coordinates = positions;
             descriptorTemplate = null;
-            this.projection = projection;
+            this.resolvedBlocks = resolvedBlocks;
             this.index = index;
             NBTTagCompound location = positions == null ? n : positions;
             x = location.getInteger("x");
@@ -742,8 +829,8 @@ final class HologramState {
             wantMeta = n.getInteger("wantMeta");
             id = n.getString("id");
             wantId = n.getString("wantId");
-            actualBlock = projection ? Block.getBlockFromName(id) : null;
-            targetBlock = projection ? id.equals(wantId) ? actualBlock : Block.getBlockFromName(wantId) : null;
+            actualBlock = resolvedBlocks ? Block.getBlockFromName(id) : null;
+            targetBlock = resolvedBlocks ? id.equals(wantId) ? actualBlock : Block.getBlockFromName(wantId) : null;
             status = n.getString("status");
             chosenChoice = n.hasKey("chosenChoice") ? n.getInteger("chosenChoice") : -1;
             hatchFacing = n.hasKey("hatchFacing") ? n.getInteger("hatchFacing") : -1;
@@ -779,7 +866,7 @@ final class HologramState {
             sourceMissing = n.getBoolean("sourceMissing");
             excluded = n.getBoolean("excluded");
             missingBlock = n.getBoolean("missingBlock") || !wantId.isEmpty() && !"minecraft:air".equals(wantId)
-                && (projection ? targetBlock : Block.getBlockFromName(wantId)) == null;
+                && (resolvedBlocks ? targetBlock : Block.getBlockFromName(wantId)) == null;
             anchor = n.getBoolean("anchor");
             iconOnly = n.getBoolean("iconOnly");
             actualStack = n.hasKey("actualStack", 10) ? readStack(n.getCompoundTag("actualStack")) : null;
@@ -802,13 +889,17 @@ final class HologramState {
             }
         }
 
-        /** Only a negotiated packed preparation shares parsing; mutable per-cell values remain detached. */
         private Cell(int index, DescriptorTemplate template, NBTTagCompound positions) {
+            this(index, template, positions, false);
+        }
+
+        /** Shared parsing retains each cell's independently mutable values. */
+        private Cell(int index, DescriptorTemplate template, NBTTagCompound positions, boolean local) {
             Cell value = template.values;
             raw = value.raw;
             coordinates = positions;
             descriptorTemplate = template;
-            projection = value.projection;
+            resolvedBlocks = value.resolvedBlocks;
             actualBlock = value.actualBlock;
             targetBlock = value.targetBlock;
             this.index = index;
@@ -840,7 +931,7 @@ final class HologramState {
             sourceClass = value.sourceClass;
             sourceWarning = value.sourceWarning;
             networkGroup = value.networkGroup;
-            specialHint = value.specialHint;
+            specialHint = local ? (NBTTagCompound) value.specialHint.copy() : value.specialHint;
             structureIds = value.structureIds;
             anchor = value.anchor;
             iconOnly = value.iconOnly;
@@ -852,8 +943,8 @@ final class HologramState {
             candidateBoundary = value.candidateBoundary;
             actualStack = template.actualStack == null ? null : template.actualStack.copy();
             targetStack = template.targetStack == null ? null : template.targetStack.copy();
-            actualDisplay = value.actualDisplay;
-            targetDisplay = value.targetDisplay;
+            actualDisplay = local ? (NBTTagCompound) value.actualDisplay.copy() : value.actualDisplay;
+            targetDisplay = local ? (NBTTagCompound) value.targetDisplay.copy() : value.targetDisplay;
             hintIndex = value.hintIndex;
             hintTint = value.hintTint.clone();
             System.arraycopy(value.hintIcons, 0, hintIcons, 0, hintIcons.length);
@@ -875,7 +966,7 @@ final class HologramState {
         }
 
         Block block(boolean current) {
-            return projection ? current ? actualBlock : targetBlock : Block.getBlockFromName(current ? id : wantId);
+            return resolvedBlocks ? current ? actualBlock : targetBlock : Block.getBlockFromName(current ? id : wantId);
         }
 
         NBTTagCompound tag() {

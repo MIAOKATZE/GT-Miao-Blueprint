@@ -75,6 +75,7 @@ final class HologramTextures {
     }
 
     private static final Map<String, Material> CACHE = new HashMap<>();
+    private static final Map<String, Map<Integer, Material>> PLAIN = new HashMap<>();
     private static final Map<HologramState.Cell, Material[]> RESOLVED = new IdentityHashMap<>();
     // Exact snapshot descriptors only. Neighbor-dependent native models remain owned by their individual cells.
     private static final Map<Object, Material[]> DESCRIPTORS = new IdentityHashMap<>();
@@ -87,6 +88,7 @@ final class HologramTextures {
 
     static void clear() {
         CACHE.clear();
+        PLAIN.clear();
         RESOLVED.clear();
         DESCRIPTORS.clear();
         snapshot = null;
@@ -96,6 +98,7 @@ final class HologramTextures {
         installReloadListener();
         if (snapshot != state) {
             CACHE.clear();
+            PLAIN.clear();
             RESOLVED.clear();
             DESCRIPTORS.clear();
             snapshot = state;
@@ -124,6 +127,21 @@ final class HologramTextures {
     static Material material(HologramState.Cell cell, boolean current) {
         installReloadListener();
         current = current || cell.anchor || (cell.status.equals("protected") && cell.actualStack != null);
+        ItemStack stack = current ? cell.actualStack : cell.targetStack;
+        NBTTagCompound display = current ? cell.actualDisplay : cell.targetDisplay;
+        if (!cell.iconOnly && !machine(stack) && !display.hasKey("gt.covers", 9)) {
+            // This part of resolve reads only the registered block and metadata. A repeated ordinary
+            // block does not need a per-cell entry or a serialized copy of its display and item tags.
+            Map<Integer, Material> variants = PLAIN
+                .computeIfAbsent(current ? cell.id : cell.wantId, unused -> new HashMap<>());
+            int metadata = current ? cell.meta : cell.wantMeta;
+            Material material = variants.get(metadata);
+            if (material == null) {
+                material = resolve(cell, current);
+                variants.put(metadata, material);
+            }
+            return material;
+        }
         Material[] pair = RESOLVED.get(cell);
         if (pair == null) {
             pair = new Material[2];
@@ -134,7 +152,6 @@ final class HologramTextures {
         Object descriptor = cell.descriptorIdentity();
         Material[] shared = descriptor == cell ? null : DESCRIPTORS.get(descriptor);
         if (shared != null && shared[index] != null) return pair[index] = shared[index];
-        ItemStack stack = current ? cell.actualStack : cell.targetStack;
         String key = (current ? cell.id : cell.wantId) + ":"
             + (current ? cell.meta : cell.wantMeta)
             + ":"
@@ -163,6 +180,17 @@ final class HologramTextures {
         return material;
     }
 
+    static boolean partial(HologramState.Cell cell, boolean current) {
+        current = current || cell.anchor || (cell.status.equals("protected") && cell.actualStack != null);
+        // The atlas and covers do not affect the full-cube decision for ordinary blocks. A GT pipe's
+        // partial geometry still comes from the exact, fully resolved machine variant.
+        return machine(current ? cell.actualStack : cell.targetStack) && material(cell, current).partial;
+    }
+
+    private static boolean machine(ItemStack stack) {
+        return stack != null && stack.getItem() instanceof ItemMachines;
+    }
+
     @SuppressWarnings("unchecked")
     private static Material resolve(HologramState.Cell cell, boolean current) {
         List<Sample>[] sides = (List<Sample>[]) new List<?>[6];
@@ -173,7 +201,7 @@ final class HologramTextures {
         Block block = cell.block(current);
         int meta = current || cell.anchor ? cell.meta : cell.wantMeta;
         ItemStack stack = current || cell.anchor ? cell.actualStack : cell.targetStack;
-        boolean gt = stack != null && stack.getItem() instanceof ItemMachines;
+        boolean gt = machine(stack);
         NBTTagCompound display = current ? cell.actualDisplay : cell.targetDisplay;
         boolean pipe = false;
         float thickness = 1;

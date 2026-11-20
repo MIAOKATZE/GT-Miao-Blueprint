@@ -130,20 +130,70 @@ public final class HologramRenderingRegression {
         NBTTagCompound source = boundarySource("boundary");
         NBTTagList cells = new NBTTagList();
         cells.appendTag(boundaryCell(15, 0, 0, "minecraft:glass"));
+        cells.appendTag(boundaryCell(-17, -16, -16, "minecraft:stone"));
         cells.appendTag(boundaryCell(16, 0, 0, "minecraft:stone"));
+        cells.appendTag(boundaryCell(-16, -16, -16, "minecraft:glass"));
         source.setTag("cells", cells);
         HologramRenderer.PreviewBoundary boundary = new HologramRenderer.PreviewBoundary(new HologramState(source));
         int steps = 0;
-        while (!boundary.complete() && steps++ < 20) boundary.advance(Integer.MAX_VALUE, 0, false, 1, Long.MAX_VALUE);
+        while (!boundary.complete() && steps++ < 20) {
+            int count = boundary.cells.size();
+            boolean indexing = boundary.stage == 0;
+            boundary.advance(Integer.MAX_VALUE, 0, false, 1, Long.MAX_VALUE);
+            SimpleAssert.that(
+                boundary.cells.size() - count <= (indexing ? 0 : 1),
+                "bounded cursor waits for complete occupancy and then emits at most one boundary cell per step");
+        }
         SimpleAssert
             .that(boundary.complete() && steps > 2, "the real occupancy cursor completes through bounded steps");
         SimpleAssert.eq(
-            2,
+            4,
             boundary.cells.size(),
-            "both transparent and solid occupied cells survive across a 16-cube boundary");
-        SimpleAssert.eq(2, boundary.occupancy.size(), "the boundary uses the existing spatial region identities");
+            "both transparent and solid occupied cells survive inside positive and negative region seams");
+        SimpleAssert.eq(4, boundary.occupancy.size(), "the boundary uses the existing spatial region identities");
         SimpleAssert
             .eq(0, boundary.projected, "building real occupancy never needs projection, textures or a native model");
+        localBoundaryMasks();
+    }
+
+    private static void localBoundaryMasks() {
+        java.util.Random random = new java.util.Random(793310L);
+        for (int[] center : new int[][] { { -17, -17, -17 }, { -16, -16, -16 }, { -1, 0, 15 }, { 15, 16, -16 },
+            { 0, -1, -17 }, { 7, -25, 24 } }) {
+            for (int axis = 0; axis < 3; axis++) for (int plane = 0; plane < 256; plane++) {
+                int occupied = 1 << 13, sourceBit = 0;
+                for (int u = -1; u <= 1; u++) for (int v = -1; v <= 1; v++) {
+                    if (u == 0 && v == 0) continue;
+                    if ((plane & 1 << sourceBit++) == 0) continue;
+                    int x = axis == 0 ? 0 : u;
+                    int y = axis == 0 ? u : axis == 1 ? 0 : v;
+                    int z = axis == 2 ? 0 : v;
+                    occupied |= 1 << ((x + 1) * 9 + (y + 1) * 3 + z + 1);
+                }
+                assertLocalBoundary(center[0], center[1], center[2], occupied);
+            }
+            for (int sample = 0; sample < 512; sample++)
+                assertLocalBoundary(center[0], center[1], center[2], random.nextInt(1 << 27) | 1 << 13);
+        }
+    }
+
+    private static void assertLocalBoundary(int cx, int cy, int cz, int occupied) {
+        java.util.BitSet[] regions = new java.util.BitSet[27];
+        for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++) {
+            int neighbor = (dx + 1) * 9 + (dy + 1) * 3 + dz + 1;
+            if ((occupied & 1 << neighbor) == 0) continue;
+            int x = cx + dx, y = cy + dy, z = cz + dz;
+            int region = ((x >> 4) - (cx >> 4) + 1) * 9 + ((y >> 4) - (cy >> 4) + 1) * 3 + (z >> 4) - (cz >> 4) + 1;
+            if (regions[region] == null) regions[region] = new java.util.BitSet();
+            regions[region].set(((x & 15) << 8) | ((y & 15) << 4) | (z & 15));
+        }
+        int expected = HologramRenderer.boundaryEdges(cx, cy, cz, (x, y, z) -> {
+            int dx = x - cx, dy = y - cy, dz = z - cz;
+            return (occupied & 1 << ((dx + 1) * 9 + (dy + 1) * 3 + dz + 1)) != 0;
+        });
+        int local = ((cx & 15) << 8) | ((cy & 15) << 4) | (cz & 15);
+        int actual = MiaoVisonLiteRenderer.BoundaryNeighborhood.edges(regions, local);
+        SimpleAssert.eq(expected, actual, "all twelve edge positions match the original ownership and crease rule");
     }
 
     private static void worldRegionCandidates() {
@@ -520,13 +570,13 @@ public final class HologramRenderingRegression {
                 false,
                 false);
             HologramState.Cell cell = new HologramState.Cell(0, boundaryCell(0, 0, 0, "minecraft:stone"));
-            java.lang.reflect.Field resolved = HologramTextures.class.getDeclaredField("RESOLVED"),
+            java.lang.reflect.Field plain = HologramTextures.class.getDeclaredField("PLAIN"),
                 listener = HologramTextures.class.getDeclaredField("reloadInstalled"),
                 nativeSnapshot = HologramBlockRender.class.getDeclaredField("snapshot");
-            resolved.setAccessible(true);
+            plain.setAccessible(true);
             listener.setAccessible(true);
             nativeSnapshot.setAccessible(true);
-            java.util.Map<HologramState.Cell, HologramTextures.Material[]> materials = (java.util.Map<HologramState.Cell, HologramTextures.Material[]>) resolved
+            java.util.Map<String, java.util.Map<Integer, HologramTextures.Material>> materials = (java.util.Map<String, java.util.Map<Integer, HologramTextures.Material>>) plain
                 .get(null);
             boolean installed = listener.getBoolean(null);
             Object previousNative = nativeSnapshot.get(null);
@@ -534,10 +584,11 @@ public final class HologramRenderingRegression {
             int[] previousOffset = HologramRenderer.moveOffset;
             listener.setBoolean(null, true);
             nativeSnapshot.set(null, null);
-            materials.put(cell, new HologramTextures.Material[] { material, material });
+            java.util.Map<Integer, HologramTextures.Material> previousStone = materials
+                .put("minecraft:stone", Collections.singletonMap(0, material));
             try {
                 completeCameraProjection(material, materials);
-                tutorialSnapshotOwnership(material, materials);
+                tutorialSnapshotOwnership();
                 Class<?> faceClass = Class.forName(MiaoVisonLiteRenderer.class.getName() + "$Face");
                 java.lang.reflect.Constructor<?> faceConstructor = faceClass.getDeclaredConstructor(
                     HologramState.Cell.class,
@@ -669,7 +720,8 @@ public final class HologramRenderingRegression {
                     com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.setEnabled(metrics);
                 }
             } finally {
-                materials.remove(cell);
+                if (previousStone == null) materials.remove("minecraft:stone");
+                else materials.put("minecraft:stone", previousStone);
                 listener.setBoolean(null, installed);
                 nativeSnapshot.set(null, previousNative);
                 HologramRenderer.selection = previousSelection;
@@ -681,8 +733,7 @@ public final class HologramRenderingRegression {
     }
 
     @SuppressWarnings("unchecked")
-    private static void tutorialSnapshotOwnership(HologramTextures.Material material,
-        java.util.Map<HologramState.Cell, HologramTextures.Material[]> materials) throws ReflectiveOperationException {
+    private static void tutorialSnapshotOwnership() throws ReflectiveOperationException {
         NBTTagCompound data = boundarySource("tutorial-owner");
         NBTTagList rows = new NBTTagList();
         rows.appendTag(boundaryCell(0, 0, 0, "minecraft:stone"));
@@ -708,7 +759,6 @@ public final class HologramRenderingRegression {
             .get(null), savedPublished = (java.util.BitSet) published.clone();
         boolean worldPreview = HologramClient.worldPreview;
         try {
-            materials.put(teaching.cells.get(0), new HologramTextures.Material[] { material, material });
             tutorialSandbox.set(ui.tutorial, sandbox);
             SimpleAssert.that(HologramClient.ownsNativeRenderSnapshot(ui), "an active lesson owns its native snapshot");
             for (int frame = 0; frame < 6; frame++) {
@@ -754,7 +804,6 @@ public final class HologramRenderingRegression {
                 .that(HologramClient.ownsNativeRenderSnapshot(ui), "read-only library ownership remains intact");
         } finally {
             tutorialSandbox.set(ui.tutorial, null);
-            materials.remove(teaching.cells.get(0));
             for (int i = 0; i < names.length; i++) field(MiaoVisonLiteRenderer.class, names[i]).set(null, saved[i]);
             regions.clear();
             regions.putAll(savedRegions);
@@ -809,7 +858,8 @@ public final class HologramRenderingRegression {
 
     @SuppressWarnings("unchecked")
     private static void completeCameraProjection(HologramTextures.Material material,
-        java.util.Map<HologramState.Cell, HologramTextures.Material[]> materials) throws ReflectiveOperationException {
+        java.util.Map<String, java.util.Map<Integer, HologramTextures.Material>> materials)
+        throws ReflectiveOperationException {
         // The same prepared region inputs drive both a bounded cursor and the camera-only complete cursor. No GL draw
         // or copied projection algorithm is involved; the native candidate checks the actual screen submission.
         NBTTagCompound source = boundarySource("prepared-camera");
@@ -818,6 +868,11 @@ public final class HologramRenderingRegression {
         for (int[] point : new int[][] { { 16, 0 }, { 14, 1 }, { 16, 1 }, { 15, 0 }, { 16, 2 }, { 14, 0 }, { 14, 2 },
             { 15, 2 }, { -16, 0 }, { -17, -1 }, { -16, -1 }, { -17, 0 } })
             rows.appendTag(boundaryCell(point[0], 0, point[1], "minecraft:glass"));
+        // The plain material cache distinguishes this fixture's partial surface by its exact metadata.
+        rows.getCompoundTagAt(7)
+            .setInteger("meta", 1);
+        rows.getCompoundTagAt(7)
+            .setInteger("wantMeta", 1);
         source.setTag("cells", rows);
         HologramState state = new HologramState(source);
         boolean[] missingIcon = { false };
@@ -847,10 +902,6 @@ public final class HologramRenderingRegression {
             false,
             true,
             true);
-        for (HologramState.Cell cell : state.cells) materials.put(
-            cell,
-            new HologramTextures.Material[] { cell.index == 7 ? partialMaterial : diagnosticMaterial,
-                cell.index == 7 ? partialMaterial : diagnosticMaterial });
         String[] names = { "previewPreparation", "previewState", "cachedFaces", "cachedOutlines", "cachedMarkers",
             "projectedFrame", "previewSubmission", "hoverFaces", "previewCameraReprojects", "previewCameraOrderReuses",
             "previewCameraOrderSorts", "previewBrowseSurfaceReuses" };
@@ -868,6 +919,11 @@ public final class HologramRenderingRegression {
             .get(null), savedPublished = (java.util.BitSet) published.clone();
         java.lang.reflect.Field browseState = field(HologramLibraryClient.class, "browseState");
         Object oldBrowseState = browseState.get(HologramLibraryClient.INSTANCE);
+        java.util.Map<Integer, HologramTextures.Material> fixtureGlass = new java.util.HashMap<>();
+        fixtureGlass.put(0, diagnosticMaterial);
+        fixtureGlass.put(1, partialMaterial);
+        java.util.Map<Integer, HologramTextures.Material> previousGlass = materials
+            .put("minecraft:glass", fixtureGlass);
         try {
             java.lang.reflect.Method prepareRegion = MiaoVisonLiteRenderer.class.getDeclaredMethod(
                 "previewRegion",
@@ -1075,7 +1131,8 @@ public final class HologramRenderingRegression {
                 "direct structure mesh preserves the ordinary cell, surface, depth and vertex oracle");
         } finally {
             browseState.set(HologramLibraryClient.INSTANCE, oldBrowseState);
-            for (HologramState.Cell cell : state.cells) materials.remove(cell);
+            if (previousGlass == null) materials.remove("minecraft:glass");
+            else materials.put("minecraft:glass", previousGlass);
             regions.clear();
             regions.putAll(savedRegions);
             for (int i = 0; i < names.length; i++) field(MiaoVisonLiteRenderer.class, names[i]).set(null, saved[i]);

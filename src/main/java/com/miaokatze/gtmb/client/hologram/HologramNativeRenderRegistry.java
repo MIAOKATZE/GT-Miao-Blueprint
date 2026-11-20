@@ -3,7 +3,9 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import java.util.IdentityHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.CopyOnWriteArrayList;
 
 import net.minecraft.block.Block;
@@ -92,6 +94,8 @@ public final class HologramNativeRenderRegistry {
     private static final List<Adapter> ADAPTERS = new CopyOnWriteArrayList<>();
     private static final List<Adapter> BUILTINS = new CopyOnWriteArrayList<>();
     private static final List<MultipartAdapter> MULTIPART_ADAPTERS = new CopyOnWriteArrayList<>();
+    private static final Map<Block, Adapter> BUILTIN_BY_BLOCK = new IdentityHashMap<>();
+    private static final Adapter NO_BUILTIN = block -> false;
 
     private HologramNativeRenderRegistry() {}
 
@@ -105,19 +109,30 @@ public final class HologramNativeRenderRegistry {
         return ADAPTERS.remove(adapter);
     }
 
-    /** Built-in family modules remain below every registered community adapter. */
-    public static void registerBuiltin(Adapter adapter) {
+    /** Built-in family modules match by registered block identity and run after community adapters. */
+    public static synchronized void registerBuiltin(Adapter adapter) {
         if (adapter == null) throw new IllegalArgumentException("native renderer adapter is required");
         BUILTINS.add(adapter);
+        BUILTIN_BY_BLOCK.clear();
     }
 
-    public static boolean unregisterBuiltin(Adapter adapter) {
-        return BUILTINS.remove(adapter);
+    public static synchronized boolean unregisterBuiltin(Adapter adapter) {
+        if (!BUILTINS.remove(adapter)) return false;
+        BUILTIN_BY_BLOCK.clear();
+        return true;
     }
 
-    static Adapter builtin(Block block) {
-        for (Adapter adapter : BUILTINS) if (adapter.supports(block)) return adapter;
-        return null;
+    static synchronized Adapter builtin(Block block) {
+        Adapter found = BUILTIN_BY_BLOCK.get(block);
+        if (found == null) {
+            found = NO_BUILTIN;
+            for (Adapter adapter : BUILTINS) if (adapter.supports(block)) {
+                found = adapter;
+                break;
+            }
+            BUILTIN_BY_BLOCK.put(block, found);
+        }
+        return found == NO_BUILTIN ? null : found;
     }
 
     static boolean detachedRead(Block block, Adapter selected) {

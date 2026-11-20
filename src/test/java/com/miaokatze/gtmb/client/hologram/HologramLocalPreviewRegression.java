@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
+import net.minecraft.init.Blocks;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
@@ -18,6 +19,7 @@ public final class HologramLocalPreviewRegression {
     public static void run() throws Exception {
         admissionReceipts();
         compactDisplay();
+        sharedPlainDisplay();
         sourceReuse();
         earlyDisplay();
         displayPicture();
@@ -81,6 +83,80 @@ public final class HologramLocalPreviewRegression {
             HologramBlueprintPreview.snapshot(legacy.getBytes(StandardCharsets.UTF_8)),
             HologramBlueprintPreview.snapshot(compact.getBytes(StandardCharsets.UTF_8)),
             "compact material and NBT references produce exactly the same detached display");
+    }
+
+    private static void sharedPlainDisplay() throws Exception {
+        String source = "{\"blueprint\":{\"cells\":["
+            + "{\"block\":\"minecraft:stonebrick\",\"item\":\"minecraft:stonebrick\"},"
+            + "{\"x\":16,\"block\":\"minecraft:stonebrick\",\"item\":\"minecraft:stonebrick\"},"
+            + "{\"x\":17,\"block\":\"minecraft:stonebrick\",\"item\":\"minecraft:stonebrick\",\"metadata\":1,\"damage\":1},"
+            + "{\"x\":18,\"block\":\"minecraft:stonebrick\",\"item\":\"minecraft:stonebrick\"},"
+            + "{\"x\":19,\"block\":\"minecraft:stonebrick\",\"item\":\"minecraft:stonebrick\"}]}}";
+        NBTTagCompound decoded = HologramBlueprintPreview.snapshot(source.getBytes(StandardCharsets.UTF_8));
+        NBTTagList rows = decoded.getTagList("cells", 10);
+        NBTTagCompound nativeTile = new NBTTagCompound();
+        nativeTile.setString("kept", "detached source payload");
+        rows.getCompoundTagAt(3)
+            .setTag("previewTile", nativeTile);
+        rows.getCompoundTagAt(4)
+            .setString("unknownDisplayField", "preserved");
+        NBTTagCompound independent = (NBTTagCompound) decoded.copy();
+        NBTTagList originals = independent.getTagList("cells", 10);
+        for (int i = 0; i < originals.tagCount(); i++)
+            HologramBlueprintPreview.completeCell(originals.getCompoundTagAt(i));
+
+        HologramState.Preparation preparation = new HologramState.Preparation(decoded, true);
+        while (!preparation.step(1, Long.MAX_VALUE)) {}
+        HologramState shared = preparation.result();
+        SimpleAssert.eq(new HologramState(independent).fullData(), shared.fullData(), "shared preview stays lossless");
+        HologramState.Cell first = shared.cells.get(0), second = shared.cells.get(1);
+        SimpleAssert
+            .that(first.descriptorIdentity() == second.descriptorIdentity(), "plain display description reused");
+        SimpleAssert.that(
+            first.descriptorIdentity() != shared.cells.get(2)
+                .descriptorIdentity(),
+            "material metadata remains distinct");
+        SimpleAssert.that(
+            shared.cells.get(3)
+                .descriptorIdentity() == shared.cells.get(3),
+            "native payload follows the independent path");
+        SimpleAssert.that(
+            shared.cells.get(4)
+                .descriptorIdentity() == shared.cells.get(4),
+            "unrecognized descriptor fields follow the independent path");
+        first.targetStack.setItemDamage(3);
+        first.targetDisplay.setInteger("color", 7);
+        SimpleAssert.eq(0, second.targetStack.getItemDamage(), "shared display stacks remain privately mutable");
+        SimpleAssert.eq(-1, second.targetDisplay.getInteger("color"), "shared display NBT remains privately mutable");
+        SimpleAssert.that(!HologramTextures.partial(second, false), "ordinary visibility needs no atlas access");
+
+        java.lang.reflect.Field nodes = HologramLinkNodePreview.class.getDeclaredField("NODES");
+        nodes.setAccessible(true);
+        java.util.Map<?, ?> entries = (java.util.Map<?, ?>) nodes.get(null);
+        int before = entries.size();
+        SimpleAssert.that(
+            HologramLinkNodePreview.prepare(first, false)
+                .isEmpty(),
+            "empty cover path");
+        SimpleAssert.eq(before, entries.size(), "coverless preview creates no per-cell link cache");
+
+        java.util.concurrent.atomic.AtomicInteger matched = new java.util.concurrent.atomic.AtomicInteger();
+        HologramNativeRenderRegistry.Adapter builtin = block -> {
+            matched.incrementAndGet();
+            return block == Blocks.stonebrick;
+        };
+        HologramNativeRenderRegistry.registerBuiltin(builtin);
+        try {
+            SimpleAssert.eq(builtin, HologramNativeRenderRegistry.builtin(Blocks.stonebrick), "native builtin found");
+            SimpleAssert
+                .eq(builtin, HologramNativeRenderRegistry.builtin(Blocks.stonebrick), "native selection reused");
+            SimpleAssert.eq(1, matched.get(), "builtin classification only runs once per exact block");
+        } finally {
+            HologramNativeRenderRegistry.unregisterBuiltin(builtin);
+        }
+        SimpleAssert.that(
+            HologramNativeRenderRegistry.builtin(Blocks.stonebrick) != builtin,
+            "unregister clears cached native builtin");
     }
 
     private static void sourceReuse() throws Exception {

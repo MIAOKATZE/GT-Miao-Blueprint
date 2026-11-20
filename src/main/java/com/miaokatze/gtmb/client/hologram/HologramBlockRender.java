@@ -102,8 +102,9 @@ final class HologramBlockRender {
 
     static boolean invisible(HologramState.Cell cell, boolean current) {
         current = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
-        HologramNativeRenderRegistry.Adapter adapter = HologramNativeRenderRegistry.adapter(cell.block(current));
-        return adapter != null && adapter.invisible(cell.block(current), current ? cell.meta : cell.wantMeta);
+        Block block = cell.block(current);
+        HologramNativeRenderRegistry.Adapter adapter = HologramNativeRenderRegistry.adapter(block);
+        return adapter != null && adapter.invisible(block, current ? cell.meta : cell.wantMeta);
     }
 
     /** An empty/air-only or partly unsupported snapshot is never inferred to be an intentional data-only model. */

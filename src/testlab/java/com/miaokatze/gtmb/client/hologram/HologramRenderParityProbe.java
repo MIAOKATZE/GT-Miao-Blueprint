@@ -46,7 +46,10 @@ public final class HologramRenderParityProbe {
 
     private static final String OPT_IN = "gtmb.testlab.renderParity";
     private static final String GIANT_SOURCE = "gtmb.testlab.renderParityGiantSource";
+    private static final String GIANT_LIBRARY_ROOT = "gtmb.testlab.renderParityGiantLibraryRoot";
+    private static final String GIANT_LIBRARY_ID = "gtmb.testlab.renderParityGiantLibraryId";
     private static final String ANIMATION_WITNESS = "gtmb.testlab.renderParityAnimationWitness";
+    private static final String GIANT_PERFORMANCE = "gtmb.testlab.renderParityGiantPerformance";
     private static final String COMBINED = "gtmb.testlab.renderParityCombined";
     private static final String EDITOR_RECEIPT = "gtmb-render-parity-editor.json";
     private static final String CLIENT_RECEIPT = "gtmb-client-ui.json";
@@ -62,17 +65,25 @@ public final class HologramRenderParityProbe {
     private final List<Long> orbitDrawNanos = new ArrayList<>();
     private final Map<String, Object> receipt = new LinkedHashMap<>();
     private final String giantSource = System.getProperty(GIANT_SOURCE, "");
-    private final Map<String, Object> giantEvidence = new LinkedHashMap<>();
-    private final List<Map<String, Object>> giantFrames = new ArrayList<>();
-    private final List<Long> giantOrbitDrawNanos = new ArrayList<>();
+    private final boolean giantPerformance = Boolean.getBoolean(GIANT_PERFORMANCE);
+    private final String giantLibraryId = System.getProperty(GIANT_LIBRARY_ID, "");
+    private final List<Map<String, Object>> giantLoads = new ArrayList<>();
+    private Map<String, Object> giantEvidence;
+    private List<Map<String, Object>> giantFrames;
+    private List<Long> giantOrbitDrawNanos;
     private final boolean animationWitness = Boolean.getBoolean(ANIMATION_WITNESS);
     private final List<Map<String, Object>> animationFrames = new ArrayList<>();
     private HologramScreen screen;
     private HologramState snapshot;
     private int scenario, phase, draws, poseDraws, orbitIndex;
+    private int completedGiantLoads;
+    private boolean giantDrawerDispatched;
+    private HologramClientLibrary originalLibrary, isolatedLibrary;
+    private HologramState coldBrowseState;
     private long activated = System.nanoTime();
     private long beforeDraw, drawNanos, guiPosts, renderedPosts;
     private long giantStarted;
+    private long lastGiantStatus;
     private long nextAnimationSample;
     private int[] clickPoint;
     private int clickCell = -1;
@@ -86,14 +97,10 @@ public final class HologramRenderParityProbe {
         receipt.put("frames", frames);
         receipt.put("orbitEditorDrawNanos", orbitDrawNanos);
         if (animationWitness) receipt.put("nativeSixAnimationFrames", animationFrames);
-        if (!giantSource.isEmpty()) {
-            giantEvidence.put("frames", giantFrames);
-            giantEvidence.put("orbitEditorDrawNanos", giantOrbitDrawNanos);
-            giantEvidence.put(
-                "heapMaxBytes",
-                Runtime.getRuntime()
-                    .maxMemory());
-            receipt.put("giant", giantEvidence);
+        if (giantPerformance) {
+            receipt.put("profile", "giant-performance-after-issue100");
+            receipt.put("lightingAdmission", "Issue100 world rendered and unloaded; same mixed editor control");
+            receipt.put("giantLoads", giantLoads);
         }
     }
 
@@ -104,8 +111,10 @@ public final class HologramRenderParityProbe {
     static boolean install(GuiScreen menu, Path output, String run, String tutorialFailure) throws Exception {
         if (!enabled()) return false;
         HologramRenderParityProbe probe = new HologramRenderParityProbe(menu, output, run);
-        if (tutorialFailure != null) {
-            probe.finish("Issue100 tutorial failed: " + tutorialFailure);
+        if (tutorialFailure != null || probe.giantPerformance && probe.giantSource.isEmpty()) {
+            probe.finish(
+                tutorialFailure == null ? "Giant performance requires an explicit sample"
+                    : "Issue100 tutorial failed: " + tutorialFailure);
             return true;
         }
         FMLCommonHandler.instance()
@@ -123,12 +132,13 @@ public final class HologramRenderParityProbe {
             require(mc.theWorld == null && mc.thePlayer == null && mc.getIntegratedServer() == null, "Menu-only probe");
             if (screen == null) {
                 require(mc.currentScreen == menu, "Original menu identity was lost");
-                if (scenario == CASES.length + (giantSource.isEmpty() ? 0 : 1)) {
+                if (scenario == CASES.length + requiredGiantLoads()) {
                     verifyAeDelta();
                     finish(null);
                     return;
                 }
-                snapshot = giant() ? giantSnapshot() : new HologramState(fixture(scenario));
+                if (giant()) beginGiantBrowse();
+                snapshot = new HologramState(fixture(giant() ? 0 : scenario));
                 screen = new HologramScreen(snapshot);
                 screen.openFrom(menu);
                 screen.ui.preview.moveHandles(false);
@@ -140,7 +150,22 @@ public final class HologramRenderParityProbe {
             require(mc.currentScreen == screen, "Expected production editor screen");
             long timeout = giant() ? 180_000_000_000L : 45_000_000_000L;
             require(System.nanoTime() - activated < timeout, scenarioName() + " did not finish rendering");
-            if (phase == 1 && scenario == 0) {
+            if (giant()) {
+                observeGiantStatus();
+                if (giantStarted == 0) {
+                    require(
+                        System.nanoTime() - activated < 20_000_000_000L,
+                        "Private browse never admitted its request");
+                } else if (System.nanoTime() - giantStarted > 3_000_000_000L) {
+                    HologramLibraryClient library = HologramLibraryClient.INSTANCE;
+                    require(
+                        library.busy() || library.browsePreviewState() != null,
+                        "Private browse request retired without display: " + library.status());
+                }
+            }
+            if (giant() && giantStarted == 0) {
+                requestGiantBrowse();
+            } else if (phase == 1 && scenario == 0) {
                 require(clickPoint != null, "Mixed scene needs a visible native pick target");
                 HologramMuiProbeInput.click(screen, clickPoint[0], clickPoint[1], 0);
                 inputDispatched = true;
@@ -152,9 +177,16 @@ public final class HologramRenderParityProbe {
                     setPose(orbit[++orbitIndex]);
                     phase = 4;
                 } else {
+                    if (giant() && giantFrames.size() == GIANT_ORBIT.length
+                        && giantEvidence.containsKey("firstMaterialNanos")
+                        && Integer.valueOf(GIANT_CELLS)
+                            .equals(giantEvidence.get("completedCells"))) {
+                        completedGiantLoads++;
+                    }
+                    if (giant()) HologramLibraryClient.INSTANCE.clearBrowsePreview();
                     mc.displayGuiScreen(menu);
                     screen = null;
-                    scenario++;
+                    scenario = giantPerformance && scenario == 0 ? CASES.length : scenario + 1;
                 }
             }
         } catch (Exception | LinkageError failure) {
@@ -163,7 +195,11 @@ public final class HologramRenderParityProbe {
     }
 
     private boolean giant() {
-        return scenario == CASES.length && !giantSource.isEmpty();
+        return scenario >= CASES.length && scenario < CASES.length + requiredGiantLoads();
+    }
+
+    private int requiredGiantLoads() {
+        return giantSource.isEmpty() ? 0 : giantPerformance ? 2 : 1;
     }
 
     private boolean orbitalCase() {
@@ -172,33 +208,148 @@ public final class HologramRenderParityProbe {
 
     private String scenarioName() {
         if (scenario < CASES.length) return CASES[scenario];
-        return giant() ? "giant-private-blueprint" : "post-editor checks";
+        if (!giant()) return "post-editor checks";
+        return giantPerformance ? "giant-private-blueprint-" + (scenario == CASES.length ? "cold" : "warm")
+            : "giant-private-blueprint";
     }
 
-    private HologramState giantSnapshot() throws Exception {
-        giantStarted = System.nanoTime();
-        Path path = Paths.get(giantSource);
+    private void beginGiantBrowse() throws Exception {
+        giantStarted = 0;
+        lastGiantStatus = 0;
+        giantDrawerDispatched = false;
+        giantEvidence = new LinkedHashMap<>();
+        giantFrames = new ArrayList<>();
+        giantOrbitDrawNanos = new ArrayList<>();
+        giantEvidence.put("frames", giantFrames);
+        giantEvidence.put("orbitEditorDrawNanos", giantOrbitDrawNanos);
+        giantEvidence.put(
+            "heapMaxBytes",
+            Runtime.getRuntime()
+                .maxMemory());
+        giantEvidence.put("heapUsedBytesAtAdmission", heapUsedBytes());
+        giantEvidence.put(
+            "availableProcessors",
+            Runtime.getRuntime()
+                .availableProcessors());
+        giantEvidence.put("sampleKind", "isolated exact private library JSON/PNG pair");
+        giantEvidence.put("pipeline", "native library drawer → previewLocal → worker → Preparation → browse scene");
+        if (giantPerformance) {
+            giantEvidence.put("label", scenario == CASES.length ? "cold" : "warm");
+            giantLoads.add(giantEvidence);
+        } else receipt.put("giant", giantEvidence);
+        if (isolatedLibrary != null) {
+            giantEvidence.put("canonicalLibraryId", giantLibraryId);
+            giantEvidence.put("stagedPair", true);
+            return;
+        }
+        String directory = System.getProperty(GIANT_LIBRARY_ROOT, "");
         require(
-            Files.isRegularFile(path) && Files.size(path) <= HologramBlueprintArtifact.MAX_JSON_BYTES,
-            "Private blueprint source must be the local copy within the artifact byte limit");
-        byte[] source = Files.readAllBytes(path);
-        giantEvidence.put("sampleKind", "read-only copy of a private library blueprint");
-        giantEvidence.put("sourceJsonSha256", HologramBlueprintArtifact.hash(source));
-        giantEvidence.put("sourceBytes", source.length);
-        NBTTagCompound data = HologramBlueprintPreview.snapshot(source);
-        decorateFixture(data, scenarioName());
-        HologramState state = new HologramState(data);
-        require(state.cells.size() == GIANT_CELLS, "Expected the selected 123369-cell private structure");
-        giantEvidence.put("cells", state.cells.size());
-        giantEvidence.put("snapshotNanos", System.nanoTime() - giantStarted);
-        return state;
+            !directory.isEmpty() && giantLibraryId.matches("local_[a-fA-F0-9-]{36}"),
+            "Host must stage the exact private pair in an isolated library");
+        Path root = Paths.get(directory)
+            .toRealPath();
+        Path game = Minecraft.getMinecraft().mcDataDir.toPath()
+            .toRealPath();
+        require(!root.startsWith(game), "The fixture library must be outside the registered client data directory");
+        HologramClientLibrary stagingStore = new HologramClientLibrary(root);
+        Path staged = stagingStore.savedPath(giantLibraryId);
+        require(
+            Files.isRegularFile(staged) && Files.isRegularFile(HologramBlueprintArtifact.previewPath(staged)),
+            "Host-staged private blueprint pair is missing");
+        Field store = diagnosticField(HologramLibraryClient.class, "store");
+        originalLibrary = (HologramClientLibrary) store.get(HologramLibraryClient.INSTANCE);
+        store.set(HologramLibraryClient.INSTANCE, stagingStore);
+        isolatedLibrary = stagingStore;
+        giantEvidence.put("canonicalLibraryId", giantLibraryId);
+        giantEvidence.put("stagedPair", true);
     }
 
-    private void setPose(double yaw) {
-        screen.ui.preview.yaw(yaw);
-        screen.ui.preview.pitch(0.58);
-        screen.ui.preview.zoom(1.0);
+    private void requestGiantBrowse() throws Exception {
+        if (!screen.ui.library.libraryDrawer() && !giantDrawerDispatched) {
+            if (screen.ui.shell.targetBounds("header.library") != null) {
+                HologramMuiProbeInput.nativeTarget(screen, "header.library", new LinkedHashMap<>());
+                giantDrawerDispatched = true;
+                giantEvidence.put("drawerAdmission", "native library header input");
+                return;
+            }
+        }
+        if (!screen.ui.library.libraryDrawer() && System.nanoTime() - activated >= 750_000_000L
+            && screen.ui.shell.built()) {
+            giantEvidence.put("nativeHeaderDispatchObserved", giantDrawerDispatched);
+            screen.ui.shell.toggleLibrary();
+            if (!screen.ui.library.libraryDrawer()) screen.ui.library.libraryDrawer(true);
+            giantEvidence.put("drawerAdmission", "production drawer callback after header did not open this fixture");
+        }
+        if (!screen.ui.library.libraryDrawer()) return;
+        giantEvidence.putIfAbsent("drawerAdmission", "already-open production library drawer");
+        if (HologramLibraryClient.INSTANCE.busy() || HologramBackgroundTasks.busy()) return;
+        java.lang.reflect.Method browse = HologramUiLibrary.class
+            .getDeclaredMethod("browsePreset", String.class, boolean.class);
+        browse.setAccessible(true);
+        giantStarted = System.nanoTime();
+        browse.invoke(screen.ui.library, giantLibraryId, false);
+        require(screen.ui.library.browsePreviewActive(), "Production private browse did not acquire the scene");
+    }
+
+    private void observeGiantStatus() {
+        long now = System.nanoTime();
+        if (now - lastGiantStatus < 2_000_000_000L) return;
+        lastGiantStatus = now;
+        HologramLibraryClient library = HologramLibraryClient.INSTANCE;
+        HologramState using = library.browsePreviewState();
+        String checkpoint = "phase=" + phase
+            + " id="
+            + giantLibraryId
+            + " screen="
+            + Minecraft.getMinecraft().currentScreen.getClass()
+                .getSimpleName()
+            + " drawer="
+            + screen.ui.library.libraryDrawer()
+            + " browse="
+            + screen.ui.library.browsePreviewActive()
+            + " requested="
+            + (giantStarted != 0)
+            + " busy="
+            + library.busy()
+            + " backgroundBusy="
+            + HologramBackgroundTasks.busy()
+            + " cells="
+            + (using == null ? 0 : using.cells.size())
+            + " progress="
+            + library.browsePreviewStatus()
+            + " status="
+            + library.status();
+        giantEvidence.put("lastCheckpoint", checkpoint);
+        System.out.println("[GTMB-PRIVATE-PERF] " + scenarioName() + " " + checkpoint);
+    }
+
+    private static Field diagnosticField(Class<?> owner, String name) throws ReflectiveOperationException {
+        Field field = owner.getDeclaredField(name);
+        field.setAccessible(true);
+        return field;
+    }
+
+    private void setPose(double yaw) throws ReflectiveOperationException {
+        HologramUiPreview preview = screen.ui.preview;
+        if (giant() && screen.ui.library.browsePreviewActive()) {
+            diagnosticField(HologramUiPreview.class, "browseYaw").setDouble(preview, yaw);
+            diagnosticField(HologramUiPreview.class, "browsePitch").setDouble(preview, 0.58);
+            diagnosticField(HologramUiPreview.class, "browseZoom").setDouble(preview, 1.0);
+        } else {
+            preview.yaw(yaw);
+            preview.pitch(0.58);
+            preview.zoom(1.0);
+        }
         poseDraws = 0;
+    }
+
+    private double[] pose() throws ReflectiveOperationException {
+        HologramUiPreview preview = screen.ui.preview;
+        if (giant()) {
+            return new double[] { diagnosticField(HologramUiPreview.class, "browseYaw").getDouble(preview),
+                diagnosticField(HologramUiPreview.class, "browsePitch").getDouble(preview), preview.zoom() };
+        }
+        return new double[] { preview.yaw(), preview.pitch(), preview.zoom() };
     }
 
     @SubscribeEvent(priority = EventPriority.HIGHEST)
@@ -218,14 +369,17 @@ public final class HologramRenderParityProbe {
         if (complete || event.phase != TickEvent.Phase.END || screen == null || renderedPosts == guiPosts) return;
         renderedPosts = guiPosts;
         try {
-            boolean ready = HologramRenderer.previewMeshReady(snapshot);
+            if (giant() && !readGiantPublication()) return;
+            boolean ready = HologramRenderer.previewMeshReady(snapshot)
+                && (!giant() || snapshot.cells.size() == GIANT_CELLS && !snapshot.data.getBoolean("displayPartial"));
             if (!ready && !giant()) return;
-            require(screen.ui.session.state().identity == snapshot.identity, "The prepared fixture changed owners");
+            if (!giant())
+                require(screen.ui.session.state().identity == snapshot.identity, "The prepared fixture changed owners");
             HologramEditorSceneWidget scene = (HologramEditorSceneWidget) screen.ui.shell.scene();
             if (scene == null) return;
             if (giant()) observeGiant(ready);
             if (!ready) return;
-            if (!scene.editFrameReady()) return;
+            if (!giant() && !scene.editFrameReady()) return;
             draws++;
             poseDraws++;
             if (phase == 0 && poseDraws == 4) {
@@ -312,15 +466,82 @@ public final class HologramRenderParityProbe {
                 giantEvidence.put("firstMaterialCells", materialCells);
                 giantEvidence.put("firstMaterialWasComplete", ready);
                 giantEvidence.put("firstPreparedCells", HologramRenderer.previewMeshCompleted(snapshot));
-                String file = "giant-first-full.png";
-                captureFramebuffer(file);
-                giantEvidence.put("firstMaterialScene", cropScene(output, file, "giant-first-scene.png", screen.ui));
+                giantEvidence.put("firstStageTiming", previewTiming());
+                if (!giantPerformance) {
+                    String file = "giant-first-full.png";
+                    captureFramebuffer(file);
+                    giantEvidence
+                        .put("firstMaterialScene", cropScene(output, file, "giant-first-scene.png", screen.ui));
+                }
             }
         }
         if (ready && !giantEvidence.containsKey("completeNanos")) {
             giantEvidence.put("completeNanos", elapsed);
             giantEvidence.put("completedCells", HologramRenderer.previewMeshCompleted(snapshot));
+            giantEvidence.put("completionStageTiming", previewTiming());
+            giantEvidence.put("heapUsedBytesAfterComplete", heapUsedBytes());
+            witnessGiantHydration();
         }
+    }
+
+    private boolean readGiantPublication() {
+        if (giantStarted == 0 || !screen.ui.library.browsePreviewActive()) return false;
+        HologramLibraryClient library = HologramLibraryClient.INSTANCE;
+        long elapsed = System.nanoTime() - giantStarted;
+        String status = library.browsePreviewStatus();
+        if (status != null && !status.isEmpty()) {
+            giantEvidence.putIfAbsent("firstStatus", status);
+            giantEvidence.put("currentStatus", status);
+        }
+        if (library.browsePreviewImage() != null) giantEvidence.putIfAbsent("thumbnailAvailableNanos", elapsed);
+        snapshot = library.browsePreviewState();
+        if (snapshot == null) return false;
+        if (!giantEvidence.containsKey("firstStatePublishedNanos")) {
+            giantEvidence.put("firstStatePublishedNanos", elapsed);
+            giantEvidence.put("firstStateCells", snapshot.cells.size());
+        }
+        if (!snapshot.data.getBoolean("displayPartial") && snapshot.cells.size() == GIANT_CELLS) {
+            giantEvidence.putIfAbsent("fullStatePublishedNanos", elapsed);
+        }
+        return true;
+    }
+
+    private void witnessGiantHydration() throws Exception {
+        require(snapshot.cells.size() == GIANT_CELLS, "Expected the selected 123369-cell private structure");
+        boolean warmCacheReuse = coldBrowseState == snapshot;
+        if (coldBrowseState == null) coldBrowseState = snapshot;
+        giantEvidence.put("warmCachedDisplayStateReused", warmCacheReuse);
+        giantEvidence.put("cells", snapshot.cells.size());
+        NBTTagCompound presented = HologramRenderer.lessonInspection(snapshot);
+        int nativeModels = presented.getInteger("nativeModelCellCount");
+        int stacks = 0;
+        int tileData = 0;
+        for (HologramState.Cell cell : snapshot.cells) {
+            if (cell.targetStack != null) stacks++;
+            if (cell.targetDisplay.hasKey("nativeTile", 10)) tileData++;
+        }
+        giantEvidence.put("targetStackCells", stacks);
+        giantEvidence.put("targetNativeTileCells", tileData);
+        giantEvidence.put("firstCompleteNativeModelCells", nativeModels);
+        require(stacks > 0 && tileData > 0 && nativeModels > 0, "Private browse did not hydrate native model inputs");
+        Map<?, ?> local = (Map<?, ?>) diagnosticField(HologramLibraryClient.class, "localPreviews")
+            .get(HologramLibraryClient.INSTANCE);
+        HologramLibraryClient.DisplaySource source;
+        synchronized (local) {
+            source = (HologramLibraryClient.DisplaySource) local.get("local:" + giantLibraryId);
+        }
+        require(
+            source != null && source.state == snapshot && source.thumbnail != null,
+            "Private pair publication lost");
+        giantEvidence.put("sourceJsonSha256", HologramBlueprintArtifact.hash(source.json));
+        giantEvidence.put("sourceBytes", source.json.length);
+        Path staged = HologramBlueprintArtifact.previewPath(isolatedLibrary.savedPath(giantLibraryId));
+        giantEvidence.put("sourcePngSha256", HologramBlueprintArtifact.hash(Files.readAllBytes(staged)));
+    }
+
+    private static long heapUsedBytes() {
+        Runtime runtime = Runtime.getRuntime();
+        return runtime.totalMemory() - runtime.freeMemory();
     }
 
     private void findClickTarget(HologramEditorSceneWidget scene) {
@@ -345,8 +566,7 @@ public final class HologramRenderParityProbe {
         frame.put("name", name);
         frame.put("cellCount", snapshot.cells.size());
         frame.put("preparedDraws", draws);
-        frame
-            .put("pose", new double[] { screen.ui.preview.yaw(), screen.ui.preview.pitch(), screen.ui.preview.zoom() });
+        frame.put("pose", pose());
         frame.put("editorDrawNanos", drawNanos);
         frame.put(
             "selection",
@@ -391,6 +611,7 @@ public final class HologramRenderParityProbe {
         frame.put("visibleCellCount", inspection.getInteger("presentedVisibleCellCount"));
         frame.put("residentRendererCounters", residentCounters());
         frame.put("cameraRendererCounters", cameraCounters());
+        if (giant()) frame.put("rendererStages", previewTiming());
         frame.put("scene", cropScene(output, file, name + "-scene.png", screen.ui));
         if (giant()) giantFrames.add(frame);
         else frames.add(frame);
@@ -408,6 +629,17 @@ public final class HologramRenderParityProbe {
 
     private static Map<String, Long> cameraCounters() throws IllegalAccessException {
         return rendererCounters("previewCameraReprojects", "previewCameraOrderReuses", "previewCameraOrderSorts");
+    }
+
+    private static Object previewTiming() throws ReflectiveOperationException {
+        try {
+            java.lang.reflect.Method method = HologramRenderer.class.getSuperclass()
+                .getDeclaredMethod("previewTiming");
+            method.setAccessible(true);
+            return method.invoke(null);
+        } catch (NoSuchMethodException expectedOnBaseline) {
+            return java.util.Collections.emptyMap();
+        }
     }
 
     private static Map<String, Long> rendererCounters(String... names) throws IllegalAccessException {
@@ -565,6 +797,11 @@ public final class HologramRenderParityProbe {
             .bus()
             .unregister(this);
         MinecraftForge.EVENT_BUS.unregister(this);
+        try {
+            restoreGiantLibrary();
+        } catch (ReflectiveOperationException | RuntimeException cleanup) {
+            failure = "Private fixture store restoration failed: " + cleanup;
+        }
         boolean restored = mc.currentScreen == menu && mc.theWorld == null && mc.getIntegratedServer() == null;
         Map<String, Long> counters = residentCounters();
         if (failure == null && Boolean.getBoolean("gtmb.testlab.renderParityResidentRequired")
@@ -573,13 +810,10 @@ public final class HologramRenderParityProbe {
                     <= counters.getOrDefault("previewResidentCaptures", 0L))) {
             failure = "Missing resident buffer captures or replays";
         }
-        boolean giantComplete = giantSource.isEmpty()
-            || giantFrames.size() == GIANT_ORBIT.length && giantEvidence.containsKey("firstMaterialNanos")
-                && Integer.valueOf(GIANT_CELLS)
-                    .equals(giantEvidence.get("completedCells"));
+        boolean giantComplete = completedGiantLoads == requiredGiantLoads();
         boolean animationComplete = !animationWitness || animationFrames.size() == ANIMATION_SAMPLES;
         boolean passed = failure == null && restored
-            && frames.size() == 7
+            && frames.size() == (giantPerformance ? 2 : 7)
             && inputDispatched
             && giantComplete
             && animationComplete;
@@ -608,6 +842,22 @@ public final class HologramRenderParityProbe {
             receipt.put("detail", "Combined profile requires the native Issue95 playback");
         }
         publish(output, CLIENT_RECEIPT, receipt);
+    }
+
+    private void restoreGiantLibrary() throws ReflectiveOperationException {
+        if (isolatedLibrary == null) return;
+        HologramLibraryClient library = HologramLibraryClient.INSTANCE;
+        library.clearBrowsePreview();
+        Field store = diagnosticField(HologramLibraryClient.class, "store");
+        require(store.get(library) == isolatedLibrary, "Private fixture store changed owners");
+        store.set(library, originalLibrary);
+        Map<?, ?> sources = (Map<?, ?>) diagnosticField(HologramLibraryClient.class, "localPreviews").get(library);
+        synchronized (sources) {
+            sources.remove("local:" + giantLibraryId);
+        }
+        coldBrowseState = null;
+        isolatedLibrary = null;
+        receipt.put("fixtureLibraryStoreRestored", true);
     }
 
     static boolean completeCombined(Path output, String failure) {
