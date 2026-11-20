@@ -162,6 +162,7 @@ final class HologramUiPreview {
     /** Only model/ghost/selection geometry. Native controls are siblings of this bounded scene widget. */
     boolean sourcePreparing() {
         if (ui.session.isTutorial() || ui.library.browsePreviewActive()) return false;
+        if (ui.library.openingPreview() != null) return true;
         if (ui.session.state().data.getBoolean("localStandardController")) return false;
         return ui.session.controllerOpening() || HologramClient.snapshotPreparing()
             || sourceSwitchWaiting(
@@ -196,6 +197,7 @@ final class HologramUiPreview {
         GL11.glEnable(GL11.GL_SCISSOR_TEST);
         applyViewportScissor();
         try {
+            if (drawOpeningPreview(viewport, 0, 0, viewportWidth(), previewHeight())) return;
             HologramState snapshot = ui.session.state();
             if (snapshot.data.getBoolean("localStandardController") && snapshot.cells.isEmpty()) {
                 hovered = -1;
@@ -294,6 +296,7 @@ final class HologramUiPreview {
         GL11.glEnable(GL11.GL_SCISSOR_TEST);
         applyViewportScissor();
         try {
+            if (drawOpeningPreview(viewport, viewportX(), viewportY(), viewportWidth(), height)) return;
             if (sourcePreparing()) {
                 hovered = -1;
                 viewport.waitingPreview(ui.session.state());
@@ -392,6 +395,19 @@ final class HologramUiPreview {
                 break;
             }
         }
+    }
+
+    private boolean drawOpeningPreview(MiaoVisonLiteRenderer viewport, int x, int y, int width, int height) {
+        if (ui.session.isTutorial() || !ui.library.openingLocalSource()) return false;
+        HologramState opening = ui.library.openingPreview();
+        if (opening == null) return false;
+        hovered = -1;
+        viewport.selection = null;
+        viewport.selectedStructureId = "";
+        viewport.preview(
+            opening, x, y, width, height, yaw, pitch, zoom, camera.x, camera.y, camera.z,
+            allLayers ? Integer.MAX_VALUE : layer, view, -1, -1, -1, -1, false);
+        return true;
     }
 
     /** A library display has its own camera and no selection, session, or editing capability. */

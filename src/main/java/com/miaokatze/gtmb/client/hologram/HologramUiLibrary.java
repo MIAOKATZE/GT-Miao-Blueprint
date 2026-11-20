@@ -39,6 +39,18 @@ final class HologramUiLibrary {
         return localWorkspace.busy();
     }
 
+    boolean openingLocalSource() {
+        return localWorkspace.opening();
+    }
+
+    HologramState openingPreview() {
+        return localWorkspace.openingPreview();
+    }
+
+    void advanceLocalWorkspaceFrame() {
+        localWorkspace.advanceFrame();
+    }
+
     void openCapture(com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument document, String notice) {
         localWorkspace.openCapture(document, notice);
     }

@@ -440,6 +440,10 @@ final class HologramEditorLibraryPane {
     }
 
     void refresh() {
+        if (built == null) {
+            dialogs.refresh();
+            return;
+        }
         String query = search.getStringValue()
             .trim()
             .toLowerCase(Locale.ROOT);

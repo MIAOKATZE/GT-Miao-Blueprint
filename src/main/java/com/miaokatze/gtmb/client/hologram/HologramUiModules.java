@@ -41,6 +41,11 @@ final class HologramUiModules {
         return base + panelGraphSuffix;
     }
 
+    boolean deferInactiveWidgets() {
+        return !session.isTutorial() && workspaces.projection()
+            && session.state().data.getBoolean("localStandardController");
+    }
+
     HologramUiModules(HologramUiHost host) {
         this.host = host;
         ae = new HologramUiAeReview(this);

@@ -4,8 +4,6 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.util.Iterator;
-import java.util.LinkedHashMap;
-import java.util.Map;
 
 import net.minecraft.block.Block;
 import net.minecraft.entity.Entity;
@@ -15,8 +13,10 @@ import net.minecraft.util.AxisAlignedBB;
 import net.minecraft.world.World;
 
 import com.github.bsideup.jabel.Desugar;
+import com.gtnewhorizon.gtnhlib.util.CoordinatePacker;
 
 import gregtech.api.GregTechAPI;
+import it.unimi.dsi.fastutil.longs.Long2ObjectLinkedOpenHashMap;
 
 /** Observes native preview placements in memory without chunks, lifecycle events, ticks, or a renderer. */
 final class HologramNativePreviewWorld extends HologramResourceWorld {
@@ -24,13 +24,10 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
     @Desugar
     record Placement(int x, int y, int z, Block block, int meta, TileEntity tile) {}
 
-    @Desugar
-    record Position(int x, int y, int z) {}
-
     private static final int CHUNK_LIMIT = 30_000_000 >> 4;
     private final Thread owner = Thread.currentThread();
-    private final Map<Position, Placement> placements = new LinkedHashMap<>();
-    private final Position anchor;
+    private final Long2ObjectLinkedOpenHashMap<Placement> placements = new Long2ObjectLinkedOpenHashMap<>();
+    private final long anchor;
     private final Block controllerBlock;
     private final int controllerMeta;
     private boolean recording = true;
@@ -39,7 +36,7 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
 
     private HologramNativePreviewWorld(TileEntity controller, Block block, int metadata) {
         super(block, metadata);
-        anchor = new Position(controller.xCoord, controller.yCoord, controller.zCoord);
+        anchor = CoordinatePacker.pack(controller.xCoord, controller.yCoord, controller.zCoord);
         controllerBlock = block;
         controllerMeta = metadata;
         tile = controller;
@@ -47,7 +44,8 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
 
     static HologramNativePreviewWorld open(TileEntity detached) {
         if (!(detached.getWorldObj() instanceof HologramResourceWorld source) || source instanceof HologramNativePreviewWorld
-            || source.getTileEntity(detached.xCoord, detached.yCoord, detached.zCoord) != detached)
+            || source.getTileEntity(detached.xCoord, detached.yCoord, detached.zCoord) != detached
+            || !packable(detached.xCoord, detached.yCoord, detached.zCoord))
             throw new IllegalArgumentException("LOCAL_NATIVE_PREVIEW_REQUIRES_DETACHED_CONTROLLER");
         Block block = source.getBlock(detached.xCoord, detached.yCoord, detached.zCoord);
         int metadata = source.getBlockMetadata(detached.xCoord, detached.yCoord, detached.zCoord);
@@ -92,32 +90,35 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
 
     @Override
     public Block getBlock(int x, int y, int z) {
-        Position position = new Position(x, y, z);
-        if (position.equals(anchor)) return controllerBlock;
+        if (!packable(x, y, z)) return Blocks.air;
+        long position = CoordinatePacker.pack(x, y, z);
+        if (position == anchor) return controllerBlock;
         Placement placement = placements.get(position);
         return placement == null ? Blocks.air : placement.block;
     }
 
     @Override
     public int getBlockMetadata(int x, int y, int z) {
-        Position position = new Position(x, y, z);
-        if (position.equals(anchor)) return controllerMeta;
+        if (!packable(x, y, z)) return 0;
+        long position = CoordinatePacker.pack(x, y, z);
+        if (position == anchor) return controllerMeta;
         Placement placement = placements.get(position);
         return placement == null ? 0 : placement.meta;
     }
 
     @Override
     public TileEntity getTileEntity(int x, int y, int z) {
-        Position position = new Position(x, y, z);
-        if (position.equals(anchor)) return tile;
+        if (!packable(x, y, z)) return null;
+        long position = CoordinatePacker.pack(x, y, z);
+        if (position == anchor) return tile;
         Placement placement = placements.get(position);
         return placement == null ? null : placement.tile;
     }
 
     @Override
     public boolean setBlock(int x, int y, int z, Block block, int metadata, int flags) {
-        Position position = writable(x, y, z);
-        if (position.equals(anchor)) return false;
+        long position = writable(x, y, z);
+        if (position == anchor) return false;
         Placement previous = placements.get(position);
         if (block == Blocks.air) {
             if (previous == null) return false;
@@ -129,24 +130,24 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
         if (previous == null && placements.size() >= HologramBlueprintLimits.MAX_CELLS - 1)
             throw new IllegalStateException("LOCAL_NATIVE_PREVIEW_CELL_LIMIT");
         TileEntity next = block.hasTileEntity(metadata) ? block.createTileEntity(this, metadata) : null;
-        put(position, block, metadata, next);
+        put(position, x, y, z, block, metadata, next);
         return true;
     }
 
     @Override
     public boolean setBlockMetadataWithNotify(int x, int y, int z, int metadata, int flags) {
-        Position position = writable(x, y, z);
+        long position = writable(x, y, z);
         Placement old = placements.get(position);
         if (old == null) return false;
-        if (old.meta != metadata) put(position, old.block, metadata, old.tile);
+        if (old.meta != metadata) put(position, x, y, z, old.block, metadata, old.tile);
         return true;
     }
 
     @Override
     public void setTileEntity(int x, int y, int z, TileEntity next) {
-        Position position = writable(x, y, z);
+        long position = writable(x, y, z);
         Placement old = placements.get(position);
-        if (old != null && old.tile != next) put(position, old.block, old.meta, next);
+        if (old != null && old.tile != next) put(position, x, y, z, old.block, old.meta, next);
     }
 
     @Override
@@ -154,23 +155,28 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
         setTileEntity(x, y, z, null);
     }
 
-    private Position writable(int x, int y, int z) {
-        if (!recording || Thread.currentThread() != owner) throw new IllegalStateException("LOCAL_NATIVE_PREVIEW_SCOPE");
-        if (!blockExists(x, y, z)) throw new IllegalStateException("LOCAL_NATIVE_PREVIEW_OUT_OF_BOUNDS");
-        return new Position(x, y, z);
+    static boolean packable(int x, int y, int z) {
+        // CoordinatePacker stores signed X/Z in 26 bits and signed Y in 12 bits.
+        return x == (x << 6 >> 6) && y == (y << 20 >> 20) && z == (z << 6 >> 6);
     }
 
-    private void put(Position position, Block block, int metadata, TileEntity next) {
+    private long writable(int x, int y, int z) {
+        if (!recording || Thread.currentThread() != owner) throw new IllegalStateException("LOCAL_NATIVE_PREVIEW_SCOPE");
+        if (!blockExists(x, y, z)) throw new IllegalStateException("LOCAL_NATIVE_PREVIEW_OUT_OF_BOUNDS");
+        return CoordinatePacker.pack(x, y, z);
+    }
+
+    private void put(long position, int x, int y, int z, Block block, int metadata, TileEntity next) {
         if (next != null) {
             World current = next.getWorldObj();
             if (current != null && current != this) throw new IllegalStateException("LOCAL_NATIVE_PREVIEW_FOREIGN_TILE");
             next.setWorldObj(this);
-            next.xCoord = position.x;
-            next.yCoord = position.y;
-            next.zCoord = position.z;
+            next.xCoord = x;
+            next.yCoord = y;
+            next.zCoord = z;
             next.blockMetadata = metadata;
         }
-        placements.put(position, new Placement(position.x, position.y, position.z, block, metadata, next));
+        placements.put(position, new Placement(x, y, z, block, metadata, next));
         changed = true;
     }
 }

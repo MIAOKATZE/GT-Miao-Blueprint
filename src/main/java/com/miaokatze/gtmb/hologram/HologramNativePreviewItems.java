@@ -55,9 +55,11 @@ final class HologramNativePreviewItems implements IItemSource {
         if (catalog != null) return catalog;
         long started = HologramRuntimeMetrics.start();
         try {
-            List<ItemStack> result = new ArrayList<>();
-            if (!readNeiCatalog(result)) readRegistry(result);
-            catalog = result;
+            catalog = readNeiCatalog();
+            if (catalog == null) {
+                catalog = new ArrayList<>();
+                readRegistry(catalog);
+            }
             return catalog;
         } finally {
             HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_CATALOG, started);
@@ -81,19 +83,24 @@ final class HologramNativePreviewItems implements IItemSource {
         }
     }
 
-    private static boolean readNeiCatalog(List<ItemStack> result) {
+    private static List<ItemStack> readNeiCatalog() {
         try {
             Class<?> itemList = Class.forName("codechicken.nei.ItemList");
-            if (!itemList.getField("loadFinished").getBoolean(null)) return false;
+            if (!itemList.getField("loadFinished").getBoolean(null)) return null;
             Object items = itemList.getField("items").get(null);
-            if (items instanceof Iterable<?> source) {
-                for (Object item : source) if (item instanceof ItemStack stack) add(result, stack);
-                return !result.isEmpty();
+            if (items instanceof List<?> source && !source.isEmpty()) {
+                // NEI publishes a new ordered list when it loads or reorders items. Freeze the order for this
+                // capture, and copy individual item/NBT payloads only when evaluating their predicates.
+                List<ItemStack> result = new ArrayList<>(source.size());
+                for (Object item : source) {
+                    if (item instanceof ItemStack stack && stack.getItem() != null) result.add(stack);
+                }
+                if (!result.isEmpty()) return result;
             }
         } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
-            result.clear();
+            // The preview can still use the local registries when NEI is absent or the catalog is reloading.
         }
-        return false;
+        return null;
     }
 
     private static void add(List<ItemStack> result, ItemStack stack) {
@@ -105,6 +112,7 @@ final class HologramNativePreviewItems implements IItemSource {
 
     static ItemStack match(Predicate<ItemStack> predicate, ItemStack stack) {
         ItemStack sample = stack.copy();
+        sample.stackSize = 1;
         return predicate.test(sample) ? sample : null;
     }
 }

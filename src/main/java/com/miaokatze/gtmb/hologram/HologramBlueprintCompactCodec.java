@@ -71,9 +71,7 @@ public final class HologramBlueprintCompactCodec {
         if (bytes == null || bytes.length == 0 || bytes.length > limit)
             throw new IOException("Blueprint JSON byte budget");
         JsonObject root = parse(new String(bytes, StandardCharsets.UTF_8), limit, false);
-        return new DisplayRows(
-            documentBlueprint(root),
-            root.has("encoding") ? array(root.get("materials")) : null);
+        return new DisplayRows(root, root.has("encoding") ? array(root.get("materials")) : null);
     }
 
     /** Decode compact preview geometry without constructing a JSON tree for each cell. */
@@ -86,7 +84,12 @@ public final class HologramBlueprintCompactCodec {
         DisplayRows packed = tryPackedDisplay(json, limit);
         if (packed != null) return packed;
         JsonObject root = parse(json, limit, false);
-        return new DisplayRows(documentBlueprint(root), root.has("encoding") ? array(root.get("materials")) : null);
+        return new DisplayRows(root, root.has("encoding") ? array(root.get("materials")) : null);
+    }
+
+    static DisplayRows packedDocument(String json, int limit) throws IOException {
+        HologramBlueprintSharing.boundedJson(json, limit);
+        return tryPackedDisplay(json, limit);
     }
 
     private static DisplayRows tryPackedDisplay(String json, int limit) {
@@ -98,11 +101,11 @@ public final class HologramBlueprintCompactCodec {
             while (reader.hasNext()) {
                 String key = reader.nextName();
                 if (root.has(key)) return null;
+                if (key.equals("cells") || key.equals("presets")) return null;
                 if (!key.equals("blueprint")) {
                     root.add(key, values.read(reader));
                     continue;
                 }
-                if (!new JsonPrimitive(ENCODING).equals(root.get("encoding"))) return null;
                 JsonObject blueprint = new JsonObject();
                 reader.beginObject();
                 while (reader.hasNext()) {
@@ -117,9 +120,10 @@ public final class HologramBlueprintCompactCodec {
                 root.add(key, blueprint);
             }
             reader.endObject();
-            if (!root.has("blueprint") || reader.peek() != JsonToken.END_DOCUMENT) return null;
+            if (!root.has("blueprint") || !new JsonPrimitive(ENCODING).equals(root.get("encoding"))
+                || reader.peek() != JsonToken.END_DOCUMENT) return null;
             validateCompact(root, limit, false, rows);
-            return new DisplayRows(documentBlueprint(root), array(root.get("materials")), rows);
+            return new DisplayRows(root, array(root.get("materials")), rows);
         } catch (IOException | RuntimeException unsupported) {
             // The general reader preserves historical and noncanonical JSON forms.
             return null;
@@ -249,15 +253,17 @@ public final class HologramBlueprintCompactCodec {
     public static final class DisplayRows {
 
         public final JsonObject blueprint;
+        final JsonObject root;
         private final JsonArray rows, materials;
         private final PackedRows packed;
 
-        private DisplayRows(JsonObject blueprint, JsonArray materials) throws IOException {
-            this(blueprint, materials, null);
+        private DisplayRows(JsonObject root, JsonArray materials) throws IOException {
+            this(root, materials, null);
         }
 
-        private DisplayRows(JsonObject blueprint, JsonArray materials, PackedRows packed) throws IOException {
-            this.blueprint = blueprint;
+        private DisplayRows(JsonObject root, JsonArray materials, PackedRows packed) throws IOException {
+            this.root = root;
+            blueprint = documentBlueprint(root);
             this.materials = materials;
             this.packed = packed;
             rows = array(blueprint.get("cells"));
@@ -299,6 +305,14 @@ public final class HologramBlueprintCompactCodec {
         public JsonObject material(int index) {
             return materials.get(index)
                 .getAsJsonObject();
+        }
+
+        JsonObject paletteCell(JsonElement reference) {
+            JsonArray row = reference.getAsJsonArray();
+            JsonObject cell = cloneObject(material(row.get(0).getAsInt()));
+            for (Map.Entry<String, JsonElement> coordinate : row.get(1).getAsJsonObject().entrySet())
+                cell.add(coordinate.getKey(), coordinate.getValue());
+            return cell;
         }
     }
 

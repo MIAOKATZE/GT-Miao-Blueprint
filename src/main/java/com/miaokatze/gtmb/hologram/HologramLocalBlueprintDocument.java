@@ -140,7 +140,36 @@ public final class HologramLocalBlueprintDocument {
     /** A file ID records the library slot. A named import starts as an unsaved copy. */
     public static HologramLocalBlueprintDocument open(byte[] exactJson, String fileId) throws IOException {
         HologramLocalBlueprintCodec codec = new HologramLocalBlueprintCodec();
-        Preset source = codec.read(exactJson);
+        HologramLocalBlueprintCodec.Loaded loaded = codec.read(exactJson, () -> true);
+        codec.materialize(loaded, () -> true);
+        return open(exactJson, fileId, codec, loaded.document());
+    }
+
+    @Desugar
+    public record EditorRows(NBTTagCompound metadata, HologramBlueprintCompactCodec.DisplayRows rows,
+        NBTTagCompound[] materials, int[] bounds) {}
+
+    @Desugar
+    public record Opened(HologramLocalBlueprintDocument document, EditorRows editor) {}
+
+    public static Opened openForEditor(byte[] exactJson, String fileId, java.util.function.BooleanSupplier current)
+        throws IOException {
+        return openForEditor(exactJson, fileId, current, editor -> {});
+    }
+
+    public static Opened openForEditor(byte[] exactJson, String fileId, java.util.function.BooleanSupplier current,
+        java.util.function.Consumer<EditorRows> display) throws IOException {
+        HologramLocalBlueprintCodec codec = new HologramLocalBlueprintCodec();
+        HologramLocalBlueprintCodec.Loaded loaded = codec.read(exactJson, current);
+        HologramLocalBlueprintDocument document = open(exactJson, fileId, codec, loaded.document());
+        EditorRows editor = document.editorRows(loaded.layout(), current);
+        if (editor != null) display.accept(editor);
+        codec.materialize(loaded, current);
+        return new Opened(document, editor);
+    }
+
+    private static HologramLocalBlueprintDocument open(byte[] exactJson, String fileId, HologramLocalBlueprintCodec codec,
+        Preset source) throws IOException {
         HologramLocalBlueprintDocument opened = new HologramLocalBlueprintDocument(source, exactJson.clone(), codec);
         if (fileId != null) {
             opened.fileId = HologramLibraryService.localId(fileId, true);
@@ -1338,11 +1367,36 @@ public final class HologramLocalBlueprintDocument {
 
     /** Editable rows use precisely the portable document order, including disabled and missing-mod cells. */
     public NBTTagCompound snapshot() throws IOException {
-        NBTTagCompound state = snapshotMetadata();
+        NBTTagCompound state = editorMetadata();
         NBTTagList cells = new NBTTagList();
         VisualPayloads payloads = new VisualPayloads();
         for (Cell cell : document.cells) cells.appendTag(cellRow(cell, payloads));
         state.setTag("cells", cells);
+        return state;
+    }
+
+    private EditorRows editorRows(HologramLocalBlueprintCodec.CompactLayout layout,
+        java.util.function.BooleanSupplier current) throws IOException {
+        if (layout == null || layout.rows().cells() == 0) return null;
+        NBTTagCompound[] descriptors = new NBTTagCompound[layout.materials().length];
+        VisualPayloads payloads = new VisualPayloads();
+        long projectedBytes = 0;
+        for (int material = 0; material < descriptors.length; material++) {
+            if (!current.getAsBoolean()) throw new IOException("蓝图预览已取消");
+            Cell descriptor = layout.materials()[material];
+            if (descriptor == null) continue;
+            long before = payloads.total;
+            NBTTagCompound row = cellRow(descriptor, payloads);
+            projectedBytes += (payloads.total - before) * layout.occurrences()[material];
+            if (payloads.exceeded || projectedBytes > VisualPayloads.MAX_BYTES) return null;
+            for (String key : new String[] { "x", "y", "z", "dx", "dy", "dz" }) row.removeTag(key);
+            descriptors[material] = row;
+        }
+        return new EditorRows(editorMetadata(), layout.rows(), descriptors, layout.bounds());
+    }
+
+    private NBTTagCompound editorMetadata() throws IOException {
+        NBTTagCompound state = snapshotMetadata();
         NBTTagList structures = new NBTTagList();
         for (Structure structure : document.structures) {
             NBTTagCompound row = new NBTTagCompound();
@@ -1438,16 +1492,25 @@ public final class HologramLocalBlueprintDocument {
         private final Map<String, Integer> sizes = new HashMap<>();
         private final Map<String, NBTTagCompound> decoded = new HashMap<>();
         private long total;
+        private boolean exceeded;
 
         NBTTagCompound copy(String source) {
-            if (text(source).isEmpty() || total >= MAX_BYTES) return null;
+            if (text(source).isEmpty()) return null;
+            if (total >= MAX_BYTES) {
+                exceeded = true;
+                return null;
+            }
             try {
                 Integer size = sizes.get(source);
                 if (size == null) {
                     size = HologramBlueprintNbt.expandedBytes(source);
                     sizes.put(source, size);
                 }
-                if (size < 0 || total > MAX_BYTES - size) return null;
+                if (size < 0) return null;
+                if (total > MAX_BYTES - size) {
+                    exceeded = true;
+                    return null;
+                }
                 NBTTagCompound payload = decoded.get(source);
                 if (payload == null) {
                     payload = HologramBlueprintNbt.decodeData(source);

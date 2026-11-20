@@ -129,6 +129,10 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
         if (!(this instanceof HologramScreen)) controls.child(field.widget());
     }
 
+    final boolean deferUnclaimedFieldWidgets() {
+        return activeFieldGraph instanceof HologramUiModules graph && graph.deferInactiveWidgets();
+    }
+
     final com.cleanroommc.modularui.widgets.textfield.TextFieldWidget adoptNativeField(HologramMuiTextField field) {
         return field.claimNative();
     }

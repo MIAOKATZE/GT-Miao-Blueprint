@@ -9,15 +9,27 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.gtnewhorizon.gtnhlib.util.CoordinatePacker;
+
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+
 /** Immutable 16-cube spatial index. A patch replaces only the regions containing changed cells. */
 final class HologramRegionCache {
 
     private static final int REGION_CELLS = 4096;
     final Map<Key, List<HologramState.Cell>> regions;
+    private final Long2ObjectOpenHashMap<Region> packedRegions;
     private final int[] bounds;
 
     private HologramRegionCache(Map<Key, List<HologramState.Cell>> regions, int[] bounds) {
         this.regions = Collections.unmodifiableMap(regions);
+        packedRegions = packedRegions(regions);
+        this.bounds = bounds;
+    }
+
+    private HologramRegionCache(HologramRegionCache source, int[] bounds) {
+        regions = source.regions;
+        packedRegions = source.packedRegions;
         this.bounds = bounds;
     }
 
@@ -93,6 +105,7 @@ final class HologramRegionCache {
         }
         result.replaceAll((key, region) -> new Region(region));
         regions = Collections.unmodifiableMap(result);
+        packedRegions = packedRegions(result);
     }
 
     HologramRegionCache(HologramRegionCache previous, List<HologramState.Cell> cells, int[] changed,
@@ -117,6 +130,7 @@ final class HologramRegionCache {
             else result.put(key, new Region(region, topology));
         });
         regions = Collections.unmodifiableMap(result);
+        packedRegions = packedRegions(result);
         if (!topology) {
             bounds = previous.bounds;
             return;
@@ -136,6 +150,11 @@ final class HologramRegionCache {
         return bounds.clone();
     }
 
+    /** A preview prefix uses the validated extent of the source while its spatial index contains only the prefix. */
+    HologramRegionCache withBounds(int[] sourceBounds) {
+        return new HologramRegionCache(this, sourceBounds.clone());
+    }
+
     /** Attach enriched rows to the same spatial index. Each replacement keeps its original ordinal and position. */
     HologramRegionCache withCells(List<HologramState.Cell> cells) {
         Map<Key, List<HologramState.Cell>> rebound = new LinkedHashMap<>();
@@ -144,8 +163,23 @@ final class HologramRegionCache {
     }
 
     HologramState.Cell at(int x, int y, int z) {
-        List<HologramState.Cell> region = regions.get(new Key(x >> 4, y >> 4, z >> 4));
-        return region == null ? null : ((Region) region).at(local(x, y, z));
+        int rx = x >> 4, ry = y >> 4, rz = z >> 4;
+        Region region = canPack(rx, ry, rz) ? packedRegions.get(CoordinatePacker.pack(rx, ry, rz))
+            : (Region) regions.get(new Key(rx, ry, rz));
+        return region == null ? null : region.at(local(x, y, z));
+    }
+
+    private static Long2ObjectOpenHashMap<Region> packedRegions(Map<Key, List<HologramState.Cell>> regions) {
+        Long2ObjectOpenHashMap<Region> packed = new Long2ObjectOpenHashMap<>(regions.size());
+        regions.forEach((key, region) -> {
+            if (canPack(key.x, key.y, key.z))
+                packed.put(CoordinatePacker.pack(key.x, key.y, key.z), (Region) region);
+        });
+        return packed;
+    }
+
+    private static boolean canPack(int x, int y, int z) {
+        return x == (x << 6 >> 6) && y == (y << 20 >> 20) && z == (z << 6 >> 6);
     }
 
     boolean withinMargin(int x, int y, int z) {

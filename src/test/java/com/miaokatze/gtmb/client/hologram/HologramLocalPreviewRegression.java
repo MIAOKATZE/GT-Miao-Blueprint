@@ -21,6 +21,7 @@ public final class HologramLocalPreviewRegression {
         admissionReceipts();
         compactDisplay();
         compactDirectDisplay();
+        packedEditorParity();
         frozenDraftParity();
         singleCellAnnotation();
         compactCoordinateCompatibility();
@@ -130,6 +131,57 @@ public final class HologramLocalPreviewRegression {
             "a committed frozen save installs the verified byte representation and clears dirty");
         SimpleAssert.that(Arrays.equals(original, frozen.artifact()),
             "the already frozen placement remains byte-exact after later edits and saves");
+    }
+
+    private static void packedEditorParity() throws Exception {
+        String descriptor = "\"block\":\"minecraft:stone\",\"item\":\"minecraft:stone\","
+            + "\"structureIds\":[\"controller\"],\"prompt\":\"member note\","
+            + "\"allowedTargets\":[{\"item\":\"minecraft:stone\",\"damage\":0,\"futureTarget\":17}],"
+            + "\"futureCell\":{\"type\":\"preserved\"}";
+        String json = "{\"schema\":2,\"futureEnvelope\":37,\"blueprint\":{\"schema\":2,\"cells\":["
+            + "{\"x\":-48,\"y\":-2,\"z\":3," + descriptor + "},"
+            + "{\"x\":64,\"y\":5,\"z\":-2,\"block\":\"missing:excluded\",\"excluded\":true},"
+            + "{\"x\":9,\"y\":-2,\"z\":3," + descriptor + "}],"
+            + "\"structures\":[{\"id\":\"controller\",\"name\":\"Fixture\"}],\"palette\":[]}}";
+        byte[] exact = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec
+            .recompress(json.getBytes(StandardCharsets.UTF_8), com.miaokatze.gtmb.hologram.HologramBlueprintArtifact.MAX_JSON_BYTES);
+        java.util.concurrent.atomic.AtomicBoolean current = new java.util.concurrent.atomic.AtomicBoolean(true);
+        try {
+            HologramLocalBlueprintDocument.openForEditor(exact, "", current::get, editor -> {
+                SimpleAssert.eq(3, editor.rows().cells(), "staged render input already owns exact whole source coordinates");
+                current.set(false);
+            });
+            throw new AssertionError("The separately staged author binding ignored cancellation");
+        } catch (IOException cancelled) {
+            SimpleAssert.that(!current.get(), "validated render input publishes before editable materialization");
+        }
+        var opened = HologramLocalBlueprintDocument.openForEditor(exact, "", () -> true);
+        SimpleAssert.that(opened.editor() != null, "the persisted coordinate-first compact artifact uses packed editing");
+        HologramState.Preparation packed = new HologramState.Preparation(
+            opened.editor().metadata(), true, new HologramBlueprintPreview.CompactCells(opened.editor()));
+        SimpleAssert.that(!packed.step(1, Long.MAX_VALUE), "a packed editor produces a bounded initial prefix");
+        HologramState prefix = packed.firstDisplay();
+        SimpleAssert.that(prefix.data.getBoolean("displayPartial") && prefix.cells.get(0).x == -48,
+            "the prefix has the real document ordinal and stays nonauthoritative");
+        while (!packed.step(5, Long.MAX_VALUE)) {}
+        HologramState.Preparation expanded = new HologramState.Preparation(opened.document().snapshot(), true);
+        while (!expanded.step(5, Long.MAX_VALUE)) {}
+        SimpleAssert.eq(expanded.result().fullData(), packed.result().fullData(),
+            "packed and expanded editor views retain the same native appearance, annotations, disabled and missing cells");
+        SimpleAssert.eq(expanded.result().structureMembers, packed.result().structureMembers,
+            "rich packed layout retains exact membership rather than the library's implicit group");
+        SimpleAssert.eq(expanded.result().regions.bounds()[3], prefix.regions.bounds()[3], "early camera fits the whole target");
+
+        NBTTagCompound edit = new NBTTagCompound();
+        edit.setString("prompt", "new blueprint note");
+        opened.document().apply("editBlueprintPrompt", edit);
+        var saved = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.parse(opened.document().artifact());
+        SimpleAssert.eq(37, saved.get("futureEnvelope").getAsInt(), "the compact reader retains future source metadata");
+        var row = saved.getAsJsonObject("blueprint").getAsJsonArray("cells").get(2).getAsJsonObject();
+        SimpleAssert.eq("preserved", row.getAsJsonObject("futureCell").get("type").getAsString(),
+            "a repeated compact descriptor keeps its per-cell opaque fields on edit");
+        SimpleAssert.eq(17, row.getAsJsonArray("allowedTargets").get(0).getAsJsonObject().get("futureTarget").getAsInt(),
+            "typed shared material retains opaque candidate properties on edit");
     }
 
     private static void singleCellAnnotation() throws Exception {

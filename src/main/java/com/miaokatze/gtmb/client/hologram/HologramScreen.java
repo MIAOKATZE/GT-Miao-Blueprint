@@ -21,6 +21,7 @@ import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 public final class HologramScreen extends HologramMuiCanvasScreen implements HologramUiHost {
 
     private static final long LOCAL_CONTROLLER_FRAME_NANOS = 3_000_000L;
+    private static final int LOCAL_CONTROLLER_FRAME_ROWS = 8_192;
 
     HologramUiModules ui = new HologramUiModules(this);
     private final HologramEditorWorkspaces.Graphs workspaceGraphs = new HologramEditorWorkspaces.Graphs();
@@ -31,7 +32,6 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     private boolean detached, detachedStarted, detachedReturned, detachedReplay;
     private String detachedTopic;
     private Runnable detachedReturn;
-    private boolean domainInitialized;
     private long controllerRequest;
     private TileEntity openingController;
     private Object openingConnection;
@@ -69,9 +69,19 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     }
 
     HologramScreen(HologramState state) {
+        this(state, 0);
+    }
+
+    private HologramScreen(HologramState state, long modulesStarted) {
         super("workstation");
-        ui.session.initialize(state);
-        workspaceGraphs.retain(state, () -> ui);
+        HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.WORKBENCH_SCREEN_MODULES, modulesStarted);
+        long sessionStarted = modulesStarted == 0 ? 0 : HologramRuntimeMetrics.start();
+        try {
+            ui.session.initialize(state);
+            workspaceGraphs.retain(state, () -> ui);
+        } finally {
+            HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.WORKBENCH_SESSION_INITIALIZE, sessionStarted);
+        }
     }
 
     HologramScreen(TileEntity tile, int dimension, long request) {
@@ -106,13 +116,20 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     static HologramScreen localController(TileEntity tile, int dimension, int side) {
         long started = HologramRuntimeMetrics.start();
         try {
-            ItemStack tool = Minecraft.getMinecraft().thePlayer.getHeldItem();
-            NBTTagCompound settings = HologramLocalControllerCapture.toolSettings(tool);
-            HologramLocalControllerCapture capture = new HologramLocalControllerCapture(
-                tile, dimension, side, tool, settings, "");
-            NBTTagCompound opening = capture.opening();
-            opening.setString("status", HologramClient.text("controllerLocalPreparing", "正在读取本地标准结构…"));
-            HologramScreen screen = new HologramScreen(new HologramState(opening));
+            HologramLocalControllerCapture capture;
+            NBTTagCompound settings;
+            HologramState state;
+            try {
+                ItemStack tool = Minecraft.getMinecraft().thePlayer.getHeldItem();
+                settings = HologramLocalControllerCapture.toolSettings(tool);
+                capture = new HologramLocalControllerCapture(tile, dimension, side, tool, settings, "");
+                NBTTagCompound opening = capture.opening();
+                opening.setString("status", HologramClient.text("controllerLocalPreparing", "正在读取本地标准结构…"));
+                state = new HologramState(opening);
+            } finally {
+                HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.WORKBENCH_CONTROLLER_CAPTURE, started);
+            }
+            HologramScreen screen = new HologramScreen(state, HologramRuntimeMetrics.start());
             screen.localController = capture;
             screen.localControllerSide = side;
             screen.localControllerToolSettings = settings;
@@ -555,7 +572,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     private void advanceLocalControllerTarget(long deadline) throws java.io.IOException {
         if (localControllerPreparation == null) {
             HologramControllerTarget.Projection snapshot =
-                localController.stepTarget(2048, Math.max(1, deadline - System.nanoTime()));
+                localController.stepTarget(LOCAL_CONTROLLER_FRAME_ROWS, Math.max(1, deadline - System.nanoTime()));
             if (snapshot == null) return;
             snapshot.metadata().setString(
                 "status", HologramClient.text("controllerLocalPreparing", "正在读取本地标准结构…"));
@@ -565,7 +582,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         if (remaining <= 0) return;
         long preparation = HologramRuntimeMetrics.start();
         try {
-            if (!localControllerPreparation.step(2048, remaining)) return;
+            if (!localControllerPreparation.step(LOCAL_CONTROLLER_FRAME_ROWS, remaining)) return;
             localControllerTarget = localControllerPreparation.result();
             localControllerPreparation = null;
         } finally {
@@ -580,7 +597,8 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             || !current.data.getString("generation").equals(localControllerTarget.data.getString("generation")))
             throw new java.io.IOException("LOCAL_CONTROLLER_CHANGED");
         if (localControllerDetails == null) {
-            NBTTagCompound details = localController.stepDetails(2048, Math.max(1, deadline - System.nanoTime()));
+            NBTTagCompound details = localController.stepDetails(
+                LOCAL_CONTROLLER_FRAME_ROWS, Math.max(1, deadline - System.nanoTime()));
             if (details == null) return null;
             details.setString("status", HologramClient.text("controllerLocalStandard", "本地标准结构"));
             localControllerDetails = new HologramState.ControllerDetails(current, details);
@@ -589,7 +607,8 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         if (remaining <= 0) return null;
         long preparation = HologramRuntimeMetrics.start();
         try {
-            return localControllerDetails.step(2048, remaining) ? localControllerDetails.result() : null;
+            return localControllerDetails.step(LOCAL_CONTROLLER_FRAME_ROWS, remaining)
+                ? localControllerDetails.result() : null;
         } finally {
             HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_PREPARE, preparation);
         }
@@ -782,26 +801,15 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         }
         if (!detached) try (FieldGraph ignored = fieldGraph(ui)) {
             ui.session.updateState(next);
+            ui.shell.prepareAvailableBlueprintPages();
         }
     }
 
     @Override
     protected boolean buildNativePanel() {
         if (detached) return true;
-        if (!domainInitialized) {
-            try (FieldGraph ignored = fieldGraph(ui)) {
-                ui.router.initGui();
-            }
-            domainInitialized = true;
-        }
-        initializedGraphs.add(ui);
         workspaceMount = new com.cleanroommc.modularui.widget.ParentWidget<>().sizeRel(1f);
-        long shell = localControllerStandard() ? HologramRuntimeMetrics.start() : 0;
-        try {
-            workspaceMount.child(ui.shell.build(panel()));
-        } finally {
-            HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.WORKBENCH_SHELL, shell);
-        }
+        mountWorkspaceGraph();
         panel().child(workspaceMount);
         return true;
     }
@@ -810,9 +818,14 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         if (initializedGraphs.add(ui)) {
             try (FieldGraph ignored = fieldGraph(ui)) {
                 ui.router.initGui();
-                workspaceMount.child(ui.shell.build(panel()));
+                long shell = localControllerStandard() ? HologramRuntimeMetrics.start() : 0;
+                try {
+                    workspaceMount.child(ui.shell.build(panel()));
+                } finally {
+                    HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.WORKBENCH_SHELL, shell);
+                }
             }
-            workspaceMount.scheduleResize();
+            if (workspaceMount.isValid()) workspaceMount.scheduleResize();
         }
     }
 

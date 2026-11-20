@@ -20,6 +20,7 @@ import net.minecraft.nbt.NBTTagList;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramBlueprintFiles;
 import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument;
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.EditorRows;
 import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.FrozenDraft;
 
 /** File I/O and viewport preparation for the ordinary in-client authoring workspace. */
@@ -44,6 +45,10 @@ final class HologramLocalBlueprintWorkspace {
         final HologramLocalBlueprintDocument draft;
         volatile long revision;
         HologramState.Preparation preparation;
+        HologramState openingPreview;
+        HologramState preparedView;
+        boolean opening, packedEditor;
+        long advancedInFrame;
         HologramLocalBlueprintDocument.StructureTask structure;
         String message;
         HologramLocalBlueprintDocument destination;
@@ -68,6 +73,17 @@ final class HologramLocalBlueprintWorkspace {
 
     boolean busy() {
         return task != null;
+    }
+
+    boolean opening() {
+        Task current = task;
+        return current != null && current.opening && screenCurrent(current);
+    }
+
+    HologramState openingPreview() {
+        Task current = task;
+        if (current == null || !current.packedEditor || !current(current) || !screenCurrent(current)) return null;
+        return current.openingPreview;
     }
 
     String status() {
@@ -99,10 +115,10 @@ final class HologramLocalBlueprintWorkspace {
     void openPublic(String id) {
         Task current = begin("正在读取服务器蓝图");
         if (current == null) return;
+        current.opening = true;
         HologramLibraryClient.INSTANCE.openPublic(
             id,
-            json -> work(current, () -> prepareView(
-                current, HologramLocalBlueprintDocument.open(json, ""), "已打开服务器蓝图的本地副本")),
+            json -> work(current, () -> prepareOpen(current, json, "", "已打开服务器蓝图的本地副本")),
             reason -> failed(current, new IOException(reason)));
     }
 
@@ -191,9 +207,19 @@ final class HologramLocalBlueprintWorkspace {
     private void open(FileSource source, String localId) {
         Task current = begin("正在读取客户端蓝图");
         if (current == null) return;
-        work(current, () -> {
-            HologramLocalBlueprintDocument document = HologramLocalBlueprintDocument.open(source.read(), localId);
-            prepareView(current, document, "已打开客户端蓝图");
+        current.opening = true;
+        work(current, () -> prepareOpen(current, source.read(), localId, "已打开客户端蓝图"));
+    }
+
+    private void prepareOpen(Task current, byte[] json, String localId, String notice) throws IOException {
+        var opened = HologramLocalBlueprintDocument.openForEditor(
+            json, localId, () -> current(current),
+            editor -> stageView(current, null, editor, editor.metadata(), notice));
+        if (opened.editor() == null) prepareView(current, opened.document(), notice);
+        else main(() -> {
+            if (!current(current) || !screenCurrent(current)) return;
+            current.destination = opened.document();
+            publishView(current);
         });
     }
 
@@ -339,7 +365,12 @@ final class HologramLocalBlueprintWorkspace {
     }
 
     private void prepareView(Task current, HologramLocalBlueprintDocument document, String notice) throws IOException {
-        NBTTagCompound snapshot = commandResult(current, document.snapshot(), true, "");
+        stageView(current, document, null, document.snapshot(), notice);
+    }
+
+    private void stageView(Task current, HologramLocalBlueprintDocument document, EditorRows editor,
+        NBTTagCompound source, String notice) {
+        NBTTagCompound snapshot = commandResult(current, source, true, "");
         main(() -> {
             if (task != current) return;
             if (!current(current) || !screenCurrent(current)) {
@@ -350,7 +381,9 @@ final class HologramLocalBlueprintWorkspace {
                 snapshot.setInteger("dimension", ui.host.minecraft().thePlayer.dimension);
             try {
                 current.destination = document;
-                current.preparation = new HologramState.Preparation(snapshot, true);
+                current.packedEditor = editor != null;
+                current.preparation = new HologramState.Preparation(
+                    snapshot, true, editor == null ? null : new HologramBlueprintPreview.CompactCells(editor));
                 current.notice = notice;
             } catch (RuntimeException failure) {
                 failed(current, failure);
@@ -359,33 +392,83 @@ final class HologramLocalBlueprintWorkspace {
     }
 
     void tick() {
+        advance(false);
+    }
+
+    void advanceFrame() {
+        advance(true);
+    }
+
+    private void advance(boolean frame) {
         Task current = task;
-        if (current == null || current.preparation == null && current.structure == null) return;
+        if (current == null) return;
+        if (!current.opening && current.preparation == null && current.structure == null) return;
         if (!current(current) || !screenCurrent(current)) {
             if (current.structure != null) current.structure.close();
             task = null;
             return;
         }
         if (current.structure != null) {
-            advanceStructure(current);
+            if (!frame) advanceStructure(current);
             return;
         }
+        if (current.preparation == null) return;
+        if (frame && !current.packedEditor) return;
+        long now = System.nanoTime();
+        if (frame) current.advancedInFrame = now;
+        else if (current.advancedInFrame != 0 && now - current.advancedInFrame < 60_000_000L) return;
         try {
-            if (!current.preparation.step(512, 2_000_000L)) return;
-            task = null;
-            HologramState initial = current.preparation.result();
-            if (ui.session.document() == current.destination)
-                ui.session.publishLocalDocument(current.destination, initial);
-            else {
-                String fileId = current.destination.fileId();
-                if (!fileId.isEmpty()) HologramLibraryClient.INSTANCE.select(false, fileId);
-                ui.session.installLocalDocument(current.destination, initial);
-            }
-            if (!current.notice.isEmpty()) ui.session.notice(current.notice);
+            advanceView(current, current.packedEditor ? 5_000_000L : 2_000_000L);
+            publishView(current);
         } catch (RuntimeException failure) {
             task = null;
             ui.session.notice(HologramUiText.reason(failure.getMessage()));
         }
+    }
+
+    private void publishView(Task current) {
+        if (current.destination == null || current.preparedView == null) return;
+        HologramState initial = current.preparedView;
+        task = null;
+        if (ui.session.document() == current.destination) ui.session.publishLocalDocument(current.destination, initial);
+        else {
+            String fileId = current.destination.fileId();
+            if (!fileId.isEmpty()) HologramLibraryClient.INSTANCE.select(false, fileId);
+            ui.session.installLocalDocument(current.destination, initial);
+        }
+        if (!current.notice.isEmpty()) ui.session.notice(current.notice);
+    }
+
+    private void advanceView(Task current, long nanos) {
+        HologramState.Preparation preparation = current.preparation;
+        if (preparation.canPrepareCompactIndex()) {
+            HologramState.Preparation.DetachedIndex index = preparation.prepareCompactIndex(256, nanos);
+            if (index == null) return;
+            current.openingPreview = index.firstDisplay();
+            current.preparation = null;
+            work(current, () -> {
+                HologramState result = index.finish(() -> current(current));
+                if (result != null) main(() -> acceptIndexedView(current, result));
+            });
+        } else {
+            boolean complete = preparation.step(current.packedEditor ? Integer.MAX_VALUE : 512, nanos);
+            if (current.packedEditor && current.openingPreview == null && (!complete || current.destination == null))
+                current.openingPreview = preparation.firstDisplay();
+            if (complete) {
+                current.preparedView = preparation.result();
+                current.preparation = null;
+            }
+        }
+    }
+
+    private void acceptIndexedView(Task current, HologramState result) {
+        if (!current(current)) return;
+        if (!screenCurrent(current)) {
+            task = null;
+            return;
+        }
+        current.preparedView = result;
+        publishView(current);
     }
 
     private void advanceStructure(Task current) {

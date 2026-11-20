@@ -32,6 +32,7 @@ import org.lwjgl.opengl.GL14;
 
 import com.gtnewhorizon.gtnhlib.client.renderer.DirectTessellator;
 import com.miaokatze.gtmb.hologram.HologramPreviewPose;
+import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteDisplayList;
 import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteMaterialBatch;
 import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteMesh;
@@ -95,6 +96,8 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     private List<Face> cachedFaces = new ArrayList<>();
     private PreviewSubmission previewSubmission;
     private List<Face> hoverFaces;
+    private MaterialPresentation materialPresentation;
+    private long materialSerial;
     private int hoverX, hoverY, hoveredCell = -1;
     static long previewSliceCaptures, previewSliceHits, previewSliceReplayedQuads, previewSliceUnsupported,
         previewSliceFallbackFrames;
@@ -115,6 +118,24 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         session.replaceSubmission(null);
         previewSubmission = null;
         hoverFaces = null;
+    }
+
+    @com.github.bsideup.jabel.Desugar
+    record MaterialPresentation(HologramState state, long serial, long drawnAtNanos,
+        int submittedCells, boolean complete, boolean bodyMaterial) {}
+
+    MaterialPresentation materialPresentation() {
+        return materialPresentation;
+    }
+
+    private static boolean materialBody(HologramState.Cell cell) {
+        return !cell.anchor && !cell.iconOnly && !cell.missingBlock && !cell.sourceMissing;
+    }
+
+    private static boolean bodyFaces(List<Face> faces) {
+        for (Face face : faces)
+            if (!face.empty && !face.nativeModel && materialBody(face.cell) && !face.samples().isEmpty()) return true;
+        return false;
     }
 
     private int previewHovered(List<Face> faces, int mouseX, int mouseY, boolean picking) {
@@ -189,6 +210,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
 
     @Override
     public void close() {
+        materialPresentation = null;
         releasePreview();
         assets.clear();
     }
@@ -402,6 +424,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         invalidatePreviewDrawCache();
         session.clearPresentation();
         displayedState = null;
+        materialPresentation = null;
         presentedState = null;
         presentedFrame = null;
         presentedRequest = null;
@@ -620,7 +643,8 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                 || previewPreparation.projection.published != state.cells.size())
                 previewPreparation.advance(
                     layer, view, currentView, key,
-                    browseViewport && !cameraChanged && allowCapture && !state.data.getBoolean("displayPartial")
+                    (browseViewport || previewPreparation.localBlueprint) && !cameraChanged && allowCapture
+                        && !state.data.getBoolean("displayPartial")
                         && state.cells.size() >= LARGE_BROWSE_CELLS ? LARGE_BROWSE_BUILD_NANOS : PREVIEW_BUILD_NANOS);
         }
         if (!budgeted && (previewState != state || !key.equals(previewKey))) {
@@ -748,6 +772,9 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         if (PREVIEW_TIMINGS != null) PREVIEW_TIMINGS.mark(0);
         lastPreviewRoleMarkers = lastPreviewAnchorMarkers = 0;
         int hovered = -1;
+        boolean measureMaterial = budgeted && HologramRuntimeMetrics.isEnabled();
+        boolean bodyMaterial = false;
+        long materialAt = 0;
         GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
         try {
             GL11.glDisable(GL11.GL_LIGHTING);
@@ -829,6 +856,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                     moveY,
                     budgeted && t.getClass() == Tessellator.class);
             }
+            if (measureMaterial && materialDrawn) bodyMaterial = bodyFaces(faces);
             if (PREVIEW_TIMINGS != null) PREVIEW_TIMINGS.mark(3);
             HologramRasterBridge.Frame raster = HologramRasterBridge
                 .begin(state, view == 1 || state.data.getInteger("mode") == 2);
@@ -853,7 +881,10 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                     view == 1 || state.data.getInteger("mode") == 2
                         || cell.anchor
                         || cell.status.equals("protected") && cell.actualStack != null)
-                    > 0) materialDrawn = true;
+                    > 0) {
+                    materialDrawn = true;
+                    if (measureMaterial && materialBody(cell)) bodyMaterial = true;
+                }
                 GL11.glPopAttrib();
                 GL11.glPopMatrix();
                 if (pixels != null) raster.after(cell, pixels);
@@ -868,6 +899,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                 HologramLinkNodePreview.draw(cell, current, .96f);
                 GL11.glPopMatrix();
             }
+            if (measureMaterial && materialDrawn) materialAt = System.nanoTime();
             if (PREVIEW_TIMINGS != null) PREVIEW_TIMINGS.mark(4);
             GL11.glDisable(GL11.GL_TEXTURE_2D);
             // Read face depth without writing line depth. The small z bias avoids coplanar
@@ -1096,6 +1128,12 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             || previewPreparation != null && previewPreparation.boundary != null
                 && previewPreparation.boundary.presented ? state : null;
         previewSubmitted = !budgeted || previewPreparation.projection.published == state.cells.size();
+        if (materialAt != 0) {
+            boolean complete = previewSubmitted && !state.data.getBoolean("displayPartial");
+            materialPresentation = new MaterialPresentation(state, ++materialSerial,
+                complete ? System.nanoTime() : materialAt, previewPreparation.projection.published, complete,
+                bodyMaterial);
+        }
         if (budgeted && previewSubmitted && !previewPreparation.completeGeometryPresented) {
             previewPreparation.completeGeometryPresented = true;
             if (previewPreparation.boundary != null) previewPreparation.boundary.discardProjectedPoints();
@@ -1506,8 +1544,9 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             structureBoundsState = state;
             cachedStructureBounds = structureBounds(state);
             missingStructures.clear();
-            for (HologramState.Cell cell : state.cells)
-                if (cell.sourceMissing) missingStructures.addAll(cell.structureIds);
+            if (!cachedStructureBounds.isEmpty())
+                for (HologramState.Cell cell : state.cells)
+                    if (cell.sourceMissing) missingStructures.addAll(cell.structureIds);
         }
         for (Map.Entry<String, int[]> entry : cachedStructureBounds.entrySet()) {
             int[] b = entry.getValue();
@@ -1535,6 +1574,9 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
 
     /** Pure shared-wall bounds calculation; one cell can extend several structures without duplicate mesh cells. */
     Map<String, int[]> structureBounds(HologramState state) {
+        if (state.structureMembers.isEmpty()
+            || (state.structureMembers.size() == 1 && state.structureMembers.containsKey("")))
+            return java.util.Collections.emptyMap();
         Map<String, int[]> bounds = new LinkedHashMap<>();
         for (HologramState.Cell cell : state.cells) for (String structureId : cell.structureIds) {
             int[] b = bounds.get(structureId);
@@ -1910,11 +1952,14 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         private List<MiaoVisonLiteTopology.Run<HologramState.Cell, PreviewCell>> detachedRuns;
         private int detachedRun;
         final PreviewBoundary boundary;
+        final boolean localBlueprint;
         PreviewProjection projection;
         boolean outlineObserved, materialObserved, readyObserved, completeGeometryPresented;
 
         PreviewPreparation(HologramState state, boolean outline) {
             this.state = state;
+            localBlueprint = state.data.getBoolean("localBlueprintDocument")
+                || (browseViewport && "blueprint-artifact".equals(state.session));
             regions = state.regions.regions.entrySet()
                 .iterator();
             // Structure hints already enter the progressive mesh directly. A second all-cell occupancy/edge pass
@@ -1930,7 +1975,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                 detached = startDetached(state, layer, view, current);
             }
             boolean waitingForBoundary = false;
-            if (boundary != null) {
+            if (boundary != null && !localBlueprint) {
                 long boundaryDeadline = start + PREVIEW_BUILD_NANOS;
                 boundary.advance(layer, view, current, Integer.MAX_VALUE, boundaryDeadline);
                 boundary.project(key, projectedFrame, Integer.MAX_VALUE, boundaryDeadline);
@@ -1961,6 +2006,13 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             // presentation before material publication, including when the worker has already produced a full mesh.
             if (!waitingForBoundary) projection.publish();
             else if (completed != before) previewBoundaryOverlapFrames++;
+            // A validated blueprint already owns its neighbor index. Fill in the interim outline
+            // in the remaining budget while material sections start using that same index.
+            if (localBlueprint && boundary != null && projection.published < state.cells.size()
+                && System.nanoTime() < deadline) {
+                boundary.advance(layer, view, current, Integer.MAX_VALUE, deadline);
+                boundary.project(key, projectedFrame, Integer.MAX_VALUE, deadline);
+            }
             if (completed == state.cells.size()) closeDetached();
         }
 
@@ -1988,10 +2040,12 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                     }
                     if (detached != null) {
                         detachedRuns = detached.take(entry.getKey());
-                        if (detachedRuns == null) {
-                            if (!detached.done()) break;
+                        if (detachedRuns == null && detached.done())
                             detachedRuns = detached.take(entry.getKey());
-                        }
+                        // Start a local artifact on the client if the first worker section has not arrived.
+                        // Once material is visible, give the bounded background preparation priority again.
+                        if (detachedRuns == null && !detached.done() && (!localBlueprint || materialObserved))
+                            break;
                         detachedRun = 0;
                     }
                     region = new PreviewRegion();

@@ -45,6 +45,18 @@ final class HologramLibraryClient {
             return thread;
         },
         new ThreadPoolExecutor.AbortPolicy());
+    private final ThreadPoolExecutor thumbnailWorker = new ThreadPoolExecutor(
+        0,
+        1,
+        15,
+        TimeUnit.SECONDS,
+        new ArrayBlockingQueue<>(1),
+        runnable -> {
+            Thread thread = new Thread(runnable, "GTMB blueprint thumbnails");
+            thread.setDaemon(true);
+            return thread;
+        },
+        new ThreadPoolExecutor.DiscardOldestPolicy());
     private HologramClientLibrary store;
     private NBTTagList local = new NBTTagList(), server = new NBTTagList();
     private NBTTagCompound config = new NBTTagCompound();
@@ -74,6 +86,7 @@ final class HologramLibraryClient {
     private HologramLibraryDownload.Assembly incoming;
     private volatile long generation;
     private volatile long lastActivity;
+    private long lastDisplayFrame;
     private volatile HologramProgress workerDisplayProgress;
     private Object libraryConnection;
     private Object libraryWorld, quickTool;
@@ -104,12 +117,16 @@ final class HologramLibraryClient {
     private long browseStartedAt;
     private final HologramLibraryPreviewImage previewImage = new HologramLibraryPreviewImage();
     private HologramState.Preparation browsePreparation;
+    private volatile DisplayIndex displayIndex;
     private HologramState browseState;
-    private long browseEpoch;
+    private volatile long browseEpoch;
     private String browseStatus = "";
     private String lastIntegratedPreview = "";
     private volatile UpgradeTask upgradeTask;
     private final java.util.List<String> upgradeDetails = new java.util.ArrayList<>();
+
+    @com.github.bsideup.jabel.Desugar
+    private record DisplayIndex(DisplaySource source, long generation, long task, long epoch, boolean placement) {}
 
     private static final class UpgradeTask {
 
@@ -158,7 +175,7 @@ final class HologramLibraryClient {
         String hash;
         byte[] artifact;
         String artifactHash;
-        BufferedImage thumbnail;
+        volatile BufferedImage thumbnail;
 
         DisplaySource(String key, String stamp, byte[] json, NBTTagCompound snapshot, String localId, String publicId,
             String hash, String revision) {
@@ -515,7 +532,8 @@ final class HologramLibraryClient {
                 publicArtifactBytes = 0;
             }
         }
-        tickBrowsePreview();
+        if (lastDisplayFrame == 0 || System.nanoTime() - lastDisplayFrame >= 60_000_000L)
+            tickBrowsePreview(5_000_000L);
         if (quickPreview && (!sameQuickTool(mc) || !quickScreenAllowed(mc))) cancelQuickPlacement();
         if (placementSubmission != null && (!placementSubmission.current() || !sameQuickTool(mc)))
             cancelProjectedPlacement("蓝图放置来源或投影仪已变化，请重新确认");
@@ -993,6 +1011,8 @@ final class HologramLibraryClient {
             browsePreparation.unit(),
             false,
             now);
+        else if (displayIndex != null)
+            transferProgress.update(identity, "snapshot.regions", 0, 0, "", false, now);
         else if (displayPreparing != null && displayPreparing.state != null && !displayPlacement)
             transferProgress.update(
                 identity,
@@ -1387,7 +1407,7 @@ final class HologramLibraryClient {
         status = "正在读取蓝图预览";
         localProgressPhase = "library.read";
         work(() -> {
-            DisplaySource source = readDisplaySource("local:" + id, store.savedPath(id), id, "");
+            DisplaySource source = readDisplaySource("local:" + id, store.savedPath(id), id, "", !placement, token, epoch);
             main(() -> {
                 if (discardedBrowse(token, epoch, placement)) return;
                 startDisplay(source, placement, epoch);
@@ -1449,22 +1469,29 @@ final class HologramLibraryClient {
 
     DisplaySource readDisplaySource(String key, java.nio.file.Path path, String localId, String publicId)
         throws java.io.IOException {
+        return readDisplaySource(key, path, localId, publicId, false, generation, browseEpoch);
+    }
+
+    private DisplaySource readDisplaySource(String key, java.nio.file.Path path, String localId, String publicId,
+        boolean thumbnail, long token, long epoch) throws java.io.IOException {
         String stamp = fileStamp(path);
         DisplaySource cached;
         synchronized (localPreviews) {
             cached = localPreviews.get(key);
         }
-        if (cached != null && stamp.equals(cached.stamp)) return cached;
-        long token = generation, epoch = browseEpoch;
-        BufferedImage thumbnail = readBrowseImage(path, token, epoch);
+        if (cached != null && stamp.equals(cached.stamp)) {
+            if (thumbnail && cached.thumbnail == null) queueBrowseImage(cached, path, token, epoch);
+            return cached;
+        }
         byte[] json = readDisplayBytes(path, HologramBlueprintArtifact.MAX_JSON_BYTES);
         if (!stamp.equals(fileStamp(path))) throw new java.io.IOException("蓝图文件已变化，请重试");
+        DisplaySource source = new DisplaySource(key, stamp, json, null, localId, publicId, "", "");
+        if (thumbnail) queueBrowseImage(source, path, token, epoch);
         observeDisplay(token, "library.parse", 0, 0, "");
         HologramBlueprintPreview.DisplayInput input = HologramBlueprintPreview
             .displayInput(json, (done, total) -> observeDisplay(token, "library.parse", done, total, "cells"));
-        DisplaySource source = new DisplaySource(key, stamp, json, input.snapshot, localId, publicId, "", "");
+        source.snapshot = input.snapshot;
         source.compactCells = input.cells;
-        source.thumbnail = thumbnail;
         return source;
     }
 
@@ -1637,23 +1664,29 @@ final class HologramLibraryClient {
             .update("library:" + token, phase, done, total, unit, false, lastActivity);
     }
 
-    private BufferedImage readBrowseImage(java.nio.file.Path source, long token, long epoch) {
-        try {
-            java.nio.file.Path png = HologramBlueprintArtifact.previewPath(source);
-            if (!java.nio.file.Files.isRegularFile(png)) return null;
-            String stamp = fileStamp(png);
-            BufferedImage image = decodeDisplayImage(
-                readDisplayBytes(png, HologramBlueprintArtifact.MAX_PNG_BYTES, false));
-            if (!stamp.equals(fileStamp(png))) return null;
-            main(
-                () -> {
-                    if (token == generation && epoch == browseEpoch && browseState == null) previewImage.replace(image);
+    private void queueBrowseImage(DisplaySource source, java.nio.file.Path path, long token, long epoch) {
+        thumbnailWorker.execute(() -> {
+            if (token != generation || epoch != browseEpoch) return;
+            try {
+                java.nio.file.Path png = HologramBlueprintArtifact.previewPath(path);
+                if (!java.nio.file.Files.isRegularFile(png)) return;
+                String stamp = fileStamp(png);
+                BufferedImage image = decodeDisplayImage(
+                    readDisplayBytes(png, HologramBlueprintArtifact.MAX_PNG_BYTES, false));
+                if (!stamp.equals(fileStamp(png)) || !source.stamp.equals(fileStamp(path))) return;
+                main(() -> {
+                    if (token != generation || epoch != browseEpoch) return;
+                    source.thumbnail = image;
+                    synchronized (localPreviews) {
+                        if (localPreviews.get(source.key) == source) retainDisplaySource(source);
+                    }
+                    if (browseState == null || !HologramRenderer.browse().previewMeshVisible(browseState))
+                        previewImage.replace(image);
                 });
-            return image;
-        } catch (java.io.IOException | RuntimeException unavailable) {
-            // An optional picture never blocks the actual blueprint display.
-            return null;
-        }
+            } catch (java.io.IOException | RuntimeException unavailable) {
+                // The local cover is optional and independent of preparing geometry.
+            }
+        });
     }
 
     static BufferedImage decodeDisplayImage(byte[] png) throws java.io.IOException {
@@ -1722,7 +1755,8 @@ final class HologramLibraryClient {
             DisplaySource source;
             String localId = id.startsWith("local_") ? id : "local_" + id;
             if (localId.matches("local_[a-fA-F0-9-]{36}") && java.nio.file.Files.isRegularFile(store.savedPath(localId)))
-                source = readDisplaySource("local:" + localId, store.savedPath(localId), localId, "");
+                source = readDisplaySource(
+                    "local:" + localId, store.savedPath(localId), localId, "", !placement, token, epoch);
             else {
                 String key = id.startsWith("legacy:") ? id : "legacy:" + id;
                 String stamp = fileStamp(store.legacyCatalogPath());
@@ -1761,6 +1795,7 @@ final class HologramLibraryClient {
             }
             displayPreparing = null;
             browsePreparation = null;
+            displayIndex = null;
         }
         browseState = null;
         browseStatus = "";
@@ -1769,6 +1804,7 @@ final class HologramLibraryClient {
     private void startDisplay(DisplaySource source, boolean placement, long epoch) {
         workerDisplayProgress = null;
         displayFirstPublished = false;
+        displayIndex = null;
         if (previewImage.image() == null) previewImage.replace(source.thumbnail);
         displayPreparing = source;
         displayPlacement = placement;
@@ -1789,6 +1825,7 @@ final class HologramLibraryClient {
         boolean placement = displayPlacement;
         displayPreparing = null;
         browsePreparation = null;
+        displayIndex = null;
         displayPlacement = false;
         preparing = false;
         source.snapshot = null;
@@ -1867,11 +1904,30 @@ final class HologramLibraryClient {
         return compact.length < source.length ? compact : source;
     }
 
-    private void tickBrowsePreview() {
+    void advanceFrame() {
         if (displayPreparing == null) return;
+        if (!displayContextCurrent()) return;
+        lastDisplayFrame = System.nanoTime();
+        tickBrowsePreview(5_000_000L);
+    }
+
+    private boolean displayContextCurrent() {
+        Minecraft mc = Minecraft.getMinecraft();
+        return mc.theWorld != null && mc.theWorld == libraryWorld && mc.getNetHandler() == libraryConnection
+            && mc.thePlayer != null && mc.thePlayer.getUniqueID().equals(libraryActor)
+            && (!quickPreview || sameQuickTool(mc) && quickScreenAllowed(mc));
+    }
+
+    private void tickBrowsePreview(long nanos) {
+        if (displayPreparing == null || displayIndex != null) return;
         try {
             if (browsePreparation != null) {
-                if (browsePreparation.step(Integer.MAX_VALUE, 2_000_000L)) {
+                if (browsePreparation.canPrepareCompactIndex()) {
+                    HologramState.Preparation.DetachedIndex index = browsePreparation.prepareCompactIndex(256, nanos);
+                    lastActivity = System.nanoTime();
+                    if (index != null) startDisplayIndex(index);
+                    return;
+                } else if (browsePreparation.step(Integer.MAX_VALUE, nanos)) {
                     displayPreparing.state = browsePreparation.result();
                     browsePreparation = null;
                     if (!displayPlacement) browseState = displayPreparing.state;
@@ -1888,8 +1944,39 @@ final class HologramLibraryClient {
         } catch (RuntimeException invalid) {
             displayPreparing = null;
             browsePreparation = null;
+            displayIndex = null;
             failTask("preview.decode", "Preview unavailable: " + invalid.getMessage());
         }
+    }
+
+    private void startDisplayIndex(HologramState.Preparation.DetachedIndex index) {
+        DisplayIndex ticket = new DisplayIndex(
+            displayPreparing, generation, backgroundTaskToken, displayEpoch, displayPlacement);
+        displayIndex = ticket;
+        browsePreparation = null;
+        HologramState prefix = index.firstDisplay();
+        if (!ticket.placement() && prefix != null && ticket.epoch() == browseEpoch) {
+            browseState = prefix;
+            displayFirstPublished = true;
+        }
+        work(() -> {
+            HologramState complete = index.finish(
+                () -> displayIndex == ticket && ticket.generation() == generation);
+            if (complete != null) main(() -> {
+                if (!displayIndexCurrent(ticket)) return;
+                ticket.source().state = complete;
+                displayReady();
+            });
+        }, failure -> {
+            if (displayIndexCurrent(ticket))
+                failTask("preview.decode", "Preview unavailable: " + failure.getMessage());
+        });
+    }
+
+    private boolean displayIndexCurrent(DisplayIndex ticket) {
+        return displayIndex == ticket && ticket.generation() == generation && ticket.task() == backgroundTaskToken
+            && ticket.source() == displayPreparing && ticket.placement() == displayPlacement
+            && (ticket.placement() || ticket.epoch() == browseEpoch) && displayContextCurrent();
     }
 
     boolean prepareLocalPlacement(HologramLocalPlacement placement) {
@@ -2135,8 +2222,15 @@ final class HologramLibraryClient {
         if (abandoned != null && abandoned.failure() != null) abandoned.failure().accept(reason);
         displayPreparing = null;
         browsePreparation = null;
+        displayIndex = null;
         workerDisplayProgress = null;
         releaseBrowseImage();
+        if (displayFirstPublished && browseState != null && browseState.data.getBoolean("displayPartial")) {
+            HologramRenderer.cancelBrowseTopology(browseState);
+            HologramRenderer.releaseInactiveBrowse(browseState);
+            browseState = null;
+        }
+        displayFirstPublished = false;
         displayPlacement = false;
         placementSubmission = null;
         placementRequest = null;

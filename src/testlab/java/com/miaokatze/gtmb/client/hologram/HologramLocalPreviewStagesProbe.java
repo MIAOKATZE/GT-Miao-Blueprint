@@ -77,6 +77,7 @@ final class HologramLocalPreviewStagesProbe {
     private static final String FLAG = "gtmb.testlab.localPreviewStages";
     private static final String SOURCE = FLAG + "Source";
     private static final String HANDLER = "gtmb-testlab-local-preview-stages";
+    private static final int SOLAR_BODY_CELLS = 2847;
     private static final Set<String> PLACEMENT_FIELDS = new HashSet<>(
         Arrays.asList(
             "action",
@@ -98,13 +99,18 @@ final class HologramLocalPreviewStagesProbe {
     private final NativeParity parity = NativeParity.configured();
     private final boolean workbenchStages = Boolean.getBoolean(FLAG + "WorkbenchStages");
     private final String timingMode = System.getProperty(FLAG + "Timing", "");
+    private final boolean strictTiming = HologramPreviewThresholdWitness.enabled() && "gtmb".equals(timingMode);
     private final List<Map<String, Object>> timingRuns = new ArrayList<>();
+    private final List<HologramState> timingSolarStates = new ArrayList<>();
     private GuiScreen timingScreen;
     private long reopenAtTick;
     private volatile Map<String, Object> timingNeiFrame;
     private Map<String, Object> timingGtmbFrame;
     private Map<String, Object> timingFrameToCapture;
     private long timingDrawFrame;
+    private long timingWorkbenchInitNanos;
+    private Map<String, Map<String, Long>> timingWorkbenchActivity;
+    private HologramPreviewThresholdWitness timingMaterial;
     private volatile Exception timingFailure;
     private final int x, y, z, toolSlot, stoneSlot;
     private final String actorName;
@@ -179,6 +185,7 @@ final class HologramLocalPreviewStagesProbe {
             evidence.put("timingMode", timingMode);
             evidence.put("timingRuns", timingRuns);
             evidence.put("timingScope", "same default trigger, south facing, first open then natural close/reopen");
+            if (strictTiming) evidence.put("strictPreviewThresholds", true);
         }
         if (parity != null) {
             require(!construction, "Native controller parity and the construction positive control are separate fixtures");
@@ -253,8 +260,15 @@ final class HologramLocalPreviewStagesProbe {
         evidence.put("stage", stage);
         evidence.put("worldInputFocused", HologramClient.worldInputFocused());
         if (fixtureFailure != null) throw new IllegalStateException("Owned fixture failed", fixtureFailure);
+        boolean expired = System.nanoTime() - started >= 90_000_000_000L;
+        if (expired && timingMaterial != null) {
+            evidence.put("pendingWorkbenchInitializationNanos", timingWorkbenchInitNanos);
+            evidence.put("pendingWorkbenchInitializationActivity", timingWorkbenchActivity);
+            evidence.put("pendingMaterialFrameThresholds", timingMaterial.receipt(
+                0, parity == NativeParity.SOLAR ? HologramPreviewThresholdWitness.SOLAR_COMPLETE_NANOS : 0));
+        }
         require(
-            System.nanoTime() - started < 90_000_000_000L,
+            !expired,
             "Local preview proof timed out in stage " + stage
                 + ", focus="
                 + HologramClient.worldInputFocused()
@@ -421,6 +435,10 @@ final class HologramLocalPreviewStagesProbe {
         if (!timingMode.isEmpty()) {
             if (finished || stage != 1 || gui != timingScreen || timingFailure != null
                 || timingFrameToCapture != null) return;
+            if (timingMaterial != null && gui instanceof HologramScreen shown) {
+                timingMaterial.observe(shown.ui.session.state(), HologramRenderer.editorMaterialPresentation());
+                return;
+            }
             if (gui instanceof HologramScreen shown && workbench.guiPost(shown)) {
                 timingFrameToCapture = new LinkedHashMap<>();
                 timingDrawFrame = frame;
@@ -514,19 +532,27 @@ final class HologramLocalPreviewStagesProbe {
             if (channel == null) observeOutbound();
             look(mc, x + .5, y + .5, z + .5);
             require(hitAt(mc, x, y, z), "The timing fixture is not at the player's crosshair");
-            controllerClicked = System.nanoTime();
             if ("nei".equals(timingMode)) {
+                controllerClicked = System.nanoTime();
                 timingScreen = HologramNeiFirstFrame.open(mc, controllerItem);
             } else {
                 if (mc.thePlayer.inventory.getStackInSlot(toolSlot) != fixtureTool)
                     mc.thePlayer.inventory.setInventorySlotContents(toolSlot, fixtureTool);
                 HologramRuntimeMetrics.setEnabled(true);
-                workbench = new HologramWorkbenchStagesWitness(null, controllerClicked);
+                if (strictTiming) timingMaterial = new HologramPreviewThresholdWitness(
+                    parity == NativeParity.SOLAR ? SOLAR_BODY_CELLS + 1 : 0);
+                NBTTagCompound beforeOpen = HologramRuntimeMetrics.snapshot().getCompoundTag("activity");
+                controllerClicked = System.nanoTime();
                 if (postFocus) HologramScreen.localController(tile, mc.thePlayer.dimension, mc.objectMouseOver.sideHit)
                     .openFrom(mc.currentScreen);
                 else rightClick(mc);
+                timingWorkbenchInitNanos = System.nanoTime() - controllerClicked;
+                timingWorkbenchActivity = workbenchActivity(
+                    beforeOpen, HologramRuntimeMetrics.snapshot().getCompoundTag("activity"));
                 require(mc.currentScreen instanceof HologramScreen, "The timing fixture did not open the workbench");
                 timingScreen = mc.currentScreen;
+                if (timingMaterial != null) timingMaterial.start(controllerClicked);
+                else workbench = new HologramWorkbenchStagesWitness(null, controllerClicked);
             }
             stage = 1;
             return false;
@@ -535,21 +561,42 @@ final class HologramLocalPreviewStagesProbe {
         Map<String, Object> sample;
         if (timingScreen instanceof HologramScreen shown) {
             HologramState state = shown.ui.session.state();
-            workbench.observe(state);
-            if (!workbench.sawMaterial() || timingGtmbFrame == null || !state.data.getBoolean("projectionDataComplete")
-                || state.data.getBoolean("capturePending")) return false;
+            if (!state.data.getBoolean("projectionDataComplete") || state.data.getBoolean("capturePending")) {
+                if (workbench != null) workbench.observe(state);
+                return false;
+            }
             require(state.data.getInteger("main") == 1 && state.data.getCompoundTag("channels").hasNoTags(),
                 "GTMB timing fixture does not use the default trigger");
-            sample = workbench.receipt(state, HologramRuntimeMetrics.snapshot().getTagList("loadStages", 10),
-                Boolean.getBoolean(FLAG + "RequireEarly"), Boolean.getBoolean(FLAG + "RequireEarlyFrame"));
+            if (timingMaterial != null) {
+                if (!timingMaterial.sawComplete()) return false;
+                long completeLimit = parity == NativeParity.SOLAR ? HologramPreviewThresholdWitness.SOLAR_COMPLETE_NANOS : 0;
+                sample = new LinkedHashMap<>();
+                sample.put("materialFrameThresholds", timingMaterial.receipt(0, completeLimit));
+                sample.put("firstMaterialNanos", timingMaterial.firstNanos());
+                sample.put("completedMaterialNanos", timingMaterial.completeNanos());
+                boolean workbenchPassed = timingWorkbenchInitNanos < HologramPreviewThresholdWitness.WORKBENCH_NANOS;
+                sample.put("workbenchInitializationPassed", workbenchPassed);
+                sample.put("workbenchInitializationLimitNanosExclusive", HologramPreviewThresholdWitness.WORKBENCH_NANOS);
+                sample.put("strictThresholdsPassed", workbenchPassed
+                    && (completeLimit == 0 || timingMaterial.completeNanos() < completeLimit));
+                if (parity == NativeParity.SOLAR) timingSolarStates.add(state);
+                timingMaterial = null;
+            } else {
+                workbench.observe(state);
+                if (!workbench.sawMaterial() || timingGtmbFrame == null) return false;
+                sample = workbench.receipt(state, HologramRuntimeMetrics.snapshot().getTagList("loadStages", 10),
+                    Boolean.getBoolean(FLAG + "RequireEarly"), Boolean.getBoolean(FLAG + "RequireEarlyFrame"));
+                sample.putAll(timingGtmbFrame);
+                timingGtmbFrame = null;
+            }
+            sample.put("workbenchInitializationNanos", timingWorkbenchInitNanos);
+            sample.put("workbenchInitializationActivity", timingWorkbenchActivity);
             sample.put("screen", shown.getClass().getName());
             sample.put("controllerMeta", controllerItem.getItemDamage());
             sample.put("facing", ForgeDirection.SOUTH.name());
             sample.put("main", 1);
             sample.put("channels", Collections.singletonMap("gt_hatch", 1));
             sample.put("targetPositions", state.cells.size());
-            sample.putAll(timingGtmbFrame);
-            timingGtmbFrame = null;
         } else {
             if (timingNeiFrame == null) return false;
             sample = timingNeiFrame;
@@ -569,8 +616,36 @@ final class HologramLocalPreviewStagesProbe {
         }
         zero("timing.closed");
         require(finish(mc), "Timing probe did not restore its world input");
+        if (strictTiming) {
+            for (int index = 0; index < timingSolarStates.size(); index++) {
+                Map<String, Object> nativeParity = new LinkedHashMap<>();
+                timingRuns.get(index).put("nativeFootprint", nativeParity);
+                requireNativeFootprint(timingSolarStates.get(index), nativeParity, ForgeDirection.SOUTH);
+                require(Integer.valueOf(SOLAR_BODY_CELLS).equals(nativeParity.get("nativeCells")),
+                    "The timed Solar footprint lost native positions");
+            }
+            timingSolarStates.clear();
+            boolean passed = timingRuns.stream().allMatch(sampleResult ->
+                Boolean.TRUE.equals(sampleResult.get("strictThresholdsPassed")));
+            evidence.put("strictThresholdsPassed", passed);
+            require(passed, "Workbench initialization or full Solar material rendering missed its deadline");
+        }
         evidence.put("passed", true);
         return true;
+    }
+
+    private static Map<String, Map<String, Long>> workbenchActivity(NBTTagCompound before, NBTTagCompound after) {
+        Map<String, Map<String, Long>> deltas = new TreeMap<>();
+        for (Object entry : after.func_150296_c()) {
+            String name = (String) entry;
+            if (!name.startsWith("workbench")) continue;
+            NBTTagCompound previous = before.getCompoundTag(name), current = after.getCompoundTag(name);
+            Map<String, Long> delta = new LinkedHashMap<>();
+            delta.put("calls", current.getLong("calls") - previous.getLong("calls"));
+            delta.put("totalNanos", current.getLong("totalNanos") - previous.getLong("totalNanos"));
+            deltas.put(name, delta);
+        }
+        return deltas;
     }
 
     private void timingScreenshot(Minecraft mc, Map<String, Object> sample) throws java.io.IOException {
@@ -734,6 +809,9 @@ final class HologramLocalPreviewStagesProbe {
             if (parity != NativeParity.CRITICAL) require(changed, "Native channel edit left the preview unchanged");
             if (parity == NativeParity.CENTER)
                 require(actual.size() > firstParityCells.size(), "Selecting six sectors must expand the footprint");
+            if (parity == NativeParity.GTNL || parity == NativeParity.TST)
+                require(firstParityCells.keySet().equals(actual.keySet()),
+                    "A material tier must preserve the original native coordinates");
             zero("nativeChannelPresented");
             mc.displayGuiScreen(null);
             zero("nativeChannelEditorClosed");
@@ -865,6 +943,11 @@ final class HologramLocalPreviewStagesProbe {
     }
 
     private Map<String, String> requireNativeFootprint(HologramState state, Map<String, Object> proof) throws Exception {
+        return requireNativeFootprint(state, proof, ForgeDirection.NORTH);
+    }
+
+    private Map<String, String> requireNativeFootprint(HologramState state, Map<String, Object> proof,
+        ForgeDirection facing) throws Exception {
         Map<String, String> actual = new TreeMap<>();
         int anchors = 0, ports = 0, maximumRelativeY = 0;
         for (HologramState.Cell cell : state.cells) {
@@ -890,7 +973,7 @@ final class HologramLocalPreviewStagesProbe {
         require(anchors == 1, "Native structure screen must retain the exact controller anchor");
         long referenceStarted = System.nanoTime();
         Map<String, String> reference = HologramNativeControllerBrowserReference.cells(
-            controllerItem, ForgeDirection.NORTH, state.data.getInteger("main"), state.data.getCompoundTag("channels"));
+            controllerItem, facing, state.data.getInteger("main"), state.data.getCompoundTag("channels"));
         proof.put("blockRendererReferenceNanos", System.nanoTime() - referenceStarted);
         proof.put("nativeCells", actual.size());
         proof.put("blockRendererCells", reference.size());
@@ -923,10 +1006,15 @@ final class HologramLocalPreviewStagesProbe {
         CRITICAL("com.miaokatze.gtsr.common.machine.MTECriticalMachine", "gtsr.critical.solar", "main", 2),
         SOLAR("com.miaokatze.gtsr.common.machine.MTELargeSolarOverpressureArray",
             "gtsr.large.solar.overpressure.array", "main", 2),
+        TURBINE("com.miaokatze.gtsr.common.machine.MTEMegaSteamTurbineArray",
+            "gtsr.mega.steam.turbine.array", "lenght", 3),
         ENTANGLER("com.miaokatze.gtsr.common.machine.MTESteamSingularityEntangler",
             "gtsr.steam.singularity.entangler", "main", 1),
         CHEMICAL("gtPlusPlus.xmod.gregtech.common.tileentities.machines.multi.production.chemplant.MTEChemicalPlant",
             "", "casing", 8),
+        GTNL("com.science.gtnl.common.machine.multiblock.structuralReconstructionPlan.ElectricBlastFurnace",
+            "ElectricBlastFurnace", "coil", 2),
+        TST("com.Nxer.TwistSpaceTechnology.system.Disassembler.TST_Disassembler", "NameTSTDisassembler", "component", 2),
         EBF(MTEElectricBlastFurnace.class.getName(), "", "coil", 2);
 
         final String type, name, channel;

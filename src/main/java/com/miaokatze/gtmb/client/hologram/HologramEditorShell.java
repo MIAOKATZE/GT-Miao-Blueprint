@@ -44,6 +44,7 @@ final class HologramEditorShell {
     private boolean inspectorOpen, inspectorFloating, inspectorAutoOverlay;
     private int inspectorX = 60, inspectorY = 72, inspectorWidth = 184, inspectorHeight = 250;
     private PagedWidget<?> pages;
+    private ParentWidget<?> blueprintSettingsPage, blueprintNetworkPage, blueprintAnnotationPage, blueprintSavePage;
     private HologramEditorPropertiesPane properties;
     private HologramEditorLibraryPane library;
     private HologramEditorBlueprintSettingsPane settings;
@@ -140,8 +141,7 @@ final class HologramEditorShell {
         top.child(ui.tools.buildTopTools());
         presentation.child(top);
 
-        boolean deferHiddenPanes = !ui.session.isTutorial() && ui.workspaces.projection()
-            && ui.session.state().data.getBoolean("localStandardController");
+        boolean deferHiddenPanes = ui.deferInactiveWidgets();
         if (cut == null) cut = new HologramEditorCutWorkspace(ui);
         editBody = HologramEditorNativeTheme.collapsingFlow(GuiAxis.X)
             .name("editor_native_edit_body")
@@ -189,8 +189,8 @@ final class HologramEditorShell {
                 .child(ui.tools.buildSelectedBar()));
         editBody.child(viewport);
         editBody.child(buildLaunchers());
-        editBody.child(buildInspector());
-        editBody.child(buildLibraryDrawer());
+        editBody.child(buildInspector(deferHiddenPanes));
+        editBody.child(buildLibraryDrawer(deferHiddenPanes));
         cutBody = new ParentWidget<>().sizeRel(1f);
         if (deferHiddenPanes) cut.captureInitialDirectory();
         else prepareCut();
@@ -242,7 +242,7 @@ final class HologramEditorShell {
         root.child(bottom);
         ui.tools.attach(host);
         ui.guide.attach(host);
-        legacy.attach(host);
+        legacy.attach(host, deferHiddenPanes);
         annotations.attach(host);
         registerTarget("viewport", ui.workspaces.isCut() ? cut.scene() : scene);
         registerTarget("inspector", inspectorBody);
@@ -460,7 +460,7 @@ final class HologramEditorShell {
             .animationDuration(0);
     }
 
-    private IWidget buildInspector() {
+    private IWidget buildInspector(boolean deferBlueprintPages) {
         dock = expandable().expanded(false);
         Flow body = Flow.col()
             .width(184)
@@ -489,17 +489,23 @@ final class HologramEditorShell {
             HologramEditorNativeTheme
                 .flatIconButton("collapse-right", () -> "收起功能侧栏", () -> setDockExpanded(false), () -> true, () -> false)
                 .size(HologramEditorNativeTheme.ICON_BUTTON));
+        if (deferBlueprintPages) {
+            blueprintSettingsPage = new ParentWidget<>().sizeRel(1f);
+            blueprintNetworkPage = new ParentWidget<>().sizeRel(1f);
+            blueprintAnnotationPage = new ParentWidget<>().sizeRel(1f);
+            blueprintSavePage = new ParentWidget<>().sizeRel(1f);
+        }
         pages = new PagedWidget<>().sizeRel(1f)
             .expanded()
             .initialPage(0)
             .addPage(properties.buildSelection())
-            .addPage(settings.build())
+            .addPage(deferBlueprintPages ? blueprintSettingsPage : settings.build())
             .addPage(new ParentWidget<>().sizeRel(1f))
             .addPage(properties.buildStructure())
             .addPage(properties.buildMaterials())
-            .addPage(buildNetworkPane())
-            .addPage(buildAnnotationPane())
-            .addPage(library.buildSave())
+            .addPage(deferBlueprintPages ? blueprintNetworkPage : buildNetworkPane())
+            .addPage(deferBlueprintPages ? blueprintAnnotationPage : buildAnnotationPane())
+            .addPage(deferBlueprintPages ? blueprintSavePage : library.buildSave())
             .addPage(properties.buildConstruction());
         body.child(heading)
             .child(pages);
@@ -560,7 +566,7 @@ final class HologramEditorShell {
                         .height(18));
     }
 
-    private IWidget buildLibraryDrawer() {
+    private IWidget buildLibraryDrawer(boolean deferLibraryPane) {
         libraryDrawer = expandable().expanded(ui.workspaces.blueprint());
         ui.library.libraryDrawer(ui.workspaces.blueprint());
         ui.library.blueprintTab(ui.workspaces.blueprint());
@@ -579,14 +585,17 @@ final class HologramEditorShell {
             .padding(4)
             .childPadding(4)
             .background(HologramEditorNativeTheme.PANEL);
-        libraryBody.child(
-            new ParentWidget<>().sizeRel(1f)
-                .expanded()
-                .child(library.build()));
+        if (!deferLibraryPane) mountLibraryPane();
         libraryDrawer.collapsedView(collapsed)
             .expandedView(libraryBody)
             .setEnabledIf(w -> ui.workspaces.blueprint());
         return libraryDrawer;
+    }
+
+    private void mountLibraryPane() {
+        if (libraryBody.hasChildren()) return;
+        libraryBody.child(new ParentWidget<>().sizeRel(1f).expanded().child(library.build()));
+        if (libraryBody.isValid()) libraryBody.scheduleResize();
     }
 
     void toggleStructures() {
@@ -620,6 +629,7 @@ final class HologramEditorShell {
     }
 
     void toggleLibrary() {
+        prepareAvailableBlueprintPages();
         if (libraryDrawer != null) libraryDrawer.expanded(!libraryDrawer.isExpanded());
         if (libraryDrawer != null) ui.library.libraryDrawer(libraryDrawer.isExpanded());
         if (ui.session.isTutorial() && libraryPageSelected()) setDockExpanded(false);
@@ -796,6 +806,8 @@ final class HologramEditorShell {
 
     void selectDockPage(int page) {
         if (pages == null || !launcherAvailable(page)) return;
+        prepareAvailableBlueprintPages();
+        if (page == 7) mountSavePage();
         if (page == 2) {
             if (ui.session.isTutorial()) setDockExpanded(false);
             if (libraryDrawer != null) libraryDrawer.expanded(true);
@@ -806,6 +818,26 @@ final class HologramEditorShell {
         if (ui.session.isTutorial()) closeTutorialLibrary();
         setDockExpanded(true);
         pages.setPage(page);
+    }
+
+    void prepareAvailableBlueprintPages() {
+        if (libraryBody != null && ui.workspaces.blueprint()) {
+            mountLibraryPane();
+            mountSavePage();
+        }
+        if (blueprintSettingsPage == null || !launcherAvailable(1)) return;
+        blueprintSettingsPage.child(settings.build());
+        blueprintNetworkPage.child(buildNetworkPane());
+        blueprintAnnotationPage.child(buildAnnotationPane());
+        blueprintSettingsPage = blueprintNetworkPage = blueprintAnnotationPage = null;
+        pages.scheduleResize();
+    }
+
+    private void mountSavePage() {
+        if (blueprintSavePage == null) return;
+        blueprintSavePage.child(library.buildSave());
+        blueprintSavePage = null;
+        pages.scheduleResize();
     }
 
     /** Lessons devote the viewport to manipulation instead of retaining unrelated inspectors. */

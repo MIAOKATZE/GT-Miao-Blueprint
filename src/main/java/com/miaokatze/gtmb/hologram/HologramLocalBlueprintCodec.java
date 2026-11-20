@@ -11,11 +11,14 @@ import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
 import java.util.WeakHashMap;
+import java.util.function.BooleanSupplier;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import com.miaokatze.gtmb.hologram.HologramPresets.Cell;
 import com.miaokatze.gtmb.hologram.HologramPresets.HintArea;
 import com.miaokatze.gtmb.hologram.HologramPresets.Preset;
@@ -43,32 +46,40 @@ final class HologramLocalBlueprintCodec {
     private volatile JsonObject envelope;
     private boolean explicitRetention = true;
 
-    Preset read(byte[] bytes) throws IOException {
+    @com.github.bsideup.jabel.Desugar
+    record Loaded(Preset document, CompactLayout layout) {}
+
+    @com.github.bsideup.jabel.Desugar
+    record CompactLayout(HologramBlueprintCompactCodec.DisplayRows rows, Cell[] materials, int[] occurrences,
+        int[] bounds) {}
+
+    Loaded read(byte[] bytes, BooleanSupplier current) throws IOException {
         if (bytes == null || bytes.length == 0 || bytes.length > HologramBlueprintArtifact.MAX_JSON_BYTES)
             throw new IOException("蓝图文件大小超出范围");
         String text = StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes)).toString();
-        JsonObject root = HologramBlueprintCompactCodec.parse(text, HologramBlueprintArtifact.MAX_JSON_BYTES);
+        HologramBlueprintCompactCodec.DisplayRows compact = HologramBlueprintCompactCodec.packedDocument(
+            text, HologramBlueprintArtifact.MAX_JSON_BYTES);
+        JsonObject root = compact == null
+            ? HologramBlueprintCompactCodec.parse(text, HologramBlueprintArtifact.MAX_JSON_BYTES) : compact.root;
         try {
             JsonObject blueprint = HologramBlueprintCompactCodec.documentBlueprint(root);
             explicitRetention = blueprint.has("retainNbt");
             int envelopeSchema = number(root, "schema", 2);
             if (envelopeSchema < 1 || envelopeSchema > 2 || root.has("presets"))
                 throw new IOException("蓝图分享文件格式无效");
+            Set<String> envelopeFields = compact == null ? fields("schema", "blueprint", "previewBinding")
+                : fields("schema", "blueprint", "previewBinding", "encoding", "materials", "nbt");
             envelope = blueprint == root ? new JsonObject()
-                : remaining(root, fields("schema", "blueprint", "previewBinding"), java.util.Collections.emptySet());
+                : remaining(root, envelopeFields, java.util.Collections.emptySet());
             Set<String> ignored = blueprint == root ? fields("cells", "palette", "structures", "hintAreas", "previewBinding")
                 : ROWS;
             Preset result = readFields(blueprint, HEADER, ignored, Preset.class);
             int schema = number(blueprint, "schema", 1);
             if (schema != 1 && schema != 2) throw new IOException("蓝图条目格式无效");
             result.schema = schema;
-            Set<Position> positions = new HashSet<>();
-            for (JsonElement row : rows(blueprint, "cells", HologramBlueprintLimits.MAX_CELLS)) {
-                Cell cell = readCell(object(row));
-                if (!positions.add(new Position(cell.x, cell.y, cell.z))) throw new IOException("蓝图格坐标重复");
-                result.cells.add(cell);
-            }
-            for (JsonElement row : rows(blueprint, "palette", 4096)) result.palette.add(readCell(object(row)));
+            CompactLayout layout = null;
+            if (compact == null) readExpandedCells(result, blueprint);
+            else layout = readCompactLayout(result, compact, current);
             Set<String> structures = new HashSet<>();
             for (JsonElement row : rows(blueprint, "structures", 256)) {
                 JsonObject entry = object(row);
@@ -83,10 +94,74 @@ final class HologramLocalBlueprintCodec {
                 boundedPosition(entry, "x2", "y2", "z2");
                 result.hintAreas.add(readFields(entry, HINT, java.util.Collections.emptySet(), HintArea.class));
             }
-            return result;
+            return new Loaded(result, layout);
         } catch (RuntimeException invalid) {
             throw new IOException("蓝图编辑数据格式无效", invalid);
         }
+    }
+
+    private void readExpandedCells(Preset result, JsonObject blueprint) throws IOException {
+        Set<Position> positions = new HashSet<>();
+        for (JsonElement row : rows(blueprint, "cells", HologramBlueprintLimits.MAX_CELLS))
+            addCell(result, positions, readCell(object(row)));
+        for (JsonElement row : rows(blueprint, "palette", 4096)) result.palette.add(readCell(object(row)));
+    }
+
+    private CompactLayout readCompactLayout(Preset result, HologramBlueprintCompactCodec.DisplayRows compact,
+        BooleanSupplier current) throws IOException {
+        int count = compact.cells();
+        LongOpenHashSet positions = new LongOpenHashSet(count);
+        Cell[] materials = new Cell[compact.materials()];
+        int[] occurrences = new int[materials.length];
+        int[] bounds = { Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE,
+            Integer.MIN_VALUE, Integer.MIN_VALUE };
+        for (int row = 0; row < count; row++) {
+            if ((row & 255) == 0 && !current.getAsBoolean()) throw new IOException("蓝图读取已取消");
+            int material = compact.materialIndex(row);
+            occurrences[material]++;
+            if (materials[material] == null) materials[material] = readCell(compact.material(material));
+            int x = compact.coordinate(row, 0), y = compact.coordinate(row, 1), z = compact.coordinate(row, 2);
+            boundedPosition(x, y, z);
+            // The checked document bounds fit signed X/Z in 27 bits and signed Y in 10 bits.
+            long position = (x & 0x7ffffffL) << 37 | (z & 0x7ffffffL) << 10 | (y & 0x3ffL);
+            if (!positions.add(position)) throw new IOException("蓝图格坐标重复");
+            bounds[0] = Math.min(bounds[0], x);
+            bounds[1] = Math.min(bounds[1], y);
+            bounds[2] = Math.min(bounds[2], z);
+            bounds[3] = Math.max(bounds[3], x);
+            bounds[4] = Math.max(bounds[4], y);
+            bounds[5] = Math.max(bounds[5], z);
+        }
+        for (JsonElement row : rows(compact.blueprint, "palette", 4096))
+            result.palette.add(readCell(compact.paletteCell(row)));
+        return new CompactLayout(compact, materials, occurrences, bounds);
+    }
+
+    void materialize(Loaded source, BooleanSupplier current) throws IOException {
+        CompactLayout layout = source.layout();
+        if (layout == null) return;
+        HologramBlueprintCompactCodec.DisplayRows rows = layout.rows();
+        int count = rows.cells();
+        java.util.ArrayList<Cell> cells = new java.util.ArrayList<>(count);
+        JsonObject[] extensions = new JsonObject[layout.materials().length];
+        for (int material = 0; material < extensions.length; material++)
+            if (layout.materials()[material] != null) extensions[material] = opaque.get(layout.materials()[material]);
+        for (int row = 0; row < count; row++) {
+            if ((row & 255) == 0 && !current.getAsBoolean()) throw new IOException("蓝图读取已取消");
+            int material = rows.materialIndex(row);
+            Cell cell = HologramSnapshotMetadataSource.copyCell(layout.materials()[material]);
+            cell.x = rows.coordinate(row, 0);
+            cell.y = rows.coordinate(row, 1);
+            cell.z = rows.coordinate(row, 2);
+            if (extensions[material] != null) opaque.put(cell, extensions[material]);
+            cells.add(cell);
+        }
+        source.document().cells = cells;
+    }
+
+    private static void addCell(Preset result, Set<Position> positions, Cell cell) throws IOException {
+        if (!positions.add(new Position(cell.x, cell.y, cell.z))) throw new IOException("蓝图格坐标重复");
+        result.cells.add(cell);
     }
 
     private Cell readCell(JsonObject row) throws IOException {
@@ -236,9 +311,12 @@ final class HologramLocalBlueprintCodec {
     }
 
     private static void boundedPosition(JsonObject row, String x, String y, String z) throws IOException {
-        if (Math.abs((long) number(row, x, 0)) > 60000000
-            || Math.abs((long) number(row, y, 0)) > 256
-            || Math.abs((long) number(row, z, 0)) > 60000000) throw new IOException("蓝图坐标超出范围");
+        boundedPosition(number(row, x, 0), number(row, y, 0), number(row, z, 0));
+    }
+
+    private static void boundedPosition(int x, int y, int z) throws IOException {
+        if (Math.abs((long) x) > 60000000 || Math.abs((long) y) > 256 || Math.abs((long) z) > 60000000)
+            throw new IOException("蓝图坐标超出范围");
     }
 
     private static Set<String> fields(String... names) {

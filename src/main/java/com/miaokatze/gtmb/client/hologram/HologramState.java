@@ -108,7 +108,7 @@ final class HologramState {
         parsedCells = ready.cellPosition;
         cells = new CellPages(ready.pages.toArray(new Cell[ready.pages.size()][]), parsedCells);
         regions = ready.regions.finish();
-        boolean compact = ready.compactCells != null;
+        boolean compact = ready.anonymousCompact;
         structureMembers = compact ? anonymousMembers(parsedCells) : Collections.unmodifiableMap(ready.members);
         materials = Collections.unmodifiableList(ready.materials);
         if (compact && parsedCells != 0) {
@@ -267,8 +267,10 @@ final class HologramState {
         List<Cell> prefix = new ArrayList<>(count);
         for (int i = 0; i < count; i++) prefix.add(ready.pages.get(i >> 8)[i & 255]);
         cells = new CellPages(prefix);
-        regions = new HologramRegionCache(cells);
-        structureMembers = ready.compactCells == null ? memberships(cells) : anonymousMembers(count);
+        HologramRegionCache partialRegions = new HologramRegionCache(cells);
+        int[] wholeBounds = ready.compactCells == null ? null : ready.compactCells.bounds();
+        regions = wholeBounds == null ? partialRegions : partialRegions.withBounds(wholeBounds);
+        structureMembers = ready.anonymousCompact ? anonymousMembers(count) : memberships(cells);
         materials = Collections.emptyList();
         Cell first = cells.get(0);
         minY = maxY = first.dy;
@@ -284,6 +286,14 @@ final class HologramState {
             maxWorldY = Math.max(maxWorldY, cell.y);
             minWorldZ = Math.min(minWorldZ, cell.z);
             maxWorldZ = Math.max(maxWorldZ, cell.z);
+        }
+        if (wholeBounds != null) {
+            minWorldX = wholeBounds[0];
+            minY = minWorldY = wholeBounds[1];
+            minWorldZ = wholeBounds[2];
+            maxWorldX = wholeBounds[3];
+            maxY = maxWorldY = wholeBounds[4];
+            maxWorldZ = wholeBounds[5];
         }
     }
 
@@ -316,9 +326,13 @@ final class HologramState {
         private int minY, maxY, minWorldX, maxWorldX, minWorldY, maxWorldY, minWorldZ, maxWorldZ;
         private HologramState result;
         private final boolean displayRows;
+        private final boolean anonymousCompact;
         private final HologramBlueprintPreview.CompactCells compactCells;
         private final List<HologramControllerTarget.Cell> controllerCells;
         private final DescriptorTemplate[] compactMaterials;
+        private final boolean[] seenCompactMaterials;
+        private int compactDescriptorCursor;
+        private boolean detachedIndex;
         private final int cellCount;
         private final NBTTagCompound source;
         private final boolean packed;
@@ -355,9 +369,11 @@ final class HologramState {
             displayDescriptors = displayRows && !packed && compactCells == null ? new HashMap<>() : null;
             this.displayRows = displayRows;
             this.compactCells = compactCells;
+            anonymousCompact = compactCells != null && !compactCells.editorRows();
             this.controllerCells = controllerCells;
-            regions = new HologramRegionCache.Builder(compactCells != null);
+            regions = new HologramRegionCache.Builder(compactCells != null || controllerCells != null);
             compactMaterials = compactCells == null ? null : new DescriptorTemplate[compactCells.materialCount()];
+            seenCompactMaterials = compactCells == null ? null : new boolean[compactCells.materialCount()];
             fullBaseline = controllerCells != null || compactCells != null || fullBaseline(source);
             data = metadata(source, false);
             rows = source.getTagList("cells", 10);
@@ -372,12 +388,21 @@ final class HologramState {
         }
 
         boolean step(int maxWork, long maxNanos) {
-            if (Thread.currentThread() != owner) throw new IllegalStateException("Client preparation thread changed");
+            checkClientOwner();
+            return stepOwned(maxWork, maxNanos);
+        }
+
+        private void checkClientOwner() {
+            if (Thread.currentThread() != owner || detachedIndex)
+                throw new IllegalStateException("Client preparation no longer owns the snapshot");
+        }
+
+        private boolean stepOwned(int maxWork, long maxNanos) {
             if (maxWork < 1 || maxNanos < 1) throw new IllegalArgumentException("Client preparation budget");
             long started = System.nanoTime();
             lastStepWork = 0;
             while (stage < 4 && lastStepWork < maxWork
-                && (lastStepWork == 0 || System.nanoTime() - started < maxNanos)) {
+                && (maxNanos == Long.MAX_VALUE || lastStepWork == 0 || System.nanoTime() - started < maxNanos)) {
                 if (stage == 0) {
                     if (cellPosition == cellCount) {
                         stage++;
@@ -388,7 +413,7 @@ final class HologramState {
                     if ((cellPosition & 255) == 0) pages.add(new Cell[Math.min(256, cellCount - cellPosition)]);
                     pages.get(cellPosition >> 8)[cellPosition & 255] = cell;
                     regions.add(cell);
-                    if (compactCells == null) {
+                    if (!anonymousCompact) {
                         for (String id : membershipIds(cell)) members.computeIfAbsent(id, unused -> new ArrayList<>())
                             .add(cell.index);
                         minWorldX = Math.min(minWorldX, cell.x);
@@ -429,6 +454,58 @@ final class HologramState {
             return stage == 4;
         }
 
+        boolean canPrepareCompactIndex() {
+            return compactCells != null && cellCount >= 32_768 && compactMaterials.length <= 64
+                && materialRows.tagCount() == 0;
+        }
+
+        /** Resolve the renderer's mod-facing descriptors here. Only detached row assembly goes to the worker. */
+        DetachedIndex prepareCompactIndex(int prefixRows, long budgetNanos) {
+            checkClientOwner();
+            if (!canPrepareCompactIndex() || prefixRows < 1 || budgetNanos < 1)
+                throw new IllegalArgumentException("Invalid compact index preparation");
+            long started = System.nanoTime();
+            while (compactDescriptorCursor < compactMaterials.length) {
+                if (compactCells.definedMaterial(compactDescriptorCursor)) compactDescriptor(compactDescriptorCursor);
+                compactDescriptorCursor++;
+                if (System.nanoTime() - started >= budgetNanos) return null;
+            }
+            int missingPrefix = Math.min(cellCount, prefixRows) - cellPosition;
+            if (missingPrefix > 0) {
+                long remaining = budgetNanos - (System.nanoTime() - started);
+                if (remaining <= 0) return null;
+                stepOwned(missingPrefix, remaining);
+                if (cellPosition < Math.min(cellCount, prefixRows)) return null;
+            }
+            HologramState first = firstDisplay();
+            detachedIndex = true;
+            return new DetachedIndex(this, first);
+        }
+
+        static final class DetachedIndex {
+
+            private final Preparation preparation;
+            private final HologramState firstDisplay;
+            private final java.util.concurrent.atomic.AtomicBoolean claimed = new java.util.concurrent.atomic.AtomicBoolean();
+
+            private DetachedIndex(Preparation preparation, HologramState firstDisplay) {
+                this.preparation = preparation;
+                this.firstDisplay = firstDisplay;
+            }
+
+            HologramState firstDisplay() {
+                return firstDisplay;
+            }
+
+            HologramState finish(java.util.function.BooleanSupplier current) {
+                if (!claimed.compareAndSet(false, true)) throw new IllegalStateException("Index already claimed");
+                while (current.getAsBoolean())
+                    if (preparation.stepOwned(4096, Long.MAX_VALUE))
+                        return current.getAsBoolean() ? preparation.result() : null;
+                return null;
+            }
+        }
+
         private Cell prepareCell(NBTTagCompound row) {
             if (displayRows) try {
                 Cell shared = displayDescriptors == null ? null : plainDisplayCell(row);
@@ -443,9 +520,22 @@ final class HologramState {
 
         private Cell prepareCompactCell() {
             int material = compactCells.coordinate(cellPosition, 3);
+            DescriptorTemplate template = compactDescriptor(material);
+            int x = compactCells.coordinate(cellPosition, 0);
+            int y = compactCells.coordinate(cellPosition, 1);
+            int z = compactCells.coordinate(cellPosition, 2);
+            Cell cell = new Cell(cellPosition, template, null, true, x, y, z, x, y, z);
+            if (!seenCompactMaterials[material]) {
+                seenCompactMaterials[material] = true;
+                if (template.compactPlain) plainDisplayExamples.add(cell);
+            }
+            return cell;
+        }
+
+        private DescriptorTemplate compactDescriptor(int material) {
             DescriptorTemplate template = compactMaterials[material];
-            boolean first = template == null;
-            if (first) {
+            if (template == null) {
+                if (detachedIndex) throw new IllegalArgumentException("Missing frozen blueprint descriptor");
                 NBTTagCompound definition = compactCells.copyMaterial(material);
                 boolean withoutPayload = !definition.hasKey("previewTile", 10)
                     && !definition.hasKey("previewItemTag", 10);
@@ -454,15 +544,10 @@ final class HologramState {
                 } catch (java.io.IOException invalid) {
                     throw new IllegalArgumentException(invalid.getMessage(), invalid);
                 }
-                template = new DescriptorTemplate(definition, true, withoutPayload);
+                template = new DescriptorTemplate(definition, true, anonymousCompact && withoutPayload);
                 compactMaterials[material] = template;
             }
-            int x = compactCells.coordinate(cellPosition, 0);
-            int y = compactCells.coordinate(cellPosition, 1);
-            int z = compactCells.coordinate(cellPosition, 2);
-            Cell cell = new Cell(cellPosition, template, null, true, x, y, z, x, y, z);
-            if (first && template.compactPlain) plainDisplayExamples.add(cell);
-            return cell;
+            return template;
         }
 
         /** Share only the known detached source rows with no tile/item payload or additional cell data. */

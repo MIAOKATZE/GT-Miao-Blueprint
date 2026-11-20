@@ -45,6 +45,7 @@ import com.github.bsideup.jabel.Desugar;
 import com.miaokatze.gtmb.hologram.HologramAeNativePreview;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec;
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.EditorRows;
 import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.FrozenDraft;
 import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
 import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteRenderScope;
@@ -189,12 +190,25 @@ public final class HologramBlueprintPreview {
     static final class CompactCells {
 
         private final int[] locations;
+        private final EditorRows editor;
+        private final int[] bounds;
         private NBTTagCompound[] materials;
         private int size;
 
         CompactCells(int cells, int materials) {
             locations = new int[Math.multiplyExact(cells, 4)];
+            editor = null;
+            bounds = new int[] { Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE,
+                Integer.MIN_VALUE, Integer.MIN_VALUE };
             this.materials = new NBTTagCompound[materials];
+        }
+
+        CompactCells(EditorRows editor) {
+            locations = null;
+            this.editor = editor;
+            bounds = editor.bounds();
+            materials = editor.materials();
+            size = editor.rows().cells();
         }
 
         private void add(int x, int y, int z, int material) {
@@ -203,6 +217,12 @@ public final class HologramBlueprintPreview {
             locations[at + 1] = y;
             locations[at + 2] = z;
             locations[at + 3] = material;
+            bounds[0] = Math.min(bounds[0], x);
+            bounds[1] = Math.min(bounds[1], y);
+            bounds[2] = Math.min(bounds[2], z);
+            bounds[3] = Math.max(bounds[3], x);
+            bounds[4] = Math.max(bounds[4], y);
+            bounds[5] = Math.max(bounds[5], z);
         }
 
         private void putMaterial(int index, NBTTagCompound material) {
@@ -216,11 +236,24 @@ public final class HologramBlueprintPreview {
         }
 
         int coordinate(int row, int dimension) {
-            return locations[row * 4 + dimension];
+            if (editor == null) return locations[row * 4 + dimension];
+            return dimension == 3 ? editor.rows().materialIndex(row) : editor.rows().coordinate(row, dimension);
+        }
+
+        boolean editorRows() {
+            return editor != null;
+        }
+
+        int[] bounds() {
+            return bounds;
         }
 
         int materialCount() {
             return materials.length;
+        }
+
+        boolean definedMaterial(int index) {
+            return materials[index] != null;
         }
 
         NBTTagCompound copyMaterial(int index) {

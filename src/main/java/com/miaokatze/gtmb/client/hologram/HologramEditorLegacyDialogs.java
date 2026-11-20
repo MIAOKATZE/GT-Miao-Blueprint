@@ -164,14 +164,10 @@ final class HologramEditorLegacyDialogs {
         domains.add(new Domain(id, title, cancelControl, x, y, width, height, visible, paint, key, wheel));
     }
 
-    void attach(ModularPanel host) {
+    void attach(ModularPanel host, boolean deferClosedDialogs) {
         if (attached) return;
         attached = true;
-        for (Domain domain : domains) {
-            domain.panel = new LegacyDialog(domain);
-            domain.handler = IPanelHandler.simple(host, (parent, player) -> domain.panel, true);
-            ui.shell.registerTarget(domain.id, domain.panel);
-        }
+        if (!deferClosedDialogs) for (Domain domain : domains) domain.mount(host);
     }
 
     /** Called by the native shell after its domain tick, never from a legacy scene render. */
@@ -179,6 +175,10 @@ final class HologramEditorLegacyDialogs {
         if (!attached) return;
         for (Domain domain : domains) {
             boolean visible = domain.active();
+            if (domain.panel == null) {
+                if (!visible) continue;
+                domain.mount(ui.shell.host());
+            }
             domain.panel.fit();
             if (!visible) domain.panel.retireContent();
             if (visible && !domain.handler.isPanelOpen()) domain.handler.openPanel();
@@ -214,6 +214,12 @@ final class HologramEditorLegacyDialogs {
 
         boolean active() {
             return !ui.tutorial.active() && visible.getAsBoolean();
+        }
+
+        void mount(ModularPanel host) {
+            panel = new LegacyDialog(this);
+            handler = IPanelHandler.simple(host, (parent, player) -> panel, true);
+            ui.shell.registerTarget(id, panel);
         }
     }
 

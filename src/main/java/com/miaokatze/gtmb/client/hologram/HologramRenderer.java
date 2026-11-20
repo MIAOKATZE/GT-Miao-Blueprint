@@ -117,6 +117,14 @@ final class HologramRenderer {
         return EDITOR.previewDisplayState();
     }
 
+    static MiaoVisonLiteRenderer.MaterialPresentation editorMaterialPresentation() {
+        return EDITOR.materialPresentation();
+    }
+
+    static MiaoVisonLiteRenderer.MaterialPresentation browseMaterialPresentation() {
+        return BROWSE.materialPresentation();
+    }
+
     static boolean previewMeshReady(HologramState state) {
         return viewportFor(state).previewMeshReady(state);
     }

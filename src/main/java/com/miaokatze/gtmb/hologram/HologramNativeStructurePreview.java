@@ -27,6 +27,7 @@ import net.minecraft.world.World;
 import net.minecraftforge.common.MinecraftForge;
 
 import com.github.bsideup.jabel.Desugar;
+import com.gtnewhorizon.gtnhlib.util.CoordinatePacker;
 import com.gtnewhorizon.structurelib.StructureEvent.StructureElementVisitedEvent;
 import com.gtnewhorizon.structurelib.StructureLibAPI;
 import com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor;
@@ -43,6 +44,7 @@ import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import gregtech.api.interfaces.INEIPreviewModifier;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.api.threads.RunnableMachineUpdate;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 import gregtech.common.misc.GTStructureChannels;
 
 /** Runs the native multiblock browser's placement callbacks on a controller owned by this capture. */
@@ -69,7 +71,8 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
     private final boolean gregTech;
     private final ItemStack trigger;
     private final NBTTagList description = new NBTTagList();
-    private final Map<Position, IStructureElement<?>> elements = new HashMap<>();
+    private final Long2ObjectOpenHashMap<IStructureElement<?>> elements = new Long2ObjectOpenHashMap<>();
+    private final Map<Position, IStructureElement<?>> wideElements = new HashMap<>();
     private final Map<IStructureElement<?>, Boolean> observedMaterials = new IdentityHashMap<>();
     private final Map<IStructureElement<?>, PreviewOptions> sharedOptions = new IdentityHashMap<>();
     private HologramChannelTrace.Report channels;
@@ -180,12 +183,23 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
     private void elementVisited(StructureElementVisitedEvent event) {
         if (event.getWorld() != world || Thread.currentThread() != owner
             || instrumented && event.getInstrumentIdentifier() != this) return;
-        Position position = new Position(event.getX(), event.getY(), event.getZ());
-        if (elements.size() >= HologramBlueprintLimits.MAX_CELLS && !elements.containsKey(position)) {
-            visitLimit = true;
-            return;
+        int x = event.getX(), y = event.getY(), z = event.getZ();
+        boolean atLimit = elements.size() + wideElements.size() >= HologramBlueprintLimits.MAX_CELLS;
+        if (HologramNativePreviewWorld.packable(x, y, z)) {
+            long position = CoordinatePacker.pack(x, y, z);
+            if (atLimit && !elements.containsKey(position)) visitLimit = true;
+            else elements.put(position, event.getElement());
+        } else {
+            // A custom declaration can emit visits outside the preview world's placement bounds.
+            Position position = new Position(x, y, z);
+            if (atLimit && !wideElements.containsKey(position)) visitLimit = true;
+            else wideElements.put(position, event.getElement());
         }
-        elements.put(position, event.getElement());
+    }
+
+    private IStructureElement<?> elementAt(int x, int y, int z) {
+        return HologramNativePreviewWorld.packable(x, y, z) ? elements.get(CoordinatePacker.pack(x, y, z))
+            : wideElements.get(new Position(x, y, z));
     }
 
     Iterator<HologramNativePreviewWorld.Placement> placements() {
@@ -227,14 +241,14 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
     }
 
     HologramCapture.Cell cell(HologramNativePreviewWorld.Placement placement) {
-        IStructureElement<?> element = elements.get(new Position(placement.x(), placement.y(), placement.z()));
+        IStructureElement<?> element = elementAt(placement.x(), placement.y(), placement.z());
         HologramCapture.Cell cell = HologramCapture.nativePreviewCell(placement, element, trigger);
         readCellCandidates(cell);
         return cell;
     }
 
     HologramCapture.Cell candidateCell(int x, int y, int z, String role) {
-        HologramCapture.Cell cell = new HologramCapture.Cell(elements.get(new Position(x, y, z)), x, y, z, trigger, true);
+        HologramCapture.Cell cell = new HologramCapture.Cell(elementAt(x, y, z), x, y, z, trigger, true);
         cell.role = role;
         readCellCandidates(cell);
         return cell;
@@ -339,6 +353,7 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
     public void close() {
         closed = true;
         elements.clear();
+        wideElements.clear();
         observedMaterials.clear();
         sharedOptions.clear();
         placements = Collections.<HologramNativePreviewWorld.Placement>emptyList().iterator();
