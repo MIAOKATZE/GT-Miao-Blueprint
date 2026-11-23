@@ -15,6 +15,7 @@ import java.util.concurrent.ExecutionException;
 import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.BooleanSupplier;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.entity.player.EntityPlayerMP;
@@ -32,7 +33,7 @@ import cpw.mods.fml.common.network.simpleimpl.MessageContext;
 import cpw.mods.fml.common.network.simpleimpl.SimpleNetworkWrapper;
 import io.netty.buffer.ByteBuf;
 
-/** Flow-controlled transport for the placement operation packet after it exceeds the single-packet budget. */
+/** Flow-controlled transport for every projected placement review. */
 public final class HologramPlacementUpload {
 
     static final int CHUNK_BYTES = HologramAttachmentUpload.CHUNK_BYTES;
@@ -58,19 +59,15 @@ public final class HologramPlacementUpload {
         return new Prepared(UUID.fromString(id), bytes, digest(bytes));
     }
 
-    static void send(Prepared prepared) {
+    static void send(Prepared prepared, BooleanSupplier valid) throws IOException {
         Outgoing active = OUTGOING.get();
-        if (active != null && active.context.current()) {
-            if (!active.prepared.id.equals(prepared.id))
-                HologramNetwork.clientPlacementFailure(prepared.id.toString(), "另一个施工清单正在上传，请稍后重试");
-            return;
-        }
+        if (active != null && active.context.current())
+            throw new IOException("另一个施工清单正在上传，请稍后重试");
         ClientContext context = new ClientContext();
-        if (context.player == null || context.world == null || context.connection == null) {
-            HologramNetwork.clientPlacementFailure(prepared.id.toString(), "施工上传缺少当前客户端连接");
-            return;
-        }
-        OUTGOING.set(new Outgoing(prepared, context));
+        if (context.player == null || context.world == null || context.connection == null)
+            throw new IOException("施工上传缺少当前客户端连接");
+        if (!valid.getAsBoolean()) throw new IOException("施工来源已变化，请重新确认");
+        OUTGOING.set(new Outgoing(prepared, context, valid));
     }
 
     static void clientTick() {
@@ -80,26 +77,27 @@ public final class HologramPlacementUpload {
             OUTGOING.compareAndSet(current, null);
             return;
         }
-        long now = System.nanoTime();
-        if (now - current.lastAcknowledged > IDLE_LIMIT || now - current.started > TOTAL_LIMIT) {
-            failClient(current, "施工清单上传超时，请重试");
+        if (!current.valid.getAsBoolean()) {
+            failClient(current, "施工来源或投影仪已变化，请重新确认");
             return;
         }
-        Prepared prepared = current.prepared;
-        int total = prepared.bytes.length;
-        for (int sent = 0; sent < WINDOW && current.next < frames(total)
-            && current.next - current.acknowledged < WINDOW && OUTGOING.get() == current; sent++) {
-            int index = current.next++;
-            int start = index * CHUNK_BYTES;
+        if (current.window.expired(System.nanoTime())) {
+            failClient(current, current.window.acknowledged() == 0
+                ? "服务器未确认施工上传，确认两端 GTMB 版本一致后重试"
+                : "施工清单上传超时，请重试");
+            return;
+        }
+        for (int sent = 0; sent < WINDOW && OUTGOING.get() == current; sent++) {
+            int index = current.window.nextFrame();
+            if (index < 0) break;
             try {
-                channel.sendToServer(new Fragment(prepared.id, total, index, prepared.digest,
-                    Arrays.copyOfRange(prepared.bytes, start, Math.min(start + CHUNK_BYTES, total))));
+                channel.sendToServer(current.prepared.frame(index));
             } catch (RuntimeException unavailable) {
                 failClient(current, "施工清单传输失败，请重试");
                 return;
             }
         }
-        if (current.acknowledged == frames(total)) OUTGOING.compareAndSet(current, null);
+        if (current.window.complete()) OUTGOING.compareAndSet(current, null);
     }
 
     private static void failClient(Outgoing current, String reason) {
@@ -216,7 +214,7 @@ public final class HologramPlacementUpload {
                 reserved -= incoming.assembly.bytes.length;
                 if (incoming.cancelled) continue;
                 try {
-                    HologramProjectedPlacementService.receive(incoming.player, incoming.decoding.get());
+                    HologramNetwork.receiveUploadedPlacement(incoming.player, incoming.decoding.get());
                 } catch (ExecutionException invalid) {
                     String id = incoming.id.toString();
                     HologramProjectedPlacementService.retire(incoming.player, id);
@@ -247,7 +245,7 @@ public final class HologramPlacementUpload {
         }
     }
 
-    static final class Prepared {
+    public static final class Prepared {
 
         final UUID id;
         private final byte[] bytes, digest;
@@ -256,6 +254,21 @@ public final class HologramPlacementUpload {
             this.id = id;
             this.bytes = bytes;
             this.digest = digest;
+        }
+
+        int bytes() {
+            return bytes.length;
+        }
+
+        int frameCount() {
+            return frames(bytes.length);
+        }
+
+        Fragment frame(int index) {
+            if (index < 0 || index >= frameCount()) throw new IllegalArgumentException("placement frame index");
+            int start = index * CHUNK_BYTES;
+            return new Fragment(id, bytes.length, index, digest.clone(),
+                Arrays.copyOfRange(bytes, start, Math.min(start + CHUNK_BYTES, bytes.length)));
         }
     }
 
@@ -280,13 +293,55 @@ public final class HologramPlacementUpload {
 
         final Prepared prepared;
         final ClientContext context;
-        final long started = System.nanoTime();
-        volatile long lastAcknowledged = started;
-        volatile int acknowledged, next;
+        final BooleanSupplier valid;
+        final SendWindow window;
 
-        Outgoing(Prepared prepared, ClientContext context) {
+        Outgoing(Prepared prepared, ClientContext context, BooleanSupplier valid) {
             this.prepared = prepared;
             this.context = context;
+            this.valid = valid;
+            window = new SendWindow(prepared.id, context.connection, prepared.frameCount(), System.nanoTime());
+        }
+    }
+
+    /** Per-request/connection credits. Old, unsent and late acknowledgements never renew the deadline. */
+    static final class SendWindow {
+
+        final UUID id;
+        final Object connection;
+        final int frames;
+        final long started;
+        private long lastAcknowledged;
+        private int acknowledged, next;
+
+        SendWindow(UUID id, Object connection, int frames, long now) {
+            this.id = id;
+            this.connection = connection;
+            this.frames = frames;
+            started = lastAcknowledged = now;
+        }
+
+        synchronized int nextFrame() {
+            return next < frames && next - acknowledged < WINDOW ? next++ : -1;
+        }
+
+        synchronized void acknowledge(UUID request, Object peer, int after, long now) {
+            if (id.equals(request) && connection == peer && after > acknowledged && after <= next && !expired(now)) {
+                lastAcknowledged = now;
+                acknowledged = after;
+            }
+        }
+
+        synchronized int acknowledged() {
+            return acknowledged;
+        }
+
+        synchronized boolean complete() {
+            return acknowledged == frames;
+        }
+
+        synchronized boolean expired(long now) {
+            return now - lastAcknowledged > IDLE_LIMIT || now - started > TOTAL_LIMIT;
         }
     }
 
@@ -377,6 +432,9 @@ public final class HologramPlacementUpload {
     public static final class Fragment implements IMessage {
 
         private static final int HEADER = 16 + 4 + 4 + 32;
+        // SimpleImpl writes one discriminator byte in the C17 payload before Fragment.toBytes.
+        private static final int C17_DISCRIMINATOR_BYTES = 1;
+        private static final int C17_PAYLOAD_LIMIT = Short.MAX_VALUE;
         UUID id;
         int total, index;
         byte[] digest, data;
@@ -394,7 +452,8 @@ public final class HologramPlacementUpload {
         private boolean valid() {
             return id != null && total > 0 && total <= MAX_COMPRESSED && index >= 0 && index < frames(total)
                 && digest != null && digest.length == 32 && data != null
-                && data.length == Math.min(CHUNK_BYTES, total - index * CHUNK_BYTES);
+                && data.length == Math.min(CHUNK_BYTES, total - index * CHUNK_BYTES)
+                && HEADER + data.length + C17_DISCRIMINATOR_BYTES < C17_PAYLOAD_LIMIT;
         }
 
         @Override
@@ -473,11 +532,7 @@ public final class HologramPlacementUpload {
         @Override
         public IMessage onMessage(Ack ack, MessageContext context) {
             Outgoing current = OUTGOING.get();
-            if (current != null && current.prepared.id.equals(ack.id) && ack.next > current.acknowledged
-                && ack.next <= current.next) {
-                current.lastAcknowledged = System.nanoTime();
-                current.acknowledged = ack.next;
-            }
+            if (current != null) current.window.acknowledge(ack.id, context.netHandler, ack.next, System.nanoTime());
             return null;
         }
     }
