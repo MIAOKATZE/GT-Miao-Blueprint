@@ -1457,6 +1457,10 @@ final class HologramState {
             return specialHint == null ? "" : specialHint.getString(key);
         }
 
+        HologramControllerTarget.Cell capturedNativeTarget() {
+            return controllerCell;
+        }
+
         boolean localObservationMissing() {
             return controllerCell == null ? raw.getBoolean("localObservationMissing") : controllerCell.localObservationMissing();
         }

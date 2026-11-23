@@ -10,13 +10,16 @@ import java.util.HashMap;
 import java.util.IdentityHashMap;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.function.Predicate;
 import java.util.function.Supplier;
 
 import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.nbt.NBTTagString;
@@ -73,6 +76,7 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
     private final INEIPreviewModifier modifier;
     private final boolean structureCompat;
     private final boolean gregTech;
+    private final Set<Position> sourceWater;
     private final ItemStack trigger;
     private final NBTTagList description = new NBTTagList();
     private final Long2ObjectOpenHashMap<IStructureElement<?>> elements = new Long2ObjectOpenHashMap<>();
@@ -106,6 +110,8 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
             blockRenderer = null;
             world = memory;
         }
+        sourceWater = memory != null && context != null && HologramNativeSourceWater.reviewedController(context.getClass())
+            ? new LinkedHashSet<>() : null;
         PreviewPlayer actor = new PreviewPlayer(world);
         survivalEnvironment = ISurvivalBuildEnvironment.create(items, actor);
         candidateEnvironment = AutoPlaceEnvironment.fromLegacy(items, actor, message -> {});
@@ -131,6 +137,7 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
                 if (updateEnabled) RunnableMachineUpdate.setCurrentThreadEnabled(false);
                 if (ownsInstrument) StructureLibAPI.enableInstrument(this);
                 instrumented = ownsInstrument;
+                if (!ownsInstrument && sourceWater != null) sourceWater.clear();
                 ACTIVE.set(this);
                 if (rounds == 0 && modifier != null) modifier.onPreviewConstruct(trigger);
                 boolean repeat = false;
@@ -165,6 +172,7 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
                 if (modifier != null) modifier.onPreviewStructureComplete(trigger);
                 if (visitLimit) throw new IOException("LOCAL_NATIVE_PREVIEW_CELL_LIMIT");
                 placements = memory == null ? blockRenderer.placements(controller) : memory.placements();
+                if (sourceWater != null && !sourceWater.isEmpty()) appendUnplacedSourceWater();
                 if (!placements.hasNext()) throw new IOException("LOCAL_NATIVE_PREVIEW_EMPTY");
                 readDescription();
                 done = true;
@@ -191,15 +199,46 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
         int x = event.getX(), y = event.getY(), z = event.getZ();
         boolean atLimit = elements.size() + wideElements.size() >= HologramBlueprintLimits.MAX_CELLS;
         if (HologramNativePreviewWorld.packable(x, y, z)) {
-            long position = CoordinatePacker.pack(x, y, z);
-            if (atLimit && !elements.containsKey(position)) visitLimit = true;
-            else elements.put(position, event.getElement());
+            long positionKey = CoordinatePacker.pack(x, y, z);
+            if (sourceWater != null && instrumented && (!atLimit || elements.containsKey(positionKey))
+                && !(x == controller.xCoord && y == controller.yCoord && z == controller.zCoord)) {
+                Position position = new Position(x, y, z);
+                if (HologramNativeSourceWater.reviewedSlot(event.getElement())) sourceWater.add(position);
+                else sourceWater.remove(position);
+            }
+            if (atLimit && !elements.containsKey(positionKey)) visitLimit = true;
+            else elements.put(positionKey, event.getElement());
         } else {
             // A custom declaration can emit visits outside the preview world's placement bounds.
             Position position = new Position(x, y, z);
             if (atLimit && !wideElements.containsKey(position)) visitLimit = true;
             else wideElements.put(position, event.getElement());
         }
+    }
+
+    private void appendUnplacedSourceWater() throws IOException {
+        // Survival-place has no item for water and can fall through to native air. Materialize a preview
+        // row only: do not call element.placeBlock, setBlock, bucket logic or a real controller callback.
+        List<HologramNativePreviewWorld.Placement> generated = new ArrayList<>();
+        for (Position p : sourceWater) {
+            if (!memory.blockExists(p.x(), p.y(), p.z())
+                || !HologramNativeSourceWater.missingFromDetachedPreview(memory.getBlock(p.x(), p.y(), p.z()))) continue;
+            HologramBlueprintLimits.require(memory.recordedPlacementCount() + generated.size() + 2);
+            generated.add(new HologramNativePreviewWorld.Placement(p.x(), p.y(), p.z(), Blocks.water, 0, null));
+        }
+        if (generated.isEmpty()) return;
+        Iterator<HologramNativePreviewWorld.Placement> nativeRows = placements, waterRows = generated.iterator();
+        placements = new Iterator<HologramNativePreviewWorld.Placement>() {
+            @Override
+            public boolean hasNext() {
+                return nativeRows.hasNext() || waterRows.hasNext();
+            }
+
+            @Override
+            public HologramNativePreviewWorld.Placement next() {
+                return nativeRows.hasNext() ? nativeRows.next() : waterRows.next();
+            }
+        };
     }
 
     private IStructureElement<?> elementAt(int x, int y, int z) {
@@ -242,13 +281,22 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
     }
 
     HologramCapture.Cell targetCell(HologramNativePreviewWorld.Placement placement) {
-        return HologramCapture.nativePreviewCell(placement, null, trigger);
+        return previewCell(placement, null);
     }
 
     HologramCapture.Cell cell(HologramNativePreviewWorld.Placement placement) {
         IStructureElement<?> element = elementAt(placement.x(), placement.y(), placement.z());
-        HologramCapture.Cell cell = HologramCapture.nativePreviewCell(placement, element, trigger);
+        HologramCapture.Cell cell = previewCell(placement, element);
         readCellCandidates(cell);
+        return cell;
+    }
+
+    private HologramCapture.Cell previewCell(HologramNativePreviewWorld.Placement placement,
+        IStructureElement<?> element) {
+        HologramCapture.Cell cell = HologramCapture.nativePreviewCell(placement, element, trigger);
+        if (sourceWater != null && HologramNativeSourceWater.source(placement.block(), placement.meta())
+            && sourceWater.contains(new Position(placement.x(), placement.y(), placement.z())))
+            cell.nativeSourceWater = true;
         return cell;
     }
 
@@ -443,6 +491,7 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
     public void close() {
         closed = true;
         elements.clear();
+        if (sourceWater != null) sourceWater.clear();
         wideElements.clear();
         observedMaterials.clear();
         sharedOptions.clear();
