@@ -267,6 +267,8 @@ public final class HologramRegressionTest {
         cases.put(
             "projected_placement_wire_carries_only_operations_and_matching_consumables",
             HologramPlacementRequestRegression::run);
+        cases.put("projected_placement_guard_trace_is_private_and_one_shot",
+            HologramProjectedPlacementGuardTraceRegression::run);
         cases.put("native_generated_source_water_preserves_editing_without_placement_authority",
             HologramNativeSourceWaterRegression::run);
         cases.put("network_energy_quotes_consume_once_and_refund_only_actual_debits", HologramEnergyRegression::run);
