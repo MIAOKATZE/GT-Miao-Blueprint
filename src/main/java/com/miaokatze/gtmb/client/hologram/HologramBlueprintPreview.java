@@ -724,11 +724,25 @@ public final class HologramBlueprintPreview {
         return new HologramState(data);
     }
 
-    /** A saved local draft keeps original payload bytes even when author selection omits some from placement. */
+    /** Browse snapshots filter on projection; editable observations survive metadata-only policy changes. */
     static boolean showMeOutputCapacity(NBTTagCompound data) {
+        if (localEditor(data)) return true;
         if (data.getBoolean("localMaterialPolicyPresent") && !data.getBoolean("retainNbt")) return false;
-        if (!data.hasKey("retainedNbtKeys")) return true;
-        NBTTagList retained = data.getTagList("retainedNbtKeys", 8);
+        return !data.hasKey("retainedNbtKeys") || includesMeOutputCapacity(data.getTagList("retainedNbtKeys", 8));
+    }
+
+    /** Only the local editor's target caption uses its live, typed authoring policy. */
+    static boolean editorAllowsMeOutputCapacity(NBTTagCompound data) {
+        return !localEditor(data) || data.hasKey("blueprintRetainNbt", 1) && data.getBoolean("blueprintRetainNbt")
+            && data.hasKey("blueprintNbtAll", 1)
+            && (data.getBoolean("blueprintNbtAll") || includesMeOutputCapacity(data.getTagList("blueprintNbtKeys", 8)));
+    }
+
+    private static boolean localEditor(NBTTagCompound data) {
+        return data.hasKey("localBlueprintDocument", 1) && data.getBoolean("localBlueprintDocument");
+    }
+
+    private static boolean includesMeOutputCapacity(NBTTagList retained) {
         for (int i = 0; i < retained.tagCount(); i++) {
             if ("baseCapacity".equals(retained.getStringTagAt(i))) return true;
         }
