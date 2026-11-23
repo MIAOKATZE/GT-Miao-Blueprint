@@ -83,6 +83,11 @@ final class HologramLibrarySecondUseRegression {
         SimpleAssert.that(ticket.consume(client) == null, "player loss invalidates the old view before inventory access");
         client.thePlayer = player;
         ticket = new Ticket(placement, frozen, client, newer);
+        player.isDead = true;
+        SimpleAssert.that(!ticket.current(client) && ticket.consume(client) == null,
+            "death invalidates the local owner before sampling or submitting");
+        player.isDead = false;
+        ticket = new Ticket(placement, frozen, client, newer);
         field(EntityClientPlayerMP.class, "sendQueue").set(player, null);
         SimpleAssert.that(ticket.consume(client) == null, "unchanged world and inventory cannot substitute for connection ownership");
         field(EntityClientPlayerMP.class, "sendQueue").set(player, network);
@@ -102,9 +107,11 @@ final class HologramLibrarySecondUseRegression {
         SimpleAssert.that(relocked.current(placement, client),
             "the existing async preparation may still use the same source after its loading screen replaces the pane");
 
-        var frame = HologramLibraryMaterialReviewScreen.unknownFrame(captured);
-        SimpleAssert.that(frame.status().contains("未核算") && !frame.rows().hasKey("complete")
-            && frame.rows().getTagList("rows", 10).tagCount() == 0,
+        var observation = new HologramLibraryMaterialReviewScreen.CapturedDescription(
+            HologramLibraryMaterialForecast.fromCapture(captured));
+        var frame = observation.frame(() -> { throw new AssertionError("unindexed source has no stock to refresh"); }, 0);
+        SimpleAssert.that(frame.status().contains("未核算") && !frame.ready() && !frame.rows().hasKey("complete")
+            && frame.description().isEmpty(),
             "already-present unproved source uses an explicit local unknown frame, not an authoritative quote");
     }
 
