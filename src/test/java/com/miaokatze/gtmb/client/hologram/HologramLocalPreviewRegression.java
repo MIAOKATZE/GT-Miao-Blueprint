@@ -32,6 +32,7 @@ public final class HologramLocalPreviewRegression {
         sourceReuse();
         savedPrivateMaterialSource();
         indexedMaterialSourceCapture();
+        HologramLibraryMaterialForecastRegression.run();
         earlyDisplay();
         displayPicture();
         uploadRepresentation();
@@ -700,7 +701,8 @@ public final class HologramLocalPreviewRegression {
             var fallback = reader.readSavedDisplaySource(id, before, false, 0, 0);
             SimpleAssert.that(
                 before.path().equals(store.savedPath(id)) && !before.indexed() && fallback.savedMaterials != null
-                    && !fallback.capturedIndexedMaterialSource(),
+                    && !fallback.capturedIndexedMaterialSource()
+                    && HologramLibraryMaterialForecast.fromCapture(fallback) == null,
                 "compatibility filename still previews, but it has no durable index provenance");
             reader.retainDisplaySource(fallback);
 
@@ -709,7 +711,8 @@ public final class HologramLocalPreviewRegression {
             var managed = reader.readSavedDisplaySource(id, selection, false, 0, 0);
             SimpleAssert.that(
                 selection.path().equals(before.path()) && selection.indexed() && managed != fallback
-                    && managed.capturedIndexedMaterialSource(),
+                    && managed.capturedIndexedMaterialSource()
+                    && HologramLibraryMaterialForecast.fromCapture(managed).candidates().size() == 1,
                 "a chosen indexed source carries its own provenance even when the JSON stamp is unchanged");
             reader.retainDisplaySource(managed);
             SimpleAssert.that(
@@ -720,7 +723,8 @@ public final class HologramLocalPreviewRegression {
             var later = reader.readSavedDisplaySource(id, store.savedDisplayPath(id), false, 0, 0);
             SimpleAssert.that(
                 later != managed && !later.capturedIndexedMaterialSource()
-                    && managed.capturedIndexedMaterialSource(),
+                    && managed.capturedIndexedMaterialSource()
+                    && HologramLibraryMaterialForecast.fromCapture(managed).candidates().size() == 1,
                 "removed index mapping cannot borrow indexed provenance for a fresh read; old proofs are historical");
         } finally {
             java.nio.file.Files.deleteIfExists(index);
