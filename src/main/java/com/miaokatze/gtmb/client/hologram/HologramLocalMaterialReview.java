@@ -9,6 +9,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Function;
 
 import net.minecraft.init.Blocks;
 import net.minecraft.item.Item;
@@ -179,6 +180,12 @@ final class HologramLocalMaterialReview {
 
     /** Detached exact counts only. An unavailable/disabled source is not measured as zero. */
     static NBTTagCompound stockRows(NBTTagCompound theory, ItemStack[] inventory, int protectedSlot) {
+        return stockRows(theory, inventory, protectedSlot, HologramMaterialQuote::readItem);
+    }
+
+    /** Same exact local stock arithmetic for rows that already have a client-owned item identity. */
+    static NBTTagCompound stockRows(NBTTagCompound theory, ItemStack[] inventory, int protectedSlot,
+        Function<NBTTagCompound, ItemStack> rowIdentity) {
         NBTTagCompound visible = (NBTTagCompound) theory.copy();
         visible.removeTag("complete");
         visible.setBoolean("localEstimate", true);
@@ -193,7 +200,7 @@ final class HologramLocalMaterialReview {
             NBTTagCompound row = rows.getCompoundTagAt(i);
             row.setBoolean("availableKnown", false);
             if (inventory == null || !"item".equals(row.getString("kind"))) continue;
-            ItemStack item = HologramMaterialQuote.readItem(row);
+            ItemStack item = rowIdentity.apply(row);
             if (item == null) continue;
             long available = stock.getOrDefault(ItemIdentity.of(item), 0L);
             String required = HologramMaterialReview.amount(row, "required");
