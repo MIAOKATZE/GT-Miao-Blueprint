@@ -1158,6 +1158,7 @@ public final class HologramCapture {
         boolean userPosition;
         HologramAttachmentPlacementProof attachmentPlacementProof;
         boolean iconOnly;
+        boolean nativeSourceWater;
         String role = "block";
         String family = "";
         String renderKind = "block";

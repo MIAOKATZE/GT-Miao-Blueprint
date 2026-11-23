@@ -133,6 +133,61 @@ final class HologramState {
         }
     }
 
+    /** One sealed CPU view, without NBT metadata, graph, publication ancestry or renderer state. */
+    static final class LocalGeometry {
+
+        private final List<Cell> cells, plainDisplayExamples;
+        private final List<Material> materials;
+        private final HologramRegionCache regions;
+        private final java.util.Map<String, List<Integer>> structureMembers;
+        private final int minY, maxY, minWorldX, minWorldY, minWorldZ, maxWorldX, maxWorldY, maxWorldZ;
+        private final boolean fullBaseline;
+
+        LocalGeometry(HologramState view) {
+            cells = view.cells;
+            regions = view.regions;
+            materials = view.materials;
+            structureMembers = view.structureMembers;
+            plainDisplayExamples = view.plainDisplayExamples;
+            fullBaseline = view.fullBaseline;
+            minY = view.minY;
+            maxY = view.maxY;
+            minWorldX = view.minWorldX;
+            minWorldY = view.minWorldY;
+            minWorldZ = view.minWorldZ;
+            maxWorldX = view.maxWorldX;
+            maxWorldY = view.maxWorldY;
+            maxWorldZ = view.maxWorldZ;
+        }
+
+        HologramState rebase(NBTTagCompound fresh) {
+            return new HologramState(fresh, this);
+        }
+    }
+
+    /** A new local presentation, retaining only sealed CPU geometry and no old publication lineage. */
+    private HologramState(NBTTagCompound fresh, LocalGeometry geometry) {
+        data = metadata(fresh);
+        session = data.getString("session");
+        cells = geometry.cells;
+        regions = geometry.regions;
+        materials = geometry.materials;
+        structureMembers = geometry.structureMembers;
+        plainDisplayExamples = geometry.plainDisplayExamples;
+        fullBaseline = geometry.fullBaseline;
+        parsedCells = 0; // no cell rows projected or parsed for this publication
+        parentIdentity = controllerTargetIdentity = null;
+        changedIndices = new int[0];
+        minY = geometry.minY;
+        maxY = geometry.maxY;
+        minWorldX = geometry.minWorldX;
+        minWorldY = geometry.minWorldY;
+        minWorldZ = geometry.minWorldZ;
+        maxWorldX = geometry.maxWorldX;
+        maxWorldY = geometry.maxWorldY;
+        maxWorldZ = geometry.maxWorldZ;
+    }
+
     private HologramState(ControllerDetails ready) {
         HologramState geometry = ready.geometry;
         data = ready.data;
@@ -326,6 +381,7 @@ final class HologramState {
         private int minY, maxY, minWorldX, maxWorldX, minWorldY, maxWorldY, minWorldZ, maxWorldZ;
         private HologramState result;
         private final boolean displayRows;
+        private final boolean showMeOutputCapacity;
         private final boolean anonymousCompact;
         private final HologramBlueprintPreview.CompactCells compactCells;
         private final List<HologramControllerTarget.Cell> controllerCells;
@@ -368,6 +424,7 @@ final class HologramState {
             descriptors = packed ? new java.util.IdentityHashMap<>() : null;
             displayDescriptors = displayRows && !packed && compactCells == null ? new HashMap<>() : null;
             this.displayRows = displayRows;
+            showMeOutputCapacity = displayRows && HologramBlueprintPreview.showMeOutputCapacity(source);
             this.compactCells = compactCells;
             anonymousCompact = compactCells != null && !compactCells.editorRows();
             this.controllerCells = controllerCells;
@@ -454,6 +511,10 @@ final class HologramState {
             return stage == 4;
         }
 
+        boolean usesEditorCells() {
+            return compactCells != null && compactCells.editorRows();
+        }
+
         boolean canPrepareCompactIndex() {
             return compactCells != null && cellCount >= 32_768 && compactMaterials.length <= 64
                 && materialRows.tagCount() == 0;
@@ -510,7 +571,7 @@ final class HologramState {
             if (displayRows) try {
                 Cell shared = displayDescriptors == null ? null : plainDisplayCell(row);
                 if (shared != null) return shared;
-                HologramBlueprintPreview.completeCell(row);
+                HologramBlueprintPreview.completeCell(row, showMeOutputCapacity);
             } catch (java.io.IOException invalid) {
                 throw new IllegalArgumentException(invalid.getMessage(), invalid);
             }
@@ -540,7 +601,7 @@ final class HologramState {
                 boolean withoutPayload = !definition.hasKey("previewTile", 10)
                     && !definition.hasKey("previewItemTag", 10);
                 try {
-                    HologramBlueprintPreview.completeCell(definition);
+                    HologramBlueprintPreview.completeCell(definition, showMeOutputCapacity);
                 } catch (java.io.IOException invalid) {
                     throw new IllegalArgumentException(invalid.getMessage(), invalid);
                 }
@@ -566,7 +627,7 @@ final class HologramState {
                 descriptor.setInteger("targetFacing", material.facing);
                 descriptor.setString("previewItem", material.item);
                 descriptor.setInteger("previewDamage", material.damage);
-                HologramBlueprintPreview.completeCell(descriptor);
+                HologramBlueprintPreview.completeCell(descriptor, showMeOutputCapacity);
                 DescriptorTemplate candidate = new DescriptorTemplate(descriptor, true);
                 if (candidate.plainTarget()) {
                     template = candidate;
@@ -1455,6 +1516,10 @@ final class HologramState {
 
         String specialHint(String key) {
             return specialHint == null ? "" : specialHint.getString(key);
+        }
+
+        HologramControllerTarget.Cell capturedNativeTarget() {
+            return controllerCell;
         }
 
         boolean localObservationMissing() {

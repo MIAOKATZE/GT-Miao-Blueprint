@@ -3,6 +3,8 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import static com.miaokatze.gtmb.client.hologram.HologramUiText.projector;
+
 import java.util.EnumMap;
 import java.util.Map;
 import java.util.function.BooleanSupplier;
@@ -110,7 +112,7 @@ final class HologramEditorNativeLibraryDialogs {
         if (kind == Kind.ADMIN) admin(content);
         else if (kind == Kind.PRESET) {
             content.child(
-                HologramEditorNativeTheme.label(() -> "为已核对的处理选择命名，供下次导入复用。")
+                HologramEditorNativeTheme.label(() -> projector("library.preset_help"))
                     .widthRel(1f)
                     .height(32));
             content.child(
@@ -119,20 +121,20 @@ final class HologramEditorNativeLibraryDialogs {
                     .widthRel(1f)
                     .height(22));
             content.child(
-                HologramEditorNativeTheme.label(() -> "只保存全局策略，不复制本图设备数据。")
+                HologramEditorNativeTheme.label(() -> projector("library.preset_scope"))
                     .sizeRel(1f)
                     .expanded());
         } else {
             content.child(
                 HologramEditorNativeTheme
                     .label(
-                        () -> kind == Kind.DELETE ? "删除蓝图：" + ui.library.nativeDeleteName() + "\n当前编辑稿保留；此操作不能撤销。"
+                        () -> kind == Kind.DELETE ? projector("dialog.delete_body", ui.library.nativeDeleteName())
                             : ui.library.nativeReviewBody())
                     .widthRel(1f)
                     .height(48));
             content.child(
                 HologramEditorNativeTheme
-                    .label(() -> kind == Kind.DELETE ? "只删除所选库中的文件对。" : ui.library.nativeReviewTarget())
+                    .label(() -> kind == Kind.DELETE ? projector("library.delete_scope") : ui.library.nativeReviewTarget())
                     .sizeRel(1f)
                     .expanded());
         }
@@ -141,7 +143,7 @@ final class HologramEditorNativeLibraryDialogs {
             .height(24)
             .childPadding(8);
         ButtonWidget<?> cancel = ui.shell
-            .nativeAction(cancelId(kind), () -> kind == Kind.ADMIN ? "关闭" : "取消", () -> true, () -> "返回原上下文，保留未提交内容。")
+            .nativeAction(cancelId(kind), () -> kind == Kind.ADMIN ? projector("dialog.close") : projector("dialog.cancel"), () -> true, () -> projector("dialog.cancel_help"))
             .widthRel(1f)
             .expanded()
             .height(24);
@@ -184,13 +186,13 @@ final class HologramEditorNativeLibraryDialogs {
                 : kind == Kind.DELETE ? ui.session.editable()
                     : ui.session.editable()
                         || HologramBackgroundTasks.awaitingSourceReview() && ui.session.pendingSequence() < 0;
-        Supplier<String> label = () -> kind == Kind.PRESET ? "确认保存流程预设"
-            : kind == Kind.DELETE ? "确认删除"
-                : kind == Kind.ADMIN ? "保存全部设置"
-                    : kind == Kind.OVERWRITE ? "确认覆盖保存"
-                        : ui.library.clearWorkspaceReview() ? "确认清空"
-                            : ui.library.projectionDiscardReview() ? "丢弃投影并打开蓝图" : "放弃改动并继续";
-        return ui.shell.nativeAction(id, label, enabled, () -> "仍由原业务门禁和服务器核对本次请求。")
+        Supplier<String> label = () -> kind == Kind.PRESET ? projector("dialog.confirm_preset")
+            : kind == Kind.DELETE ? projector("dialog.confirm_delete")
+                : kind == Kind.ADMIN ? projector("dialog.confirm_admin")
+                    : kind == Kind.OVERWRITE ? projector("dialog.confirm_overwrite")
+                        : ui.library.clearWorkspaceReview() ? projector("dialog.confirm_clear")
+                            : ui.library.projectionDiscardReview() ? projector("dialog.confirm_projection") : projector("dialog.confirm_discard");
+        return ui.shell.nativeAction(id, label, enabled, () -> projector("dialog.confirm_help"))
             .onMousePressed(button -> {
                 if (button != 0 || !enabled.getAsBoolean() || desired() != kind) return true;
                 if (kind == Kind.PRESET) ui.processing.processingPresetField()
@@ -205,7 +207,7 @@ final class HologramEditorNativeLibraryDialogs {
     }
 
     private String title(Kind kind) {
-        return kind == Kind.ADMIN ? "服务器蓝图库设置 · OP 4"
-            : kind == Kind.DELETE ? "删除所选蓝图" : kind == Kind.PRESET ? "保存流程预设" : ui.library.nativeReviewTitle();
+        return kind == Kind.ADMIN ? projector("library.admin_title")
+            : kind == Kind.DELETE ? projector("library.delete_selected") : kind == Kind.PRESET ? projector("dialog.preset_title") : ui.library.nativeReviewTitle();
     }
 }

@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.function.BooleanSupplier;
+import java.util.function.IntFunction;
 
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockHay;
@@ -160,6 +161,12 @@ public final class HologramProjectedPlacement {
     /** Freezes the selectable targets of a local controller view for a real build review. */
     public static Plan compileDisplayed(NBTTagCompound state, int[] anchor, int worldHeight, BooleanSupplier current)
         throws IOException {
+        return compileDisplayed(state, anchor, worldHeight, current, index -> null);
+    }
+
+    /** A fresh local projection may supply capture-owned target semantics; raw or imported rows cannot. */
+    public static Plan compileDisplayed(NBTTagCompound state, int[] anchor, int worldHeight, BooleanSupplier current,
+        IntFunction<HologramControllerTarget.Cell> nativeTarget) throws IOException {
         if (anchor == null || anchor.length != 3
             || !HologramWorldFlow.worldPosition(anchor[0], anchor[1], anchor[2], worldHeight))
             throw new IOException("放置锚点超出当前世界范围");
@@ -176,11 +183,15 @@ public final class HologramProjectedPlacement {
             NBTTagCompound row = rows.getCompoundTagAt(index);
             if (!scope.includes(row, index) || row.getBoolean("anchor") || "minecraft:air".equals(row.getString("wantId")))
                 continue;
+            int x = row.getInteger("x"), y = row.getInteger("y"), z = row.getInteger("z");
+            if (!HologramWorldFlow.worldPosition(x, y, z, worldHeight)) throw new IOException("结构格超出当前世界范围");
+            if (HologramNativeSourceWater.previewRow(row)
+                && x - anchor[0] == row.getInteger("dx") && y - anchor[1] == row.getInteger("dy")
+                && z - anchor[2] == row.getInteger("dz")
+                && HologramNativeSourceWater.matches(nativeTarget.apply(index), row)) continue;
             ItemStack sample = ItemStack.loadItemStackFromNBT(row.getCompoundTag("targetStack"));
             if (sample == null || row.getBoolean("missingBlock"))
                 throw new IOException("所选范围包含未确定材料的结构格，请先明确目标方块");
-            int x = row.getInteger("x"), y = row.getInteger("y"), z = row.getInteger("z");
-            if (!HologramWorldFlow.worldPosition(x, y, z, worldHeight)) throw new IOException("结构格超出当前世界范围");
             if (x == anchor[0] && y == anchor[1] && z == anchor[2]) continue;
             String blockName = row.getString("wantId");
             Block block = Block.getBlockFromName(blockName);

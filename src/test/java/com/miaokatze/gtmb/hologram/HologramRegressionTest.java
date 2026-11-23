@@ -233,6 +233,8 @@ public final class HologramRegressionTest {
             com.miaokatze.gtmb.client.hologram.HologramLocalHistoryTraceRegression::run);
         cases.put("client_private_edit_performance_settings_natural_route",
             com.miaokatze.gtmb.client.hologram.HologramPrivateEditPerformanceRegression::run);
+        cases.put("same_owner_local_editor_resume_reuses_cells_without_retired_metadata",
+            com.miaokatze.gtmb.client.hologram.HologramLocalPresentationRegression::run);
         cases.put("native_channels_fallback_and_arbitrary_keys", HologramRegressionTest::channels);
         cases.put("unadapted_channels_are_editable_and_reach_native_trigger", HologramRegressionTest::openChannels);
         cases.put("packet_snapshot_roundtrip_keeps_all_channel_values", HologramRegressionTest::packetRoundTrip);
@@ -265,6 +267,8 @@ public final class HologramRegressionTest {
         cases.put(
             "projected_placement_wire_carries_only_operations_and_matching_consumables",
             HologramPlacementRequestRegression::run);
+        cases.put("native_generated_source_water_preserves_editing_without_placement_authority",
+            HologramNativeSourceWaterRegression::run);
         cases.put("network_energy_quotes_consume_once_and_refund_only_actual_debits", HologramEnergyRegression::run);
         cases.put("decor_fractional_materials_pay_once_and_refund_failed_cells", HologramDecorMaterialsRegression::run);
         cases.put(

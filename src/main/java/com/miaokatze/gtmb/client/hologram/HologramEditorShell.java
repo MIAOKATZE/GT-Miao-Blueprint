@@ -3,6 +3,8 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import static com.miaokatze.gtmb.client.hologram.HologramUiText.projector;
+
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -207,7 +209,7 @@ final class HologramEditorShell {
             .disableHoverBackground()
             .overlay((context, x, y, width, height, theme) -> {
                 com.cleanroommc.modularui.drawable.GuiDraw.drawRect(x, y, width, height, 0xc8292d2f);
-                String message = "右击控制器开启投影模式";
+                String message = projector("editor.open_controller");
                 ui.host.font()
                     .drawString(
                         message,
@@ -286,8 +288,8 @@ final class HologramEditorShell {
                 .child(
                     HologramEditorNativeTheme
                         .label(
-                            () -> ui.workspaces.projection() ? "控制器投影 · 固定锚点"
-                                : ui.workspaces.isCut() ? "当前存档 · 独立剪切列表" : ui.library.blueprintSaveState(),
+                            () -> ui.workspaces.projection() ? projector("editor.controller_fixed")
+                                : ui.workspaces.isCut() ? projector("editor.cut_world") : ui.library.blueprintSaveState(),
                             HologramEditorNativeTheme.MUTED)
                         .widthRel(1f)
                         .height(10)));
@@ -295,27 +297,28 @@ final class HologramEditorShell {
         bar.child(
             taskProgress.widthRel(.35f)
                 .height(20));
-        bar.child(headerButton("打开剪切", "cut", () -> ui.workspaces.activateCut(), ui.workspaces::blueprint));
-        bar.child(headerButton("蓝图库", "library", () -> {
+        bar.child(headerButton(projector("editor.open_cuts"), "cut", () -> ui.workspaces.activateCut(), ui.workspaces::blueprint));
+        bar.child(headerButton(projector("library.title"), "library", () -> {
             if (!ui.workspaces.blueprint()) ui.workspaces.activateBlueprint();
             else toggleLibrary();
         }, ui.workspaces::blueprint));
-        bar.child(headerButton("教程", "tutorial", ui.guide::openLessons, () -> true));
-        bar.child(headerButton("保存", "save", () -> selectDockPage(7), ui.workspaces::blueprint));
-        bar.child(headerButton("退出", "back", ui.router::closeRoot, () -> true));
+        bar.child(headerButton(projector("editor.tutorial"), "tutorial", ui.guide::openLessons, () -> true));
+        bar.child(headerButton(projector("editor.save"), "save", () -> selectDockPage(7), ui.workspaces::blueprint));
+        bar.child(headerButton(projector("editor.exit"), "back", ui.router::closeRoot, () -> true));
         bar.child(ui.guide.buildChip());
         return bar;
     }
 
     private String documentTitle() {
-        if (ui.workspaces.isCut()) return "剪切存储";
+        if (ui.workspaces.isCut()) return projector("editor.cut_storage");
         String title = ui.session.state().data.getString("virtualPresetName")
             .trim();
         if (title.isEmpty()) title = ui.session.state().data.getString("title")
             .trim();
+        // The bootstrap marker is stored in state. Only its presentation is localized.
         if (ui.workspaces.blueprint() && (title.isEmpty() || "全息构造器".equals(title)))
-            return ui.session.state().cells.isEmpty() ? "未命名蓝图" : "蓝图草稿";
-        return title.isEmpty() ? "控制器投影" : title;
+            return ui.session.state().cells.isEmpty() ? projector("editor.untitled") : projector("editor.draft");
+        return title.isEmpty() ? projector("editor.controller") : title;
     }
 
     private IWidget headerButton(String name, String icon, Runnable action, BooleanSupplier visible) {
@@ -346,8 +349,8 @@ final class HologramEditorShell {
     }
 
     private String workspaceHint() {
-        return ui.workspaces.projection() ? "固定控制器 · 等级 / 信道 / 仓室"
-            : ui.workspaces.isCut() ? "选择列表即时预览 · 放置与撤回" : "点选格 · 列表选整组 · G 移动";
+        return ui.workspaces.projection() ? projector("editor.projection_hint")
+            : ui.workspaces.isCut() ? projector("editor.cut_hint") : projector("editor.blueprint_hint");
     }
 
     private IWidget buildLaunchers() {
@@ -359,7 +362,7 @@ final class HologramEditorShell {
             .childPadding(4)
             .background(HologramEditorNativeTheme.PANEL);
         String[] icons = { "select", "structure", "process", "material", "network", "info", "place" };
-        String[] names = { "所选格属性", "结构配置", "蓝图处理", "材料与来源", "量子组与网络", "提示词与区域", "材料核验与施工" };
+        String[] names = { "editor.properties", "editor.structure", "editor.processing", "editor.materials", "editor.network_launcher", "editor.hints", "editor.build_review" };
         int[] indices = { 0, 3, 1, 4, 5, 6, 8 };
         ListWidget<IWidget, ?> list = new ListWidget<>().widthRel(1f)
             .heightRel(1f)
@@ -367,7 +370,7 @@ final class HologramEditorShell {
         for (int i = 0; i < names.length; i++) {
             final int index = indices[i];
             final String name = names[i];
-            ButtonWidget<?> button = HologramEditorNativeTheme.toolButton(() -> name, icons[i], () -> {
+            ButtonWidget<?> button = HologramEditorNativeTheme.toolButton(() -> projector(name), icons[i], () -> {
                 if (dockExpanded() && pages.getCurrentPageIndex() == index) setDockExpanded(false);
                 else selectDockPage(index);
             }, () -> true, () -> dockExpanded() && pages.getCurrentPageIndex() == index, this::launcherLabels)
@@ -489,14 +492,14 @@ final class HologramEditorShell {
             HologramEditorNativeTheme
                 .flatIconButton(
                     "detach",
-                    () -> inspectorFloating ? "停靠到侧栏" : "浮出功能面板",
+                    () -> inspectorFloating ? projector("editor.dock") : projector("editor.float"),
                     this::toggleInspectorFloating,
                     () -> true,
                     () -> inspectorFloating)
                 .size(HologramEditorNativeTheme.ICON_BUTTON));
         heading.child(
             HologramEditorNativeTheme
-                .flatIconButton("collapse-right", () -> "收起功能侧栏", () -> setDockExpanded(false), () -> true, () -> false)
+                .flatIconButton("collapse-right", () -> projector("editor.collapse_dock"), () -> setDockExpanded(false), () -> true, () -> false)
                 .size(HologramEditorNativeTheme.ICON_BUTTON));
         if (deferBlueprintPages) {
             blueprintSettingsPage = new ParentWidget<>().sizeRel(1f);
@@ -538,16 +541,16 @@ final class HologramEditorShell {
             .child(
                 nativeAction(
                     196,
-                    () -> "已有量子类群绑定",
+                    () -> projector("editor.network_bindings"),
                     () -> launcherAvailable(5) && ui.session.editable(),
-                    () -> "当前蓝图登记的真实量子类群与网络").widthRel(1f)
+                    () -> projector("editor.network_bindings_help")).widthRel(1f)
                         .height(18))
             .child(
                 nativeAction(
                     179,
-                    () -> "AE 容器与资源标记",
+                    () -> projector("editor.ae"),
                     () -> launcherAvailable(5) && ui.session.editable(),
-                    () -> "原容器标记与资源审查").widthRel(1f)
+                    () -> projector("editor.ae_help")).widthRel(1f)
                         .height(18));
     }
 
@@ -558,20 +561,20 @@ final class HologramEditorShell {
             .child(
                 nativeAction(
                     146,
-                    () -> "所选格提示词",
+                    () -> projector("editor.cell_prompt"),
                     () -> launcherAvailable(6) && ui.session.editable() && ui.session.selectedCell() != null,
-                    () -> "编辑当前格的施工提示").widthRel(1f)
+                    () -> projector("editor.cell_prompt_help")).widthRel(1f)
                         .height(18))
             .child(
-                nativeAction(227, () -> "全局提示词", () -> launcherAvailable(6) && ui.session.editable(), () -> "整份蓝图的说明")
+                nativeAction(227, () -> projector("editor.global_prompt"), () -> launcherAvailable(6) && ui.session.editable(), () -> projector("editor.global_prompt_help"))
                     .widthRel(1f)
                     .height(18))
             .child(
                 nativeAction(
                     166,
-                    () -> "所选格 NBT",
+                    () -> projector("editor.cell_nbt"),
                     () -> launcherAvailable(6) && ui.processing.canEditBlueprintNbt(),
-                    () -> "审阅当前格的真实NBT").widthRel(1f)
+                    () -> projector("editor.cell_nbt_help")).widthRel(1f)
                         .height(18));
     }
 
@@ -586,7 +589,7 @@ final class HologramEditorShell {
             .background(HologramEditorNativeTheme.PANEL);
         collapsed.child(
             HologramEditorNativeTheme
-                .flatIconButton("library", () -> "展开蓝图库", this::toggleLibrary, () -> true, () -> false)
+                .flatIconButton("library", () -> projector("editor.expand_library"), this::toggleLibrary, () -> true, () -> false)
                 .size(HologramEditorNativeTheme.ICON_BUTTON));
         libraryBody = Flow.col()
             .width(libraryWidth)
@@ -982,7 +985,7 @@ final class HologramEditorShell {
         private int grabX, grabY;
 
         InspectorHandle() {
-            tooltip(t -> t.addLine("拖动标题浮出并移动；图钉按钮停靠回侧栏"));
+            tooltip(t -> t.addLine(projector("editor.move_panel")));
         }
 
         @Override
@@ -998,10 +1001,12 @@ final class HologramEditorShell {
         @Override
         public void draw(com.cleanroommc.modularui.screen.viewport.ModularGuiContext context,
             com.cleanroommc.modularui.theme.WidgetThemeEntry<?> theme) {
-            String[] titles = { "所选格属性", "蓝图处理", "", "结构配置", "材料与来源", "量子与网络", "提示词与区域", "保存蓝图", "材料核验与施工" };
+            String[] titles = { "editor.properties", "editor.processing", "", "editor.structure", "editor.materials", "editor.network_panel", "editor.hints", "library.save", "editor.build_review" };
             net.minecraft.client.gui.FontRenderer font = ui.host.minecraft().fontRenderer;
+            String titleKey = titles[pages.getCurrentPageIndex()];
+            String title = titleKey.isEmpty() ? "" : projector(titleKey);
             font.drawString(
-                font.trimStringToWidth(titles[pages.getCurrentPageIndex()], Math.max(8, getArea().width - 2)),
+                font.trimStringToWidth(title, Math.max(8, getArea().width - 2)),
                 1,
                 Math.max(1, (getArea().height - 9) / 2),
                 HologramEditorNativeTheme.TITLE);

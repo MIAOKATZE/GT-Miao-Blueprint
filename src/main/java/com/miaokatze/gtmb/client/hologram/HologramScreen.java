@@ -68,12 +68,22 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         EXECUTION_PREPARATION.allowCoreThreadTimeOut(true);
     }
 
+    private final Object openedWorld, openedConnection, openedPlayer;
+    private final int openedDimension;
+    private final long openedPresentationResources;
+
     HologramScreen(HologramState state) {
         this(state, 0);
     }
 
     private HologramScreen(HologramState state, long modulesStarted) {
         super("workstation");
+        Minecraft client = minecraft();
+        openedWorld = client.theWorld;
+        openedConnection = client.getNetHandler();
+        openedPlayer = client.thePlayer;
+        openedDimension = client.thePlayer == null ? Integer.MIN_VALUE : client.thePlayer.dimension;
+        openedPresentationResources = HologramTextures.resourceGeneration();
         HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.WORKBENCH_SCREEN_MODULES, modulesStarted);
         long sessionStarted = modulesStarted == 0 ? 0 : HologramRuntimeMetrics.start();
         try {
@@ -347,10 +357,22 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     }
 
     void reviewLocalConstruction(NBTTagCompound settings) {
-        if (!localControllerStandard() || !controllerContextCurrent(false) || localExecutionRequest != null) return;
+        if (!localControllerStandard()) return;
+        if (localExecutionRequest != null) {
+            ui.session.notice("上一次施工核对尚未结束，请稍候。");
+            return;
+        }
         Minecraft client = minecraft();
         HologramState displayed = ui.session.state();
-        if (displayed.cells.isEmpty() || displayed.data.getBoolean("capturePending")) return;
+        String blocker = HologramPlacementConfirmation.localStructureReviewBlocker(displayed);
+        if (!blocker.isEmpty()) {
+            ui.session.notice(blocker);
+            return;
+        }
+        if (!controllerContextCurrent(false)) {
+            ui.session.notice("控制器或手持投影仪已变化，请重新打开结构。");
+            return;
+        }
         if (displayed.data.getInteger("mode") != 0) {
             settings.setInteger("mode", displayed.data.getInteger("mode"));
             HologramClient.prepareExplicitControllerOperation(openingController, localControllerSide, settings, displayed);
@@ -374,22 +396,28 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
                     }
                     intent.setTag("cells", cells);
                     var plan = com.miaokatze.gtmb.hologram.HologramProjectedPlacement.compileDisplayed(
-                        intent, anchor, height, () -> id.equals(localExecutionRequest));
+                        intent, anchor, height, () -> id.equals(localExecutionRequest),
+                        index -> displayed.cells.get(index).capturedNativeTarget());
                     NBTTagCompound request = com.miaokatze.gtmb.hologram.HologramPlacementRequest.encode(
                         id, anchor, plan, intent);
-                    var packet = com.miaokatze.gtmb.hologram.HologramNetwork.prepareProjectedPlacement(request);
+                    var upload = com.miaokatze.gtmb.hologram.HologramNetwork.prepareProjectedPlacement(
+                        request, () -> id.equals(localExecutionRequest));
                     client.func_152344_a(() -> {
                         if (!id.equals(localExecutionRequest)) return;
                         if (client.currentScreen != this || !controllerContextCurrent(false)
                             || displayed.cells != ui.session.state().cells) {
-                            localExecutionRequest = null;
+                            if (client.currentScreen == this)
+                                localExecutionFailed(id, "施工目标或手持投影仪已变化，请重新核对。");
+                            else localExecutionRequest = null;
                             return;
                         }
                         try {
-                            com.miaokatze.gtmb.hologram.HologramNetwork.sendPreparedPlacement(packet);
+                            com.miaokatze.gtmb.hologram.HologramNetwork.sendPreparedPlacement(upload,
+                                () -> id.equals(localExecutionRequest) && client.currentScreen == this
+                                    && controllerContextCurrent(false) && displayed.cells == ui.session.state().cells);
                             localExecutionSent = true;
                             ui.session.notice("正在核对施工现场和材料…");
-                        } catch (RuntimeException failure) {
+                        } catch (java.io.IOException | RuntimeException failure) {
                             localExecutionFailed(id, failure.getMessage());
                         }
                     });
@@ -760,6 +788,9 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     private HologramScreen(String topic, boolean replay, Runnable returnToStorage) {
         super("detached_tutorial");
+        openedWorld = openedConnection = openedPlayer = null;
+        openedDimension = Integer.MIN_VALUE;
+        openedPresentationResources = -1;
         if (returnToStorage == null) throw new IllegalArgumentException("A detached tutorial requires a return target");
         detached = true;
         detachedTopic = topic;
@@ -861,11 +892,19 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             requestedLocalMaterialScope = null;
             java.util.UUID execution = localExecutionRequest;
             localExecutionRequest = null;
-            if (localExecutionSent && execution != null && minecraft().getNetHandler() != null) {
-                NBTTagCompound cancel = new NBTTagCompound();
-                cancel.setString("action", "cancelProjectedPlacement");
-                cancel.setString("placementRequestId", execution.toString());
-                com.miaokatze.gtmb.hologram.HologramNetwork.sendAction(cancel);
+            if (execution != null) {
+                com.miaokatze.gtmb.hologram.HologramNetwork.discardPreparedPlacement(execution);
+                if (localExecutionSent && minecraft().getNetHandler() == openingConnection
+                    && openingController != null && minecraft().theWorld == openingController.getWorldObj()) {
+                    NBTTagCompound cancel = new NBTTagCompound();
+                    cancel.setString("action", "cancelProjectedPlacement");
+                    cancel.setString("placementRequestId", execution.toString());
+                    try {
+                        com.miaokatze.gtmb.hologram.HologramNetwork.sendAction(cancel);
+                    } catch (RuntimeException disconnected) {
+                        // Cleanup still proceeds; the original server upload has a bounded lease.
+                    }
+                }
             }
             localExecutionSent = false;
             retireLocalController();
@@ -876,9 +915,17 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
                 .newSetFromMap(new java.util.IdentityHashMap<>());
             graphs.addAll(workspaceGraphs.values());
             graphs.add(ui);
+            Minecraft client = minecraft();
+            // A retiring old screen must not assign its draft to a new player/world on close.
+            boolean sameOwner = openedWorld != null && openedWorld == client.theWorld
+                && openedConnection != null && openedConnection == client.getNetHandler()
+                && openedPlayer != null && openedPlayer == client.thePlayer && openedDimension == client.thePlayer.dimension;
             for (HologramUiModules graph : graphs) {
-                if (!detached && graph.session.localDocument())
-                    HologramClient.rememberLocalDocument(graph.session.document());
+                if (!detached && sameOwner && graph.session.localDocument())
+                    HologramClient.rememberLocalDocument(graph.session.document(), graph.session.state(),
+                        !graph.library.localBusy() && graph.session.pendingSequence() < 0 && !graph.session.isTutorial()
+                            && openedPresentationResources == HologramTextures.resourceGeneration());
+                graph.library.retireLocalResume();
                 graph.shell.close();
                 graph.canvas.layout()
                     .release();

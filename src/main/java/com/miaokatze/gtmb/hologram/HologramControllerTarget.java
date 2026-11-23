@@ -28,13 +28,18 @@ public final class HologramControllerTarget {
         }
     }
 
+    public enum TargetKind {
+        MATERIAL,
+        MACHINE_SOURCE_WATER
+    }
+
     /** Stack, display and hint payloads are capture-owned and read-only after publication. */
     @Desugar
     public record Cell(int x, int y, int z, int dx, int dy, int dz, String id, String wantId, int meta, int wantMeta,
         Block actualBlock, Block targetBlock, ItemStack actualStack, ItemStack targetStack, NBTTagCompound actualDisplay,
         NBTTagCompound targetDisplay, boolean anchor, boolean iconOnly, boolean missingBlock, String status, String role,
         String family, String renderKind, String prompt, int actualFacing, int targetFacing, String[] hintIcons,
-        int[] hintTint, int hintIndex, boolean localObservationMissing) {
+        int[] hintTint, int hintIndex, boolean localObservationMissing, TargetKind kind) {
 
         /** Only serialization and edit/export operations need a materialized row. */
         public NBTTagCompound tag() {
@@ -53,6 +58,7 @@ public final class HologramControllerTarget {
             row.setBoolean("inScope", true);
             row.setBoolean("missingBlock", missingBlock);
             row.setBoolean("iconOnly", iconOnly);
+            if (kind == TargetKind.MACHINE_SOURCE_WATER) HologramNativeSourceWater.describe(row);
             row.setString("status", status);
             row.setString("role", role);
             row.setString("family", family);
