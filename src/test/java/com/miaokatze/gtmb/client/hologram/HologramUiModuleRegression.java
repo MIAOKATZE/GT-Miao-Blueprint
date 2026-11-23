@@ -3,12 +3,16 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
+import net.minecraft.nbt.NBTBase;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
+import net.minecraft.util.ReportedException;
 
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
@@ -33,9 +37,11 @@ public final class HologramUiModuleRegression {
         movementHandleControl();
         idleHintTiming();
         confirmedLibraryTargets();
+        configurationPresetPresence();
         controllerConstructionConfirmation();
         presentationSnapshotFailure();
         authorSaveKeepsIdentityChoiceAfterRotation();
+        localAuthorSavePrivacyRoundTrip();
         List<String> visited = new ArrayList<>();
         boolean handled = HologramUiInputChain.consume(() -> {
             visited.add("hidden overlay");
@@ -631,6 +637,9 @@ public final class HologramUiModuleRegression {
     private static void confirmedLibraryTargets() {
         java.lang.reflect.Field singleton = null;
         Object previous = null;
+        HologramLibraryClient library = HologramLibraryClient.INSTANCE;
+        NBTTagList savedCatalog = library.rows(false);
+        String savedSelection = library.selected(false);
         try {
             for (java.lang.reflect.Field field : net.minecraft.client.Minecraft.class.getDeclaredFields())
                 if (field.getType() == net.minecraft.client.Minecraft.class
@@ -640,15 +649,16 @@ public final class HologramUiModuleRegression {
             previous = singleton.get(null);
             java.lang.reflect.Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
             unsafeField.setAccessible(true);
-            singleton.set(
-                null,
-                ((sun.misc.Unsafe) unsafeField.get(null)).allocateInstance(net.minecraft.client.Minecraft.class));
+            sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
+            var minecraft = (net.minecraft.client.Minecraft) unsafe.allocateInstance(net.minecraft.client.Minecraft.class);
+            singleton.set(null, minecraft);
+            selectedCatalogPresence(minecraft, unsafe);
             for (int action : new int[] { 139, 14001 }) {
                 HologramUiModules ui = librarySwitchUi();
                 HologramState state = ui.session.state();
                 // The compatibility button may address a separately browsed item. Ordinary rows instead use
                 // the immutable identity captured when their native control was drawn.
-                if (action == 139) setUiField(ui.library, "browseServerPresetId", "chosen-target");
+                if (action == 139) HologramLibraryClient.INSTANCE.select(false, "chosen-target");
                 NBTTagCompound originalView = ui.preview.backgroundUiState();
                 ui.router.activate(action);
                 SimpleAssert.that(
@@ -677,36 +687,29 @@ public final class HologramUiModuleRegression {
                     (NBTTagCompound) reordered.getCompoundTagAt(1)
                         .copy());
                 ui.router.activate(224);
-                NBTTagCompound confirmed = (NBTTagCompound) uiField(ui.diagnostics, "capturedRenderSmokeAction");
-                SimpleAssert
-                    .eq("chosen-target", confirmed.getString("presetId"), "confirmation retains the clicked identity");
-                SimpleAssert.eq("editPreset", confirmed.getString("op"), "confirmation retains the original operation");
+                SimpleAssert.eq("chosen-target", HologramLibraryClient.INSTANCE.selected(false),
+                    "confirmation retains the clicked identity");
                 SimpleAssert.that(
-                    confirmed.getBoolean("confirmDiscard") && ui.session.sequence() == 1 && !ui.library.discardReview(),
-                    "one confirmation submits the switch through the existing discard gate without a separate discard command");
+                    ui.session.sequence() == 0 && !ui.library.discardReview()
+                        && uiField(ui.diagnostics, "capturedRenderSmokeAction") == null,
+                    "confirming the private-library switch issues no server draft request");
                 SimpleAssert.that(
-                    originalView.equals(ui.preview.backgroundUiState())
-                        && "chosen-target".equals(ui.library.libraryNavigation().targetId),
-                    "confirmed handoff keeps the camera and the originally captured navigation target");
+                    originalView.equals(ui.preview.backgroundUiState()),
+                    "confirmed handoff keeps the camera while the local file is requested");
             }
 
             HologramUiModules clean = librarySwitchUi();
             clean.session.state().data.setBoolean("blueprintDirty", false);
             NBTTagCompound cleanView = clean.preview.backgroundUiState();
             clean.router.activate(14001);
-            NBTTagCompound cleanRequest = (NBTTagCompound) uiField(clean.diagnostics, "capturedRenderSmokeAction");
             SimpleAssert.that(
-                !clean.library.discardReview() && clean.session.sequence() == 1
-                    && "editPreset".equals(cleanRequest.getString("op"))
-                    && "chosen-target".equals(cleanRequest.getString("presetId"))
-                    && !cleanRequest.getBoolean("confirmDiscard"),
-                "a clean row directly enters the real editPreset chain without an extra edit or discard action");
+                !clean.library.discardReview() && clean.session.sequence() == 0
+                    && "chosen-target".equals(HologramLibraryClient.INSTANCE.selected(false))
+                    && uiField(clean.diagnostics, "capturedRenderSmokeAction") == null,
+                "a clean row opens the local library without an edit or discard packet");
             SimpleAssert.that(
-                cleanView.equals(clean.preview.backgroundUiState()) && !clean.library.browsePreviewActive()
-                    && "blueprintEdit".equals(clean.library.libraryNavigation().purpose)
-                    && !clean.library.libraryNavigation().local,
-                "integrated-library row handoff is an editable server session and preserves the current camera");
-            NBTTagCompound nextData = (NBTTagCompound) clean.session.state().data.copy();
+                cleanView.equals(clean.preview.backgroundUiState()) && !clean.library.browsePreviewActive(),
+                "opening a private file keeps the current camera");
             HologramUiModules overwrite = librarySwitchUi();
             overwrite.session.state().data.setBoolean("blueprintProcessingRequired", true);
             overwrite.session.state().data.setBoolean("blueprintProcessingComplete", false);
@@ -717,22 +720,6 @@ public final class HologramUiModuleRegression {
             SimpleAssert.that(
                 overwrite.library.prepareLibraryNavigation(140) && overwrite.library.overwriteReview(),
                 "explicit overwrite reaches target confirmation before server-owned saved-policy rechecking");
-            nextData.setString("session", "loaded-target");
-            nextData.setString("generation", "loaded-target");
-            nextData.setString("libraryLocalId", "");
-            nextData.setString("selectedPresetId", "chosen-target");
-            nextData.setBoolean("open", true);
-            HologramState next = new HologramState(nextData);
-            SimpleAssert.that(
-                clean.library.acceptsLibraryNavigation(next),
-                "the real integrated-library response is accepted in the existing screen instead of reopening it");
-            clean.preview.resetSession(next);
-            NBTTagCompound nextView = clean.preview.backgroundUiState();
-            for (String field : new String[] { "yaw", "pitch", "zoom", "cameraX", "cameraZ" }) SimpleAssert.eq(
-                cleanView.getDouble(field),
-                nextView.getDouble(field),
-                "same-screen row response preserves editor camera " + field);
-
             for (boolean localIdentity : new boolean[] { false, true }) {
                 HologramUiModules same = librarySwitchUi();
                 if (!localIdentity) same.session.state().data.setString("libraryLocalId", "");
@@ -780,7 +767,7 @@ public final class HologramUiModuleRegression {
                 "display layer controls and denied edits preserve the authoritative state and original selection");
             for (int action : new int[] { 139, 14001 }) {
                 HologramUiModules cancelled = librarySwitchUi();
-                if (action == 139) setUiField(cancelled.library, "browseServerPresetId", "chosen-target");
+                if (action == 139) HologramLibraryClient.INSTANCE.select(false, "chosen-target");
                 HologramState draft = cancelled.session.state();
                 NBTTagCompound originalView = cancelled.preview.backgroundUiState();
                 cancelled.router.activate(action);
@@ -814,21 +801,313 @@ public final class HologramUiModuleRegression {
                 .that(rejected.library.discardReview(), "the existing scalar server discard reply offers confirmation");
             rejected.session.state().data.setString("selectedPresetId", "original");
             rejected.router.activate(224);
-            NBTTagCompound retry = (NBTTagCompound) uiField(rejected.diagnostics, "capturedRenderSmokeAction");
             SimpleAssert.that(
-                "editPreset".equals(retry.getString("op")) && "chosen-target".equals(retry.getString("presetId"))
-                    && retry.getBoolean("confirmDiscard")
-                    && rejected.session.sequence() == 1,
-                "a server-requested confirmation retries its exact target and operation once");
+                "chosen-target".equals(HologramLibraryClient.INSTANCE.selected(false))
+                    && uiField(rejected.diagnostics, "capturedRenderSmokeAction") == null
+                    && rejected.session.sequence() == 0,
+                "a legacy server-sourced proposal selects its exact target through the local file path");
             libraryCatalogControlsPreservePreview();
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("cannot exercise library discard confirmation", failure);
         } finally {
+            try {
+                setUiField(library, "local", savedCatalog);
+                library.select(false, savedSelection);
+            } catch (ReflectiveOperationException failure) {
+                throw new AssertionError("cannot restore detached library catalog", failure);
+            }
             if (singleton != null) try {
                 singleton.set(null, previous);
             } catch (IllegalAccessException failure) {
                 throw new AssertionError("cannot restore detached Minecraft singleton", failure);
             }
+        }
+    }
+
+    private static void configurationPresetPresence() {
+        try {
+            Path directory = Files.createTempDirectory("gtmb-config-preset-presence-");
+            Path file = directory.resolve("presence.nbt");
+            try {
+                configurationPresetPresence(file);
+            } finally {
+                Files.deleteIfExists(file);
+                Files.deleteIfExists(directory);
+            }
+        } catch (java.io.IOException | ReflectiveOperationException failure) {
+            throw new AssertionError("cannot exercise local configuration preset presence", failure);
+        }
+    }
+
+    private static void configurationPresetPresence(Path file)
+        throws java.io.IOException, ReflectiveOperationException {
+        var storeField = HologramUiConfiguration.class.getDeclaredField("presetStore");
+        storeField.setAccessible(true);
+        Object priorStore = storeField.get(null);
+        try {
+            var ui = headlessUi();
+            var store = new HologramConfigurationPresets(file.toFile());
+            setUiField(ui.config, "selectedHatchPreset", "Selected");
+            storeField.set(null, null);
+            SimpleAssert.that(!ui.config.nativeSelectedPreset() && !ui.config.nativeLastPreset(true)
+                && !ui.config.nativeLastPreset(false), "uninitialized local storage does not enable the options");
+            storeField.set(null, store);
+            SimpleAssert.that(!store.containsName("Selected") && !store.hasLast(true) && !store.hasLast(false),
+                "empty storage has no selected or previous profile");
+
+            var selected = new PresetCopySpy();
+            var savedHatch = new PresetCopySpy();
+            var savedSources = new PresetCopySpy();
+            for (var profile : new PresetCopySpy[] { selected, savedHatch, savedSources }) {
+                var nested = new NBTTagCompound();
+                nested.setString("value", "kept");
+                profile.setTag("nested", nested);
+            }
+            var selectedRow = new PresetCopySpy();
+            selectedRow.setString("name", "Selected");
+            selectedRow.setTag("profile", selected);
+            var missingProfile = new NBTTagCompound();
+            missingProfile.setString("name", "First duplicate");
+            var duplicate = new NBTTagCompound();
+            duplicate.setString("name", "First duplicate");
+            duplicate.setTag("profile", selected);
+            var wrongProfile = new NBTTagCompound();
+            wrongProfile.setString("name", "Wrong profile");
+            wrongProfile.setInteger("profile", 1);
+            var numericName = new NBTTagCompound();
+            numericName.setInteger("name", 1);
+            var numericProfile = new NBTTagCompound();
+            numericProfile.setString("fixture", "numeric name");
+            numericName.setTag("profile", numericProfile);
+            var emptyName = new NBTTagCompound();
+            emptyName.setString("name", "");
+
+            var rows = new NBTTagList();
+            for (var row : new NBTTagCompound[] {
+                selectedRow, missingProfile, duplicate, wrongProfile, numericName, emptyName }) rows.appendTag(row);
+            while (rows.tagCount() < 64) {
+                var filler = new NBTTagCompound();
+                filler.setString("name", "row-" + rows.tagCount());
+                rows.appendTag(filler);
+            }
+            var beyondVisible = new NBTTagCompound();
+            beyondVisible.setString("name", "Beyond visible limit");
+            rows.appendTag(beyondVisible);
+
+            var data = new NBTTagCompound();
+            data.setTag("hatches", rows);
+            data.setTag("lastHatch", savedHatch);
+            data.setInteger("lastSources", 1);
+            setUiField(store, "data", data);
+            SimpleAssert.that(ui.config.nativeSelectedPreset() && ui.config.nativeLastPreset(true)
+                && !ui.config.nativeLastPreset(false), "client local selection, separate modes and typed last tags");
+            for (String name : new String[] { "Selected", "First duplicate", "Wrong profile", "1", "", "Beyond visible limit" })
+                SimpleAssert.that(store.containsName(name), "exact legacy selection presence for raw name: " + name);
+            for (String name : new String[] { "Unknown", " selected", "selected", "01", " 1" })
+                SimpleAssert.that(!store.containsName(name) && store.get(name) == null, "literal name matching: " + name);
+            SimpleAssert.that(!store.names().contains("Beyond visible limit"), "availability is not a visible-list lookup");
+            var absentProfile = store.get("First duplicate");
+            SimpleAssert.eq(new NBTTagCompound(), absentProfile, "first duplicate's absent profile yields empty");
+            absentProfile.setString("fixture", "detached empty");
+            SimpleAssert.that(!missingProfile.hasKey("profile") && store.get("First duplicate").hasNoTags(),
+                "the absent-profile fallback stays detached and never inserts a tag");
+
+            var corruptTag = wrongProfile.getTag("profile");
+            setUiField(ui.config, "selectedHatchPreset", "Wrong profile");
+            SimpleAssert.that(ui.config.nativeSelectedPreset() && store.containsName("Wrong profile"),
+                "display checks the raw row name without reading its corrupt typed payload");
+            try {
+                store.get("Wrong profile");
+                throw new AssertionError("the action payload reader must still surface corrupt profile NBT");
+            } catch (ReportedException expected) {
+                SimpleAssert.that(expected.getCause() instanceof ClassCastException
+                    && "Reading NBT data".equals(expected.getMessage()), "pinned action reader keeps the NBT type error");
+            }
+            SimpleAssert.that(wrongProfile.getTag("profile") == corruptTag && wrongProfile.hasKey("profile", 3)
+                && wrongProfile.getInteger("profile") == 1 && !Files.exists(file),
+                "neither display nor failed payload read mutates or persists the corrupt row");
+            setUiField(ui.config, "selectedHatchPreset", "Selected");
+            SimpleAssert.eq("1", numericName.getString("name"), "pinned NBT exposes a numeric name as its raw string");
+            SimpleAssert.eq(numericProfile, store.get("1"), "numeric name keeps the same exact detached legacy match");
+            SimpleAssert.eq(new NBTTagCompound(), store.get(""), "a separate truly empty name still matches");
+            SimpleAssert.eq(null, store.last(false), "a wrong last type yields no detached payload either");
+
+            data.setTag("lastSources", new NBTTagCompound());
+            SimpleAssert.that(ui.config.nativeLastPreset(false) && store.last(false) != null,
+                "a typed empty last source is available, not a missing value");
+            data.setTag("lastSources", savedSources);
+            java.util.function.BiConsumer<String, NBTTagCompound> tutorial = (op, nbt) -> {
+                throw new AssertionError("a display predicate must not dispatch an action");
+            };
+            setUiField(ui.session, "tutorialSink", tutorial);
+            SimpleAssert.that(!ui.config.nativeSelectedPreset() && !ui.config.nativeLastPreset(true)
+                && !ui.config.nativeLastPreset(false), "tutorial never consults populated local preferences");
+            setUiField(ui.session, "tutorialSink", null);
+            SimpleAssert.that(ui.config.nativeSelectedPreset() && ui.config.nativeLastPreset(true)
+                && ui.config.nativeLastPreset(false), "real adapters use current view and mode after tutorial");
+            SimpleAssert.that(!Files.exists(file), "presentation has not written user preferences");
+            SimpleAssert.eq(0, selectedRow.profileReads, "selection presence never reads the stored profile payload");
+            for (var original : new PresetCopySpy[] { selected, savedHatch, savedSources })
+                SimpleAssert.eq(0, original.copies, "presentation and lookup gates never copy the profile NBT");
+
+            var selectedPayload = store.get("Selected");
+            var hatchPayload = store.last(true);
+            var sourcesPayload = store.last(false);
+            var originals = new PresetCopySpy[] { selected, savedHatch, savedSources };
+            var detached = new NBTTagCompound[] { selectedPayload, hatchPayload, sourcesPayload };
+            for (int i = 0; i < originals.length; i++) {
+                SimpleAssert.eq(1, originals[i].copies, "a true payload reader still gets a single defensive copy");
+                detached[i].getCompoundTag("nested").setString("value", "only local to caller");
+                SimpleAssert.eq("kept", originals[i].getCompoundTag("nested").getString("value"),
+                    "payload edit cannot affect live preference data");
+            }
+            store.delete("Selected");
+            SimpleAssert.that(!ui.config.nativeSelectedPreset() && !store.containsName("Selected"),
+                "an unchanged selected name immediately loses presence after deletion");
+            var reopened = new HologramConfigurationPresets(file.toFile());
+            SimpleAssert.that(!reopened.containsName("Selected") && reopened.hasLast(true) && reopened.hasLast(false),
+                "deletion persistence does not erase either previously accepted configuration");
+            data.setString("hatches", "wrong catalog tag");
+            data.removeTag("lastHatch");
+            SimpleAssert.that(!store.containsName("First duplicate") && !ui.config.nativeLastPreset(true)
+                && ui.config.nativeLastPreset(false), "wrong catalog and removed typed last do not retain stale presence");
+            System.out.println("GTMB local preset presence PASS: no payload copies, exact names, typed modes and detached data");
+        } finally {
+            storeField.set(null, priorStore);
+        }
+    }
+
+    private static final class PresetCopySpy extends NBTTagCompound {
+
+        private int copies, profileReads;
+
+        @Override
+        public NBTTagCompound getCompoundTag(String key) {
+            if ("profile".equals(key)) profileReads++;
+            return super.getCompoundTag(key);
+        }
+
+        @Override
+        public NBTBase copy() {
+            copies++;
+            return super.copy();
+        }
+    }
+
+    private static void selectedCatalogPresence(net.minecraft.client.Minecraft minecraft, sun.misc.Unsafe unsafe)
+        throws ReflectiveOperationException {
+        HologramLibraryClient library = HologramLibraryClient.INSTANCE;
+        NBTTagList oldLocal = library.rows(false), oldServer = library.rows(true);
+        String oldSelectedLocal = library.selected(false), oldSelectedServer = library.selected(true);
+        var priorWorld = minecraft.theWorld;
+        try {
+            var remembered = new CountingCatalogRow("remembered");
+            var fallback = new CountingCatalogRow("fallback");
+            var currentPublic = new CountingCatalogRow("current-public");
+            var otherPublic = new CountingCatalogRow("other-public");
+            var tutorial = new CountingCatalogRow("tutorial-only");
+            var malformed = new CountingCatalogRow("");
+            setUiField(library, "local", catalog(remembered, fallback, currentPublic, malformed));
+            setUiField(library, "server", catalog(currentPublic));
+            HologramUiModules ui = headlessUi();
+            HologramState state = new HologramState(new NBTTagCompound());
+            state.data.setTag("presets", catalog(tutorial));
+            state.data.setString("selectedPresetId", "fallback");
+            setUiField(ui.session, "state", state);
+
+            library.select(false, "remembered");
+            for (int sample = 0; sample < 4; sample++) {
+                SimpleAssert.that(ui.library.selectedPresetExists(), "remembered local row is present");
+            }
+            SimpleAssert.eq(4, remembered.idReads, "same backing list reads the matching local ID only once per check");
+            SimpleAssert.eq(0, fallback.idReads, "remembered local match does not consult other rows");
+            library.select(false, "stale-local");
+            SimpleAssert.that(ui.library.selectedPresetExists() && "stale-local".equals(library.selected(false)),
+                "integrated fallback requires a real row and never repairs a remembered ID");
+            state.data.setString("selectedPresetId", "stale-local");
+            SimpleAssert.that(!ui.library.selectedPresetExists(), "a stale selected string alone does not establish presence");
+            state.data.setString("selectedPresetId", "");
+            library.select(false, "");
+            SimpleAssert.that(!ui.library.selectedPresetExists(), "an empty ID is absent even with a malformed empty row");
+
+            state.data.setString("selectedPresetId", "fallback");
+            setUiField(ui.library, "overwriteMode", true);
+            setUiField(ui.library, "overwriteTarget", "remembered");
+            library.select(false, "missing");
+            state.data.setString("selectedPresetId", "missing");
+            SimpleAssert.that(ui.library.nativeSelected(remembered) && !ui.library.selectedPresetExists(),
+                "overwrite highlighting does not manufacture catalog selection presence");
+
+            setUiField(ui.library, "overwriteMode", false);
+            minecraft.theWorld = (net.minecraft.client.multiplayer.WorldClient) unsafe
+                .allocateInstance(net.minecraft.client.multiplayer.WorldClient.class);
+            SimpleAssert.that(ui.library.nativeDedicated(), "dedicated branch is reached without a real world or connection");
+            state.data.setString("selectedPresetId", "fallback");
+            SimpleAssert.that(!ui.library.selectedPresetExists(), "dedicated private never falls back to the snapshot selection");
+            library.select(false, "remembered");
+            SimpleAssert.that(ui.library.selectedPresetExists(), "dedicated private checks the owned local catalog");
+
+            setUiField(ui.library, "publicLibrary", true);
+            library.select(true, "current-public");
+            SimpleAssert.that(ui.library.selectedPresetExists(), "present selected ID belongs to the current public page");
+            setUiField(library, "server", catalog(otherPublic));
+            SimpleAssert.that(!ui.library.selectedPresetExists() && "current-public".equals(library.selected(true)),
+                "a public page replacement drops presence, even if a stale ID remains and local has the same ID");
+            setUiField(library, "server", new NBTTagList());
+            SimpleAssert.that(!ui.library.selectedPresetExists(), "an empty newly owned catalog never retains a selected row");
+
+            state.data.setString("selectedPresetId", "tutorial-only");
+            java.util.function.BiConsumer<String, NBTTagCompound> sink = (op, request) -> {};
+            setUiField(ui.session, "tutorialSink", sink);
+            SimpleAssert.that(!ui.library.selectedPresetExists(),
+                "tutorial still uses the remembered local ID precedence, but only its own display catalog can satisfy it");
+            library.select(false, "");
+            SimpleAssert.that(ui.library.selectedPresetExists(), "tutorial fallback searches its own fixture, not the public page");
+            for (var row : new CountingCatalogRow[] { remembered, fallback, currentPublic, otherPublic, tutorial, malformed })
+                SimpleAssert.eq(0, row.copies, "boolean selection and fallback never clone any row or full list");
+
+            var detached = ui.library.nativeSelectedRow();
+            SimpleAssert.eq(1, tutorial.copies, "a real row-payload reader still receives a detached copy");
+            detached.getCompoundTag("details").setString("owner", "edited-test-copy");
+            SimpleAssert.eq("synthetic", tutorial.getCompoundTag("details").getString("owner"),
+                "mutating the returned nested ownership payload cannot change the catalog");
+            System.out.println("GTMB catalog presence PASS: no copies, current private/public/tutorial rows and detached payload");
+        } finally {
+            minecraft.theWorld = priorWorld;
+            setUiField(library, "local", oldLocal);
+            setUiField(library, "server", oldServer);
+            library.select(false, oldSelectedLocal);
+            library.select(true, oldSelectedServer);
+        }
+    }
+
+    private static NBTTagList catalog(CountingCatalogRow... rows) {
+        var catalog = new NBTTagList();
+        for (var row : rows) catalog.appendTag(row);
+        return catalog;
+    }
+
+    private static final class CountingCatalogRow extends NBTTagCompound {
+
+        private int copies, idReads;
+
+        private CountingCatalogRow(String id) {
+            setString("id", id);
+            var details = new NBTTagCompound();
+            details.setString("owner", "synthetic");
+            setTag("details", details);
+        }
+
+        @Override
+        public String getString(String key) {
+            if ("id".equals(key)) idReads++;
+            return super.getString(key);
+        }
+
+        @Override
+        public NBTBase copy() {
+            copies++;
+            return super.copy();
         }
     }
 
@@ -858,6 +1137,8 @@ public final class HologramUiModuleRegression {
             rows.appendTag(row);
         }
         data.setTag("presets", rows);
+        setUiField(HologramLibraryClient.INSTANCE, "local", rows);
+        HologramLibraryClient.INSTANCE.select(false, "original");
         setUiField(ui.session, "state", new HologramState(data));
         setUiField(ui.diagnostics, "captureRenderSmokeAction", true);
         ui.library.libraryDrawer(true);
@@ -1232,6 +1513,73 @@ public final class HologramUiModuleRegression {
             SimpleAssert.eq(5L, ui.session.pendingSequence(), "closing while pending preserves the outstanding ticket");
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("cannot inspect the actual composed binding dispatch", failure);
+        }
+    }
+
+    /** Real local import → header edit → composed UI Save options → frozen portable artifact (no client/worker). */
+    private static void localAuthorSavePrivacyRoundTrip() {
+        try {
+            for (int level : new int[] { 0, 2, 7, 10 })
+                localAuthorSavePolicy(level, level, 1, 0, true, true);
+            localAuthorSavePolicy(-1, 0, 0, 0, false, true); // no historical policy fields
+            localAuthorSavePolicy(0, 1, 0, 1, false, true); // legacy AE implicit floor, not an explicit level-one edit
+            localAuthorSavePolicy(10, 0, 2, 0, true, false); // old UI submitted 0 and raw 10 denied Save
+            localAuthorSavePolicy(0, 0, 0, 2, false, true); // future metadata at raw 0 already round-tripped unchanged
+        } catch (Exception failure) {
+            throw new AssertionError("local authored privacy policy round trip", failure);
+        }
+    }
+
+    private static void localAuthorSavePolicy(int raw, int effective, int version, int ae, boolean chosen,
+        boolean saveAllowed) throws Exception {
+        java.util.UUID actor = new java.util.UUID(0, 12);
+        String id = "local_" + actor;
+        com.google.gson.JsonObject header = new com.google.gson.JsonParser().parse(
+            "{\"schema\":2,\"name\":\"local save\",\"futureMarker\":{\"v\":27},"
+                + "\"cells\":[{\"x\":0,\"y\":0,\"z\":0,\"block\":\"minecraft:stone\",\"item\":\"minecraft:stone\"}]}")
+            .getAsJsonObject();
+        if (raw >= 0) {
+            header.addProperty("deidentificationLevel", raw);
+            header.addProperty("deidentificationVersion", version);
+            header.addProperty("aePolicyVersion", ae);
+            header.addProperty("deidentificationChosen", chosen);
+        }
+        var document = com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.open(
+            header.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8), id);
+        NBTTagCompound edit = new NBTTagCompound();
+        edit.setLong("planRevision", document.revision());
+        edit.setString("prompt", "edited");
+        document.apply("editBlueprintPrompt", edit);
+        HologramUiModules ui = headlessUi();
+        NBTTagCompound state = document.snapshotMetadata();
+        SimpleAssert.eq(effective, state.getInteger("deidentificationMinimumLevel"), "local authored floor");
+        boolean known = version <= 1 && ae <= 1;
+        SimpleAssert.eq(known, state.hasKey("blueprintDeidentificationLevel", 3), "never reinterpret opaque policy");
+        SimpleAssert.eq(chosen && known, state.getBoolean("deidentificationChosen"), "project actual known choice");
+        setUiField(ui.session, "state", new HologramState(state));
+        NBTTagCompound options = new NBTTagCompound();
+        if (chosen && known) ui.identity.deidentificationSaveOptions(options);
+        else options.setInteger("deidentificationLevel", ui.identity.deidentificationChoice(false));
+        SimpleAssert.eq(effective, options.getInteger("deidentificationLevel"), "ordinary direct Save uses authored policy");
+        try {
+            var saved = document.prepareSave(options, "test", actor, id);
+            SimpleAssert.that(saveAllowed, "preserve prior admission for opaque versions");
+            var bytes = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.displayGeometry(saved).blueprint;
+            SimpleAssert.eq(Math.max(0, raw), bytes.get("deidentificationLevel").getAsInt(), "never rewrite effective floor as a new declared level");
+            SimpleAssert.eq(version, bytes.get("deidentificationVersion").getAsInt(), "preserve authored policy version");
+            SimpleAssert.eq(ae, bytes.get("aePolicyVersion").getAsInt(), "preserve legacy AE policy version");
+            SimpleAssert.eq(chosen, bytes.get("deidentificationChosen").getAsBoolean(), "do not manufacture authored consent");
+            SimpleAssert.eq("edited", bytes.get("prompt").getAsString(), "header edit survives");
+            SimpleAssert.eq(header.get("futureMarker"), bytes.get("futureMarker"), "unrelated opaque metadata preserved");
+        } catch (java.io.IOException denied) {
+            if (saveAllowed) throw denied;
+        }
+        options.setInteger("deidentificationLevel", effective == 0 ? 1 : 0);
+        try {
+            document.prepareSave(options, "test", actor, id);
+            throw new AssertionError("direct Save must not change the privacy level in either direction");
+        } catch (java.io.IOException denied) {
+            SimpleAssert.that(document.dirty(), "refused Save does not commit the user's edit");
         }
     }
 

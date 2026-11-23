@@ -19,6 +19,7 @@ import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonIOException;
+import com.google.gson.JsonObject;
 
 /** Independent share files; client supplied names never become arbitrary filesystem paths. */
 final class HologramBlueprintSharing {
@@ -39,7 +40,7 @@ final class HologramBlueprintSharing {
     }
 
     static HologramPresets.Preset importFile(String name) throws IOException {
-        return read(resolve(name));
+        return readForUse(resolve(name));
     }
 
     static Path resolve(String name) throws IOException {
@@ -159,6 +160,13 @@ final class HologramBlueprintSharing {
         return decode(new String(HologramBlueprintArtifact.readPair(file).json, StandardCharsets.UTF_8));
     }
 
+    static HologramPresets.Preset readForUse(Path file) throws IOException {
+        byte[] source = HologramBlueprintArtifact.readPair(file).json;
+        HologramPresets.Preset preset = decodeStored(source);
+        HologramPresets.validate(preset);
+        return preset;
+    }
+
     static byte[] readBytes(Path file) throws IOException {
         return readBytes(file, MAX_BYTES);
     }
@@ -210,9 +218,29 @@ final class HologramBlueprintSharing {
 
     /** Structural JSON admission only; caller must run the canonical safety boundary before use. */
     static HologramPresets.Preset decodeUnchecked(String json) throws IOException {
+        return decodeUnchecked(json, false);
+    }
+
+    /** Historic documents have no provenance header. Construction still admits their actual operations. */
+    static HologramPresets.Preset decodePlacementSource(String json) throws IOException {
+        return decodeUnchecked(json, true);
+    }
+
+    /** Decodes the original share once; format admission replaces neither schema nor gameplay validation. */
+    static HologramPresets.Preset decodeStored(byte[] source) throws IOException {
+        var original = HologramBlueprintCompactCodec.parseStored(source, MAX_BYTES);
+        HologramPresets.Preset preset = decodeRoot(original.root(), false);
+        if (!original.compact()) throw new HologramCompactRequiredException();
+        return preset;
+    }
+
+    private static HologramPresets.Preset decodeUnchecked(String json, boolean historical) throws IOException {
         boundedJson(json);
+        return decodeRoot(HologramBlueprintCompactCodec.parse(json, MAX_BYTES), historical);
+    }
+
+    private static HologramPresets.Preset decodeRoot(JsonElement root, boolean historical) throws IOException {
         try {
-            JsonElement root = HologramBlueprintCompactCodec.parse(json, MAX_BYTES);
             if (!root.isJsonObject() || !root.getAsJsonObject()
                 .has("schema")
                 || !root.getAsJsonObject()
@@ -230,9 +258,8 @@ final class HologramBlueprintSharing {
             validatePresetSchema(
                 root.getAsJsonObject()
                     .get("blueprint"));
-            HologramBlueprintVersions.validateJson(
-                root.getAsJsonObject()
-                    .get("blueprint"));
+            JsonObject blueprint = root.getAsJsonObject().getAsJsonObject("blueprint");
+            if (!historical || blueprint.has("nativeBlueprint")) HologramBlueprintVersions.validateJson(blueprint);
             Share share = GSON.fromJson(root, Share.class);
             return share.blueprint;
         } catch (RuntimeException invalid) {

@@ -84,7 +84,8 @@ final class HologramNativeCompatibilitySmoke {
                 require(detached.getWorldObj() != Minecraft.getMinecraft().theWorld, "fixture owns its render world");
                 NBTTagCompound nativeTag = new NBTTagCompound();
                 detached.writeToNBT(nativeTag);
-                NBTTagCompound old = cell.targetDisplay.getCompoundTag("nativeTile");
+                NBTTagCompound old = cell.display(false)
+                    .getCompoundTag("nativeTile");
                 if (old.hasKey("gtmb.aeCableVisual", 10)) nativeTag.setTag(
                     "gtmb.aeCableVisual",
                     old.getTag("gtmb.aeCableVisual")
@@ -156,7 +157,8 @@ final class HologramNativeCompatibilitySmoke {
         HologramBlockAccess access = new HologramBlockAccess(state, current);
         StringBuilder result = new StringBuilder();
         for (HologramState.Cell cell : state.cells) {
-            NBTTagCompound source = (NBTTagCompound) (current ? cell.actualDisplay : cell.targetDisplay).copy();
+            NBTTagCompound source = (NBTTagCompound) cell.display(current)
+                .copy();
             TileEntity tile = access.getTileEntity(cell.x, cell.y, cell.z);
             require(
                 tile != null && tile.getWorldObj() != Minecraft.getMinecraft().theWorld,
@@ -197,9 +199,7 @@ final class HologramNativeCompatibilitySmoke {
                     HologramBlockRender.usesIcon(cell, current, Blocks.stone.getIcon(1, 0)),
                     "legal roof must emit its secondary stone cladding texture");
             }
-            require(
-                source.equals(current ? cell.actualDisplay : cell.targetDisplay),
-                "native renderer must not mutate snapshot NBT");
+            require(source.equals(cell.display(current)), "native renderer must not mutate snapshot NBT");
             result.append(cell.wantId)
                 .append(" vertices=")
                 .append(HologramBlockRender.vertexCount(cell, current))

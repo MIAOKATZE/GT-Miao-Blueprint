@@ -19,12 +19,14 @@ import com.cleanroommc.modularui.screen.ModularPanel;
 import com.cleanroommc.modularui.screen.viewport.LocatedWidget;
 import com.cleanroommc.modularui.screen.viewport.TransformationMatrix;
 import com.cleanroommc.modularui.widget.ParentWidget;
+import com.cleanroommc.modularui.widget.sizer.Area;
 import com.cleanroommc.modularui.widgets.ButtonWidget;
 import com.cleanroommc.modularui.widgets.Expandable;
 import com.cleanroommc.modularui.widgets.ListWidget;
 import com.cleanroommc.modularui.widgets.PagedWidget;
 import com.cleanroommc.modularui.widgets.layout.Flow;
 import com.cleanroommc.modularui.widgets.textfield.TextFieldWidget;
+import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 
 /** One persistent native widget graph per editing session. No domain state is copied into the shell. */
 final class HologramEditorShell {
@@ -40,9 +42,10 @@ final class HologramEditorShell {
     private final Map<ModularPanel, Boolean> pausedPanels = new java.util.IdentityHashMap<>();
     private Expandable dock;
     private Flow inspectorBody;
-    private boolean inspectorOpen, inspectorFloating, inspectorAutoOverlay;
+    private boolean inspectorOpen, inspectorFloating, inspectorAutoOverlay, inspectorPositioned;
     private int inspectorX = 60, inspectorY = 72, inspectorWidth = 184, inspectorHeight = 250;
     private PagedWidget<?> pages;
+    private ParentWidget<?> blueprintSettingsPage, blueprintNetworkPage, blueprintAnnotationPage, blueprintSavePage;
     private HologramEditorPropertiesPane properties;
     private HologramEditorLibraryPane library;
     private HologramEditorBlueprintSettingsPane settings;
@@ -139,7 +142,7 @@ final class HologramEditorShell {
         top.child(ui.tools.buildTopTools());
         presentation.child(top);
 
-        structures = new HologramEditorStructurePane(ui);
+        boolean deferHiddenPanes = ui.deferInactiveWidgets();
         if (cut == null) cut = new HologramEditorCutWorkspace(ui);
         editBody = HologramEditorNativeTheme.collapsingFlow(GuiAxis.X)
             .name("editor_native_edit_body")
@@ -156,8 +159,8 @@ final class HologramEditorShell {
             .child(
                 HologramEditorNativeTheme.button(() -> "\u7ed3\u6784\u5217\u8868  \u2039", this::toggleStructures)
                     .widthRel(1f)
-                    .height(22))
-            .child(structures.build());
+                    .height(22));
+        if (!deferHiddenPanes || structuresOpen) mountStructureList();
         structureDrawer.setEnabledIf(w -> structuresOpen);
         editBody.child(structureDrawer);
         scene = sceneOverride == null ? new HologramEditorSceneWidget(ui).sizeRel(1f) : sceneOverride;
@@ -187,10 +190,11 @@ final class HologramEditorShell {
                 .child(ui.tools.buildSelectedBar()));
         editBody.child(viewport);
         editBody.child(buildLaunchers());
-        editBody.child(buildInspector());
-        editBody.child(buildLibraryDrawer());
-        cutBody = new ParentWidget<>().sizeRel(1f)
-            .child(cut.build());
+        editBody.child(buildInspector(deferHiddenPanes));
+        editBody.child(buildLibraryDrawer(deferHiddenPanes));
+        cutBody = new ParentWidget<>().sizeRel(1f);
+        if (deferHiddenPanes) cut.captureInitialDirectory();
+        else prepareCut();
         ParentWidget<?> workspace = new ParentWidget<>().widthRel(1f)
             .heightRel(1f)
             .expanded()
@@ -239,7 +243,7 @@ final class HologramEditorShell {
         root.child(bottom);
         ui.tools.attach(host);
         ui.guide.attach(host);
-        legacy.attach(host);
+        legacy.attach(host, deferHiddenPanes);
         annotations.attach(host);
         registerTarget("viewport", ui.workspaces.isCut() ? cut.scene() : scene);
         registerTarget("inspector", inspectorBody);
@@ -451,13 +455,21 @@ final class HologramEditorShell {
             public com.cleanroommc.modularui.api.widget.Interactable.Result onMousePressed(int button) {
                 return com.cleanroommc.modularui.api.widget.Interactable.Result.STOP;
             }
+
+            @Override
+            public void postResize() {
+                super.postResize();
+                // MUI has applied absolute positions. Place the paper in its later-drawn sibling
+                // subtree now rather than waiting for the next client tick.
+                if (this == dock) layoutInspector();
+            }
         }.coverChildrenWidth(0)
             .disableCoverChildrenHeight()
             .heightRel(1f)
             .animationDuration(0);
     }
 
-    private IWidget buildInspector() {
+    private IWidget buildInspector(boolean deferBlueprintPages) {
         dock = expandable().expanded(false);
         Flow body = Flow.col()
             .width(184)
@@ -486,22 +498,28 @@ final class HologramEditorShell {
             HologramEditorNativeTheme
                 .flatIconButton("collapse-right", () -> "收起功能侧栏", () -> setDockExpanded(false), () -> true, () -> false)
                 .size(HologramEditorNativeTheme.ICON_BUTTON));
+        if (deferBlueprintPages) {
+            blueprintSettingsPage = new ParentWidget<>().sizeRel(1f);
+            blueprintNetworkPage = new ParentWidget<>().sizeRel(1f);
+            blueprintAnnotationPage = new ParentWidget<>().sizeRel(1f);
+            blueprintSavePage = new ParentWidget<>().sizeRel(1f);
+        }
         pages = new PagedWidget<>().sizeRel(1f)
             .expanded()
             .initialPage(0)
             .addPage(properties.buildSelection())
-            .addPage(settings.build())
+            .addPage(deferBlueprintPages ? blueprintSettingsPage : settings.build())
             .addPage(new ParentWidget<>().sizeRel(1f))
             .addPage(properties.buildStructure())
             .addPage(properties.buildMaterials())
-            .addPage(buildNetworkPane())
-            .addPage(buildAnnotationPane())
-            .addPage(library.buildSave())
+            .addPage(deferBlueprintPages ? blueprintNetworkPage : buildNetworkPane())
+            .addPage(deferBlueprintPages ? blueprintAnnotationPage : buildAnnotationPane())
+            .addPage(deferBlueprintPages ? blueprintSavePage : library.buildSave())
             .addPage(properties.buildConstruction());
         body.child(heading)
             .child(pages);
         inspectorBody = body;
-        inspectorBody.setEnabledIf(w -> inspectorOpen && !ui.workspaces.isCut() && !ui.workspaces.emptyProjection());
+        inspectorBody.setEnabledIf(w -> inspectorInteractive());
         dock.collapsedView(
             new com.cleanroommc.modularui.widget.Widget<>().width(0)
                 .heightRel(1f)
@@ -557,7 +575,7 @@ final class HologramEditorShell {
                         .height(18));
     }
 
-    private IWidget buildLibraryDrawer() {
+    private IWidget buildLibraryDrawer(boolean deferLibraryPane) {
         libraryDrawer = expandable().expanded(ui.workspaces.blueprint());
         ui.library.libraryDrawer(ui.workspaces.blueprint());
         ui.library.blueprintTab(ui.workspaces.blueprint());
@@ -576,22 +594,51 @@ final class HologramEditorShell {
             .padding(4)
             .childPadding(4)
             .background(HologramEditorNativeTheme.PANEL);
-        libraryBody.child(
-            new ParentWidget<>().sizeRel(1f)
-                .expanded()
-                .child(library.build()));
+        if (!deferLibraryPane) mountLibraryPane();
         libraryDrawer.collapsedView(collapsed)
             .expandedView(libraryBody)
             .setEnabledIf(w -> ui.workspaces.blueprint());
         return libraryDrawer;
     }
 
+    private void mountLibraryPane() {
+        if (libraryBody.hasChildren()) return;
+        libraryBody.child(new ParentWidget<>().sizeRel(1f).expanded().child(library.build()));
+        if (libraryBody.isValid()) libraryBody.scheduleResize();
+    }
+
     void toggleStructures() {
+        if (!structuresOpen && structureDrawer != null) mountStructureList();
         structuresOpen = !structuresOpen;
         if (editBody != null) editBody.scheduleResize();
     }
 
+    private void mountStructureList() {
+        if (structures != null) return;
+        long started = HologramRuntimeMetrics.start();
+        try {
+            HologramEditorStructurePane pane = new HologramEditorStructurePane(ui);
+            structureDrawer.child(pane.build());
+            structures = pane;
+        } finally {
+            HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.WORKBENCH_STRUCTURE_WIDGETS, started);
+        }
+    }
+
+    /** Mount the Cut widgets before switching visibility. A direct Cut open mounts them during build. */
+    void prepareCut() {
+        if (cutBody == null || cutBody.hasChildren()) return;
+        long started = HologramRuntimeMetrics.start();
+        try {
+            cutBody.child(cut.build());
+            if (cutBody.isValid()) cutBody.scheduleResize();
+        } finally {
+            HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.WORKBENCH_CUT_WIDGETS, started);
+        }
+    }
+
     void toggleLibrary() {
+        prepareAvailableBlueprintPages();
         if (libraryDrawer != null) libraryDrawer.expanded(!libraryDrawer.isExpanded());
         if (libraryDrawer != null) ui.library.libraryDrawer(libraryDrawer.isExpanded());
         if (ui.session.isTutorial() && libraryPageSelected()) setDockExpanded(false);
@@ -628,7 +675,7 @@ final class HologramEditorShell {
         layoutSidebars();
         layoutInspector();
         properties.refresh();
-        structures.refresh();
+        if (structures != null) structures.refresh();
         library.refresh();
         settings.refresh();
         legacy.refresh();
@@ -766,8 +813,16 @@ final class HologramEditorShell {
         return inspectorOpen;
     }
 
+    void showLibraryMaintenance() {
+        if (!launcherAvailable(2)) return;
+        selectDockPage(2);
+        if (library != null) library.showMaintenance();
+    }
+
     void selectDockPage(int page) {
         if (pages == null || !launcherAvailable(page)) return;
+        prepareAvailableBlueprintPages();
+        if (page == 7) mountSavePage();
         if (page == 2) {
             if (ui.session.isTutorial()) setDockExpanded(false);
             if (libraryDrawer != null) libraryDrawer.expanded(true);
@@ -778,6 +833,26 @@ final class HologramEditorShell {
         if (ui.session.isTutorial()) closeTutorialLibrary();
         setDockExpanded(true);
         pages.setPage(page);
+    }
+
+    void prepareAvailableBlueprintPages() {
+        if (libraryBody != null && ui.workspaces.blueprint()) {
+            mountLibraryPane();
+            mountSavePage();
+        }
+        if (blueprintSettingsPage == null || !launcherAvailable(1)) return;
+        blueprintSettingsPage.child(settings.build());
+        blueprintNetworkPage.child(buildNetworkPane());
+        blueprintAnnotationPage.child(buildAnnotationPane());
+        blueprintSettingsPage = blueprintNetworkPage = blueprintAnnotationPage = null;
+        pages.scheduleResize();
+    }
+
+    private void mountSavePage() {
+        if (blueprintSavePage == null) return;
+        blueprintSavePage.child(library.buildSave());
+        blueprintSavePage = null;
+        pages.scheduleResize();
     }
 
     /** Lessons devote the viewport to manipulation instead of retaining unrelated inspectors. */
@@ -794,6 +869,10 @@ final class HologramEditorShell {
     }
 
     void setDockExpanded(boolean expanded) {
+        if (inspectorOpen != expanded) {
+            inspectorPositioned = false;
+            if (inspectorBody != null) inspectorBody.setEnabled(false);
+        }
         inspectorOpen = expanded;
         if (dock != null) dock.expanded(expanded && !inspectorFloating && !inspectorAutoOverlay);
         if (root != null) root.scheduleResize();
@@ -836,37 +915,47 @@ final class HologramEditorShell {
         }
     }
 
+    private boolean inspectorInteractive() {
+        return inspectorOpen && inspectorPositioned && !ui.workspaces.isCut() && !ui.workspaces.emptyProjection();
+    }
+
     private void layoutInspector() {
-        if (inspectorBody == null || !inspectorOpen || content == null || !content.isValid()) return;
-        int x, y, w, h;
+        if (!inspectorOpen || paused || ui.workspaces.isCut() || ui.workspaces.emptyProjection()
+            || dock == null || !dock.isValid() || dock.getPanel() != host
+            || inspectorBody == null || !inspectorBody.isValid() || inspectorBody.getPanel() != host
+            || content == null || !content.isValid() || content.getPanel() != host) return;
         if (inspectorFloating) {
-            w = Math.min(inspectorWidth, Math.max(140, content.getArea().width - 12));
-            h = Math.min(inspectorHeight, Math.max(100, content.getArea().height - 16));
-            x = Math.max(0, Math.min(inspectorX, content.getArea().width - w));
-            y = Math.max(0, Math.min(inspectorY, content.getArea().height - h));
+            int w = Math.min(inspectorWidth, Math.max(140, content.getArea().width - 12));
+            int h = Math.min(inspectorHeight, Math.max(100, content.getArea().height - 16));
+            int x = Math.max(0, Math.min(inspectorX, content.getArea().width - w));
+            int y = Math.max(0, Math.min(inspectorY, content.getArea().height - h));
+            placeInspector(inspectorBody, x, y, w, h);
         } else if (inspectorAutoOverlay) {
             int[] area = absoluteBounds(dock), origin = bounds(content);
             if (origin == null) return;
-            w = Math.min(184, Math.max(100, content.getArea().width - 24));
-            h = area[3];
+            int w = Math.min(184, Math.max(100, content.getArea().width - 24));
             int librarySpace = ui.workspaces.blueprint() ? libraryDrawer.isExpanded() ? libraryWidth : 18 : 0;
-            x = Math.max(0, content.getArea().width - librarySpace - w);
-            y = area[1] - origin[1];
-        } else {
-            int[] area = bounds(dock), origin = bounds(content);
-            if (area == null || origin == null || area[2] < 100) return;
-            int librarySpace = ui.workspaces.blueprint() ? libraryDrawer.isExpanded() ? libraryWidth : 18 : 0;
-            x = Math.max(0, content.getArea().width - librarySpace - area[2]);
-            y = area[1] - origin[1];
-            w = area[2];
-            h = area[3];
+            int x = Math.max(0, content.getArea().width - librarySpace - w);
+            placeInspector(inspectorBody, x, area[1] - origin[1], w, area[3]);
+        } else if (!layoutDockedInspector(inspectorBody, dock.getArea(), inspectorBody.getParent().getArea(),
+            dock.isExpanded(), dock.requiresResize())) return;
+        if (!inspectorPositioned) {
+            inspectorPositioned = true;
+            inspectorBody.setEnabled(inspectorInteractive());
         }
-        if (inspectorBody.getArea().rx != x || inspectorBody.getArea().ry != y
-            || inspectorBody.getArea().width != w
-            || inspectorBody.getArea().height != h)
-            inspectorBody.pos(x, y)
-                .size(w, h)
-                .scheduleResize();
+    }
+
+    // Both MUI layout Areas are unscaled. The dock's transformed screen clip is not a layout unit.
+    static boolean layoutDockedInspector(Flow paper, Area slot, Area paperParent, boolean expanded, boolean resizePending) {
+        if (!expanded || resizePending || slot.width < 100 || slot.height <= 0) return false;
+        placeInspector(paper, slot.x - paperParent.x, slot.y - paperParent.y, slot.width, slot.height);
+        return true;
+    }
+
+    private static void placeInspector(Flow paper, int x, int y, int w, int h) {
+        Area area = paper.getArea();
+        if (area.rx != x || area.ry != y || area.width != w || area.height != h)
+            paper.pos(x, y).size(w, h).scheduleResize();
     }
 
     private static final class InspectorOverlay extends ParentWidget<InspectorOverlay> {
@@ -1040,6 +1129,10 @@ final class HologramEditorShell {
 
     int[] nativeWidgetBounds(IWidget widget) {
         return bounds(widget);
+    }
+
+    int[] nativeInspectorBounds() {
+        return bounds(inspectorBody);
     }
 
     int[] controlBounds(int id) {

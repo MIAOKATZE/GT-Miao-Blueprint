@@ -11,6 +11,7 @@ import java.util.List;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
 
 /** Pure content identity; no registry, world, sanitization or full blueprint validation. */
 public final class HologramBlueprintContentHash {
@@ -18,14 +19,56 @@ public final class HologramBlueprintContentHash {
     private HologramBlueprintContentHash() {}
 
     public static String of(byte[] json) throws IOException {
+        return of(json, null);
+    }
+
+    /** Match the exact public member as well as the descriptive-field-independent content identity. */
+    public static String of(byte[] json, String publicId) throws IOException {
         try {
-            JsonElement blueprint = HologramBlueprintCompactCodec.parse(json)
-                .get("blueprint");
-            if (blueprint == null || !blueprint.isJsonObject()) throw new IOException("Missing blueprint content");
+            com.google.gson.JsonObject blueprint = HologramBlueprintCompactCodec.documentBlueprint(
+                HologramBlueprintCompactCodec.parse(json));
+            if (publicId != null && (!blueprint.has("id") || !publicId.equals(blueprint.get("id").getAsString())))
+                throw new IOException("Public blueprint ID differs from the downloaded artwork");
             return ofBlueprint(blueprint);
         } catch (RuntimeException malformed) {
             throw new IOException("Invalid blueprint content JSON", malformed);
         }
+    }
+
+    /** Target naming only: the original codec parsed the source and already expanded its dictionary. */
+    static String ofExpandedTarget(JsonObject expanded) throws IOException {
+        JsonObject wrapper = new JsonObject();
+        wrapper.add("blueprint", expanded);
+        String normalized = wrapper.toString();
+        long bytes = stableUtf8Size(normalized);
+        // Java's UTF-8 encoder replaces an unpaired surrogate; reparsing can then merge keys.
+        // Do not hash the pre-round-trip tree in that case.
+        if (bytes < 0) return of(normalized.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+        int limit = HologramBlueprintArtifact.MAX_JSON_BYTES;
+        // Preserve the old byte gate before the normalized wrapper's depth and legacy row checks.
+        if (bytes > limit) throw new IOException("Blueprint JSON byte budget");
+        HologramBlueprintSharing.boundedJson(normalized, limit);
+        try {
+            HologramBlueprintCompactCodec.validateLegacyRows(expanded);
+            return ofBlueprint(expanded);
+        } catch (RuntimeException malformed) {
+            throw new IOException("Invalid blueprint content JSON", malformed);
+        }
+    }
+
+    private static long stableUtf8Size(String text) {
+        long bytes = text.length();
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c < 0x80) continue;
+            if (c < 0x800) bytes++;
+            else if (Character.isHighSurrogate(c)) {
+                if (++i == text.length() || !Character.isLowSurrogate(text.charAt(i))) return -1;
+                bytes += 2; // the two UTF-16 units together contribute four UTF-8 bytes
+            } else if (Character.isLowSurrogate(c)) return -1;
+            else bytes += 2;
+        }
+        return bytes;
     }
 
     /** Already admitted owned DTO; serialization only, without game validation or compression. */

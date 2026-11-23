@@ -26,8 +26,7 @@ import com.miaokatze.miaokatzecore.api.ui.CanvasTransform;
 /** Native control layer above the projector's specialized scene renderer. */
 abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
 
-    private final ControlLayer controls = new ControlLayer().sizeRel(1f)
-        .background(IDrawable.NONE);
+    private ControlLayer fallbackControls;
     private final Map<Integer, NativeButton> buttons = new HashMap<>();
     private List<HologramMuiTextField> fields = new ArrayList<>();
     private Object activeFieldGraph;
@@ -53,7 +52,14 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
         panel().child(
             new SceneWidget().sizeRel(1f)
                 .background(IDrawable.NONE));
-        panel().child(controls);
+        panel().child(fallbackControlLayer());
+    }
+
+    /** The workstation mounts its own scene and never needs an unparented legacy widget tree. */
+    private ControlLayer fallbackControlLayer() {
+        if (fallbackControls == null) fallbackControls = new ControlLayer().sizeRel(1f)
+            .background(IDrawable.NONE);
+        return fallbackControls;
     }
 
     protected boolean buildNativePanel() {
@@ -94,7 +100,7 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
         if (entry == null) {
             entry = new NativeButton(id);
             buttons.put(id, entry);
-            controls.child(entry.widget);
+            fallbackControlLayer().child(entry.widget);
         }
         entry.frame = nativeFrame;
         entry.text = text;
@@ -122,11 +128,15 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
         if (!(this instanceof HologramScreen)) fields.removeIf(previous -> {
             if (!previous.sameBounds(field) || previous.nativeOwned()) return false;
             if (previous.widget()
-                .isValid()) controls.remove(previous.widget());
+                .isValid() && fallbackControls != null) fallbackControls.remove(previous.widget());
             return true;
         });
         fields.add(field);
-        if (!(this instanceof HologramScreen)) controls.child(field.widget());
+        if (!(this instanceof HologramScreen)) fallbackControlLayer().child(field.widget());
+    }
+
+    final boolean deferUnclaimedFieldWidgets() {
+        return activeFieldGraph instanceof HologramUiModules graph && graph.deferInactiveWidgets();
     }
 
     final com.cleanroommc.modularui.widgets.textfield.TextFieldWidget adoptNativeField(HologramMuiTextField field) {
@@ -207,7 +217,8 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
     }
 
     final void resetNativeFields() {
-        for (HologramMuiTextField field : fields) controls.remove(field.widget());
+        if (fallbackControls != null)
+            for (HologramMuiTextField field : fields) fallbackControls.remove(field.widget());
         fields.clear();
     }
 
@@ -242,7 +253,7 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
                     com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Could not deactivate a tutorial field", failure);
                 } finally {
                     try {
-                        controls.remove(field.widget());
+                        if (fallbackControls != null) fallbackControls.remove(field.widget());
                     } catch (RuntimeException failure) {
                         com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Could not dispose a tutorial field", failure);
                     }

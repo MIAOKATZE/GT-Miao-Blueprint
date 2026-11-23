@@ -26,7 +26,14 @@ import gregtech.common.covers.Cover;
 /** GTSWN's procedural material and static relief mesh; reads snapshots, never live cover hosts or particles. */
 final class HologramLinkNodePreview {
 
-    private static final Map<HologramState.Cell, List<Node>[]> NODES = new IdentityHashMap<>();
+    static final class Cache {
+
+        final Map<HologramState.Cell, List<Node>[]> nodes = new IdentityHashMap<>();
+    }
+
+    private static Map<HologramState.Cell, List<Node>[]> nodes() {
+        return HologramPreviewAssets.active().linkNodes.nodes;
+    }
     private static final Map<String, ResourceLocation[]> TEXTURES = new HashMap<>();
     private static final String VISUALS = "com.miaokatze.gtswn.client.render.LinkNodeVisuals";
     private static final String CONFIG = "com.miaokatze.gtswn.config.Config";
@@ -35,15 +42,14 @@ final class HologramLinkNodePreview {
     private HologramLinkNodePreview() {}
 
     static void begin() {
-        NODES.clear();
+        nodes().clear();
     }
 
     static void advance(HologramState previous, HologramState next) {
-        for (HologramState.Cell cell : next.changedPreviousCells) NODES.remove(cell);
+        for (HologramState.Cell cell : next.changedPreviousCells) nodes().remove(cell);
     }
 
-    static void clear() {
-        NODES.clear();
+    static void clearTextures() {
         for (ResourceLocation[] pair : TEXTURES.values()) for (ResourceLocation texture : pair) Minecraft.getMinecraft()
             .getTextureManager()
             .deleteTexture(texture);
@@ -81,12 +87,13 @@ final class HologramLinkNodePreview {
 
     @SuppressWarnings("unchecked")
     static List<Node> prepare(HologramState.Cell cell, boolean current) {
-        List<Node>[] pair = NODES.computeIfAbsent(cell, unused -> new List[2]);
+        if (!cell.hasDisplayTag(current, "gt.covers", 9)) return java.util.Collections.emptyList();
+        List<Node>[] pair = nodes().computeIfAbsent(cell, unused -> new List[2]);
         int index = current ? 1 : 0;
         if (pair[index] != null) return pair[index];
         List<Node> nodes = new ArrayList<>();
-        NBTTagCompound display = current ? cell.actualDisplay : cell.targetDisplay;
-        NBTTagList covers = display.getTagList("gt.covers", 10);
+        NBTTagList covers = cell.display(current)
+            .getTagList("gt.covers", 10);
         try {
             for (int i = 0; i < covers.tagCount(); i++) {
                 NBTTagCompound row = covers.getCompoundTagAt(i);

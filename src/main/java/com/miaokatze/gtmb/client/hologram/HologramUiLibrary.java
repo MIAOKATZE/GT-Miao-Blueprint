@@ -17,12 +17,14 @@ import org.lwjgl.input.Keyboard;
 
 import com.miaokatze.gtmb.client.hologram.HologramUiLibrary.LibraryNavigation;
 import com.miaokatze.gtmb.client.hologram.HologramUiMemory.UiMemory;
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.LocalSaveIntent;
 import com.miaokatze.miaokatzecore.api.ui.CanvasTransform;
 
 /** Internal library workflow; composed by the workstation, never part of the mod extension API. */
 final class HologramUiLibrary {
 
     private final HologramUiModules ui;
+    private final HologramLocalBlueprintWorkspace localWorkspace;
     private static final HologramSaveGuidance SAVE_GUIDANCE = new HologramSaveGuidance();
     private HologramSaveGuidanceDialog saveGuidanceDialog;
     private final HologramEditorLibrarySidebar sidebar = new HologramEditorLibrarySidebar();
@@ -31,6 +33,48 @@ final class HologramUiLibrary {
 
     HologramUiLibrary(HologramUiModules ui) {
         this.ui = ui;
+        localWorkspace = new HologramLocalBlueprintWorkspace(ui);
+    }
+
+    boolean localBusy() {
+        return localWorkspace.busy();
+    }
+
+    boolean openingLocalSource() {
+        return localWorkspace.opening();
+    }
+
+    HologramState openingPreview() {
+        return localWorkspace.openingPreview();
+    }
+
+    void advanceLocalWorkspaceFrame() {
+        localWorkspace.advanceFrame();
+    }
+
+    void openCapture(com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument document, String notice) {
+        localWorkspace.openCapture(document, notice);
+    }
+
+    void cancelLocalAttachment(long request) {
+        localWorkspace.cancelAttachment(request);
+    }
+
+    void tickLocalWorkspace() {
+        localWorkspace.tick();
+    }
+
+    HologramLocalHistoryTrace watchLocalHistory(String operation, HologramState source,
+        com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument draft, long nextSequence, long pressNanos) {
+        return localWorkspace.watchHistory(operation, source, draft, nextSequence, pressNanos);
+    }
+
+    void stopWatchingLocalHistory(HologramLocalHistoryTrace trace) {
+        localWorkspace.stopWatchingHistory(trace);
+    }
+
+    boolean editLocalDocument(String operation, NBTTagCompound request) {
+        return localWorkspace.edit(operation, request);
     }
 
     /** Called only after the client/server save transaction has actually committed. */
@@ -80,15 +124,15 @@ final class HologramUiLibrary {
 
     private boolean libraryDrawer;
     private boolean browsePreview;
-    private String browseServerPresetId = "";
 
     boolean browsePreviewActive() {
         return libraryDrawer && browsePreview;
     }
 
     private String selectedServerPresetId() {
-        return browseServerPresetId.isEmpty() ? ui.session.state().data.getString("selectedPresetId")
-            : browseServerPresetId;
+        HologramLibraryClient library = HologramLibraryClient.INSTANCE;
+        String localId = library.selected(false);
+        return catalogContains(library.rows(false), localId) ? localId : ui.session.state().data.getString("selectedPresetId");
     }
 
     private void browsePreset(String id, boolean server) {
@@ -369,8 +413,9 @@ final class HologramUiLibrary {
     }
 
     NBTTagList nativeRows() {
-        return dedicatedLibrary() ? HologramLibraryClient.INSTANCE.rows(publicLibrary)
-            : ui.session.state().data.getTagList("presets", 10);
+        if (ui.session.isTutorial()) return ui.session.state().data.getTagList("presets", 10);
+        HologramLibraryClient library = HologramLibraryClient.INSTANCE;
+        return library.rows(dedicatedLibrary() && publicLibrary);
     }
 
     void nativeBindRow(int slot, NBTTagCompound row) {
@@ -381,7 +426,8 @@ final class HologramUiLibrary {
     }
 
     boolean nativeIdle() {
-        return ui.session.editable() && !HologramBackgroundTasks.busy()
+        return ui.session.editable() && !localBusy()
+            && !HologramBackgroundTasks.busy()
             && (!dedicatedLibrary() || !HologramLibraryClient.INSTANCE.busy());
     }
 
@@ -437,7 +483,8 @@ final class HologramUiLibrary {
         if (!nativeCanPlaceCurrent()) return;
         cancelLibraryNavigation();
         if (presetNameField != null) presetNameField.setFocused(false);
-        ui.session.send("placeCurrentBlueprint", new NBTTagCompound(), true);
+        if (ui.session.localDocument()) localWorkspace.placeCurrent();
+        else ui.session.send("placeCurrentBlueprint", new NBTTagCompound(), true);
     }
 
     boolean nativeAdmin() {
@@ -450,16 +497,38 @@ final class HologramUiLibrary {
     }
 
     boolean nativeCanTransferSelected() {
+        if (!dedicatedLibrary()) return false;
         return publicLibrary ? HologramLibraryClient.INSTANCE.canReadPublic()
-            : HologramLibraryClient.INSTANCE.canPublishPublic();
+            : privateFileId(HologramLibraryClient.INSTANCE.selected(false))
+                && HologramLibraryClient.INSTANCE.canPublishPublic();
     }
 
     boolean nativeCanUpgrade() {
         return !ui.session.isTutorial() && (!dedicatedLibrary() || !publicLibrary || nativeAdmin())
-            && upgradeStatus() > 0
+            && !localBusy()
             && !HologramLibraryClient.INSTANCE.busy()
             && !HologramBackgroundTasks.busy()
             && ui.session.pendingSequence() < 0;
+    }
+
+    void requireCompactUpdate() {
+        if (publicLibrary && dedicatedLibrary() && !nativeAdmin()) {
+            ui.session.notice("此公库蓝图必须先由管理员紧凑化");
+            return;
+        }
+        ui.session.notice(com.miaokatze.gtmb.hologram.HologramCompactRequiredException.MESSAGE);
+        if (ui.shell.built()) ui.shell.showLibraryMaintenance();
+    }
+
+    boolean nativeCanUpgradeNamed() {
+        return nativeCanUpgrade() && !publicLibrary && presetNameField != null
+            && !presetNameField.getText().trim().isEmpty();
+    }
+
+    void nativeUpgradeNamed() {
+        if (!nativeCanUpgradeNamed()) return;
+        String alias = presetNameField.getText().trim();
+        HologramLibraryClient.INSTANCE.upgradeLocal(alias, this::upgradedLibrary);
     }
 
     int nativeServerPage() {
@@ -472,6 +541,8 @@ final class HologramUiLibrary {
 
     String nativeStatus() {
         if (ui.session.isTutorial()) return "独立教学示例，不连接真实蓝图库";
+        if (localBusy() && !localWorkspace.status()
+            .isEmpty()) return localWorkspace.status();
         String status = HologramLibraryClient.INSTANCE.status();
         if (!status.isEmpty()) return status;
         NBTTagCompound config = HologramLibraryClient.INSTANCE.config();
@@ -536,7 +607,7 @@ final class HologramUiLibrary {
             return;
         }
         int x = HologramScreenLayout.COMPACT_PANEL_X, w = HologramScreenLayout.COMPACT_PANEL_WIDTH;
-        NBTTagList presets = ui.session.state().data.getTagList("presets", 10);
+        NBTTagList presets = nativeRows();
         drawRect(x, 57, x + w, 314, 0xef172f36);
         ui.canvas.text("蓝图库 · " + presets.tagCount() + " 项", x + 5, 62, 83, 0xf5e4b9);
         drawWebsiteButton(309, x + 91, 60, 62, 15, false, mx, my);
@@ -887,23 +958,20 @@ final class HologramUiLibrary {
         if (server && !HologramLibraryClient.INSTANCE.config()
             .getBoolean("admin")) return;
         int width = server ? 30 : 66;
-        int upgrade = upgradeStatus();
         ui.canvas.button(
             226,
             x,
             301,
             width,
             13,
-            server ? "升级" : "升级旧蓝图",
-            upgrade > 0 && !HologramLibraryClient.INSTANCE.busy()
-                && !HologramBackgroundTasks.busy()
-                && ui.session.pendingSequence() < 0,
+            server ? "紧凑化" : "升级／紧凑化",
+            nativeCanUpgrade(),
             mx,
             my);
         if (mx >= x && mx < x + width && my >= 301 && my < 314) {
             ui.canvas.tooltip(new ArrayList<>());
             ui.canvas.tooltip()
-                .add(upgrade == 0 ? "蓝图 GTMB 版本已一致，无需升级。" : upgrade == 2 ? "包含重要处理更新：建议升级旧蓝图。" : "只有版本信息更新，可按需升级。");
+                .add(server ? "检查服务器公库：更新旧档并紧凑化展开文件。" : "检查本地蓝图库：更新旧档并紧凑化展开文件。");
             ui.canvas.tooltip()
                 .add("仅更新 GTMB 元数据及兼容存储；保留原整合包、其他 Mod 版本和方块内容。");
             ui.canvas.tooltip()
@@ -917,18 +985,6 @@ final class HologramUiLibrary {
             if (details.size() > 8) ui.canvas.tooltip()
                 .add("另有 " + (details.size() - 8) + " 条跳过原因，完整明细见游戏日志。");
         }
-    }
-
-    int upgradeStatus() {
-        NBTTagList rows = dedicatedLibrary() ? HologramLibraryClient.INSTANCE.rows(this.publicLibrary)
-            : ui.session.state().data.getTagList("presets", 10);
-        int status = 0;
-        for (int i = 0; i < rows.tagCount(); i++) status = Math.max(
-            status,
-            com.miaokatze.gtmb.hologram.HologramBlueprintUpgrade.status(
-                rows.getCompoundTagAt(i)
-                    .getString("gtmbVersion")));
-        return status;
     }
 
     private void upgradedLibrary() {
@@ -1126,6 +1182,21 @@ final class HologramUiLibrary {
             placeCurrentBlueprint();
             return true;
         }
+        if (id == 161) {
+            if (ui.session.editable() && !localBusy() && presetNameField != null) localWorkspace.importNamed(
+                presetNameField.getText()
+                    .trim());
+            return true;
+        }
+        if (id == 299 && ui.session.localDocument()) {
+            if (discardConfirmed && !localBusy()) {
+                String fileId = ui.session.document()
+                    .fileId();
+                if (fileId.isEmpty()) ui.session.leaveLocalDocument();
+                else localWorkspace.reloadPreset(fileId);
+            }
+            return true;
+        }
         if (!dedicatedLibrary()) return false;
         if (ui.canvas.rejectLocalPlanAction(id)) return true;
         HologramLibraryClient library = HologramLibraryClient.INSTANCE;
@@ -1145,14 +1216,18 @@ final class HologramUiLibrary {
                 ui.library.cancelLibraryNavigation();
                 this.publicLibrary = !this.publicLibrary;
                 this.libraryOffset = 0;
-                if (this.publicLibrary) library.refreshServer(0);
+                if (this.publicLibrary) {
+                    library.refreshServer(0);
+                    library.refreshServerConfig();
+                }
                 return true;
             case 202:
                 library.refreshLocal();
                 return true;
             case 203:
+                if (!nativeCanTransferSelected()) return true;
                 if (this.publicLibrary) library.downloadSelected();
-                else library.sendLocal(ui.session.state(), "preview", true);
+                else library.publishSelected();
                 return true;
             case 205:
                 NBTTagCompound row = library.selectedRow(this.publicLibrary);
@@ -1177,26 +1252,22 @@ final class HologramUiLibrary {
                 this.libraryOffset = 0;
                 return true;
             case 176:
-                library.deleteSelected(this.publicLibrary);
+                if (this.deletePresetId.startsWith("public_")) {
+                    library.select(true, this.deletePresetId);
+                    library.deleteSelected(true);
+                } else if (privateFileId(this.deletePresetId) || this.deletePresetId.startsWith("legacy:"))
+                    localWorkspace.deletePreset(this.deletePresetId);
                 this.deletePresetId = this.deletePresetName = "";
                 return true;
             case 141:
             case 139:
                 if (id == 139) browsePreview = false;
-                if (id == 139 && (this.publicLibrary || !library.busy()))
-                    ui.library.rememberLibraryNavigation(library.selected(this.publicLibrary), "blueprintEdit");
-                else if (id == 141) ui.library.cancelLibraryNavigation();
-                if (this.publicLibrary) {
-                    if (!library.canReadPublic()) return true;
-                    if (id == 141) {
-                        library.previewPublic(library.selected(true));
-                        return true;
-                    }
-                    NBTTagCompound action = new NBTTagCompound();
-                    action.setString("presetId", library.selected(true));
-                    ui.session.send("editPreset", action, true);
-                } else
-                    library.sendLocal(ui.session.state(), id == 141 ? "place" : "edit", false, this.discardConfirmed);
+                if (id == 141) ui.library.cancelLibraryNavigation();
+                if (this.publicLibrary && !library.canReadPublic()) return true;
+                sendPresetSwitch(
+                    id == 141 ? "choosePlacementPreset" : "editPreset",
+                    library.selected(this.publicLibrary),
+                    this.discardConfirmed);
                 if (id == 139) {
                     this.blueprintTab = true;
                     this.libraryDrawer = true;
@@ -1225,7 +1296,11 @@ final class HologramUiLibrary {
                     ui.session.state().data.getTagList("blueprintNbtKeys", 8)
                         .copy());
                 ui.identity.deidentificationSaveOptions(options);
-                library.saveDraft(ui.session.state(), options, false, ui.preview.yaw(), ui.preview.pitch());
+                if (ui.session.localDocument()) localWorkspace.save(
+                    options,
+                    id == 140 ? ui.session.document().fileId() : "",
+                    id == 140 ? LocalSaveIntent.SAVE_CURRENT : LocalSaveIntent.SAVE_AS_NEW);
+                else library.saveDraft(ui.session.state(), options, false, ui.preview.yaw(), ui.preview.pitch());
                 return true;
             default:
                 return false;
@@ -1273,6 +1348,13 @@ final class HologramUiLibrary {
             .trim()
             .isEmpty()) options.setString("name", "未命名蓝图");
         options.setBoolean("saveCurrent", current);
+        if (ui.session.localDocument()) {
+            localWorkspace.save(
+                options,
+                current ? ui.session.document().fileId() : "",
+                current ? LocalSaveIntent.SAVE_CURRENT : LocalSaveIntent.SAVE_AS_NEW);
+            return;
+        }
         if (dedicatedLibrary()) {
             HologramLibraryClient.INSTANCE
                 .saveDraft(ui.session.state(), options, current, ui.preview.yaw(), ui.preview.pitch());
@@ -1296,20 +1378,22 @@ final class HologramUiLibrary {
     }
 
     boolean selectedPresetExists() {
-        boolean dedicated = dedicatedLibrary();
-        if (!dedicated && !browseServerPresetId.isEmpty()) {
-            NBTTagList rows = ui.session.state().data.getTagList("presets", 10);
-            for (int i = 0; i < rows.tagCount(); i++) if (browseServerPresetId.equals(
-                rows.getCompoundTagAt(i)
-                    .getString("id")))
-                return true;
-            return false;
-        }
-        return HologramGuidance.selectedSavedBlueprint(
-            ui.session.state().data,
-            dedicated,
-            dedicated ? HologramLibraryClient.INSTANCE.selectedRow(this.publicLibrary)
-                .getString("id") : "");
+        HologramLibraryClient library = HologramLibraryClient.INSTANCE;
+        NBTTagList rows = nativeRows();
+        if (dedicatedLibrary()) return catalogContains(rows, library.selected(publicLibrary));
+        NBTTagList local = library.rows(false);
+        String remembered = library.selected(false);
+        // Integrated views normally read this same local list; tutorials may show a separate fixture catalog.
+        if (catalogContains(local, remembered)) return rows == local || catalogContains(rows, remembered);
+        String fallback = ui.session.state().data.getString("selectedPresetId");
+        return (rows != local || !fallback.equals(remembered)) && catalogContains(rows, fallback);
+    }
+
+    /** Observe the currently published list without borrowing its mutable row payload or allocating a result row. */
+    private static boolean catalogContains(NBTTagList rows, String id) {
+        if (id == null || id.isEmpty()) return false;
+        for (int i = 0; i < rows.tagCount(); i++) if (id.equals(rows.getCompoundTagAt(i).getString("id"))) return true;
+        return false;
     }
 
     int websiteAccent() {
@@ -1329,8 +1413,7 @@ final class HologramUiLibrary {
 
     void revealSelectedPreset() {
         boolean dedicated = dedicatedLibrary();
-        NBTTagList presets = dedicated ? HologramLibraryClient.INSTANCE.rows(this.publicLibrary)
-            : ui.session.state().data.getTagList("presets", 10);
+        NBTTagList presets = nativeRows();
         String selectedId = dedicated ? HologramLibraryClient.INSTANCE.selected(this.publicLibrary)
             : selectedServerPresetId();
         for (int i = 0; i < presets.tagCount(); i++) {
@@ -1366,8 +1449,7 @@ final class HologramUiLibrary {
         if (id == 224 && this.overwriteReview) {
             if (!ui.session.editable()) return true;
             if (ui.canvas.rejectLocalPlanAction(id)) return true;
-            NBTTagList rows = dedicatedLibrary() ? HologramLibraryClient.INSTANCE.rows(false)
-                : ui.session.state().data.getTagList("presets", 10);
+            NBTTagList rows = dedicatedLibrary() ? HologramLibraryClient.INSTANCE.rows(false) : nativeRows();
             boolean found = false;
             for (int i = 0; i < rows.tagCount(); i++) if (overwriteTarget.equals(
                 rows.getCompoundTagAt(i)
@@ -1382,6 +1464,10 @@ final class HologramUiLibrary {
             request.setString("presetId", this.overwriteTarget);
             request.setBoolean("confirmOverwrite", true);
             this.overwriteReview = false;
+            if (ui.session.localDocument()) {
+                localWorkspace.save(request, this.overwriteTarget, LocalSaveIntent.STRICT);
+                return true;
+            }
             HologramLibraryClient.INSTANCE
                 .expectDraftDownload(ui.session.state(), ui.preview.yaw(), ui.preview.pitch());
             ui.session.send("saveBlueprintReplace", request, true);
@@ -1424,7 +1510,12 @@ final class HologramUiLibrary {
             || "choosePlacementPreset".equals(operation);
     }
 
+    private static boolean privateFileId(String id) {
+        return id.matches("local_[a-fA-F0-9-]{36}");
+    }
+
     private void sendPresetSwitch(String operation, String target, boolean confirmDiscard) {
+        if (target.isEmpty()) return;
         if (ui.session.isTutorial()) {
             NBTTagCompound request = new NBTTagCompound();
             request.setString("presetId", target);
@@ -1433,46 +1524,26 @@ final class HologramUiLibrary {
             return;
         }
         if ("previewPreset".equals(operation)) {
-            browsePreset(target, !dedicatedLibrary() || target.startsWith("public_"));
+            browsePreset(target, target.startsWith("public_"));
             return;
         }
         if ("choosePlacementPreset".equals(operation)) {
             HologramLibraryClient library = HologramLibraryClient.INSTANCE;
-            if (dedicatedLibrary() && !target.startsWith("public_")) library.previewLocal(target, true);
-            else library.previewPublic(target, true);
+            if (target.startsWith("public_")) library.previewPublic(target, true);
+            else library.previewLocal(target, true);
             return;
         }
         if ("editPreset".equals(operation)) {
             browsePreview = false;
-            browseServerPresetId = target;
             blueprintTab = libraryDrawer = true;
             if (presetNameField != null) presetNameField.setFocused(false);
+            cancelLibraryNavigation();
+            publicLibrary = target.startsWith("public_");
+            keepLibraryOffset = true;
+            HologramLibraryClient.INSTANCE.select(publicLibrary, target);
+            if (publicLibrary) localWorkspace.openPublic(target);
+            else localWorkspace.openPreset(target);
         }
-        if (dedicatedLibrary()) {
-            HologramLibraryClient library = HologramLibraryClient.INSTANCE;
-            // Public IDs already carry their namespace; a refreshed view cannot redirect a confirmed local target.
-            boolean publicTarget = target.startsWith("public_");
-            publicLibrary = publicTarget;
-            library.select(publicTarget, target);
-            if (!"choosePlacementPreset".equals(operation))
-                rememberLibraryNavigation(target, "editPreset".equals(operation) ? "blueprintEdit" : "blueprintBrowse");
-            else cancelLibraryNavigation();
-            if (!publicTarget) {
-                library.sendLocal(
-                    ui.session.state(),
-                    "editPreset".equals(operation) ? "edit"
-                        : "choosePlacementPreset".equals(operation) ? "place" : "preview",
-                    false,
-                    confirmDiscard);
-                return;
-            }
-        }
-        if (!dedicatedLibrary() && "editPreset".equals(operation)) rememberLibraryNavigation(target, "blueprintEdit");
-        NBTTagCompound request = new NBTTagCompound();
-        request.setString("presetId", target);
-        request.setBoolean("confirmDiscard", confirmDiscard);
-        keepLibraryOffset = true;
-        ui.session.send(operation, request, true);
     }
 
     boolean toggleOverwriteMode(int id) {
@@ -1493,6 +1564,13 @@ final class HologramUiLibrary {
     }
 
     boolean prepareLibraryNavigation(int id) {
+        if (localBusy() && (id >= 14000 && id < 15000 || id == 132
+            || id == 139
+            || id == 140
+            || id == 141
+            || id == 161
+            || id == 299
+            || id == 311)) return true;
         if (!ui.session.isTutorial() && (id == 132 || id == 140 && !overwriteMode)) {
             if (nativeCanSave()) submitBlueprintSave(id == 140);
             return true;
@@ -1510,6 +1588,10 @@ final class HologramUiLibrary {
         NBTTagCompound clickedRow = rowSelection ? visibleLibraryRow(id) : null;
         if (rowSelection && (clickedRow.getString("id")
             .isEmpty() || !this.overwriteMode && currentEditablePreset(clickedRow.getString("id")))) return true;
+        if (rowSelection && !overwriteMode && clickedRow.getBoolean("needsCompaction")) {
+            requireCompactUpdate();
+            return true;
+        }
         // A row now selects the editable source. Do not mutate selection or discard before consent.
         boolean switching = id == 139 || id == 161 || rowSelection;
         if (id == 139 && currentEditablePreset(
@@ -1532,6 +1614,10 @@ final class HologramUiLibrary {
         }
         if (this.overwriteMode && id >= 14000 && id < 15000) {
             NBTTagCompound row = clickedRow;
+            if (!privateFileId(row.getString("id"))) {
+                ui.session.notice("请选择可覆盖的客户端蓝图文件");
+                return true;
+            }
             this.overwriteTarget = row.getString("id");
             this.overwriteName = row.getString("name");
             this.overwriteManualName |= !this.presetNameField.getText()
@@ -1592,10 +1678,10 @@ final class HologramUiLibrary {
             }
         }
         if (id == 226) {
-            if (dedicatedLibrary() && this.publicLibrary) {
-                if (HologramLibraryClient.INSTANCE.config()
-                    .getBoolean("admin")) HologramLibraryClient.INSTANCE.upgradeServer(this::upgradedLibrary);
-            } else HologramLibraryClient.INSTANCE.upgradeLocal(this::upgradedLibrary);
+            if (!nativeCanUpgrade()) return true;
+            if (dedicatedLibrary() && this.publicLibrary)
+                HologramLibraryClient.INSTANCE.upgradeServer(this::upgradedLibrary);
+            else HologramLibraryClient.INSTANCE.upgradeLocal(this::upgradedLibrary);
             return true;
         }
         if (id == 309 || id == 310) {
@@ -1619,7 +1705,7 @@ final class HologramUiLibrary {
                 return true;
             case 141:
                 if (ui.session.editable() && ui.library.selectedPresetExists()) {
-                    HologramLibraryClient.INSTANCE.previewPublic(selectedServerPresetId(), true);
+                    sendPresetSwitch("choosePlacementPreset", selectedServerPresetId(), false);
                 }
                 return true;
             case 148:
@@ -1641,16 +1727,10 @@ final class HologramUiLibrary {
                 showNativeDockPage(2);
                 return true;
             case 159:
-            case 161:
-                if (ui.session.editable()) {
-                    NBTTagCompound transfer = new NBTTagCompound();
-                    transfer.setString("presetId", selectedServerPresetId());
-                    transfer.setString(
-                        "fileId",
-                        this.presetNameField.getText()
-                            .trim());
-                    ui.session.send(id == 159 ? "exportBlueprint" : "importBlueprint", transfer, true);
-                }
+                if (ui.session.editable() && presetNameField != null) localWorkspace.exportNamed(
+                    selectedServerPresetId(),
+                    presetNameField.getText()
+                        .trim());
                 return true;
             case 130:
                 this.blueprintTab = true;
@@ -1672,7 +1752,7 @@ final class HologramUiLibrary {
             case 175:
                 if (!ui.session.editable() || !ui.library.selectedPresetExists()) return true;
                 this.deletePresetId = selectedServerPresetId();
-                NBTTagList deleteRows = ui.session.state().data.getTagList("presets", 10);
+                NBTTagList deleteRows = nativeRows();
                 for (int i = 0; i < deleteRows.tagCount(); i++) {
                     NBTTagCompound row = deleteRows.getCompoundTagAt(i);
                     if (this.deletePresetId.equals(row.getString("id"))) this.deletePresetName = row.getString("name");
@@ -1681,6 +1761,11 @@ final class HologramUiLibrary {
                 return true;
             case 176:
                 if (!ui.session.editable() || this.deletePresetId.isEmpty()) return true;
+                if (privateFileId(this.deletePresetId) || this.deletePresetId.startsWith("legacy:")) {
+                    localWorkspace.deletePreset(this.deletePresetId);
+                    this.deletePresetId = this.deletePresetName = "";
+                    return true;
+                }
                 NBTTagCompound deletion = new NBTTagCompound();
                 deletion.setString("presetId", this.deletePresetId);
                 this.libraryResult = ui.session.notice("正在删除蓝图，请等待服务器确认");
@@ -1876,7 +1961,6 @@ final class HologramUiLibrary {
 
     void restoreSession(HologramState next, SnapshotTransition change) {
         browsePreview = false;
-        browseServerPresetId = "";
         UiMemory memory = HologramUiMemory.UI_MEMORY()
             .get(next.session);
         blueprintTab = memory == null ? next.data.getBoolean("presetBrowseForPlacement") || HologramUiMemory.tabMemory()
@@ -2129,14 +2213,13 @@ final class HologramUiLibrary {
     void prepareInitialization() {
         if (ui.session.isTutorial()) return;
         if (ui.library.presetNameField() != null) ui.memory.rememberUi();
-        if (dedicatedLibrary()) HologramLibraryClient.INSTANCE.open();
-        else refreshLibrary();
+        refreshLibrary();
     }
 
     private void refreshLibrary() {
-        if (ui.session.isTutorial()) return;
-        if (dedicatedLibrary()) HologramLibraryClient.INSTANCE.refreshLocal();
-        else ui.session.send("refreshPresetLibrary", null, false);
+        if (ui.session.isTutorial() || !localWorkspace.catalogAvailable()) return;
+        HologramLibraryClient.INSTANCE.privateStore();
+        HologramLibraryClient.INSTANCE.refreshLocal();
     }
 
     /** Modal controls are appended after the library rows; only the top modal may own this click. */
@@ -2173,6 +2256,7 @@ final class HologramUiLibrary {
 
     void tickStatus() {
         if (ui.session.isTutorial()) return;
+        localWorkspace.tick();
         if (ui.library.presetSaveSequence() >= 0 && !HologramLibraryClient.INSTANCE.status()
             .isEmpty()) ui.library.libraryResult(ui.session.notice(HologramLibraryClient.INSTANCE.status()));
         if (ui.library.libraryAdminDrawer()) {

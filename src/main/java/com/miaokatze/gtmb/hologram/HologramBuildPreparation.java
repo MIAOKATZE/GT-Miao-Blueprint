@@ -166,6 +166,17 @@ final class HologramBuildPreparation {
 
     static boolean aeReady(HologramSession s) {
         if (!s.virtual || s.virtualPreset == null || s.virtualPreset.schema < 2 || s.capture == null) return true;
+        if (!s.executionRequestId.isEmpty()) {
+            try {
+                for (NBTTagCompound descriptor : s.executionNetworks.values())
+                    HologramNetworkBindings.validate(descriptor, s.player, s.networkBindings);
+                return true;
+            } catch (java.io.IOException invalid) {
+                s.networkBindingRequested = true;
+                s.status = HologramAePolicy.fallback(invalid.getMessage());
+                return false;
+            }
+        }
         try {
             if (HologramDeidentification.level(s.virtualPreset) == 0)
                 for (HologramCapture.Cell cell : s.capture.cells) {

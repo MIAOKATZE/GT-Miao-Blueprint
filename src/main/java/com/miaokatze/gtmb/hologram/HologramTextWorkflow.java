@@ -285,28 +285,7 @@ final class HologramTextWorkflow {
             String key = wx + "," + wy + "," + wz;
             HologramCapture.Cell occupied = capture == null ? null : capture.positions.get(key);
             if (occupiedPositions.contains(key)) throw new IOException(text.noun() + "与工作区内容冲突，请移动后确认");
-            // These are virtual blueprint coordinates, not a request to place blocks at the player's site.
-            int paint = cell.boxes[0];
-            String materialName = cell.materials[paint];
-            int metadata = cell.metadata[paint];
-            Block material = Block.getBlockFromName(materialName);
-            boolean ordinary = cell.fullBlock && metadata <= 15
-                && material.isOpaqueCube()
-                && material.renderAsNormalBlock();
-            HologramCapture.Cell added = new HologramCapture.Cell(null, wx, wy, wz);
-            added.userPosition = true;
-            added.block = ordinary ? material : host;
-            added.meta = ordinary ? metadata : 0;
-            added.blueprintBlock = ordinary ? materialName : "littletiles:BlockLittleTiles";
-            added.tileNbt = ordinary ? "" : cell.encodedTile();
-            // The first exact child supplies only the primary sample; the full payload remains payable later.
-            added.actualStack = ordinary ? new ItemStack(material, 1, metadata)
-                : HologramNativePlacement.sample(host, 0, cell.sampleTile());
-            if (added.actualStack == null) throw new IOException("LittleTiles 材料样本生成失败");
-            added.blueprintItem = Item.itemRegistry.getNameForObject(added.actualStack.getItem());
-            added.blueprintDamage = added.actualStack.getItemDamage();
-            added.sourceClass = "";
-            added.sourceWarning = "";
+            HologramCapture.Cell added = generatedCell(host, cell, wx, wy, wz);
             HologramBlueprintData.setMemberships(added, java.util.Collections.singletonList(text.id));
             added.attachmentPlacementProof = HologramAttachmentPlacementProof.generated(added);
             additions.add(added);
@@ -343,6 +322,29 @@ final class HologramTextWorkflow {
             s.localEdits.invalidate();
             HologramSnapshots.send(s);
         }
+    }
+
+    /** Shared conversion of a generated attachment host into its portable block and visual payload. */
+    static HologramCapture.Cell generatedCell(Block host, HologramTextBox.Cell cell, int x, int y, int z)
+        throws IOException {
+        int paint = cell.boxes[0];
+        String materialName = cell.materials[paint];
+        int metadata = cell.metadata[paint];
+        validateMaterial(materialName, metadata);
+        Block material = Block.getBlockFromName(materialName);
+        boolean ordinary = cell.fullBlock && metadata <= 15 && material.isOpaqueCube() && material.renderAsNormalBlock();
+        HologramCapture.Cell added = new HologramCapture.Cell(null, x, y, z);
+        added.userPosition = true;
+        added.block = ordinary ? material : host;
+        added.meta = ordinary ? metadata : 0;
+        added.blueprintBlock = ordinary ? materialName : "littletiles:BlockLittleTiles";
+        added.tileNbt = ordinary ? "" : cell.encodedTile();
+        added.actualStack = ordinary ? new ItemStack(material, 1, metadata)
+            : HologramNativePlacement.sample(host, 0, cell.sampleTile());
+        if (added.actualStack == null) throw new IOException("LittleTiles 材料样本生成失败");
+        added.blueprintItem = Item.itemRegistry.getNameForObject(added.actualStack.getItem());
+        added.blueprintDamage = added.actualStack.getItemDamage();
+        return added;
     }
 
     static boolean occupiesBlueprintPosition(HologramCapture.Cell cell, ItemStack target) {

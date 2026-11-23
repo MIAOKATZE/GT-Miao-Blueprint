@@ -44,6 +44,15 @@ public final class HologramSnapshotCodec {
 
     static byte[] compress(NBTTagCompound tag, java.util.function.BooleanSupplier current,
         java.util.function.LongConsumer progress, boolean palette) throws IOException {
+        return compress(tag, current, progress, palette, RAW_BYTES, HologramSnapshotAssembly.MAX_BYTES);
+    }
+
+    static byte[] compress(NBTTagCompound tag, int rawLimit, int compressedLimit) throws IOException {
+        return compress(tag, () -> true, written -> {}, false, rawLimit, compressedLimit);
+    }
+
+    private static byte[] compress(NBTTagCompound tag, java.util.function.BooleanSupplier current,
+        java.util.function.LongConsumer progress, boolean palette, int rawLimit, int compressedLimit) throws IOException {
         if (palette) tag = HologramSnapshotPalette.pack(tag, current);
         boolean packed = HologramSnapshotPalette.isPacked(tag);
         if (packed && !palette) throw new IOException("packed snapshot requires negotiated encoding");
@@ -57,8 +66,8 @@ public final class HologramSnapshotCodec {
             new LimitedOutput(
                 new BufferedOutputStream(
                     new GZIPOutputStream(
-                        new LimitedOutput(bytes, HologramSnapshotAssembly.MAX_BYTES - (packed ? 8 : 0)))),
-                RAW_BYTES,
+                        new LimitedOutput(bytes, compressedLimit - (packed ? 8 : 0)))),
+                rawLimit,
                 current,
                 progress))) {
             CompressedStreamTools.write(tag, output);

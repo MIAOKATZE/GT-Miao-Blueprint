@@ -258,9 +258,15 @@ public final class HologramNativeDisplayRegression {
         source.setTag("actualDisplay", display);
         HologramState.Cell cell = new HologramState.Cell(0, source);
         display.setInteger("connections", 42);
-        SimpleAssert
-            .eq(21, cell.actualDisplay.getInteger("connections"), "client display state is detached from packet NBT");
-        SimpleAssert.that(cell.targetDisplay.hasNoTags(), "legacy snapshots retain empty optional display state");
+        SimpleAssert.eq(
+            21,
+            cell.display(true)
+                .getInteger("connections"),
+            "client display state is detached from packet NBT");
+        SimpleAssert.that(
+            cell.display(false)
+                .hasNoTags(),
+            "legacy snapshots retain empty optional display state");
     }
 
     private static ITexture texture() {

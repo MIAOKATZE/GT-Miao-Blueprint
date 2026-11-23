@@ -39,13 +39,14 @@ final class HologramBusyReplies {
         }
         NBTTagCompound proof = new NBTTagCompound();
         for (String key : new String[] { "session", "op", "action", "requestId", "transfer", "saveReceipt", "localId",
-            "replaceLocalId", "jsonSha256", "previewSha256" }) {
+            "replaceLocalId", "jsonSha256", "previewSha256", "placementRequestId" }) {
             if (!request.hasKey(key, 8)) continue;
             String value = request.getString(key);
             proof.setString(key, value.substring(0, Math.min(128, value.length())));
         }
         if (request.hasKey("uiSequence", 4)) proof.setLong("uiSequence", request.getLong("uiSequence"));
-        if (request.hasKey("controllerOpenId", 4)) proof.setLong("controllerOpenId", request.getLong("controllerOpenId"));
+        if (request.hasKey("controllerOpenId", 4))
+            proof.setLong("controllerOpenId", request.getLong("controllerOpenId"));
         if (request.hasKey("planRevision", 4)) proof.setLong("planRevision", request.getLong("planRevision"));
         if (request.hasKey("clientTaskToken", 4)) proof.setLong("clientTaskToken", request.getLong("clientTaskToken"));
         if (request.hasKey("artifactVersion", 3))
@@ -86,18 +87,24 @@ final class HologramBusyReplies {
                     proof.setString("code", "busy");
                     proof.setString("message", "服务器蓝图库请求繁忙，请稍后重试");
                     HologramNetwork.sendLibraryReply(player, proof);
-                } else {
-                    proof.setString("scope", kind == Kind.CUT ? "cut" : "server");
-                    if (kind == Kind.CUT) proof.setString("op", proof.getString("action"));
-                    proof.setString("phase", "transport.busy");
-                    proof.setString("outcome", "rejected");
-                    proof.setString("code", "busy");
-                    proof.setString("message", "服务器请求繁忙，此操作未执行，请稍后重试");
-                    NBTTagCompound state = new NBTTagCompound();
-                    state.setBoolean("progressOnly", true);
-                    state.setTag("progress", proof);
-                    HologramNetwork.sendState(player, state);
-                }
+                } else if (kind == Kind.ACTION && ("projectedPlacement".equals(proof.getString("action"))
+                    || "checkPlacementMaterials".equals(proof.getString("action")))
+                    && proof.getString("placementRequestId")
+                        .length() == 36) {
+                            HologramProjectedPlacementService
+                                .reply(player, proof.getString("placementRequestId"), false, "服务器请求繁忙，请稍后重试");
+                        } else {
+                            proof.setString("scope", kind == Kind.CUT ? "cut" : "server");
+                            if (kind == Kind.CUT) proof.setString("op", proof.getString("action"));
+                            proof.setString("phase", "transport.busy");
+                            proof.setString("outcome", "rejected");
+                            proof.setString("code", "busy");
+                            proof.setString("message", "服务器请求繁忙，此操作未执行，请稍后重试");
+                            NBTTagCompound state = new NBTTagCompound();
+                            state.setBoolean("progressOnly", true);
+                            state.setTag("progress", proof);
+                            HologramNetwork.sendState(player, state);
+                        }
             }
         }
     }

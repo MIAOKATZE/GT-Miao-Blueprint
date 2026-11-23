@@ -351,6 +351,7 @@ final class HologramWorldPlacementWorkflow {
     static void unlockWorldPosition(EntityPlayerMP player, NBTTagCompound request) {
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
         if (s == null || s.player != player
+            || !s.executionRequestId.isEmpty()
             || s.cancelled
             || !s.id.equals(request.getString("session"))
             || !request.hasKey("planRevision", 4)
@@ -403,6 +404,7 @@ final class HologramWorldPlacementWorkflow {
     static void nudgeWorldPosition(EntityPlayerMP player, NBTTagCompound request) {
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
         if (s == null || s.player != player
+            || !s.executionRequestId.isEmpty()
             || s.cancelled
             || !s.id.equals(request.getString("session"))
             || !request.hasKey("planRevision", 4)
@@ -487,6 +489,10 @@ final class HologramWorldPlacementWorkflow {
             }
             return;
         }
+        if (!s.executionRequestId.isEmpty()) {
+            cancelExecution(s);
+            return;
+        }
         boolean expireCapability = s.virtualLocked || s.placementReviewIssued || s.forcePlacementReady;
         s.virtualPlacement = false;
         s.virtualLocked = false;
@@ -501,6 +507,19 @@ final class HologramWorldPlacementWorkflow {
         s.presetBrowseForPlacement = false;
         HologramProjectorWorkflow.libraryCloseUi(s);
         s.status = "放置已取消，当前蓝图已保留；右键可重新打开工作台";
+        HologramSnapshots.send(s);
+    }
+
+    static void cancelExecution(HologramSession s) {
+        HologramDeferredPlanRefresh.cancel(s);
+        s.executionStart = null;
+        s.blueprintAwaitingConfirmation = false;
+        s.placementReviewIssued = false;
+        s.forcePlacementReady = false;
+        s.placementReviewNonce++;
+        s.cancelled = true;
+        s.status = "施工确认已取消";
+        HologramProjectorWorkflow.libraryCloseUi(s);
         HologramSnapshots.send(s);
     }
 
@@ -636,6 +655,7 @@ final class HologramWorldPlacementWorkflow {
                     preset,
                     vertical,
                     policy == TransformPolicy.AUTHORING,
+                    true,
                     validateFinalPose,
                     controller,
                     currentFacings,
@@ -764,6 +784,22 @@ final class HologramWorldPlacementWorkflow {
             false,
             true,
             true,
+            true,
+            HologramVirtualTransform.alignment(HologramVirtualTransform.controller(preset), false),
+            java.util.Collections.emptyMap(),
+            0,
+            0,
+            0);
+    }
+
+    /** Local authoring rotates the visible saved grid and keeps placement-only provenance opaque. */
+    static void turnLocalAuthorDocument(HologramPresets.Preset preset) throws java.io.IOException {
+        turnPreset(
+            preset,
+            false,
+            true,
+            false,
+            false,
             HologramVirtualTransform.alignment(HologramVirtualTransform.controller(preset), false),
             java.util.Collections.emptyMap(),
             0,
@@ -772,8 +808,8 @@ final class HologramWorldPlacementWorkflow {
     }
 
     private static void turnPreset(HologramPresets.Preset preset, boolean vertical, boolean authoring,
-        boolean validateFinalPose, ExtendedFacing controller, Map<String, Integer> currentFacings, int originX,
-        int originY, int originZ) throws java.io.IOException {
+        boolean placementData, boolean validateFinalPose, ExtendedFacing controller, Map<String, Integer> currentFacings,
+        int originX, int originY, int originZ) throws java.io.IOException {
         Map<String, int[]> littleReferences = HologramBlockTransformLittleTiles
             .presetReferences(preset.cells, vertical);
         preset.controllerFacing = controller.ordinal();
@@ -781,11 +817,13 @@ final class HologramWorldPlacementWorkflow {
             int front = currentFacings.getOrDefault(
                 (originX + saved.x) + "," + (originY + saved.y) + "," + (originZ + saved.z),
                 saved.facing);
-            if (preset.schema >= 2) {
+            if (preset.schema >= 2 && (placementData || !saved.missing())) {
                 HologramBlockTransforms.turn(saved, vertical, littleReferences, authoring);
-                saved.tileNbt = HologramCoordinatePolicies.rotatePayload(saved.tileNbt, vertical);
-                saved.itemNbt = HologramCoordinatePolicies.rotatePayload(saved.itemNbt, vertical);
-                HologramBlockTransforms.nativeSample(saved);
+                if (placementData) {
+                    saved.tileNbt = HologramCoordinatePolicies.rotatePayload(saved.tileNbt, vertical);
+                    saved.itemNbt = HologramCoordinatePolicies.rotatePayload(saved.itemNbt, vertical);
+                    HologramBlockTransforms.nativeSample(saved);
+                }
             }
             int[] offset = HologramVirtualTransform.turn(saved.x, saved.y, saved.z, vertical);
             saved.x = offset[0];
@@ -813,7 +851,14 @@ final class HologramWorldPlacementWorkflow {
             saved.y = coordinate[1];
             saved.z = coordinate[2];
             if (saved.textBoxNbt != null && !saved.textBoxNbt.isEmpty()) {
-                NBTTagCompound definition = HologramBlueprintNbt.decode(saved.textBoxNbt);
+                NBTTagCompound definition;
+                try {
+                    definition = placementData ? HologramBlueprintNbt.decode(saved.textBoxNbt)
+                        : HologramBlueprintNbt.decodeData(saved.textBoxNbt);
+                } catch (java.io.IOException invalid) {
+                    if (placementData) throw invalid;
+                    continue;
+                }
                 int[] previous = definition.getIntArray("turns");
                 if (previous.length >= 96) throw new java.io.IOException("文字旋转历史过长，请重建文本框");
                 int[] turns = java.util.Arrays.copyOf(previous, previous.length + 1);

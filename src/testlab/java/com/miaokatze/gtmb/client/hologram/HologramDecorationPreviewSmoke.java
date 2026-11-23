@@ -559,7 +559,7 @@ final class HologramDecorationPreviewSmoke {
             }
             for (HologramState.Cell cell : state.cells) {
                 TileEntity tile = getTileEntity(cell.x, cell.y, cell.z);
-                NBTTagCompound tag = (NBTTagCompound) (current ? cell.actualDisplay : cell.targetDisplay)
+                NBTTagCompound tag = (NBTTagCompound) cell.display(current)
                     .getCompoundTag("nativeTile")
                     .copy();
                 tag.setInteger("x", cell.x);

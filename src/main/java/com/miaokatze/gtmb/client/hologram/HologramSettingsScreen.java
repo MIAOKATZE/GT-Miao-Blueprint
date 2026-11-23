@@ -99,12 +99,7 @@ final class HologramSettingsScreen extends HologramMuiScreen {
             case 5 -> presetIndex = (presetIndex + 1) % presets().tagCount();
             case 6 -> recovery = 1 - recovery;
             case 7 -> save();
-            case 8 -> {
-                NBTTagCompound request = new NBTTagCompound();
-                request.setString("action", "useAir");
-                HologramClient.stampSemanticRevision(request);
-                HologramNetwork.sendAction(request);
-            }
+            case 8 -> HologramClient.openSettings();
             default -> {}
         }
     }

@@ -8,9 +8,11 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.WeakHashMap;
 import java.util.function.BiFunction;
 import java.util.function.Function;
@@ -22,6 +24,7 @@ import net.minecraftforge.common.util.ForgeDirection;
 import com.gtnewhorizon.structurelib.structure.IStructureElement;
 import com.gtnewhorizon.structurelib.structure.IStructureElementChain;
 
+import gregtech.api.enums.HatchElement;
 import gregtech.api.interfaces.IHatchElement;
 import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
 import gregtech.common.blocks.ItemMachines;
@@ -39,6 +42,8 @@ public final class HologramHatchPolicy {
     private static final Map<IStructureElement<?>, java.util.EnumSet<ForgeDirection>> DISALLOWED = new WeakHashMap<>();
     private static final Map<Object, List<IHatchElement<?>>> DECLARED = new WeakHashMap<>();
     private static final Map<IStructureElement<?>, List<IHatchElement<?>>> ELEMENT_DECLARED = new WeakHashMap<>();
+    private static final Map<Object, Predicate<ItemStack>> COLD_BUILDERS = new WeakHashMap<>();
+    private static final Map<IStructureElement<?>, Predicate<ItemStack>> COLD_ELEMENTS = new WeakHashMap<>();
 
     public static synchronized List<IHatchElement<?>> declared(IStructureElement<?> element) {
         List<IHatchElement<?>> types = ELEMENT_DECLARED.get(element);
@@ -91,6 +96,45 @@ public final class HologramHatchPolicy {
         Map<IHatchElement<?>, Integer> values = new java.util.LinkedHashMap<>();
         entries.forEach((type, count) -> values.put(type, Math.max(0, count.intValue())));
         REQUIREMENTS.put(builder, values);
+        COLD_BUILDERS.remove(builder);
+        try {
+            Predicate<ItemStack> cold = coldPreviewRule(DECLARED.get(builder), entries);
+            if (cold != null) COLD_BUILDERS.put(builder, cold);
+        } catch (RuntimeException | LinkageError unavailable) {
+            // Optional browsing evidence cannot interfere with native builder registration.
+        }
+    }
+
+    private static Predicate<ItemStack> coldPreviewRule(List<IHatchElement<?>> declared,
+        Map<? extends IHatchElement<?>, ? extends Number> entries) {
+        // Reproduce the pinned atLeast item filter on a cold context, where reviewed stock counts are zero.
+        // The blacklist is shared across ALL declared roles, not just those with a positive minimum.
+        if (declared == null || !entries.keySet().equals(new HashSet<>(declared))) return null;
+        List<IHatchElement<?>> needed = new ArrayList<>();
+        Set<Class<? extends IMetaTileEntity>> blacklist = new HashSet<>();
+        for (IHatchElement<?> type : declared) {
+            Number minimum = entries.get(type);
+            if (!(minimum instanceof Byte || minimum instanceof Short || minimum instanceof Integer
+                || minimum instanceof Long) || !stockColdCount(type)) return null;
+            if (minimum.longValue() > 0) needed.add(type);
+            blacklist.addAll(type.mteBlacklist());
+        }
+        if (needed.isEmpty()) return null;
+        return stack -> {
+            IMetaTileEntity tile = ItemMachines.getMetaTileEntity(stack);
+            if (tile == null || blacklist.contains(tile.getClass())) return false;
+            for (IHatchElement<?> type : needed) if (matchesHatch(type, tile)) return true;
+            return false;
+        };
+    }
+
+    private static boolean stockColdCount(IHatchElement<?> type) {
+        if (!(type instanceof HatchElement hatch)) return false;
+        // These .265 counts read initially empty base lists, not overridable getters or layered callbacks.
+        return switch (hatch) {
+            case Muffler, Maintenance, InputHatch, InputBus, OutputHatch, OutputBus, Energy, Dynamo -> true;
+            default -> false;
+        };
     }
 
     public static synchronized Map<IHatchElement<?>, Integer> requirements(IStructureElement<?> element) {
@@ -141,6 +185,7 @@ public final class HologramHatchPolicy {
     public static synchronized void declare(Object builder, Collection<? extends IHatchElement<?>> elements,
         boolean sharedBlacklist) {
         SINGLE_IDS.remove(builder);
+        COLD_BUILDERS.remove(builder);
         List<IHatchElement<?>> declared = new ArrayList<>(elements);
         // Native decorators preserve the reviewed matching declaration, independently of their count/adder callbacks.
         if (declared.stream()
@@ -231,6 +276,7 @@ public final class HologramHatchPolicy {
         BUILDERS.remove(builder);
         REQUIREMENTS.remove(builder);
         DECLARED.remove(builder);
+        COLD_BUILDERS.remove(builder);
     }
 
     public static synchronized void singleId(Object builder, int id) {
@@ -282,6 +328,13 @@ public final class HologramHatchPolicy {
         if (element != null && REQUIREMENTS.containsKey(builder))
             ELEMENT_REQUIREMENTS.put(element, REQUIREMENTS.get(builder));
         if (element != null && DECLARED.containsKey(builder)) ELEMENT_DECLARED.put(element, DECLARED.get(builder));
+        Predicate<ItemStack> cold = COLD_BUILDERS.get(builder);
+        if (cold != null && element != null) COLD_ELEMENTS.put(element, cold);
+    }
+
+    /** Known native reference offers, not structural or auto-placement authority. */
+    static synchronized Predicate<ItemStack> coldPreviewPredicate(IStructureElement<?> element) {
+        return COLD_ELEMENTS.get(element);
     }
 
     public static synchronized Predicate<ItemStack> predicate(IStructureElement<?> element, Object context,

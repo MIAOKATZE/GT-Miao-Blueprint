@@ -32,7 +32,7 @@ final class HologramAnnotationMarkers {
                 // Bounds follow this snapshot's transformed cells, restricted to the current editing structure.
                 if (!activeStructure.isEmpty() && !cell.belongsToStructure(activeStructure)) continue;
                 Set<String> prompts = networkPrompts.computeIfAbsent(cell.networkGroup, key -> new LinkedHashSet<>());
-                String hint = cell.specialHint.getString("hint");
+                String hint = cell.specialHint("hint");
                 if (!hint.isEmpty() && !hint.equals("量子网络组 " + cell.networkGroup.substring(1))) prompts.add(hint);
                 if (!cell.prompt.isEmpty()) prompts.add(cell.prompt);
                 networkCells.computeIfAbsent(cell.networkGroup, key -> new ArrayList<>())

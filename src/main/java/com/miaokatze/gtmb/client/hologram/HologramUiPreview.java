@@ -162,6 +162,8 @@ final class HologramUiPreview {
     /** Only model/ghost/selection geometry. Native controls are siblings of this bounded scene widget. */
     boolean sourcePreparing() {
         if (ui.session.isTutorial() || ui.library.browsePreviewActive()) return false;
+        if (ui.library.openingPreview() != null) return true;
+        if (ui.session.state().data.getBoolean("localStandardController")) return false;
         return ui.session.controllerOpening() || HologramClient.snapshotPreparing()
             || sourceSwitchWaiting(
                 ui.library.libraryNavigation(),
@@ -184,27 +186,41 @@ final class HologramUiPreview {
             drawBrowsePreview(mx, my);
             return;
         }
-        HologramRenderer.selection = selection;
-        HologramRenderer.moveOffset = gizmo.offset();
-        HologramRenderer.showEmptyCells = inventory || ui.position.positionDrawer() || airSelectionHeld();
+        MiaoVisonLiteRenderer viewport = HologramRenderer.editor();
+        viewport.selection = selection;
+        viewport.moveOffset = gizmo.offset();
+        viewport.showEmptyCells = inventory || ui.position.positionDrawer() || airSelectionHeld();
         HologramRenderer.projectionLayer = allLayers ? Integer.MAX_VALUE : layer;
-        HologramRenderer.selectedStructureId = ui.config.selectedStructureId();
+        viewport.selectedStructureId = ui.config.selectedStructureId();
         drawRect(0, 0, viewportWidth(), previewHeight(), 0xff292d2f);
         GL11.glPushAttrib(GL11.GL_SCISSOR_BIT);
         GL11.glEnable(GL11.GL_SCISSOR_TEST);
         applyViewportScissor();
         try {
+            if (drawOpeningPreview(viewport, 0, 0, viewportWidth(), previewHeight())) return;
+            HologramState snapshot = ui.session.state();
+            if (snapshot.data.getBoolean("localStandardController") && snapshot.cells.isEmpty()) {
+                hovered = -1;
+                viewport.waitingPreview(snapshot);
+                ui.canvas.sceneText(
+                    snapshot.data.getString("status"),
+                    viewportX() + 8,
+                    viewportY() + 24,
+                    Math.max(150, viewportWidth() - 16),
+                    0xb9d5d4);
+                return;
+            }
             if (sourcePreparing()) {
                 hovered = -1;
-                HologramRenderer.waitingPreview(ui.session.state());
+                viewport.waitingPreview(ui.session.state());
                 if (ui.session.controllerOpening()) {
                     String message = HologramClient.text("controllerReading", "Checking the structure…  Esc to close");
                     ui.canvas.sceneText(message, viewportX() + 8, viewportY() + 24, viewportWidth() - 16, 0xb9d5d4);
                 } else ui.canvas.sceneText("正在准备蓝图", viewportX() + 8, viewportY() + 12, 160, 0xb9d5d4);
                 return;
             }
-            hovered = HologramRenderer.preview(
-                ui.session.state(),
+            hovered = viewport.preview(
+                snapshot,
                 0,
                 0,
                 viewportWidth(),
@@ -268,24 +284,26 @@ final class HologramUiPreview {
             return;
         }
         int height = previewHeight();
-        HologramRenderer.selection = this.selection;
-        HologramRenderer.moveOffset = this.gizmo.offset();
-        HologramRenderer.showEmptyCells = this.inventory || ui.position.positionDrawer()
+        MiaoVisonLiteRenderer viewport = HologramRenderer.editor();
+        viewport.selection = this.selection;
+        viewport.moveOffset = this.gizmo.offset();
+        viewport.showEmptyCells = this.inventory || ui.position.positionDrawer()
             || ui.preview.airSelectionHeld();
         HologramRenderer.projectionLayer = this.allLayers ? Integer.MAX_VALUE : this.layer;
-        HologramRenderer.selectedStructureId = ui.config.selectedStructureId();
+        viewport.selectedStructureId = ui.config.selectedStructureId();
         drawRect(viewportX(), viewportY(), viewportX() + viewportWidth(), viewportY() + height, 0xff0c1e28);
         GL11.glPushAttrib(GL11.GL_SCISSOR_BIT);
         GL11.glEnable(GL11.GL_SCISSOR_TEST);
         applyViewportScissor();
         try {
+            if (drawOpeningPreview(viewport, viewportX(), viewportY(), viewportWidth(), height)) return;
             if (sourcePreparing()) {
                 hovered = -1;
-                HologramRenderer.waitingPreview(ui.session.state());
+                viewport.waitingPreview(ui.session.state());
                 ui.canvas.sceneText("正在准备蓝图", viewportX() + 8, viewportY() + 12, 160, 0xb9d5d4);
                 return;
             }
-            this.hovered = HologramRenderer.preview(
+            this.hovered = viewport.preview(
                 ui.session.state(),
                 viewportX(),
                 viewportY(),
@@ -379,6 +397,19 @@ final class HologramUiPreview {
         }
     }
 
+    private boolean drawOpeningPreview(MiaoVisonLiteRenderer viewport, int x, int y, int width, int height) {
+        if (ui.session.isTutorial() || !ui.library.openingLocalSource()) return false;
+        HologramState opening = ui.library.openingPreview();
+        if (opening == null) return false;
+        hovered = -1;
+        viewport.selection = null;
+        viewport.selectedStructureId = "";
+        viewport.preview(
+            opening, x, y, width, height, yaw, pitch, zoom, camera.x, camera.y, camera.z,
+            allLayers ? Integer.MAX_VALUE : layer, view, -1, -1, -1, -1, false);
+        return true;
+    }
+
     /** A library display has its own camera and no selection, session, or editing capability. */
     private void drawBrowsePreview(int mx, int my) {
         HologramLibraryClient library = HologramLibraryClient.INSTANCE;
@@ -401,10 +432,7 @@ final class HologramUiPreview {
         }
         int height = previewHeight();
         drawRect(viewportX(), viewportY(), viewportX() + viewportWidth(), viewportY() + height, 0xff0c1e28);
-        HologramRenderer.selection = null;
-        HologramRenderer.showEmptyCells = false;
-        HologramRenderer.selectedStructureId = "";
-        HologramRenderer.projectionLayer = browseAllLayers ? Integer.MAX_VALUE : browseLayer;
+        MiaoVisonLiteRenderer viewport = HologramRenderer.browse();
         if (display == null) {
             if (drawBrowseImage(library, height)) return;
             String status = HologramLibraryClient.INSTANCE.browsePreviewStatus();
@@ -420,7 +448,7 @@ final class HologramUiPreview {
         GL11.glEnable(GL11.GL_SCISSOR_TEST);
         applyViewportScissor();
         try {
-            HologramRenderer.preview(
+            viewport.preview(
                 display,
                 viewportX(),
                 viewportY(),
@@ -440,9 +468,9 @@ final class HologramUiPreview {
         } finally {
             GL11.glPopAttrib();
         }
-        boolean visible = HologramRenderer.previewMeshVisible(display);
+        boolean visible = viewport.previewMeshVisible(display);
         if (!visible) drawBrowseImage(library, height);
-        if (!display.data.getBoolean("displayPartial") && HologramRenderer.previewMeshReady(display))
+        if (!display.data.getBoolean("displayPartial") && viewport.previewMeshReady(display))
             library.releaseBrowseImage();
         ui.canvas.text("只读预览", 38, 61, 76, 0x81dce9);
         ui.canvas.button(11, 116, 55, 50, 17, browseAllLayers ? "全部层" : "层 " + browseLayer, visible, mx, my);
@@ -451,7 +479,7 @@ final class HologramUiPreview {
     }
 
     private boolean browseMeshInteractive() {
-        return browseState != null && HologramRenderer.previewMeshVisible(browseState);
+        return browseState != null && HologramRenderer.browse().previewMeshVisible(browseState);
     }
 
     private boolean drawBrowseImage(HologramLibraryClient library, int height) {
@@ -526,7 +554,7 @@ final class HologramUiPreview {
             : cell == null
                 ? ui.session.state().data.getInteger("y") + (ui.session.state().minY + ui.session.state().maxY) / 2
                 : cell.y;
-        int[] voxel = HologramRenderer.pickEmptyVoxel(ui.session.state(), mx, my, planeY);
+        int[] voxel = HologramRenderer.editor().pickEmptyVoxel(ui.session.state(), mx, my, planeY);
         if (voxel == null) return null;
         String structure = ui.config.selectedStructureId();
         if (!structure.isEmpty()) {
@@ -789,8 +817,8 @@ final class HologramUiPreview {
     }
 
     boolean previewFrameReady(int x, int y, int width, int height) {
-        boolean renderedEmpty = HologramRenderer.showEmptyCells;
-        return HologramRenderer.previewPresented(
+        boolean renderedEmpty = HologramRenderer.editor().showEmptyCells;
+        return HologramRenderer.editor().previewPresented(
             ui.session.state(),
             x,
             y,
@@ -1061,7 +1089,7 @@ final class HologramUiPreview {
             .held("cameraForward") ? 1 : 0)
             - (ui.tools.commands()
                 .held("cameraBack") ? 1 : 0);
-        double speed = Math.max(2, HologramRenderer.previewExtent() * .6) / this.zoom;
+        double speed = Math.max(2, HologramRenderer.editor().previewExtent() * .6) / this.zoom;
         this.camera.move(this.yaw, (now - previous) / 1_000_000_000.0, right, forward, speed);
     }
 
@@ -1189,12 +1217,16 @@ final class HologramUiPreview {
                 }
                 return true;
             case 23:
-                if (ui.session.editable()) ui.session.send("scan", null, true);
+                if (ui.session.editable() && ui.host.parent() != null) ui.host.parent().rescanDisplayedStructure();
                 return true;
             case 26:
                 if (ui.session.editable()) {
-                    ui.session.awaitingScan(true);
-                    ui.session.send("scan", null, true);
+                    HologramScreen root = ui.host.parent();
+                    if (root != null && root.localWorkspaceView()) root.checkLocalMaterials();
+                    else {
+                        ui.session.awaitingScan(true);
+                        ui.session.send("scan", null, true);
+                    }
                 }
                 return true;
             case 64:

@@ -108,6 +108,7 @@ final class HologramActionDispatcher {
         if (s.actionCount++ >= 8) return;
         if (presentationSequence) s.uiSequence = action.getLong("uiSequence");
         String op = action.getString("op");
+        if (!s.executionRequestId.isEmpty() && HologramExecutionReview.handle(s, action, op)) return;
         if ("captureIntent".equals(op) && HologramSessionPolicy.valid(s) && !s.virtual && s.job != 1 && s.job != 2) {
             String intent = action.getString("intent");
             if (!"NEW_TEMPLATE".equals(intent) && !"LIVE_SNAPSHOT".equals(intent)) return;

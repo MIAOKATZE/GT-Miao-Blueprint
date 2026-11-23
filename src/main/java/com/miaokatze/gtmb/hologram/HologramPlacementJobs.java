@@ -197,21 +197,7 @@ final class HologramPlacementJobs {
                 return;
             }
         }
-        if (!s.planRecoveryFits) {
-            s.status = s.blueprintResourceMissing.isEmpty() ? "背包无法容纳回收，请整理后重试"
-                : "蓝图资源校验失败，未施工：" + s.blueprintResourceMissing;
-            return;
-        }
-        if (s.planMissing > 0 && (!s.virtual || !s.forcePlacementReady)) {
-            s.forcePlacementReady = false;
-            s.status = s.virtual
-                ? (s.blueprintResourceMissing.isEmpty() ? "蓝图材料不足" : s.blueprintResourceMissing)
-                    + "；请核对仅放已有材料的方案后明确确认，权限与占位保护仍有效"
-                : "施工材料不足，请补齐后重试";
-            return;
-        }
-        boolean partial = s.virtual && s.planMissing > 0 && s.forcePlacementReady;
-        s.forcePlacementReady = false;
+        if (!approvedReviewedMaterials(s)) return;
         s.work.clear();
         for (int i = 0; i < s.capture.cells.size(); i++) {
             if (!HologramSessionPolicy.ignoredPlacementAir(s, s.capture.cells.get(i), i)
@@ -220,6 +206,7 @@ final class HologramPlacementJobs {
         }
         spatialWorkOrder(s);
         if (s.work.isEmpty()) {
+            s.forcePlacementReady = false;
             int satisfied = 0, protectedCells = 0, unsupported = 0;
             String reason = "";
             for (int i = 0; i < s.capture.cells.size(); i++) {
@@ -245,6 +232,33 @@ final class HologramPlacementJobs {
                     + (reason.isEmpty() ? "" : "；" + reason);
             return;
         }
+        begin(s, reviewedAction);
+    }
+
+    static boolean approvedMaterials(HologramSession s, net.minecraft.nbt.NBTTagCompound reviewedAction) {
+        return HologramMaterialWorkflow.recheckBuild(s, reviewedAction) && approvedReviewedMaterials(s);
+    }
+
+    private static boolean approvedReviewedMaterials(HologramSession s) {
+        if (!s.planRecoveryFits) {
+            s.status = s.blueprintResourceMissing.isEmpty() ? "背包无法容纳回收，请整理后重试"
+                : "蓝图资源校验失败，未施工：" + s.blueprintResourceMissing;
+            return false;
+        }
+        if (s.planMissing > 0 && (!s.virtual || !s.forcePlacementReady)) {
+            s.forcePlacementReady = false;
+            s.status = s.virtual
+                ? (s.blueprintResourceMissing.isEmpty() ? "蓝图材料不足" : s.blueprintResourceMissing)
+                    + "；请核对仅放已有材料的方案后明确确认，权限与占位保护仍有效"
+                : "施工材料不足，请补齐后重试";
+            return false;
+        }
+        return true;
+    }
+
+    static void begin(HologramSession s, net.minecraft.nbt.NBTTagCompound reviewedAction) {
+        boolean partial = s.virtual && s.planMissing > 0 && s.forcePlacementReady;
+        s.forcePlacementReady = false;
         s.replacementAuthorized = s.mode == 1;
         s.cursor = 0;
         s.completed = 0;

@@ -56,10 +56,11 @@ final class HologramDeidentification {
     }
 
     static int level(HologramPresets.Preset preset) {
-        return preset == null ? 0
-            : Math.max(
-                preset.deidentificationLevel,
-                preset.deidentificationVersion == 0 && preset.aePolicyVersion > 0 ? 1 : 0);
+        return preset == null ? 0 : level(preset.deidentificationLevel, preset.deidentificationVersion, preset.aePolicyVersion);
+    }
+
+    static int level(int authoredLevel, int version, int aeVersion) {
+        return Math.max(authoredLevel, version == 0 && aeVersion > 0 ? 1 : 0);
     }
 
     static HologramPresets.Preset apply(HologramPresets.Preset source, int requested) throws IOException {

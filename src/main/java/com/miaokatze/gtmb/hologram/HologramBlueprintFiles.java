@@ -36,6 +36,119 @@ public final class HologramBlueprintFiles {
         return member == null ? child(root, id + ".json") : child(root, member);
     }
 
+    /** Existing durable mapping only; no portable catalogue adoption and no legacy filename fallback. */
+    public static synchronized Path indexedPath(Path directory, String id) throws IOException {
+        validId(id);
+        Path root = directory.toAbsolutePath().normalize();
+        String member = index(root).getProperty(id);
+        return member == null ? null : child(root, member);
+    }
+
+    /** Pre-pair shares can be exported as exact JSON under their requested local name. */
+    public static synchronized void exportHistoricShare(Path directory, String alias, byte[] json,
+        java.util.function.BooleanSupplier current) throws IOException {
+        Path target = resolve(directory, alias);
+        if (Files.exists(HologramBlueprintArtifact.previewPath(target), LinkOption.NOFOLLOW_LINKS))
+            throw new IOException("同名文件已有预览，请换一个导出名称");
+        requireCurrent(current);
+        Files.createDirectories(target.getParent());
+        replace(target, json);
+    }
+
+    /** Explicit single named import, not a general recovery for a missing native PNG. Keep JSON-only sources JSON-only. */
+    public static String upgradeNamedHistoric(Path directory, String alias, java.util.function.BooleanSupplier current)
+        throws IOException {
+        validId(alias);
+        if (alias.equalsIgnoreCase("hologram-presets") || alias.matches("(?i)(?:local_|public_)[a-f0-9-]{36}")
+            || alias.matches("(?i).+_[a-f0-9]{64}")) throw new IOException("请选择未纳入蓝图库的旧分享文件名");
+        Path root = directory.toAbsolutePath().normalize();
+        Path source = child(root, alias + ".json");
+        requireCurrent(current);
+        int limit = HologramBlueprintArtifact.MAX_JSON_BYTES;
+        byte[] original = read(source, limit);
+        if (!HologramBlueprintPreviewBinding.pngSha256(original).isEmpty())
+            throw new IOException("此蓝图需要原预览，不能按单 JSON 转换");
+        JsonObject document = HologramBlueprintCompactCodec.storageDocument(original, limit);
+        if (document.has("presets")) throw new IOException("此文件不是单张蓝图");
+        JsonObject member = HologramBlueprintCompactCodec.documentBlueprint(document);
+        if (member.has("nativeBlueprint") || document.has("owner") || document.has("uploadedBy"))
+            throw new IOException("原生蓝图需要配对预览，已保留原文件");
+        if (document.has("encoding")) return "蓝图已经紧凑化，无需转换";
+        HologramBlueprintCompactCodec.requireRecompressibleEnvelope(document);
+        if (member == document) {
+            document = new JsonObject();
+            document.addProperty("schema", 2);
+            document.add("blueprint", member);
+        }
+        byte[] compact = HologramBlueprintCompactCodec.recompressExpanded(document, limit, current);
+        String sourceHash = HologramBlueprintArtifact.hash(original);
+        Map<Path, String> previews = historicPreviews(root, source, sourceHash, current);
+        Path staged = Files.createTempFile(root, "gtmb-historic-", ".tmp");
+        try {
+            Files.write(staged, compact);
+            if (!java.util.Arrays.equals(compact, read(staged, limit))) throw new IOException("升级回读校验失败");
+            // Same monitor order as pair commit. Recheck source, all PNG identities, index and cancellation at publish.
+            synchronized (HologramBlueprintArtifact.class) {
+                synchronized (HologramBlueprintFiles.class) {
+                    Properties mappings = index(root);
+                    if (mappings.containsKey(alias) || mappings.containsValue(source.getFileName().toString()))
+                        throw new IOException("此蓝图已有管理映射，不能按单 JSON 转换");
+                    if (!previews.equals(historicPreviews(root, source, null, current))
+                        || !java.util.Arrays.equals(original, read(source, limit)))
+                        throw new IOException("蓝图或预览在转换期间已变更");
+                    requireCurrent(current);
+                    Files.move(staged, source, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+                }
+            }
+        } finally {
+            Files.deleteIfExists(staged);
+        }
+        return "旧分享蓝图已紧凑化，保留原文件名且未生成预览";
+    }
+
+    private static Map<Path, String> historicPreviews(Path root, Path source, String sourceHash,
+        java.util.function.BooleanSupplier current) throws IOException {
+        Map<Path, String> entries = new LinkedHashMap<>();
+        Path sibling = HologramBlueprintArtifact.previewPath(source);
+        try (java.nio.file.DirectoryStream<Path> files = Files.newDirectoryStream(root, "*.png")) {
+            for (Path path : files) {
+                requireCurrent(current);
+                if (entries.size() >= 4096) throw new IOException("蓝图升级目录超过4096组文件上限");
+                if (sibling.equals(path)) throw new IOException("已有同名预览，请使用成对升级");
+                java.nio.file.attribute.BasicFileAttributes stat = Files.readAttributes(path,
+                    java.nio.file.attribute.BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+                if (!stat.isRegularFile()) throw new IOException("无法确认预览文件来源");
+                entries.put(path, stat.fileKey() + ":" + stat.size() + ":" + stat.lastModifiedTime());
+                if (sourceHash != null && HologramBlueprintArtifact.previewReferences(sourceHash,
+                    read(path, HologramBlueprintArtifact.MAX_PNG_BYTES))) throw new IOException("找到原图预览，请使用成对升级");
+            }
+        }
+        return entries;
+    }
+
+    /** Remove only the selected row, preserving every other field and member of the historic file. */
+    public static void deleteHistoricMember(Path path, String memberId) throws IOException {
+        deleteHistoricMember(path, memberId, read(path, HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES));
+    }
+
+    static void deleteHistoricMember(Path path, String memberId, byte[] original) throws IOException {
+        int limit = HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES;
+        var source = HologramBlueprintCompactCodec.parseStored(original, limit);
+        JsonObject catalog = source.root();
+        com.google.gson.JsonArray remaining = new com.google.gson.JsonArray();
+        boolean removed = false;
+        for (com.google.gson.JsonElement row : catalog.getAsJsonArray("presets")) {
+            JsonObject member = row.getAsJsonObject();
+            if (!removed && member.has("id") && memberId.equals(member.get("id").getAsString())) removed = true;
+            else remaining.add(row);
+        }
+        if (!removed) throw new IOException("本地旧合集蓝图不存在");
+        catalog.add("presets", remaining);
+        byte[] remainingJson = source.compact() ? HologramBlueprintCompactCodec.recompressExpanded(catalog, limit, () -> true)
+            : HologramBlueprintSharing.encodeBounded(new com.google.gson.GsonBuilder().serializeNulls().create(), catalog, limit);
+        HologramPresets.replaceCompressedCatalog(path, original, remainingJson);
+    }
+
     public static Map<String, Path> managed(Path directory) throws IOException {
         adoptPortablePairs(
             directory.toAbsolutePath()
@@ -54,7 +167,9 @@ public final class HologramBlueprintFiles {
                 String name = path.getFileName()
                     .toString();
                 if (name.equals("hologram-presets.json") || known.contains(path)
-                    || !Files.isRegularFile(HologramBlueprintArtifact.previewPath(path))) continue;
+                    || name.matches("public_[a-fA-F0-9-]{36}\\.json")
+                    || !Files.isRegularFile(path, LinkOption.NOFOLLOW_LINKS)
+                    || !Files.isRegularFile(HologramBlueprintArtifact.previewPath(path), LinkOption.NOFOLLOW_LINKS)) continue;
                 result.put(name.substring(0, name.length() - 5), path);
             }
         }
@@ -65,9 +180,12 @@ public final class HologramBlueprintFiles {
     public static synchronized String displayId(Path directory, Path source, String nativeId) throws IOException {
         Path root = directory.toAbsolutePath()
             .normalize();
+        return displayId(root, source, nativeId, index(root));
+    }
+
+    private static String displayId(Path root, Path source, String nativeId, Properties mappings) throws IOException {
         String member = source.getFileName()
             .toString();
-        Properties mappings = index(root);
         for (String key : mappings.stringPropertyNames())
             if (key.matches("local_[a-fA-F0-9-]{36}") && member.equals(mappings.getProperty(key))) return key;
         String basename = member.substring(0, member.length() - 5);
@@ -118,6 +236,10 @@ public final class HologramBlueprintFiles {
     }
 
     public static synchronized Path target(Path directory, String id, byte[] json) throws IOException {
+        return target(directory, id, json, null);
+    }
+
+    private static synchronized Path target(Path directory, String id, byte[] json, Path upgradeSource) throws IOException {
         validId(id);
         Path root = directory.toAbsolutePath()
             .normalize();
@@ -125,15 +247,11 @@ public final class HologramBlueprintFiles {
         JsonObject blueprint = document.has("blueprint") ? document.getAsJsonObject("blueprint") : document;
         String name = blueprint.has("name") ? blueprint.get("name")
             .getAsString() : "蓝图";
-        JsonObject content = new JsonObject();
-        content.add("blueprint", blueprint);
-        String hash = HologramBlueprintContentHash.of(
-            content.toString()
-                .getBytes(StandardCharsets.UTF_8));
+        String hash = HologramBlueprintContentHash.ofExpandedTarget(blueprint);
         String stem = safeName(name) + "_" + hash;
         Path target = child(root, stem + ".json");
         Properties index = index(root);
-        String current = index.getProperty(id, id + ".json");
+        String current = index.getProperty(id, upgradeSource == null ? id + ".json" : upgradeSource.getFileName().toString());
         boolean occupied = false;
         for (String key : index.stringPropertyNames()) if (!key.equals(id) && target.getFileName()
             .toString()
@@ -175,6 +293,12 @@ public final class HologramBlueprintFiles {
 
     static void track(Path directory, String id, HologramBlueprintArtifact.PairWrite receipt,
         IndexWriteOperation publish) throws IOException {
+        track(directory, id, receipt, publish, null, null, null, null);
+    }
+
+    private static void track(Path directory, String id, HologramBlueprintArtifact.PairWrite receipt,
+        IndexWriteOperation publish, Path upgradeSource, String sourceJsonHash, String sourcePngHash, Path detachedPng)
+        throws IOException {
         Path root = directory.toAbsolutePath()
             .normalize();
         Path target = child(
@@ -187,19 +311,33 @@ public final class HologramBlueprintFiles {
             before = index(root);
         }
         final String previous = before.getProperty(id);
-        Path old = previous == null ? child(root, id + ".json") : child(root, previous);
-        String oldJsonHash = old.equals(target) ? null
+        Path old = upgradeSource == null ? (previous == null ? child(root, id + ".json") : child(root, previous))
+            : upgradeSource;
+        if (upgradeSource != null && previous != null && !old.equals(child(root, previous)))
+            throw new IOException("升级期间蓝图映射已变更");
+        String oldJsonHash = upgradeSource != null ? sourceJsonHash : old.equals(target) ? null
             : memberHashOrAbsent(old, HologramBlueprintArtifact.MAX_JSON_BYTES);
-        String oldPngHash = old.equals(target) ? null
+        String oldPngHash = upgradeSource != null ? (detachedPng == null ? sourcePngHash : null) : old.equals(target) ? null
             : memberHashOrAbsent(HologramBlueprintArtifact.previewPath(old), HologramBlueprintArtifact.MAX_PNG_BYTES);
         String member = target.getFileName()
             .toString();
         Map<String, String> changes = new LinkedHashMap<>();
         changes.put(id, previous);
+        if (upgradeSource != null) {
+            String sourceName = old.getFileName().toString();
+            String alias = sourceName.substring(0, sourceName.length() - 5);
+            validId(alias);
+            if (!alias.matches("(?:local_|public_)[a-fA-F0-9-]{36}")) {
+                String existing = before.getProperty(alias);
+                if (existing != null && !sourceName.equals(existing)) throw new IOException("蓝图原文件名与已有别名冲突");
+                changes.put(alias, existing);
+            }
+        }
         for (String key : before.stringPropertyNames()) if (old.getFileName()
             .toString()
             .equals(before.getProperty(key))) changes.put(key, before.getProperty(key));
         // Install recovery first, without holding the filename-index monitor while acquiring a receipt lock.
+        boolean[] publishing = { false };
         receipt.onCompletion(() -> {
             if (!old.equals(target)) {
                 synchronized (HologramBlueprintFiles.class) {
@@ -215,22 +353,33 @@ public final class HologramBlueprintFiles {
                     throw new IOException("旧蓝图在保存期间已变化，保留旧文件");
                 HologramBlueprintArtifact.deletePair(old);
             }
+            if (detachedPng != null && !detachedPng.equals(HologramBlueprintArtifact.previewPath(target))) {
+                if (!sourcePngHash.equals(memberHashOrAbsent(detachedPng, HologramBlueprintArtifact.MAX_PNG_BYTES)))
+                    throw new IOException("原预览在升级期间已变更");
+                Files.deleteIfExists(detachedPng);
+            }
         }, () -> {
             synchronized (HologramBlueprintFiles.class) {
+                if (!publishing[0]) return;
                 Properties actual = index(root);
+                boolean updated = false;
                 for (Map.Entry<String, String> change : changes.entrySet()) {
                     if (!member.equals(actual.getProperty(change.getKey()))) continue;
                     if (change.getValue() == null) actual.remove(change.getKey());
+                    else if (member.equals(change.getValue())) continue;
                     else actual.setProperty(change.getKey(), change.getValue());
+                    updated = true;
                 }
-                writeIndex(root, actual);
+                if (updated) writeIndex(root, actual);
             }
         });
         synchronized (HologramBlueprintFiles.class) {
             Properties actual = index(root);
-            if (!java.util.Objects.equals(previous, actual.getProperty(id)))
-                throw new IOException("Blueprint filename mapping changed during save");
+            for (Map.Entry<String, String> change : changes.entrySet())
+                if (!java.util.Objects.equals(change.getValue(), actual.getProperty(change.getKey())))
+                    throw new IOException("Blueprint filename mapping changed during save");
             for (String key : changes.keySet()) actual.setProperty(key, member);
+            publishing[0] = true;
             publish.write(root, actual);
         }
     }
@@ -245,34 +394,29 @@ public final class HologramBlueprintFiles {
     public static void delete(Path directory, String id) throws IOException {
         Path root = directory.toAbsolutePath()
             .normalize();
-        final Path file;
-        final Map<String, String> removed = new LinkedHashMap<>();
-        synchronized (HologramBlueprintFiles.class) {
-            file = resolve(root, id);
-            Properties actual = index(root);
-            for (String key : actual.stringPropertyNames()) if (file.getFileName()
-                .toString()
-                .equals(actual.getProperty(key))) removed.put(key, actual.getProperty(key));
-            for (String key : removed.keySet()) actual.remove(key);
-            writeIndex(root, actual);
-        }
-        try {
-            HologramBlueprintArtifact.deletePair(file);
-        } catch (IOException | RuntimeException failure) {
-            try {
-                synchronized (HologramBlueprintFiles.class) {
-                    Properties actual = index(root);
-                    for (Map.Entry<String, String> previous : removed.entrySet()) {
-                        if (actual.containsKey(previous.getKey()))
-                            throw new IOException("Blueprint deletion mapping changed during rollback");
-                        actual.setProperty(previous.getKey(), previous.getValue());
+        synchronized (HologramBlueprintArtifact.class) {
+            synchronized (HologramBlueprintFiles.class) {
+                Path file = resolve(root, id);
+                Properties actual = index(root);
+                Map<String, String> removed = new LinkedHashMap<>();
+                for (String key : actual.stringPropertyNames()) if (file.getFileName()
+                    .toString()
+                    .equals(actual.getProperty(key))) removed.put(key, actual.getProperty(key));
+                for (String key : removed.keySet()) actual.remove(key);
+                writeIndex(root, actual);
+                try {
+                    HologramBlueprintArtifact.deletePair(file);
+                } catch (IOException | RuntimeException failure) {
+                    try {
+                        for (Map.Entry<String, String> previous : removed.entrySet())
+                            actual.setProperty(previous.getKey(), previous.getValue());
+                        if (!removed.isEmpty()) writeIndex(root, actual);
+                    } catch (IOException restore) {
+                        failure.addSuppressed(restore);
                     }
-                    writeIndex(root, actual);
+                    throw failure;
                 }
-            } catch (IOException restore) {
-                failure.addSuppressed(restore);
             }
-            throw failure;
         }
     }
 
@@ -324,10 +468,12 @@ public final class HologramBlueprintFiles {
                     progress.accept(done, jsonFiles.size());
                     continue;
                 }
-                byte[] old = read(source, HologramBlueprintArtifact.MAX_JSON_BYTES);
-                JsonObject document = HologramBlueprintCompactCodec.parse(old);
-                if (!document.has("blueprint")) throw new IOException("缺少独立蓝图容器");
-                JsonObject blueprint = document.getAsJsonObject("blueprint");
+                UpgradeSource original = readUpgradeSource(root, source);
+                byte[] old = original.json;
+                byte[] detached = HologramBlueprintPreviewBinding.sourceJson(old);
+                byte[] compact = HologramBlueprintUpgrade.migrate(detached,
+                    HologramBlueprintArtifact.MAX_JSON_BYTES, currentOperation);
+                JsonObject blueprint = HologramBlueprintCompactCodec.displayRows(compact).blueprint;
                 if (!blueprint.has("name") || !blueprint.has("cells")) throw new IOException("缺少名称或方块列表");
                 Path pngPath = HologramBlueprintArtifact.previewPath(source);
                 byte[] png;
@@ -345,21 +491,28 @@ public final class HologramBlueprintFiles {
                         try {
                             byte[] candidateBytes = read(candidate, HologramBlueprintArtifact.MAX_PNG_BYTES);
                             if (!HologramBlueprintArtifact.previewMatches(old, candidateBytes)) continue;
+                            if (Files.exists(previewOwner(candidate), LinkOption.NOFOLLOW_LINKS))
+                                throw new IOException("摘要匹配的PNG已有同名JSON，保留原文件");
                             if (match != null) throw new IOException("存在多个摘要匹配的PNG");
                             match = candidate;
                             png = candidateBytes;
                         } catch (IOException invalidPng) {
-                            if ("存在多个摘要匹配的PNG".equals(invalidPng.getMessage())) throw invalidPng;
+                            if ("存在多个摘要匹配的PNG".equals(invalidPng.getMessage())
+                                || "摘要匹配的PNG已有同名JSON，保留原文件".equals(invalidPng.getMessage())) throw invalidPng;
                         }
                     }
                     if (match == null) throw new IOException("缺少同名或唯一摘要匹配PNG");
                     pngPath = match;
                 }
-                String id = adopt(root, source, document);
-                byte[] compact = HologramBlueprintUpgrade.migrate(
-                    HologramBlueprintPreviewBinding.sourceJson(old),
-                    HologramBlueprintArtifact.MAX_JSON_BYTES,
-                    currentOperation);
+                requireCurrent(currentOperation);
+                if (compact == detached && pngPath.equals(HologramBlueprintArtifact.previewPath(source))) {
+                    current++;
+                    progress.accept(++done, jsonFiles.size());
+                    continue;
+                }
+                // Do not adopt before we have an accepted pair; a rejected item must leave no new alias.
+                String nativeId = blueprint.has("id") ? blueprint.get("id").getAsString() : "";
+                String id = displayId(root, source, nativeId, original.mappings);
                 progress.accept(done, jsonFiles.size());
                 byte[] bound;
                 if (!HologramBlueprintPreviewBinding.pngSha256(old)
@@ -368,42 +521,13 @@ public final class HologramBlueprintFiles {
                     compact = migrated.json;
                     bound = migrated.png;
                 } else bound = HologramBlueprintArtifact.bindPreview(compact, png);
-                Path target = target(root, id, compact);
-                if (source.equals(target) && java.util.Arrays.equals(old, compact)
-                    && java.util.Arrays.equals(png, bound)) {
-                    current++;
-                    done++;
-                    progress.accept(done, jsonFiles.size());
-                    continue;
-                }
-                HologramBlueprintArtifact.PairWrite receipt = HologramBlueprintArtifact
-                    .writePairPending(target, compact, bound, currentOperation);
-                try {
-                    HologramBlueprintArtifact.Artifact actual = HologramBlueprintArtifact.readPair(target);
-                    if (!java.util.Arrays.equals(actual.json, compact)) throw new IOException("升级回读校验失败");
-                    requireCurrent(currentOperation);
-                    track(root, id, receipt);
-                    requireCurrent(currentOperation);
-                } catch (IOException | RuntimeException failure) {
-                    try {
-                        receipt.rollback();
-                    } catch (IOException rollback) {
-                        failure.addSuppressed(rollback);
-                    }
-                    throw failure;
-                }
-                receipt.commit();
+                Path target = target(root, id, compact, source);
+                HologramBlueprintArtifact.PairWrite receipt =
+                    commitUpgradePair(root, id, nativeId, source, pngPath, target, original, png, compact, bound,
+                        currentOperation);
                 if (!receipt.cleanupWarning()
                     .isEmpty()) reasons.add(name + "：升级完成，旧文件清理待重试：" + receipt.cleanupWarning());
                 upgraded++;
-                if (!pngPath.equals(HologramBlueprintArtifact.previewPath(source))
-                    && !pngPath.equals(HologramBlueprintArtifact.previewPath(target))) {
-                    try {
-                        Files.deleteIfExists(pngPath);
-                    } catch (IOException cleanup) {
-                        reasons.add(name + "：升级完成，旧预览清理失败：" + cleanup.getMessage());
-                    }
-                }
             } catch (IOException | RuntimeException failure) {
                 requireCurrent(currentOperation);
                 skipped++;
@@ -418,6 +542,91 @@ public final class HologramBlueprintFiles {
             + "，跳过 "
             + skipped
             + (reasons.isEmpty() ? "" : "；" + String.join("；", reasons));
+    }
+
+    private static final class UpgradeSource {
+
+        final byte[] json;
+        final Properties mappings;
+
+        UpgradeSource(byte[] json, Properties mappings) {
+            this.json = json;
+            this.mappings = mappings;
+        }
+    }
+
+    private static UpgradeSource readUpgradeSource(Path root, Path source) throws IOException {
+        synchronized (HologramBlueprintArtifact.class) {
+            synchronized (HologramBlueprintFiles.class) {
+                if (HologramBlueprintArtifact.hasPendingWrite(source)) throw new IOException("蓝图仍有待确认的保存");
+                return new UpgradeSource(read(source, HologramBlueprintArtifact.MAX_JSON_BYTES), index(root));
+            }
+        }
+    }
+
+    /** Include every old alias as well as reserved source/target slots; an unrelated mapping does not block upgrade. */
+    private static Map<String, String> upgradeMappings(Properties mappings, String id, Path source, Path target) {
+        String before = source.getFileName().toString(), after = target.getFileName().toString();
+        Map<String, String> relevant = new LinkedHashMap<>();
+        relevant.put(id, mappings.getProperty(id));
+        String alias = before.substring(0, before.length() - 5);
+        relevant.put(alias, mappings.getProperty(alias));
+        for (String key : mappings.stringPropertyNames()) {
+            String value = mappings.getProperty(key);
+            if (before.equals(value) || after.equals(value)) relevant.put(key, value);
+        }
+        return relevant;
+    }
+
+    /** Hold both monitors only for final CAS/readback/index publication, never for compression. */
+    private static HologramBlueprintArtifact.PairWrite commitUpgradePair(Path root, String id, String nativeId,
+        Path source, Path pngPath, Path target, UpgradeSource original, byte[] png, byte[] compact, byte[] bound,
+        java.util.function.BooleanSupplier current) throws IOException {
+        synchronized (HologramBlueprintArtifact.class) {
+            synchronized (HologramBlueprintFiles.class) {
+                Properties live = index(root);
+                if (!upgradeMappings(original.mappings, id, source, target).equals(upgradeMappings(live, id, source, target))
+                    || !id.equals(displayId(root, source, nativeId, live)))
+                    throw new IOException("升级期间蓝图映射已变更");
+                if (HologramBlueprintArtifact.hasPendingWrite(source) || HologramBlueprintArtifact.hasPendingWrite(target))
+                    throw new IOException("蓝图仍有待确认的保存");
+                byte[] old = original.json;
+                if (!java.util.Arrays.equals(old, read(source, HologramBlueprintArtifact.MAX_JSON_BYTES))
+                    || !java.util.Arrays.equals(png, read(pngPath, HologramBlueprintArtifact.MAX_PNG_BYTES)))
+                    throw new IOException("蓝图或预览在升级期间已变更");
+                boolean sibling = pngPath.equals(HologramBlueprintArtifact.previewPath(source));
+                if (!sibling && (Files.exists(HologramBlueprintArtifact.previewPath(source), LinkOption.NOFOLLOW_LINKS)
+                    || Files.exists(previewOwner(pngPath), LinkOption.NOFOLLOW_LINKS)))
+                    throw new IOException("蓝图预览的配对关系在升级期间已变更");
+                if (!source.equals(target) && (Files.exists(target, LinkOption.NOFOLLOW_LINKS)
+                    || Files.exists(HologramBlueprintArtifact.previewPath(target), LinkOption.NOFOLLOW_LINKS)))
+                    throw new IOException("升级目标已有文件");
+                HologramBlueprintArtifact.PairWrite receipt =
+                    HologramBlueprintArtifact.writePairPending(target, compact, bound, current);
+                try {
+                    HologramBlueprintArtifact.Artifact actual = HologramBlueprintArtifact.readPair(target);
+                    if (!java.util.Arrays.equals(actual.json, compact) || !java.util.Arrays.equals(actual.png, bound))
+                        throw new IOException("升级回读校验失败");
+                    requireCurrent(current);
+                    track(root, id, receipt, HologramBlueprintFiles::writeIndex, source, HologramBlueprintArtifact.hash(old),
+                        HologramBlueprintArtifact.hash(png), sibling ? null : pngPath);
+                } catch (IOException | RuntimeException failure) {
+                    try {
+                        receipt.rollback();
+                    } catch (IOException rollback) {
+                        failure.addSuppressed(rollback);
+                    }
+                    throw failure;
+                }
+                receipt.commit();
+                return receipt;
+            }
+        }
+    }
+
+    private static Path previewOwner(Path png) {
+        String name = png.getFileName().toString();
+        return png.resolveSibling(name.substring(0, name.length() - 4) + ".json");
     }
 
     private static void requireCurrent(java.util.function.BooleanSupplier current) throws IOException {

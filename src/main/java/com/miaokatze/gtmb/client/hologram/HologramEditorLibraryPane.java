@@ -49,6 +49,10 @@ final class HologramEditorLibraryPane {
         dialogs = new HologramEditorNativeLibraryDialogs(ui);
     }
 
+    void showMaintenance() {
+        if (built != null) pages.setPage(1);
+    }
+
     boolean consumeBackLayer() {
         if (built == null || pages.getActivePageIndex() != 1) return false;
         pages.setPage(0);
@@ -394,8 +398,13 @@ final class HologramEditorLibraryPane {
                 () -> "沿用原删除确认与权限校验。").expanded()
                     .height(18));
         maintenance.child(
-            action(226, () -> "升级旧蓝图", ui.library::nativeCanUpgrade, () -> "保留原文件版本门禁；服务器公库仅管理员可操作。").expanded()
-                .height(18));
+            action(
+                226,
+                () -> "升级／紧凑化",
+                ui.library::nativeCanUpgrade,
+                () -> "批量检查蓝图库；同版本的展开档也会紧凑化。无法安全转换则保留原件。服务器公库仅管理员可操作。")
+                    .expanded()
+                    .height(18));
         list.child(maintenance);
         list.child(
             action(
@@ -425,8 +434,17 @@ final class HologramEditorLibraryPane {
             action(
                 161,
                 () -> "导入命名文件",
-                () -> idle() && !ui.library.nativeDedicated(),
-                () -> "在保存页名称框填写文件名，沿用原文件准入与换稿确认。").widthRel(1f)
+                this::idle,
+                () -> "在保存页名称框填写客户端文件名。").widthRel(1f)
+                    .height(18));
+        list.child(
+            localIcon(
+                HologramEditorControlIds.LIBRARY + 7,
+                "settings",
+                () -> "紧凑化命名文件",
+                ui.library::nativeCanUpgradeNamed,
+                ui.library::nativeUpgradeNamed,
+                () -> "仅处理名称框明确指定的无封面旧分享文件，不改其他蓝图。").widthRel(1f)
                     .height(18));
         list.child(
             action(150, () -> "来源版本", () -> true, () -> "查看来源与依赖。").widthRel(1f)
@@ -440,6 +458,10 @@ final class HologramEditorLibraryPane {
     }
 
     void refresh() {
+        if (built == null) {
+            dialogs.refresh();
+            return;
+        }
         String query = search.getStringValue()
             .trim()
             .toLowerCase(Locale.ROOT);

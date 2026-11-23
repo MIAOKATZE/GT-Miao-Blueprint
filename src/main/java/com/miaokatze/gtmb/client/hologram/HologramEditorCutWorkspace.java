@@ -37,7 +37,7 @@ final class HologramEditorCutWorkspace {
     private HologramCutStorageBrowserView browser;
     private Flow root;
     private String selected = "", confirmUndo = "";
-    private boolean active, closed, activatedOnce;
+    private boolean active, closed, activatedOnce, initialDirectoryCaptured;
 
     HologramEditorCutWorkspace(HologramUiModules ui) {
         this.ui = ui;
@@ -104,6 +104,13 @@ final class HologramEditorCutWorkspace {
         isolated = true;
     }
 
+    /** Keep the workspace's original saved selection when its browser widgets mount later. */
+    void captureInitialDirectory() {
+        if (isolated || initialDirectoryCaptured) return;
+        refreshDirectory();
+        initialDirectoryCaptured = true;
+    }
+
     IWidget build() {
         if (root != null) return root;
         root = Flow.column()
@@ -157,7 +164,7 @@ final class HologramEditorCutWorkspace {
         confirmationActions.child(button("undo.cancel", "取消", "cancel", () -> true, () -> confirmUndo = "").expanded());
         confirmation.child(confirmationActions);
         browser.addFooter(confirmation);
-        if (!isolated) refreshDirectory();
+        captureInitialDirectory();
         return root;
     }
 

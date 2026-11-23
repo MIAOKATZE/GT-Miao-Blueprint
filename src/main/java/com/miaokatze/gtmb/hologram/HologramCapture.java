@@ -251,16 +251,39 @@ public final class HologramCapture {
         return collect(machine, trigger, facing, intent, resumed, true);
     }
 
-    @SuppressWarnings({ "rawtypes", "unchecked" })
     private static HologramCapture collect(MTEEnhancedMultiBlockBase<?> machine, ItemStack trigger,
         ExtendedFacing facing, StructureSources.CaptureIntent intent, HologramCapture resumed, boolean projectionOnly) {
+        return collect(machine, trigger, facing, intent, resumed, projectionOnly, 0);
+    }
+
+    /** Client-local templates walk a registered, fresh controller with an independent client budget. */
+    static HologramCapture collectLocalProjection(MTEEnhancedMultiBlockBase<?> machine, ItemStack trigger,
+        ExtendedFacing facing, HologramCapture resumed, long sliceNanos) {
+        if (sliceNanos <= 0 || !(machine.getBaseMetaTileEntity()
+            .getWorld() instanceof HologramResourceWorld))
+            throw new IllegalArgumentException("Local structure capture requires a bounded detached controller");
+        return collect(
+            machine,
+            trigger,
+            facing,
+            StructureSources.CaptureIntent.NEW_TEMPLATE,
+            resumed,
+            true,
+            sliceNanos);
+    }
+
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    private static HologramCapture collect(MTEEnhancedMultiBlockBase<?> machine, ItemStack trigger,
+        ExtendedFacing facing, StructureSources.CaptureIntent intent, HologramCapture resumed, boolean projectionOnly,
+        long localSliceNanos) {
         HologramCapture capture = resumed == null ? new HologramCapture(machine, trigger, intent, projectionOnly)
             : resumed;
         if (capture.projectionOnly != projectionOnly) {
             capture.invalidateSource("SOURCE_CAPTURE_MODE_CHANGED");
             return capture;
         }
-        capture.deadline = System.nanoTime() + CAPTURE_TIME_NS;
+        long slice = localSliceNanos == 0 ? CAPTURE_TIME_NS : Math.min(localSliceNanos, CAPTURE_TIME_NS);
+        capture.deadline = System.nanoTime() + slice;
         capture.pending = false;
         if (resumed != null && !capture.resumeCurrent(machine, trigger, facing, intent)) return capture;
         if (capture.walkingComplete) {
@@ -307,6 +330,10 @@ public final class HologramCapture {
             if (!capture.sourceCurrent()) return capture;
             IStructureDefinition definition = capture.definition;
             capture.refreshInterpretationGeneration();
+            if (localSliceNanos > 0 && (definition == null || !HologramStructureCursor.supports(definition))) {
+                capture.invalidateSource("LOCAL_STRUCTURE_WALK_UNAVAILABLE");
+                return capture;
+            }
             final World world = machine.getBaseMetaTileEntity()
                 .getWorld();
             int x = machine.getBaseMetaTileEntity()
@@ -352,6 +379,23 @@ public final class HologramCapture {
                 capture.failure);
         }
         return capture;
+    }
+
+    static Cell nativePreviewCell(HologramNativePreviewWorld.Placement placement, IStructureElement<?> element,
+        ItemStack trigger) {
+        Cell cell = new Cell(element, placement.x(), placement.y(), placement.z(), trigger, true);
+        cell.block = placement.block();
+        cell.meta = placement.meta();
+        if (placement.tile() instanceof IGregTechTileEntity nativeTile && nativeTile.getMetaTileEntity() != null) {
+            cell.previewStack = new ItemStack(cell.block, 1, nativeTile.getMetaTileID());
+            cell.previewFacing = nativeTile.getFrontFacing()
+                .ordinal();
+            cell.targetDisplay = HologramDisplaySnapshot.projection(placement.tile());
+            cell.renderKind = "item";
+            if (nativeTile.getMetaTileEntity() instanceof gregtech.api.metatileentity.implementations.MTEHatch)
+                cell.role = "hatch";
+        }
+        return cell;
     }
 
     private void bindSource(MTEEnhancedMultiBlockBase<?> machine, ExtendedFacing facing) {
@@ -815,6 +859,7 @@ public final class HologramCapture {
         target.blueprintItem = source.blueprintItem;
         target.blueprintDamage = source.blueprintDamage;
         target.candidateComplete = source.candidateComplete;
+        target.nativeCandidateCount = source.nativeCandidateCount;
         target.candidateBoundary = source.candidateBoundary;
     }
 
@@ -1106,6 +1151,7 @@ public final class HologramCapture {
         int projectionPiece = -1;
         String renderBoundary = "";
         boolean candidateComplete;
+        int nativeCandidateCount = -1;
         String candidateBoundary = "尚未解析结构声明";
         final ItemStack elementTrigger;
         boolean anchor;
@@ -1116,6 +1162,8 @@ public final class HologramCapture {
         String family = "";
         String renderKind = "block";
         ItemStack actualStack;
+        ItemStack previewStack;
+        int previewFacing = -1;
         net.minecraft.nbt.NBTTagCompound actualDisplay;
         net.minecraft.nbt.NBTTagCompound targetDisplay;
         int actualFacing = -1;

@@ -271,7 +271,7 @@ public final class HologramAeCablePreviewRegression {
             for (int i = 0; i < fixtures.size(); i++) {
                 Fixture fixture = fixtures.get(i);
                 HologramState.Cell cell = state.cells.get(i);
-                NBTTagCompound snapshotBefore = (NBTTagCompound) (current ? cell.actualDisplay : cell.targetDisplay)
+                NBTTagCompound snapshotBefore = (NBTTagCompound) cell.display(current)
                     .copy();
                 TileEntity detached = access.getTileEntity(cell.x, cell.y, cell.z);
                 if (detached != null) reporterPreflight(bus(detached), fixture.name);
@@ -327,9 +327,7 @@ public final class HologramAeCablePreviewRegression {
                         usesIcon(expected, facadeIcon) && HologramBlockRender.usesIcon(cell, current, facadeIcon),
                         fixture.name + " real facade material sprite");
                 }
-                check(
-                    snapshotBefore.equals(current ? cell.actualDisplay : cell.targetDisplay),
-                    fixture.name + " snapshot unchanged");
+                check(snapshotBefore.equals(cell.display(current)), fixture.name + " snapshot unchanged");
                 check(
                     fixture.savedSource.equals(saved(fixture.source)),
                     fixture.name + " full native source unchanged");

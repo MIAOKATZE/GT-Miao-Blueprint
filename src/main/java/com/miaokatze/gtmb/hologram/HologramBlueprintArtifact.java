@@ -188,6 +188,11 @@ public final class HologramBlueprintArtifact {
             && (pngHash.isEmpty() || pngHash.equals(hash(png)));
     }
 
+    /** Migration lookup of an unbound historic JSON. Caller has already hashed the exact source bytes. */
+    static boolean previewReferences(String sourceHash, byte[] png) throws IOException {
+        return sourceHash.equals(inspectPng(png).source);
+    }
+
     /** Explicit fresh-save boundary. Reads, transfers and legacy loads never manufacture this metadata. */
     public static Artifact prepareSave(byte[] json, byte[] freshlyCapturedPng) throws IOException {
         jsonBounds(json);
@@ -305,6 +310,10 @@ public final class HologramBlueprintArtifact {
         return jsonPath.resolveSibling(name.substring(0, name.length() - 5) + ".png");
     }
 
+    static synchronized boolean hasPendingWrite(Path path) throws IOException {
+        return PENDING_WRITES.containsKey(absolute(path));
+    }
+
     public static synchronized Artifact readPair(Path jsonPath) throws IOException {
         Path pngPath = previewPath(jsonPath);
         byte[] json = readBounded(jsonPath, MAX_JSON_BYTES);
@@ -312,6 +321,30 @@ public final class HologramBlueprintArtifact {
         jsonBounds(json);
         requireSource(json, png, inspectPng(png));
         return new Artifact(json, png);
+    }
+
+    /** Historical client documents may predate paired PNGs and their digest fields. */
+    public static synchronized byte[] readLocalJson(Path jsonPath) throws IOException {
+        byte[] json = readBounded(jsonPath, MAX_JSON_BYTES);
+        Path pngPath = previewPath(jsonPath);
+        HologramBlueprintPreviewBinding.LocalBinding binding = HologramBlueprintPreviewBinding.inspectLocalJson(json);
+        boolean bound = !binding.pngSha256.isEmpty();
+        if (bound || Files.isRegularFile(pngPath, LinkOption.NOFOLLOW_LINKS)) {
+            byte[] png;
+            Png info;
+            try {
+                png = readBounded(pngPath, MAX_PNG_BYTES);
+                info = inspectPng(png);
+            } catch (IOException unavailable) {
+                if (!bound) return json;
+                throw unavailable;
+            }
+            if (info.source != null || bound) {
+                requireSourceDigest(binding.sourceSha256(), info);
+                requirePngDigest(binding.pngSha256, png);
+            }
+        }
+        return json;
     }
 
     public static synchronized void writePair(Path jsonPath, byte[] json, byte[] png) throws IOException {
@@ -450,9 +483,16 @@ public final class HologramBlueprintArtifact {
     }
 
     private static void requireSource(byte[] json, byte[] pngBytes, Png png) throws IOException {
-        if (!hash(HologramBlueprintPreviewBinding.sourceJson(json)).equals(png.source))
+        requireSourceDigest(hash(HologramBlueprintPreviewBinding.sourceJson(json)), png);
+        requirePngDigest(HologramBlueprintPreviewBinding.pngSha256(json), pngBytes);
+    }
+
+    private static void requireSourceDigest(String source, Png png) throws IOException {
+        if (!source.equals(png.source))
             throw new IOException("Blueprint PNG is missing its matching JSON digest");
-        String expected = HologramBlueprintPreviewBinding.pngSha256(json);
+    }
+
+    private static void requirePngDigest(String expected, byte[] pngBytes) throws IOException {
         if (!expected.isEmpty() && !expected.equals(hash(pngBytes)))
             throw new IOException("Blueprint PNG digest differs from its saved JSON binding");
     }

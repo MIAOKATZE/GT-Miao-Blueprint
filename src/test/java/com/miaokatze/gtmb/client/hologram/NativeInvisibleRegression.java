@@ -58,12 +58,12 @@ public final class NativeInvisibleRegression {
             SimpleAssert
                 .eq(0, HologramBlockRender.vertexCount(state.cells.get(0), false), "no fabricated invisible geometry");
             HologramBlockRender.draw(state.cells.get(0), false);
-            java.lang.reflect.Method visible = HologramRenderer.class
+            java.lang.reflect.Method visible = MiaoVisonLiteRenderer.class
                 .getDeclaredMethod("previewVisible", HologramState.Cell.class, int.class, int.class, boolean.class);
             visible.setAccessible(true);
             SimpleAssert.eq(
                 false,
-                visible.invoke(null, state.cells.get(0), Integer.MAX_VALUE, 0, false),
+                visible.invoke(HologramRenderer.editor(), state.cells.get(0), Integer.MAX_VALUE, 0, false),
                 "data-only cell produces no fallback cube, outline or label");
             SimpleAssert.that(
                 !HologramBlockRender.missingTexture(state.cells.get(0), false),

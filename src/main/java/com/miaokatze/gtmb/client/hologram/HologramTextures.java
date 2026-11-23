@@ -74,11 +74,20 @@ final class HologramTextures {
         }
     }
 
-    private static final Map<String, Material> CACHE = new HashMap<>();
-    private static final Map<HologramState.Cell, Material[]> RESOLVED = new IdentityHashMap<>();
-    // Exact snapshot descriptors only. Neighbor-dependent native models remain owned by their individual cells.
-    private static final Map<Object, Material[]> DESCRIPTORS = new IdentityHashMap<>();
-    private static HologramState snapshot;
+    static final class Cache {
+
+        final Map<String, Material> resolvedVariants = new HashMap<>();
+        final Map<String, Map<Integer, Material>> plain = new HashMap<>();
+        final Map<HologramState.Cell, Material[]> cells = new IdentityHashMap<>();
+        // Exact snapshot descriptors only. Neighbor-dependent native models are owned by their cells.
+        final Map<Object, Material[]> descriptors = new IdentityHashMap<>();
+        HologramState snapshot;
+    }
+
+    private static Cache cache() {
+        return HologramPreviewAssets.active().textures;
+    }
+
     private static final Field MULTI = texturesField(GTMultiTextureRender.class);
     private static final Field SIDED = texturesField(GTSidedTextureRender.class);
     private static boolean reloadInstalled;
@@ -86,29 +95,34 @@ final class HologramTextures {
     private HologramTextures() {}
 
     static void clear() {
-        CACHE.clear();
-        RESOLVED.clear();
-        DESCRIPTORS.clear();
-        snapshot = null;
+        Cache cache = cache();
+        cache.resolvedVariants.clear();
+        cache.plain.clear();
+        cache.cells.clear();
+        cache.descriptors.clear();
+        cache.snapshot = null;
     }
 
     static void begin(HologramState state) {
+        Cache cache = cache();
         installReloadListener();
-        if (snapshot != state) {
-            CACHE.clear();
-            RESOLVED.clear();
-            DESCRIPTORS.clear();
-            snapshot = state;
+        if (cache.snapshot != state) {
+            cache.resolvedVariants.clear();
+            cache.plain.clear();
+            cache.cells.clear();
+            cache.descriptors.clear();
+            cache.snapshot = state;
         }
     }
 
     static void advance(HologramState previous, HologramState next) {
-        if (snapshot != previous) return;
+        Cache cache = cache();
+        if (cache.snapshot != previous) return;
         for (HologramState.Cell cell : next.changedPreviousCells) {
-            RESOLVED.remove(cell);
-            DESCRIPTORS.remove(cell.descriptorIdentity());
+            cache.cells.remove(cell);
+            cache.descriptors.remove(cell.descriptorIdentity());
         }
-        snapshot = next;
+        cache.snapshot = next;
     }
 
     static void installReloadListener() {
@@ -122,19 +136,33 @@ final class HologramTextures {
     }
 
     static Material material(HologramState.Cell cell, boolean current) {
+        Cache cache = cache();
         installReloadListener();
         current = current || cell.anchor || (cell.status.equals("protected") && cell.actualStack != null);
-        Material[] pair = RESOLVED.get(cell);
+        ItemStack stack = current ? cell.actualStack : cell.targetStack;
+        if (!cell.iconOnly && !machine(stack) && !cell.hasDisplayTag(current, "gt.covers", 9)) {
+            // This part of resolve reads only the registered block and metadata. A repeated ordinary
+            // block does not need a per-cell entry or a serialized copy of its display and item tags.
+            Map<Integer, Material> variants = cache.plain
+                .computeIfAbsent(current ? cell.id : cell.wantId, unused -> new HashMap<>());
+            int metadata = current ? cell.meta : cell.wantMeta;
+            Material material = variants.get(metadata);
+            if (material == null) {
+                material = resolve(cell, current);
+                variants.put(metadata, material);
+            }
+            return material;
+        }
+        Material[] pair = cache.cells.get(cell);
         if (pair == null) {
             pair = new Material[2];
-            RESOLVED.put(cell, pair);
+            cache.cells.put(cell, pair);
         }
         int index = current ? 1 : 0;
         if (pair[index] != null) return pair[index];
         Object descriptor = cell.descriptorIdentity();
-        Material[] shared = descriptor == cell ? null : DESCRIPTORS.get(descriptor);
+        Material[] shared = descriptor == cell ? null : cache.descriptors.get(descriptor);
         if (shared != null && shared[index] != null) return pair[index] = shared[index];
-        ItemStack stack = current ? cell.actualStack : cell.targetStack;
         String key = (current ? cell.id : cell.wantId) + ":"
             + (current ? cell.meta : cell.wantMeta)
             + ":"
@@ -142,25 +170,36 @@ final class HologramTextures {
             + ":"
             + cell.iconOnly
             + ":"
-            + Arrays.toString(cell.hintIcons)
+            + cell.hintIconKey()
             + ":"
             + Arrays.toString(cell.hintTint);
         key += ":" + (current ? cell.actualFacing : cell.targetFacing);
-        key += ":" + (current ? cell.actualDisplay : cell.targetDisplay);
-        Material material = CACHE.get(key);
+        key += ":" + cell.display(current);
+        Material material = cache.resolvedVariants.get(key);
         if (material == null) {
             material = resolve(cell, current);
-            CACHE.put(key, material);
+            cache.resolvedVariants.put(key, material);
         }
         pair[index] = material;
         if (descriptor != cell) {
             if (shared == null) {
                 shared = new Material[2];
-                DESCRIPTORS.put(descriptor, shared);
+                cache.descriptors.put(descriptor, shared);
             }
             shared[index] = material;
         }
         return material;
+    }
+
+    static boolean partial(HologramState.Cell cell, boolean current) {
+        current = current || cell.anchor || (cell.status.equals("protected") && cell.actualStack != null);
+        // The atlas and covers do not affect the full-cube decision for ordinary blocks. A GT pipe's
+        // partial geometry still comes from the exact, fully resolved machine variant.
+        return machine(current ? cell.actualStack : cell.targetStack) && material(cell, current).partial;
+    }
+
+    private static boolean machine(ItemStack stack) {
+        return stack != null && stack.getItem() instanceof ItemMachines;
     }
 
     @SuppressWarnings("unchecked")
@@ -173,13 +212,13 @@ final class HologramTextures {
         Block block = cell.block(current);
         int meta = current || cell.anchor ? cell.meta : cell.wantMeta;
         ItemStack stack = current || cell.anchor ? cell.actualStack : cell.targetStack;
-        boolean gt = stack != null && stack.getItem() instanceof ItemMachines;
-        NBTTagCompound display = current ? cell.actualDisplay : cell.targetDisplay;
+        boolean gt = machine(stack);
+        NBTTagCompound display = gt || cell.hasDisplayTag(current, "gt.covers", 9) ? cell.display(current) : null;
         boolean pipe = false;
         float thickness = 1;
         ITexture[][] textures = null;
         int front = current ? cell.actualFacing : cell.targetFacing;
-        if (front < 0 && display.hasKey("facing")) front = display.getInteger("facing");
+        if (front < 0) front = cell.displayInteger(current, "facing", front);
         int[] textureSides = { 0, 1, 2, 3, 4, 5 };
         try {
             if (gt) {
@@ -207,8 +246,10 @@ final class HologramTextures {
                 if (textures != null && side < textures.length && textures[side] != null)
                     for (ITexture texture : textures[side]) append(sides[side], texture, sourceSide, 0);
                 if (gt && sides[side].isEmpty()) fallback = true;
-                if (sides[side].isEmpty() && cell.iconOnly && !cell.hintIcons[side].isEmpty())
-                    sides[side].add(new Sample(atlas.getAtlasSprite(cell.hintIcons[side]), cell.textureColor()));
+                if (sides[side].isEmpty() && cell.iconOnly
+                    && !cell.hintIcon(side)
+                        .isEmpty())
+                    sides[side].add(new Sample(atlas.getAtlasSprite(cell.hintIcon(side)), cell.textureColor()));
                 if (sides[side].isEmpty() && block != null && block != Blocks.air) {
                     IIcon icon = block.getIcon(side, meta);
                     if (icon != null) sides[side].add(new Sample(icon, block.getRenderColor(meta)));
@@ -222,8 +263,8 @@ final class HologramTextures {
             }
         }
         int coverMask = 0;
-        NBTTagList rows = display.getTagList("gt.covers", 10);
-        for (int i = 0; i < rows.tagCount(); i++) {
+        NBTTagList rows = display == null ? null : display.getTagList("gt.covers", 10);
+        for (int i = 0; rows != null && i < rows.tagCount(); i++) {
             NBTTagCompound row = rows.getCompoundTagAt(i);
             int side = row.getByte("s");
             if (side < 0 || side >= 6) continue;

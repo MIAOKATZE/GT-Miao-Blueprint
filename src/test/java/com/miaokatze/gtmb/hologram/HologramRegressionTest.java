@@ -52,6 +52,9 @@ public final class HologramRegressionTest {
         cases.put(
             "native_structure_projection_reads_hatch_chain_without_callbacks",
             HologramProjectionChainRegression::run);
+        cases.put("native_constructable_provider_falls_through", HologramStructureDiscoveryRegression::run);
+        cases.put("native_structure_preview_converges_and_preserves_latest_elements", HologramStructureDiscoveryRegression::runNativePreview);
+        cases.put("file_structure_channels_refresh_only_the_selected_native_group", HologramLocalBlueprintStructureRegression::run);
         cases.put(
             "direct_world_gestures_keep_source_and_plan_revisions",
             com.miaokatze.gtmb.client.hologram.HologramSemanticRequestRegression::run);
@@ -61,6 +64,7 @@ public final class HologramRegressionTest {
             HologramSourceContractRegression::runRefresh);
         cases.put("public_pure_elements_world_identity_and_reader_lifecycle", HologramPureElementsRegression::run);
         cases.put("fixed_hatch_markers_do_not_execute_controller_callbacks", HologramHatchHintCaptureRegression::run);
+        cases.put("native_subchannel_hatch_trace_aggregation", HologramNativeChannelTraceRegression::run);
         cases.put(
             "gtpp_tiered_hint_projection_keeps_native_authority_boundaries",
             HologramGtppDeclarationsRegression::run);
@@ -112,6 +116,12 @@ public final class HologramRegressionTest {
         cases.put(
             "area_import_task_uses_complete_geometry_provenance_after_metadata_stripping",
             com.miaokatze.gtmb.client.hologram.HologramAreaWorkspaceReceiptRegression::run);
+        cases.put(
+            "controller_details_preserve_the_matching_rendered_target",
+            com.miaokatze.gtmb.client.hologram.HologramControllerDetailsRegression::run);
+        cases.put(
+            "local_controller_hatch_facing_proof_tracks_exact_candidates_and_restore",
+            com.miaokatze.gtmb.client.hologram.HologramControllerDetailsRegression::hatchFacings);
         cases.put(
             "completed_area_capture_retires_local_gestures_before_the_next_blueprint",
             com.miaokatze.gtmb.client.hologram.HologramAreaSelectionLifecycleRegression::run);
@@ -219,6 +229,10 @@ public final class HologramRegressionTest {
         cases.put(
             "native_editor_expanded_layout_waits_for_parent_and_preserves_both_axes",
             com.miaokatze.gtmb.client.hologram.HologramEditorNativeLayoutRegression::run);
+        cases.put("owned_local_giant_history_timing",
+            com.miaokatze.gtmb.client.hologram.HologramLocalHistoryTraceRegression::run);
+        cases.put("client_private_edit_performance_settings_natural_route",
+            com.miaokatze.gtmb.client.hologram.HologramPrivateEditPerformanceRegression::run);
         cases.put("native_channels_fallback_and_arbitrary_keys", HologramRegressionTest::channels);
         cases.put("unadapted_channels_are_editable_and_reach_native_trigger", HologramRegressionTest::openChannels);
         cases.put("packet_snapshot_roundtrip_keeps_all_channel_values", HologramRegressionTest::packetRoundTrip);
@@ -248,6 +262,9 @@ public final class HologramRegressionTest {
                 throw new RuntimeException(failure);
             }
         });
+        cases.put(
+            "projected_placement_wire_carries_only_operations_and_matching_consumables",
+            HologramPlacementRequestRegression::run);
         cases.put("network_energy_quotes_consume_once_and_refund_only_actual_debits", HologramEnergyRegression::run);
         cases.put("decor_fractional_materials_pay_once_and_refund_failed_cells", HologramDecorMaterialsRegression::run);
         cases.put(
@@ -441,6 +458,7 @@ public final class HologramRegressionTest {
             "blueprint_metadata_records_release_and_exact_pack_versions",
             HologramBlueprintVersionsRegression::run);
         cases.put("blueprint_json_png_artifacts_preserve_atomic_pairs", HologramBlueprintArtifactRegression::run);
+        cases.put("blueprint_target_preserves_legacy_normalization_and_logical_owner", HologramBlueprintTargetRegression::run);
         cases.put(
             "compact_blueprints_preserve_semantics_and_bound_dictionary_expansion",
             HologramBlueprintCompactRegression::run);

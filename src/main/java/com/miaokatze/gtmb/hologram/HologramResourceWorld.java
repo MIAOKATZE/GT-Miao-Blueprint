@@ -7,6 +7,7 @@ import java.io.File;
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.lang.reflect.Proxy;
+import java.util.function.Supplier;
 
 import net.minecraft.block.Block;
 import net.minecraft.entity.Entity;
@@ -29,7 +30,7 @@ import net.minecraft.world.storage.MapStorage;
 import net.minecraft.world.storage.WorldInfo;
 
 /** Single detached cell for audited persistence/drop callbacks, on either logical side. */
-final class HologramResourceWorld extends World {
+class HologramResourceWorld extends World {
 
     // Forge adds these exact, unmapped fields in the patched 1.7.10 World source.
     private static final Field SAVE_CACHE = worldCacheField("s_savehandler", ISaveHandler.class);
@@ -50,12 +51,16 @@ final class HologramResourceWorld extends World {
     }
 
     /** Main-thread callers retain their own in-memory storage without disturbing Forge's live shared cache. */
-    static synchronized HologramResourceWorld create(Block block, int metadata) {
+    static HologramResourceWorld create(Block block, int metadata) {
+        return create(() -> new HologramResourceWorld(block, metadata));
+    }
+
+    static synchronized <T extends World> T create(Supplier<T> factory) {
         try {
             Object previousSave = SAVE_CACHE.get(null);
             Object previousMap = MAP_CACHE.get(null);
             try {
-                HologramResourceWorld created = new HologramResourceWorld(block, metadata);
+                T created = factory.get();
                 HologramRuntimeMetrics.add(HologramRuntimeMetrics.Counter.MATERIAL_WORLD_CREATED, 1);
                 return created;
             } finally {
@@ -82,7 +87,7 @@ final class HologramResourceWorld extends World {
         }
     }
 
-    private HologramResourceWorld(Block block, int metadata) {
+    HologramResourceWorld(Block block, int metadata) {
         super(
             new MemorySaveHandler(),
             "GTMB material inspection",
@@ -157,11 +162,17 @@ final class HologramResourceWorld extends World {
             new Class<?>[] { IChunkProvider.class },
             (proxy, method, args) -> {
                 Class<?> result = method.getReturnType();
+                if (result == boolean.class && args != null && args.length == 2
+                    && args[0] instanceof Integer x && args[1] instanceof Integer z) return previewChunkExists(x, z);
                 if (result == boolean.class) return false;
                 if (result == int.class) return 0;
                 if (result == String.class) return "GTMB detached materials";
                 return null;
             });
+    }
+
+    boolean previewChunkExists(int x, int z) {
+        return false;
     }
 
     @Override

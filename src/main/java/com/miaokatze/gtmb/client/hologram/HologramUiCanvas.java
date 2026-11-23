@@ -43,7 +43,7 @@ final class HologramUiCanvas {
         }
     };
 
-    private final RenderItem itemRenderer = new RenderItem();
+    private RenderItem itemRenderer;
 
     static final int viewportX = HologramScreenLayout.VIEWPORT_X;
 
@@ -291,7 +291,6 @@ final class HologramUiCanvas {
             || id == 163 && ui.session.selectedCell() != null && ui.session.selectedCell().sourceMissing)
             accent = 0xff7272;
         if (id == 309 || id == 310) accent = ui.library.websiteAccent();
-        if (id == 226) accent = ui.library.upgradeStatus() == 2 ? HologramUiAccent.NEXT : 0;
         if (id == 139 && ui.library.selectedPresetExists()) accent = HologramUiAccent.WEBSITE;
         if ((id == 331 && ui.textBoxes.active(false)) || (id == 332 && ui.textBoxes.active(true)))
             accent = ui.textBoxes.choosingPosition() ? HologramUiAccent.SPECTRUM : HologramUiAccent.NEXT;
@@ -587,22 +586,24 @@ final class HologramUiCanvas {
 
     void drawItem(ItemStack stack, int x, int y) {
         if (stack == null) return;
+        // Native workbench setup does not draw a legacy stack. Create its renderer only on an actual draw.
+        if (itemRenderer == null) itemRenderer = new RenderItem();
         GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
         GL11.glPushMatrix();
-        float previousZ = this.itemRenderer.zLevel;
+        float previousZ = itemRenderer.zLevel;
         try {
-            this.itemRenderer.zLevel = 0;
+            itemRenderer.zLevel = 0;
             GL11.glEnable(GL11.GL_DEPTH_TEST);
             GL11.glDepthMask(true);
             RenderHelper.enableGUIStandardItemLighting();
-            this.itemRenderer.renderItemAndEffectIntoGUI(
+            itemRenderer.renderItemAndEffectIntoGUI(
                 ui.host.font(),
                 ui.host.minecraft()
                     .getTextureManager(),
                 stack,
                 x,
                 y);
-            this.itemRenderer.renderItemOverlayIntoGUI(
+            itemRenderer.renderItemOverlayIntoGUI(
                 ui.host.font(),
                 ui.host.minecraft()
                     .getTextureManager(),
@@ -610,7 +611,7 @@ final class HologramUiCanvas {
                 x,
                 y);
         } finally {
-            this.itemRenderer.zLevel = previousZ;
+            itemRenderer.zLevel = previousZ;
             GL11.glPopMatrix();
             GL11.glPopAttrib();
         }

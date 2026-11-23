@@ -100,7 +100,8 @@ final class HologramUiTextBoxes {
 
     void reset() {
         closeEditor();
-        if (pending) {
+        if (pending && ui.session.localDocument()) ui.library.cancelLocalAttachment(request);
+        else if (pending) {
             ui.session.send(
                 "cancelAttachment",
                 com.miaokatze.gtmb.hologram.HologramAttachmentUpload.clientCancellation(),
@@ -436,7 +437,7 @@ final class HologramUiTextBoxes {
             return true;
         }
         int[] point = HologramRenderer.pickAdjacentVoxel(mx, my);
-        if (point == null) point = HologramRenderer
+        if (point == null) point = HologramRenderer.editor()
             .pickEmptyVoxel(ui.session.state(), mx, my, ui.session.state().data.getInteger("y") + draft.y, false);
         if (point != null) {
             draft.x = point[0] - ui.session.state().data.getInteger("x");

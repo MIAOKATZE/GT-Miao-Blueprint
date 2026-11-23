@@ -37,6 +37,6 @@ public final class HologramGtppChemicalDeclarations {
                 throw new IllegalArgumentException("Chemical casing hint requires a positive tier");
             signal.stackSize = Math.min(signal.stackSize, 8);
             return signal;
-        }, false));
+        }, false, true));
     }
 }

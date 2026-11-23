@@ -383,10 +383,10 @@ public final class HologramProductionPreviewSmoke {
             HologramScreen screen = (HologramScreen) mc.currentScreen;
             NBTTagCompound ui = screen.smokeLibraryUiState();
             boolean current = renderStage == 2;
-            int renderedView = field(HologramRenderer.class, "visibleView").getInt(null);
-            int renderedMode = field(HologramRenderer.class, "visibleMode").getInt(null);
+            int renderedView = field(MiaoVisonLiteRenderer.class, "visibleView").getInt(HologramRenderer.editor());
+            int renderedMode = field(MiaoVisonLiteRenderer.class, "visibleMode").getInt(HologramRenderer.editor());
             if (HologramTestLabUiDiagnostics.readDiagnosticField(screen, "state") != state
-                || field(HologramRenderer.class, "previewState").get(null) != state
+                || field(MiaoVisonLiteRenderer.class, "previewState").get(HologramRenderer.editor()) != state
                 || !state.session.equals(ui.getString("session"))
                 || state.data.getLong("planRevision") != ui.getLong("planRevision")
                 || ui.getLong("renderGeneration") <= 0
@@ -463,7 +463,7 @@ public final class HologramProductionPreviewSmoke {
             Block block = cell.block(current);
             String type = block.getClass()
                 .getName();
-            NBTTagCompound nativeTile = (current ? cell.actualDisplay : cell.targetDisplay)
+            NBTTagCompound nativeTile = cell.display(current)
                 .getCompoundTag("nativeTile");
             if (type.equals("com.carpentersblocks.block.BlockCarpentersSlope")) {
                 int sourceX = cell.dx + 8, sourceY = cell.dy + (adjacentProfile ? 79 : 80), sourceZ = cell.dz + 8;

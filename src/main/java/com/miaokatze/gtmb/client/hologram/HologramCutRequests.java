@@ -16,7 +16,7 @@ final class HologramCutRequests {
     private long activityGeneration;
     private boolean held;
 
-    boolean observeHeld(boolean holding) {
+    boolean observeStorageContext(boolean holding) {
         boolean entered = holding && !held;
         held = holding;
         return entered;

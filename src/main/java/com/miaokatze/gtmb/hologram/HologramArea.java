@@ -375,7 +375,7 @@ final class HologramArea extends HologramAreaSelection {
         }
     }
 
-    private static ItemStack serverSample(Block block, int metadata, TileEntity tile, NBTTagCompound data) {
+    static ItemStack serverSample(Block block, int metadata, TileEntity tile, NBTTagCompound data) {
         if (tile instanceof IGregTechTileEntity)
             return new ItemStack(GregTechAPI.sBlockMachines, 1, ((IGregTechTileEntity) tile).getMetaTileID());
         if (block instanceof BlockFrameBox) return ((BlockFrameBox) block).getStackForm(1, metadata);

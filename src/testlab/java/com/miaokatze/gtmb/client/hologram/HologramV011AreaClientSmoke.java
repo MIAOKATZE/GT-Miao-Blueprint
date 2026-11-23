@@ -59,7 +59,7 @@ public final class HologramV011AreaClientSmoke {
     private NBTTagCompound observation;
     private boolean captured, finished;
     private HologramAreaOverlay.RenderWitness areaWitness;
-    private HologramRenderer.WorldRenderWitness worldWitness;
+    private MiaoVisonLiteRenderer.WorldRenderWitness worldWitness;
     private NBTTagCompound aimAtWorldRender = new NBTTagCompound();
     private final HologramActualUsePress press = new HologramActualUsePress();
     private volatile NBTTagCompound lastAction;
@@ -108,7 +108,7 @@ public final class HologramV011AreaClientSmoke {
         worldRenderSerial++;
         witnessBeforeEndFrame = frame + 1;
         areaWitness = HologramAreaOverlay.lastRenderWitness();
-        worldWitness = HologramRenderer.lastWorldRenderWitness();
+        worldWitness = MiaoVisonLiteRenderer.lastWorldRenderWitness();
         Minecraft mc = Minecraft.getMinecraft();
         if (mc.thePlayer != null) try {
             aimAtWorldRender = aimWitness(mc);

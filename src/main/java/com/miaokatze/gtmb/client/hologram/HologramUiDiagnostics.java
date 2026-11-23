@@ -3,21 +3,42 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import java.lang.reflect.Constructor;
+
 import net.minecraft.nbt.NBTTagCompound;
 
 /** Passive optional diagnostics seam. Normal workstation construction never loads test implementation classes. */
 class HologramUiDiagnostics {
 
     static HologramUiDiagnostics create(HologramUiModules ui) {
+        if (OptionalDiagnostics.CONSTRUCTOR == null) return OptionalDiagnostics.FALLBACK;
         try {
-            Class<?> type = Class.forName("com.miaokatze.gtmb.client.hologram.HologramTestLabUiDiagnostics");
-            java.lang.reflect.Constructor<?> constructor = type.getDeclaredConstructor(HologramUiModules.class);
-            constructor.setAccessible(true);
-            return (HologramUiDiagnostics) constructor.newInstance(ui);
-        } catch (ClassNotFoundException absent) {
-            return new HologramUiDiagnostics();
+            return OptionalDiagnostics.CONSTRUCTOR.newInstance(ui);
         } catch (ReflectiveOperationException failure) {
             throw new IllegalStateException("Optional diagnostics initialization failed", failure);
+        }
+    }
+
+    private static final class OptionalDiagnostics {
+
+        private static final Constructor<? extends HologramUiDiagnostics> CONSTRUCTOR = findConstructor();
+        private static final HologramUiDiagnostics FALLBACK = new HologramUiDiagnostics();
+
+        private static Constructor<? extends HologramUiDiagnostics> findConstructor() {
+            try {
+                Class<? extends HologramUiDiagnostics> type = Class
+                    .forName("com.miaokatze.gtmb.client.hologram.HologramTestLabUiDiagnostics", false,
+                        HologramUiDiagnostics.class.getClassLoader())
+                    .asSubclass(HologramUiDiagnostics.class);
+                Constructor<? extends HologramUiDiagnostics> constructor =
+                    type.getDeclaredConstructor(HologramUiModules.class);
+                constructor.setAccessible(true);
+                return constructor;
+            } catch (ClassNotFoundException absent) {
+                return null;
+            } catch (ReflectiveOperationException failure) {
+                throw new IllegalStateException("Optional diagnostics initialization failed", failure);
+            }
         }
     }
 

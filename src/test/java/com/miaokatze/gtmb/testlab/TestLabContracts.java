@@ -152,6 +152,12 @@ public final class TestLabContracts {
         try {
             if (!MinecraftTestBootstrap.enter(TestLabContracts.class, args)) return;
             TestLabRegression.run();
+            com.miaokatze.gtmb.client.hologram.HologramGiantApplyWitnessRegression.run();
+            com.miaokatze.gtmb.client.hologram.HologramEbfFixedControlsRegression.run();
+            com.miaokatze.gtmb.client.hologram.HologramEbfPreparedStockRegression.run();
+            com.miaokatze.gtmb.client.hologram.HologramGiantCrossHistoryRegression.run();
+            com.miaokatze.gtmb.client.hologram.HologramGiantIndexedPairRegression.run();
+            com.miaokatze.gtmb.client.hologram.HologramLocalSaveTraceRegression.run();
             SimpleAssert.eq(2, new TestLabCommand(null).getRequiredPermissionLevel(), "test operations require OP2");
             java.util.Set<String> ids = new java.util.LinkedHashSet<String>();
             int defaults = 0;

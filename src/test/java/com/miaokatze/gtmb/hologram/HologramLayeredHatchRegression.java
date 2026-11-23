@@ -7,6 +7,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.reflect.Field;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.LinkedHashMap;
@@ -37,13 +38,15 @@ import gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase;
 import gregtech.api.metatileentity.implementations.MTEHatchEnergy;
 import gregtech.api.metatileentity.implementations.MTEHatchOutput;
 import gregtech.api.metatileentity.implementations.MTEMultiBlockBase;
+import gregtech.api.util.HatchElementBuilder;
 import gregtech.api.util.IGTHatchAdder;
 import gregtech.api.util.MultiblockTooltipBuilder;
+import gtPlusPlus.xmod.gregtech.api.metatileentity.implementations.MTEHatchSteamBusOutput;
 
 /** Native decorated hatch candidates retain manual editing without claiming whole-machine layer quotas. */
 final class HologramLayeredHatchRegression {
 
-    private static final int OUTPUT_ID = 32748, ENERGY_ID = 32747;
+    private static final int OUTPUT_ID = 32748, ENERGY_ID = 32747, STEAM_OUTPUT_ID = 32746;
 
     private HologramLayeredHatchRegression() {}
 
@@ -67,7 +70,9 @@ final class HologramLayeredHatchRegression {
                 .withCount(context -> { throw new AssertionError("layer count executed while editing"); })
                 .withAdder(
                     (context, tile, texture) -> { throw new AssertionError("layer adder executed while editing"); });
+            coldNativeOffers(unsafe, machines, layered);
             nativeCandidatesAndPin(unsafe, machines, layered);
+            localFacingChoices(machines, layered);
             contextualPresets(unsafe, machines, layered);
             unknownBoundaries(unsafe, layered);
         } catch (ReflectiveOperationException | IOException failure) {
@@ -76,6 +81,122 @@ final class HologramLayeredHatchRegression {
             GregTechAPI.sBlockMachines = previousMachines;
             System.arraycopy(previous, 0, GregTechAPI.METATILEENTITIES, 0, previous.length);
         }
+    }
+
+    private static void coldNativeOffers(sun.misc.Unsafe unsafe, Block machines, IHatchElement<MTEMultiBlockBase> layered)
+        throws ReflectiveOperationException {
+        ItemStack casing = new ItemStack(Blocks.stone), output = new ItemStack(machines, 1, OUTPUT_ID),
+            energy = new ItemStack(machines, 1, ENERGY_ID), steamOutput = new ItemStack(machines, 1, STEAM_OUTPUT_ID);
+        GregTechAPI.METATILEENTITIES[STEAM_OUTPUT_ID] = (MTEHatchSteamBusOutput) unsafe.allocateInstance(MTEHatchSteamBusOutput.class);
+        try {
+            Map<IHatchElement<? super MTEMultiBlockBase>, Integer> bottomRequirements = new LinkedHashMap<>();
+            bottomRequirements.put(HatchElement.OutputHatch, 1);
+            bottomRequirements.put(HatchElement.Energy, 1);
+            bottomRequirements.put(HatchElement.OutputBus, 1);
+            IStructureElement<MTEMultiBlockBase> bottom = witnessedAtLeast(bottomRequirements);
+            IStructureElement<MTEMultiBlockBase> top = witnessedAtLeast(
+                Collections.singletonMap(HatchElement.OutputHatch, 1));
+            var topChain = StructureUtility.ofChain(
+                StructureUtility.withChannel("gtmb_test_hatch_channel", top), StructureUtility.ofBlock(Blocks.stone, 0));
+            var bottomFilter = HologramNativeStructurePreview.coldHatches(bottom);
+            var topFilter = HologramNativeStructurePreview.coldHatches(topChain);
+            SimpleAssert.that(bottomFilter != null && bottomFilter.test(output) && bottomFilter.test(energy)
+                && !bottomFilter.test(steamOutput) && HologramHatchPolicy.predicate(bottom, null, null).test(steamOutput),
+                "native cold offers preserve the blacklist without narrowing explicit manual declaration authority");
+            SimpleAssert.that(topFilter != null && topFilter.test(output) && !topFilter.test(energy)
+                && !topFilter.test(casing), "the top layer is an output-only offer even when a bottom role is open");
+            SimpleAssert.that(HologramNativeStructurePreview.coldHatches(
+                StructureUtility.onlyIf(context -> { throw new AssertionError("conditional executed"); }, top)) == null,
+                "no opaque branch is queried or unwrapped for supplementary offers");
+            IStructureElement<MTEMultiBlockBase> contextual = witnessedAtLeast(Collections.singletonMap(layered, 1));
+            SimpleAssert.that(HologramNativeStructurePreview.coldHatches(contextual) == null,
+                "a layer-specific count is not interpreted as a global fresh minimum");
+            var overridable = witnessedAtLeast(Collections.singletonMap(HatchElement.ExoticEnergy, 1));
+            SimpleAssert.that(HologramNativeStructurePreview.coldHatches(overridable) == null,
+                "even a stock enum with an overridable controller count remains native-only");
+            Map<IHatchElement<? super MTEMultiBlockBase>, Integer> zero = new LinkedHashMap<>();
+            zero.put(HatchElement.OutputHatch, 1);
+            zero.put(HatchElement.Energy, 0);
+            var positive = HologramNativeStructurePreview.coldHatches(witnessedAtLeast(zero));
+            SimpleAssert.that(positive != null && positive.test(output) && !positive.test(energy),
+                "a zero native minimum cannot create a fresh offer");
+
+            HologramCapture.Cell cell = new HologramCapture.Cell(topChain, 0, 64, 0, casing, true);
+            var settled = IStructureElement.BlocksToPlace.create(casing);
+            int[] scans = { 0 };
+            var cold = new HologramNativeStructurePreview.ColdCandidateCache(() -> {
+                scans[0]++;
+                return Arrays.asList(energy, output, output.copy(), casing, steamOutput);
+            });
+            SimpleAssert.that(cold.offers(contextual).isEmpty() && cold.offers(contextual).isEmpty()
+                && scans[0] == 0, "negative wrapper or hatch proof never scans the catalog");
+            HologramNativeStructurePreview.readCandidates(
+                cell, settled, true, Collections::emptyList, () -> cold.offers(topChain));
+            SimpleAssert.that(cold.offers(topChain).size() == 1 && scans[0] == 1,
+                "multiple cell visits reuse the exact trigger-invariant cold match list");
+            SimpleAssert.that(cell.nativeCandidateCount == 1 && cell.candidates.size() == 2
+                && HologramValues.same(cell.candidates.get(0), casing)
+                && HologramValues.same(cell.candidates.get(1), output) && !cell.candidateComplete,
+                "post-fill casing offers keep their exact prefix; a deduplicated output is manual-only");
+            HologramNativeStructurePreview.readCandidates(
+                cell, settled, false, Collections::emptyList, Collections::emptyList);
+            SimpleAssert.that(cell.nativeCandidateCount == -1 && cell.candidates.size() == 1 && cell.candidateComplete,
+                "no additional offer keeps the legacy prefix absent and literal native completeness intact");
+            List<ItemStack> variants = new ArrayList<>();
+            for (int i = 0; i < 130; i++) {
+                ItemStack variant = output.copy();
+                NBTTagCompound nbt = new NBTTagCompound();
+                nbt.setInteger("gtmbFixture", i);
+                variant.setTagCompound(nbt);
+                variants.add(variant);
+            }
+            var variantOffers = new HologramNativeStructurePreview.ColdCandidateCache(() -> variants);
+            HologramNativeStructurePreview.readCandidates(
+                cell, settled, false, Collections::emptyList, () -> variantOffers.offers(topChain));
+            SimpleAssert.that(cell.nativeCandidateCount == 1 && cell.candidates.size() == 128
+                && !cell.candidateComplete
+                && cell.candidates.get(127).getTagCompound().getInteger("gtmbFixture") == 126,
+                "the global 128 cap keeps the native prefix and exact NBT variants bounded");
+        } finally {
+            GregTechAPI.METATILEENTITIES[STEAM_OUTPUT_ID] = null;
+        }
+    }
+
+    private static IStructureElement<MTEMultiBlockBase> witnessedAtLeast(
+        Map<IHatchElement<? super MTEMultiBlockBase>, Integer> requirements) {
+        HatchElementBuilder<MTEMultiBlockBase> builder = HatchElementBuilder.<MTEMultiBlockBase>builder()
+            .atLeast(requirements)
+            .casingIndex(11)
+            .hint(1);
+        IStructureElement<MTEMultiBlockBase> leaf = builder.build();
+        // The headless suite does not load the production mixin. Mirror the source-reviewed callback notifications.
+        HologramHatchPolicy.declare(builder, requirements.keySet(), true);
+        HologramHatchPolicy.requirements(builder, requirements);
+        HologramHatchPolicy.built(builder, leaf);
+        return leaf;
+    }
+
+    private static void localFacingChoices(Block machines, IHatchElement<?> layered) {
+        ItemStack sample = new ItemStack(machines, 1, OUTPUT_ID);
+        var element = com.gtnewhorizon.structurelib.structure.StructureUtility.ofBlock(Blocks.stone, 0);
+        HologramCapture.Cell cell = new HologramCapture.Cell(element, 0, 64, 0, sample, true);
+        ExtendedFacing facing = ExtendedFacing.of(ForgeDirection.EAST);
+        SimpleAssert.eq(0, HologramCellPolicy.previewHatchFacings(cell, sample, null, facing).length,
+            "an unknown branch gives no local facing proof");
+        Object builder = new Object();
+        HologramHatchPolicy.declare(builder, Collections.singletonList(layered), false);
+        HologramHatchPolicy.built(builder, element);
+        var prototype = GregTechAPI.METATILEENTITIES[OUTPUT_ID];
+        ForgeDirection abc = Arrays.stream(ForgeDirection.VALID_DIRECTIONS)
+            .filter(direction -> direction.offsetY == 0 && prototype.isFacingValid(facing.getWorldDirection(direction)))
+            .findFirst().orElseThrow(() -> new AssertionError("test fixture lacks an allowed horizontal face"));
+        HologramHatchPolicy.directions(element, java.util.EnumSet.complementOf(java.util.EnumSet.of(abc)));
+        SimpleAssert.that(Arrays.equals(new int[] { facing.getWorldDirection(abc).ordinal() },
+            HologramCellPolicy.previewHatchFacings(cell, sample, null, facing)),
+            "native prototype and rotated declared branch together determine the sole legal choice");
+        SimpleAssert.eq(0, HologramCellPolicy.previewHatchFacings(
+            cell, new ItemStack(machines, 1, ENERGY_ID), null, facing).length,
+            "another GT hatch is not accepted by the output declaration");
     }
 
     private static HologramSession session(sun.misc.Unsafe unsafe, Block machines, IHatchElement<?> layered)

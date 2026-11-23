@@ -3,9 +3,12 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import static com.miaokatze.gtmb.client.hologram.HologramLocalSaveTrace.mark;
+
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.LinkOption;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
@@ -14,9 +17,13 @@ import java.util.UUID;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.miaokatze.gtmb.client.hologram.HologramLocalSaveTrace.Stage;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramBlueprintFiles;
 import com.miaokatze.gtmb.hologram.HologramLibraryFacade;
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.FrozenDraft;
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.LocalEditorOrigin;
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.LocalSaveIntent;
 
 /** Client-owned files, independent of world saves and server identities. Call from the library worker only. */
 final class HologramClientLibrary {
@@ -93,6 +100,12 @@ final class HologramClientLibrary {
         }
     }
 
+    @com.github.bsideup.jabel.Desugar
+    record EditorSave(LocalSave receipt, byte[] exactJson) {}
+
+    @com.github.bsideup.jabel.Desugar
+    record EditorSource(byte[] json, LocalEditorOrigin origin) {}
+
     static final class Entry {
 
         final String id, name, authorName, authorUuid, sourceMod, gtmbVersion;
@@ -138,7 +151,7 @@ final class HologramClientLibrary {
         }
     }
 
-    List<Entry> list() throws IOException {
+    synchronized List<Entry> list() throws IOException {
         List<Entry> entries = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
         Files.createDirectories(directory);
@@ -198,64 +211,128 @@ final class HologramClientLibrary {
     private static JsonObject displayMetadata(Path path) throws IOException {
         try (com.google.gson.stream.JsonReader reader = new com.google.gson.stream.JsonReader(
             Files.newBufferedReader(path, StandardCharsets.UTF_8))) {
-            JsonObject metadata = new JsonObject();
+            JsonObject root = new JsonObject(), blueprint = null;
             reader.beginObject();
-            boolean blueprint = false;
             while (reader.hasNext()) {
                 String name = reader.nextName();
-                if (!name.equals("blueprint")) {
-                    reader.skipValue();
-                    continue;
+                if (name.equals("blueprint")) {
+                    blueprint = new JsonObject();
+                    reader.beginObject();
+                    while (reader.hasNext()) readDisplayField(reader, blueprint, reader.nextName());
+                    reader.endObject();
+                } else {
+                    readDisplayField(reader, root, name);
                 }
-                blueprint = true;
-                reader.beginObject();
-                while (reader.hasNext()) {
-                    String key = reader.nextName();
-                    if (key.equals("cells") || key.equals("structures")) {
-                        int count = 0;
-                        reader.beginArray();
-                        while (reader.hasNext()) {
-                            reader.skipValue();
-                            count++;
-                        }
-                        reader.endArray();
-                        metadata.addProperty(key.equals("cells") ? "displayCells" : "displayStructures", count);
-                    } else if (key.equals("nativeBlueprint"))
-                        metadata.add(key, new com.google.gson.JsonParser().parse(reader));
-                    else if (key.equals("fullyVoucherCovered")
-                        && reader.peek() == com.google.gson.stream.JsonToken.BOOLEAN)
-                        metadata.addProperty(key, reader.nextBoolean());
-                    else if (key.equals("createdAt")) metadata.addProperty(key, reader.nextLong());
-                    else if (key.equals("id") || key.equals("name")
-                        || key.equals("authorName")
-                        || key.equals("authorUuid")
-                        || key.equals("sourceMod")) metadata.addProperty(key, reader.nextString());
-                    else reader.skipValue();
-                }
-                reader.endObject();
             }
             reader.endObject();
-            if (!blueprint || !metadata.has("displayCells")) throw new IOException("Missing blueprint display data");
+            JsonObject metadata = blueprint == null ? root : blueprint;
+            if (!metadata.has("displayCells") || !metadata.has("name"))
+                throw new IOException("Missing blueprint display data");
             return metadata;
+        }
+    }
+
+    private static void readDisplayField(com.google.gson.stream.JsonReader reader, JsonObject metadata, String key)
+        throws IOException {
+        switch (key) {
+            case "cells", "structures" -> {
+                int count = 0;
+                if (reader.peek() == com.google.gson.stream.JsonToken.BEGIN_ARRAY) {
+                    reader.beginArray();
+                    while (reader.hasNext()) {
+                        reader.skipValue();
+                        count++;
+                    }
+                    reader.endArray();
+                } else reader.skipValue();
+                metadata.addProperty(key.equals("cells") ? "displayCells" : "displayStructures", count);
+            }
+            case "nativeBlueprint" -> metadata.add(key, new com.google.gson.JsonParser().parse(reader));
+            case "fullyVoucherCovered" -> {
+                if (reader.peek() == com.google.gson.stream.JsonToken.BOOLEAN)
+                    metadata.addProperty(key, reader.nextBoolean());
+                else reader.skipValue();
+            }
+            case "createdAt" -> {
+                if (reader.peek() == com.google.gson.stream.JsonToken.NUMBER)
+                    metadata.addProperty(key, reader.nextLong());
+                else reader.skipValue();
+            }
+            case "id", "name", "authorName", "authorUuid", "sourceMod" -> {
+                if (reader.peek() == com.google.gson.stream.JsonToken.STRING)
+                    metadata.addProperty(key, reader.nextString());
+                else reader.skipValue();
+            }
+            default -> reader.skipValue();
         }
     }
 
     /** Save validation and actual readback remain separate from display-only catalog hints. */
     LocalSave prepareLocalSave(byte[] data, byte[] preview, String id, java.util.function.BooleanSupplier stillCurrent)
         throws IOException {
-        JsonObject blueprint = blueprint(data);
+        return prepareSavePair(data, preview, id, stillCurrent, blueprint(data), null, LocalSaveIntent.STRICT);
+    }
+
+    LocalSave preparePrivateDocumentSave(byte[] data, byte[] preview, String id,
+        java.util.function.BooleanSupplier stillCurrent) throws IOException {
+        return preparePrivateDocumentSave(data, preview, id, stillCurrent, null);
+    }
+
+    LocalSave preparePrivateDocumentSave(byte[] data, byte[] preview, String id,
+        java.util.function.BooleanSupplier stillCurrent, HologramLocalSaveTrace trace) throws IOException {
+        return preparePrivateDocumentSave(data, preview, id, stillCurrent, trace, LocalSaveIntent.STRICT);
+    }
+
+    EditorSave prepareEditorSave(FrozenDraft prepared, byte[] freshlyCapturedPng, String id,
+        java.util.function.BooleanSupplier stillCurrent, HologramLocalSaveTrace trace) throws IOException {
+        HologramBlueprintArtifact.Artifact pair = prepared.bindLocalSave(id, freshlyCapturedPng);
+        mark(trace, Stage.BOUND_PAIR_READY);
+        LocalSave saved = preparePrivateDocumentSave(pair.json, pair.png, id, stillCurrent, trace,
+            prepared.incompleteAuthorIntent());
+        return new EditorSave(saved, pair.json);
+    }
+
+    private LocalSave preparePrivateDocumentSave(byte[] data, byte[] preview, String id,
+        java.util.function.BooleanSupplier stillCurrent, HologramLocalSaveTrace trace, LocalSaveIntent incompleteAuthorIntent)
+        throws IOException {
+        JsonObject blueprint = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.displayRows(data).blueprint;
+        JsonObject header = blueprint(blueprint);
+        mark(trace, Stage.PAIR_INPUT_READY);
+        return prepareSavePair(data, preview, id, stillCurrent, header, trace, incompleteAuthorIntent);
+    }
+
+    private synchronized LocalSave prepareSavePair(byte[] data, byte[] preview, String id,
+        java.util.function.BooleanSupplier stillCurrent, JsonObject blueprint, HologramLocalSaveTrace trace,
+        LocalSaveIntent incompleteAuthorIntent) throws IOException {
+        mark(trace, Stage.TARGET_BEGIN);
         Path previous = file(id);
+        if (incompleteAuthorIntent != LocalSaveIntent.STRICT) {
+            Path indexed = HologramBlueprintFiles.indexedPath(directory, id);
+            if (incompleteAuthorIntent == LocalSaveIntent.SAVE_CURRENT) {
+                if (!previous.equals(indexed) || !Files.isRegularFile(previous, LinkOption.NOFOLLOW_LINKS))
+                    throw new IOException("本地蓝图已不在原保存槽位");
+            } else if (indexed != null || Files.exists(previous, LinkOption.NOFOLLOW_LINKS)
+                || Files.exists(HologramBlueprintArtifact.previewPath(previous), LinkOption.NOFOLLOW_LINKS)) {
+                throw new IOException("本地蓝图新保存槽位已存在");
+            }
+        }
         if (!Files.exists(previous) && list().size() >= MAX_ENTRIES) throw new IOException("客户端蓝图库已满（128 项）");
         Path target = HologramBlueprintFiles.target(directory, id, data);
-        if (string(blueprint, "authorName").isEmpty() || string(blueprint, "authorUuid").isEmpty())
-            throw new IOException("蓝图缺少服务器确认的作者信息");
+        if (incompleteAuthorIntent == LocalSaveIntent.STRICT
+            && (string(blueprint, "authorName").isEmpty() || string(blueprint, "authorUuid").isEmpty()))
+            throw new IOException("蓝图缺少完整作者信息");
+        mark(trace, Stage.TARGET_READY);
+        mark(trace, Stage.STAGED_WRITE_BEGIN);
         HologramBlueprintArtifact.PairWrite written = pairIo.write(target, data, preview, stillCurrent);
+        mark(trace, Stage.STAGED_WRITE_DONE);
         try {
             HologramBlueprintArtifact.Artifact actual = pairIo.read(target);
             if (!written.jsonSha256.equals(actual.jsonSha256) || !written.pngSha256.equals(actual.pngSha256))
                 throw new IOException("Actual saved artifact differs from written bytes");
             if (!stillCurrent.getAsBoolean()) throw new IOException("Blueprint save source changed");
+            mark(trace, Stage.READBACK_READY);
             HologramBlueprintFiles.track(directory, id, written);
+            mark(trace, Stage.INDEX_READY);
             entryCache.put(target.toString(), new CachedEntry(new Entry(id, blueprint, actual.json.length), target));
             return new LocalSave(written, string(blueprint, "name"), target, actual);
         } catch (IOException | RuntimeException failure) {
@@ -295,9 +372,17 @@ final class HologramClientLibrary {
         return upgradeLegacy(() -> true, (done, total) -> {});
     }
 
-    String upgradeLegacy(java.util.function.BooleanSupplier current,
+    synchronized String upgradeLegacy(java.util.function.BooleanSupplier current,
         java.util.function.BiConsumer<Integer, Integer> progress) throws IOException {
         String result = HologramBlueprintFiles.upgrade(directory, current, progress);
+        entryCache.clear();
+        return result;
+    }
+
+    synchronized String upgradeNamedHistoric(String alias, java.util.function.BooleanSupplier current)
+        throws IOException {
+        String basename = alias.endsWith(".json") ? alias.substring(0, alias.length() - 5) : alias;
+        String result = HologramBlueprintFiles.upgradeNamedHistoric(directory, basename, current);
         entryCache.clear();
         return result;
     }
@@ -323,6 +408,61 @@ final class HologramClientLibrary {
         }
     }
 
+    synchronized byte[] readPrivateDocument(String id) throws IOException {
+        return HologramBlueprintArtifact.readLocalJson(file(id));
+    }
+
+    EditorSource readNamedEditorSource(String alias) throws IOException {
+        return new EditorSource(
+            HologramBlueprintArtifact.readLocalJson(HologramBlueprintFiles.resolve(directory, alias)),
+            LocalEditorOrigin.NAMED_IMPORT);
+    }
+
+    synchronized EditorSource readPrivateEditorSource(String id) throws IOException {
+        Path indexed = HologramBlueprintFiles.indexedPath(directory, id);
+        if (indexed != null && Files.isRegularFile(indexed, LinkOption.NOFOLLOW_LINKS))
+            return new EditorSource(HologramBlueprintArtifact.readLocalJson(indexed), LocalEditorOrigin.TRACKED_PRIVATE);
+        return new EditorSource(readPrivateDocument(id), LocalEditorOrigin.STRICT);
+    }
+
+    Path legacyCatalogPath() {
+        return directory.resolve("hologram-presets.json");
+    }
+
+    List<Entry> listLegacy() throws IOException {
+        if (!Files.isRegularFile(legacyCatalogPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS))
+            return java.util.Collections.emptyList();
+        List<Entry> entries = new ArrayList<>();
+        java.util.Set<String> seen = new java.util.HashSet<>();
+        JsonObject root = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.readLegacyCatalog(legacyCatalogPath());
+        for (JsonElement member : root.getAsJsonArray("presets")) {
+            try {
+                JsonObject blueprint = blueprint(member.getAsJsonObject());
+                String id = string(blueprint, "id");
+                if (!id.matches("[a-zA-Z0-9_-]{1,96}") || !seen.add(id)) continue;
+                if (id.matches("(?:local_)?[a-fA-F0-9-]{36}")
+                    && Files.isRegularFile(file(id.startsWith("local_") ? id : "local_" + id))) continue;
+                entries.add(new Entry("legacy:" + id, blueprint, 0));
+            } catch (IOException | RuntimeException invalid) {
+                // Other readable members stay visible.
+            }
+            if (entries.size() >= MAX_ENTRIES) break;
+        }
+        return entries;
+    }
+
+    byte[] readLegacyDocument(String id) throws IOException {
+        String memberId = id.startsWith("legacy:") ? id.substring("legacy:".length()) : id;
+        if (!memberId.matches("[a-zA-Z0-9_-]{1,96}")) throw new IOException("旧蓝图 ID 无效");
+        var catalog = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.readStoredCatalog(legacyCatalogPath());
+        for (JsonElement member : catalog.root().getAsJsonArray("presets")) {
+            if (member.isJsonObject() && memberId.equals(string(member.getAsJsonObject(), "id")))
+                return com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.legacyCatalogMember(
+                    catalog, member.getAsJsonObject());
+        }
+        throw new IOException("本地旧合集蓝图不存在");
+    }
+
     byte[] read(String id) throws IOException {
         byte[] data = HologramBlueprintArtifact.readPair(file(id)).json;
         parse(data);
@@ -335,7 +475,14 @@ final class HologramClientLibrary {
         return HologramBlueprintArtifact.encode(saved.json, saved.png);
     }
 
-    /** Placement upload only: validate and package the original pair after a server hash miss. */
+    /** An actual publication, unlike an internal disk receipt, must originate from a compact pair. */
+    byte[] publicationArtifact(String id) throws IOException {
+        HologramBlueprintArtifact.Artifact saved = HologramBlueprintArtifact.readPair(file(id));
+        com.miaokatze.gtmb.hologram.HologramCompactRequiredException.require(saved.json);
+        return HologramBlueprintArtifact.encode(saved.json, saved.png);
+    }
+
+    /** Package an already written pair for its exact receipt. */
     byte[] previewArtifact(String id) throws IOException {
         HologramBlueprintArtifact.Artifact saved = HologramBlueprintArtifact.readPair(file(id));
         return HologramBlueprintArtifact.encode(saved.json, saved.png);
@@ -349,7 +496,11 @@ final class HologramClientLibrary {
         return string(blueprint(read(id)), "name");
     }
 
-    void delete(String id) throws IOException {
+    synchronized void delete(String id) throws IOException {
+        if (id.startsWith("legacy:")) {
+            HologramBlueprintFiles.deleteHistoricMember(legacyCatalogPath(), id.substring("legacy:".length()));
+            return;
+        }
         Path selected = file(id);
         if (!selected.equals(HologramBlueprintFiles.resolve(directory, id))) {
             HologramBlueprintFiles.managed(directory);
@@ -471,7 +622,7 @@ final class HologramClientLibrary {
             .toString();
     }
 
-    private Path file(String id) throws IOException {
+    private synchronized Path file(String id) throws IOException {
         if (id == null || !id.matches("local_[a-fA-F0-9-]{36}")) throw new IOException("客户端蓝图 ID 无效");
         Path indexed = HologramBlueprintFiles.resolve(directory, id);
         if (Files.isRegularFile(indexed)) return indexed;

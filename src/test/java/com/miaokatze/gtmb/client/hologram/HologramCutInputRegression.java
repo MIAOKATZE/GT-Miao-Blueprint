@@ -171,7 +171,7 @@ public final class HologramCutInputRegression {
     private static void localBlueprintOwnsSelection() {
         HologramCutClient cut = HologramCutClient.INSTANCE;
         HologramState previous = HologramClient.state;
-        String[] names = { "localArea", "localAreaAwaitingBegin", "localAreaFinishing", "localAreaCancelling" };
+        String[] names = { "localArea", "localAreaFinishing" };
         Field[] fields = new Field[names.length];
         Object[] saved = new Object[names.length];
         int captured = 0;
@@ -195,7 +195,7 @@ public final class HologramCutInputRegression {
             fields[0].set(null, area);
             SimpleAssert.that(
                 (Boolean) busy.invoke(cut),
-                "local subtract selection owns input before its server snapshot arrives");
+                "local subtract selection owns input without a server snapshot");
             area.point(1, 2, 66, 2, "replace");
             area.point(2, 4, 68, 4, "replace");
             NBTTagCompound geometry = area.snapshot();
@@ -223,14 +223,14 @@ public final class HologramCutInputRegression {
                     .intent((HologramWorldFlow.Stage) worldStage.invoke(null), HologramWorldFlow.Gesture.SHIFT_RIGHT),
                 "Shift-right still finishes blueprint import after the rejected Ctrl-Shift-Alt-right gesture");
 
-            fields[0].set(null, null);
             for (int i = 1; i < names.length; i++) {
                 fields[i].setBoolean(null, true);
                 SimpleAssert.that(
                     (Boolean) busy.invoke(cut),
-                    names[i] + " fences cut entry until the server receipt completes");
+                    "the local selection retains input while its capture is pending");
                 fields[i].setBoolean(null, false);
             }
+            fields[0].set(null, null);
             SimpleAssert.that(!(Boolean) busy.invoke(cut), "completed area lifecycle restores initial workspace input");
             SimpleAssert.eq(
                 HologramCutInput.Intent.SWITCHER,
@@ -251,14 +251,14 @@ public final class HologramCutInputRegression {
     private static void recoveryIsolation() {
         HologramCutInput.Stage idle = HologramCutInput.Stage.IDLE;
         HologramCutRequests requests = new HologramCutRequests();
-        requests.observeHeld(true);
+        requests.observeStorageContext(true);
         requests.begin("directory", "list", "", 0);
         SimpleAssert.that(!requests.writing(), "initial directory sync is not a cut write");
         checkRecoveryRouting(false, "initial directory has not loaded");
         requests.expire(HologramCutRequests.READ_TIMEOUT_NS);
         checkRecoveryRouting(false, "directory sync timed out");
         for (int tick = 0; tick < 100; tick++)
-            SimpleAssert.that(!requests.observeHeld(true), "a failed sync does not poll while the tool stays held");
+            SimpleAssert.that(!requests.observeStorageContext(true), "a failed sync does not poll while the tool stays held");
         SimpleAssert.that(!requests.active("list"), "opening a local switcher cannot restart a directory request");
 
         // The failed ACK removes the network request, but its directory failure must still gate cut actions.

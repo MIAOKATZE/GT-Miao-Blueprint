@@ -6,6 +6,7 @@ package com.miaokatze.gtmb.client.hologram;
 import net.minecraft.client.Minecraft;
 import net.minecraft.nbt.NBTTagCompound;
 
+import com.github.bsideup.jabel.Desugar;
 import com.miaokatze.gtmb.hologram.HologramPreviewPose;
 
 /** Disposable local display intent. It never grants a server session, material quote or construction permission. */
@@ -13,11 +14,11 @@ final class HologramLocalPlacement {
 
     static final HologramLocalPlacement INSTANCE = new HologramLocalPlacement();
     private HologramState display;
-    private Object world;
+    private HologramLibraryClient.DisplaySource source;
+    private Object world, connection, player;
     private boolean locked, submitting;
     private int[] anchor;
     private HologramPreviewPose pose = new HologramPreviewPose();
-    private String localId = "", publicId = "", jsonHash = "", sourceRevision = "";
     private final com.miaokatze.gtmb.hologram.HologramWorldFlow.KeyRepeat[] nudgeKeys = {
         new com.miaokatze.gtmb.hologram.HologramWorldFlow.KeyRepeat(),
         new com.miaokatze.gtmb.hologram.HologramWorldFlow.KeyRepeat(),
@@ -78,6 +79,10 @@ final class HologramLocalPlacement {
         return pose.apply(x, y, z);
     }
 
+    HologramPreviewPose previewPose() {
+        return pose;
+    }
+
     void rotateGl() {
         org.lwjgl.opengl.GL11.glTranslated(.5, .5, .5);
         int[] turns = pose.recipe();
@@ -100,31 +105,35 @@ final class HologramLocalPlacement {
         return bounds;
     }
 
-    void install(HologramState prepared, String localId, String publicId, String hash, String revision) {
+    void install(HologramLibraryClient.DisplaySource prepared) {
         clear();
-        this.localId = localId;
-        this.publicId = publicId;
-        this.jsonHash = hash;
-        this.sourceRevision = revision;
-        world = Minecraft.getMinecraft().theWorld;
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.theWorld == null || mc.thePlayer == null) return;
+        source = prepared;
+        world = mc.theWorld;
+        connection = mc.getNetHandler();
+        player = mc.thePlayer;
         NBTTagCompound metadata = new NBTTagCompound();
         metadata.setString("session", "local-preview");
         metadata.setBoolean("localPreview", true);
         metadata.setBoolean("virtual", true);
         metadata.setBoolean("virtualPlacement", true);
         metadata.setBoolean("moving", true);
-        metadata.setInteger("dimension", Minecraft.getMinecraft().thePlayer.dimension);
+        metadata.setInteger("dimension", mc.thePlayer.dimension);
         metadata.setInteger("x", 0);
         metadata.setInteger("y", 0);
         metadata.setInteger("z", 0);
-        display = prepared.withMetadata(metadata);
-        Minecraft.getMinecraft()
-            .displayGuiScreen(null);
+        display = prepared.state.withMetadata(metadata);
+        mc.displayGuiScreen(null);
     }
 
     void tick() {
-        if (active() && (Minecraft.getMinecraft().theWorld != world || Minecraft.getMinecraft().thePlayer == null))
-            clear();
+        if (active() && !currentContext()) clear();
+    }
+
+    private boolean currentContext() {
+        Minecraft mc = Minecraft.getMinecraft();
+        return mc.theWorld == world && mc.getNetHandler() == connection && mc.thePlayer == player;
     }
 
     void turn(boolean vertical) {
@@ -150,7 +159,7 @@ final class HologramLocalPlacement {
     }
 
     void submit(NBTTagCompound options) {
-        if (!active() || submitting) return;
+        if (!active() || !locked || submitting) return;
         submitting = HologramLibraryClient.INSTANCE.prepareLocalPlacement(this, options);
         if (submitting) Minecraft.getMinecraft()
             .displayGuiScreen(new HologramPlacementLoadingScreen());
@@ -167,24 +176,10 @@ final class HologramLocalPlacement {
         return options;
     }
 
-    String localId() {
-        return localId;
-    }
-
-    String publicId() {
-        return publicId;
-    }
-
-    String hash() {
-        return jsonHash;
-    }
-
-    String revision() {
-        return sourceRevision;
-    }
-
-    void intent(NBTTagCompound request) {
-        int[] at = anchor();
+    Submission freeze(NBTTagCompound options) {
+        if (!active() || !locked || anchor == null || !currentContext()) return null;
+        NBTTagCompound request = (NBTTagCompound) options.copy();
+        int[] at = anchor;
         request.setInteger("x", at[0]);
         request.setInteger("y", at[1]);
         request.setInteger("z", at[2]);
@@ -193,19 +188,29 @@ final class HologramLocalPlacement {
         request.setInteger("placementZ", at[2]);
         request.setInteger("side", 1);
         request.setIntArray("previewPose", pose.recipe());
-        request.setString("jsonHash", jsonHash);
-        request.setString("sourceHash", jsonHash);
-        request.setString("sourceRevision", sourceRevision);
-        request.setString("id", publicId);
-        request.setString("publicPresetId", publicId);
-        request.setBoolean("openReview", true);
+        if (!options.hasKey("openReview", 1)) request.setBoolean("openReview", true);
+        return new Submission(source, display, request);
+    }
+
+    /** The exact source and locked intent outlive asynchronous validation only while this ghost remains current. */
+    @Desugar
+    record Submission(HologramLibraryClient.DisplaySource source, HologramState display, NBTTagCompound intent) {
+
+        boolean current() {
+            return INSTANCE.display == display && INSTANCE.source == source && INSTANCE.currentContext();
+        }
+
+        @Override
+        public NBTTagCompound intent() {
+            return (NBTTagCompound) intent.copy();
+        }
     }
 
     void clear() {
         if (display != null) HologramRenderer.nativeSnapshotChanged();
         display = null;
-        world = null;
-        localId = publicId = jsonHash = sourceRevision = "";
+        source = null;
+        world = connection = player = null;
         locked = submitting = false;
         anchor = null;
         pose = new HologramPreviewPose();

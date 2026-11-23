@@ -95,7 +95,8 @@ final class HologramLibraryUiSocketSmoke {
                     return false;
                 case 1:
                     if (!nativeLevel("op3", 3, mc)) return false;
-                    library.open();
+                    library.refreshServer(0);
+                    library.refreshServerConfig();
                     stage = 2;
                     return false;
                 case 2:
@@ -121,7 +122,8 @@ final class HologramLibraryUiSocketSmoke {
                     return false;
                 case 3:
                     if (!nativeLevel("op4", 4, mc)) return false;
-                    library.open();
+                    library.refreshServer(0);
+                    library.refreshServerConfig();
                     stage = 4;
                     return false;
                 case 4:
@@ -245,7 +247,7 @@ final class HologramLibraryUiSocketSmoke {
                         || !publicId.equals(state.getString("selectedPresetId"))) return false;
                     if (!worldRendered.getAsBoolean()) return false;
                     require(
-                        !state.getBoolean("virtualLocked") && HologramRenderer.lastWorldGeometry > 0,
+                        !state.getBoolean("virtualLocked") && MiaoVisonLiteRenderer.lastWorldGeometry > 0,
                         "direct public choice becomes actual world ghost");
                     require(
                         worldReceipt.getInteger("blueprintStock") == stock

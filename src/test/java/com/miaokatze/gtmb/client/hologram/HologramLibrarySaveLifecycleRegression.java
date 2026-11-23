@@ -3,15 +3,18 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import java.io.IOException;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Paths;
 import java.util.concurrent.ThreadPoolExecutor;
 
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
+import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
@@ -39,12 +42,12 @@ public final class HologramLibrarySaveLifecycleRegression {
             preparationActivityIsCorrelatedAndBounded();
             savedPreviewOwnsItsObservedAngles();
             settingsReplyRequiresMatchingWrite();
-        } catch (ReflectiveOperationException failure) {
+        } catch (IOException | ReflectiveOperationException failure) {
             throw new AssertionError("Blueprint save lifecycle", failure);
         }
     }
 
-    private static void savedPreviewOwnsItsObservedAngles() {
+    private static void savedPreviewOwnsItsObservedAngles() throws IOException {
         HologramState clicked = state(91, 12, "saveBlueprintReplace", false, false);
         HologramSavePreviewPose pose = new HologramSavePreviewPose(91, 8, clicked, .87, .42);
         HologramLibraryClient.SaveCommand command = new HologramLibraryClient.SaveCommand(
@@ -78,8 +81,10 @@ public final class HologramLibrarySaveLifecycleRegression {
                 && !pose.accepts(91, 8, "different-source", 42, command, clicked)
                 && !pose.accepts(91, 8, clicked.session, 41, command, clicked),
             "task, transport generation, session and older revisions fence the frozen view");
+        byte[] source = "{\"cells\":[{\"block\":\"minecraft:stone\"}]}".getBytes(StandardCharsets.UTF_8);
         HologramBlueprintPreview.Request capture = new HologramBlueprintPreview.Request(
-            new NBTTagCompound(),
+            HologramBlueprintPreview.snapshot(source),
+            HologramBlueprintArtifact.hash(source),
             pose.yaw,
             pose.pitch,
             () -> true,

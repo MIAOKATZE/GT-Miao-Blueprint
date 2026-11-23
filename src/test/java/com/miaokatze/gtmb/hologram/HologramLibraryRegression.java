@@ -51,15 +51,12 @@ public final class HologramLibraryRegression {
         publicStorageUpgrade();
         boundedUpgradeReport();
         publicExpandedBudgetBeforePublish();
-        contentAdmissionWithoutWorkspace();
-        integratedPrivateIngress();
+        integratedSaveIngress();
         trustedCacheQuotasAndSavedReceipt();
         activationControlAdmission();
         localExecutionConsent();
         contentIdentity();
         trustedCacheIsolation();
-        publicPreviewPrivacy();
-        publicThumbnailBounds();
         protocolAndThrottle();
         uploadWindowAndMailboxes();
         uploadAdmissionLifecycle();
@@ -78,7 +75,7 @@ public final class HologramLibraryRegression {
     }
 
     @SuppressWarnings("unchecked")
-    private static void integratedPrivateIngress() throws Exception {
+    private static void integratedSaveIngress() throws Exception {
         Field global = MinecraftServer.class.getDeclaredField("mcServer");
         global.setAccessible(true);
         Object previous = global.get(null);
@@ -98,14 +95,14 @@ public final class HologramLibraryRegression {
             global.set(
                 null,
                 unsafe().allocateInstance(Class.forName("net.minecraft.server.integrated.IntegratedServer")));
-            for (String operation : new String[] { "privateBegin", "contentResolve", "cancel" }) {
+            for (String operation : new String[] { "previewBegin", "saveStatus", "cancel" }) {
                 NBTTagCompound request = HologramLibraryProtocol.request(operation);
                 request.setLong("clientTaskToken", 919);
                 HologramLibraryFacade.receive(actor, request);
                 Object accepted = queue.poll();
-                SimpleAssert.that(accepted != null, "integrated wire admits private operation " + operation);
+                SimpleAssert.that(accepted != null, "integrated wire admits a save receipt operation " + operation);
                 NBTTagCompound copy = (NBTTagCompound) get(accepted, "request");
-                SimpleAssert.eq(operation, copy.getString("op"), "queued private request preserves its purpose");
+                SimpleAssert.eq(operation, copy.getString("op"), "queued save request preserves its purpose");
                 boolean chunk = (Boolean) get(accepted, "chunk");
                 HologramLibraryProtocol.RequestQuota quota = (HologramLibraryProtocol.RequestQuota) get(
                     accepted,
@@ -115,9 +112,9 @@ public final class HologramLibraryRegression {
                 pending.remove(HologramLibraryFacade.actorId(actor), quota);
             }
             SimpleAssert.that(
-                HologramLibraryFacade.integratedOperation("privateChunk"),
-                "integrated transport permits the private chunk operation type");
-            NBTTagCompound unadmitted = HologramLibraryProtocol.request("privateChunk");
+                HologramLibraryFacade.integratedOperation("previewChunk"),
+                "integrated transport permits the save receipt chunk operation type");
+            NBTTagCompound unadmitted = HologramLibraryProtocol.request("previewChunk");
             unadmitted.setLong("clientTaskToken", 919);
             unadmitted.setString(
                 "transfer",
@@ -130,13 +127,14 @@ public final class HologramLibraryRegression {
             SimpleAssert.that(
                 !pending.containsKey(HologramLibraryFacade.actorId(actor)),
                 "rejected unadmitted chunks retain no ingress quota");
-            for (String operation : new String[] { "uploadBegin", "uploadChunk", "configSet", "delete", "download" }) {
+            for (String operation : new String[] { "uploadBegin", "uploadChunk", "configSet", "delete", "download",
+                "privateBegin", "privateChunk", "contentResolve", "publicPrepare", "quickBootstrap" }) {
                 HologramLibraryFacade.receive(actor, HologramLibraryProtocol.request(operation));
-                SimpleAssert.that(queue.isEmpty(), "integrated wire keeps public operation disabled: " + operation);
+                SimpleAssert.that(queue.isEmpty(), "integrated wire ignores public and retired operations: " + operation);
             }
             SimpleAssert.that(
-                !HologramLibraryService.sessionCurrent(actor, HologramLibraryProtocol.request("privateBegin")),
-                "admitting private transport does not admit an absent projector session");
+                !HologramLibraryService.saveCurrent(actor, HologramLibraryProtocol.request("previewBegin")),
+                "admitting save transport does not admit an absent projector session");
         } finally {
             global.set(null, previous);
         }
@@ -174,11 +172,21 @@ public final class HologramLibraryRegression {
             reloaded = new HologramServerLibrary(entries, root.resolve("library.cfg"));
             HologramServerLibrary active = reloaded;
             runWorker(active, () -> {});
-            SimpleAssert
-                .that(active.get(id) != null, "legacy public logical filenames remain readable without migration");
+            try {
+                active.get(id);
+                throw new AssertionError("expanded public original entered gameplay before explicit admin migration");
+            } catch (HologramCompactRequiredException expected) {
+                SimpleAssert.eq(HologramCompactRequiredException.MESSAGE, expected.getMessage(),
+                    "public storage format is checked independently of the canonical DTO and content hash");
+            }
             NBTTagCompound upgrade = HologramLibraryProtocol.request("upgradeLibrary");
             upgrade.setLong("clientTaskToken", 811);
             Object ordinary = peer(player(UUID.randomUUID(), "OrdinaryReader"));
+            NBTTagCompound blockedDownload = HologramLibraryProtocol.request("download");
+            blockedDownload.setString("id", id);
+            denied(() -> runWorker(active, () -> handle(active, ordinary, blockedDownload)),
+                "full legacy payload is not released to older clients under a browse/download pretext");
+            SimpleAssert.that(get(ordinary, "download") == null, "no transfer was allocated for expanded JSON");
             denied(
                 () -> runWorker(active, () -> handle(active, ordinary, upgrade)),
                 "ordinary readers cannot rewrite public originals");
@@ -222,9 +230,22 @@ public final class HologramLibraryRegression {
             NBTTagCompound download = HologramLibraryProtocol.request("download");
             download.setString("id", id);
             download.setLong("clientTaskToken", 812);
+            download.setString("sourceHash", HologramBlueprintContentHash.of(actual.json));
+            download.setLong("sourceRevision", -1);
+            denied(() -> runWorker(active, () -> handle(active, ordinary, download)), "a stale revision cannot fetch a public artifact");
+            download.removeTag("sourceRevision");
+            download.removeTag("sourceHash");
             runWorker(active, () -> handle(active, ordinary, download));
-            SimpleAssert
-                .that(get(ordinary, "download") != null, "full download resolves the logical ID after physical rename");
+            Object queued = get(ordinary, "download");
+            SimpleAssert.that(queued != null, "full download resolves the logical ID after physical rename");
+            HologramLibraryDownload.Encoded payload = (HologramLibraryDownload.Encoded) get(queued, "payload");
+            HologramBlueprintArtifact.Artifact portable = HologramBlueprintArtifact.decode(
+                HologramLibraryDownload.decode(payload.bytes, payload.encoding, payload.decodedTotal, payload.hash));
+            com.google.gson.JsonObject share = HologramBlueprintCompactCodec.parse(portable.json);
+            SimpleAssert.eq(id, share.getAsJsonObject("blueprint").get("id").getAsString(), "portable artifact retains public identity");
+            SimpleAssert.eq(after.get("futureMetadata"), share.get("futureMetadata"), "portable artifact retains extension metadata");
+            SimpleAssert.that(!share.has("owner") && !share.has("uploadedBy"), "server catalog attribution is not embedded into the portable copy");
+            SimpleAssert.eq(HologramBlueprintContentHash.of(actual.json), HologramBlueprintContentHash.of(portable.json), "download uses the stored artifact content");
             runWorker(active, () -> invoke(active, "clearDownload", ordinary));
             active.stop();
             reloaded = null;
@@ -285,112 +306,6 @@ public final class HologramLibraryRegression {
                 HologramBlueprintFiles.managedPublic(entries)
                     .isEmpty(),
                 "expanded budget failure writes no public original");
-        } finally {
-            store.stop();
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private static void contentAdmissionWithoutWorkspace() throws Exception {
-        Path root = Files.createTempDirectory("gtmb-pure-admission-");
-        HologramServerLibrary store = new HologramServerLibrary(root.resolve("library"), root.resolve("library.cfg"));
-        try {
-            runWorker(store, () -> {});
-            EntityPlayerMP actor = player(UUID.randomUUID(), "ContentOnlyOwner");
-            Object peer = peer(actor);
-            UUID owner = HologramLibraryFacade.actorId(actor);
-            synchronized (store) {
-                ((Map<UUID, Object>) get(store, "peers")).put(owner, peer);
-            }
-            HologramPresets.Preset source = blueprint();
-            byte[] compact = HologramServerLibrary.encodeShare(source);
-            String contentHash = HologramBlueprintContentHash.of(compact);
-            java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(
-                HologramBlueprintArtifact.WIDTH,
-                HologramBlueprintArtifact.HEIGHT,
-                java.awt.image.BufferedImage.TYPE_INT_RGB);
-            java.io.ByteArrayOutputStream png = new java.io.ByteArrayOutputStream();
-            javax.imageio.ImageIO.write(image, "png", png);
-            byte[] legacy = new com.google.gson.GsonBuilder().setPrettyPrinting()
-                .create()
-                .toJson(HologramBlueprintCompactCodec.parse(compact))
-                .getBytes(java.nio.charset.StandardCharsets.UTF_8);
-            byte[] artifact = HologramBlueprintArtifact.encode(legacy, png.toByteArray());
-            NBTTagCompound request = HologramLibraryProtocol.request("privateBegin");
-            request.setString(
-                "transfer",
-                UUID.randomUUID()
-                    .toString());
-            request.setLong("clientTaskToken", 711);
-            request.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
-            request.setInteger("total", artifact.length);
-            request.setString("hash", HologramBlueprintArtifact.hash(artifact));
-            request.setString("jsonHash", contentHash);
-            request.setBoolean("contentOnly", true);
-            request.setBoolean("hashProbe", true);
-            Object before = HologramWorkspace.find(owner);
-            NBTTagCompound probe = HologramLibraryProtocol.request("contentResolve");
-            probe.setString("transfer", request.getString("transfer"));
-            probe.setLong("clientTaskToken", 711);
-            probe.setString("jsonHash", contentHash);
-            probe.setString("sourceHash", contentHash);
-            runWorker(store, () -> handle(store, peer, probe));
-            SimpleAssert.that(get(peer, "upload") == null, "hash-only miss allocates no upload or fake header");
-            SimpleAssert.eq(0L, get(store, "reservedBytes"), "hash-only miss reserves no artifact bytes");
-            SimpleAssert.eq(0, get(store, "activeUploads"), "hash-only miss occupies no upload slot");
-            try (java.util.stream.Stream<Path> files = Files.list(root.resolve("library"))) {
-                SimpleAssert.that(
-                    !files.anyMatch(
-                        path -> path.getFileName()
-                            .toString()
-                            .startsWith("incoming-")),
-                    "hash-only miss creates no incoming temporary artifact");
-            }
-            NBTTagCompound needed = HologramServerLibrary.contentUploadReply(probe, contentHash);
-            SimpleAssert.eq("needUpload", needed.getString("op"), "only an explicit probe miss requests bytes");
-            SimpleAssert.eq(contentHash, needed.getString("contentHash"), "upload need keeps the probed identity");
-            SimpleAssert.eq(probe.getString("transfer"), needed.getString("transfer"), "upload need keeps task fence");
-            runWorker(store, () -> handle(store, peer, request));
-            SimpleAssert.that(get(peer, "upload") != null, "UI content miss admits bounded upload without a workspace");
-            for (int offset = 0, index = 0; offset
-                < artifact.length; offset += HologramLibraryProtocol.CHUNK_BYTES, index++) {
-                NBTTagCompound chunk = HologramLibraryProtocol.request("privateChunk");
-                chunk.setString("transfer", request.getString("transfer"));
-                chunk.setLong("clientTaskToken", 711);
-                chunk.setInteger("index", index);
-                chunk.setByteArray(
-                    "data",
-                    Arrays.copyOfRange(
-                        artifact,
-                        offset,
-                        Math.min(artifact.length, offset + HologramLibraryProtocol.CHUNK_BYTES)));
-                runWorker(store, () -> handle(store, peer, chunk));
-            }
-            HologramTrustedBlueprintCache cache = (HologramTrustedBlueprintCache) get(store, "trusted");
-            SimpleAssert.that(
-                cache.contains(owner, peer, get(peer, "world"), (Long) get(store, "runtimeEpoch"), contentHash),
-                "a fully received canonical original becomes reusable content");
-            SimpleAssert.that(
-                before == HologramWorkspace.find(owner),
-                "content admission never creates or replaces author state");
-            runWorker(store, () -> handle(store, peer, probe));
-            SimpleAssert.that(get(peer, "upload") == null, "a hash-only content hit never requests an artifact");
-            SimpleAssert.eq(0L, get(store, "reservedBytes"), "a hash-only hit keeps reservations empty");
-            runWorker(store, () -> handle(store, peer, request));
-            SimpleAssert.that(get(peer, "upload") == null, "pure content hit allocates no upload");
-            request.setBoolean("contentOnly", false);
-            request.setBoolean("admittedOnly", true);
-            request.setString("jsonHash", repeat('a', 64));
-            request.removeTag("total");
-            request.removeTag("hash");
-            runWorker(store, () -> handle(store, peer, request));
-            SimpleAssert
-                .that(get(peer, "upload") == null, "a final missing reference cannot silently upload in the world");
-            NBTTagCompound ready = HologramServerLibrary.contentReply(request, contentHash, true, false);
-            SimpleAssert.eq("contentReady", ready.getString("op"), "content readiness has its own result kind");
-            SimpleAssert.that(
-                !ready.hasKey("session") && !ready.hasKey("planRevision") && !ready.hasKey("placementReviewNonce"),
-                "content readiness is not a placement or review capability");
         } finally {
             store.stop();
         }
@@ -586,103 +501,6 @@ public final class HologramLibraryRegression {
             .that(cache.get(owner, connection, world, 1, "oversize") == null, "oversized bases are not retained");
         cache.retire(connection);
         SimpleAssert.that(cache.get(owner, connection, world, 1, "next9") == null, "disconnect removes owned entries");
-    }
-
-    private static void publicPreviewPrivacy() throws Exception {
-        HologramPresets.Preset source = blueprint();
-        NBTTagCompound original = new NBTTagCompound();
-        original.setString("owner", "private actor");
-        original.setString("inventory", "private inventory");
-        original.setInteger("texturePage", 4);
-        original.setInteger("textureIndex", 12);
-        NBTTagList covers = new NBTTagList();
-        NBTTagCompound cover = new NBTTagCompound();
-        cover.setInteger("id", 3);
-        cover.setByte("s", (byte) 1);
-        cover.setString("data", "private cover configuration");
-        covers.appendTag(cover);
-        original.setTag("gt.covers", covers);
-        source.cells.get(0).tileNbt = HologramBlueprintNbt.encodeData(original);
-        NBTTagCompound projected = HologramPublicPreview.project(source);
-        NBTTagCompound display = projected.getTagList("cells", 10)
-            .getCompoundTagAt(0)
-            .getCompoundTag("targetDisplay");
-        SimpleAssert.eq(12, display.getInteger("textureIndex"), "public preview keeps the reviewed casing appearance");
-        SimpleAssert.that(
-            !projected.toString()
-                .contains("private"),
-            "public preview omits actor, inventory and cover configuration");
-        SimpleAssert.that(
-            !projected.hasKey("authorUuid") && !display.hasKey("nativeTile"),
-            "public display cannot carry provenance or generic native persistence");
-        SimpleAssert
-            .eq("private actor", original.getString("owner"), "public projection preserves its original source");
-    }
-
-    private static void publicThumbnailBounds() throws Exception {
-        java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(
-            HologramBlueprintArtifact.WIDTH,
-            HologramBlueprintArtifact.HEIGHT,
-            java.awt.image.BufferedImage.TYPE_INT_RGB);
-        java.io.ByteArrayOutputStream compactPng = new java.io.ByteArrayOutputStream();
-        javax.imageio.ImageIO.write(image, "png", compactPng);
-        java.awt.image.BufferedImage detailed = javax.imageio.ImageIO.read(
-            new java.io.ByteArrayInputStream(HologramServerLibrary.thumbnail(compactPng.toByteArray(), () -> true)));
-        SimpleAssert.that(
-            detailed.getWidth() == 160 && detailed.getHeight() == 160,
-            "compressible source retains the clearer thumbnail within the same packet budget");
-        java.util.Random random = new java.util.Random(191120L);
-        for (int y = 0; y < image.getHeight(); y++)
-            for (int x = 0; x < image.getWidth(); x++) image.setRGB(x, y, random.nextInt(0x1000000));
-        java.io.ByteArrayOutputStream encoded = new java.io.ByteArrayOutputStream();
-        javax.imageio.ImageIO.write(image, "png", encoded);
-        denied(
-            () -> HologramBlueprintArtifact.bindPreview(new byte[] { 1 }, encoded.toByteArray()),
-            "arbitrary binary source bytes cannot masquerade as legacy blueprint JSON");
-        byte[] json = "{\"schema\":2,\"blueprint\":{\"name\":\"thumbnail_fixture\",\"cells\":[]}}"
-            .getBytes(java.nio.charset.StandardCharsets.UTF_8);
-        byte[] source = HologramBlueprintArtifact.bindPreview(json, encoded.toByteArray());
-        byte[] thumbnail = HologramServerLibrary.thumbnail(source, () -> true);
-        SimpleAssert.that(
-            thumbnail.length <= HologramServerLibrary.THUMBNAIL_BYTES,
-            "incompressible source pixels produce a single bounded optional thumbnail");
-        java.awt.image.BufferedImage small = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(thumbnail));
-        SimpleAssert
-            .that(small.getWidth() == 64 && small.getHeight() == 64, "thumbnail bounds both decoded dimensions");
-        SimpleAssert.that(
-            !new String(thumbnail, java.nio.charset.StandardCharsets.ISO_8859_1)
-                .contains(HologramBlueprintArtifact.SOURCE_KEY),
-            "thumbnail exports only pixels without source digest metadata");
-        NBTTagCompound reply = HologramLibraryProtocol.reply("previewThumbnail");
-        reply.setLong("clientTaskToken", 991);
-        reply.setString("publicId", "public_" + UUID.randomUUID());
-        reply.setString("sourceHash", repeat('a', 64));
-        reply.setLong("sourceRevision", 1);
-        reply.setByteArray("thumbnailPng", thumbnail);
-        io.netty.buffer.ByteBuf wire = Unpooled.buffer();
-        new HologramNetwork.LibraryReply(reply).toBytes(wire);
-        SimpleAssert.that(
-            wire.readableBytes() < HologramLibraryProtocol.PACKET_BYTES,
-            "thumbnail and identity fit the unchanged library packet budget");
-        HologramNetwork.LibraryReply decoded = new HologramNetwork.LibraryReply();
-        decoded.fromBytes(wire.duplicate());
-        SimpleAssert.that(
-            Arrays.equals(thumbnail, ((NBTTagCompound) get(decoded, "tag")).getByteArray("thumbnailPng")),
-            "optional thumbnail uses the existing bounded library reply codec");
-        byte[] oversizedDimensions = source.clone();
-        java.nio.ByteBuffer.wrap(oversizedDimensions)
-            .putInt(16, 1000000);
-        denied(
-            () -> HologramServerLibrary.thumbnail(oversizedDimensions, () -> true),
-            "source dimensions are rejected before image allocation");
-        denied(
-            () -> HologramServerLibrary.thumbnail(new byte[HologramBlueprintArtifact.MAX_PNG_BYTES + 1], () -> true),
-            "thumbnail source byte limit is independent of compressed image pixels");
-        denied(() -> HologramServerLibrary.thumbnail(source, () -> false), "cancelled thumbnail never begins decode");
-        int[] checks = { 0 };
-        denied(
-            () -> HologramServerLibrary.thumbnail(source, () -> ++checks[0] < 2),
-            "retired thumbnail stops before encoding or publishing its decoded pixels");
     }
 
     private static void streamingDraftProgress() throws Exception {
@@ -1297,7 +1115,7 @@ public final class HologramLibraryRegression {
 
         HologramLibraryProtocol.RequestQueue queue = new HologramLibraryProtocol.RequestQueue();
         NBTTagCompound data = uploadReply(transfer, 71, 1);
-        data.setString("op", "privateChunk");
+        data.setString("op", "previewChunk");
         SimpleAssert.that(!queue.offer(data, false), "worker mailbox also requires admitted data");
         for (int i = 0; i < 8; i++) SimpleAssert.that(queue.offer(data, true), "worker data window is bounded");
         SimpleAssert.that(!queue.offer(data, true), "worker refuses a ninth data chunk");
@@ -1377,7 +1195,7 @@ public final class HologramLibraryRegression {
                 SimpleAssert
                     .that(!store.uploadAdmitted(actor, chunk), "old task cannot use the current transfer admission");
                 chunk.setLong("clientTaskToken", 31);
-                chunk.setString("op", "privateChunk");
+                chunk.setString("op", "previewChunk");
                 SimpleAssert.that(!store.uploadAdmitted(actor, chunk), "different upload purpose cannot use admission");
                 chunk.setString("op", "uploadChunk");
                 handle(store, peer, chunk);
@@ -1825,24 +1643,6 @@ public final class HologramLibraryRegression {
                 .keySet()
                 .iterator()
                 .next();
-            String publicHash = HologramBlueprintContentHash
-                .of(HologramServerLibrary.encodeShare(active.get(publicId)));
-            NBTTagCompound probe = HologramLibraryProtocol.request("privateBegin");
-            probe.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
-            probe.setBoolean("hashProbe", true);
-            probe.setBoolean("contentOnly", true);
-            probe.setString("jsonHash", publicHash);
-            probe.setString(
-                "transfer",
-                UUID.randomUUID()
-                    .toString());
-            probe.setInteger("total", 32);
-            probe.setString("hash", repeat('a', 64));
-            runWorker(active, () -> handle(active, restricted, probe));
-            SimpleAssert.that(
-                get(restricted, "upload") != null,
-                "denied public cache hit falls back to a real private upload instead of granting content");
-            runWorker(active, () -> invoke(active, "abort", restricted));
             NBTTagCompound download = HologramLibraryProtocol.request("download");
             download.setString("id", publicId);
             runWorker(active, () -> handle(active, publisher, download));

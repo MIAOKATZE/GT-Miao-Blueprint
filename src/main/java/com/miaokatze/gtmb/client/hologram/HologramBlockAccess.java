@@ -8,7 +8,6 @@ import java.util.Map;
 
 import net.minecraft.block.Block;
 import net.minecraft.init.Blocks;
-import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.IBlockAccess;
 import net.minecraft.world.biome.BiomeGenBase;
@@ -68,8 +67,7 @@ final class HologramBlockAccess implements IBlockAccess {
             HologramState.Cell cell = cells.at(x, y, z);
             if (cell == null) return null;
             boolean actual = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
-            NBTTagCompound display = actual ? cell.actualDisplay : cell.targetDisplay;
-            if (!display.hasKey("nativeTile", 10)) return null;
+            if (!cell.hasDisplayTag(actual, "nativeTile", 10)) return null;
             if (renderWorld == null) renderWorld = new HologramRenderWorld(this);
             TileEntity tile;
             loadingTile = true;
@@ -77,7 +75,8 @@ final class HologramBlockAccess implements IBlockAccess {
                 tile = HologramNativeTiles.create(
                     getBlock(x, y, z),
                     getBlockMetadata(x, y, z),
-                    display.getCompoundTag("nativeTile"),
+                    cell.display(actual)
+                        .getCompoundTag("nativeTile"),
                     renderWorld,
                     x,
                     y,

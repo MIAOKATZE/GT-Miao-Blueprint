@@ -29,10 +29,19 @@ public final class HologramChannelTrace {
 
     /** Call from capture's finally block, including failed and nested captures. */
     public static Report end(Scope scope) {
+        leave(scope);
+        return new Report(scope);
+    }
+
+    static void endInto(Scope scope, Accumulator accumulator) {
+        leave(scope);
+        accumulator.append(scope);
+    }
+
+    private static void leave(Scope scope) {
         if (ACTIVE.get() != scope) throw new IllegalStateException("channel capture scope mismatch");
         if (scope.previous == null) ACTIVE.remove();
         else ACTIVE.set(scope.previous);
-        return new Report(scope);
     }
 
     public static void record(ItemStack stack, String id, int effective, int operation) {
@@ -45,6 +54,7 @@ public final class HologramChannelTrace {
         boolean explicit = channels != null && channels.hasKey(id, 3);
         // Presence is an observation of the key, not an integer channel value.
         if (operation == 4) effective = explicit ? channels.getInteger(id) : stack.stackSize;
+        if (scope.values.isEmpty()) scope.values = new LinkedHashMap<>();
         scope.values.put(id, new Observation(id, effective, explicit, (old == null ? 0 : old.operations) | operation));
     }
 
@@ -62,6 +72,7 @@ public final class HologramChannelTrace {
         if (scope == null || !validId(id) || stacks.isEmpty()) return;
         List<ItemStack> copy = new ArrayList<>();
         for (ItemStack stack : stacks) copy.add(stack.copy());
+        if (scope.materials.isEmpty()) scope.materials = new LinkedHashMap<>();
         scope.materials.put(id, Collections.unmodifiableList(copy));
     }
 
@@ -70,19 +81,49 @@ public final class HologramChannelTrace {
         if (latest == null) return previous;
         if (previous.context != latest.context) throw new IllegalArgumentException("channel report context mismatch");
         Map<String, Observation> merged = new LinkedHashMap<>(previous.observations);
-        for (Observation observation : latest.observations.values()) {
-            Observation old = merged.get(observation.id);
-            merged.put(
-                observation.id,
-                new Observation(
-                    observation.id,
-                    observation.effective,
-                    observation.explicit,
-                    observation.operations | (old == null ? 0 : old.operations)));
-        }
+        appendObservations(merged, latest.observations);
         Map<String, List<ItemStack>> materials = new LinkedHashMap<>(previous.materials);
         materials.putAll(latest.materials);
         return new Report(latest.context, latest.generation, merged, materials);
+    }
+
+    private static void appendObservations(Map<String, Observation> target, Map<String, Observation> source) {
+        for (Observation observation : source.values()) {
+            Observation old = target.get(observation.id);
+            int operations = observation.operations | (old == null ? 0 : old.operations);
+            target.put(
+                observation.id,
+                operations == observation.operations ? observation
+                    : new Observation(observation.id, observation.effective, observation.explicit, operations));
+        }
+    }
+
+    /** A native preview performs many independent position reads and publishes very few complete reports. */
+    static final class Accumulator {
+
+        private final Object context;
+        private final Map<String, Observation> values = new LinkedHashMap<>();
+        private final Map<String, List<ItemStack>> materials = new LinkedHashMap<>();
+        private long generation;
+        private Report snapshot;
+
+        Accumulator(Object context) {
+            this.context = context;
+        }
+
+        private void append(Scope scope) {
+            if (context != scope.context) throw new IllegalArgumentException("channel report context mismatch");
+            appendObservations(values, scope.values);
+            materials.putAll(scope.materials);
+            generation = scope.generation;
+            snapshot = null;
+        }
+
+        Report snapshot() {
+            if (generation == 0) return null;
+            if (snapshot == null) snapshot = new Report(context, generation, values, materials);
+            return snapshot;
+        }
     }
 
     public static final class Scope {
@@ -90,8 +131,8 @@ public final class HologramChannelTrace {
         private final Scope previous;
         private final Object context;
         private final long generation = GENERATIONS.incrementAndGet();
-        private final Map<String, Observation> values = new LinkedHashMap<>();
-        private final Map<String, List<ItemStack>> materials = new LinkedHashMap<>();
+        private Map<String, Observation> values = Collections.emptyMap();
+        private Map<String, List<ItemStack>> materials = Collections.emptyMap();
 
         private Scope(Object context, Scope previous) {
             this.context = context;

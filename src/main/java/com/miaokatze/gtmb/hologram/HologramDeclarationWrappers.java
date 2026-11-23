@@ -116,6 +116,29 @@ final class HologramDeclarationWrappers {
         return (IStructureElement<?>[]) array.get(element);
     }
 
+    /** These native candidate readers depend on the settled controller and trigger, without reading a position. */
+    static boolean reusablePreviewOptions(IStructureElement<?> element, int depth) throws ReflectiveOperationException {
+        if (element == null || depth == 0) return false;
+        if (element == StructureUtility.isAir()) return true;
+        if (element instanceof IStructureElementChain<?> chain) {
+            IStructureElement<?>[] children = nativeChainChildren(chain);
+            if (children == null || children.length == 0 || children.length > 64) return false;
+            for (IStructureElement<?> child : children) if (!reusablePreviewOptions(child, depth - 1)) return false;
+            return true;
+        }
+        Method method = factory(element.getClass());
+        if (method == null) return false;
+        if (method.getDeclaringClass() == HatchElementBuilder.class) return "build".equals(method.getName());
+        if (method.getDeclaringClass() == GTStructureUtility.class) return "ofAnyWater".equals(method.getName());
+        if (method.getDeclaringClass() != StructureUtility.class) return false;
+        return switch (method.getName()) {
+            case "ofBlocksTiered" -> true;
+            case "onElementPass", "onElementFail", "withDescription" ->
+                reusablePreviewOptions(nativeBacking(element), depth - 1);
+            default -> false;
+        };
+    }
+
     static boolean isLazy(IStructureElement<?> element) {
         return element != null && element.getClass()
             .getName()
@@ -270,15 +293,33 @@ final class HologramDeclarationWrappers {
     }
 
     static void observeMaterials(IStructureElement<?> element) {
+        observeMaterials(element, false);
+    }
+
+    /** A reviewed advisory adapter can describe local preview options without giving them placement authority. */
+    static void observePreviewMaterials(IStructureElement<?> element) {
+        observeMaterials(element, true);
+    }
+
+    private static void observeMaterials(IStructureElement<?> element, boolean advisory) {
         for (IStructureElement<?> part : HologramElementCatalog.parts(element)) {
             try {
                 String channel = channel(part);
-                if (channel != null) HologramChannelTrace.declareMaterials(channel, materials(backing(part)));
+                if (channel != null) HologramChannelTrace.declareMaterials(channel, materials(backing(part), advisory));
             } catch (ReflectiveOperationException | RuntimeException | LinkageError ignored) {}
         }
     }
 
     private static List<ItemStack> materials(IStructureElement<?> root) throws ReflectiveOperationException {
+        return materials(root, false);
+    }
+
+    private static List<ItemStack> materials(IStructureElement<?> root, boolean advisory)
+        throws ReflectiveOperationException {
+        if (advisory) {
+            HologramDeclarationAdapters.Declaration declaration = HologramDeclarationAdapters.declaration(root);
+            if (declaration != null && declaration.previewMaterialOptions) root = declaration.backing();
+        }
         List<ItemStack> result = new ArrayList<>();
         for (IStructureElement<?> part : HologramElementCatalog.parts(root, false)) {
             Method factory = factory(part.getClass());

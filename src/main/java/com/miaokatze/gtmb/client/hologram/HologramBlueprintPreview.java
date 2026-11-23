@@ -3,11 +3,12 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import static com.miaokatze.gtmb.client.hologram.HologramLocalSaveTrace.mark;
+
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.DoubleBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
@@ -29,7 +30,6 @@ import net.minecraft.block.Block;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.OpenGlHelper;
 import net.minecraft.client.renderer.Tessellator;
-import net.minecraft.client.shader.Framebuffer;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
@@ -38,25 +38,21 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
 import org.lwjgl.BufferUtils;
-import org.lwjgl.opengl.ARBShaderObjects;
-import org.lwjgl.opengl.ARBVertexArrayObject;
-import org.lwjgl.opengl.ARBVertexBufferObject;
-import org.lwjgl.opengl.ContextCapabilities;
 import org.lwjgl.opengl.GL11;
-import org.lwjgl.opengl.GL13;
-import org.lwjgl.opengl.GL15;
-import org.lwjgl.opengl.GL20;
-import org.lwjgl.opengl.GL30;
-import org.lwjgl.opengl.GL32;
-import org.lwjgl.opengl.GLContext;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import com.github.bsideup.jabel.Desugar;
 import com.miaokatze.gtmb.hologram.HologramAeNativePreview;
+import com.miaokatze.gtmb.client.hologram.HologramLocalSaveTrace.Stage;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
+import com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec;
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.EditorRows;
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.FrozenDraft;
 import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
-import com.miaokatze.miaokatzecore.client.preview.PreviewRenderScope.ClientTessState;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteRenderScope;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteTarget;
 
 import cpw.mods.fml.common.FMLCommonHandler;
 import cpw.mods.fml.common.eventhandler.EventPriority;
@@ -68,7 +64,6 @@ import cpw.mods.fml.relauncher.ReflectionHelper;
 public final class HologramBlueprintPreview {
 
     static final int SIZE = 640;
-    private static final int FRAMEBUFFER = 0x8d40, RENDERBUFFER = 0x8d41;
     private static final ArrayBlockingQueue<Request> REQUESTS = new ArrayBlockingQueue<>(4);
     private static final HologramBlueprintPreview LISTENER = new HologramBlueprintPreview();
     private static final Map<NBTTagCompound, SourceReceipt> SOURCES = new IdentityHashMap<>();
@@ -76,7 +71,6 @@ public final class HologramBlueprintPreview {
     private static final AtomicLong CAPTURE_GENERATION = new AtomicLong();
     private static volatile NBTTagCompound captureWitness = new NBTTagCompound();
     private static volatile boolean installed;
-    private static boolean capturing;
 
     private HologramBlueprintPreview() {}
 
@@ -92,70 +86,285 @@ public final class HologramBlueprintPreview {
         boolean witness = Boolean.getBoolean("gtmb.hologram.previewCaptureWitness");
         byte[] sourceJson = witness ? exactJson.clone() : exactJson;
         try {
-            JsonObject share = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.parse(sourceJson);
-            JsonObject blueprint = share.getAsJsonObject("blueprint");
-            if (blueprint == null) throw new IOException("Blueprint preview requires the exact exported share file");
+            JsonObject share = HologramBlueprintCompactCodec.parse(sourceJson);
+            JsonObject blueprint = HologramBlueprintCompactCodec.documentBlueprint(share);
             JsonArray sourceCells = blueprint.getAsJsonArray("cells");
-            if (sourceCells == null || sourceCells.size() == 0) throw new IOException("Blueprint preview has no cells");
-            NBTTagCompound data = new NBTTagCompound();
-            data.setString("session", "blueprint-artifact");
-            data.setInteger("mode", 0);
-            data.setBoolean("localMaterialPolicyPresent", blueprint.has("retainNbt"));
-            data.setBoolean(
-                "retainNbt",
-                !blueprint.has("retainNbt") || blueprint.get("retainNbt")
-                    .getAsBoolean());
-            data.setBoolean(
-                "retainCovers",
-                !blueprint.has("retainCovers") || blueprint.get("retainCovers")
-                    .getAsBoolean());
-            if (blueprint.has("retainedNbtKeys") && blueprint.get("retainedNbtKeys")
-                .isJsonArray()) {
-                NBTTagList retained = new NBTTagList();
-                for (JsonElement key : blueprint.getAsJsonArray("retainedNbtKeys"))
-                    retained.appendTag(new net.minecraft.nbt.NBTTagString(key.getAsString()));
-                data.setTag("retainedNbtKeys", retained);
-            }
-            NBTTagList cells = new NBTTagList();
-            Payloads payloads = new Payloads();
-            int processed = 0;
-            if (progress != null) progress.accept(0, sourceCells.size());
-            for (JsonElement row : sourceCells) {
-                if (progress != null && (++processed & 255) == 0) progress.accept(processed, sourceCells.size());
-                JsonObject source = row.getAsJsonObject();
-                JsonElement excluded = source.get("excluded");
-                if (excluded != null && excluded.isJsonPrimitive()
-                    && excluded.getAsJsonPrimitive()
-                        .isBoolean()
-                    && excluded.getAsBoolean()) continue;
-                NBTTagCompound cell = new NBTTagCompound();
-                for (String axis : new String[] { "x", "y", "z" }) {
-                    int coordinate = integer(source, axis, 0);
-                    if (Math.abs((long) coordinate) > (axis.equals("y") ? 256L : 60000000L))
-                        throw new IOException("Blueprint preview coordinate out of range");
-                    cell.setInteger(axis, coordinate);
-                    cell.setInteger("d" + axis, coordinate);
-                }
-                cell.setString("wantId", string(source, "block"));
-                cell.setInteger("wantMeta", integer(source, "metadata", 0));
-                cell.setInteger("targetFacing", integer(source, "facing", -1));
-                cell.setString("previewItem", string(source, "item"));
-                cell.setInteger("previewDamage", integer(source, "damage", 0));
-                NBTTagCompound tile = payloads.decode(string(source, "tileNbt"));
-                NBTTagCompound item = payloads.decode(string(source, "itemNbt"));
-                if (tile != null) cell.setTag("previewTile", tile.copy());
-                if (item != null) cell.setTag("previewItemTag", item.copy());
-                // Controller cells use their target data too; anchor labels belong to the editor.
-                cells.appendTag(cell);
-            }
-            if (cells.tagCount() == 0) throw new IOException("Blueprint preview has no buildable cells");
-            data.setTag("cells", cells);
-            if (progress != null) progress.accept(sourceCells.size(), sourceCells.size());
+            NBTTagCompound data = expandedDisplay(blueprint, sourceCells, progress);
             if (witness) rememberSource(data, HologramBlueprintArtifact.hash(sourceJson));
             return data;
         } catch (RuntimeException invalid) {
             throw new IOException("Invalid blueprint preview JSON", invalid);
         }
+    }
+
+    /** Worker-side local file decoding. Native resolution remains in the client preparation cursor. */
+    static DisplayInput displayInput(byte[] bytes, java.util.function.BiConsumer<Integer, Integer> progress)
+        throws IOException {
+        try {
+            HologramBlueprintCompactCodec.DisplayRows view = HologramBlueprintCompactCodec.displayGeometry(bytes);
+            if (!view.compact()) return new DisplayInput(
+                expandedDisplay(view.blueprint, view.blueprint.getAsJsonArray("cells"), progress),
+                null);
+            CompactCells cells = new CompactCells(view.cells(), view.materials());
+            Payloads payloads = new Payloads();
+            boolean[] excluded = new boolean[view.materials()];
+            long[] materialBytes = new long[view.materials()];
+            if (progress != null) progress.accept(0, view.cells());
+            for (int index = 0; index < view.cells(); index++) {
+                if (progress != null && ((index + 1) & 255) == 0) progress.accept(index + 1, view.cells());
+                int material = view.materialIndex(index);
+                if (excluded[material]) continue;
+                NBTTagCompound known = cells.materials[material];
+                JsonObject definition = known == null ? view.material(material) : null;
+                if (definition != null && excluded(definition)) {
+                    excluded[material] = true;
+                    continue;
+                }
+                int x = checkedCoordinate(view.coordinate(index, 0), 60000000L);
+                int y = checkedCoordinate(view.coordinate(index, 1), 256L);
+                int z = checkedCoordinate(view.coordinate(index, 2), 60000000L);
+                if (known == null) {
+                    long before = payloads.total;
+                    cells.materials[material] = displayMaterial(definition, payloads);
+                    materialBytes[material] = payloads.total - before;
+                } else payloads.account(materialBytes[material]);
+                cells.add(x, y, z, material);
+            }
+            if (cells.size() == 0) throw new IOException("Blueprint preview has no buildable cells");
+            if (progress != null) progress.accept(view.cells(), view.cells());
+            return new DisplayInput(displayMetadata(view.blueprint), cells);
+        } catch (RuntimeException invalid) {
+            throw new IOException("Invalid blueprint preview JSON", invalid);
+        }
+    }
+
+    static DisplayInput displayInput(FrozenDraft draft, BooleanSupplier current,
+        java.util.function.BiConsumer<Integer, Integer> progress) throws IOException {
+        int total = draft.cellCount();
+        CompactCells cells = new CompactCells(total, Math.min(total, 64));
+        Map<DisplayMaterial, Integer> index = new HashMap<>();
+        Payloads payloads = new Payloads();
+        if (progress != null) progress.accept(0, total);
+        draft.visitDisplayCells((x, y, z, block, metadata, item, damage, facing, tileNbt, itemNbt) -> {
+            DisplayMaterial material = new DisplayMaterial(block, metadata, item, damage, facing, tileNbt, itemNbt);
+            Integer position = index.get(material);
+            if (position == null) {
+                position = index.size();
+                cells.putMaterial(position, displayMaterial(material, payloads));
+                index.put(material, position);
+            } else {
+                payloads.account(payloads.expanded.getOrDefault(tileNbt, 0));
+                payloads.account(payloads.expanded.getOrDefault(itemNbt, 0));
+            }
+            cells.add(checkedCoordinate(x, 60000000L), checkedCoordinate(y, 256L), checkedCoordinate(z, 60000000L),
+                position);
+            if (progress != null && (cells.size() & 255) == 0) progress.accept(cells.size(), total);
+        }, current);
+        if (cells.size() == 0) throw new IOException("Blueprint preview has no buildable cells");
+        if (progress != null) progress.accept(total, total);
+        return new DisplayInput(displayMetadata(draft), cells);
+    }
+
+    static NBTTagCompound snapshot(FrozenDraft draft, BooleanSupplier current) throws IOException {
+        NBTTagCompound data = displayMetadata(draft);
+        NBTTagList cells = new NBTTagList();
+        Payloads payloads = new Payloads();
+        draft.visitDisplayCells((x, y, z, block, metadata, item, damage, facing, tileNbt, itemNbt) ->
+            cells.appendTag(displayRow(
+                displayMaterial(new DisplayMaterial(block, metadata, item, damage, facing, tileNbt, itemNbt), payloads),
+                checkedCoordinate(x, 60000000L), checkedCoordinate(y, 256L), checkedCoordinate(z, 60000000L))), current);
+        if (cells.tagCount() == 0) throw new IOException("Blueprint preview has no buildable cells");
+        data.setTag("cells", cells);
+        return data;
+    }
+
+    static final class DisplayInput {
+
+        final NBTTagCompound snapshot;
+        final CompactCells cells;
+
+        DisplayInput(NBTTagCompound snapshot, CompactCells cells) {
+            this.snapshot = snapshot;
+            this.cells = cells;
+        }
+    }
+
+    /** Each cell occupies four integers. Material data remains detached and unmodified until client preparation. */
+    static final class CompactCells {
+
+        private final int[] locations;
+        private final EditorRows editor;
+        private final int[] bounds;
+        private NBTTagCompound[] materials;
+        private int size;
+
+        CompactCells(int cells, int materials) {
+            locations = new int[Math.multiplyExact(cells, 4)];
+            editor = null;
+            bounds = new int[] { Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE,
+                Integer.MIN_VALUE, Integer.MIN_VALUE };
+            this.materials = new NBTTagCompound[materials];
+        }
+
+        CompactCells(EditorRows editor) {
+            locations = null;
+            this.editor = editor;
+            bounds = editor.bounds();
+            materials = editor.materials();
+            size = editor.rows().cells();
+        }
+
+        private void add(int x, int y, int z, int material) {
+            int at = size++ * 4;
+            locations[at] = x;
+            locations[at + 1] = y;
+            locations[at + 2] = z;
+            locations[at + 3] = material;
+            bounds[0] = Math.min(bounds[0], x);
+            bounds[1] = Math.min(bounds[1], y);
+            bounds[2] = Math.min(bounds[2], z);
+            bounds[3] = Math.max(bounds[3], x);
+            bounds[4] = Math.max(bounds[4], y);
+            bounds[5] = Math.max(bounds[5], z);
+        }
+
+        private void putMaterial(int index, NBTTagCompound material) {
+            if (index == materials.length)
+                materials = java.util.Arrays.copyOf(materials, Math.min(locations.length / 4, materials.length * 2));
+            materials[index] = material;
+        }
+
+        int size() {
+            return size;
+        }
+
+        int coordinate(int row, int dimension) {
+            if (editor == null) return locations[row * 4 + dimension];
+            return dimension == 3 ? editor.rows().materialIndex(row) : editor.rows().coordinate(row, dimension);
+        }
+
+        boolean editorRows() {
+            return editor != null;
+        }
+
+        int[] bounds() {
+            return bounds;
+        }
+
+        int materialCount() {
+            return materials.length;
+        }
+
+        boolean definedMaterial(int index) {
+            return materials[index] != null;
+        }
+
+        NBTTagCompound copyMaterial(int index) {
+            return (NBTTagCompound) materials[index].copy();
+        }
+    }
+
+    private static NBTTagCompound expandedDisplay(JsonObject blueprint, JsonArray sourceCells,
+        java.util.function.BiConsumer<Integer, Integer> progress) throws IOException {
+        if (sourceCells == null || sourceCells.size() == 0) throw new IOException("Blueprint preview has no cells");
+        NBTTagCompound data = displayMetadata(blueprint);
+        NBTTagList cells = new NBTTagList();
+        Payloads payloads = new Payloads();
+        int processed = 0;
+        if (progress != null) progress.accept(0, sourceCells.size());
+        for (JsonElement row : sourceCells) {
+            if (progress != null && (++processed & 255) == 0) progress.accept(processed, sourceCells.size());
+            JsonObject source = row.getAsJsonObject();
+            if (excluded(source)) continue;
+            int x = coordinate(source, "x"), y = coordinate(source, "y"), z = coordinate(source, "z");
+            cells.appendTag(displayRow(displayMaterial(source, payloads), x, y, z));
+        }
+        if (cells.tagCount() == 0) throw new IOException("Blueprint preview has no buildable cells");
+        data.setTag("cells", cells);
+        if (progress != null) progress.accept(sourceCells.size(), sourceCells.size());
+        return data;
+    }
+
+    private static NBTTagCompound displayRow(NBTTagCompound cell, int x, int y, int z) {
+        cell.setInteger("x", x);
+        cell.setInteger("y", y);
+        cell.setInteger("z", z);
+        cell.setInteger("dx", x);
+        cell.setInteger("dy", y);
+        cell.setInteger("dz", z);
+        return cell;
+    }
+
+    private static NBTTagCompound displayMetadata(FrozenDraft draft) {
+        NBTTagCompound data = draft.displayMetadata();
+        data.setString("session", "blueprint-artifact");
+        data.setInteger("mode", 0);
+        return data;
+    }
+
+    private static NBTTagCompound displayMetadata(JsonObject blueprint) {
+        NBTTagCompound data = new NBTTagCompound();
+        data.setString("session", "blueprint-artifact");
+        data.setInteger("mode", 0);
+        data.setBoolean("localMaterialPolicyPresent", blueprint.has("retainNbt"));
+        data.setBoolean(
+            "retainNbt",
+            !blueprint.has("retainNbt") || blueprint.get("retainNbt")
+                .getAsBoolean());
+        data.setBoolean(
+            "retainCovers",
+            !blueprint.has("retainCovers") || blueprint.get("retainCovers")
+                .getAsBoolean());
+        if (blueprint.has("retainedNbtKeys") && blueprint.get("retainedNbtKeys")
+            .isJsonArray()) {
+            NBTTagList retained = new NBTTagList();
+            for (JsonElement key : blueprint.getAsJsonArray("retainedNbtKeys"))
+                retained.appendTag(new net.minecraft.nbt.NBTTagString(key.getAsString()));
+            data.setTag("retainedNbtKeys", retained);
+        }
+        return data;
+    }
+
+    private static boolean excluded(JsonObject source) {
+        JsonElement value = source.get("excluded");
+        return value != null && value.isJsonPrimitive()
+            && value.getAsJsonPrimitive()
+                .isBoolean()
+            && value.getAsBoolean();
+    }
+
+    private static int coordinate(JsonObject source, String axis) throws IOException {
+        return checkedCoordinate(integer(source, axis, 0), axis.equals("y") ? 256L : 60000000L);
+    }
+
+    private static int checkedCoordinate(int value, long limit) throws IOException {
+        if (Math.abs((long) value) > limit) throw new IOException("Blueprint preview coordinate out of range");
+        return value;
+    }
+
+    private static NBTTagCompound displayMaterial(JsonObject source, Payloads payloads) throws IOException {
+        return displayMaterial(new DisplayMaterial(
+            string(source, "block"), integer(source, "metadata", 0), string(source, "item"),
+            integer(source, "damage", 0), integer(source, "facing", -1),
+            string(source, "tileNbt"), string(source, "itemNbt")), payloads);
+    }
+
+    @Desugar
+    private record DisplayMaterial(String block, int metadata, String item, int damage, int facing, String tileNbt,
+        String itemNbt) {}
+
+    private static NBTTagCompound displayMaterial(DisplayMaterial material, Payloads payloads) throws IOException {
+        NBTTagCompound cell = new NBTTagCompound();
+        cell.setString("wantId", material.block());
+        cell.setInteger("wantMeta", material.metadata());
+        cell.setInteger("targetFacing", material.facing());
+        cell.setString("previewItem", material.item());
+        cell.setInteger("previewDamage", material.damage());
+        NBTTagCompound tile = payloads.decode(material.tileNbt());
+        NBTTagCompound item = payloads.decode(material.itemNbt());
+        if (tile != null) cell.setTag("previewTile", tile.copy());
+        if (item != null) cell.setTag("previewItemTag", item.copy());
+        return cell;
     }
 
     /** Structural decoding bounds only, deliberately independent of construction policy. */
@@ -194,11 +403,23 @@ public final class HologramBlueprintPreview {
 
     static Request capture(NBTTagCompound exactSnapshot, double yaw, double pitch, BooleanSupplier current,
         Consumer<BufferedImage> done, Consumer<Throwable> failure) {
-        Request request = new Request(exactSnapshot, yaw, pitch, current, done, failure);
+        return queue(new Request(exactSnapshot, null, yaw, pitch, current, done, failure));
+    }
+
+    /** The local save worker owns the detached display rows and never mutates them after submission. */
+    static Request captureOwned(NBTTagCompound exactSnapshot, byte[] exactJson, double yaw, double pitch,
+        HologramLocalSaveTrace trace, BooleanSupplier current, Consumer<BufferedImage> done, Consumer<Throwable> failure) {
+        String hash = Boolean.getBoolean("gtmb.hologram.previewCaptureWitness")
+            ? HologramBlueprintArtifact.hash(exactJson) : "";
+        return queue(new Request(exactSnapshot, hash, yaw, pitch, current, done, failure, trace));
+    }
+
+    private static Request queue(Request request) {
         if (!REQUESTS.offer(request)) {
             request.fail(new IOException("Blueprint preview queue is full"));
             return request;
         }
+        mark(request.saveTrace, Stage.CAPTURE_RENDER_QUEUED);
         try {
             Minecraft.getMinecraft()
                 .func_152344_a(HologramBlueprintPreview::install);
@@ -218,9 +439,6 @@ public final class HologramBlueprintPreview {
     }
 
     /** The renderer uses this scoped flag to omit editor outlines, role labels, selection, and annotations. */
-    static boolean cleanCapture() {
-        return capturing;
-    }
 
     /**
      * Read-only opt-in evidence from an actual successful END capture. RGB SHA-256 packs unsigned R, G, B bytes,
@@ -284,12 +502,14 @@ public final class HologramBlueprintPreview {
         if (event.phase != TickEvent.Phase.END) return;
         Request request = REQUESTS.poll();
         if (request == null) return;
+        mark(request.saveTrace, Stage.RENDER_END_POLL);
         try {
             request.requireCurrent();
             BufferedImage image = render(request);
             request.requireCurrent();
             if (request.completed.compareAndSet(false, true)) {
                 recordWitness(request);
+                mark(request.saveTrace, Stage.RENDER_IMAGE_READY);
                 request.done.accept(image);
             }
         } catch (Throwable failure) {
@@ -305,21 +525,34 @@ public final class HologramBlueprintPreview {
         private final Consumer<BufferedImage> done;
         private final Consumer<Throwable> failure;
         private final String sourceJsonSha256;
+        private final HologramLocalSaveTrace saveTrace;
         private final AtomicBoolean completed = new AtomicBoolean();
         private String rgbSha256 = "";
         private int preexistingErrorCount;
         private boolean nativeRendering, readbackSucceeded;
         private volatile boolean cancelled;
 
-        Request(NBTTagCompound snapshot, double yaw, double pitch, BooleanSupplier current,
+        Request(NBTTagCompound snapshot, String ownedSourceHash, double yaw, double pitch, BooleanSupplier current,
             Consumer<BufferedImage> done, Consumer<Throwable> failure) {
+            this(snapshot, ownedSourceHash, yaw, pitch, current, done, failure, null);
+        }
+
+        Request(NBTTagCompound snapshot, String ownedSourceHash, double yaw, double pitch, BooleanSupplier current,
+            Consumer<BufferedImage> done, Consumer<Throwable> failure, HologramLocalSaveTrace saveTrace) {
+            this.saveTrace = saveTrace;
             if (!Double.isFinite(yaw) || !Double.isFinite(pitch))
                 throw new IllegalArgumentException("Invalid preview camera");
             this.yaw = yaw;
             this.pitch = pitch;
-            SourceReceipt source = takeSource(Objects.requireNonNull(snapshot));
-            this.sourceJsonSha256 = source == null ? "" : source.hash;
-            this.snapshot = (NBTTagCompound) (source == null ? snapshot : source.snapshot).copy();
+            Objects.requireNonNull(snapshot);
+            if (ownedSourceHash == null) {
+                SourceReceipt source = takeSource(snapshot);
+                sourceJsonSha256 = source == null ? "" : source.hash;
+                this.snapshot = (NBTTagCompound) (source == null ? snapshot : source.snapshot).copy();
+            } else {
+                sourceJsonSha256 = ownedSourceHash;
+                this.snapshot = snapshot;
+            }
             this.current = Objects.requireNonNull(current);
             this.done = Objects.requireNonNull(done);
             this.failure = Objects.requireNonNull(failure);
@@ -352,19 +585,18 @@ public final class HologramBlueprintPreview {
         if (witness) request.preexistingErrorCount = clearPreexistingErrors();
         if (!OpenGlHelper.isFramebufferEnabled()) throw new IOException("Native framebuffer previews are unavailable");
         HologramState state = completeSnapshot(request.snapshot);
-        ClientTessState tess = new ClientTessState(Tessellator.instance);
-        RenderState saved = new RenderState();
-        Framebuffer framebuffer = null;
-        boolean oldEmpty = HologramRenderer.showEmptyCells;
-        HologramSelection oldSelection = HologramRenderer.selection;
-        String oldStructure = HologramRenderer.selectedStructureId;
-        try {
-            saved.push();
+        mark(request.saveTrace, Stage.RENDER_STATE_READY);
+        MiaoVisonLiteRenderer viewport = new MiaoVisonLiteRenderer(
+            new HologramPreviewAssets(),
+            MiaoVisonLiteRenderer.View.CAPTURE);
+        MiaoVisonLiteRenderScope.ClientTessState tess = new MiaoVisonLiteRenderScope.ClientTessState(
+            Tessellator.instance);
+        MiaoVisonLiteRenderScope saved = MiaoVisonLiteRenderScope.enter();
+        try (HologramPreviewAssets.Scope ignored = viewport.assets().enter()) {
             OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit);
-            framebuffer = new Framebuffer(SIZE, SIZE, true);
-            framebuffer.bindFramebuffer(true);
-            if (OpenGlHelper.func_153167_i(FRAMEBUFFER) != 0x8cd5)
-                throw new IOException("Native preview framebuffer is incomplete");
+            MiaoVisonLiteTarget framebuffer = viewport.target(SIZE, SIZE);
+            framebuffer.bind(true);
+            if (!framebuffer.complete()) throw new IOException("Native preview framebuffer is incomplete");
             GL11.glViewport(0, 0, SIZE, SIZE);
             // Enable the explicit FBO scissor before preview: its GUI fallback depends on the display scale.
             GL11.glEnable(GL11.GL_SCISSOR_TEST);
@@ -398,13 +630,10 @@ public final class HologramBlueprintPreview {
             GL11.glMatrixMode(GL11.GL_TEXTURE);
             GL11.glLoadIdentity();
             GL11.glMatrixMode(GL11.GL_MODELVIEW);
-            HologramRenderer.showEmptyCells = false;
-            HologramRenderer.selection = null;
-            HologramRenderer.selectedStructureId = "";
-            capturing = true;
             request.requireCurrent();
-            HologramRenderer
-                .preview(state, 0, 0, SIZE, SIZE, request.yaw, request.pitch, 1, Integer.MAX_VALUE, 0, -1, -1, -1, -1);
+            mark(request.saveTrace, Stage.NATIVE_SUBMIT_BEGIN);
+            viewport.preview(
+                state, 0, 0, SIZE, SIZE, request.yaw, request.pitch, 1, Integer.MAX_VALUE, 0, -1, -1, -1, -1);
             // A native shape must never be silently replaced with the renderer's diagnostic cube fallback.
             for (HologramState.Cell cell : state.cells) {
                 Block block = cell.block(false);
@@ -419,28 +648,17 @@ public final class HologramBlueprintPreview {
                     throw new IOException("Blueprint material unavailable: " + cell.wantId);
             }
             request.nativeRendering = true;
+            mark(request.saveTrace, Stage.NATIVE_SUBMIT_CHECKED);
             request.requireCurrent();
-            saved.unbindPixelBuffers();
-            GL11.glReadBuffer(0x8ce0); // GL_COLOR_ATTACHMENT0, independent of the window's front/back buffer.
-            GL11.glPixelStorei(GL11.GL_PACK_ALIGNMENT, 1);
-            GL11.glPixelStorei(GL11.GL_PACK_ROW_LENGTH, 0);
-            GL11.glPixelStorei(GL11.GL_PACK_SKIP_ROWS, 0);
-            GL11.glPixelStorei(GL11.GL_PACK_SKIP_PIXELS, 0);
-            if (saved.pixelTransferAvailable) {
-                // Legacy readback applies this state. Core profiles removed it and Angelica does not emulate it.
-                GL11.glPixelTransferi(GL11.GL_MAP_COLOR, GL11.GL_FALSE);
-                for (int channel : new int[] { GL11.GL_RED_SCALE, GL11.GL_GREEN_SCALE, GL11.GL_BLUE_SCALE,
-                    GL11.GL_ALPHA_SCALE }) GL11.glPixelTransferf(channel, 1);
-                for (int channel : new int[] { GL11.GL_RED_BIAS, GL11.GL_GREEN_BIAS, GL11.GL_BLUE_BIAS,
-                    GL11.GL_ALPHA_BIAS }) GL11.glPixelTransferf(channel, 0);
-            }
             ByteBuffer pixels = BufferUtils.createByteBuffer(SIZE * SIZE * 4);
-            GL11.glReadPixels(0, 0, SIZE, SIZE, GL11.GL_RGBA, GL11.GL_UNSIGNED_BYTE, pixels);
+            mark(request.saveTrace, Stage.GL_READBACK_BEGIN);
+            framebuffer.readRgba(saved, pixels);
             if (witness) {
                 int error = GL11.glGetError();
                 if (error != GL11.GL_NO_ERROR) throw new IOException("Native preview readback GL error: " + error);
             }
             request.readbackSucceeded = true;
+            mark(request.saveTrace, Stage.GL_READBACK_DONE);
             int[] colors = new int[SIZE * SIZE];
             for (int y = 0; y < SIZE; y++) for (int x = 0; x < SIZE; x++) {
                 int offset = (y * SIZE + x) * 4;
@@ -461,20 +679,11 @@ public final class HologramBlueprintPreview {
             image.setRGB(0, 0, SIZE, SIZE, colors, 0, SIZE);
             return image;
         } finally {
-            capturing = false;
-            HologramRenderer.showEmptyCells = oldEmpty;
-            HologramRenderer.selection = oldSelection;
-            HologramRenderer.selectedStructureId = oldStructure;
             try {
-                // Release detached tiles and display lists; the next live preview rebuilds its normal caches.
-                try {
-                    HologramRenderer.release();
-                } finally {
-                    if (framebuffer != null) framebuffer.deleteFramebuffer();
-                }
+                viewport.close();
             } finally {
                 try {
-                    saved.restore();
+                    saved.close();
                 } finally {
                     tess.restore();
                 }
@@ -637,181 +846,14 @@ public final class HologramBlueprintPreview {
                 expanded.put(encoded, size);
                 decoded.put(encoded, HologramSnapshotCodec.decode(bytes));
             }
-            total += expanded.get(encoded);
-            if (total > 64L * 1024 * 1024) throw new IOException("Blueprint preview total NBT byte budget");
+            account(expanded.get(encoded));
             return decoded.get(encoded);
         }
-    }
 
-    /** Attribute stacks omit FBOs, buffer objects, programs, matrices, and Minecraft's lightmap cache. */
-    private static final class RenderState {
-
-        private final ContextCapabilities caps = GLContext.getCapabilities();
-        private final boolean pixelTransferAvailable = legacyPixelTransferAvailable(caps);
-        private final int[] pixelStoreNames = { GL11.GL_PACK_ALIGNMENT, GL11.GL_PACK_ROW_LENGTH, GL11.GL_PACK_SKIP_ROWS,
-            GL11.GL_PACK_SKIP_PIXELS, GL11.GL_UNPACK_ALIGNMENT, GL11.GL_UNPACK_ROW_LENGTH, GL11.GL_UNPACK_SKIP_ROWS,
-            GL11.GL_UNPACK_SKIP_PIXELS };
-        private final int[] pixelStoreValues = new int[pixelStoreNames.length];
-        private final boolean splitFramebuffer = caps.OpenGL30 || caps.GL_ARB_framebuffer_object;
-        private final boolean buffers = caps.OpenGL15 || caps.GL_ARB_vertex_buffer_object;
-        private final boolean pixelBuffers = caps.OpenGL21 || caps.GL_ARB_pixel_buffer_object;
-        private final boolean vertexArrays = caps.OpenGL30 || caps.GL_ARB_vertex_array_object;
-        private final int drawFramebuffer = GL11.glGetInteger(0x8ca6);
-        private final int readFramebuffer = splitFramebuffer ? GL11.glGetInteger(0x8caa) : drawFramebuffer;
-        private final int renderbuffer = GL11.glGetInteger(0x8ca7);
-        private final int activeTexture = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
-        private final int clientTexture = GL11.glGetInteger(GL13.GL_CLIENT_ACTIVE_TEXTURE);
-        private final int matrixMode = GL11.glGetInteger(GL11.GL_MATRIX_MODE);
-        private final int arrayBuffer = buffers ? GL11.glGetInteger(0x8894) : 0;
-        private final int elementBuffer = buffers ? GL11.glGetInteger(0x8895) : 0;
-        private final int packBuffer = pixelBuffers ? GL11.glGetInteger(0x88ed) : 0;
-        private final int unpackBuffer = pixelBuffers ? GL11.glGetInteger(0x88ef) : 0;
-        private final int vertexArray = vertexArrays ? GL11.glGetInteger(0x85b5) : 0;
-        private final int program = caps.OpenGL20 ? GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM)
-            : caps.GL_ARB_shader_objects ? ARBShaderObjects.glGetHandleARB(ARBShaderObjects.GL_PROGRAM_OBJECT_ARB) : 0;
-        private final float brightnessX = OpenGlHelper.lastBrightnessX, brightnessY = OpenGlHelper.lastBrightnessY;
-        private final List<Matrix> matrices = new ArrayList<>();
-        private boolean attributes, clientAttributes;
-
-        RenderState() {
-            for (int index = 0; index < pixelStoreNames.length; index++)
-                pixelStoreValues[index] = GL11.glGetInteger(pixelStoreNames[index]);
-        }
-
-        private static boolean legacyPixelTransferAvailable(ContextCapabilities caps) {
-            // This extension restores legacy pixel transfer even when a legacy-created context reports no profile.
-            if (caps.GL_ARB_compatibility) return true;
-            if (caps.OpenGL32) {
-                int profile = GL11.glGetInteger(GL32.GL_CONTEXT_PROFILE_MASK);
-                if ((profile & GL32.GL_CONTEXT_CORE_PROFILE_BIT) != 0) return false;
-                if ((profile & GL32.GL_CONTEXT_COMPATIBILITY_PROFILE_BIT) != 0) return true;
-                throw new IllegalStateException("Native preview OpenGL profile is invalid: " + profile);
-            }
-            if (caps.OpenGL31) return caps.GL_ARB_compatibility;
-            if (caps.OpenGL30)
-                return (GL11.glGetInteger(GL30.GL_CONTEXT_FLAGS) & GL30.GL_CONTEXT_FLAG_FORWARD_COMPATIBLE_BIT) == 0;
-            return true;
-        }
-
-        void push() {
-            GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
-            attributes = true;
-            GL11.glPushClientAttrib(0xffffffff);
-            clientAttributes = true;
-            matrices.add(new Matrix(GL11.GL_PROJECTION, GL11.GL_PROJECTION_MATRIX, GL11.GL_PROJECTION_STACK_DEPTH, -1));
-            matrices.add(new Matrix(GL11.GL_MODELVIEW, GL11.GL_MODELVIEW_MATRIX, GL11.GL_MODELVIEW_STACK_DEPTH, -1));
-            for (int unit = 0; unit < GL11.glGetInteger(GL13.GL_MAX_TEXTURE_UNITS); unit++) {
-                OpenGlHelper.setActiveTexture(GL13.GL_TEXTURE0 + unit);
-                matrices.add(
-                    new Matrix(
-                        GL11.GL_TEXTURE,
-                        GL11.GL_TEXTURE_MATRIX,
-                        GL11.GL_TEXTURE_STACK_DEPTH,
-                        GL13.GL_TEXTURE0 + unit));
-            }
-            unbindPixelBuffers();
-            if (vertexArrays) {
-                if (caps.OpenGL30) GL30.glBindVertexArray(0);
-                else ARBVertexArrayObject.glBindVertexArray(0);
-            }
-            if (buffers) {
-                bindBuffer(0x8892, 0);
-                bindBuffer(0x8893, 0);
-            }
-            GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, 1);
-            GL11.glPixelStorei(GL11.GL_UNPACK_ROW_LENGTH, 0);
-            GL11.glPixelStorei(GL11.GL_UNPACK_SKIP_ROWS, 0);
-            GL11.glPixelStorei(GL11.GL_UNPACK_SKIP_PIXELS, 0);
-        }
-
-        void useProgram(int value) {
-            if (caps.OpenGL20) GL20.glUseProgram(value);
-            else if (caps.GL_ARB_shader_objects) ARBShaderObjects.glUseProgramObjectARB(value);
-        }
-
-        void cleanTextureUnits() {
-            for (int unit = 0; unit < GL11.glGetInteger(GL13.GL_MAX_TEXTURE_UNITS); unit++) {
-                OpenGlHelper.setActiveTexture(GL13.GL_TEXTURE0 + unit);
-                GL11.glDisable(GL11.GL_TEXTURE_1D);
-                GL11.glDisable(GL11.GL_TEXTURE_2D);
-                if (caps.OpenGL12) GL11.glDisable(0x806f); // GL_TEXTURE_3D
-                if (caps.OpenGL13 || caps.GL_ARB_texture_cube_map) GL11.glDisable(GL13.GL_TEXTURE_CUBE_MAP);
-                for (int axis : new int[] { GL11.GL_TEXTURE_GEN_S, GL11.GL_TEXTURE_GEN_T, GL11.GL_TEXTURE_GEN_R,
-                    GL11.GL_TEXTURE_GEN_Q }) GL11.glDisable(axis);
-                GL11.glTexEnvi(GL11.GL_TEXTURE_ENV, GL11.GL_TEXTURE_ENV_MODE, GL11.GL_MODULATE);
-                GL11.glMatrixMode(GL11.GL_TEXTURE);
-                GL11.glLoadIdentity();
-            }
-            OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit);
-        }
-
-        void bindBuffer(int target, int value) {
-            if (caps.OpenGL15) GL15.glBindBuffer(target, value);
-            else if (buffers) ARBVertexBufferObject.glBindBufferARB(target, value);
-        }
-
-        void unbindPixelBuffers() {
-            if (pixelBuffers) {
-                bindBuffer(0x88eb, 0); // GL_PIXEL_PACK_BUFFER
-                bindBuffer(0x88ec, 0); // GL_PIXEL_UNPACK_BUFFER
-            }
-        }
-
-        void restore() {
-            for (Matrix matrix : matrices) matrix.restore();
-            if (vertexArrays) {
-                if (caps.OpenGL30) GL30.glBindVertexArray(vertexArray);
-                else ARBVertexArrayObject.glBindVertexArray(vertexArray);
-            }
-            // Restore the binding before PopAttrib re-applies the previous read/draw buffer selection.
-            if (splitFramebuffer) {
-                OpenGlHelper.func_153171_g(0x8ca8, readFramebuffer);
-                OpenGlHelper.func_153171_g(0x8ca9, drawFramebuffer);
-            } else OpenGlHelper.func_153171_g(FRAMEBUFFER, drawFramebuffer);
-            OpenGlHelper.func_153176_h(RENDERBUFFER, renderbuffer);
-            if (clientAttributes) GL11.glPopClientAttrib();
-            if (attributes) GL11.glPopAttrib();
-            // Angelica's client attribute stack stores vertex state, not pixel-store parameters.
-            for (int index = 0; index < pixelStoreNames.length; index++)
-                GL11.glPixelStorei(pixelStoreNames[index], pixelStoreValues[index]);
-            if (buffers) {
-                bindBuffer(0x8892, arrayBuffer);
-                bindBuffer(0x8893, elementBuffer);
-            }
-            if (pixelBuffers) {
-                bindBuffer(0x88eb, packBuffer);
-                bindBuffer(0x88ec, unpackBuffer);
-            }
-            useProgram(program);
-            OpenGlHelper.setLightmapTextureCoords(OpenGlHelper.lightmapTexUnit, brightnessX, brightnessY);
-            OpenGlHelper.setClientActiveTexture(clientTexture);
-            OpenGlHelper.setActiveTexture(activeTexture);
-            GL11.glMatrixMode(matrixMode);
+        void account(long bytes) throws IOException {
+            total += bytes;
+            if (total > 64L * 1024 * 1024) throw new IOException("Blueprint preview total NBT byte budget");
         }
     }
 
-    /** Restore the original top and stack depth even when an optional native renderer throws inside a matrix push. */
-    private static final class Matrix {
-
-        private final int mode, depthName, textureUnit, depth;
-        private final DoubleBuffer value = BufferUtils.createDoubleBuffer(16);
-
-        Matrix(int mode, int valueName, int depthName, int textureUnit) {
-            this.mode = mode;
-            this.depthName = depthName;
-            this.textureUnit = textureUnit;
-            GL11.glMatrixMode(mode);
-            depth = GL11.glGetInteger(depthName);
-            GL11.glGetDouble(valueName, value);
-        }
-
-        void restore() {
-            if (textureUnit >= 0) OpenGlHelper.setActiveTexture(textureUnit);
-            GL11.glMatrixMode(mode);
-            for (int current = GL11.glGetInteger(depthName); current > depth; current--) GL11.glPopMatrix();
-            for (int current = GL11.glGetInteger(depthName); current < depth; current++) GL11.glPushMatrix();
-            value.rewind();
-            GL11.glLoadMatrix(value);
-        }
-    }
 }

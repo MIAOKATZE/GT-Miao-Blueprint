@@ -7,11 +7,20 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.Comparator;
+import java.util.UUID;
+
+import net.minecraft.nbt.NBTTagCompound;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
+import com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec;
+import com.miaokatze.gtmb.hologram.HologramBlueprintFiles;
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument;
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.LocalEditorOrigin;
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.LocalSaveIntent;
 import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
@@ -37,9 +46,75 @@ public final class HologramClientLibraryRegression {
             exerciseQuickFence();
             exerciseLegacyMappings();
             exerciseImportedAuthorUpdates();
+            exerciseNameOnlyLocalAuthoring();
             exerciseDisplayListing();
+            storedFormatAdmission();
         } catch (Exception failure) {
             throw new IllegalStateException("Client blueprint persistence regression", failure);
+        }
+    }
+
+    private static void storedFormatAdmission() throws Exception {
+        Path game = Files.createTempDirectory("gtmb-stored-use-");
+        try {
+            HologramClientLibrary store = new HologramClientLibrary(game);
+            Files.createDirectories(store.directory());
+            String id = "local_33333333-3333-3333-3333-333333333333";
+            byte[] expanded = json("Original", "Alice");
+            byte[] compact = HologramBlueprintCompactCodec.recompress(expanded, HologramBlueprintArtifact.MAX_JSON_BYTES);
+            HologramBlueprintArtifact.writePair(store.directory().resolve(id + ".json"), expanded, png(0xff647888));
+            SimpleAssert.eq(id, store.list().get(0).id, "expanded pair remains listed");
+            byte[] originalOnDisk = Files.readAllBytes(store.savedPath(id));
+            int[] published = { 0 };
+            try {
+                HologramLocalBlueprintDocument.openStoredForEditor(store.readPrivateEditorSource(id).json(), id,
+                    () -> true, rows -> published[0]++, true, LocalEditorOrigin.TRACKED_PRIVATE);
+                throw new AssertionError("expanded original entered the library editor");
+            } catch (com.miaokatze.gtmb.hologram.HologramCompactRequiredException expected) {
+                SimpleAssert.eq(com.miaokatze.gtmb.hologram.HologramCompactRequiredException.MESSAGE, expected.getMessage(), "legacy gets the specific format guidance");
+            }
+            SimpleAssert.eq(0, published[0], "rejected source cannot publish even a partial editor view");
+            reject(() -> store.publicationArtifact(id), "publishing cannot compact a legacy pair implicitly");
+            SimpleAssert.that(Arrays.equals(originalOnDisk, Files.readAllBytes(store.savedPath(id))),
+                "browse, rejected edit and publication leave the original byte exact");
+            HologramLibraryClient client = new HologramLibraryClient();
+            var browsed = client.readDisplaySource("fixture", store.savedPath(id), id, "");
+            reject(browsed::requireStoredUse, "a browsable expanded display cannot become a world preview");
+            client.retainDisplaySource(browsed);
+            var warm = client.readDisplaySource("fixture", store.savedPath(id), id, "");
+            reject(warm::requireStoredUse, "a cached browse does not qualify for quick placement");
+            var ok = HologramLocalBlueprintDocument.openStoredForEditor(compact, id, () -> true,
+                rows -> published[0]++, false, LocalEditorOrigin.TRACKED_PRIVATE);
+            SimpleAssert.that(ok.document() != null && published[0] == 1,
+                "compact original opens despite older GTMB provenance without a conversion step");
+            byte[] malformed = "{\"encoding\":\"bad\",\"blueprint\":{\"cells\":[]}}".getBytes(StandardCharsets.UTF_8);
+            try {
+                HologramLocalBlueprintDocument.openStoredForEditor(malformed, id, () -> true, rows -> {},
+                    false, LocalEditorOrigin.TRACKED_PRIVATE);
+                throw new AssertionError("unsupported encoding accepted");
+            } catch (IOException expected) {
+                SimpleAssert.that(!(expected instanceof com.miaokatze.gtmb.hologram.HologramCompactRequiredException),
+                    "unsupported encoding is not a legacy compaction prompt");
+            }
+
+            JsonObject catalog = new JsonObject();
+            var members = new com.google.gson.JsonArray();
+            members.add(HologramBlueprintCompactCodec.parse(expanded).getAsJsonObject("blueprint"));
+            catalog.addProperty("schema", 2);
+            catalog.add("presets", members);
+            byte[] collection = jsonBytes(catalog);
+            Path path = store.legacyCatalogPath();
+            Files.write(path, collection);
+            SimpleAssert.that(!HologramBlueprintCompactCodec.isCompact(store.readLegacyDocument(id),
+                HologramBlueprintArtifact.MAX_JSON_BYTES), "extracting an expanded collection member preserves format");
+            Files.write(path, HologramBlueprintCompactCodec.recompress(collection, HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES));
+            SimpleAssert.that(HologramBlueprintCompactCodec.isCompact(store.readLegacyDocument(id),
+                HologramBlueprintArtifact.MAX_JSON_BYTES), "explicitly compacted catalog now yields compact members");
+        } finally {
+            try (java.util.stream.Stream<Path> paths = Files.walk(game)) {
+                for (Path path : (Iterable<Path>) paths.sorted(Comparator.reverseOrder())::iterator)
+                    Files.deleteIfExists(path);
+            }
         }
     }
 
@@ -51,13 +126,13 @@ public final class HologramClientLibraryRegression {
             Files.createDirectories(library.directory());
             Path legacy = library.directory()
                 .resolve(id + ".json");
-            HologramBlueprintArtifact.writePair(legacy, json("Nxer legacy import", "Nxer"), png(0xff334455));
+            HologramBlueprintArtifact.writePair(legacy, json("FixtureAuthor legacy import", "FixtureAuthor"), png(0xff334455));
             SimpleAssert.eq(
                 id,
                 library.list()
                     .get(0).id,
                 "legacy aliases register their stable editable identity");
-            byte[] edited = json("Nxer secondary edit", "Nxer");
+            byte[] edited = json("FixtureAuthor secondary edit", "FixtureAuthor");
             library.save(edited, png(0xff778899), id);
             SimpleAssert.eq(
                 1,
@@ -65,7 +140,7 @@ public final class HologramClientLibraryRegression {
                     .size(),
                 "secondary save replaces the loaded import without duplicates");
             SimpleAssert.eq(
-                "Nxer",
+                "FixtureAuthor",
                 library.list()
                     .get(0).authorName,
                 "a portable file retains the imported author when a different player edits it locally");
@@ -85,6 +160,166 @@ public final class HologramClientLibraryRegression {
                     Files.deleteIfExists(path);
             }
         }
+    }
+
+    private static void exerciseNameOnlyLocalAuthoring() throws Exception {
+        Path game = Files.createTempDirectory("gtmb-name-only-local-author-");
+        try {
+            CountingPairs pairs = new CountingPairs();
+            HologramClientLibrary library = new HologramClientLibrary(game, pairs);
+            String sourceId = "local_33333333-3333-3333-3333-333333333333";
+            String newId = "local_11111111-1111-1111-1111-111111111111";
+            String unrelatedId = "local_22222222-2222-2222-2222-222222222222";
+            UUID actor = UUID.fromString("44444444-4444-4444-4444-444444444444");
+            String originalUuid = "55555555-5555-5555-5555-555555555555";
+            byte[] firstCover = png(0xff224466);
+            byte[] nextCover = png(0xff778899);
+            Files.createDirectories(library.directory());
+
+            JsonObject root = HologramBlueprintCompactCodec.parse(json("Historic work", "Historical Author"));
+            JsonObject author = root.getAsJsonObject("blueprint");
+            author.remove("authorUuid");
+            author.addProperty("localEditorOrigin", "TRACKED_PRIVATE");
+            author.addProperty("saveIntent", "SAVE_AS_NEW");
+            HologramBlueprintArtifact.Artifact archived = HologramBlueprintArtifact.prepareSave(
+                jsonBytes(root), firstCover);
+            Path source = library.directory().resolve("Historical work.json");
+            HologramBlueprintArtifact.writePair(source, archived.json, archived.png);
+            library.list();
+            SimpleAssert.that(HologramBlueprintFiles.indexedPath(library.directory(), sourceId) == null,
+                "listing portable pairs does not make their apparent IDs durable");
+            var displayOnly = library.readPrivateEditorSource(sourceId);
+            SimpleAssert.eq(LocalEditorOrigin.STRICT, displayOnly.origin(),
+                "unindexed display-only alias cannot authorize writing back");
+            var visibleDoc = localEditor(displayOnly, sourceId);
+            var name = new NBTTagCompound();
+            name.setString("name", "Historical work local copy");
+            reject(() -> visibleDoc.prepareSaveDraft(name, "Actor", actor, sourceId, LocalSaveIntent.SAVE_CURRENT),
+                "a display-only import cannot replace a portable source");
+            var bare = HologramLocalBlueprintDocument.open(archived.json, "");
+            reject(() -> bare.prepareSaveDraft(name, "Actor", actor, newId, LocalSaveIntent.SAVE_AS_NEW),
+                "logical ID, empty file ID and opaque payload flags confer no authoring origin");
+            reject(() -> library.preparePrivateDocumentSave(archived.json, archived.png, newId, () -> true),
+                "server-download/direct byte store still requires complete authorship");
+            reject(() -> library.prepareLocalSave(archived.json, archived.png, newId, () -> true),
+                "ordinary raw save remains strict");
+
+            var read = library.readNamedEditorSource("Historical work");
+            SimpleAssert.that(Arrays.equals(archived.json, read.json()), "production named read verifies unchanged bound source");
+            var doc = localEditor(read, "");
+            SimpleAssert.that(doc.dirty() && doc.fileId().isEmpty(), "named read installs a fresh unsaved draft");
+            reject(() -> doc.prepareSaveDraft(name, "Actor", actor, newId, LocalSaveIntent.STRICT),
+                "explicit overwrite intent does not get the named compatibility rule");
+            reject(() -> doc.prepareSaveDraft(name, "Actor", actor, newId, LocalSaveIntent.SAVE_CURRENT),
+                "unsaved import cannot be treated as a current-file replacement");
+            reject(() -> library.prepareEditorSave(doc.freeze(), nextCover, newId, () -> true, null),
+                "generic placement/preview freeze cannot produce a disk save proof");
+
+            var prepared = doc.prepareSaveDraft(name, "Actor", actor, newId, LocalSaveIntent.SAVE_AS_NEW);
+            reject(() -> library.prepareEditorSave(prepared, nextCover, unrelatedId, () -> true, null),
+                "typed save cannot be redirected to an unrelated output slot");
+            SimpleAssert.eq(0, pairs.writes, "all rejects precede any pair mutation");
+            byte[] detached = prepared.artifact();
+            byte[] externalCopy = prepared.artifact();
+            externalCopy[externalCopy.length - 2] ^= 1;
+            var written = library.prepareEditorSave(prepared, nextCover, newId, () -> true, null);
+            written.receipt().write.commit();
+            doc.saved(doc.revision(), prepared, written.exactJson());
+            SimpleAssert.eq(newId, doc.fileId(), "matching owner ACK assigns exact new ID");
+            SimpleAssert.that(!doc.dirty() && Arrays.equals(written.exactJson(), library.read(newId)),
+                "owner receives the same JSON bytes as the measured durable readback");
+            var full = HologramBlueprintArtifact.readPair(library.savedPath(newId));
+            SimpleAssert.that(Arrays.equals(detached,
+                com.miaokatze.gtmb.hologram.HologramBlueprintPreviewBinding.sourceJson(full.json))
+                && HologramBlueprintArtifact.previewMatches(full.json, full.png),
+                "typed draft binds its own original encoded bytes and both cover directions");
+            assertNameOnlyAuthor(full.json);
+            reject(() -> library.prepareEditorSave(prepared, nextCover, newId, () -> true, null),
+                "prepared Save As New cannot replace an indexed slot on reuse");
+
+            name.setString("name", "Historical work current");
+            var current = doc.prepareSaveDraft(name, "Actor", actor, newId, LocalSaveIntent.SAVE_CURRENT);
+            written = library.prepareEditorSave(current, firstCover, newId, () -> true, null);
+            written.receipt().write.commit();
+            doc.saved(doc.revision(), current, written.exactJson());
+            assertNameOnlyAuthor(library.read(newId));
+
+            HologramClientLibrary restarted = new HologramClientLibrary(game);
+            var tracked = restarted.readPrivateEditorSource(newId);
+            SimpleAssert.eq(LocalEditorOrigin.TRACKED_PRIVATE, tracked.origin(), "fresh reader loads the persisted index");
+            SimpleAssert.that(Arrays.equals(written.exactJson(), tracked.json()), "fresh native slot reads the exact saved bytes");
+            var reopened = localEditor(tracked, newId);
+            SimpleAssert.that(!reopened.dirty(), "reopened managed row is clean");
+            reject(() -> reopened.prepareSaveDraft(name, "Actor", actor, unrelatedId, LocalSaveIntent.SAVE_CURRENT),
+                "Save Current cannot point away from the persistently opened source");
+            reject(() -> reopened.prepareSaveDraft(name, "Actor", actor, newId, LocalSaveIntent.STRICT),
+                "explicit overwrite does not opt in, even for the same slot");
+            current = reopened.prepareSaveDraft(name, "Actor", actor, newId, LocalSaveIntent.SAVE_CURRENT);
+            var pendingCurrent = current;
+            Path index = restarted.directory().resolve(".gtmb-blueprint-files.properties");
+            Path parkedIndex = index.resolveSibling(".regression-held-index");
+            Path priorPath = restarted.savedPath(newId);
+            byte[] priorJson = Files.readAllBytes(priorPath);
+            Files.move(index, parkedIndex);
+            try {
+                restarted.list(); // The same ID may still be visible through display fallback.
+                reject(() -> restarted.prepareEditorSave(pendingCurrent, nextCover, newId, () -> true, null),
+                    "a displayed row that lost its durable mapping cannot be written back");
+                SimpleAssert.that(Arrays.equals(priorJson, Files.readAllBytes(priorPath)),
+                    "a stale writer does not mutate the previously tracked pair");
+            } finally {
+                Files.move(parkedIndex, index);
+            }
+            written = restarted.prepareEditorSave(current, nextCover, newId, () -> true, null);
+            written.receipt().write.commit();
+            assertNameOnlyAuthor(restarted.read(newId));
+            var unchanged = HologramBlueprintArtifact.readPair(source);
+            SimpleAssert.that(Arrays.equals(archived.json, unchanged.json) && Arrays.equals(archived.png, unchanged.png),
+                "authoring never rewrites the imported original pair");
+
+            author.remove("authorName");
+            var blank = HologramLocalBlueprintDocument.open(jsonBytes(root), "");
+            var stamped = savedBlueprint(blank.prepareSaveDraft(name, "Actor", actor, unrelatedId).artifact());
+            SimpleAssert.eq("Actor", stamped.get("authorName").getAsString(), "authorless draft continues to record actor name");
+            SimpleAssert.eq(actor.toString(), stamped.get("authorUuid").getAsString(),
+                "authorless draft continues to record the same actor UUID");
+            author.addProperty("authorUuid", originalUuid);
+            var onlyUuid = localEditor(new HologramClientLibrary.EditorSource(jsonBytes(root), LocalEditorOrigin.NAMED_IMPORT), "");
+            reject(() -> onlyUuid.prepareSaveDraft(name, "Actor", actor, unrelatedId, LocalSaveIntent.SAVE_AS_NEW),
+                "UUID-only draft cannot infer an author name");
+            author.addProperty("authorName", "Established author");
+            var complete = HologramLocalBlueprintDocument.open(jsonBytes(root), "");
+            var original = savedBlueprint(complete.prepareSaveDraft(name, "Actor", actor, unrelatedId).artifact());
+            SimpleAssert.eq("Established author", original.get("authorName").getAsString(), "complete author name unchanged");
+            SimpleAssert.eq(originalUuid, original.get("authorUuid").getAsString(), "complete author UUID unchanged");
+            SimpleAssert.eq(1234L, original.get("createdAt").getAsLong(), "complete provenance timestamp unchanged");
+        } finally {
+            try (java.util.stream.Stream<Path> paths = Files.walk(game)) {
+                for (Path path : (Iterable<Path>) paths.sorted(Comparator.reverseOrder())::iterator)
+                    Files.deleteIfExists(path);
+            }
+        }
+    }
+
+    private static HologramLocalBlueprintDocument localEditor(HologramClientLibrary.EditorSource input, String id)
+        throws IOException {
+        return HologramLocalBlueprintDocument.openForEditor(input.json(), id, () -> true, rows -> {}, false,
+            input.origin()).document();
+    }
+
+    private static byte[] jsonBytes(JsonObject root) {
+        return root.toString().getBytes(StandardCharsets.UTF_8);
+    }
+
+    private static JsonObject savedBlueprint(byte[] bytes) throws IOException {
+        return HologramBlueprintCompactCodec.documentBlueprint(HologramBlueprintCompactCodec.parse(bytes));
+    }
+
+    private static void assertNameOnlyAuthor(byte[] bytes) throws IOException {
+        JsonObject actual = savedBlueprint(bytes);
+        SimpleAssert.eq("Historical Author", actual.get("authorName").getAsString(), "historical display attribution is kept");
+        SimpleAssert.that(!actual.has("authorUuid"), "missing creator UUID stays absent rather than assigning the actor");
+        SimpleAssert.eq(1234L, actual.get("createdAt").getAsLong(), "historical timestamp is not re-authored");
     }
 
     private static void exerciseLegacyMappings() throws Exception {

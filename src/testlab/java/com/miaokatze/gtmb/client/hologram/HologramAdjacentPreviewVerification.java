@@ -19,16 +19,16 @@ public final class HologramAdjacentPreviewVerification {
     private HologramAdjacentPreviewVerification() {}
 
     public static NBTTagCompound verify(NBTTagCompound snapshot, boolean current) throws ReflectiveOperationException {
-        HologramState rendered = (HologramState) field(HologramRenderer.class, "previewState").get(null);
+        HologramState rendered = (HologramState) field(MiaoVisonLiteRenderer.class, "previewState").get(HologramRenderer.editor());
         require(
             rendered != null && rendered.data.equals(snapshot),
             "adjacency witness requires this actual editor snapshot");
-        int renderedView = field(HologramRenderer.class, "visibleView").getInt(null);
-        int renderedMode = field(HologramRenderer.class, "visibleMode").getInt(null);
+        int renderedView = field(MiaoVisonLiteRenderer.class, "visibleView").getInt(HologramRenderer.editor());
+        int renderedMode = field(MiaoVisonLiteRenderer.class, "visibleMode").getInt(HologramRenderer.editor());
         require(
             (renderedView == 1 || renderedMode == 2) == current,
             "adjacency witness requires the actual displayed target/current view");
-        List<?> faces = (List<?>) field(HologramRenderer.class, "cachedFaces").get(null);
+        List<?> faces = (List<?>) field(MiaoVisonLiteRenderer.class, "cachedFaces").get(HologramRenderer.editor());
         HologramState state = new HologramState(snapshot);
         NBTTagList rows = new NBTTagList();
         int floors = 0;
@@ -53,8 +53,10 @@ public final class HologramAdjacentPreviewVerification {
                     int side = field(face.getClass(), "side").getInt(face);
                     emitted |= 1 << side;
                     if (side == 1) {
-                        double[][] points = (double[][]) field(face.getClass(), "points").get(face);
-                        top = new double[][] { points[3], points[7], points[6], points[2] };
+                        double[] points = (double[]) field(face.getClass(), "points").get(face);
+                        top = new double[][] { java.util.Arrays.copyOfRange(points, 9, 12),
+                            java.util.Arrays.copyOfRange(points, 21, 24), java.util.Arrays.copyOfRange(points, 18, 21),
+                            java.util.Arrays.copyOfRange(points, 6, 9) };
                     }
                 }
                 require(
