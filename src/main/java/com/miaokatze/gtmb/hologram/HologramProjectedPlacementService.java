@@ -25,6 +25,9 @@ import net.minecraft.world.World;
 
 import com.github.bsideup.jabel.Desugar;
 import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
+import com.miaokatze.gtmb.hologram.HologramProjectedPlacementGuardTrace.Phase;
+import com.miaokatze.gtmb.hologram.HologramProjectedPlacementGuardTrace.Reason;
+import com.miaokatze.gtmb.main.GTMiaoBlueprint;
 
 /** Turns an explicit material-review request into the existing server-owned placement transaction. */
 final class HologramProjectedPlacementService {
@@ -58,7 +61,7 @@ final class HologramProjectedPlacementService {
             if (pending != null || PENDING.size() + QUOTES.size() >= MAX_PENDING)
                 throw new IOException("已有施工核对任务，请稍后重试");
             Job job = new Job(player, header, tag);
-            job.requireCurrent();
+            job.requireCurrent(Phase.RECEIVE);
             if (!HologramAreaPreparation.execute(job.decoding)) throw new IOException("施工准备队列繁忙，请稍后重试");
             PENDING.put(owner, job);
         } catch (IOException invalid) {
@@ -150,7 +153,7 @@ final class HologramProjectedPlacementService {
                 pending.remove();
             } catch (RuntimeException | LinkageError failure) {
                 HologramAreaPreparation.cancel(job.decoding);
-                com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Projected placement preparation failed", failure);
+                GTMiaoBlueprint.LOG.warn("Projected placement preparation failed", failure);
                 reply(job.player, job.header.id(), false, "施工准备失败，未进行扣料或建造");
                 pending.remove();
             } catch (InterruptedException interrupted) {
@@ -282,31 +285,45 @@ final class HologramProjectedPlacementService {
             decoding = new FutureTask<>(() -> HologramPlacementRequest.decode(header, tag, height));
         }
 
-        private void requireCurrent() throws IOException {
-            if (System.nanoTime() - started > 90_000_000_000L) throw new IOException("施工准备超时，请缩小施工选区后重试");
-            if (!HologramNetwork.progressConnected(player) || player.worldObj != world
-                || player.inventory.currentItem != toolSlot
-                || player.getHeldItem() != tool
-                || !ItemNekoHologramProjector.isProjector(tool)
-                || !player.capabilities.allowEdit
-                || HologramWorkspace.find(player.getUniqueID()) != previous
-                || !HologramWorldFlow.worldPosition(header.x(), header.y(), header.z(), world.getHeight())
-                || !HologramSessionPolicy.previewReach(player, header.x(), header.y(), header.z())
-                || !world.blockExists(header.x(), header.y(), header.z())) throw new IOException("施工工具、位置或会话已变化，请重新确认");
+        private void requireCurrent(Phase phase) throws IOException {
+            Reason rejection = firstRejection();
+            if (rejection != null)
+                throw HologramProjectedPlacementGuardTrace
+                    .failure(phase, rejection, line -> GTMiaoBlueprint.LOG.info(line));
+        }
+
+        /** Preserve the former short-circuit order; diagnosing an early failure does not probe later conditions. */
+        private Reason firstRejection() {
+            if (System.nanoTime() - started > 90_000_000_000L) return Reason.TIMEOUT;
+            if (!HologramNetwork.progressConnected(player)) return Reason.CONNECTION_CLOSED;
+            if (player.worldObj != world) return Reason.WORLD_CHANGED;
+            if (player.inventory.currentItem != toolSlot) return Reason.SLOT_CHANGED;
+            if (player.getHeldItem() != tool) return Reason.STACK_REPLACED;
+            if (!ItemNekoHologramProjector.isProjector(tool)) return Reason.NOT_PROJECTOR;
+            if (!player.capabilities.allowEdit) return Reason.EDIT_DISABLED;
+            if (HologramWorkspace.find(player.getUniqueID()) != previous) return Reason.WORKSPACE_CHANGED;
+            if (!HologramWorldFlow.worldPosition(header.x(), header.y(), header.z(), world.getHeight()))
+                return Reason.ANCHOR_BOUNDS;
+            if (!HologramSessionPolicy.previewReach(player, header.x(), header.y(), header.z()))
+                return Reason.ANCHOR_REACH;
+            if (!world.blockExists(header.x(), header.y(), header.z())) return Reason.ANCHOR_NOT_LOADED;
+
             HologramArea area = HologramWorkspace.AREAS.get(player.getUniqueID());
-            if (HologramDemolition.active(player) || HologramAeCraftingOrders.active(player)
-                || area != null && (area.selecting || area.importing)
-                || previous != null
-                    && (previous.planRevision != previousRevision || previous.editorWorkspaceEpoch != previousWorkspace
-                        || previous.job == 1
-                        || previous.job == 2
-                        || previous.capturePending
-                        || HologramAuthoringWorkflow.blueprintHasUnsavedChanges(previous)))
-                throw new IOException("请先处理当前施工、采集或未保存的服务器草稿");
+            if (HologramDemolition.active(player)) return Reason.ACTIVE_DEMOLITION;
+            if (HologramAeCraftingOrders.active(player)) return Reason.ACTIVE_AE_ORDER;
+            if (area != null && (area.selecting || area.importing)) return Reason.AREA_BUSY;
+            if (previous != null) {
+                if (previous.planRevision != previousRevision) return Reason.PREVIOUS_REVISION_CHANGED;
+                if (previous.editorWorkspaceEpoch != previousWorkspace) return Reason.PREVIOUS_EPOCH_CHANGED;
+                if (previous.job == 1 || previous.job == 2) return Reason.PREVIOUS_JOB_BUSY;
+                if (previous.capturePending) return Reason.PREVIOUS_CAPTURE_PENDING;
+                if (HologramAuthoringWorkflow.blueprintHasUnsavedChanges(previous)) return Reason.PREVIOUS_UNSAVED;
+            }
+            return null;
         }
 
         private boolean step(long deadline) throws IOException, ExecutionException, InterruptedException {
-            requireCurrent();
+            requireCurrent(Phase.WAIT);
             if (decoded == null) {
                 if (!decoding.isDone()) return false;
                 decoded = decoding.get();
@@ -349,7 +366,7 @@ final class HologramProjectedPlacementService {
                 if (target.controller() == (pass == 1)) add(target, resolved);
             }
             if (pass < 2) return false;
-            requireCurrent();
+            requireCurrent(Phase.PUBLISH);
             HologramWorkspace.activate(player.getUniqueID(), session);
             if (!HologramProjectorWorkflow.openPlacementReview(session, player))
                 throw new IOException("材料核对未能启动，请重新确认");
