@@ -3,6 +3,8 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import static com.miaokatze.gtmb.client.hologram.HologramUiText.projector;
+
 import static net.minecraft.client.gui.Gui.drawRect;
 
 import java.io.IOException;
@@ -76,7 +78,7 @@ final class HologramLibraryAdminEditor {
         try {
             value = Integer.parseInt(quota.getText());
         } catch (NumberFormatException invalid) {
-            throw new IOException("每成员配额须为 1..1000 的整数");
+            throw new IOException(projector("admin.quota_error"));
         }
         selected().setString("name", name.getText());
         selected().setInteger("quota", value);
@@ -112,7 +114,7 @@ final class HologramLibraryAdminEditor {
         }
         if (!remove && !defaultGroup()) selected().getTagList("members", 8)
             .appendTag(new NBTTagString(id.toString()));
-        notice = remove || defaultGroup() ? "已移回默认组；保存后生效" : "已登记到当前组；保存后生效";
+        notice = remove || defaultGroup() ? projector("admin.reset_member_notice") : projector("admin.move_member_notice");
     }
 
     boolean activate(int id) {
@@ -139,7 +141,7 @@ final class HologramLibraryAdminEditor {
                     break;
                 case 18002:
                     storeGroup();
-                    if (groups.size() >= HologramLibraryPermissions.MAX_GROUPS) throw new IOException("权限组已达16组上限");
+                    if (groups.size() >= HologramLibraryPermissions.MAX_GROUPS) throw new IOException(projector("admin.group_limit"));
                     NBTTagCompound group = new HologramLibraryPermissions.Group(
                         "group_" + UUID.randomUUID()
                             .toString()
@@ -159,7 +161,7 @@ final class HologramLibraryAdminEditor {
                         groups.remove(selected);
                         selected = groupPage = 0;
                         showGroup();
-                        notice = "已删除组，其成员归默认组；保存后生效";
+                        notice = projector("admin.delete_group_notice");
                     }
                     break;
                 case 18004:
@@ -187,17 +189,17 @@ final class HologramLibraryAdminEditor {
                     storeGroup();
                     HologramLibraryPermissions permissions = HologramLibraryPermissions.read(tags());
                     int up = Integer.parseInt(upload.getText()), down = Integer.parseInt(download.getText());
-                    if (up < 1 || up > 1024 || down < 1 || down > 1024) throw new IOException("全服带宽须为 1..1024 KiB/s");
+                    if (up < 1 || up > 1024 || down < 1 || down > 1024) throw new IOException(projector("admin.bandwidth_error"));
                     HologramLibraryClient.INSTANCE
                         .saveConfig(up, down, permissions.effective(null).quota, revision, permissions.tag());
                     saving = HologramLibraryClient.INSTANCE.configSavePending();
-                    notice = "等待服务器确认全部设置";
+                    notice = projector("admin.awaiting_server");
                     break;
                 default:
                     return false;
             }
         } catch (IOException | IllegalArgumentException invalid) {
-            notice = invalid.getMessage() == null ? "请输入有效的整数" : invalid.getMessage();
+            notice = invalid.getMessage() == null ? projector("admin.integer_error") : invalid.getMessage();
         }
         return true;
     }
@@ -212,7 +214,7 @@ final class HologramLibraryAdminEditor {
             saving = false;
             if (HologramLibraryClient.INSTANCE.confirmedConfigRevision() > revision) {
                 load(HologramLibraryClient.INSTANCE.config());
-                notice = "服务器已确认全部设置 · 修订 " + revision;
+                notice = projector("admin.confirmed", revision);
             } else notice = HologramLibraryClient.INSTANCE.status();
         }
     }
@@ -225,7 +227,7 @@ final class HologramLibraryAdminEditor {
 
     String status() {
         return !saving && HologramLibraryClient.INSTANCE.config()
-            .getLong("configRevision") != revision ? "其他管理员已更新；草稿保留，请重新载入后编辑" : notice;
+            .getLong("configRevision") != revision ? projector("admin.revision_conflict") : notice;
     }
 
     /** The production ADMIN dialog adopts the same fields and draft as the legacy canvas adapter. */
@@ -235,13 +237,13 @@ final class HologramLibraryAdminEditor {
             .coverChildrenHeight()
             .childPadding(4);
         form.child(
-            HologramEditorNativeTheme.label(() -> "全服共享带宽（KiB/s，1..1024）")
+            HologramEditorNativeTheme.label(() -> projector("admin.shared_bandwidth"))
                 .widthRel(1f)
                 .height(18));
-        form.child(nativeField("上传", upload));
-        form.child(nativeField("下载", download));
+        form.child(nativeField(projector("admin.upload"), upload));
+        form.child(nativeField(projector("admin.download"), download));
         form.child(
-            HologramEditorNativeTheme.label(() -> "权限组仅控制公库；不授予管理或删除他人蓝图权限。")
+            HologramEditorNativeTheme.label(() -> projector("admin.group_scope"))
                 .widthRel(1f)
                 .height(30));
         form.child(
@@ -249,44 +251,44 @@ final class HologramLibraryAdminEditor {
                 .widthRel(1f)
                 .height(22)
                 .childPadding(4)
-                .child(nativeButton(18000, () -> "上一组", () -> selected > 0).width(68))
+                .child(nativeButton(18000, () -> projector("admin.prev_group"), () -> selected > 0).width(68))
                 .child(
                     HologramEditorNativeTheme
                         .label(() -> (selected + 1) + "/" + groups.size() + " · " + selected().getString("name"))
                         .widthRel(1f)
                         .expanded()
                         .height(22))
-                .child(nativeButton(18001, () -> "下一组", () -> selected + 1 < groups.size()).width(68)));
+                .child(nativeButton(18001, () -> projector("admin.next_group"), () -> selected + 1 < groups.size()).width(68)));
         form.child(
             Flow.row()
                 .widthRel(1f)
                 .height(22)
                 .childPadding(4)
                 .child(
-                    nativeButton(18002, () -> "新增组", () -> groups.size() < HologramLibraryPermissions.MAX_GROUPS)
+                    nativeButton(18002, () -> projector("admin.add_group"), () -> groups.size() < HologramLibraryPermissions.MAX_GROUPS)
                         .widthRel(1f)
                         .expanded())
                 .child(
-                    nativeButton(18003, () -> "删除组，成员归默认", () -> !defaultGroup()).widthRel(1f)
+                    nativeButton(18003, () -> projector("admin.delete_group"), () -> !defaultGroup()).widthRel(1f)
                         .expanded()));
-        form.child(nativeField("组名", name));
-        form.child(nativeField("每成员配额", quota));
+        form.child(nativeField(projector("admin.group_name"), name));
+        form.child(nativeField(projector("admin.member_quota"), quota));
         form.child(
             Flow.row()
                 .widthRel(1f)
                 .height(22)
                 .childPadding(4)
                 .child(
-                    nativeButton(18004, () -> "发布：" + (selected().getBoolean("publish") ? "允许" : "禁止"), () -> true)
+                    nativeButton(18004, () -> projector("admin.publish_state", projector(selected().getBoolean("publish") ? "library.allowed" : "library.denied")), () -> true)
                         .widthRel(1f)
                         .expanded())
                 .child(
-                    nativeButton(18005, () -> "下载：" + (selected().getBoolean("download") ? "允许" : "禁止"), () -> true)
+                    nativeButton(18005, () -> projector("admin.download_state", projector(selected().getBoolean("download") ? "library.allowed" : "library.denied")), () -> true)
                         .widthRel(1f)
                         .expanded()));
         form.child(
             HologramEditorNativeTheme
-                .label(() -> defaultGroup() ? "默认组涵盖未登记玩家；输入 UUID 可将其归默认。" : "一人一组；输入完整小写 UUID，登记会从原组移入。")
+                .label(() -> defaultGroup() ? projector("admin.default_help") : projector("admin.registration_help"))
                 .widthRel(1f)
                 .height(30));
         IWidget uuidField = ui.shell.adoptField(member)
@@ -301,10 +303,10 @@ final class HologramLibraryAdminEditor {
                 .height(22)
                 .childPadding(4)
                 .child(
-                    nativeButton(18006, () -> defaultGroup() ? "归默认组" : "登记 / 移入", () -> true).widthRel(1f)
+                    nativeButton(18006, () -> defaultGroup() ? projector("admin.move_default") : projector("admin.move_member"), () -> true).widthRel(1f)
                         .expanded())
                 .child(
-                    nativeButton(18007, () -> "移除成员", () -> !defaultGroup()).widthRel(1f)
+                    nativeButton(18007, () -> projector("admin.remove_member"), () -> !defaultGroup()).widthRel(1f)
                         .expanded()));
         for (int row = 0; row < 3; row++) {
             final int slot = row;
@@ -317,22 +319,21 @@ final class HologramLibraryAdminEditor {
                 .widthRel(1f)
                 .height(22)
                 .childPadding(4)
-                .child(nativeButton(18008, () -> "成员上页", () -> memberPage > 0).width(88))
+                .child(nativeButton(18008, () -> projector("admin.prev_member"), () -> memberPage > 0).width(88))
                 .child(
                     HologramEditorNativeTheme.label(
-                        () -> "登记 " + selected().getTagList("members", 8)
-                            .tagCount() + " 位 · 页 " + (memberPage + 1))
+                        () -> projector("admin.members", selected().getTagList("members", 8).tagCount(), memberPage + 1))
                         .widthRel(1f)
                         .expanded()
                         .height(22))
                 .child(
                     nativeButton(
                         18009,
-                        () -> "成员下页",
+                        () -> projector("admin.next_member"),
                         () -> (memberPage + 1) * 3 < selected().getTagList("members", 8)
                             .tagCount()).width(88)));
         form.child(
-            nativeButton(18010, () -> "重新载入服务器设置（放弃本地草稿）", () -> true).widthRel(1f)
+            nativeButton(18010, () -> projector("admin.reload"), () -> true).widthRel(1f)
                 .height(22));
         return new HologramRecessedList().name("library_permission_form")
             .widthRel(1f)
