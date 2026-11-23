@@ -142,9 +142,9 @@ GTNL 0.2.7-rc2.1 蒸汽树场的青铜加固木位置可按原机声明手动选
 
 *Select a blueprint directly in the library. Projection, Blueprint and Cut have separate entries; Properties, Blueprint Settings and Library share the central editing canvas.*
 
-**本机蓝图打开速度（可选）**：如需更快地等待大型私有蓝图的完整重建，在这个游戏实例中新建 `config/gtmb/client-blueprint-performance.properties`，写入 `ordinaryOpenPreset=fast`，然后重启客户端。默认 `regular`（每次 5,120 工作单位 / 5 ms），`fast` 为 51,200 / 10 ms，完整打开时可能有更明显的短时掉帧。预算在工作单位之间检查，不保证单帧上限。只影响从本地私有蓝图库主动进入编辑、且确实需要普通完整重建的情况；紧凑蓝图、缓存、局部编辑和服务器不变。缺少或无效配置时使用默认值，Mod 不自动生成或改写此文件。
+**本机蓝图打开速度（可选）**：如需更快地等待大型私有蓝图的完整重建，在这个游戏实例中新建 `config/gtmb/client-blueprint-performance.properties`，写入 `ordinaryOpenPreset=fast`，然后重启客户端。默认 `regular`（每次 5,120 工作单位 / 5 ms），`fast` 为 51,200 / 10 ms，完整打开时可能有更明显的短时掉帧。预算在工作单位之间检查，不保证单帧上限。只影响从本地私有蓝图库主动进入编辑、且确实需要从当前普通数据生成视图、未进入紧凑索引捷径的情况；原生紧凑视图、自动恢复、局部编辑及服务器不变。缺少或无效配置时使用默认值，Mod 不自动生成或改写此文件。
 
-*Optional local opening speed: create `config/gtmb/client-blueprint-performance.properties` in this game instance, set `ordinaryOpenPreset=fast`, and restart the client. The default `regular` uses 5,120 work units / 5 ms per slice; `fast` uses 51,200 / 10 ms and may cause more noticeable short frame drops. These are cooperative budgets, not frame-time guarantees. This affects explicit Edit of a managed private blueprint only when it needs ordinary full preparation. Compact opens, cached views, edits and servers are unchanged. A missing or invalid file uses the default; the mod never writes it.*
+*Optional local opening speed: create `config/gtmb/client-blueprint-performance.properties` in this game instance, set `ordinaryOpenPreset=fast`, and restart the client. The default `regular` uses 5,120 work units / 5 ms per slice; `fast` uses 51,200 / 10 ms and may cause more noticeable short frame drops. These are cooperative budgets, not frame-time guarantees. This affects explicit Edit of a managed private blueprint only when it needs a cooperative view build from materialized data instead of the compact-index shortcut. Files with an already prepared compact view, automatic resume, local edits, and servers are unchanged. A missing or invalid file uses the default; the mod never writes it.*
 
 <table>
   <tr>
