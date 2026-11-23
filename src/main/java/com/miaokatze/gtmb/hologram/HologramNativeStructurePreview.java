@@ -67,6 +67,7 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
     private final HologramBlockRendererPreview blockRenderer;
     private final HologramNativePreviewItems items = new HologramNativePreviewItems();
     private final ColdCandidateCache coldCandidates = new ColdCandidateCache(items::catalog);
+    private final HologramNativeHatchChooser nativeHatchChooser;
     private final ISurvivalBuildEnvironment survivalEnvironment;
     private final AutoPlaceEnvironment candidateEnvironment;
     private final IConstructable constructable;
@@ -87,6 +88,11 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
 
     HologramNativeStructurePreview(TileEntity controller, Object context, IConstructable constructable,
         boolean structureCompat, ItemStack trigger) throws IOException {
+        this(controller, context, constructable, structureCompat, trigger, null);
+    }
+
+    HologramNativeStructurePreview(TileEntity controller, Object context, IConstructable constructable,
+        boolean structureCompat, ItemStack trigger, ControllerFactory pristine) throws IOException {
         this.controller = controller;
         this.context = context;
         channels = new HologramChannelTrace.Accumulator(context);
@@ -96,6 +102,8 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
         emptyWorld = controller.getWorldObj();
         gregTech = controller instanceof IGregTechTileEntity;
         modifier = gregTech && context instanceof INEIPreviewModifier supplied ? supplied : null;
+        nativeHatchChooser = !gregTech || pristine == null || modifier != null ? null
+            : new HologramNativeHatchChooser(items::catalog, () -> pristineHatchQuery(pristine));
         if (HologramBlockRendererPreview.required(context)) {
             // Only this implementation requires BlockRenderer's class identity. Other controllers use our memory world.
             blockRenderer = new HologramBlockRendererPreview(controller);
@@ -280,15 +288,31 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
         try {
             controller.setWorldObj(world);
             boolean first = observedMaterials.put(element, Boolean.TRUE) == null;
-            if (first)
+            if (first) try {
                 HologramDeclarationWrappers.observePreviewMaterials(element);
+            } catch (RuntimeException | LinkageError unavailable) {
+                // Optional channel/material metadata must not abort the exact cell's native offer query.
+            }
             // Keep the settled controller's real native result, which may limit occupancy-dependent auto-fill.
             // The browser uses an unfilled representative for browsing, not its separately placed preview controller.
-            IStructureElement.BlocksToPlace blocks = element.getBlocksToPlace(
-                context, emptyWorld, cell.x, cell.y, cell.z, trigger.copy(), candidateEnvironment);
-            if (blocks != null) readCandidates(cell, blocks, isChain(element), items::catalog,
-                () -> coldCandidates.offers(element));
-            boolean hatch = "hatch".equals(HologramElementCatalog.hatchRole(element));
+            IStructureElement.BlocksToPlace blocks = null;
+            boolean chain = false;
+            try {
+                chain = isChain(element);
+                blocks = element.getBlocksToPlace(
+                    context, emptyWorld, cell.x, cell.y, cell.z, trigger.copy(), candidateEnvironment);
+            } catch (RuntimeException | LinkageError unavailable) {
+                // An opaque sibling must not suppress separately readable native hatch branches.
+            }
+            boolean settled = blocks != null;
+            readCandidates(cell, blocks, chain, items::catalog, () -> hatchSupplements(cell, element, settled));
+            boolean hatch;
+            try {
+                hatch = "hatch".equals(HologramElementCatalog.hatchRole(element));
+            } catch (RuntimeException | LinkageError unavailable) {
+                // A successfully appended native hatch offer can still drive this cell's manual chooser.
+                hatch = cell.nativeCandidateCount >= 0;
+            }
             if (hatch) cell.role = "hatch";
             if (first && reusablePreviewOptions(element)) sharedOptions.put(
                 element,
@@ -301,6 +325,38 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
             HologramChannelTrace.endInto(trace, channels);
             HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_CANDIDATES, candidateStart);
         }
+    }
+
+    private List<ItemStack> hatchSupplements(HologramCapture.Cell cell, IStructureElement<?> element, boolean settled) {
+        List<ItemStack> normal = settled ? coldCandidates.offers(element) : Collections.emptyList();
+        if (nativeHatchChooser == null) return normal;
+        List<ItemStack> fresh = nativeHatchChooser.offers(element, cell.x, cell.y, cell.z, trigger);
+        if (normal.isEmpty()) return fresh;
+        if (fresh.isEmpty()) return normal;
+        List<ItemStack> merged = new ArrayList<>(normal.size() + fresh.size());
+        merged.addAll(normal);
+        merged.addAll(fresh);
+        return merged;
+    }
+
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    private HologramNativeHatchChooser.Query pristineHatchQuery(ControllerFactory factory) throws IOException {
+        TileEntity pristine = factory.create();
+        Object fresh = HologramStructureDiscovery.context(pristine);
+        World pristineWorld = pristine.getWorldObj();
+        if (pristine == controller || !(pristineWorld instanceof HologramResourceWorld)
+            || pristineWorld == emptyWorld || pristineWorld == world || fresh == context || fresh == null
+            || fresh.getClass() != context.getClass())
+            throw new IOException("LOCAL_NATIVE_HATCH_CONTEXT_UNAVAILABLE");
+        AutoPlaceEnvironment environment =
+            AutoPlaceEnvironment.fromLegacy(new HologramNativePreviewItems(), new PreviewPlayer(pristineWorld), msg -> {});
+        return (element, x, y, z, sample) ->
+            ((IStructureElement) element).getBlocksToPlace(fresh, pristineWorld, x, y, z, sample, environment);
+    }
+
+    @FunctionalInterface
+    interface ControllerFactory {
+        TileEntity create() throws IOException;
     }
 
     private static boolean reusablePreviewOptions(IStructureElement<?> element) {
@@ -359,6 +415,28 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
     static void readCandidates(HologramCapture.Cell cell, IStructureElement.BlocksToPlace blocks, boolean chain,
         Supplier<List<ItemStack>> catalog, Supplier<List<ItemStack>> coldOffers) {
         Map<HologramBlueprintResources.ExactKey, ItemStack> stacks = new LinkedHashMap<>();
+        boolean complete = false;
+        if (blocks != null) try {
+            complete = readSettledOffers(stacks, blocks, chain, catalog);
+        } catch (RuntimeException | LinkageError unavailable) {
+            // A bad settled predicate still must not erase independently proved manual options or lift auto eligibility.
+            stacks.clear();
+        }
+        int nativeCount = stacks.size();
+        if (nativeCount < MAX_CANDIDATES) for (ItemStack candidate : coldOffers.get()) {
+            add(stacks, candidate);
+            if (stacks.size() == MAX_CANDIDATES) break;
+        }
+        boolean supplemental = stacks.size() > nativeCount;
+        cell.nativeCandidateCount = supplemental ? nativeCount : -1;
+        cell.candidates = new ArrayList<>(stacks.values());
+        cell.candidateComplete = complete && !supplemental;
+        cell.candidateBoundary = supplemental ? "本地目录含空结构的仓室候选，不代表自动补仓" : complete ? ""
+            : blocks == null ? "原生结构元素未提供可读取选项" : "选项来自本地物品目录";
+    }
+
+    private static boolean readSettledOffers(Map<HologramBlueprintResources.ExactKey, ItemStack> stacks,
+        IStructureElement.BlocksToPlace blocks, boolean chain, Supplier<List<ItemStack>> catalog) {
         Iterable<ItemStack> listed = blocks.getStacks();
         // StructureLib chains can return a partial stack iterable alongside the full combined predicate.
         boolean complete = listed != null && !chain;
@@ -385,16 +463,7 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
                 if (stacks.size() == MAX_CANDIDATES) break;
             }
         }
-        int nativeCount = stacks.size();
-        if (nativeCount < MAX_CANDIDATES) for (ItemStack candidate : coldOffers.get()) {
-            add(stacks, candidate);
-            if (stacks.size() == MAX_CANDIDATES) break;
-        }
-        boolean supplemental = stacks.size() > nativeCount;
-        cell.nativeCandidateCount = supplemental ? nativeCount : -1;
-        cell.candidates = new ArrayList<>(stacks.values());
-        cell.candidateComplete = complete && !supplemental;
-        cell.candidateBoundary = supplemental ? "本地目录含空结构的仓室候选，不代表自动补仓" : complete ? "" : "选项来自本地物品目录";
+        return complete;
     }
 
     /** Capture-owned memo: only reviewed trigger-invariant native leaves can contribute, even through a wrapper. */
@@ -447,6 +516,7 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
         observedMaterials.clear();
         sharedOptions.clear();
         coldCandidates.clear();
+        if (nativeHatchChooser != null) nativeHatchChooser.clear();
         placements = Collections.<HologramNativePreviewWorld.Placement>emptyList().iterator();
     }
 

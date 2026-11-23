@@ -22,6 +22,7 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraftforge.common.util.ForgeDirection;
 
+import com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor;
 import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
 import com.gtnewhorizon.structurelib.structure.IStructureDefinition;
 import com.gtnewhorizon.structurelib.structure.IStructureElement;
@@ -36,6 +37,7 @@ import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase;
 import gregtech.api.metatileentity.implementations.MTEHatchEnergy;
+import gregtech.api.metatileentity.implementations.MTEHatchInputBus;
 import gregtech.api.metatileentity.implementations.MTEHatchOutput;
 import gregtech.api.metatileentity.implementations.MTEMultiBlockBase;
 import gregtech.api.util.HatchElementBuilder;
@@ -47,6 +49,7 @@ import gtPlusPlus.xmod.gregtech.api.metatileentity.implementations.MTEHatchSteam
 final class HologramLayeredHatchRegression {
 
     private static final int OUTPUT_ID = 32748, ENERGY_ID = 32747, STEAM_OUTPUT_ID = 32746;
+    private static final int INPUT_BUS_ID = 32745, SPECIAL_BUS_ID = 32744;
 
     private HologramLayeredHatchRegression() {}
 
@@ -71,6 +74,13 @@ final class HologramLayeredHatchRegression {
                 .withAdder(
                     (context, tile, texture) -> { throw new AssertionError("layer adder executed while editing"); });
             coldNativeOffers(unsafe, machines, layered);
+            try {
+                mixedNativeChooser(unsafe, machines);
+            } finally {
+                // The isolated Unsafe nodes have no GT host; do not leave them in later native registry walks.
+                GregTechAPI.METATILEENTITIES[INPUT_BUS_ID] = null;
+                GregTechAPI.METATILEENTITIES[SPECIAL_BUS_ID] = null;
+            }
             nativeCandidatesAndPin(unsafe, machines, layered);
             localFacingChoices(machines, layered);
             contextualPresets(unsafe, machines, layered);
@@ -160,6 +170,135 @@ final class HologramLayeredHatchRegression {
         } finally {
             GregTechAPI.METATILEENTITIES[STEAM_OUTPUT_ID] = null;
         }
+    }
+
+    private static void mixedNativeChooser(sun.misc.Unsafe unsafe, Block machines) throws ReflectiveOperationException {
+        var fresh = (FacingOnlyController) unsafe.allocateInstance(FacingOnlyController.class);
+        var settled = (FacingOnlyController) unsafe.allocateInstance(FacingOnlyController.class);
+        var bus = (InputBusFixture) unsafe.allocateInstance(InputBusFixture.class);
+        var special = (SpecialBusFixture) unsafe.allocateInstance(SpecialBusFixture.class);
+        GregTechAPI.METATILEENTITIES[INPUT_BUS_ID] = bus;
+        GregTechAPI.METATILEENTITIES[SPECIAL_BUS_ID] = special;
+        fresh.mInputBusses = new ArrayList<>();
+        fresh.mDualInputHatches = new ArrayList<>();
+        fresh.mEnergyHatches = new ArrayList<>();
+        fresh.mOutputHatches = new ArrayList<>();
+        settled.mInputBusses = new ArrayList<>(Collections.singletonList(bus));
+        settled.mDualInputHatches = new ArrayList<>();
+        settled.mEnergyHatches = new ArrayList<>();
+        settled.mOutputHatches = new ArrayList<>();
+        ItemStack casingA = new ItemStack(Blocks.stone), casingC = new ItemStack(Blocks.dirt);
+        ItemStack input = new ItemStack(machines, 1, INPUT_BUS_ID), extended = new ItemStack(machines, 1, SPECIAL_BUS_ID),
+            fluid = new ItemStack(machines, 1, OUTPUT_ID), energy = new ItemStack(machines, 1, ENERGY_ID);
+        var busA = witnessedAtLeast(Collections.singletonMap(HatchElement.InputBus.or(specialRole()), 1));
+        var fluidOnly = witnessedAtLeast(Collections.singletonMap(HatchElement.OutputHatch.or(specialRole()), 1));
+        var energyC = witnessedAtLeast(Collections.singletonMap(HatchElement.Energy, 1));
+        IStructureElement<MTEMultiBlockBase> opaque = StructureUtility.onlyIf(
+            context -> { throw new AssertionError("opaque native condition was queried by the chooser"); }, energyC);
+        var a = StructureUtility.withChannel("gtmb_test_mixed_hatch",
+            StructureUtility.ofChain(opaque, busA, StructureUtility.ofBlock(Blocks.stone, 0)));
+        var c = StructureUtility.ofChain(energyC, StructureUtility.ofBlock(Blocks.dirt, 0));
+        var fluidRow = StructureUtility.ofChain(fluidOnly, StructureUtility.ofBlock(Blocks.stone, 0));
+        ItemStack trigger = casingA.copy();
+        ChannelDataAccessor.setChannelData(trigger, "gtmb_test_mixed_hatch", 3);
+        var used = busA.getBlocksToPlace(settled, null, 0, 64, 0, trigger, null).getPredicate();
+        SimpleAssert.that(!used.test(input) && !used.test(extended) && HologramNativeStructurePreview.coldHatches(a) == null,
+            "an already populated A quota hides both native buses and the old stock parser cannot supplement them");
+        int[] factories = { 0 }, queries = { 0 };
+        HologramNativeHatchChooser chooser = new HologramNativeHatchChooser(
+            () -> Arrays.asList(input, input.copy(), extended, fluid, energy, casingA, casingC),
+            () -> {
+                factories[0]++;
+                return (element, x, y, z, stack) -> {
+                    queries[0]++;
+                    if (element == busA) SimpleAssert.that(y == 64 && z == 0
+                        && (x == 0 && stack.stackSize == 3 || x == 4 && stack.stackSize == 5),
+                        "native query uses the visited slot and its current effective StructureLib channel");
+                    return getNativeOffers(element, fresh, x, y, z, stack);
+                };
+            });
+        SimpleAssert.that(chooser.offers(c, 2, 64, 0, trigger).isEmpty() && factories[0] == 0,
+            "reviewed stock casing C uses the existing path and never instantiates a redundant controller");
+
+        HologramCapture.Cell rowA = new HologramCapture.Cell(a, 0, 64, 0, trigger, true);
+        HologramNativeStructurePreview.readCandidates(rowA, IStructureElement.BlocksToPlace.create(casingA), false,
+            Collections::emptyList, () -> chooser.offers(a, 0, 64, 0, trigger));
+        SimpleAssert.that(rowA.nativeCandidateCount == 1 && !rowA.candidateComplete
+            && rowA.candidates.size() == 3 && HologramValues.same(rowA.candidates.get(0), casingA)
+            && HologramValues.same(rowA.candidates.get(1), input) && HologramValues.same(rowA.candidates.get(2), extended),
+            "A retains the exact settled autos and offers only proved manual bus variants, not fluid/energy outsiders");
+
+        HologramCapture.Cell rowC = new HologramCapture.Cell(c, 2, 64, 0, trigger, true);
+        HologramNativeStructurePreview.readCandidates(rowC, IStructureElement.BlocksToPlace.create(casingC, energy), false,
+            Collections::emptyList, () -> chooser.offers(c, 2, 64, 0, trigger));
+        SimpleAssert.that(rowC.candidates.size() == 2 && HologramValues.same(rowC.candidates.get(1), energy)
+            && rowC.candidateComplete && rowC.nativeCandidateCount == -1,
+            "C retains its own settled roles with neither A's buses nor a manual-only marker");
+        SimpleAssert.that(chooser.offers(a, 4, 64, 0, trigger).size() == 2 && queries[0] == 1,
+            "the same captured A root reuses only its own plain atLeast result");
+
+        HologramCapture.Cell rowFluid = new HologramCapture.Cell(fluidRow, 6, 64, 0, trigger, true);
+        HologramNativeStructurePreview.readCandidates(rowFluid, null, true, Collections::emptyList,
+            () -> chooser.offers(fluidRow, 6, 64, 0, trigger));
+        SimpleAssert.that(rowFluid.candidates.size() == 2 && rowFluid.nativeCandidateCount == 0
+            && !rowFluid.candidateComplete && HologramValues.same(rowFluid.candidates.get(0), extended)
+            && HologramValues.same(rowFluid.candidates.get(1), fluid) && queries[0] == 2 && factories[0] == 1,
+            "native fluid sibling remains available even without settled candidates and never becomes a preset");
+        SimpleAssert.that(fresh.mInputBusses.isEmpty() && fresh.mOutputHatches.isEmpty()
+            && settled.mInputBusses.size() == 1 && HologramHatchPolicy.predicate(busA, null, null) == null
+            && !HologramHatchPolicy.globalRequirementsComplete(busA),
+            "chooser leaves both construction contexts and existing structural/whole-machine proof unchanged");
+        ItemStack changedTrigger = trigger.copy();
+        ChannelDataAccessor.setChannelData(changedTrigger, "gtmb_test_mixed_hatch", 5);
+        SimpleAssert.that(chooser.offers(a, 4, 64, 0, changedTrigger).size() == 2 && queries[0] == 3,
+            "an exact changed trigger does not reuse a prior capture signal's offers");
+        chooser.clear();
+
+        HologramNativeStructurePreview.readCandidates(rowFluid, IStructureElement.BlocksToPlace.create(
+            stack -> { throw new IllegalStateException("opaque settled predicate"); }), true,
+            () -> Collections.singletonList(fluid), () -> Collections.singletonList(fluid));
+        SimpleAssert.that(rowFluid.candidates.size() == 1 && rowFluid.nativeCandidateCount == 0
+            && !rowFluid.candidateComplete, "failed settled predicates never swallow independent manual proof");
+
+        var builder = HatchElementBuilder.<MTEMultiBlockBase>builder()
+            .atLeast(HatchElement.InputBus.or(specialRole())).casingIndex(1).hint(1);
+        var oldLeaf = builder.build();
+        var unknownRoles = Collections.<IHatchElement<? super MTEMultiBlockBase>, Integer>singletonMap(specialRole(), 1);
+        HologramHatchPolicy.declare(builder, unknownRoles.keySet(), true);
+        HologramHatchPolicy.requirements(builder, unknownRoles);
+        HologramHatchPolicy.built(builder, oldLeaf);
+        SimpleAssert.that(HologramHatchPolicy.nativeBrowseAtLeast(oldLeaf), "plain mixed builder qualifies for chooser");
+        builder.hatchItemFilter(mte -> stack -> { throw new AssertionError("replacement filter must not run"); });
+        HologramHatchPolicy.reset(builder);
+        SimpleAssert.that(!HologramHatchPolicy.nativeBrowseAtLeast(oldLeaf),
+            "an older native leaf cannot call a replacement filter via its retained mutable builder");
+    }
+
+    private static IHatchElement<MTEMultiBlockBase> specialRole() {
+        return new IHatchElement<>() {
+
+            public List<Class<? extends IMetaTileEntity>> mteClasses() {
+                return Collections.singletonList(SpecialBusFixture.class);
+            }
+
+            public IGTHatchAdder<MTEMultiBlockBase> adder() {
+                return (context, tile, texture) -> { throw new AssertionError("chooser called a native hatch adder"); };
+            }
+
+            public String name() {
+                return "gtmb_test_mixed_hatch";
+            }
+
+            public long count(MTEMultiBlockBase context) {
+                return context.mInputBusses.stream().filter(SpecialBusFixture.class::isInstance).count();
+            }
+        };
+    }
+
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    private static IStructureElement.BlocksToPlace getNativeOffers(IStructureElement<?> element,
+        MTEMultiBlockBase fresh, int x, int y, int z, ItemStack trigger) {
+        return ((IStructureElement) element).getBlocksToPlace(fresh, null, x, y, z, trigger, null);
     }
 
     private static IStructureElement<MTEMultiBlockBase> witnessedAtLeast(
@@ -407,6 +546,15 @@ final class HologramLayeredHatchRegression {
             return new ItemStack(GregTechAPI.sBlockMachines, (int) amount, ENERGY_ID);
         }
     }
+
+    private static class InputBusFixture extends MTEHatchInputBus {
+
+        private InputBusFixture() {
+            super("mixed_input_bus", 0, new String[0], (ITexture[][][]) null);
+        }
+    }
+
+    private static final class SpecialBusFixture extends InputBusFixture {}
 
     private static final class FacingOnlyController extends MTEEnhancedMultiBlockBase<FacingOnlyController> {
 
