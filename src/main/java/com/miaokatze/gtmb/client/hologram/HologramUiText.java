@@ -3,7 +3,10 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import java.util.IllegalFormatException;
 import java.util.Locale;
+
+import net.minecraft.util.StatCollector;
 
 /** Human-readable Chinese context for third-party/server diagnostics; raw identifiers remain inspectable. */
 final class HologramUiText {
@@ -11,8 +14,20 @@ final class HologramUiText {
     private HologramUiText() {}
 
     static String localized(String key, String fallback) {
-        String result = net.minecraft.util.StatCollector.translateToLocal(key);
+        String result = StatCollector.translateToLocal(key);
         return key.equals(result) ? fallback : result;
+    }
+
+    /** Formats only the locale template, never interprets escape sequences in user-authored arguments. */
+    static String projector(String key, Object... args) {
+        String template = StatCollector.translateToLocal("gtmb.hologram.projector." + key).replace("\\n", "\n");
+        if (args.length == 0) return template;
+        try {
+            return String.format(Locale.ROOT, template, args);
+        } catch (IllegalFormatException ignored) {
+            // A malformed user resource-pack override must not break the native screen.
+            return template;
+        }
     }
 
     static String severity(String value) {
