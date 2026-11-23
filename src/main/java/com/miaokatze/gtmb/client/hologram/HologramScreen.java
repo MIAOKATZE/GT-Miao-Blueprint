@@ -68,12 +68,22 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         EXECUTION_PREPARATION.allowCoreThreadTimeOut(true);
     }
 
+    private final Object openedWorld, openedConnection, openedPlayer;
+    private final int openedDimension;
+    private final long openedPresentationResources;
+
     HologramScreen(HologramState state) {
         this(state, 0);
     }
 
     private HologramScreen(HologramState state, long modulesStarted) {
         super("workstation");
+        Minecraft client = minecraft();
+        openedWorld = client.theWorld;
+        openedConnection = client.getNetHandler();
+        openedPlayer = client.thePlayer;
+        openedDimension = client.thePlayer == null ? Integer.MIN_VALUE : client.thePlayer.dimension;
+        openedPresentationResources = HologramTextures.resourceGeneration();
         HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.WORKBENCH_SCREEN_MODULES, modulesStarted);
         long sessionStarted = modulesStarted == 0 ? 0 : HologramRuntimeMetrics.start();
         try {
@@ -760,6 +770,9 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     private HologramScreen(String topic, boolean replay, Runnable returnToStorage) {
         super("detached_tutorial");
+        openedWorld = openedConnection = openedPlayer = null;
+        openedDimension = Integer.MIN_VALUE;
+        openedPresentationResources = -1;
         if (returnToStorage == null) throw new IllegalArgumentException("A detached tutorial requires a return target");
         detached = true;
         detachedTopic = topic;
@@ -876,9 +889,17 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
                 .newSetFromMap(new java.util.IdentityHashMap<>());
             graphs.addAll(workspaceGraphs.values());
             graphs.add(ui);
+            Minecraft client = minecraft();
+            // A retiring old screen must not assign its draft to a new player/world on close.
+            boolean sameOwner = openedWorld != null && openedWorld == client.theWorld
+                && openedConnection != null && openedConnection == client.getNetHandler()
+                && openedPlayer != null && openedPlayer == client.thePlayer && openedDimension == client.thePlayer.dimension;
             for (HologramUiModules graph : graphs) {
-                if (!detached && graph.session.localDocument())
-                    HologramClient.rememberLocalDocument(graph.session.document());
+                if (!detached && sameOwner && graph.session.localDocument())
+                    HologramClient.rememberLocalDocument(graph.session.document(), graph.session.state(),
+                        !graph.library.localBusy() && graph.session.pendingSequence() < 0 && !graph.session.isTutorial()
+                            && openedPresentationResources == HologramTextures.resourceGeneration());
+                graph.library.retireLocalResume();
                 graph.shell.close();
                 graph.canvas.layout()
                     .release();

@@ -48,6 +48,7 @@ import com.miaokatze.gtmb.hologram.HologramAeNativePreview;
 import com.miaokatze.gtmb.client.hologram.HologramLocalSaveTrace.Stage;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec;
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.DetachedEditorRows;
 import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.EditorRows;
 import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.FrozenDraft;
 import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
@@ -194,6 +195,7 @@ public final class HologramBlueprintPreview {
 
         private final int[] locations;
         private final EditorRows editor;
+        private final boolean editable;
         private final int[] bounds;
         private NBTTagCompound[] materials;
         private int size;
@@ -201,6 +203,7 @@ public final class HologramBlueprintPreview {
         CompactCells(int cells, int materials) {
             locations = new int[Math.multiplyExact(cells, 4)];
             editor = null;
+            editable = false;
             bounds = new int[] { Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE,
                 Integer.MIN_VALUE, Integer.MIN_VALUE };
             this.materials = new NBTTagCompound[materials];
@@ -209,9 +212,19 @@ public final class HologramBlueprintPreview {
         CompactCells(EditorRows editor) {
             locations = null;
             this.editor = editor;
+            editable = true;
             bounds = editor.bounds();
             materials = editor.materials();
             size = editor.rows().cells();
+        }
+
+        CompactCells(DetachedEditorRows editor) {
+            locations = editor.coordinates();
+            this.editor = null;
+            editable = true;
+            bounds = editor.bounds();
+            materials = editor.materials();
+            size = locations.length / 4;
         }
 
         private void add(int x, int y, int z, int material) {
@@ -244,7 +257,7 @@ public final class HologramBlueprintPreview {
         }
 
         boolean editorRows() {
-            return editor != null;
+            return editable;
         }
 
         int[] bounds() {

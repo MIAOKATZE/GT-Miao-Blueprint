@@ -90,6 +90,7 @@ final class HologramTextures {
 
     private static final Field MULTI = texturesField(GTMultiTextureRender.class);
     private static final Field SIDED = texturesField(GTSidedTextureRender.class);
+    private static volatile long resourceGeneration;
     private static boolean reloadInstalled;
 
     private HologramTextures() {}
@@ -125,13 +126,20 @@ final class HologramTextures {
         cache.snapshot = next;
     }
 
+    static long resourceGeneration() {
+        return resourceGeneration;
+    }
+
     static void installReloadListener() {
         if (!reloadInstalled) {
             reloadInstalled = true;
             if (Minecraft.getMinecraft()
                 .getResourceManager() instanceof IReloadableResourceManager)
                 ((IReloadableResourceManager) Minecraft.getMinecraft()
-                    .getResourceManager()).registerReloadListener(manager -> HologramRenderer.release());
+                    .getResourceManager()).registerReloadListener(manager -> {
+                        resourceGeneration++;
+                        HologramRenderer.release();
+                    });
         }
     }
 

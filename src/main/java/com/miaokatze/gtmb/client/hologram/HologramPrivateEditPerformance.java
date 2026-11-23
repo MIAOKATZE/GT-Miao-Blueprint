@@ -15,7 +15,6 @@ import java.util.regex.Pattern;
 import net.minecraft.nbt.NBTTagCompound;
 
 import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument;
-import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.EditorRows;
 import com.miaokatze.gtmb.hologram.HologramSnapshotPalette;
 
 /** Client startup preference for the ordinary preparation of an explicit managed private Edit. */
@@ -82,9 +81,10 @@ final class HologramPrivateEditPerformance {
             this.preset = preset;
         }
 
-        Bound bind(HologramLocalBlueprintDocument document, EditorRows editor, NBTTagCompound snapshot,
+        Bound bind(HologramLocalBlueprintDocument document, boolean materializedProjection, NBTTagCompound snapshot,
             HologramState.Preparation preparation, boolean exactOwner) {
-            if (!exactOwner || editor != null || document == null || snapshot == null || preparation == null
+            if (!exactOwner || !materializedProjection || document == null || snapshot == null || preparation == null
+                || !preparation.usesEditorCells()
                 || !fileId.equals(document.fileId()) || document.packedAuthoring() || document.dirty() || document.revision() != 0
                 || !snapshot.getBoolean("localBlueprintDocument") || !snapshot.getBoolean("blueprintEditing")
                 || !fileId.equals(snapshot.getString("libraryLocalId")) || snapshot.getLong("planRevision") != 0

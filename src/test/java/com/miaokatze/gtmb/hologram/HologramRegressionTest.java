@@ -233,6 +233,8 @@ public final class HologramRegressionTest {
             com.miaokatze.gtmb.client.hologram.HologramLocalHistoryTraceRegression::run);
         cases.put("client_private_edit_performance_settings_natural_route",
             com.miaokatze.gtmb.client.hologram.HologramPrivateEditPerformanceRegression::run);
+        cases.put("same_owner_local_editor_resume_reuses_cells_without_retired_metadata",
+            com.miaokatze.gtmb.client.hologram.HologramLocalPresentationRegression::run);
         cases.put("native_channels_fallback_and_arbitrary_keys", HologramRegressionTest::channels);
         cases.put("unadapted_channels_are_editable_and_reach_native_trigger", HologramRegressionTest::openChannels);
         cases.put("packet_snapshot_roundtrip_keeps_all_channel_values", HologramRegressionTest::packetRoundTrip);
