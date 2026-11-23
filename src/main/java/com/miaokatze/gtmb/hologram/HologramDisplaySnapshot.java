@@ -57,6 +57,7 @@ final class HologramDisplaySnapshot {
         if (tile instanceof BaseMetaPipeEntity)
             display.setInteger("connections", ((BaseMetaPipeEntity) tile).getConnections() & 63);
         captureHatchTextures(gt.getMetaTileEntity(), display);
+        HologramGtMeOutputDisplay.observeLive(gt, display);
         return display;
     }
 
@@ -97,6 +98,7 @@ final class HologramDisplaySnapshot {
         if (tile instanceof BaseMetaPipeEntity)
             display.setInteger("connections", ((BaseMetaPipeEntity) tile).getConnections() & 63);
         captureHatchTextures(gt.getMetaTileEntity(), display);
+        HologramGtMeOutputDisplay.observeLive(gt, display);
         return display;
     }
 
@@ -166,6 +168,8 @@ final class HologramDisplaySnapshot {
                 saved.getTag("gt.covers")
                     .copy());
         }
+        HologramGtMeOutputDisplay
+            .observeFilteredTile(declaredHost == null ? nativeBlock : declaredHost, stack, saved, display);
         // The planned hatch belongs to this declaration even if an unformed source saved its default 0:0 skin.
         applyCasing(element, display);
         return display;
