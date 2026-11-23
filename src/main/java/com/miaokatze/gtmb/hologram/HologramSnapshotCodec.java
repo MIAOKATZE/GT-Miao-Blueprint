@@ -47,8 +47,9 @@ public final class HologramSnapshotCodec {
         return compress(tag, current, progress, palette, RAW_BYTES, HologramSnapshotAssembly.MAX_BYTES);
     }
 
-    static byte[] compress(NBTTagCompound tag, int rawLimit, int compressedLimit) throws IOException {
-        return compress(tag, () -> true, written -> {}, false, rawLimit, compressedLimit);
+    static byte[] compress(NBTTagCompound tag, int rawLimit, int compressedLimit,
+        java.util.function.BooleanSupplier current) throws IOException {
+        return compress(tag, current, written -> {}, false, rawLimit, compressedLimit);
     }
 
     private static byte[] compress(NBTTagCompound tag, java.util.function.BooleanSupplier current,

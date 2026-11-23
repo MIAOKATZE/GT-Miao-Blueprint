@@ -377,7 +377,8 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
                         intent, anchor, height, () -> id.equals(localExecutionRequest));
                     NBTTagCompound request = com.miaokatze.gtmb.hologram.HologramPlacementRequest.encode(
                         id, anchor, plan, intent);
-                    var packet = com.miaokatze.gtmb.hologram.HologramNetwork.prepareProjectedPlacement(request);
+                    var upload = com.miaokatze.gtmb.hologram.HologramNetwork.prepareProjectedPlacement(
+                        request, () -> id.equals(localExecutionRequest));
                     client.func_152344_a(() -> {
                         if (!id.equals(localExecutionRequest)) return;
                         if (client.currentScreen != this || !controllerContextCurrent(false)
@@ -386,10 +387,12 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
                             return;
                         }
                         try {
-                            com.miaokatze.gtmb.hologram.HologramNetwork.sendPreparedPlacement(packet);
+                            com.miaokatze.gtmb.hologram.HologramNetwork.sendPreparedPlacement(upload,
+                                () -> id.equals(localExecutionRequest) && client.currentScreen == this
+                                    && controllerContextCurrent(false) && displayed.cells == ui.session.state().cells);
                             localExecutionSent = true;
                             ui.session.notice("正在核对施工现场和材料…");
-                        } catch (RuntimeException failure) {
+                        } catch (java.io.IOException | RuntimeException failure) {
                             localExecutionFailed(id, failure.getMessage());
                         }
                     });
@@ -861,11 +864,19 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             requestedLocalMaterialScope = null;
             java.util.UUID execution = localExecutionRequest;
             localExecutionRequest = null;
-            if (localExecutionSent && execution != null && minecraft().getNetHandler() != null) {
-                NBTTagCompound cancel = new NBTTagCompound();
-                cancel.setString("action", "cancelProjectedPlacement");
-                cancel.setString("placementRequestId", execution.toString());
-                com.miaokatze.gtmb.hologram.HologramNetwork.sendAction(cancel);
+            if (execution != null) {
+                com.miaokatze.gtmb.hologram.HologramNetwork.discardPreparedPlacement(execution);
+                if (localExecutionSent && minecraft().getNetHandler() == openingConnection
+                    && openingController != null && minecraft().theWorld == openingController.getWorldObj()) {
+                    NBTTagCompound cancel = new NBTTagCompound();
+                    cancel.setString("action", "cancelProjectedPlacement");
+                    cancel.setString("placementRequestId", execution.toString());
+                    try {
+                        com.miaokatze.gtmb.hologram.HologramNetwork.sendAction(cancel);
+                    } catch (RuntimeException disconnected) {
+                        // Cleanup still proceeds; the original server upload has a bounded lease.
+                    }
+                }
             }
             localExecutionSent = false;
             retireLocalController();
