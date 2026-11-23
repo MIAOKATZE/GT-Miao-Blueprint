@@ -2042,13 +2042,8 @@ final class HologramLibraryClient {
             && (ticket.placement() || ticket.epoch() == browseEpoch) && displayContextCurrent();
     }
 
-    boolean prepareLocalPlacement(HologramLocalPlacement placement) {
-        return prepareLocalPlacement(placement, new NBTTagCompound());
-    }
-
-    boolean prepareLocalPlacement(HologramLocalPlacement placement, NBTTagCompound options) {
-        HologramLocalPlacement.Submission submission = placement.freeze(options);
-        if (submission == null || busy()) return false;
+    boolean prepareLocalPlacement(HologramLocalPlacement.Submission submission) {
+        if (submission == null || !submission.current() || busy()) return false;
         DisplaySource source = submission.source();
         if (!beginBackgroundTask("准备施工并核对材料")) return false;
         Minecraft mc = Minecraft.getMinecraft();

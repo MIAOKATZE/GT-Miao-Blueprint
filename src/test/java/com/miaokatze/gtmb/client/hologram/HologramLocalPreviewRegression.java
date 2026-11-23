@@ -33,11 +33,12 @@ public final class HologramLocalPreviewRegression {
         savedPrivateMaterialSource();
         indexedMaterialSourceCapture();
         HologramLibraryMaterialForecastRegression.run();
+        HologramLibrarySecondUseRegression.run();
         earlyDisplay();
         displayPicture();
         uploadRepresentation();
         NBTTagCompound review = HologramLocalPlacement.reviewOptions();
-        SimpleAssert.eq(true, review.getBoolean("openReview"), "second world use opens the existing server review");
+        SimpleAssert.eq(true, review.getBoolean("openReview"), "explicit local submission retains access to the existing server review");
         SimpleAssert.eq(false, review.getBoolean("executeIntent"), "opening review cannot request construction");
         SimpleAssert.eq(false, review.hasKey("acknowledgedMaterials"), "display never invents a material acceptance");
         String json = "{\"blueprint\":{\"schema\":999,\"retainNbt\":false,\"retainCovers\":true,"

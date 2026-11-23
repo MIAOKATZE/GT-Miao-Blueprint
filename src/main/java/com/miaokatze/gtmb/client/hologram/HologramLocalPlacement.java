@@ -17,6 +17,7 @@ final class HologramLocalPlacement {
     private HologramLibraryClient.DisplaySource source;
     private Object world, connection, player;
     private boolean locked, submitting;
+    private long lockGeneration;
     private int[] anchor;
     private HologramPreviewPose pose = new HologramPreviewPose();
     private final com.miaokatze.gtmb.hologram.HologramWorldFlow.KeyRepeat[] nudgeKeys = {
@@ -51,8 +52,10 @@ final class HologramLocalPlacement {
         net.minecraft.entity.EntityLivingBase camera = mc.renderViewEntity == null ? mc.thePlayer : mc.renderViewEntity;
         int[] step = com.miaokatze.gtmb.hologram.HologramWorldFlow.nudgeOffset(camera.rotationYaw, direction);
         int x = anchor[0] + step[0], y = anchor[1] + step[1], z = anchor[2] + step[2];
-        if (com.miaokatze.gtmb.hologram.HologramWorldFlow.worldPosition(x, y, z, mc.theWorld.getHeight()))
+        if (com.miaokatze.gtmb.hologram.HologramWorldFlow.worldPosition(x, y, z, mc.theWorld.getHeight())) {
             anchor = new int[] { x, y, z };
+            lockGeneration++;
+        }
     }
 
     boolean active() {
@@ -132,13 +135,18 @@ final class HologramLocalPlacement {
     }
 
     private boolean currentContext() {
-        Minecraft mc = Minecraft.getMinecraft();
-        return mc.theWorld == world && mc.getNetHandler() == connection && mc.thePlayer == player;
+        return currentContext(Minecraft.getMinecraft());
+    }
+
+    private boolean currentContext(Minecraft mc) {
+        return mc != null && mc.theWorld != null && mc.thePlayer != null && mc.theWorld == world
+            && mc.getNetHandler() == connection && mc.thePlayer == player;
     }
 
     void turn(boolean vertical) {
         if (!active() || submitting) return;
         pose = pose.turn(vertical);
+        lockGeneration++;
     }
 
     void use(boolean shift) {
@@ -146,6 +154,7 @@ final class HologramLocalPlacement {
         if (shift && locked) {
             locked = false;
             anchor = null;
+            lockGeneration++;
         } else if (!locked) {
             anchor = HologramClient.localPlacementAnchor();
             if (anchor == null) {
@@ -153,16 +162,25 @@ final class HologramLocalPlacement {
                 return;
             }
             locked = true;
+            lockGeneration++;
         } else {
-            submit(reviewOptions());
+            Minecraft client = Minecraft.getMinecraft();
+            if (client.currentScreen != null) return;
+            Submission frozen = freeze(reviewOptions());
+            if (frozen == null) return;
+            try {
+                new HologramLibraryMaterialReviewScreen(this, frozen, client).openFrom(null);
+            } catch (RuntimeException failure) {
+                HologramClient.selectionNotice("未打开本地材料窗口，请返回预览重试。");
+            }
         }
     }
 
-    void submit(NBTTagCompound options) {
-        if (!active() || !locked || submitting) return;
-        submitting = HologramLibraryClient.INSTANCE.prepareLocalPlacement(this, options);
-        if (submitting) Minecraft.getMinecraft()
-            .displayGuiScreen(new HologramPlacementLoadingScreen());
+    boolean submitFrozen(Submission submission) {
+        if (submitting || !submission.current()) return false;
+        submitting = HologramLibraryClient.INSTANCE.prepareLocalPlacement(submission);
+        if (submitting) Minecraft.getMinecraft().displayGuiScreen(new HologramPlacementLoadingScreen());
+        return submitting;
     }
 
     void retry() {
@@ -189,15 +207,22 @@ final class HologramLocalPlacement {
         request.setInteger("side", 1);
         request.setIntArray("previewPose", pose.recipe());
         if (!options.hasKey("openReview", 1)) request.setBoolean("openReview", true);
-        return new Submission(source, display, request);
+        return new Submission(source, display, lockGeneration, request);
     }
 
     /** The exact source and locked intent outlive asynchronous validation only while this ghost remains current. */
     @Desugar
-    record Submission(HologramLibraryClient.DisplaySource source, HologramState display, NBTTagCompound intent) {
+    record Submission(HologramLibraryClient.DisplaySource source, HologramState display, long lockGeneration,
+        NBTTagCompound intent) {
 
         boolean current() {
-            return INSTANCE.display == display && INSTANCE.source == source && INSTANCE.currentContext();
+            return current(INSTANCE, Minecraft.getMinecraft());
+        }
+
+        boolean current(HologramLocalPlacement owner, Minecraft client) {
+            return owner.display == display && owner.source == source && owner.locked
+                && owner.lockGeneration == lockGeneration && owner.currentContext(client)
+                && display.data.getInteger("dimension") == client.thePlayer.dimension;
         }
 
         @Override
@@ -212,6 +237,7 @@ final class HologramLocalPlacement {
         source = null;
         world = connection = player = null;
         locked = submitting = false;
+        lockGeneration++;
         anchor = null;
         pose = new HologramPreviewPose();
         for (com.miaokatze.gtmb.hologram.HologramWorldFlow.KeyRepeat key : nudgeKeys) key.sample(false, false, true, 0);
