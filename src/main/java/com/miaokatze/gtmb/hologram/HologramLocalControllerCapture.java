@@ -416,7 +416,8 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
             if (constructable == null) throw new IOException("LOCAL_DECLARATION_UNAVAILABLE");
             boolean structureCompat = controllerId < 0 && IMultiblockInfoContainer.contains(detachedTile.getClass());
             nativePreview = new HologramNativeStructurePreview(
-                detachedTile, detachedContext, constructable, structureCompat, previewTrigger(null, settings));
+                detachedTile, detachedContext, constructable, structureCompat, previewTrigger(null, settings),
+                controllerId >= 0 ? this::createNativeController : null);
         }
         if (!nativePreview.advance(deadline)) return false;
         nativePlacements = nativePreview.placements();
