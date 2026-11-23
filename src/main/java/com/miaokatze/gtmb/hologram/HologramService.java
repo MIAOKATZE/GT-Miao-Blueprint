@@ -26,10 +26,15 @@ public final class HologramService {
         // The GT base tile is a provider even on single-block machines.
         if (tile instanceof IGregTechTileEntity gt) {
             Object machine = gt.getMetaTileEntity();
-            return machine instanceof IConstructable || machine instanceof MTEEnhancedMultiBlockBase<?> multi
+            return machine instanceof IConstructable || machine instanceof MTEEnhancedMultiBlockBase<?>multi
                 && HologramStructureDiscovery.captureSupported(multi);
         }
         return HologramStructureDiscovery.supports(tile);
+    }
+
+    /** Resolve native hints for an already selected tile on the caller's game thread. */
+    public static IConstructable nativeConstructable(TileEntity tile, int side) {
+        return HologramStructureDiscovery.constructable(tile, HologramStructureDiscovery.context(tile), side);
     }
 
     public static void open(EntityPlayerMP player, int x, int y, int z, int side) {
@@ -83,6 +88,7 @@ public final class HologramService {
     }
 
     public static void clear() {
+        HologramProjectedPlacementService.clear();
         HologramWorkspace.clear();
     }
 

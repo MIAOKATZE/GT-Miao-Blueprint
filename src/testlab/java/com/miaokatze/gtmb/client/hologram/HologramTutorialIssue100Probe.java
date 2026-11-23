@@ -30,6 +30,7 @@ import com.cleanroommc.modularui.screen.viewport.LocatedWidget;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
+import com.miaokatze.gtmb.register.ProjectorRegistry;
 import com.miaokatze.miaokatzecore.api.testlab.ArtifactIdentity;
 
 import cpw.mods.fml.common.FMLCommonHandler;
@@ -50,6 +51,9 @@ public final class HologramTutorialIssue100Probe {
     private volatile Thread serverThread;
     private volatile boolean exactWorldOwned;
     private volatile String serverFailure;
+    private volatile HologramLocalPreviewStagesProbe localPreviewStages;
+    private final Map<String, Object> preparedStockReceipt = new LinkedHashMap<>();
+    private volatile HologramEbfPreparedStock preparedStock;
     private Path save;
     private GuiScreen originalMenu;
     private HologramScreen screen;
@@ -68,7 +72,24 @@ public final class HologramTutorialIssue100Probe {
     private String failure;
 
     static boolean install() {
+        if (HologramEbfFixedControls.coilOnlyEnabled()) require(
+            HologramEbfFixedControls.coilProfileAllowed(Boolean.getBoolean("gtmb.testlab.tutorialIssue100"),
+                Boolean.getBoolean("miaotest.host.environment"), HologramLocalPreviewStagesProbe.enabled(),
+                Boolean.getBoolean(HologramEbfPreparedStock.FLAG), HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled(),
+                System.getProperty("gtmb.testlab.localPreviewStagesNativeParity", ""),
+                Boolean.getBoolean("gtmb.testlab.localPreviewStagesConstruction")
+                    || Boolean.getBoolean("gtmb.testlab.localPreviewStagesPostFocus")
+                    || Boolean.getBoolean("gtmb.testlab.localPreviewStagesWorkbenchStages")
+                    || Boolean.getBoolean("gtmb.testlab.localPreviewStagesExerciseCandidates")
+                    || !System.getProperty("gtmb.testlab.localPreviewStagesTiming", "").isEmpty()),
+            "Coil-only native EBF requires the exact prepared-stock fixture profile and no alternate driver");
+        if (Boolean.getBoolean(HologramEbfPreparedStock.FLAG)) require(
+            Boolean.getBoolean("gtmb.testlab.tutorialIssue100") && Boolean.getBoolean("miaotest.host.environment")
+                && HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled() && HologramLocalPreviewStagesProbe.enabled(),
+            "Prepared stock is only allowed in the exact isolated fixed EBF profile");
         if (!Boolean.getBoolean("gtmb.testlab.tutorialIssue100")) return false;
+        require(!HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled() || HologramLocalPreviewStagesProbe.enabled(),
+            "Fixed native EBF requires the existing lease-owned local-preview route");
         HologramTutorialIssue100Probe probe = new HologramTutorialIssue100Probe();
         FMLCommonHandler.instance()
             .bus()
@@ -79,7 +100,17 @@ public final class HologramTutorialIssue100Probe {
 
     @SubscribeEvent
     public void serverTick(TickEvent.ServerTickEvent event) {
-        if (complete || exactWorldOwned || stage == 0 || event.phase != TickEvent.Phase.END) return;
+        if (complete || stage == 0 || event.phase != TickEvent.Phase.END) return;
+        if (exactWorldOwned) {
+            try {
+                if (preparedStock != null && !preparedStock.verifyServer(server.worldServerForDimension(0))) return;
+                HologramLocalPreviewStagesProbe local = localPreviewStages;
+                if (local != null) local.setup(server);
+            } catch (Exception problem) {
+                serverFailure = problem.toString();
+            }
+            return;
+        }
         try {
             MinecraftServer actual = FMLCommonHandler.instance()
                 .getMinecraftServerInstance();
@@ -132,23 +163,28 @@ public final class HologramTutorialIssue100Probe {
                     .resolve("saves")
                     .toRealPath();
                 save = parent.resolve("MiaoHost-" + run);
-                JsonObject lease = read(
-                    mc.mcDataDir.toPath()
-                        .resolve(".testlab-host/lease.json"));
-                require(
-                    run.equals(
-                        lease.get("runId")
-                            .getAsString()),
-                    "Exact host lease required");
+                if (Boolean.getBoolean(HologramEbfPreparedStock.FLAG)) {
+                    receipt.put("preparedStock", preparedStockReceipt);
+                    preparedStock = HologramEbfPreparedStock.read(mc.mcDataDir.toPath(), output,
+                        Paths.get(System.getProperty("miaotest.host.receiptDir")), run,
+                        System.getProperty("miaotest.host.actorUuid"), mc.getSession().getPlayerID(),
+                        System.getProperty(HologramEbfPreparedStock.SHA_FLAG), ProjectorRegistry.projector);
+                } else {
+                    JsonObject lease = read(mc.mcDataDir.toPath().resolve(".testlab-host/lease.json"));
+                    require(run.equals(lease.get("runId").getAsString()), "Exact host lease required");
+                }
                 Files.createDirectory(save);
                 Map<String, Object> marker = new LinkedHashMap<>();
                 marker.put("runId", run);
                 marker.put("parent", parent.toString());
-                Files.write(save.resolve(".miaotest-host-owner.json"), json(marker));
+                Files.write(save.resolve(".miaotest-host-owner.json"), json(marker),
+                    java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE);
+                if (preparedStock != null) preparedStock.install(save, parent, preparedStockReceipt);
                 // HostEnvironment reads this only in FMLServerAboutToStartEvent, after the exact host lease/marker.
                 System.setProperty("miaotest.host.worldPath", save.toString());
                 receipt.put("ownedSave", save.toString());
-                receipt.put("actorMode", "SURVIVAL; no OP or inventory fixture changes");
+                receipt.put("actorMode", preparedStock == null ? "SURVIVAL; no OP or inventory fixture changes"
+                    : "SURVIVAL; no OP; explicit pre-login vanilla playerdata fixture, no live inventory injection");
                 transition(1);
                 launchedWorld = true;
                 mc.launchIntegratedServer(
@@ -160,8 +196,29 @@ public final class HologramTutorialIssue100Probe {
                 if (!exactWorldOwned || mc.theWorld == null || mc.thePlayer == null || mc.thePlayer.ticksExisted < 60)
                     return;
                 require(!mc.thePlayer.capabilities.isCreativeMode, "Business actor must remain survival");
+                if (HologramLocalPreviewStagesProbe.enabled()) {
+                    if (localPreviewStages == null) {
+                        if (preparedStock != null && !preparedStock.verifyClient(mc.thePlayer, preparedStockReceipt)) return;
+                        localPreviewStages = new HologramLocalPreviewStagesProbe(mc, output, receipt);
+                    }
+                    if (!localPreviewStages.step(mc)) return;
+                    if (HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled()) {
+                        transition(6);
+                        return; // separate preview-only EBF terminal; no Issue100 playback runs afterward
+                    }
+                }
                 inventoryBefore = inventory(mc);
-                HologramLocalPlacement.INSTANCE.install(localFixture(), "issue100-fixture", "", "", "");
+                HologramLibraryClient.DisplaySource source = new HologramLibraryClient.DisplaySource(
+                    "issue100-fixture",
+                    "",
+                    null,
+                    null,
+                    "issue100-fixture",
+                    "",
+                    "",
+                    "");
+                source.state = localFixture();
+                HologramLocalPlacement.INSTANCE.install(source);
                 background = HologramLocalPlacement.INSTANCE.display();
                 mc.thePlayer.rotationPitch = 65;
                 startFrame = frame;
@@ -173,7 +230,7 @@ public final class HologramTutorialIssue100Probe {
                     require(HologramLocalPlacement.INSTANCE.locked(), "Native local placement could not lock a target");
                     return;
                 }
-                HologramRenderer.WorldRenderWitness witness = HologramRenderer.lastWorldRenderWitness();
+                MiaoVisonLiteRenderer.WorldRenderWitness witness = MiaoVisonLiteRenderer.lastWorldRenderWitness();
                 if (witness == null || witness.state != background || witness.lists <= 0) return;
                 beforeGeneration = witness.generation;
                 receipt.put("backgroundBeforeGeneration", beforeGeneration);
@@ -197,7 +254,7 @@ public final class HologramTutorialIssue100Probe {
                         engine.getInteger("selectedCellCount") > 0 && engine.getInteger("presentedVisibleCellCount") > 0
                             && engine.getInteger("renderedCellCount") > 0,
                         "SELECT_CELL did not select visible rendered material");
-                    HologramRenderer.WorldRenderWitness witness = HologramRenderer.lastWorldRenderWitness();
+                    MiaoVisonLiteRenderer.WorldRenderWitness witness = MiaoVisonLiteRenderer.lastWorldRenderWitness();
                     require(
                         witness != null && !activeWorldConflict && witness.generation == activeWorldGeneration,
                         "Background projection was submitted while the tutorial owned the native snapshot");
@@ -211,7 +268,7 @@ public final class HologramTutorialIssue100Probe {
                     transition(4);
                 }
             } else if (stage == 4) {
-                HologramRenderer.WorldRenderWitness witness = HologramRenderer.lastWorldRenderWitness();
+                MiaoVisonLiteRenderer.WorldRenderWitness witness = MiaoVisonLiteRenderer.lastWorldRenderWitness();
                 if (witness == null || witness.state != background || witness.generation <= activeWorldLastGeneration)
                     return;
                 restoredGeneration = witness.generation;
@@ -243,7 +300,7 @@ public final class HologramTutorialIssue100Probe {
         if (complete || stage != 3 || Minecraft.getMinecraft().currentScreen != screen || !screen.ui.tutorial.active())
             return;
         observedWorldEvent = event;
-        HologramRenderer.WorldRenderWitness witness = HologramRenderer.lastWorldRenderWitness();
+        MiaoVisonLiteRenderer.WorldRenderWitness witness = MiaoVisonLiteRenderer.lastWorldRenderWitness();
         worldGenerationBeforeHandler = witness == null || witness.state != background ? -1 : witness.generation;
     }
 
@@ -252,7 +309,7 @@ public final class HologramTutorialIssue100Probe {
         if (complete || stage < 2 || stage > 4) return;
         worldFrames++;
         if (observedWorldEvent == event) {
-            HologramRenderer.WorldRenderWitness witness = HologramRenderer.lastWorldRenderWitness();
+            MiaoVisonLiteRenderer.WorldRenderWitness witness = MiaoVisonLiteRenderer.lastWorldRenderWitness();
             if (witness == null || witness.state != background || worldGenerationBeforeHandler < 0)
                 activeWorldConflict = true;
             else {
@@ -266,8 +323,14 @@ public final class HologramTutorialIssue100Probe {
         }
     }
 
+    @SubscribeEvent(priority = EventPriority.HIGHEST)
+    public void guiPre(GuiScreenEvent.DrawScreenEvent.Pre event) {
+        if (!complete && stage == 1 && localPreviewStages != null) localPreviewStages.guiPre(event.gui, frame);
+    }
+
     @SubscribeEvent
     public void guiPost(GuiScreenEvent.DrawScreenEvent.Post event) {
+        if (!complete && stage == 1 && localPreviewStages != null) localPreviewStages.guiPost(event.gui, frame);
         if (!complete && stage == 3 && event.gui == screen) postFrame = frame;
     }
 
@@ -275,6 +338,14 @@ public final class HologramTutorialIssue100Probe {
     public void render(TickEvent.RenderTickEvent event) {
         if (complete || event.phase != TickEvent.Phase.END) return;
         frame++;
+        if (stage == 1 && localPreviewStages != null) {
+            try {
+                localPreviewStages.renderTail(frame);
+            } catch (Exception problem) {
+                if (failure == null) failure = problem.toString();
+                transition(6);
+            }
+        }
         if (stage != 3 || Minecraft.getMinecraft().currentScreen != screen || postFrame != frame - 1) return;
         try {
             NBTTagCompound state = screen.ui.tutorial.diagnosticState();
@@ -313,6 +384,19 @@ public final class HologramTutorialIssue100Probe {
                         .resolve(name)),
                 "Natural frame PNG missing");
             step.put("png", "screenshots/" + name);
+            if (HologramRenderParityProbe.enabled()) {
+                try {
+                    step.put(
+                        "scene",
+                        HologramRenderParityProbe.cropScene(
+                            output,
+                            name,
+                            String.format("gtmb-issue100-step-%02d-scene.png", state.getInteger("step")),
+                            screen.ui.tutorial.renderUi()));
+                } catch (Exception cropFailure) {
+                    step.put("sceneCaptureFailure", cropFailure.toString());
+                }
+            }
             steps.add(step);
             capturedStep = state.getInteger("step");
         } catch (Throwable problem) {
@@ -343,6 +427,7 @@ public final class HologramTutorialIssue100Probe {
 
     private void closeWorld(Minecraft mc) throws Exception {
         if (!unloadRequested) {
+            if (localPreviewStages != null && !localPreviewStages.finish(mc)) return;
             if (screen != null) {
                 receipt.put(
                     "terminalTutorialDiagnostic",
@@ -411,8 +496,16 @@ public final class HologramTutorialIssue100Probe {
             "artifact",
             ArtifactIdentity.capture(HologramTutorialIssue100Probe.class)
                 .asMap());
-        Files.write(output.resolve("gtmb-issue100-tutorial.json"), json(receipt));
-        HologramTestLabUiProfile.install();
+        if (HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled()) {
+            boolean coil = HologramEbfFixedControls.coilOnlyEnabled();
+            receipt.put("schema", coil ? HologramEbfFixedControls.COIL_SCHEMA : "gtmb-stock-ebf-native-controls-v1");
+            Files.write(
+                output.resolve(coil ? HologramEbfFixedControls.COIL_FILE : "gtmb-ebf-fixed-native.json"),
+                json(receipt), java.nio.file.StandardOpenOption.CREATE_NEW);
+        } else {
+            Files.write(output.resolve("gtmb-issue100-tutorial.json"), json(receipt));
+            if (!HologramRenderParityProbe.install(originalMenu, output, run, failure)) HologramTestLabUiProfile.install();
+        }
     }
 
     private void transition(int next) {
@@ -427,6 +520,7 @@ public final class HologramTutorialIssue100Probe {
         Map<String, Object> status = new LinkedHashMap<>();
         status.put("runId", run);
         status.put("stage", stage);
+        if (localPreviewStages != null) status.put("localPreviewStages", localPreviewStages.progress());
         status.put("frame", frame);
         status.put("worldFrames", worldFrames);
         status.put("activeTutorialWorldFrames", activeWorldFrames);
@@ -439,7 +533,7 @@ public final class HologramTutorialIssue100Probe {
         status.put(
             "localPlacementAnchor",
             HologramLocalPlacement.INSTANCE.locked() ? HologramLocalPlacement.INSTANCE.anchor() : null);
-        HologramRenderer.WorldRenderWitness witness = HologramRenderer.lastWorldRenderWitness();
+        MiaoVisonLiteRenderer.WorldRenderWitness witness = MiaoVisonLiteRenderer.lastWorldRenderWitness();
         status.put("worldWitnessGeneration", witness == null ? null : witness.generation);
         status.put("worldWitnessMatchesFixture", witness != null && witness.state == background);
         status.put(

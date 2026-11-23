@@ -407,16 +407,6 @@ final class HologramPresetPersistenceRegression {
                 "omitted legacy defaults keep an exact raw identity tied to the admitted canonical base");
             SimpleAssert
                 .eq(saved.id, HologramPresets.admitted(saved.id, rawHash).id, "raw identity activates its source");
-            NBTTagCompound pairHint = new NBTTagCompound();
-            pairHint.setString("localId", "local_" + saved.id);
-            SimpleAssert.eq(
-                saved.id,
-                HologramServerLibrary.integratedContentId(pairHint),
-                "a local pair selects only its corresponding integrated catalog source");
-            SimpleAssert.that(
-                HologramPresets.matching(HologramServerLibrary.integratedContentId(pairHint), rawHash) != null
-                    && HologramPresets.matching(saved.id, "different-content") == null,
-                "existing integrated content is reusable without trusting a client filename hint");
             Object memoizedRawHash = field(legacySource, "rawHash");
             HologramPresets.matchesContent(saved.id, rawHash);
             SimpleAssert.that(

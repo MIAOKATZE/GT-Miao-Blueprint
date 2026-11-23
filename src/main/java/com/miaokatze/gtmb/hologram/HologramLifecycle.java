@@ -20,6 +20,7 @@ public final class HologramLifecycle {
     public void onServerTick(TickEvent.ServerTickEvent event) {
         if (event.phase == TickEvent.Phase.START) HologramCutService.startupRecovery();
         if (event.phase == TickEvent.Phase.END) try {
+            HologramProjectedPlacementService.tick();
             HologramAeCraftingOrders.tick();
             HologramDemolition.tick();
             HologramService.tick();
@@ -31,6 +32,7 @@ public final class HologramLifecycle {
     @SubscribeEvent
     public void loggedOut(PlayerEvent.PlayerLoggedOutEvent event) {
         if (event.player instanceof net.minecraft.entity.player.EntityPlayerMP) {
+            HologramProjectedPlacementService.forget((net.minecraft.entity.player.EntityPlayerMP) event.player);
             HologramDemolition.cancel((net.minecraft.entity.player.EntityPlayerMP) event.player);
             HologramCutService.disconnected((net.minecraft.entity.player.EntityPlayerMP) event.player);
         }

@@ -191,7 +191,7 @@ final class HologramCutClient {
         if (!held()) {
             if (HologramCutInput.cancelsActivity(stage, cutSession, rawPreview != null || preview != null)) cancel();
             closeScreen();
-            requests.observeHeld(false);
+            requests.observeStorageContext(false);
             return;
         }
         // Recover an overlapping local cut left by older input routing without touching its server-owned queue.
@@ -201,7 +201,8 @@ final class HologramCutClient {
             chooseBlueprintMode();
             closeScreen();
         }
-        if (requests.observeHeld(true)) refreshDirectory();
+        // Carrying the projector in blueprint mode never opens the remote cut directory.
+        if (requests.observeStorageContext(cutMode)) refreshDirectory();
         pollDemolition(System.nanoTime());
         boolean cameraReady = HologramClient.worldInputFocused()
             && !HologramIsometricCamera.INSTANCE.blocksWorldInput();

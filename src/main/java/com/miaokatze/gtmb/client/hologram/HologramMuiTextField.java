@@ -11,7 +11,7 @@ import com.miaokatze.miaokatzecore.api.ui.CanvasTransform;
 final class HologramMuiTextField {
 
     private final HologramMuiCanvasScreen owner;
-    private final NativeField field = new NativeField();
+    private NativeField field;
     private final StringValue value = new StringValue("");
     private final int x, y, width, height;
     final int xPosition, yPosition;
@@ -31,6 +31,7 @@ final class HologramMuiTextField {
     }
 
     TextFieldWidget claimNative() {
+        NativeField field = materializeWidget();
         if (nativeOwned) return field;
         if (legacyParent != null || field.isValid())
             throw new IllegalStateException("Text field already belongs to a legacy panel");
@@ -44,6 +45,7 @@ final class HologramMuiTextField {
     void claimLegacy(com.cleanroommc.modularui.widget.ParentWidget<?> mount) {
         if (nativeOwned) throw new IllegalStateException("Native dock field cannot be reparented");
         if (legacyParent == mount) return;
+        NativeField field = materializeWidget();
         if (legacyParent != null || field.isValid()) throw new IllegalStateException("Text field already has a parent");
         legacyParent = mount;
         mount.child(field);
@@ -57,13 +59,28 @@ final class HologramMuiTextField {
         this.height = height;
         xPosition = x;
         yPosition = y;
+        if (!owner.deferUnclaimedFieldWidgets()) materializeWidget();
+        owner.registerField(this);
+    }
+
+    TextFieldWidget widget() {
+        return materializeWidget();
+    }
+
+    private NativeField materializeWidget() {
+        if (field != null) return field;
+        field = new NativeField();
         field.background(HologramEditorTheme.INPUT)
-            .setTextColor(HologramEditorTheme.TEXT)
+            .setTextColor(editable ? HologramEditorTheme.TEXT : HologramEditorTheme.MUTED)
             .hintColor(HologramEditorTheme.MUTED)
             .setMarkedColor(0xffc4a36b)
             .value(value)
             .setMaxLength(maxLength)
             .autoUpdateOnChange(true);
+        if (!getText().isEmpty()) {
+            field.setText(getText());
+            field.cursorEnd();
+        }
         field.setEnabled(false);
         field.onUpdateListener(widget -> {
             if (nativeOwned && requestFocus
@@ -77,10 +94,6 @@ final class HologramMuiTextField {
                     .focus(field);
             }
         });
-        owner.registerField(this);
-    }
-
-    TextFieldWidget widget() {
         return field;
     }
 
@@ -102,6 +115,7 @@ final class HologramMuiTextField {
 
     void show(long frame, CanvasTransform transform) {
         if (nativeOwned) return;
+        NativeField field = materializeWidget();
         this.frame = frame;
         field.setTextColor(
             editable && !HologramBackgroundTasks.busy() ? HologramEditorTheme.TEXT : HologramEditorTheme.MUTED);
@@ -126,7 +140,7 @@ final class HologramMuiTextField {
     }
 
     void finishFrame(long frame) {
-        if (nativeOwned) return;
+        if (nativeOwned || field == null) return;
         if (this.frame == frame) return;
         if (field.isValid() && field.isFocused()) field.getContext()
             .removeFocus();
@@ -154,35 +168,37 @@ final class HologramMuiTextField {
     }
 
     String getSelectedText() {
-        return field.selectedText();
+        return materializeWidget().selectedText();
     }
 
     void setText(String text) {
         String bounded = text.length() > maxLength ? text.substring(0, maxLength) : text;
         value.setStringValue(bounded);
-        field.setText(bounded);
-        field.cursorEnd();
+        if (field != null) {
+            field.setText(bounded);
+            field.cursorEnd();
+        }
     }
 
     void setMaxStringLength(int max) {
         maxLength = Math.max(0, max);
-        field.setMaxLength(maxLength);
+        if (field != null) field.setMaxLength(maxLength);
         if (getText().length() > maxLength) setText(getText());
     }
 
     void setEnabled(boolean enabled) {
         editable = enabled;
-        field.setTextColor(enabled ? HologramEditorTheme.TEXT : HologramEditorTheme.MUTED);
+        if (field != null) field.setTextColor(enabled ? HologramEditorTheme.TEXT : HologramEditorTheme.MUTED);
         if (!enabled) setFocused(false);
     }
 
     boolean isFocused() {
-        return field.isValid() && field.isFocused();
+        return field != null && field.isValid() && field.isFocused();
     }
 
     void setFocused(boolean focused) {
         requestFocus = focused;
-        if (!field.isValid()) return;
+        if (field == null || !field.isValid()) return;
         if (focused && field.isEnabled()) field.getContext()
             .focus(field);
         else if (isFocused()) field.getContext()
@@ -199,11 +215,11 @@ final class HologramMuiTextField {
     }
 
     void setCursorPositionEnd() {
-        field.cursorEnd();
+        if (field != null) field.cursorEnd();
     }
 
     void setSelectionPos(int position) {
-        field.selection(position);
+        materializeWidget().selection(position);
     }
 
     private final class NativeField extends TextFieldWidget {

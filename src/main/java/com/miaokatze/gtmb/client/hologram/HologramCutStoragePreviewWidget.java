@@ -6,7 +6,6 @@ package com.miaokatze.gtmb.client.hologram;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.ScaledResolution;
 import net.minecraft.client.renderer.OpenGlHelper;
-import net.minecraft.client.shader.Framebuffer;
 import net.minecraft.nbt.NBTTagCompound;
 
 import org.lwjgl.opengl.GL11;
@@ -16,12 +15,16 @@ import com.cleanroommc.modularui.api.widget.Interactable;
 import com.cleanroommc.modularui.screen.viewport.ModularGuiContext;
 import com.cleanroommc.modularui.theme.WidgetThemeEntry;
 import com.cleanroommc.modularui.widget.Widget;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteRenderScope;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteSession;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteTarget;
 
 /** An isolated GUI camera over the same native raw ghost used in the world. Never ticks tile entities. */
 final class HologramCutStoragePreviewWidget extends Widget<HologramCutStoragePreviewWidget> implements Interactable {
 
     private final HologramCutStoragePreviewView preview;
-    private Framebuffer target;
+    private final MiaoVisonLiteSession<Void, Void> lite = new MiaoVisonLiteSession<>();
+    private MiaoVisonLiteTarget target;
     private float yaw = -35, pitch = 24, zoom = 1;
     private int dragX, dragY;
     private String failure = "";
@@ -88,18 +91,14 @@ final class HologramCutStoragePreviewWidget extends Widget<HologramCutStoragePre
         int bottom = (int) Math.round(context.transformY(getArea().w(), getArea().h()) * sy);
         int w = right - left, h = bottom - top;
         if (w <= 0 || h <= 0) return;
-        HologramCutRawPreviewScope.RenderState state = new HologramCutRawPreviewScope.RenderState();
-        state.push();
-        try {
-            if (target == null || target.framebufferWidth != mc.displayWidth
-                || target.framebufferHeight != mc.displayHeight) {
+        try (MiaoVisonLiteRenderScope ignored = MiaoVisonLiteRenderScope.enter()) {
+            if (target == null || !target.sizeMatches(mc.displayWidth, mc.displayHeight)) {
                 deleteTarget();
-                target = new Framebuffer(mc.displayWidth, mc.displayHeight, true);
-                target.setFramebufferFilter(GL11.GL_NEAREST);
+                target = lite.target(mc.displayWidth, mc.displayHeight);
+                target.nearestFiltering();
             }
-            target.bindFramebuffer(false);
-            if (OpenGlHelper.func_153167_i(0x8d40) != 0x8cd5)
-                throw new IllegalStateException("Storage preview framebuffer is incomplete");
+            target.bind(false);
+            if (!target.complete()) throw new IllegalStateException("Storage preview framebuffer is incomplete");
             GL11.glDisable(GL11.GL_SCISSOR_TEST);
             GL11.glDisable(GL11.GL_STENCIL_TEST);
             GL11.glColorMask(true, true, true, true);
@@ -128,17 +127,13 @@ final class HologramCutStoragePreviewWidget extends Widget<HologramCutStoragePre
             failure = HologramCutStoragePreview.text("unavailable") + " "
                 + error.getClass()
                     .getSimpleName();
-        } finally {
-            state.restore();
         }
         if (!failure.isEmpty()) {
             mc.fontRenderer.drawSplitString(failure, 7, 8, Math.max(20, getArea().w() - 14), 0xffffbb88);
             return;
         }
         // Draw only this viewport's texels. The framebuffer owns depth; the world and adjacent MUI widgets do not.
-        state = new HologramCutRawPreviewScope.RenderState();
-        state.push();
-        try {
+        try (MiaoVisonLiteRenderScope state = MiaoVisonLiteRenderScope.enter()) {
             state.useProgram(0);
             state.cleanTextureUnits();
             GL11.glMatrixMode(GL11.GL_MODELVIEW);
@@ -147,12 +142,12 @@ final class HologramCutStoragePreviewWidget extends Widget<HologramCutStoragePre
             GL11.glDisable(GL11.GL_ALPHA_TEST);
             GL11.glDisable(GL11.GL_BLEND);
             GL11.glEnable(GL11.GL_TEXTURE_2D);
-            GL11.glBindTexture(GL11.GL_TEXTURE_2D, target.framebufferTexture);
+            target.bindColorTexture();
             GL11.glColor4f(1, 1, 1, 1);
-            double u0 = left / (double) target.framebufferTextureWidth;
-            double u1 = right / (double) target.framebufferTextureWidth;
-            double v0 = (mc.displayHeight - top) / (double) target.framebufferTextureHeight;
-            double v1 = (mc.displayHeight - bottom) / (double) target.framebufferTextureHeight;
+            double u0 = left / (double) target.textureWidth();
+            double u1 = right / (double) target.textureWidth();
+            double v0 = (mc.displayHeight - top) / (double) target.textureHeight();
+            double v1 = (mc.displayHeight - bottom) / (double) target.textureHeight();
             GL11.glBegin(GL11.GL_QUADS);
             GL11.glTexCoord2d(u0, v0);
             GL11.glVertex2d(0, 0);
@@ -163,8 +158,6 @@ final class HologramCutStoragePreviewWidget extends Widget<HologramCutStoragePre
             GL11.glTexCoord2d(u1, v0);
             GL11.glVertex2d(getArea().w(), 0);
             GL11.glEnd();
-        } finally {
-            state.restore();
         }
     }
 
@@ -193,7 +186,7 @@ final class HologramCutStoragePreviewWidget extends Widget<HologramCutStoragePre
 
     private void deleteTarget() {
         if (target == null) return;
-        target.deleteFramebuffer();
+        lite.releaseTarget();
         target = null;
     }
 
@@ -204,12 +197,8 @@ final class HologramCutStoragePreviewWidget extends Widget<HologramCutStoragePre
     }
 
     void releaseTarget() {
-        HologramCutRawPreviewScope.RenderState state = new HologramCutRawPreviewScope.RenderState();
-        state.push();
-        try {
+        try (MiaoVisonLiteRenderScope ignored = MiaoVisonLiteRenderScope.enter()) {
             deleteTarget();
-        } finally {
-            state.restore();
         }
     }
 }

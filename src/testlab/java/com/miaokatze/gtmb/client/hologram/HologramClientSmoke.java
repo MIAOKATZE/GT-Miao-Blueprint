@@ -91,6 +91,7 @@ public final class HologramClientSmoke {
     }
 
     static void install() {
+        if (HologramGiantNativeEditProbe.install()) return;
         if (HologramEditorIssuesProbe.install()) return;
         if (HologramTutorialIssue100Probe.install()) return;
         if (HologramTutorialIssue95Probe.install()) return;
@@ -662,8 +663,13 @@ public final class HologramClientSmoke {
                 }
             }
             if (HologramTextures.material(cell, false).pipe) pipes++;
-            if (cell.targetDisplay.hasKey("texturePage") && cell.targetDisplay.hasKey("textureIndex")) hatches++;
-            covers += cell.targetDisplay.getTagList("gt.covers", 10)
+            if (cell.display(false)
+                .hasKey("texturePage")
+                && cell.display(false)
+                    .hasKey("textureIndex"))
+                hatches++;
+            covers += cell.display(false)
+                .getTagList("gt.covers", 10)
                 .tagCount();
         }
         if (pipes == 0 || hatches == 0 || covers == 0)
@@ -691,7 +697,7 @@ public final class HologramClientSmoke {
                 machine == null ? "null"
                     : machine.getClass()
                         .getName());
-        NBTTagCompound display = current ? cell.actualDisplay : cell.targetDisplay;
+        NBTTagCompound display = cell.display(current);
         info.append(" display=")
             .append(display);
         if (machine instanceof gregtech.api.metatileentity.implementations.MTEFluidPipe) {

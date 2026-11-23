@@ -82,6 +82,11 @@ final class HologramMuiProbeInput {
     /** Locate a current shell widget, prove the native hit, then use the screen's normal input dispatcher. */
     static void nativeTarget(HologramScreen owner, String key, java.util.Map<String, Object> evidence)
         throws ReflectiveOperationException {
+        nativeTarget(owner, key, evidence, null);
+    }
+
+    static void nativeTarget(HologramScreen owner, String key, java.util.Map<String, Object> evidence,
+        Runnable beforePress) throws ReflectiveOperationException {
         evidence.put("targetKey", key);
         int[] clipped = owner.ui.shell.targetBounds(key);
         evidence.put("clippedBounds", clipped);
@@ -155,6 +160,7 @@ final class HologramMuiProbeInput {
                 + java.util.Arrays.toString(clipped)
                 + "; hovering="
                 + hovered);
+        if (beforePress != null) beforePress.run();
         boolean consumed = screen.onMouseInputPre(0, true);
         boolean handled = false;
         try {

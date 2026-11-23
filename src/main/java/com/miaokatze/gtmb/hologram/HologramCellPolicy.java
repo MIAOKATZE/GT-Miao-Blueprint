@@ -1325,7 +1325,11 @@ final class HologramCellPolicy {
         }
     }
 
-    static String candidateRole(HologramSession s, HologramCapture.Cell c, ItemStack stack) {
+    static String candidateRole(HologramSession session, HologramCapture.Cell c, ItemStack stack) {
+        return candidateRole(c, stack);
+    }
+
+    static String candidateRole(HologramCapture.Cell c, ItemStack stack) {
         Declarations.PureElement<?> declaration = HologramElementCatalog.pure(c.element);
         if (declaration != null) return declaration.candidateRoleLabel(stack);
         if (hatchTier(stack) == Integer.MAX_VALUE) return "外壳/方块";
@@ -1353,6 +1357,39 @@ final class HologramCellPolicy {
         int[] values = new int[result.size()];
         for (int i = 0; i < values.length; i++) values[i] = result.get(i);
         return values;
+    }
+
+    /** Read-only local proof. An unknown element or unrecognized candidate cannot provide a facing choice. */
+    static int[] previewHatchFacings(HologramCapture.Cell c, ItemStack target, Object detachedContext,
+        ExtendedFacing facing) {
+        if (c.anchor || c.element == null || hatchTier(target) == Integer.MAX_VALUE) return new int[0];
+        try {
+            var prototype = ItemMachines.getMetaTileEntity(target);
+            if (prototype == null || prototype instanceof gregtech.api.metatileentity.MetaPipeEntity) return new int[0];
+            for (IStructureElement<?> part : HologramElementCatalog.parts(c.element, false)) {
+                Declarations.PureElement<?> declaration = HologramElementCatalog.pure(part);
+                if (declaration != null) {
+                    if (!declaration.accepts(target)) continue;
+                    int[] facings = declaration.legalFacings(target);
+                    return facings == null ? new int[0] : java.util.Arrays.stream(facings)
+                        .filter(direction -> direction >= 0 && direction < 6
+                            && prototype.isFacingValid(ForgeDirection.getOrientation(direction)))
+                        .toArray();
+                }
+                java.util.function.Predicate<ItemStack> declared = HologramHatchPolicy
+                    .predicate(part, detachedContext, c.elementTrigger);
+                if (declared != null && declared.test(target)) {
+                    return java.util.Arrays.stream(ForgeDirection.VALID_DIRECTIONS)
+                        .filter(direction -> prototype.isFacingValid(direction)
+                            && HologramHatchPolicy.allowed(part, facing, direction))
+                        .mapToInt(ForgeDirection::ordinal)
+                        .toArray();
+                }
+            }
+        } catch (RuntimeException | LinkageError unavailable) {
+            // The source has not proved an explicit direction. Keep native automatic placement unchanged.
+        }
+        return new int[0];
     }
 
     static boolean orientationOnly(HologramSession s, HologramCapture.Cell c, int index) {

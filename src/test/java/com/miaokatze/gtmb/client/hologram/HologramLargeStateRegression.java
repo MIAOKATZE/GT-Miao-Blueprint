@@ -469,7 +469,7 @@ public final class HologramLargeStateRegression {
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError(failure);
         }
-        SimpleAssert.that(cell.targetDisplay == display, "owned display remains a read-only snapshot reference");
+        SimpleAssert.that(cell.display(false) == display, "owned display remains a read-only snapshot reference");
         cell.targetStack.getTagCompound()
             .setString("unknownItemField", "changed");
         cell.candidates.get(0)
@@ -495,7 +495,11 @@ public final class HologramLargeStateRegression {
             .getCompoundTagAt(0)
             .getCompoundTag("targetDisplay")
             .setString("unknownNativeField", "changed");
-        SimpleAssert.eq("kept", cell.targetDisplay.getString("unknownNativeField"), "fullData exports independent NBT");
+        SimpleAssert.eq(
+            "kept",
+            cell.display(false)
+                .getString("unknownNativeField"),
+            "fullData exports independent NBT");
         NBTTagCompound external = (NBTTagCompound) source.copy();
         HologramState copied = new HologramState(external);
         external.getTagList("cells", 10)
@@ -513,7 +517,9 @@ public final class HologramLargeStateRegression {
             "public construction copies rows");
         SimpleAssert.eq(
             "kept",
-            copied.cells.get(0).targetDisplay.getString("unknownNativeField"),
+            copied.cells.get(0)
+                .display(false)
+                .getString("unknownNativeField"),
             "public construction copies display compounds");
     }
 
@@ -629,7 +635,7 @@ public final class HologramLargeStateRegression {
                     "render access uses world metadata independently of target item damage");
                 SimpleAssert.eq(5, hint.targetFacing, "target facing survives structure preparation");
                 SimpleAssert
-                    .eq(targetDisplay, hint.targetDisplay, "native target display payload survives preparation");
+                    .eq(targetDisplay, hint.display(false), "native target display payload survives preparation");
                 SimpleAssert.eq(
                     2,
                     hint.tag()
@@ -651,8 +657,11 @@ public final class HologramLargeStateRegression {
                     "direct geometry retains negative and positive region indices");
                 SimpleAssert.that(anchor.anchor && anchor.actualStack != null, "anchor keeps its native item identity");
                 SimpleAssert.eq(4, anchor.actualFacing, "anchor keeps its native facing");
-                SimpleAssert
-                    .eq("kept", anchor.actualDisplay.getString("nativeAnchorField"), "anchor keeps display NBT");
+                SimpleAssert.eq(
+                    "kept",
+                    anchor.display(true)
+                        .getString("nativeAnchorField"),
+                    "anchor keeps display NBT");
                 SimpleAssert.eq("kept annotation", hint.prompt, "projection annotations remain visible");
                 projectionUi(state);
             }
@@ -852,7 +861,10 @@ public final class HologramLargeStateRegression {
                 !((NBTTagCompound) raw.get(packed.cells.get(0))).hasKey("x"),
                 "runtime descriptor remains compact after preparation");
             SimpleAssert.that(
-                packed.cells.get(0).targetDisplay == packed.cells.get(1).targetDisplay,
+                packed.cells.get(0)
+                    .display(false)
+                    == packed.cells.get(1)
+                        .display(false),
                 "read-only native display data stays shared until detached hydration");
             packed.cells.get(0).targetStack.getTagCompound()
                 .setString("unknownItemField", "changed");
@@ -876,7 +888,9 @@ public final class HologramLargeStateRegression {
                 .setString("unknownDisplay", "changed");
             SimpleAssert.eq(
                 "kept",
-                next.cells.get(0).targetDisplay.getString("unknownDisplay"),
+                next.cells.get(0)
+                    .display(false)
+                    .getString("unknownDisplay"),
                 "incoming patch keeps external mutation isolated");
             SimpleAssert
                 .that(next.cells.get(1) == packed.cells.get(1), "small patch retains neighboring compact cells");

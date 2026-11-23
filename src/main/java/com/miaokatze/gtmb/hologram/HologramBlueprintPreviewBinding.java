@@ -28,7 +28,10 @@ public final class HologramBlueprintPreviewBinding {
     private HologramBlueprintPreviewBinding() {}
 
     public static String pngSha256(byte[] json) throws IOException {
-        int opening = opening(json);
+        return pngSha256(json, opening(json));
+    }
+
+    private static String pngSha256(byte[] json, int opening) throws IOException {
         boolean canonical = matches(json, opening + 1, PREFIX);
         boolean present = validate(json);
         if (!present) return "";
@@ -38,6 +41,35 @@ public final class HologramBlueprintPreviewBinding {
         String hash = new String(json, hashStart, 64, StandardCharsets.US_ASCII);
         if (!hash.matches("[a-f0-9]{64}")) throw new IOException("Invalid blueprint preview PNG digest");
         return hash;
+    }
+
+    /** Only for the freshly read, exclusively owned bytes inside one readLocalJson call. */
+    static LocalBinding inspectLocalJson(byte[] json) throws IOException {
+        int opening = opening(json);
+        return new LocalBinding(json, pngSha256(json, opening), opening + 1);
+    }
+
+    static final class LocalBinding {
+
+        private final byte[] json;
+        final String pngSha256;
+        private final int insertion;
+
+        private LocalBinding(byte[] json, String pngSha256, int insertion) {
+            this.json = json;
+            this.pngSha256 = pngSha256;
+            this.insertion = insertion;
+        }
+
+        String sourceSha256() {
+            if (pngSha256.isEmpty()) return HologramBlueprintArtifact.hash(json);
+            // Exactly sourceJson's two arraycopy ranges; no detached JSON is materialized.
+            MessageDigest digest = newSha256();
+            digest.update(json, 0, insertion);
+            int suffix = insertion + MEMBER_BYTES;
+            digest.update(json, suffix, json.length - suffix);
+            return hex(digest.digest());
+        }
     }
 
     /** No reserialization: every other byte, including whitespace and extension fields, survives. */
@@ -71,16 +103,22 @@ public final class HologramBlueprintPreviewBinding {
     static String boundJsonSha256(byte[] source, String pngSha256) throws IOException {
         if (!pngSha256.matches("[a-f0-9]{64}")) throw new IOException("Invalid blueprint preview PNG digest");
         int insertion = opening(source) + 1;
-        MessageDigest digest;
-        try {
-            digest = MessageDigest.getInstance("SHA-256");
-        } catch (java.security.NoSuchAlgorithmException impossible) {
-            throw new IllegalStateException(impossible);
-        }
+        MessageDigest digest = newSha256();
         digest.update(source, 0, insertion);
         digest.update((JSON_PREFIX + pngSha256 + JSON_SUFFIX).getBytes(StandardCharsets.US_ASCII));
         digest.update(source, insertion, source.length - insertion);
-        byte[] hash = digest.digest();
+        return hex(digest.digest());
+    }
+
+    private static MessageDigest newSha256() {
+        try {
+            return MessageDigest.getInstance("SHA-256");
+        } catch (java.security.NoSuchAlgorithmException impossible) {
+            throw new IllegalStateException(impossible);
+        }
+    }
+
+    private static String hex(byte[] hash) {
         char[] hex = new char[64], digits = "0123456789abcdef".toCharArray();
         for (int index = 0; index < hash.length; index++) {
             hex[index * 2] = digits[(hash[index] & 255) >>> 4];
@@ -108,12 +146,23 @@ public final class HologramBlueprintPreviewBinding {
         return true;
     }
 
+    /** Exact strict JSON syntax for a display whose compact dictionary/shape was already validated. */
+    public static void validateStoredSyntax(byte[] json) throws IOException {
+        if (json == null || json.length == 0 || json.length > HologramBlueprintArtifact.MAX_JSON_BYTES)
+            throw new IOException("Blueprint JSON byte budget");
+        validate(json);
+    }
+
     private static boolean validate(byte[] json) throws IOException {
         String text = StandardCharsets.UTF_8.newDecoder()
             .onMalformedInput(CodingErrorAction.REPORT)
             .onUnmappableCharacter(CodingErrorAction.REPORT)
             .decode(ByteBuffer.wrap(json))
             .toString();
+        return validate(text);
+    }
+
+    static boolean validate(String text) throws IOException {
         try (JsonReader reader = new JsonReader(new StringReader(text))) {
             boolean binding = object(reader, 0);
             if (reader.peek() != JsonToken.END_DOCUMENT) throw new IOException("Trailing blueprint JSON data");

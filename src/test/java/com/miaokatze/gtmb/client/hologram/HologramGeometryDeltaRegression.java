@@ -55,11 +55,11 @@ public final class HologramGeometryDeltaRegression {
             "destination includes its diagonal halo");
         SimpleAssert.that(!dirty.contains(new HologramRegionCache.Key(8, 0, 0)), "distant mesh is not dirty");
         rendererRegionReuse(base, next);
-        HologramRenderer.lastSnapshotDirtyRegions = -1;
+        MiaoVisonLiteRenderer.lastSnapshotDirtyRegions = -1;
         HologramRenderer.snapshotChanged(base, next);
         SimpleAssert.eq(
             dirty.size(),
-            HologramRenderer.lastSnapshotDirtyRegions,
+            MiaoVisonLiteRenderer.lastSnapshotDirtyRegions,
             "renderer accepts topology through its local invalidation path");
         metadataPublication(base, next, dirty);
 
@@ -116,17 +116,17 @@ public final class HologramGeometryDeltaRegression {
     @SuppressWarnings("unchecked")
     private static void rendererRegionReuse(HologramState base, HologramState next) {
         try {
-            java.lang.reflect.Field cacheField = HologramRenderer.class.getDeclaredField("previewRegions"),
-                visibleField = HologramRenderer.class.getDeclaredField("visibleState"),
-                preparationField = HologramRenderer.class.getDeclaredField("previewPreparation");
+            java.lang.reflect.Field cacheField = MiaoVisonLiteRenderer.class.getDeclaredField("previewRegions"),
+                visibleField = MiaoVisonLiteRenderer.class.getDeclaredField("visibleState"),
+                preparationField = MiaoVisonLiteRenderer.class.getDeclaredField("previewPreparation");
             cacheField.setAccessible(true);
             visibleField.setAccessible(true);
             preparationField.setAccessible(true);
             java.util.Map<HologramRegionCache.Key, Object> cache = (java.util.Map<HologramRegionCache.Key, Object>) cacheField
-                .get(null);
+                .get(HologramRenderer.editor());
             java.util.Map<HologramRegionCache.Key, Object> saved = new java.util.LinkedHashMap<>(cache);
-            Object visible = visibleField.get(null), preparation = preparationField.get(null);
-            Class<?> regionType = Class.forName(HologramRenderer.class.getName() + "$PreviewRegion");
+            Object visible = visibleField.get(HologramRenderer.editor()), preparation = preparationField.get(HologramRenderer.editor());
+            Class<?> regionType = Class.forName(MiaoVisonLiteRenderer.class.getName() + "$PreviewRegion");
             java.lang.reflect.Constructor<?> constructor = regionType.getDeclaredConstructor();
             constructor.setAccessible(true);
             Object retained = constructor.newInstance(), changed = constructor.newInstance();
@@ -141,7 +141,7 @@ public final class HologramGeometryDeltaRegression {
                 cache.clear();
                 cache.put(distant, retained);
                 cache.put(new HologramRegionCache.Key(0, 0, 0), changed);
-                visibleField.set(null, base);
+                visibleField.set(HologramRenderer.editor(), base);
                 HologramRenderer.snapshotChanged(base, next);
                 SimpleAssert.that(
                     cache.get(distant) == retained,
@@ -151,7 +151,7 @@ public final class HologramGeometryDeltaRegression {
                 SimpleAssert.that(
                     !cache.containsKey(new HologramRegionCache.Key(0, 0, 0)),
                     "the changed endpoint is retired before the new render cursor runs");
-                Object cursor = preparationField.get(null);
+                Object cursor = preparationField.get(HologramRenderer.editor());
                 java.lang.reflect.Field state = cursor.getClass()
                     .getDeclaredField("state"),
                     boundary = cursor.getClass()
@@ -170,8 +170,8 @@ public final class HologramGeometryDeltaRegression {
             } finally {
                 cache.clear();
                 cache.putAll(saved);
-                visibleField.set(null, visible);
-                preparationField.set(null, preparation);
+                visibleField.set(HologramRenderer.editor(), visible);
+                preparationField.set(HologramRenderer.editor(), preparation);
             }
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("progressive renderer delta ownership", failure);
@@ -202,11 +202,11 @@ public final class HologramGeometryDeltaRegression {
         SimpleAssert.that(
             restored.cells == publication.cells && restored.regions == publication.regions,
             "publication restore reparses no cells or spatial regions");
-        HologramRenderer.lastSnapshotDirtyRegions = -1;
+        MiaoVisonLiteRenderer.lastSnapshotDirtyRegions = -1;
         HologramRenderer.snapshotChanged(base, restored);
         SimpleAssert.eq(
             dirty.size(),
-            HologramRenderer.lastSnapshotDirtyRegions,
+            MiaoVisonLiteRenderer.lastSnapshotDirtyRegions,
             "decorated topology still reaches local renderer invalidation");
         try {
             base.withPublication(publication);

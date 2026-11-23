@@ -5,6 +5,8 @@ package com.miaokatze.gtmb.client.hologram;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
@@ -25,18 +27,27 @@ import net.minecraftforge.client.MinecraftForgeClient;
 
 import org.lwjgl.opengl.GL11;
 
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteDisplayList;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteRenderScope;
+
 import cpw.mods.fml.client.registry.ISimpleBlockRenderingHandler;
 import cpw.mods.fml.client.registry.RenderingRegistry;
 import cpw.mods.fml.relauncher.ReflectionHelper;
 
-/** Audited native static block models rendered from a detached snapshot, never from live tiles. */
+/** Produces Lite compatibility draws from audited static renderers and detached snapshot tiles. */
 final class HologramBlockRender {
 
-    private static final Map<HologramState.Cell, Model[]> MODELS = new IdentityHashMap<>();
-    private static final Map<String, String> FAILURES = new HashMap<>();
+    static final class Cache {
+
+        final Map<HologramState.Cell, Model[]> models = new IdentityHashMap<>();
+        final Map<String, String> failures = new HashMap<>();
+        HologramState snapshot;
+        int compiled;
+        HologramBlockAccess target, actual;
+        VertexScratch scratch;
+    }
+
     private static final Set<String> WARNED_FAILURES = new HashSet<>();
-    private static HologramState snapshot;
-    private static HologramBlockAccess target, actual;
     private static final Field DRAWING = field(Tessellator.class, "isDrawing", "field_78415_z");
     private static final Field OFFSET_X = field(Tessellator.class, "xOffset", "field_78408_v");
     private static final Field OFFSET_Y = field(Tessellator.class, "yOffset", "field_78407_w");
@@ -53,55 +64,66 @@ final class HologramBlockRender {
         field(Tessellator.class, "isColorDisabled", "field_78410_t"),
         field(Tessellator.class, "drawMode", "field_78409_u") };
 
-    static int compiled, vertices;
-
     private HologramBlockRender() {}
 
+    private static Cache cache() {
+        return HologramPreviewAssets.active().blocks;
+    }
+
     static void begin(HologramState state) {
-        if (snapshot == state) return;
-        HologramRenderer.nativeSnapshotChanged();
+        Cache cache = cache();
+        if (cache.snapshot == state) return;
+        if (HologramPreviewAssets.active() == HologramPreviewAssets.EDITOR) HologramRenderer.editorNativeSnapshotChanged();
+        beginViewport(state);
+    }
+
+    static void beginViewport(HologramState state) {
+        Cache cache = cache();
+        if (cache.snapshot == state) return;
         clear();
-        snapshot = state;
+        cache.snapshot = state;
         HologramLinkNodePreview.begin();
-        target = new HologramBlockAccess(state, false);
-        actual = new HologramBlockAccess(state, true);
+        cache.target = new HologramBlockAccess(state, false);
+        cache.actual = new HologramBlockAccess(state, true);
     }
 
     static void clear() {
-        for (Model[] pair : MODELS.values())
-            for (Model model : pair) if (model != null && model.list != 0) GL11.glDeleteLists(model.list, 1);
-        MODELS.clear();
-        FAILURES.clear();
-        snapshot = null;
-        target = actual = null;
-        compiled = vertices = 0;
+        Cache cache = cache();
+        for (Model[] pair : cache.models.values()) for (Model model : pair) if (model != null) model.close();
+        cache.models.clear();
+        cache.failures.clear();
+        cache.snapshot = null;
+        cache.target = cache.actual = null;
+        cache.compiled = 0;
     }
 
     static void advance(HologramState previous, HologramState next, Set<HologramRegionCache.Key> dirty) {
-        if (snapshot != previous) return;
+        Cache cache = cache();
+        if (cache.snapshot != previous) return;
         for (HologramRegionCache.Key key : dirty) {
             List<HologramState.Cell> cells = previous.regions.regions.get(key);
             if (cells == null) continue;
             for (HologramState.Cell cell : cells) {
-                Model[] pair = MODELS.remove(cell);
+                Model[] pair = cache.models.remove(cell);
                 if (pair == null) continue;
-                for (Model model : pair) if (model != null && model.list != 0) GL11.glDeleteLists(model.list, 1);
+                for (Model model : pair) if (model != null) model.close();
             }
         }
-        snapshot = next;
+        cache.snapshot = next;
         // The spatial index is shared; constructing these views does not walk all cells.
-        target = new HologramBlockAccess(next, false);
-        actual = new HologramBlockAccess(next, true);
+        cache.target = new HologramBlockAccess(next, false);
+        cache.actual = new HologramBlockAccess(next, true);
     }
 
     static String failure(HologramState.Cell cell, boolean current) {
-        return FAILURES.getOrDefault((current ? cell.id : cell.wantId), "");
+        return cache().failures.getOrDefault((current ? cell.id : cell.wantId), "");
     }
 
     static boolean invisible(HologramState.Cell cell, boolean current) {
         current = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
-        HologramNativeRenderRegistry.Adapter adapter = HologramNativeRenderRegistry.adapter(cell.block(current));
-        return adapter != null && adapter.invisible(cell.block(current), current ? cell.meta : cell.wantMeta);
+        Block block = cell.block(current);
+        HologramNativeRenderRegistry.Adapter adapter = HologramNativeRenderRegistry.adapter(block);
+        return adapter != null && adapter.invisible(block, current ? cell.meta : cell.wantMeta);
     }
 
     /** An empty/air-only or partly unsupported snapshot is never inferred to be an intentional data-only model. */
@@ -117,21 +139,21 @@ final class HologramBlockRender {
     }
 
     static boolean ready(HologramState.Cell cell, boolean current) {
-        if (snapshot == null) return false;
+        if (cache().snapshot == null) return false;
         current = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
         if (!HologramNativeTiles.supported(cell.block(current))) return false;
-        Model[] pair = MODELS.computeIfAbsent(cell, unused -> new Model[2]);
+        Model[] pair = cache().models.computeIfAbsent(cell, unused -> new Model[2]);
         int side = current ? 1 : 0;
         if (pair[side] == null) pair[side] = compile(cell, current);
-        return pair[side].list != 0 || pair[side].acceptedEmpty || pair[side].invisible;
+        return pair[side].packet != null || pair[side].acceptedEmpty || pair[side].invisible;
     }
 
     static void draw(HologramState.Cell cell, boolean current) {
         current = current || cell.anchor || cell.status.equals("protected") && cell.actualStack != null;
-        Model[] pair = MODELS.get(cell);
+        Model[] pair = cache().models.get(cell);
         if (pair == null || pair[current ? 1 : 0] == null) return;
         Model model = pair[current ? 1 : 0];
-        if (model.list == 0) return;
+        if (model.packet == null) return;
         int originalMode = GL11.glGetInteger(GL11.GL_MATRIX_MODE);
         GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
         pushMatrices();
@@ -140,7 +162,7 @@ final class HologramBlockRender {
                 .getTextureManager()
                 .bindTexture(TextureMap.locationBlocksTexture);
             if (HologramNativeRenderRegistry.doubleSided(cell.block(current))) GL11.glDisable(GL11.GL_CULL_FACE);
-            GL11.glCallList(model.list);
+            model.packet.draw();
         } finally {
             popMatrices(originalMode);
             GL11.glPopAttrib();
@@ -148,36 +170,36 @@ final class HologramBlockRender {
     }
 
     static int vertexCount(HologramState.Cell cell, boolean current) {
-        Model[] pair = MODELS.get(cell);
+        Model[] pair = cache().models.get(cell);
         return pair == null || pair[current ? 1 : 0] == null ? 0 : pair[current ? 1 : 0].vertices;
     }
 
     static int uniquePositions(HologramState.Cell cell, boolean current) {
-        Model[] pair = MODELS.get(cell);
+        Model[] pair = cache().models.get(cell);
         return pair == null || pair[current ? 1 : 0] == null ? 0 : pair[current ? 1 : 0].positions;
     }
 
     static boolean missingTexture(HologramState.Cell cell, boolean current) {
-        Model[] pair = MODELS.get(cell);
+        Model[] pair = cache().models.get(cell);
         return pair != null && pair[current ? 1 : 0] != null && pair[current ? 1 : 0].missingTexture;
     }
 
     static List<double[]> positions(HologramState.Cell cell, boolean current) {
-        Model[] pair = MODELS.get(cell);
+        Model[] pair = cache().models.get(cell);
         return pair == null || pair[current ? 1 : 0] == null ? java.util.Collections.emptyList()
             : pair[current ? 1 : 0].points;
     }
 
     /** Opt-in AE GL evidence: detached geometry, UVs and emitted packed vertex colors. */
     static List<double[]> attributes(HologramState.Cell cell, boolean current) {
-        Model[] pair = MODELS.get(cell);
+        Model[] pair = cache().models.get(cell);
         return pair == null || pair[current ? 1 : 0] == null ? java.util.Collections.emptyList()
             : pair[current ? 1 : 0].attributes;
     }
 
     /** Smoke evidence that a nondegenerate native face used a particular atlas material. */
     static boolean usesIcon(HologramState.Cell cell, boolean current, IIcon icon) {
-        Model[] pair = MODELS.get(cell);
+        Model[] pair = cache().models.get(cell);
         if (pair == null || pair[current ? 1 : 0] == null || icon == null) return false;
         for (double[] uv : pair[current ? 1 : 0].textureCenters)
             if (uv[0] > icon.getMinU() + 1e-6 && uv[0] < icon.getMaxU() - 1e-6
@@ -189,11 +211,12 @@ final class HologramBlockRender {
     @SuppressWarnings("unchecked")
     private static Model compile(HologramState.Cell cell, boolean current) {
         Block block = cell.block(current);
-        HologramBlockAccess access = current ? actual : target;
+        Cache cache = cache();
+        HologramBlockAccess access = current ? cache.actual : cache.target;
         HologramNativeRenderRegistry.Adapter adapter = HologramNativeRenderRegistry.adapter(block);
         if (adapter != null && adapter.invisible(block, access.getBlockMetadata(cell.x, cell.y, cell.z)))
             return new Model(
-                0,
+                null,
                 0,
                 0,
                 java.util.Collections.emptyList(),
@@ -213,12 +236,10 @@ final class HologramBlockRender {
     static List<double[]> nativeControl(HologramState.Cell cell, boolean current, IBlockAccess world) {
         if (!Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke"))
             throw new IllegalStateException("native renderer control requires extended compatibility smoke");
-        Model control = compile(cell, current, world, world.getTileEntity(cell.x, cell.y, cell.z), null);
-        try {
-            if (control.list == 0) throw new IllegalStateException("native control failed: " + failure(cell, current));
+        try (Model control = compile(cell, current, world, world.getTileEntity(cell.x, cell.y, cell.z), null)) {
+            if (control.packet == null)
+                throw new IllegalStateException("native control failed: " + failure(cell, current));
             return control.attributes;
-        } finally {
-            if (control.list != 0) GL11.glDeleteLists(control.list, 1);
         }
     }
 
@@ -226,12 +247,9 @@ final class HologramBlockRender {
     static List<double[]> drawSourceReference(HologramState.Cell cell, boolean current, IBlockAccess world) {
         if (!Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke"))
             throw new IllegalStateException("source render reference requires extended compatibility smoke");
-        Model control = compile(cell, current, world, world.getTileEntity(cell.x, cell.y, cell.z), null, true);
-        try {
-            if (control.list != 0) GL11.glCallList(control.list);
+        try (Model control = compile(cell, current, world, world.getTileEntity(cell.x, cell.y, cell.z), null, true)) {
+            if (control.packet != null) control.packet.draw();
             return control.attributes;
-        } finally {
-            if (control.list != 0) GL11.glDeleteLists(control.list, 1);
         }
     }
 
@@ -247,15 +265,21 @@ final class HologramBlockRender {
         Block block = cell.block(current);
         Tessellator tess = Tessellator.instance;
         Tessellator callerTess = tess;
-        int list = 0, count = 0;
+        MiaoVisonLiteDisplayList packet = null;
+        int count = 0;
         boolean opened = false;
+        boolean retained = false;
         boolean invokedNative = false;
         HologramAeNativeRender.CableContext aeCableContext = null;
         HologramNativeRenderRegistry.RenderScope renderScope = null;
-        Set<String> positions = new HashSet<>();
-        List<double[]> points = new ArrayList<>();
-        List<double[]> textureCenters = new ArrayList<>();
-        List<double[]> attributes = new ArrayList<>();
+        Cache cache = cache();
+        VertexScratch scratch = cache.scratch == null ? new VertexScratch() : cache.scratch;
+        cache.scratch = null;
+        boolean captureGeometry = Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke");
+        boolean captureAttributes = captureGeometry || Boolean.getBoolean("gtmb.hologram.aeClientSmoke");
+        List<double[]> points = captureGeometry ? new ArrayList<>() : Collections.emptyList();
+        List<double[]> textureCenters = captureGeometry ? new ArrayList<>() : Collections.emptyList();
+        List<double[]> attributes = captureAttributes ? new ArrayList<>() : Collections.emptyList();
         boolean missing = false;
         int previousPass = MinecraftForgeClient.getRenderPass();
         int previousWorldPass = ForgeHooksClient.getWorldRenderPass();
@@ -289,12 +313,14 @@ final class HologramBlockRender {
                 renderScope = rendererAdapter.renderScope(block, tile, handler);
                 if (renderScope != null) access = renderScope.access();
             }
-            list = GL11.glGenLists(1);
-            if (list == 0) return failed(cell, current, "display list allocation failed");
+            packet = MiaoVisonLiteDisplayList.allocate();
+            if (packet == null) return failed(cell, current, "display list allocation failed");
             RenderBlocks renderer = new RenderBlocks(access);
             renderer.renderAllFaces = !sourceReference;
             renderer.enableAO = false;
-            GL11.glNewList(list, GL11.GL_COMPILE);
+            // A native handler can interleave Tessellator flushes, texture changes and other GL commands.
+            // Keep both full Forge passes in a single ordered packet. The raw vertices below are diagnostics.
+            packet.begin();
             opened = true;
             // Angelica starts a GTNHLib DirectTessellator capture in glNewList.
             // Resolve it after the list opens, just as the native renderer does.
@@ -320,54 +346,47 @@ final class HologramBlockRender {
                 int emitted = VERTEX_COUNT.getInt(tess);
                 count += emitted;
                 if (emitted > 0) {
-                    int[] raw = HologramVertexData.read(tess, emitted);
-                    int stride = 8;
-                    if (stride >= 3) for (int v = 0; v < emitted; v++) {
-                        int quad = v / 4 * 4;
-                        if (quad + 3 < emitted && !usableQuad(raw, stride, quad)) continue;
-                        int start = v * stride;
-                        if (positions.add(raw[start] + ":" + raw[start + 1] + ":" + raw[start + 2])
-                            && Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke"))
-                            points.add(
-                                new double[] { Float.intBitsToFloat(raw[start]), Float.intBitsToFloat(raw[start + 1]),
-                                    Float.intBitsToFloat(raw[start + 2]) });
-                    }
-                    IIcon absent = Minecraft.getMinecraft()
-                        .getTextureMapBlocks()
-                        .getAtlasSprite("missingno");
-                    if (stride >= 5) for (int v = 0; v + 3 < emitted; v += 4) {
-                        if (!usableQuad(raw, stride, v)) continue;
+                    int[] raw = scratch.raw = HologramVertexData.read(tess, emitted, scratch.raw);
+                    IIcon absent = Minecraft.getMinecraft().getTextureMapBlocks().getAtlasSprite("missingno");
+                    for (int first = 0; first < emitted; first += 4) {
+                        int corners = Math.min(4, emitted - first);
+                        if (corners == 4 && !usableQuad(raw, 8, first)) continue;
                         double u = 0, w = 0;
-                        for (int corner = 0; corner < 4; corner++) {
-                            u += Float.intBitsToFloat(raw[(v + corner) * stride + 3]) / 4.0;
-                            w += Float.intBitsToFloat(raw[(v + corner) * stride + 4]) / 4.0;
+                        for (int vertex = first; vertex < first + corners; vertex++) {
+                            int start = vertex * 8;
+                            boolean added = scratch.add(raw[start], raw[start + 1], raw[start + 2]);
+                            if (added && captureGeometry)
+                                points.add(new double[] {
+                                    Float.intBitsToFloat(raw[start]),
+                                    Float.intBitsToFloat(raw[start + 1]),
+                                    Float.intBitsToFloat(raw[start + 2]) });
+                            if (corners == 4) {
+                                float textureU = Float.intBitsToFloat(raw[start + 3]);
+                                float textureV = Float.intBitsToFloat(raw[start + 4]);
+                                u += textureU / 4.0;
+                                w += textureV / 4.0;
+                                if (captureAttributes) attributes.add(new double[] {
+                                    Float.intBitsToFloat(raw[start]),
+                                    Float.intBitsToFloat(raw[start + 1]),
+                                    Float.intBitsToFloat(raw[start + 2]),
+                                    textureU, textureV, raw[start + 5] });
+                            }
                         }
-                        if (Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke"))
-                            textureCenters.add(new double[] { u, w });
-                        if (u > absent.getMinU() + 1e-6 && u < absent.getMaxU() - 1e-6
-                            && w > absent.getMinV() + 1e-6
-                            && w < absent.getMaxV() - 1e-6) missing = true;
+                        if (corners == 4) {
+                            if (captureGeometry) textureCenters.add(new double[] { u, w });
+                            if (u > absent.getMinU() + 1e-6 && u < absent.getMaxU() - 1e-6
+                                && w > absent.getMinV() + 1e-6 && w < absent.getMaxV() - 1e-6) missing = true;
+                        }
                     }
-                    if (stride >= 6 && (Boolean.getBoolean("gtmb.hologram.aeClientSmoke")
-                        || Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke")))
-                        for (int v = 0; v < emitted; v++) {
-                            int quad = v / 4 * 4;
-                            if (quad + 3 >= emitted || !usableQuad(raw, stride, quad)) continue;
-                            int offset = v * stride;
-                            attributes.add(
-                                new double[] { Float.intBitsToFloat(raw[offset]), Float.intBitsToFloat(raw[offset + 1]),
-                                    Float.intBitsToFloat(raw[offset + 2]), Float.intBitsToFloat(raw[offset + 3]),
-                                    Float.intBitsToFloat(raw[offset + 4]), raw[offset + 5] });
-                        }
+
                 }
                 tess.draw();
             }
-            GL11.glEndList();
+            packet.finish();
             opened = false;
             // EnderIO deliberately emits a zero-area quad in its empty alpha pass.
             // That sentinel alone is not a usable native preview model.
-            if (count == 0 || positions.size() < 3) {
-                GL11.glDeleteLists(list, 1);
+            if (count == 0 || scratch.size < 3) {
                 if (!sourceReference && count == 0
                     && adapter != null
                     && adapter.allowsEmptyGeometry(
@@ -377,27 +396,23 @@ final class HologramBlockRender {
                         cell.x,
                         cell.y,
                         cell.z)) {
-                    compiled++;
-                    return new Model(0, 0, 0, points, textureCenters, missing, attributes, true);
+                    cache.compiled++;
+                    return new Model(null, 0, 0, points, textureCenters, missing, attributes, true);
                 }
-                if (sourceReference) return new Model(0, 0, 0, points, textureCenters, missing, attributes);
+                if (sourceReference) return new Model(null, 0, 0, points, textureCenters, missing, attributes);
                 return failed(cell, current, "native renderer produced no usable geometry");
             }
             if (!sourceReference) {
-                compiled++;
-                vertices += count;
+                cache.compiled++;
             }
-            return new Model(list, count, positions.size(), points, textureCenters, missing, attributes);
+            Model model = new Model(packet, count, scratch.size, points, textureCenters, missing, attributes);
+            retained = true;
+            return model;
         } catch (ReflectiveOperationException | RuntimeException | LinkageError failedNative) {
-            if (list != 0) {
-                if (opened) {
-                    try {
-                        if (DRAWING.getBoolean(tess)) tess.draw();
-                    } catch (ReflectiveOperationException | RuntimeException ignored) {}
-                    GL11.glEndList();
-                    opened = false;
-                }
-                GL11.glDeleteLists(list, 1);
+            if (opened) {
+                try {
+                    if (DRAWING.getBoolean(tess)) tess.draw();
+                } catch (ReflectiveOperationException | RuntimeException ignored) {}
             }
             return failed(
                 cell,
@@ -406,8 +421,10 @@ final class HologramBlockRender {
                     .getSimpleName() + ": "
                     + failedNative.getMessage());
         } finally {
-            if (opened) GL11.glEndList();
-            if (invokedNative && adapter == null) releaseNativeContext(block);
+            scratch.reset();
+            cache.scratch = scratch;
+            if (!retained && packet != null) packet.close();
+            if (invokedNative && adapter == null) MiaoVisonLiteRenderScope.releaseNativeContext(block);
             if (aeCableContext != null) aeCableContext.close();
             if (renderScope != null) renderScope.close();
             callerTess.setTranslation(ox, oy, oz);
@@ -436,7 +453,7 @@ final class HologramBlockRender {
     private static Model failed(HologramState.Cell cell, boolean current, String message) {
         String id = current ? cell.id : cell.wantId;
         int meta = current ? cell.meta : cell.wantMeta;
-        FAILURES.put(id, message);
+        cache().failures.put(id, message);
         String diagnostic = id + ":" + meta + " " + message;
         // Keep diagnostics useful across snapshot changes without logging once per missing block/frame.
         if (WARNED_FAILURES.size() < 128 && WARNED_FAILURES.add(diagnostic))
@@ -446,47 +463,50 @@ final class HologramBlockRender {
                 meta,
                 current ? "current" : "target",
                 message);
-        return new Model(0, 0, 0, java.util.Collections.emptyList(), java.util.Collections.emptyList(), false);
+        return new Model(null, 0, 0, java.util.Collections.emptyList(), java.util.Collections.emptyList(), false);
     }
 
     private static Field field(Class<?> type, String... names) {
         return ReflectionHelper.findField(type, names);
     }
 
-    /** Exact public cleanup APIs for the three audited handlers with auxiliary render context. */
-    private static void releaseNativeContext(Block block) {
-        try {
-            String name = block.getClass()
-                .getName();
-            if (name.equals("codechicken.multipart.BlockMultipart")) {
-                Class<?> type = Class.forName("codechicken.lib.render.CCRenderState");
-                Object state = type.getMethod("instance")
-                    .invoke(null);
-                Object light = type.getField("lightMatrix")
-                    .get(state);
-                if (light != null) light.getClass()
-                    .getField("access")
-                    .set(light, null);
-                type.getMethod("resetInstance")
-                    .invoke(state);
-            } else if (name.equals("gcewing.architecture.common.block.BlockShape")) {
-                Object shader = Class.forName("gcewing.architecture.ArchitectureCraftClient")
-                    .getField("angelicaCompat")
-                    .get(null);
-                if (shader != null) shader.getClass()
-                    .getMethod("resetShaderMaterialOverride")
-                    .invoke(shader);
-            } else if (name.equals("crazypants.enderio.conduit.BlockConduitBundle")) {
-                Field facadeField = field(
-                    Class.forName("crazypants.enderio.conduit.render.ConduitBundleRenderer"),
-                    "facade");
-                Object facade = ((ThreadLocal<?>) facadeField.get(null)).get();
-                if (facade != null) facade.getClass()
-                    .getMethod("setBlockOverride", Class.forName("crazypants.enderio.conduit.IConduitBundle"))
-                    .invoke(facade, new Object[] { null });
+    /** Reused raw vertex storage and an exact set of the three position bit patterns. */
+    private static final class VertexScratch {
+
+        private static final int MAX_RETAINED_INTS = 1 << 16;
+        int[] raw = new int[0];
+        private int[] slots = new int[128];
+        int size;
+
+        boolean add(int x, int y, int z) {
+            if (size >= slots.length / 8) {
+                int[] previous = slots;
+                slots = new int[previous.length * 2];
+                size = 0;
+                for (int at = 0; at < previous.length; at += 4)
+                    if (previous[at] != 0) add(previous[at + 1], previous[at + 2], previous[at + 3]);
             }
-        } catch (ReflectiveOperationException | RuntimeException | LinkageError absentOptionalContext) {
-            // The GL/Tessellator scope below is unconditional even without an optional shader bridge.
+            int hash = Integer.rotateLeft(x, 11) ^ Integer.rotateLeft(y, 22) ^ z;
+            hash = it.unimi.dsi.fastutil.HashCommon.mix(hash);
+            int mask = slots.length - 1;
+            int at = (hash * 4) & mask;
+            while (slots[at] != 0) {
+                if (slots[at + 1] == x && slots[at + 2] == y && slots[at + 3] == z) return false;
+                at = (at + 4) & mask;
+            }
+            slots[at] = 1;
+            slots[at + 1] = x;
+            slots[at + 2] = y;
+            slots[at + 3] = z;
+            size++;
+            return true;
+        }
+
+        void reset() {
+            if (slots.length > MAX_RETAINED_INTS) slots = new int[128];
+            else Arrays.fill(slots, 0);
+            if (raw.length > MAX_RETAINED_INTS) raw = new int[0];
+            size = 0;
         }
     }
 
@@ -520,33 +540,42 @@ final class HologramBlockRender {
         GL11.glMatrixMode(originalMode);
     }
 
-    private static final class Model {
+    private static final class Model implements AutoCloseable {
 
-        final int list, vertices, positions;
+        final MiaoVisonLiteDisplayList packet;
+        final int vertices, positions;
         final List<double[]> points, textureCenters;
         final List<double[]> attributes;
         final boolean missingTexture;
         final boolean acceptedEmpty;
         final boolean invisible;
 
-        Model(int list, int vertices, int positions, List<double[]> points, List<double[]> textureCenters,
-            boolean missingTexture) {
-            this(list, vertices, positions, points, textureCenters, missingTexture, java.util.Collections.emptyList());
+        Model(MiaoVisonLiteDisplayList packet, int vertices, int positions, List<double[]> points,
+            List<double[]> textureCenters, boolean missingTexture) {
+            this(
+                packet,
+                vertices,
+                positions,
+                points,
+                textureCenters,
+                missingTexture,
+                java.util.Collections.emptyList());
         }
 
-        Model(int list, int vertices, int positions, List<double[]> points, List<double[]> textureCenters,
-            boolean missingTexture, List<double[]> attributes) {
-            this(list, vertices, positions, points, textureCenters, missingTexture, attributes, false);
+        Model(MiaoVisonLiteDisplayList packet, int vertices, int positions, List<double[]> points,
+            List<double[]> textureCenters, boolean missingTexture, List<double[]> attributes) {
+            this(packet, vertices, positions, points, textureCenters, missingTexture, attributes, false);
         }
 
-        Model(int list, int vertices, int positions, List<double[]> points, List<double[]> textureCenters,
-            boolean missingTexture, List<double[]> attributes, boolean acceptedEmpty) {
-            this(list, vertices, positions, points, textureCenters, missingTexture, attributes, acceptedEmpty, false);
+        Model(MiaoVisonLiteDisplayList packet, int vertices, int positions, List<double[]> points,
+            List<double[]> textureCenters, boolean missingTexture, List<double[]> attributes, boolean acceptedEmpty) {
+            this(packet, vertices, positions, points, textureCenters, missingTexture, attributes, acceptedEmpty, false);
         }
 
-        Model(int list, int vertices, int positions, List<double[]> points, List<double[]> textureCenters,
-            boolean missingTexture, List<double[]> attributes, boolean acceptedEmpty, boolean invisible) {
-            this.list = list;
+        Model(MiaoVisonLiteDisplayList packet, int vertices, int positions, List<double[]> points,
+            List<double[]> textureCenters, boolean missingTexture, List<double[]> attributes, boolean acceptedEmpty,
+            boolean invisible) {
+            this.packet = packet;
             this.vertices = vertices;
             this.positions = positions;
             this.points = points;
@@ -555,6 +584,11 @@ final class HologramBlockRender {
             this.missingTexture = missingTexture;
             this.acceptedEmpty = acceptedEmpty;
             this.invisible = invisible;
+        }
+
+        @Override
+        public void close() {
+            if (packet != null) packet.close();
         }
     }
 }

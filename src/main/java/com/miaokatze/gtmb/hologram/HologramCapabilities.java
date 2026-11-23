@@ -12,6 +12,8 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
+import com.gtnewhorizon.structurelib.structure.IChannelDefinition;
+import com.gtnewhorizon.structurelib.structure.IStructureDefinition;
 import com.miaokatze.gtmb.api.StructureSources;
 
 /** Options read from captured channel declarations and explicit source contracts. */
@@ -77,7 +79,10 @@ public final class HologramCapabilities {
                 "main".equals(id) ? main : previous.hasKey(id, 3) ? previous.getInteger(id) : main,
                 previous.hasKey(id, 3));
             Row old = rows.put(id, row);
-            if (old != null) row.operations = old.operations;
+            if (old != null) {
+                row.operations = old.operations;
+                if (old.operations != 0) row.current = old.current;
+            }
             return row;
         }
 
@@ -104,6 +109,39 @@ public final class HologramCapabilities {
         /** Preserve all named signals so a previously unseen dynamic branch can be captured. */
         public NBTTagCompound sanitizeChannels(NBTTagCompound input) {
             return input == null ? new NBTTagCompound() : (NBTTagCompound) input.copy();
+        }
+
+        /** The same explicit channel metadata used by the native multiblock browser. */
+        Result withNativeDefinition(IStructureDefinition<?> definition) {
+            if (definition == null) return this;
+            for (IChannelDefinition channel : definition.getExplicitChannelDefinitions()) {
+                String id = channel.getChannel();
+                Row observed = rows.get(id);
+                if ("main".equals(id) || observed != null && !observed.options.isEmpty()) continue;
+                Row declared = add(id, id, "declared");
+                if (observed != null) declared.current = observed.current;
+                int minimum = channel.getMinimumValue();
+                int maximum = channel.getMaximumValue();
+                if (minimum > 0 && (long) maximum - minimum < 64)
+                    for (long value = minimum; value <= maximum; value++)
+                        declared.option((int) value, Long.toString(value), null);
+            }
+            return this;
+        }
+
+        Result withFixedSignal(String id, int value) {
+            Row row = rows.get(id);
+            if (row != null) {
+                row.current = value;
+                row.editable = false;
+            }
+            return this;
+        }
+
+        Result withDefaultSignal(String id, int value) {
+            Row row = rows.get(id);
+            if (row != null && !row.explicit) row.current = value;
+            return this;
         }
 
         /** Bind the complete saved configuration when capture uses a filtered temporary trigger. */
@@ -160,7 +198,7 @@ public final class HologramCapabilities {
             NBTTagCompound option = new NBTTagCompound();
             option.setInteger("value", value);
             option.setBoolean("present", true);
-            option.setString("label", name == null ? stack.getDisplayName() : name);
+            option.setString("label", name != null ? name : stack != null ? stack.getDisplayName() : Integer.toString(value));
             if (stack != null) option.setTag("item", stack.writeToNBT(new NBTTagCompound()));
             options.add(option);
             editable = true;
@@ -185,7 +223,9 @@ public final class HologramCapabilities {
                 NBTTagCompound unset = new NBTTagCompound();
                 unset.setInteger("value", 0);
                 unset.setBoolean("present", false);
-                unset.setString("label", "presence".equals(kind) ? "关闭" : "继承主信号");
+                unset.setString(
+                    "label",
+                    "presence".equals(kind) ? "关闭" : "declared".equals(kind) ? "恢复默认" : "继承主信号");
                 values.appendTag(unset);
             }
             for (NBTTagCompound option : options) values.appendTag(option.copy());

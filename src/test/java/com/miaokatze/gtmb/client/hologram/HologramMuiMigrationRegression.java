@@ -5,6 +5,7 @@ package com.miaokatze.gtmb.client.hologram;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -12,6 +13,7 @@ import org.objectweb.asm.ClassReader;
 import org.objectweb.asm.ClassVisitor;
 import org.objectweb.asm.FieldVisitor;
 import org.objectweb.asm.MethodVisitor;
+import org.objectweb.asm.Opcodes;
 
 import com.cleanroommc.modularui.value.StringValue;
 import com.cleanroommc.modularui.widgets.ButtonWidget;
@@ -64,6 +66,7 @@ public final class HologramMuiMigrationRegression {
             "HologramCutTransformScreen", "HologramCutNameScreen", "HologramAeContainerScreen",
             "HologramTextEditorScreen", "HologramPictureEditorScreen" };
         try {
+            noEagerFallbackResources();
             Set<String> inspected = new HashSet<>();
             for (String screen : screens) {
                 ClassReader reader = reader(BASE + screen);
@@ -84,6 +87,32 @@ public final class HologramMuiMigrationRegression {
         } catch (IOException failure) {
             throw new AssertionError("Cannot inspect actual migration classes", failure);
         }
+    }
+
+    private static void noEagerFallbackResources() throws IOException {
+        assertAllocationSite("HologramMuiCanvasScreen", BASE + "HologramMuiCanvasScreen$ControlLayer",
+            "fallbackControlLayer");
+        assertAllocationSite("HologramUiCanvas", "net/minecraft/client/renderer/entity/RenderItem", "drawItem");
+    }
+
+    private static void assertAllocationSite(String owner, String allocation, String expectedMethod) throws IOException {
+        Set<String> sites = new HashSet<>();
+        // The Gradle compile classpath exposes Forge ASM 5; runHologramTest supplies ASM 9.8.
+        reader(BASE + owner).accept(new ClassVisitor(9 << 16) {
+
+            @Override
+            public MethodVisitor visitMethod(int access, String method, String descriptor, String signature,
+                String[] exceptions) {
+                return new MethodVisitor(9 << 16) {
+
+                    @Override
+                    public void visitTypeInsn(int opcode, String type) {
+                        if (opcode == Opcodes.NEW && type.equals(allocation)) sites.add(method);
+                    }
+                };
+            }
+        }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
+        SimpleAssert.eq(Collections.singleton(expectedMethod), sites, owner + " allocates " + allocation + " only on first use");
     }
 
     private static void nativeButtonStates() {

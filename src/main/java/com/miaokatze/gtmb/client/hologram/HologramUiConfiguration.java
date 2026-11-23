@@ -713,15 +713,15 @@ final class HologramUiConfiguration {
                 74,
                 19,
                 "覆盖所选",
-                ui.session.editable() && hatchPreset(selectedHatchPreset) != null,
+                ui.session.editable() && selectedPresetAvailable(),
                 mx,
                 my);
-            ui.canvas.button(1714, 322, 208, 74, 19, "删除所选", hatchPreset(selectedHatchPreset) != null, mx, my);
+            ui.canvas.button(1714, 322, 208, 74, 19, "删除所选", selectedPresetAvailable(), mx, my);
         } else {
             ui.canvas.button(105, 165, 186, 231, 19, presetDowngrade ? "缺料时允许降级 ✓" : "缺料时严格保持等级", true, mx, my);
             ui.canvas.text("保留现场仓室；不选择预设也可确认构建", 165, 213, 231, 0x94afb4);
         }
-        ui.canvas.button(1715, 165, 232, 231, 19, "使用上次预设", ui.session.editable() && lastPreset(true) != null, mx, my);
+        ui.canvas.button(1715, 165, 232, 231, 19, "使用上次预设", ui.session.editable() && lastPresetAvailable(true), mx, my);
         ui.canvas.button(
             106,
             165,
@@ -730,7 +730,7 @@ final class HologramUiConfiguration {
             20,
             customPresets ? "应用所选搭配" : "生成预设目标",
             ui.session.editable() && ui.session.state().data.getBoolean("supported")
-                && (customPresets ? hatchPreset(selectedHatchPreset) != null
+                && (customPresets ? selectedPresetAvailable()
                     : ui.session.state().data.getBoolean("presetAvailable")),
             mx,
             my);
@@ -818,7 +818,7 @@ final class HologramUiConfiguration {
             203,
             230,
             0xb9d5d4);
-        ui.canvas.button(1716, 166, 220, 230, 19, "使用上次预设", ui.session.editable() && lastPreset(false) != null, mx, my);
+        ui.canvas.button(1716, 166, 220, 230, 19, "使用上次预设", ui.session.editable() && lastPresetAvailable(false), mx, my);
         ui.canvas.text("已绑定、有电、在范围内；遵守网络权限", 166, 245, 230, 0x94afb4);
     }
 
@@ -1720,6 +1720,14 @@ final class HologramUiConfiguration {
         return ui.session.isTutorial() || presetStore == null ? null : presetStore.last(hatch);
     }
 
+    private boolean selectedPresetAvailable() {
+        return !ui.session.isTutorial() && presetStore != null && presetStore.containsName(selectedHatchPreset);
+    }
+
+    private boolean lastPresetAvailable(boolean hatch) {
+        return !ui.session.isTutorial() && presetStore != null && presetStore.hasLast(hatch);
+    }
+
     // Native presentation adapters. Configuration, legality and command dispatch stay above.
     int nativeHatchRole() {
         return Math.floorMod(hatchRole, hatchRoles().size());
@@ -1758,11 +1766,11 @@ final class HologramUiConfiguration {
     }
 
     boolean nativeSelectedPreset() {
-        return hatchPreset(selectedHatchPreset) != null;
+        return selectedPresetAvailable();
     }
 
     boolean nativeLastPreset(boolean hatch) {
-        return lastPreset(hatch) != null;
+        return lastPresetAvailable(hatch);
     }
 
     boolean nativePresetDowngrade() {

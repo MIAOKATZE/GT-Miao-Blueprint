@@ -7,6 +7,7 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
 import java.io.DataOutputStream;
 import java.io.IOException;
+import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -42,6 +43,7 @@ public final class HologramBlueprintArtifactRegression {
             byte[] png = image();
             exactBytesAndBinding(png);
             reversePreviewBinding(png);
+            localDiskReads(png);
             wireDescriptor(png);
             malformedPng(png);
             validEncodingVariants();
@@ -136,6 +138,7 @@ public final class HologramBlueprintArtifactRegression {
             HologramBlueprintArtifact.writePair(file, exactLimit, png);
             HologramBlueprintArtifact.Artifact restored = HologramBlueprintArtifact.readPair(file);
             SimpleAssert.that(Arrays.equals(exactLimit, restored.json), "exact 32MiB JSON pair reloads byte exact");
+            localEquals(file, exactLimit, "local open accepts exactly 32 MiB and hashes the whole legacy source");
             SimpleAssert.eq(
                 HologramBlueprintArtifact.hash(exactLimit),
                 restored.jsonSha256,
@@ -233,6 +236,111 @@ public final class HologramBlueprintArtifactRegression {
             HologramBlueprintArtifact.deletePair(path);
             Files.delete(directory);
         }
+    }
+
+    private static void localDiskReads(byte[] png) throws Exception {
+        Path dir = Files.createTempDirectory("gtmb-local-json-");
+        Path file = dir.resolve("fixture.json"), preview = HologramBlueprintArtifact.previewPath(file);
+        String head = " \t\r\n{", tail = " \r\n\"ext\":{\"previewBinding\":false,\"text\":\"\u732b\\u732b\"}}\n";
+        byte[] source = (head + tail).getBytes(StandardCharsets.UTF_8);
+        // Assemble both members independently of bind/sourceJson: the PNG hashes ALL original source bytes.
+        byte[] linked = insert(png, "tEXt", text(HologramBlueprintArtifact.hash(source)));
+        String linkedHash = HologramBlueprintArtifact.hash(linked);
+        String member = HologramBlueprintPreviewBinding.JSON_PREFIX + linkedHash
+            + HologramBlueprintPreviewBinding.JSON_SUFFIX;
+        byte[] bound = (head + member + tail).getBytes(StandardCharsets.UTF_8);
+        byte[] wrongSource = insert(png, "tEXt", text(HologramBlueprintArtifact.hash(json("other"))));
+        byte[] swapped = insert(linked, "tEXt", new byte[] { 'x', 0, 'y' });
+        byte[] badCrc = linked.clone();
+        badCrc[badCrc.length - 1] ^= 1;
+        byte[] badIdat = replace(linked, "IDAT", new byte[] { 1, 2, 3 });
+        String sourceError = "Blueprint PNG is missing its matching JSON digest";
+        try {
+            Files.write(file, source);
+            localEquals(file, source, "legacy JSON alone");
+            Files.createDirectory(preview);
+            localEquals(file, source, "legacy nonregular sibling");
+            Files.delete(preview);
+            for (byte[] sibling : new byte[][] { png, linked, badCrc, badIdat }) {
+                Files.write(preview, sibling);
+                localEquals(file, source, "legacy absent digest, exact raw-source digest, or unreadable PNG");
+            }
+            Files.write(preview, wrongSource);
+            localError(file, sourceError, "legacy valid PNG with someone else's source must fail");
+
+            Files.write(file, bound);
+            localError(file, sourceError, "wrong source takes precedence over wrong PNG hash");
+            Files.write(preview, png);
+            localError(file, sourceError, "bound JSON cannot accept an unbound PNG");
+            Files.write(preview, linked);
+            localEquals(file, bound, "return exact bound JSON; remove only the first member when hashing");
+            byte[] changed = bound.clone();
+            changed[changed.length - 1] = ' ';
+            Files.write(file, changed);
+            localError(file, sourceError, "one whitespace byte in reviewed source is significant on next open");
+            Files.write(file, bound);
+            Files.write(preview, swapped);
+            localError(file, "Blueprint PNG digest differs from its saved JSON binding", "same source, different PNG");
+            SimpleAssert.that(Arrays.equals(bound, Files.readAllBytes(file)), "failed open does not rewrite JSON");
+            SimpleAssert.that(Arrays.equals(swapped, Files.readAllBytes(preview)), "failed open does not repair PNG");
+            for (byte[] malformed : new byte[][] { badCrc, badIdat }) {
+                Files.write(preview, malformed);
+                IOException pngError = expectIo(() -> HologramBlueprintArtifact.validatePng(malformed), "invalid PNG");
+                localError(file, pngError.getMessage(), "bound PNG validation precedes digest comparison");
+            }
+            Files.delete(preview);
+            expectIo(() -> HologramBlueprintArtifact.readLocalJson(file), "bound JSON requires its PNG");
+            Files.createDirectory(preview);
+            expectIo(() -> HologramBlueprintArtifact.readLocalJson(file), "bound JSON rejects a nonregular sibling");
+            Files.delete(preview);
+
+            String nested = "0";
+            for (int i = 0; i < 32; i++) nested = "[" + nested + "]";
+            for (String invalid : new String[] { head + " " + member + tail, head + "\"x\":0," + member + tail,
+                head + member.replace("\"version\":1", "\"version\":2") + tail,
+                head + member.replace("\"},", "\"} ,") + tail,
+                head + member.replace(linkedHash, "G" + linkedHash.substring(1)) + tail,
+                head + member + member + tail, head + member + "\"x\":{\"a\":1,\"\\u0061\":2}}",
+                head + member + "\"x\":" + nested + "}", head + member + tail + "{}", head + "\"x\":}" }) {
+                invalidLocalJson(file, invalid.getBytes(StandardCharsets.UTF_8));
+            }
+            byte[] badUtf8 = bound.clone();
+            badUtf8[badUtf8.length - 1] = (byte) 0xff;
+            invalidLocalJson(file, badUtf8);
+
+            try (RandomAccessFile large = new RandomAccessFile(preview.toFile(), "rw")) {
+                large.setLength(1L + HologramBlueprintArtifact.MAX_PNG_BYTES);
+            }
+            Files.write(file, source);
+            localEquals(file, source, "over-budget optional legacy PNG is ignored");
+            Files.write(file, bound);
+            localError(file, "Blueprint artifact member exceeds byte limit", "mandatory PNG enforces disk limit");
+            try (RandomAccessFile large = new RandomAccessFile(file.toFile(), "rw")) {
+                large.setLength(1L + HologramBlueprintArtifact.MAX_JSON_BYTES);
+            }
+            localError(file, "Blueprint artifact member exceeds byte limit", "local JSON enforces disk limit");
+        } finally {
+            Files.deleteIfExists(file);
+            Files.deleteIfExists(preview);
+            Files.deleteIfExists(dir);
+        }
+    }
+
+    private static void localEquals(Path file, byte[] expected, String label) throws IOException {
+        SimpleAssert.that(Arrays.equals(expected, HologramBlueprintArtifact.readLocalJson(file)), label);
+    }
+
+    private static void localError(Path file, String message, String label) throws Exception {
+        IOException failure = expectIo(() -> HologramBlueprintArtifact.readLocalJson(file), label);
+        SimpleAssert.eq(message, failure.getMessage(), label);
+    }
+
+    private static void invalidLocalJson(Path file, byte[] bytes) throws Exception {
+        Files.write(file, bytes);
+        IOException expected = expectIo(() -> HologramBlueprintPreviewBinding.pngSha256(bytes), "invalid fixture");
+        IOException observed = expectIo(() -> HologramBlueprintArtifact.readLocalJson(file), "invalid JSON on disk");
+        SimpleAssert.eq(expected.getClass(), observed.getClass(), "JSON error type precedes missing sibling");
+        SimpleAssert.eq(expected.getMessage(), observed.getMessage(), "JSON error precedes missing sibling");
     }
 
     private static void malformedPng(byte[] png) throws Exception {
@@ -697,13 +805,12 @@ public final class HologramBlueprintArtifactRegression {
         void run() throws Exception;
     }
 
-    private static void expectIo(IoAction action, String label) throws Exception {
-        boolean rejected = false;
+    private static IOException expectIo(IoAction action, String label) throws Exception {
         try {
             action.run();
         } catch (IOException expected) {
-            rejected = true;
+            return expected;
         }
-        SimpleAssert.that(rejected, label);
+        throw new AssertionError(label);
     }
 }

@@ -151,6 +151,11 @@ final class HologramBlockTransforms {
         return turn(block, sourceClass, metadata, tile, item, vertical, null, 0, 0, 0);
     }
 
+    static Result turnForExecution(Block block, String sourceClass, int metadata, String tile, String item,
+        boolean vertical) throws IOException {
+        return turn(block, sourceClass, metadata, tile, item, vertical, null, 0, 0, 0, true);
+    }
+
     static Result turn(Block block, String sourceClass, int metadata, String tile, String item, boolean vertical,
         Map<String, int[]> references, int x, int y, int z) throws IOException {
         return turn(block, sourceClass, metadata, tile, item, vertical, references, x, y, z, false);

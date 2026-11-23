@@ -5,24 +5,24 @@ package com.miaokatze.gtmb.client.hologram;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.OpenGlHelper;
-import net.minecraft.client.shader.Framebuffer;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraftforge.client.MinecraftForgeClient;
 
-import org.lwjgl.opengl.ARBFramebufferObject;
-import org.lwjgl.opengl.EXTFramebufferBlit;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL14;
 import org.lwjgl.opengl.GL30;
-import org.lwjgl.opengl.GLContext;
+
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteRenderScope;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteSession;
+import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteTarget;
 
 /** Composite native geometry once: native vertex colors/TESRs cannot override the final ghost opacity. */
 final class HologramCutRawPreviewGhost {
 
-    private static final int FRAMEBUFFER = 0x8d40, READ_FRAMEBUFFER = 0x8ca8, DRAW_FRAMEBUFFER = 0x8ca9;
     private static final float OPACITY = .65f;
     private static final float[] TINT = { .90f, .97f, 1 };
-    private Framebuffer layer;
+    private final MiaoVisonLiteSession<Void, Void> lite = new MiaoVisonLiteSession<>();
+    private MiaoVisonLiteTarget layer;
     private int destination = -1, width, height, priorGlError, copyGlError;
     private long composites, depthCopies;
     private long inheritedGlErrors, depthCopyGlErrors;
@@ -32,9 +32,7 @@ final class HologramCutRawPreviewGhost {
     boolean begin() {
         Minecraft mc = Minecraft.getMinecraft();
         destination = -1;
-        if (!OpenGlHelper.isFramebufferEnabled()
-            || !(GLContext.getCapabilities().OpenGL30 || GLContext.getCapabilities().GL_ARB_framebuffer_object
-                || GLContext.getCapabilities().GL_EXT_framebuffer_blit)) {
+        if (!OpenGlHelper.isFramebufferEnabled() || !MiaoVisonLiteTarget.supportsDepthCopy()) {
             failure = "Cut ghost requires framebuffer depth-copy support; showing outlines only";
             return false;
         }
@@ -49,19 +47,18 @@ final class HologramCutRawPreviewGhost {
         failure = "";
         width = mc.displayWidth;
         height = mc.displayHeight;
-        boolean allocate = layer == null || layer.framebufferWidth != width || layer.framebufferHeight != height;
+        boolean allocate = layer == null || !layer.sizeMatches(width, height);
         if (allocate) release();
         diagnostics.beforeDepthCopy(destination, width, height);
         if (allocate) {
             // Forge's Framebuffer uses getStencilBits() to choose DEPTH24 or DEPTH24_STENCIL8, exactly as
             // Minecraft's scene framebuffer does. A mod-replaced incompatible target fails the checked copy below.
-            layer = new Framebuffer(width, height, true);
+            layer = lite.target(width, height);
             // Nearest filtering keeps the coverage mask and native texels exact at this 1:1 screen composite.
-            layer.setFramebufferFilter(GL11.GL_NEAREST);
+            layer.nearestFiltering();
         }
-        layer.bindFramebuffer(false);
-        if (OpenGlHelper.func_153167_i(FRAMEBUFFER) != 0x8cd5)
-            throw new IllegalStateException("Cut ghost framebuffer is incomplete");
+        layer.bind(false);
+        if (!layer.complete()) throw new IllegalStateException("Cut ghost framebuffer is incomplete");
         GL11.glDisable(GL11.GL_SCISSOR_TEST);
         GL11.glDisable(GL11.GL_STENCIL_TEST);
         GL11.glDisable(GL11.GL_COLOR_LOGIC_OP);
@@ -74,14 +71,7 @@ final class HologramCutRawPreviewGhost {
         GL11.glClearColor(0, 0, 0, 0);
         GL11.glClearDepth(1);
         GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
-        OpenGlHelper.func_153171_g(READ_FRAMEBUFFER, destination);
-        OpenGlHelper.func_153171_g(DRAW_FRAMEBUFFER, layer.framebufferObject);
-        if (GLContext.getCapabilities().OpenGL30)
-            GL30.glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL11.GL_DEPTH_BUFFER_BIT, GL11.GL_NEAREST);
-        else if (GLContext.getCapabilities().GL_ARB_framebuffer_object) ARBFramebufferObject
-            .glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL11.GL_DEPTH_BUFFER_BIT, GL11.GL_NEAREST);
-        else EXTFramebufferBlit
-            .glBlitFramebufferEXT(0, 0, width, height, 0, 0, width, height, GL11.GL_DEPTH_BUFFER_BIT, GL11.GL_NEAREST);
+        layer.copyDepthFrom(destination);
         copyGlError = GL11.glGetError();
         if (copyGlError != GL11.GL_NO_ERROR) {
             depthCopyGlErrors++;
@@ -90,12 +80,12 @@ final class HologramCutRawPreviewGhost {
             return false;
         }
         depthCopies++;
-        layer.bindFramebuffer(false);
+        layer.bind(false);
         diagnostics.afterDepthCopy();
         return true;
     }
 
-    void composite(HologramCutRawPreviewScope.RenderState scope) {
+    void composite(MiaoVisonLiteRenderScope scope) {
         diagnostics.sampleLayer();
         bindDestination();
         GL11.glReadBuffer(destination == 0 ? GL11.GL_BACK : 0x8ce0);
@@ -131,7 +121,7 @@ final class HologramCutRawPreviewGhost {
             GL11.glEnable(GL11.GL_BLEND);
             GL14.glBlendEquation(GL14.GL_FUNC_ADD);
             GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-            GL11.glBindTexture(GL11.GL_TEXTURE_2D, layer.framebufferTexture);
+            layer.bindColorTexture();
             GL11.glColor4f(TINT[0], TINT[1], TINT[2], OPACITY);
             GL11.glBegin(GL11.GL_QUADS);
             GL11.glTexCoord2f(0, 0);
@@ -162,7 +152,7 @@ final class HologramCutRawPreviewGhost {
     }
 
     void bindDestination() {
-        if (destination >= 0) OpenGlHelper.func_153171_g(FRAMEBUFFER, destination);
+        if (destination >= 0) OpenGlHelper.func_153171_g(GL30.GL_FRAMEBUFFER, destination);
     }
 
     void inspect(NBTTagCompound out) {
@@ -184,15 +174,12 @@ final class HologramCutRawPreviewGhost {
             diagnostics.reset();
             return;
         }
-        HologramCutRawPreviewScope.RenderState scope = new HologramCutRawPreviewScope.RenderState();
-        scope.push();
-        try {
+        try (MiaoVisonLiteRenderScope ignored = MiaoVisonLiteRenderScope.enter()) {
             // Vanilla deletion unbinds the active texture and framebuffer; cancellation must not leak those changes.
-            layer.deleteFramebuffer();
+            lite.releaseTarget();
         } finally {
             layer = null;
             diagnostics.reset();
-            scope.restore();
         }
     }
 

@@ -4,7 +4,7 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.io.IOException;
-import java.nio.charset.StandardCharsets;
+import java.util.function.BooleanSupplier;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
@@ -31,24 +31,50 @@ public final class HologramBlueprintUpgrade {
         return status(version == null || !version.isJsonPrimitive() ? "" : version.getAsString());
     }
 
-    public static byte[] migrate(byte[] original, int limit, java.util.function.BooleanSupplier current)
-        throws IOException {
-        JsonObject document = HologramBlueprintCompactCodec.parse(original, limit);
-        boolean changed = false;
-        if (document.has("blueprint")) changed = migrate(document.getAsJsonObject("blueprint"));
-        else if (document.has("presets"))
-            for (JsonElement row : document.getAsJsonArray("presets")) changed |= migrate(row.getAsJsonObject());
-        else throw new IOException("缺少蓝图容器");
-        if (!changed) return original;
-        return HologramBlueprintCompactCodec.recompress(
-            document.toString()
-                .getBytes(StandardCharsets.UTF_8),
-            limit,
-            current);
+    /** Caller must explicitly opt into disk migration. Ordinary reads never enter this path. */
+    public static byte[] migrate(byte[] original, int limit, BooleanSupplier current) throws IOException {
+        requireCurrent(current);
+        JsonObject document = HologramBlueprintCompactCodec.storageDocument(original, limit);
+        if (document.has("encoding")) {
+            boolean refresh = false;
+            if (document.has("presets")) {
+                for (JsonElement row : document.getAsJsonArray("presets")) refresh |= refreshCatalogMember(row.getAsJsonObject());
+            } else refresh = status(document.getAsJsonObject("blueprint")) > 0;
+            requireCurrent(current);
+            if (!refresh) return original; // preserve bytes, including whitespace and dictionary order
+            document = HologramBlueprintCompactCodec.parse(original, limit);
+        } else {
+            HologramBlueprintCompactCodec.requireRecompressibleEnvelope(document);
+            if (!document.has("blueprint") && !document.has("presets")) {
+                // A bare historic preset needs a share envelope. All of its fields remain inside the original member.
+                JsonObject wrapped = new JsonObject();
+                wrapped.addProperty("schema", 2);
+                wrapped.add("blueprint", document);
+                document = wrapped;
+            }
+        }
+        if (document.has("presets")) {
+            for (JsonElement row : document.getAsJsonArray("presets")) {
+                requireCurrent(current);
+                if (refreshCatalogMember(row.getAsJsonObject())) migrate(row.getAsJsonObject());
+            }
+        } else migrate(document.getAsJsonObject("blueprint"));
+        return HologramBlueprintCompactCodec.recompressExpanded(document, limit, current);
     }
 
-    private static boolean migrate(JsonObject blueprint) throws IOException {
-        if (status(blueprint) == 0) return false;
+    private static boolean refreshCatalogMember(JsonObject row) {
+        // A native header in the integrated catalog promises a separate JSON/PNG pair on disk.
+        // A collection-only member predates that contract; compaction cannot manufacture the pair.
+        JsonElement info = row.get("nativeBlueprint");
+        return info != null && !info.isJsonNull() && status(row) > 0;
+    }
+
+    private static void requireCurrent(BooleanSupplier current) throws IOException {
+        if (!current.getAsBoolean()) throw new IOException("蓝图升级已取消");
+    }
+
+    private static void migrate(JsonObject blueprint) throws IOException {
+        if (status(blueprint) == 0) return;
         JsonElement nativeInfo = blueprint.get("nativeBlueprint");
         JsonObject metadata;
         if (nativeInfo == null || nativeInfo.isJsonNull()) {
@@ -67,7 +93,6 @@ public final class HologramBlueprintUpgrade {
         blueprint.add("modVersions", versions);
         HologramPresets.Preset preset = new com.google.gson.Gson().fromJson(blueprint, HologramPresets.Preset.class);
         blueprint.addProperty("fullyVoucherCovered", HologramVoucherCoverage.compute(preset));
-        return true;
     }
 
     private static int[] numbers(String version) {

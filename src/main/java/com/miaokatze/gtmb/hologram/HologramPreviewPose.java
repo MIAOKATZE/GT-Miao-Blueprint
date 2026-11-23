@@ -29,6 +29,11 @@ public final class HologramPreviewPose {
             matrix[6] * x + matrix[7] * y + matrix[8] * z };
     }
 
+    public double[] inverse(double x, double y, double z) {
+        return new double[] { matrix[0] * x + matrix[3] * y + matrix[6] * z,
+            matrix[1] * x + matrix[4] * y + matrix[7] * z, matrix[2] * x + matrix[5] * y + matrix[8] * z };
+    }
+
     public HologramPreviewPose turn(boolean vertical) {
         int[] next = new int[9];
         for (int column = 0; column < 3; column++) {

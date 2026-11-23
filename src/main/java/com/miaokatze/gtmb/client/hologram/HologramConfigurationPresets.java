@@ -42,14 +42,22 @@ final class HologramConfigurationPresets {
         return names;
     }
 
+    boolean containsName(String name) {
+        // A matching row also counts when get() would return the empty-compound fallback for its profile.
+        return namedRow(name) != null;
+    }
+
     NBTTagCompound get(String name) {
+        NBTTagCompound row = namedRow(name);
+        return row == null ? null : (NBTTagCompound) row.getCompoundTag("profile").copy();
+    }
+
+    private NBTTagCompound namedRow(String name) {
         NBTTagList rows = data.getTagList("hatches", 10);
-        for (int i = 0; i < rows.tagCount(); i++) if (name.equals(
-            rows.getCompoundTagAt(i)
-                .getString("name")))
-            return (NBTTagCompound) rows.getCompoundTagAt(i)
-                .getCompoundTag("profile")
-                .copy();
+        for (int i = 0; i < rows.tagCount(); i++) {
+            NBTTagCompound row = rows.getCompoundTagAt(i);
+            if (name.equals(row.getString("name"))) return row;
+        }
         return null;
     }
 
@@ -92,6 +100,10 @@ final class HologramConfigurationPresets {
             rows.removeTag(i);
         data.setTag("hatches", rows);
         persist();
+    }
+
+    boolean hasLast(boolean hatch) {
+        return data.hasKey(hatch ? "lastHatch" : "lastSources", 10);
     }
 
     NBTTagCompound last(boolean hatch) {

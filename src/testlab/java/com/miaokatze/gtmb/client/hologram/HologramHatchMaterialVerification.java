@@ -85,7 +85,11 @@ public final class HologramHatchMaterialVerification {
                     row.setInteger("step", step);
                     row.setInteger("texturePage", PAGE);
                     row.setInteger("textureIndex", casing);
-                    row.setTag("capturedNativeDisplay", state.cells.get(0).targetDisplay.copy());
+                    row.setTag(
+                        "capturedNativeDisplay",
+                        state.cells.get(0)
+                            .display(false)
+                            .copy());
                     row.setTag("nativeAtlasFaces", nativeFaces(material));
                     sequences.appendTag(row);
                 }
@@ -293,7 +297,7 @@ public final class HologramHatchMaterialVerification {
         GL11.glOrtho(0, SIZE, SIZE, 0, -1000, 1000);
         GL11.glMatrixMode(GL11.GL_MODELVIEW);
         GL11.glLoadIdentity();
-        HologramRenderer
+        HologramRenderer.editor()
             .preview(state, 0, 0, SIZE, SIZE, YAW, PITCH, 1.7, Integer.MAX_VALUE, current ? 1 : 0, -1, -1, -1, 0);
         return pixels();
     }
@@ -310,11 +314,11 @@ public final class HologramHatchMaterialVerification {
         HologramState.Cell cell = state.cells.get(0);
         GL11.glTranslated(-(cell.x + .5 - camera.posX), -(cell.y + .5 - camera.posY), -(cell.z + .5 - camera.posZ));
         HologramRenderer.world(state, 1);
-        for (int attempt = 1; attempt < 12 && HologramRenderer.lastWorldGeometry == 0; attempt++)
+        for (int attempt = 1; attempt < 12 && MiaoVisonLiteRenderer.lastWorldGeometry == 0; attempt++)
             HologramRenderer.world(state, 1);
         require(
-            HologramRenderer.lastWorldGeometry > 0 && HologramRenderer.lastWorldGTGeometry == 1
-                && HologramRenderer.lastWorldFallback == 0,
+            MiaoVisonLiteRenderer.lastWorldGeometry > 0 && MiaoVisonLiteRenderer.lastWorldGTGeometry == 1
+                && MiaoVisonLiteRenderer.lastWorldFallback == 0,
             "actual world group must compile one native GT material without fallback");
         return pixels();
     }

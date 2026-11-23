@@ -54,9 +54,12 @@ final class HologramV011NormalDecorProbe {
         NBTTagCompound outcome = transaction.getCompoundTag("saveCommittedReply");
         String localId = ack.getString("localId");
         require(localId.matches("local_[a-fA-F0-9-]{36}"), "actual pair has bounded native local ID");
-        Path jsonPath = Minecraft.getMinecraft().mcDataDir.toPath()
-            .resolve("MiaoBlueprints")
-            .resolve(localId + ".json");
+        boolean productionPreview = Boolean.getBoolean("gtmb.hologram.productionPreviewSmoke");
+        Path library = Minecraft.getMinecraft().mcDataDir.toPath()
+            .resolve("MiaoBlueprints");
+        Path jsonPath = productionPreview
+            ? HologramGiantWriteArtifact.resolveIndexedPair(library.toAbsolutePath().normalize(), localId)
+            : library.resolve(localId + ".json");
         Path pngPath = HologramBlueprintArtifact.previewPath(jsonPath);
         HologramBlueprintArtifact.Artifact artifact = HologramBlueprintArtifact.readPair(jsonPath);
         HologramLibraryFacade.validateNativeJson(artifact.json);
@@ -105,11 +108,13 @@ final class HologramV011NormalDecorProbe {
         String pack = (String) Class.forName("com.dreammaster.coremod.DreamCoreMod")
             .getField("displayedModpackVersion")
             .get(null);
+        String release = Tags.RELEASE_VERSION;
         require(
-            "0.1.0".equals(Tags.RELEASE_VERSION) && Tags.RELEASE_VERSION.equals(string(metadata, "gtmbVersion")),
-            "normal candidate records stable GTMB release 0.1.0");
+            (productionPreview || "0.1.0".equals(release)) && release.equals(string(metadata, "gtmbVersion")),
+            "normal candidate records exact GTMB release");
+        String expectedPack = productionPreview ? "2.9.0" : "2.9.0-RC-2";
         require(
-            "2.9.0-RC-2".equals(pack) && pack.equals(string(metadata, "gtnhVersion"))
+            expectedPack.equals(pack) && pack.equals(string(metadata, "gtnhVersion"))
                 && "dreamcoremod.displayedModpackVersion".equals(string(metadata, "gtnhVersionSource")),
             "normal candidate records exact runtime DreamCore pack version");
         NBTTagCompound nativeMetadata = new NBTTagCompound();
@@ -324,7 +329,8 @@ final class HologramV011NormalDecorProbe {
         for (int shape : shapes) required.add(shape);
         NBTTagList rows = new NBTTagList();
         for (HologramState.Cell cell : state.cells) {
-            NBTTagCompound tile = (current ? cell.actualDisplay : cell.targetDisplay).getCompoundTag("nativeTile");
+            NBTTagCompound tile = cell.display(current)
+                .getCompoundTag("nativeTile");
             int shape = tile.getInteger("cbMetadata");
             // The two original wedge controls are separate from the seven new source cells inside the floor area.
             if (!required.contains(shape) || cell.dz + 8 < 11

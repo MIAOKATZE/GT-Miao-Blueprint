@@ -37,10 +37,12 @@ final class HologramAeNativePreviewSmoke {
         Class.forName("com.miaokatze.gtmb.client.hologram.HologramAeNativePreviewRegression")
             .getMethod("run")
             .invoke(null);
-        if (Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke"))
+        if (Boolean.getBoolean("gtmb.hologram.extendedCompatibilitySmoke")) {
             Class.forName("com.miaokatze.gtmb.client.hologram.HologramAeNativePreviewRegression")
                 .getMethod("cableRenderPass")
                 .invoke(null);
+            verifyNativeDelta();
+        }
     }
 
     static NBTTagCompound fixture(boolean vertical) throws ReflectiveOperationException {
@@ -131,6 +133,75 @@ final class HologramAeNativePreviewSmoke {
         return scene;
     }
 
+    /** Uses real AE renderer output across a dirty boundary and a distant, retained region. */
+    static void verifyNativeDelta() throws ReflectiveOperationException {
+        NBTTagCompound scene = fixture(false);
+        NBTTagList rows = scene.getTagList("cells", 10);
+        int[] xPositions = { 48, 2, 15, 16 };
+        for (int i = 0; i < xPositions.length; i++) {
+            NBTTagCompound row = rows.getCompoundTagAt(i);
+            row.setInteger("x", xPositions[i]);
+            row.setInteger("dx", xPositions[i]);
+        }
+        HologramState before = new HologramState(scene);
+        HologramState.Cell distant = before.cells.get(0), changed = before.cells.get(2), neighbor = before.cells.get(3);
+        HologramBlockRender.begin(before);
+        try {
+            check(HologramBlockRender.ready(distant, false), "native distant packet compiles");
+            check(HologramBlockRender.ready(changed, false), "native changed target packet compiles");
+            check(HologramBlockRender.ready(changed, true), "native changed current packet compiles");
+            check(HologramBlockRender.ready(neighbor, false), "native neighbor packet compiles");
+            List<double[]> distantVertices = HologramBlockRender.attributes(distant, false);
+            List<double[]> neighborVertices = HologramBlockRender.attributes(neighbor, false);
+            check(
+                !distantVertices.isEmpty() && !neighborVertices.isEmpty(),
+                "native packets contain real atlas geometry");
+
+            NBTTagCompound row = changed.tag();
+            NBTTagCompound payload = row.getCompoundTag("targetDisplay")
+                .getCompoundTag("nativeTile");
+            HologramAeNativePreview.frame(payload, "interface")
+                .setByte("paint", (byte) AEColor.Purple.ordinal());
+            row.setInteger("index", changed.index);
+            NBTTagList changes = new NBTTagList();
+            changes.appendTag(row);
+            NBTTagCompound delta = new NBTTagCompound();
+            delta.setBoolean("partial", true);
+            delta.setString("session", before.session);
+            delta.setLong("baseRevision", 0L);
+            delta.setLong("planRevision", 1L);
+            delta.setInteger("cellCount", before.cells.size());
+            delta.setTag("cells", changes);
+            HologramState next = HologramState.apply(before, delta);
+            HologramRenderer.snapshotChanged(before, next);
+
+            check(
+                HologramBlockRender.vertexCount(changed, false) == 0
+                    && HologramBlockRender.vertexCount(changed, true) == 0
+                    && HologramBlockRender.vertexCount(neighbor, false) == 0,
+                "delta retires both source packets and the adjacent region packet");
+            check(
+                HologramBlockRender.ready(distant, false)
+                    && HologramBlockRender.attributes(distant, false) == distantVertices,
+                "distant native packet is reused");
+            HologramState.Cell painted = next.cells.get(changed.index);
+            check(HologramBlockRender.ready(painted, false), "native target recompiles");
+            check(HologramBlockRender.ready(painted, true), "native current recompiles");
+            BlockInterface iface = (BlockInterface) painted.block(false);
+            check(
+                HologramBlockRender.usesIcon(painted, false, iface.getRenderTexture(1, AEColor.Purple))
+                    && HologramBlockRender.usesIcon(painted, true, iface.getRenderTexture(1, AEColor.Green)),
+                "recompiled target and current keep their own atlas paint");
+            check(
+                HologramBlockRender.ready(neighbor, false)
+                    && HologramBlockRender.attributes(neighbor, false) != neighborVertices,
+                "native packet at the neighboring boundary recompiles");
+            System.out.println("[GTMB-HOLOGRAM-CLIENT] PASS native Lite packet snapshot delta and atlas paint");
+        } finally {
+            HologramRenderer.release();
+        }
+    }
+
     /** Precompile with a real sentinel thread context; inspect usable quads before any UI overlays. */
     static String verify(HologramState state, boolean current) throws ReflectiveOperationException {
         check(state.cells.size() == 4, "all four genuine AE fixture cells");
@@ -138,7 +209,8 @@ final class HologramAeNativePreviewSmoke {
         HologramBlockAccess access = new HologramBlockAccess(state, current);
         StringBuilder receipt = new StringBuilder();
         for (HologramState.Cell cell : state.cells) {
-            NBTTagCompound before = (NBTTagCompound) (current ? cell.actualDisplay : cell.targetDisplay).copy();
+            NBTTagCompound before = (NBTTagCompound) cell.display(current)
+                .copy();
             Block block = cell.block(current);
             BlockRenderInfo info = ((AEBaseBlock) block).getRendererInstance();
             @SuppressWarnings("unchecked")
@@ -178,9 +250,7 @@ final class HologramAeNativePreviewSmoke {
                         .usesIcon(cell, current, ((BlockInterface) block).getRenderTexture(1, iface.getColor())),
                     "native colored directional Interface arrow atlas");
             }
-            check(
-                before.equals(current ? cell.actualDisplay : cell.targetDisplay),
-                "render leaves complete snapshot unchanged");
+            check(before.equals(cell.display(current)), "render leaves complete snapshot unchanged");
             receipt.append(cell.wantId)
                 .append("@")
                 .append(cell.index)

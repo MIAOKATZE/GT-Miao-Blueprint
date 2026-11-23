@@ -25,6 +25,10 @@ public final class HologramSelection {
     private final java.util.BitSet relatedBits = new java.util.BitSet();
     private boolean relatedAvailable;
 
+    int version() {
+        return version;
+    }
+
     public void clear() {
         version++;
         indices.clear();

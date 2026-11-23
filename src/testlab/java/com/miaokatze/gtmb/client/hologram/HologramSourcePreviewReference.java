@@ -87,26 +87,21 @@ public final class HologramSourcePreviewReference {
             Minecraft.getMinecraft()
                 .getTextureManager()
                 .bindTexture(TextureMap.locationBlocksTexture);
-            double x = ((Number) read("projectedX")).doubleValue();
-            double y = ((Number) read("projectedY")).doubleValue();
-            double width = ((Number) read("projectedWidth")).doubleValue();
-            double height = ((Number) read("projectedHeight")).doubleValue();
-            double scale = ((Number) read("projectedScale")).doubleValue();
-            double pitch = ((Number) read("projectedPitch")).doubleValue();
-            double yaw = ((Number) read("projectedYaw")).doubleValue();
-            double bx = ((Number) read("boundsX")).doubleValue();
-            double by = ((Number) read("boundsY")).doubleValue();
-            double bz = ((Number) read("boundsZ")).doubleValue();
+            HologramEditorCameraFrame camera = (HologramEditorCameraFrame) read("projectedFrame");
+            require(camera != null, "source reference requires the projected editor frame");
             for (HologramState.Cell cell : source.cells) {
                 if (cell.block(current) == null || cell.block(current) == net.minecraft.init.Blocks.air) continue;
                 GL11.glPushMatrix();
                 List<double[]> attributes;
                 try {
-                    GL11.glTranslated(x + width / 2, y + height / 2, 0);
-                    GL11.glScaled(scale, -scale, depthScale);
-                    GL11.glRotated(Math.toDegrees(pitch), 1, 0, 0);
-                    GL11.glRotated(-Math.toDegrees(yaw), 0, 1, 0);
-                    GL11.glTranslated(cell.dx - bx - .5, cell.dy - by - .5, cell.dz - bz - .5);
+                    GL11.glTranslated(camera.coordinates.screenX(0), camera.coordinates.screenY(0), 0);
+                    GL11.glScaled(camera.scale, -camera.scale, depthScale);
+                    GL11.glRotated(camera.pose.pitchDegrees(), 1, 0, 0);
+                    GL11.glRotated(camera.pose.yawDegrees(), 0, 1, 0);
+                    GL11.glTranslated(
+                        cell.dx - camera.pose.anchorX() - .5,
+                        cell.dy - camera.pose.anchorY() - .5,
+                        cell.dz - camera.pose.anchorZ() - .5);
                     attributes = HologramBlockRender.drawSourceReference(cell, current, access);
                 } finally {
                     GL11.glPopMatrix();
@@ -206,8 +201,8 @@ public final class HologramSourcePreviewReference {
     }
 
     private static Object read(String name) throws IllegalAccessException {
-        Field field = ReflectionHelper.findField(HologramRenderer.class, name);
-        return field.get(null);
+        Field field = ReflectionHelper.findField(MiaoVisonLiteRenderer.class, name);
+        return field.get(HologramRenderer.editor());
     }
 
     private static void require(boolean condition, String message) {

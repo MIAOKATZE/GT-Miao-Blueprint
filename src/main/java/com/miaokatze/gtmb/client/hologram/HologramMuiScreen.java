@@ -19,6 +19,7 @@ import com.cleanroommc.modularui.screen.ModularPanel;
 import com.cleanroommc.modularui.screen.ModularScreen;
 import com.cleanroommc.modularui.screen.SecondaryPanel;
 import com.cleanroommc.modularui.screen.UISettings;
+import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 
 /** Client-only MUI2 screen. Business packets stay with their existing authenticated handlers. */
 abstract class HologramMuiScreen extends GuiScreenWrapper {
@@ -155,12 +156,27 @@ abstract class HologramMuiScreen extends GuiScreenWrapper {
 
     protected void muiActivity() {}
 
+    private long startLocalWorkbenchMetric() {
+        return HologramRuntimeMetrics.isEnabled() && this instanceof HologramScreen screen
+            && screen.localControllerStandard() ? HologramRuntimeMetrics.start() : 0;
+    }
+
     private static final class ProjectorScreen extends ModularScreen {
 
         private HologramMuiScreen owner;
 
         ProjectorScreen(ModularPanel panel) {
             super("gtmb", panel);
+        }
+
+        @Override
+        public void onResize(int width, int height) {
+            long started = owner.startLocalWorkbenchMetric();
+            try {
+                super.onResize(width, height);
+            } finally {
+                HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.WORKBENCH_MUI_RESIZE, started);
+            }
         }
 
         @Override
@@ -231,6 +247,16 @@ abstract class HologramMuiScreen extends GuiScreenWrapper {
         ProjectorPanel(String name, int width, int height) {
             super("gtmb_" + name);
             size(width, height).background(HologramMuiTheme.CLOTH);
+        }
+
+        @Override
+        public void onOpen(ModularScreen screen) {
+            long started = owner.startLocalWorkbenchMetric();
+            try {
+                super.onOpen(screen);
+            } finally {
+                HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.WORKBENCH_MUI_PANEL_OPEN, started);
+            }
         }
 
         @Override

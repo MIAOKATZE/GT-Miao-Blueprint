@@ -45,6 +45,7 @@ public final class HologramRuntimeMetrics {
         CLIENT_DECODE_FAILED,
         CLIENT_PREPARE_BEGIN,
         CLIENT_PREPARE_END,
+        CLIENT_CONTROLLER_TARGET,
         CLIENT_INSTALL,
         CLIENT_DISPLAY_STATE,
         CLIENT_OUTLINE_READY,
@@ -130,7 +131,9 @@ public final class HologramRuntimeMetrics {
         LIBRARY_REPLY("libraryReply"),
         LIBRARY_SNAPSHOT("librarySnapshot"),
         CUT_ACTION("cutAction"),
-        CUT_FRAGMENT("cutFragment");
+        CUT_FRAGMENT("cutFragment"),
+        PLACEMENT_FRAGMENT("placementFragment"),
+        PLACEMENT_ACK("placementAck");
 
         final String key;
 
@@ -139,7 +142,7 @@ public final class HologramRuntimeMetrics {
         }
     }
 
-    enum Activity {
+    public enum Activity {
 
         SNAPSHOT_BUILD("snapshotBuild"),
         SNAPSHOT_COMPRESS("snapshotCompress"),
@@ -149,7 +152,27 @@ public final class HologramRuntimeMetrics {
         PLAN_STEP("planStep"),
         PLAN_CLASSIFY("planClassify"),
         PLAN_RESOURCES("planResources"),
-        CELL_ROW("cellRow");
+        CELL_ROW("cellRow"),
+        LOCAL_CONTROLLER_GEOMETRY("localControllerGeometry"),
+        LOCAL_CONTROLLER_NATIVE_PASSES("localControllerNativePasses"),
+        LOCAL_CONTROLLER_CATALOG("localControllerCatalog"),
+        LOCAL_CONTROLLER_ROWS("localControllerRows"),
+        LOCAL_CONTROLLER_CANDIDATES("localControllerCandidates"),
+        LOCAL_CONTROLLER_WORLD("localControllerWorld"),
+        LOCAL_CONTROLLER_CAPABILITIES("localControllerCapabilities"),
+        LOCAL_CONTROLLER_PREPARE("localControllerPrepare"),
+        LOCAL_CONTROLLER_INSTALL("localControllerInstall"),
+        WORKBENCH_CONTROLLER_OPENING("workbenchControllerOpening"),
+        WORKBENCH_CONTROLLER_CAPTURE("workbenchControllerCapture"),
+        WORKBENCH_SCREEN_MODULES("workbenchScreenModules"),
+        WORKBENCH_SESSION_INITIALIZE("workbenchSessionInitialize"),
+        WORKBENCH_SHELL("workbenchShell"),
+        WORKBENCH_ROUTER_BINDINGS("workbenchRouterBindings"),
+        WORKBENCH_ROUTER_FIELDS("workbenchRouterFields"),
+        WORKBENCH_STRUCTURE_WIDGETS("workbenchStructureWidgets"),
+        WORKBENCH_CUT_WIDGETS("workbenchCutWidgets"),
+        WORKBENCH_MUI_RESIZE("workbenchMuiResize"),
+        WORKBENCH_MUI_PANEL_OPEN("workbenchMuiPanelOpen");
 
         final String key;
 
@@ -318,11 +341,11 @@ public final class HologramRuntimeMetrics {
         NETWORK.addAndGet(index + 1, Math.max(0, bytes));
     }
 
-    static long start() {
+    public static long start() {
         return enabled ? System.nanoTime() : 0;
     }
 
-    static void finish(Activity activity, long started) {
+    public static void finish(Activity activity, long started) {
         if (!enabled || started == 0) return;
         long elapsed = Math.max(0, System.nanoTime() - started);
         int index = activity.ordinal() * 3;

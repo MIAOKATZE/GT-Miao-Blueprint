@@ -15,7 +15,6 @@ import net.minecraft.init.Blocks;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 
-import gregtech.api.GregTechAPI;
 import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
 import gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase;
 import gregtech.common.blocks.ItemMachines;
@@ -175,9 +174,8 @@ final class HologramLegacyStructureScope {
             ItemStack sample = material(xx, yy, zz);
             if (sample == null || !(sample.getItem() instanceof ItemMachines)
                 || block(xx, yy, zz) != Block.getBlockFromItem(sample.getItem())) return null;
-            int id = sample.getItemDamage();
             // Only a type predicate sees the registration object; no construct/check/load/save method runs on it.
-            return id >= 0 && id < GregTechAPI.METATILEENTITIES.length ? GregTechAPI.METATILEENTITIES[id] : null;
+            return ItemMachines.getMetaTileEntity(sample);
         }
     }
 

@@ -31,6 +31,7 @@ public final class ClientProxy extends CommonProxy {
     @Override
     public void init() {
         super.init();
+        com.miaokatze.gtmb.hologram.HologramNativeStructurePreview.install();
         HologramClient.install();
         OptionalTestLab.call("com.miaokatze.gtmb.client.hologram.HologramNativeRasterSmoke", "installObserver");
         if (cpw.mods.fml.common.Loader.isModLoaded("CarpentersBlocks"))

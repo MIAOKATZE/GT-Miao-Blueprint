@@ -1,0 +1,972 @@
+// SPDX-License-Identifier: AGPL-3.0-only
+// Additional terms: see AGPL-ADDITIONAL-TERMS.md in the project root.
+
+package com.miaokatze.gtmb.client.hologram;
+
+import static com.miaokatze.gtmb.client.hologram.HologramLocalSaveTrace.end;
+import static com.miaokatze.gtmb.client.hologram.HologramLocalSaveTrace.mark;
+
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.nio.file.Path;
+import java.util.UUID;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
+
+import javax.imageio.ImageIO;
+
+import net.minecraft.client.Minecraft;
+import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagList;
+
+import com.miaokatze.gtmb.client.hologram.HologramClientLibrary.EditorSource;
+import com.miaokatze.gtmb.client.hologram.HologramLocalSaveTrace.Stage;
+import com.miaokatze.gtmb.client.hologram.HologramLocalSaveTrace.Terminal;
+import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
+import com.miaokatze.gtmb.hologram.HologramBlueprintFiles;
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument;
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.EditorRows;
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.FrozenDraft;
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.HistoryDelta;
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.LocalEditorOrigin;
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.LocalSaveIntent;
+
+/** File I/O and viewport preparation for the ordinary in-client authoring workspace. */
+final class HologramLocalBlueprintWorkspace {
+
+    private static final boolean PACKED_AUTHORING = Boolean.getBoolean("gtmb.localBlueprint.packedAuthoring");
+    private static final ThreadPoolExecutor IO = new ThreadPoolExecutor(
+        1,
+        1,
+        0L,
+        TimeUnit.MILLISECONDS,
+        new ArrayBlockingQueue<>(8),
+        job -> {
+            Thread thread = new Thread(job, "GTMB private blueprint files");
+            thread.setDaemon(true);
+            return thread;
+        });
+
+    /** Captured on the client thread; the file worker never queries current Minecraft ownership. */
+    static final class PresentationOwner {
+
+        private final Object world, connection;
+        private final UUID actor;
+        private final String session;
+        private final long planRevision;
+
+        PresentationOwner(Object world, Object connection, UUID actor, String session, long planRevision) {
+            this.world = world;
+            this.connection = connection;
+            this.actor = actor;
+            this.session = session;
+            this.planRevision = planRevision;
+        }
+
+        boolean available() {
+            return world != null && connection != null && actor != null;
+        }
+
+        boolean sameClient(Object world, Object connection, UUID actor) {
+            return available() && this.world == world && this.connection == connection && this.actor.equals(actor);
+        }
+
+        boolean sameSource(Object world, Object connection, UUID actor, String session, long planRevision) {
+            return sameClient(world, connection, actor) && this.session.equals(session)
+                && this.planRevision == planRevision;
+        }
+    }
+
+    private static final class Task {
+
+        final HologramState source;
+        final PresentationOwner owner;
+        final HologramLocalBlueprintDocument draft;
+        final HologramPrivateEditPerformance.Request privateEdit;
+        HologramPrivateEditPerformance.Bound privateEditPreparation;
+        volatile long revision;
+        HologramState.Preparation preparation;
+        HologramState openingPreview;
+        HologramState preparedView;
+        boolean opening, packedEditor;
+        long advancedInFrame;
+        HologramLocalBlueprintDocument.StructureTask structure;
+        String message;
+        HologramLocalBlueprintDocument destination;
+        String notice;
+        String operation = "";
+        long sequence, attachmentRequest;
+        HologramLocalSaveTrace saveTrace;
+        HologramLocalHistoryTrace historyTrace;
+
+        Task(HologramState source, PresentationOwner owner, HologramLocalBlueprintDocument draft,
+            HologramPrivateEditPerformance.Request privateEdit) {
+            this.source = source;
+            this.owner = owner;
+            this.draft = draft;
+            this.privateEdit = privateEdit;
+            revision = draft == null ? -1 : draft.revision();
+        }
+    }
+
+    private final HologramUiModules ui;
+    private volatile Task task;
+    private HistoryWatch historyWatch; // client thread only; moved into the exact Task before IO submission
+
+    private static final class HistoryWatch {
+
+        final HologramLocalHistoryTrace trace;
+        final HologramState source;
+        final HologramLocalBlueprintDocument draft;
+
+        HistoryWatch(HologramLocalHistoryTrace trace, HologramState source, HologramLocalBlueprintDocument draft) {
+            this.trace = trace;
+            this.source = source;
+            this.draft = draft;
+        }
+    }
+
+    HologramLocalBlueprintWorkspace(HologramUiModules ui) {
+        this.ui = ui;
+    }
+
+    boolean busy() {
+        return task != null;
+    }
+
+    boolean opening() {
+        Task current = task;
+        return current != null && current.opening && screenCurrent(current);
+    }
+
+    HologramState openingPreview() {
+        Task current = task;
+        if (current == null || !current.packedEditor || !current(current) || !screenCurrent(current)) return null;
+        return current.openingPreview;
+    }
+
+    String status() {
+        Task current = task;
+        return current == null ? "" : current.message;
+    }
+
+    boolean catalogAvailable() {
+        Minecraft mc = ui.host.minecraft();
+        return mc != null && mc.mcDataDir != null;
+    }
+
+    void openPreset(String id) {
+        openPreset(id, true);
+    }
+
+    void reloadPreset(String id) {
+        openPreset(id, false);
+    }
+
+    private void openPreset(String id, boolean explicitEdit) {
+        if (!catalogAvailable()) return;
+        HologramClientLibrary store = HologramLibraryClient.INSTANCE.privateStore();
+        if (id.startsWith("legacy:")) {
+            open(() -> new EditorSource(store.readLegacyDocument(id), LocalEditorOrigin.STRICT), "", false);
+            return;
+        }
+        String localId = id.startsWith("local_") ? id : "local_" + id;
+        open(() -> store.readPrivateEditorSource(localId), localId, explicitEdit);
+    }
+
+    void openCapture(HologramLocalBlueprintDocument document, String notice) {
+        Task current = begin("正在准备本地蓝图");
+        if (current != null) work(current, () -> prepareView(current, document, notice));
+    }
+
+    void openPublic(String id) {
+        Task current = begin("正在读取服务器蓝图");
+        if (current == null) return;
+        current.opening = true;
+        HologramLibraryClient.INSTANCE.openPublic(
+            id,
+            json -> work(current, () -> prepareOpen(
+                current, new EditorSource(json, LocalEditorOrigin.STRICT), "", "已打开服务器蓝图的本地副本")),
+            reason -> failed(current, new IOException(reason)));
+    }
+
+    void importNamed(String name) {
+        if (!catalogAvailable()) return;
+        HologramClientLibrary store = HologramLibraryClient.INSTANCE.privateStore();
+        open(() -> store.readNamedEditorSource(shareName(name)), "", false);
+    }
+
+    void exportNamed(String id, String name) {
+        if (id.isEmpty() || !catalogAvailable()) return;
+        Task current = begin("正在导出客户端蓝图");
+        if (current == null) return;
+        HologramClientLibrary store = HologramLibraryClient.INSTANCE.privateStore();
+        Path directory = ui.host.minecraft().mcDataDir.toPath()
+            .resolve("MiaoBlueprints");
+        work(current, () -> {
+            String alias = shareName(name);
+            if (id.startsWith("legacy:")) {
+                HologramBlueprintFiles.exportHistoricShare(directory, alias, store.readLegacyDocument(id), () -> current(current));
+                main(() -> exported(current));
+                return;
+            }
+            String localId = id.startsWith("local_") ? id : "local_" + id;
+            Path source = store.savedPath(localId);
+            if (!java.nio.file.Files.isRegularFile(HologramBlueprintArtifact.previewPath(source))) {
+                HologramBlueprintFiles.exportHistoricShare(directory, alias, store.readPrivateDocument(localId), () -> current(current));
+                main(() -> exported(current));
+                return;
+            }
+            HologramBlueprintArtifact.Artifact pair = HologramBlueprintArtifact.readPair(source);
+            Path target = HologramBlueprintFiles.target(directory, alias, pair.json);
+            HologramBlueprintArtifact.PairWrite staged = HologramBlueprintArtifact
+                .writePairPending(target, pair.json, pair.png, () -> current(current));
+            try {
+                HologramBlueprintArtifact.readPair(target);
+                HologramBlueprintFiles.track(directory, alias, staged);
+                staged.commit();
+            } catch (IOException | RuntimeException failure) {
+                try {
+                    staged.rollback();
+                } catch (IOException rollback) {
+                    failure.addSuppressed(rollback);
+                }
+                throw failure;
+            }
+            main(() -> exported(current));
+        });
+    }
+
+    private void exported(Task current) {
+        if (task != current) return;
+        task = null;
+        if (!clientCurrent(current)) return;
+        HologramLibraryClient.INSTANCE.refreshLocal();
+        if (screenCurrent(current)) ui.session.notice("蓝图已导出到客户端");
+    }
+
+    void deletePreset(String localId) {
+        if (!catalogAvailable()) return;
+        Task current = begin("正在删除客户端蓝图");
+        if (current == null) return;
+        HologramLibraryClient library = HologramLibraryClient.INSTANCE;
+        HologramClientLibrary store = library.privateStore();
+        work(current, () -> {
+            store.delete(localId);
+            main(() -> {
+                if (task != current) return;
+                task = null;
+                if (!clientCurrent(current)) return;
+                if (localId.equals(library.selected(false))) library.select(false, "");
+                library.refreshLocal();
+                if (screenCurrent(current)) ui.session.notice("客户端蓝图已删除");
+            });
+        });
+    }
+
+    private static String shareName(String name) throws IOException {
+        String basename = name.endsWith(".json") ? name.substring(0, name.length() - 5) : name;
+        if (basename.isEmpty() || basename.equalsIgnoreCase("hologram-presets")
+            || basename.matches("(?i)(?:local_|public_)[a-f0-9-]{36}")) throw new IOException("请输入本地分享文件名");
+        return basename;
+    }
+
+    private void open(FileSource source, String localId, boolean explicitPrivateEdit) {
+        Task current = begin("正在读取客户端蓝图", explicitPrivateEdit ? localId : null);
+        if (current == null) return;
+        current.opening = true;
+        work(current, () -> prepareOpen(current, source.read(), localId, "已打开客户端蓝图"));
+    }
+
+    private void prepareOpen(Task current, EditorSource source, String localId, String notice) throws IOException {
+        var opened = HologramLocalBlueprintDocument.openStoredForEditor(
+            source.json(), localId, () -> current(current),
+            editor -> stageView(current, null, editor, editor.metadata(), notice), PACKED_AUTHORING, source.origin());
+        if (opened.editor() == null) prepareView(current, opened.document(), notice);
+        else main(() -> {
+            if (!current(current) || !screenCurrent(current)) return;
+            current.destination = opened.document();
+            publishView(current);
+        });
+    }
+
+    void save(NBTTagCompound options, String replaceId, LocalSaveIntent intent) {
+        Minecraft mc = ui.host.minecraft();
+        if (!catalogAvailable() || ui.session.document() == null || mc.thePlayer == null) return;
+        Task current = begin("正在准备本地蓝图预览");
+        if (current == null) return;
+        var trace = HologramLocalSaveTrace.begin(options.getBoolean("saveCurrent") && !replaceId.isEmpty());
+        current.saveTrace = trace;
+        HologramClientLibrary store = HologramLibraryClient.INSTANCE.privateStore();
+        String authorName = mc.thePlayer.getCommandSenderName();
+        UUID authorId = mc.thePlayer.getUniqueID();
+        String id = replaceId.isEmpty() ? "local_" + UUID.randomUUID() : replaceId;
+        NBTTagCompound saveOptions = (NBTTagCompound) options.copy();
+        double yaw = ui.preview.yaw(), pitch = ui.preview.pitch();
+        afterMaterialization(current, () -> tracedWork(current, Stage.DRAFT_IO_QUEUED, Stage.JSON_FREEZE_BEGIN, () -> {
+            var prepared = current.draft.prepareSaveDraft(saveOptions, authorName, authorId, id, intent);
+            byte[] json = prepared.artifact();
+            mark(trace, Stage.JSON_READY);
+            NBTTagCompound renderSnapshot = HologramBlueprintPreview.snapshot(prepared, () -> current(current));
+            mark(trace, Stage.CAPTURE_INPUT_READY);
+            main(() -> {
+                mark(trace, Stage.CAPTURE_CLIENT_BEGIN);
+                if (!current(current)) {
+                    end(trace, Terminal.CANCELLED_OWNER);
+                    return;
+                }
+                if (!clientCurrent(current)) {
+                    end(trace, Terminal.CANCELLED_OWNER);
+                    task = null;
+                    return;
+                }
+                HologramBlueprintPreview.captureOwned(
+                    renderSnapshot, json, yaw, pitch, trace,
+                    // captureOwned checks this on RenderTick END, before actual submission/readback.
+                    () -> {
+                        boolean owned = current(current) && clientCurrent(current);
+                        if (!owned) end(trace, Terminal.CANCELLED_OWNER);
+                        return owned;
+                    },
+                    image -> tracedWork(current, Stage.PNG_IO_QUEUED, Stage.PNG_ENCODE_BEGIN, () -> {
+                        ByteArrayOutputStream output = new ByteArrayOutputStream();
+                        if (!ImageIO.write(image, "png", output)) throw new IOException("无法编码蓝图预览 PNG");
+                        mark(trace, Stage.PNG_READY);
+                        HologramClientLibrary.EditorSave pending = store
+                            .prepareEditorSave(prepared, output.toByteArray(), id, () -> current(current), trace);
+                        HologramClientLibrary.LocalSave staged = pending.receipt();
+                        try {
+                            if (!current(current)) throw new IOException("蓝图已修改，请重新保存");
+                            mark(trace, Stage.PAIR_COMMIT_BEGIN);
+                            staged.write.commit();
+                            mark(trace, Stage.PAIR_COMMIT_DONE);
+                        } catch (IOException | RuntimeException failure) {
+                            try {
+                                staged.write.rollback();
+                            } catch (IOException rollback) {
+                                failure.addSuppressed(rollback);
+                            }
+                            throw failure;
+                        }
+                        main(() -> saved(current, prepared, pending.exactJson()));
+                    }), failure -> failed(current, failure));
+            });
+        }));
+    }
+
+    private void saved(Task current, FrozenDraft saved, byte[] json) {
+        mark(current.saveTrace, Stage.ACK_CLIENT_BEGIN);
+        if (task != current) {
+            end(current.saveTrace, Terminal.CANCELLED_OWNER);
+            return;
+        }
+        if (!clientCurrent(current)) {
+            end(current.saveTrace, Terminal.CANCELLED_OWNER);
+            task = null;
+            return;
+        }
+        try {
+            current.draft.saved(current.revision, saved, json);
+            current.revision = current.draft.revision();
+            HologramLibraryClient.INSTANCE.select(false, current.draft.fileId());
+            HologramLibraryClient.INSTANCE.refreshLocal();
+            HologramUiLibrary.committedSave(current.source.session);
+            finishEdit(current, current.revision);
+            if (screenCurrent(current)) ui.session.notice("蓝图已保存到客户端本地");
+        } catch (IOException invalid) {
+            failed(current, invalid);
+        }
+    }
+
+    HologramLocalHistoryTrace watchHistory(String op, HologramState source, HologramLocalBlueprintDocument draft,
+        long nextSequence, long pressNanos) {
+        if (!HologramLocalHistoryTrace.isHistory(op) || historyWatch != null || busy() || draft == null
+            || ui.session.document() != draft || draft.packedAuthoring() || ui.session.state() != source
+            || ui.host.minecraft().currentScreen != ui.host.parent() || nextSequence != ui.session.sequence() + 1
+            || draft.revision() != ui.session.revision()) return null;
+        var trace = new HologramLocalHistoryTrace(op, draft.revision(), nextSequence, pressNanos, System::nanoTime);
+        historyWatch = new HistoryWatch(trace, source, draft);
+        return trace;
+    }
+
+    void stopWatchingHistory(HologramLocalHistoryTrace trace) {
+        if (historyWatch == null || historyWatch.trace != trace) return;
+        historyWatch = null;
+        HologramLocalHistoryTrace.end(trace, HologramLocalHistoryTrace.Terminal.NOT_ADMITTED);
+    }
+
+    private void admitHistoryWatch(Task current, NBTTagCompound request) {
+        var watch = historyWatch;
+        if (watch == null || !HologramLocalHistoryTrace.isHistory(current.operation)) return;
+        historyWatch = null;
+        if (watch.trace.admit(current.operation, request.getLong("planRevision"), current.sequence,
+            watch.source, current.source, watch.draft, current.draft,
+            current.revision == watch.trace.sourceRevision && request.hasKey("planRevision", 4)
+                && screenCurrent(current))) {
+            current.historyTrace = watch.trace;
+        } else HologramLocalHistoryTrace.end(watch.trace, HologramLocalHistoryTrace.Terminal.NOT_ADMITTED);
+    }
+
+    boolean edit(String op, NBTTagCompound request) {
+        if (!HologramLocalBlueprintDocument.handles(op) || ui.session.document() == null) return false;
+        Task current = begin("");
+        if (current == null) return true;
+        current.operation = op;
+        current.sequence = request.getLong("uiSequence");
+        current.attachmentRequest = request.getLong("textRequest");
+        admitHistoryWatch(current, request);
+        NBTTagCompound action = (NBTTagCompound) request.copy();
+        if (!current.draft.packedAuthoring() || current.draft.supportsPackedCommand(op)) runEdit(current, op, action);
+        else afterMaterialization(current, () -> runEdit(current, op, action));
+        return true;
+    }
+
+    private void runEdit(Task current, String op, NBTTagCompound action) {
+        try {
+            current.structure = current.draft.beginStructureCommand(op, action);
+            if (current.structure != null) {
+                current.message = "正在读取所选结构的原生声明";
+                ui.session.notice(current.message);
+                return;
+            }
+        } catch (IOException failure) {
+            failed(current, failure);
+            return;
+        }
+        var history = current.historyTrace;
+        HologramLocalHistoryTrace.mark(history, HologramLocalHistoryTrace.Stage.IO_ENQUEUED);
+        work(current, () -> {
+            HologramLocalHistoryTrace.mark(history, HologramLocalHistoryTrace.Stage.IO_STARTED);
+            long previous = current.revision;
+            HologramLocalHistoryTrace.mark(history, HologramLocalHistoryTrace.Stage.RESTORE_BEGIN);
+            current.draft.apply(op, action, () -> current(current));
+            HologramLocalHistoryTrace.mark(history, HologramLocalHistoryTrace.Stage.RESTORE_END);
+            finishEdit(current, previous);
+        });
+    }
+
+    /** Only this owner may install a converted initial version and resume the old command. */
+    private void afterMaterialization(Task current, Runnable resume) {
+        if (!current.draft.packedAuthoring()) {
+            resume.run();
+            return;
+        }
+        current.message = "正在准备蓝图编辑数据";
+        ui.session.notice(current.message);
+        var trace = current.saveTrace;
+        tracedWork(current, Stage.MATERIALIZE_IO_QUEUED, Stage.MATERIALIZE_IO_BEGIN, () -> {
+            var converted = current.draft.preparePackedMaterialization(current.revision, () -> current(current));
+            mark(trace, Stage.MATERIALIZE_IO_DONE);
+            main(() -> {
+                mark(trace, Stage.MATERIALIZE_CLIENT_BEGIN);
+                if (!current(current)) {
+                    end(trace, Terminal.CANCELLED_OWNER);
+                    return;
+                }
+                if (!materializationOwner(current)) {
+                    end(trace, Terminal.CANCELLED_OWNER);
+                    task = null;
+                    return;
+                }
+                try {
+                    current.draft.acceptPackedMaterialization(converted, current.revision, () -> materializationOwner(current));
+                    mark(trace, Stage.MATERIALIZE_CLIENT_DONE);
+                    resume.run();
+                } catch (IOException | RuntimeException failure) {
+                    failed(current, failure);
+                }
+            });
+        });
+    }
+
+    private boolean materializationOwner(Task current) {
+        return current(current) && screenCurrent(current) && ui.session.document() == current.draft;
+    }
+
+    private void finishEdit(Task current, long previous) throws IOException {
+        current.revision = current.draft.revision();
+        boolean changed = current.revision != previous;
+        HistoryDelta history = changed && HologramLocalHistoryTrace.isHistory(current.operation)
+            ? current.draft.historyDelta(previous) : null;
+        if (history != null) {
+            publishCertifiedHistory(current, history);
+            return;
+        }
+        NBTTagCompound annotation = changed ? current.draft.annotationDelta() : null;
+        boolean packedHeaderHistory = current.draft.packedAuthoring()
+            && ("editUndo".equals(current.operation) || "editRedo".equals(current.operation));
+        if (changed && annotation == null && !packedHeaderHistory
+            && !HologramLocalBlueprintDocument.metadataOnlyEdit(current.operation))
+            prepareView(current, current.draft, "");
+        else {
+            HologramLocalHistoryTrace.end(current.historyTrace, HologramLocalHistoryTrace.Terminal.NOT_FULL_REBUILD);
+            NBTTagCompound metadata = commandResult(current, current.draft.snapshotMetadata(), true, "");
+            main(() -> {
+                if (task != current) {
+                    end(current.saveTrace, Terminal.CANCELLED_OWNER);
+                    return;
+                }
+                if (!screenCurrent(current)) {
+                    end(current.saveTrace, Terminal.CANCELLED_OWNER);
+                    task = null;
+                    return;
+                }
+                HologramState base = ui.session.state();
+                HologramState next;
+                try {
+                    next = annotation == null ? base.withMetadata(metadata) : applyAnnotation(base, metadata, annotation);
+                } catch (IllegalArgumentException invalidBaseline) {
+                    work(current, () -> prepareView(current, current.draft, ""));
+                    return;
+                }
+                task = null;
+                ui.session.publishLocalDocument(current.draft, next);
+                var trace = current.saveTrace;
+                if (trace != null) {
+                    if (ui.session.document() == current.draft && ui.session.state() == next) {
+                        mark(trace, Stage.ACK_PUBLISHED);
+                        end(trace, Terminal.PUBLISHED);
+                    } else end(trace, Terminal.CANCELLED_OWNER);
+                }
+            });
+        }
+    }
+
+    private void publishCertifiedHistory(Task current, HistoryDelta delta) {
+        var metadata = commandResult(current, current.draft.snapshotMetadata(), true, "");
+        var trace = current.historyTrace;
+        long enqueued = trace == null ? 0 : trace.now();
+        main(() -> {
+            long started = trace == null ? 0 : trace.now();
+            if (!current(current) || !screenCurrent(current)) {
+                HologramLocalHistoryTrace.end(trace, HologramLocalHistoryTrace.Terminal.CANCELLED_OWNER);
+                if (task == current) task = null;
+                return;
+            }
+            var base = ui.session.state();
+            var frame = HologramRenderer.editorMaterialPresentation();
+            boolean exact = ui.host.minecraft().currentScreen == ui.host.parent()
+                && base == current.source && ui.session.document() == current.draft
+                && hasHistoryCertificate(current.draft.historyDelta(delta.fromRevision()), delta)
+                && ui.session.sequence() == current.sequence && metadata.getLong("uiSequence") == current.sequence
+                && frame != null
+                && frame.state() == base && frame.complete() && frame.bodyMaterial()
+                && frame.submittedCells() == delta.cellCount() && HologramRenderer.previewDisplayState() == base
+                && HologramRenderer.previewMeshReady(base) && !ui.shell.hasModalPanel()
+                && ui.shell.scene() instanceof HologramEditorSceneWidget view && view.editFrameReady();
+            long patchBegin = trace == null ? 0 : trace.now();
+            HologramState next = null;
+            if (exact) try {
+                next = certifiedHistoryView(base, metadata, delta);
+            } catch (IllegalArgumentException invalidBaseline) {
+                // The authoritative document is already restored. Never replay Undo/Redo to recover its view.
+            }
+            if (next == null) {
+                work(current, () -> prepareView(current, current.draft, ""));
+                return;
+            }
+            if (trace != null) trace.certified(delta.header(), delta.cellCount(), enqueued, started, patchBegin, trace.now());
+            task = null;
+            publishOwnedLocalView(current, current.draft, next);
+        });
+    }
+
+    static boolean hasHistoryCertificate(HistoryDelta owned, HistoryDelta candidate) {
+        return owned != null && owned == candidate;
+    }
+
+    static HologramState certifiedHistoryView(HologramState base, NBTTagCompound metadata, HistoryDelta delta) {
+        if (base == null || delta == null || !base.data.getBoolean("localBlueprintDocument")
+            || !base.data.getBoolean("blueprintEditing") || !base.data.getBoolean("virtual")
+            || !base.data.getBoolean("target") || base.data.getBoolean("displayPartial")
+            || base.data.getBoolean("areaSelectionShell") || base.data.getBoolean("virtualPlacement")
+            || base.data.getLong("planRevision") != delta.fromRevision() || delta.revision() != delta.fromRevision() + 1
+            || base.cells.size() != delta.cellCount() || metadata.getLong("planRevision") != delta.revision()
+            || !metadata.getBoolean("localBlueprintDocument") || !base.session.equals(metadata.getString("session"))
+            || !base.data.getString("generation").equals(metadata.getString("generation"))
+            || metadata.hasKey("cells") || metadata.hasKey("topology") || metadata.hasKey("structures")
+            || metadata.hasKey("hintAreas") || metadata.hasKey("materials")) return null;
+        HologramState next;
+        if (delta.header()) {
+            if (!base.data.getString("blueprintPrompt").equals(delta.expectedPrompt())
+                || !metadata.getString("blueprintPrompt").equals(delta.prompt())) return null;
+            next = base.withMetadata(metadata);
+        } else {
+            // Existing partial construction shallow-copies the page directory and region maps. Constrain those
+            // costs explicitly (512 directories, 256 regions, 4096 rows per region), never copy the row tree.
+            int index = delta.index();
+            if (index < 0 || index >= base.cells.size()
+                || !boundedSinglePromptView(base.cells.size(), base.regions.regions.size())) return null;
+            for (var area : base.regions.regions.values()) if (area.size() > 4096) return null;
+            var row = base.cells.get(index);
+            if (row.index != index || row.x != delta.x() || row.y != delta.y() || row.z != delta.z()
+                || row.dx != delta.x() || row.dy != delta.y() || row.dz != delta.z() || row.anchor || row.iconOnly
+                || row.missingBlock || row.sourceMissing || !row.structureIds.isEmpty() || !row.networkGroup.isEmpty()
+                || !row.candidates.isEmpty() || row.hasDisplayTag(false, "nativeTile", 10)
+                || row.targetStack != null && (row.targetStack.hasTagCompound()
+                    || row.targetStack.getItem() instanceof gregtech.common.blocks.ItemMachines)
+                || !row.prompt.equals(delta.expectedPrompt()) || row.excluded != delta.excluded()
+                || !row.wantId.equals(delta.block()) || row.wantMeta != delta.metadata()
+                || row.targetFacing != delta.facing() || base.regions.at(row.x, row.y, row.z) != row) return null;
+            NBTTagCompound annotation = new NBTTagCompound();
+            annotation.setInteger("index", index);
+            annotation.setBoolean("annotationOnly", true);
+            annotation.setString("prompt", delta.prompt());
+            annotation.setBoolean("excluded", delta.excluded());
+            next = applyAnnotation(base, metadata, annotation);
+        }
+        return MiaoVisonLiteRenderer.localRenderMetadataChanged(base, next) ? null : next;
+    }
+
+    static boolean boundedSinglePromptView(int cells, int regions) {
+        return cells > 0 && cells <= 512 * 256 && regions > 0 && regions <= 256;
+    }
+
+    static HologramState applyAnnotation(HologramState base, NBTTagCompound metadata, NBTTagCompound annotation) {
+        NBTTagList rows = new NBTTagList();
+        rows.appendTag(annotation);
+        metadata.setTag("cells", rows);
+        metadata.setBoolean("partial", true);
+        metadata.setInteger("cellCount", base.cells.size());
+        metadata.setLong("baseRevision", base.data.getLong("planRevision"));
+        return HologramState.apply(base, metadata);
+    }
+
+    void cancelAttachment(long request) {
+        Task current = task;
+        if (current != null && current.attachmentRequest == request && current(current)) task = null;
+    }
+
+    void placeCurrent() {
+        if (ui.session.document() == null) return;
+        Task current = begin("正在准备蓝图预览");
+        if (current == null) return;
+        afterMaterialization(current, () -> work(current, () -> {
+            var draft = current.draft.freeze();
+            main(() -> {
+                if (task != current) return;
+                task = null;
+                if (screenCurrent(current)) HologramLibraryClient.INSTANCE.previewDraftPlacement(draft);
+            });
+        }));
+    }
+
+    private void prepareView(Task current, HologramLocalBlueprintDocument document, String notice) throws IOException {
+        if (document.packedAuthoring()) {
+            EditorRows editor = document.packedEditorRows(() -> current(current));
+            if (editor == null) throw new IOException("蓝图紧凑预览已不可用");
+            stageView(current, document, editor, editor.metadata(), notice);
+        } else {
+            HologramLocalHistoryTrace.mark(current.historyTrace, HologramLocalHistoryTrace.Stage.SNAPSHOT_BEGIN);
+            NBTTagCompound snapshot = document.snapshot();
+            HologramLocalHistoryTrace.mark(current.historyTrace, HologramLocalHistoryTrace.Stage.SNAPSHOT_END);
+            stageView(current, document, null, snapshot, notice);
+        }
+    }
+
+    private void stageView(Task current, HologramLocalBlueprintDocument document, EditorRows editor,
+        NBTTagCompound source, String notice) {
+        NBTTagCompound snapshot = commandResult(current, source, true, "");
+        var history = current.historyTrace;
+        HologramLocalHistoryTrace.mark(history, HologramLocalHistoryTrace.Stage.CLIENT_ENQUEUED);
+        main(() -> {
+            HologramLocalHistoryTrace.mark(history, HologramLocalHistoryTrace.Stage.CLIENT_STARTED);
+            if (task != current) {
+                HologramLocalHistoryTrace.end(history, HologramLocalHistoryTrace.Terminal.CANCELLED_OWNER);
+                return;
+            }
+            if (!current(current) || !screenCurrent(current)) {
+                HologramLocalHistoryTrace.end(history, HologramLocalHistoryTrace.Terminal.CANCELLED_OWNER);
+                task = null;
+                return;
+            }
+            if (ui.host.minecraft().thePlayer != null)
+                snapshot.setInteger("dimension", ui.host.minecraft().thePlayer.dimension);
+            try {
+                current.destination = document;
+                current.packedEditor = editor != null;
+                current.preparation = new HologramState.Preparation(
+                    snapshot, true, editor == null ? null : new HologramBlueprintPreview.CompactCells(editor));
+                if (editor == null && current.privateEdit != null && current.privateEditPreparation == null)
+                    current.privateEditPreparation = current.privateEdit.bind(document, null, snapshot, current.preparation,
+                        document != current.draft && privateEditOwnerCurrent(current));
+                current.notice = notice;
+                HologramLocalHistoryTrace.mark(history, HologramLocalHistoryTrace.Stage.PREPARATION_READY);
+            } catch (RuntimeException failure) {
+                failed(current, failure);
+            }
+        });
+    }
+
+    void tick() {
+        advance(false);
+    }
+
+    void advanceFrame() {
+        advance(true);
+    }
+
+    private void advance(boolean frame) {
+        Task current = task;
+        if (current == null) return;
+        if (!current.opening && current.preparation == null && current.structure == null) return;
+        if (!current(current) || !screenCurrent(current)) {
+            HologramLocalHistoryTrace.end(current.historyTrace, HologramLocalHistoryTrace.Terminal.CANCELLED_OWNER);
+            if (current.structure != null) current.structure.close();
+            task = null;
+            return;
+        }
+        if (current.structure != null) {
+            if (!frame) advanceStructure(current);
+            return;
+        }
+        if (current.preparation == null) return;
+        if (frame && !current.packedEditor) return;
+        long now = System.nanoTime();
+        if (frame) current.advancedInFrame = now;
+        else if (current.advancedInFrame != 0 && now - current.advancedInFrame < 60_000_000L) return;
+        try {
+            advanceView(current, current.packedEditor ? 5_000_000L : 2_000_000L);
+            publishView(current);
+        } catch (RuntimeException failure) {
+            HologramLocalHistoryTrace.end(current.historyTrace, HologramLocalHistoryTrace.Terminal.FAILED);
+            task = null;
+            ui.session.notice(HologramUiText.reason(failure.getMessage()));
+        }
+    }
+
+    private void publishView(Task current) {
+        if (current.destination == null || current.preparedView == null) return;
+        HologramState initial = current.preparedView;
+        task = null;
+        if (ui.session.document() == current.destination) publishOwnedLocalView(current, current.destination, initial);
+        else {
+            HologramLocalHistoryTrace.end(current.historyTrace, HologramLocalHistoryTrace.Terminal.CANCELLED_OWNER);
+            String fileId = current.destination.fileId();
+            if (!fileId.isEmpty()) HologramLibraryClient.INSTANCE.select(false, fileId);
+            ui.session.installLocalDocument(current.destination, initial);
+        }
+        if (!current.notice.isEmpty()) ui.session.notice(current.notice);
+    }
+
+    private void publishOwnedLocalView(Task current, HologramLocalBlueprintDocument destination, HologramState next) {
+        var history = current.historyTrace;
+        HologramLocalHistoryTrace.mark(history, HologramLocalHistoryTrace.Stage.PUBLISH_BEGIN);
+        ui.session.publishLocalDocument(destination, next);
+        if (history != null && ui.session.state() == next && ui.session.document() == destination
+            && next.data.getLong("planRevision") == history.sourceRevision + 1
+            && next.data.getLong("uiSequence") == history.sequence) {
+            HologramLocalHistoryTrace.mark(history, HologramLocalHistoryTrace.Stage.PUBLISH_END);
+            HologramLocalHistoryTrace.end(history, HologramLocalHistoryTrace.Terminal.PUBLISHED);
+        } else HologramLocalHistoryTrace.end(history, HologramLocalHistoryTrace.Terminal.CANCELLED_OWNER);
+    }
+
+    private void advanceView(Task current, long nanos) {
+        HologramState.Preparation preparation = current.preparation;
+        if (preparation.canPrepareCompactIndex()) {
+            HologramState.Preparation.DetachedIndex index = preparation.prepareCompactIndex(256, nanos);
+            if (index == null) return;
+            current.openingPreview = index.firstDisplay();
+            current.preparation = null;
+            work(current, () -> {
+                HologramState result = index.finish(() -> current(current));
+                if (result != null) main(() -> acceptIndexedView(current, result));
+            });
+        } else {
+            int cap = current.packedEditor ? Integer.MAX_VALUE : 512;
+            if (current.privateEditPreparation != null) {
+                var preset = current.privateEditPreparation.forPreparation(preparation, privateEditOwnerCurrent(current));
+                if (preset != null) {
+                    cap = preset.workCap;
+                    nanos = preset.softNanos;
+                } else current.privateEditPreparation = null; // A lost owner cannot resume a tuned cursor.
+            }
+            var history = current.historyTrace;
+            int cellsBefore = history == null ? 0 : preparation.cellsPrepared();
+            long start = history == null ? 0 : history.now();
+            boolean complete = preparation.step(cap, nanos);
+            if (history != null) history.slice(start, history.now(), preparation.cellsPrepared() - cellsBefore,
+                preparation.lastStepWork, cap, complete);
+            if (current.packedEditor && current.openingPreview == null && (!complete || current.destination == null))
+                current.openingPreview = preparation.firstDisplay();
+            if (complete) {
+                HologramLocalHistoryTrace.mark(history, HologramLocalHistoryTrace.Stage.RESULT_BEGIN);
+                current.preparedView = preparation.result();
+                HologramLocalHistoryTrace.mark(history, HologramLocalHistoryTrace.Stage.RESULT_END);
+                current.preparation = null;
+            }
+        }
+    }
+
+    private void acceptIndexedView(Task current, HologramState result) {
+        if (!current(current)) return;
+        if (!screenCurrent(current)) {
+            task = null;
+            return;
+        }
+        current.preparedView = result;
+        publishView(current);
+    }
+
+    private void advanceStructure(Task current) {
+        HologramLocalBlueprintDocument.StructureTask structure = current.structure;
+        try {
+            if (!structure.step(512, 2_000_000L)) return;
+            current.structure = null;
+            work(current, () -> {
+                try (structure) {
+                    long previous = current.revision;
+                    structure.commit(() -> current(current));
+                    finishEdit(current, previous);
+                }
+            });
+        } catch (IOException | RuntimeException failure) {
+            structure.close();
+            current.structure = null;
+            failed(current, failure);
+        }
+    }
+
+    private Task begin(String message) {
+        return begin(message, null);
+    }
+
+    private Task begin(String message, String explicitPrivateEditId) {
+        if (busy()) return null;
+        Minecraft mc = ui.host.minecraft();
+        HologramState source = ui.session.state();
+        PresentationOwner owner = new PresentationOwner(
+            mc.theWorld, mc.getNetHandler(), actor(mc), source.session, source.data.getLong("planRevision"));
+        if (!owner.available()) return null;
+        var privateEdit = explicitPrivateEditId == null ? null : HologramPrivateEditPerformance.capture(
+            explicitPrivateEditId, HologramClient.privateEditPreset(), privateEditRootCurrent(mc));
+        Task current = new Task(source, owner, ui.session.document(), privateEdit);
+        current.message = message;
+        task = current;
+        ui.session.notice(message);
+        return current;
+    }
+
+    private boolean privateEditRootCurrent(Minecraft mc) {
+        HologramScreen root = ui.host.parent();
+        return root != null && mc.currentScreen == root && root.ui == ui && !ui.session.isTutorial();
+    }
+
+    /** Additional budget fence only; preserve the original scheduler if the existing task can still proceed. */
+    private boolean privateEditOwnerCurrent(Task candidate) {
+        return privateEditRootCurrent(ui.host.minecraft()) && ui.session.state() == candidate.source
+            && ui.session.document() == candidate.draft;
+    }
+
+    private boolean current(Task candidate) {
+        return task == candidate && (candidate.draft == null || candidate.draft.revision() == candidate.revision);
+    }
+
+    private static UUID actor(Minecraft mc) {
+        return mc.thePlayer == null ? null : mc.thePlayer.getUniqueID();
+    }
+
+    private boolean clientCurrent(Task candidate) {
+        Minecraft mc = ui.host.minecraft();
+        return candidate.owner.sameClient(mc.theWorld, mc.getNetHandler(), actor(mc));
+    }
+
+    private boolean screenCurrent(Task candidate) {
+        Minecraft mc = ui.host.minecraft();
+        HologramState active = ui.session.state();
+        return (mc.currentScreen == ui.host.parent()
+            || mc.currentScreen instanceof HologramQuantumGroupsScreen quantum && quantum.editorIs(ui.host.parent()))
+            && candidate.owner.sameSource(
+                mc.theWorld, mc.getNetHandler(), actor(mc), active.session, active.data.getLong("planRevision"));
+    }
+
+    private void failed(Task current, Throwable failure) {
+        main(() -> {
+            if (task != current) {
+                end(current.saveTrace, Terminal.CANCELLED_OWNER);
+                HologramLocalHistoryTrace.end(current.historyTrace, HologramLocalHistoryTrace.Terminal.CANCELLED_OWNER);
+                return;
+            }
+            var trace = current.saveTrace;
+            boolean sameRevision = trace == null || current(current);
+            task = null;
+            boolean sameScreen = screenCurrent(current);
+            end(trace, sameScreen && sameRevision ? Terminal.FAILED : Terminal.CANCELLED_OWNER);
+            if (current.historyTrace != null) HologramLocalHistoryTrace.end(current.historyTrace,
+                sameScreen && current.draft.revision() == current.revision
+                    ? HologramLocalHistoryTrace.Terminal.FAILED : HologramLocalHistoryTrace.Terminal.CANCELLED_OWNER);
+            if (!sameScreen) return;
+            if (failure instanceof com.miaokatze.gtmb.hologram.HologramCompactRequiredException) {
+                ui.library.requireCompactUpdate();
+                return;
+            }
+            String reason = HologramUiText.reason(failure.getMessage());
+            if (current.draft != null && !current.operation.isEmpty()) ui.session.publishLocalDocument(
+                current.draft, ui.session.state().withMetadata(commandResult(current, new NBTTagCompound(), false, reason)));
+            else ui.session.notice(reason);
+        });
+    }
+
+    private static NBTTagCompound commandResult(Task current, NBTTagCompound metadata, boolean accepted, String reason) {
+        if (current.operation.isEmpty()) return metadata;
+        metadata.setLong("uiSequence", current.sequence);
+        if (!accepted) metadata.setString("status", reason);
+        if ("placeTextBox".equals(current.operation) && !accepted) {
+            NBTTagCompound receipt = new NBTTagCompound();
+            receipt.setLong("request", current.attachmentRequest);
+            receipt.setBoolean("accepted", false);
+            receipt.setString("message", reason);
+            metadata.setTag("textPlacementAck", receipt);
+        }
+        if (HologramLocalBlueprintDocument.processingCommand(current.operation)) {
+            metadata.setString("processingPresetOperation", current.operation);
+            metadata.setBoolean("processingPresetOperationSuccess", accepted);
+            if ("configureBlueprintQuantumGroups".equals(current.operation)) metadata.setBoolean("quantumGroupsOperationSuccess", accepted);
+        }
+        return metadata;
+    }
+
+    private void tracedWork(Task current, Stage queued, Stage started, FileWork operation) {
+        var trace = current.saveTrace;
+        if (trace == null) {
+            work(current, operation);
+            return;
+        }
+        mark(trace, queued);
+        work(current, () -> {
+            mark(trace, started);
+            operation.run();
+        });
+    }
+
+    private void work(Task current, FileWork operation) {
+        try {
+            IO.execute(() -> {
+                try {
+                    if (current(current)) operation.run();
+                    else failed(current, new IOException("蓝图已修改，请重试"));
+                } catch (IOException | RuntimeException failure) {
+                    failed(current, failure);
+                }
+            });
+        } catch (RuntimeException failure) {
+            failed(current, failure);
+        }
+    }
+
+    private static void main(Runnable runnable) {
+        Minecraft.getMinecraft()
+            .func_152344_a(runnable);
+    }
+
+    private interface FileSource {
+
+        EditorSource read() throws IOException;
+    }
+
+    private interface FileWork {
+
+        void run() throws IOException;
+    }
+}

@@ -14,11 +14,11 @@ public final class HologramCutRequestRegression {
     public static void run() {
         exitActivityOwnership();
         HologramCutRequests requests = new HologramCutRequests();
-        SimpleAssert.that(requests.observeHeld(true), "equipping requests one directory sync");
+        SimpleAssert.that(requests.observeStorageContext(true), "entering Cut mode requests one directory sync");
         requests.begin("initial", "list", "", 0);
         SimpleAssert.that(!requests.busy(), "a background directory read never locks editing");
         for (int tick = 0; tick < 10000; tick++)
-            SimpleAssert.that(!requests.observeHeld(true), "idle holding never polls the directory again");
+            SimpleAssert.that(!requests.observeStorageContext(true), "an active Cut context never polls the directory again");
         SimpleAssert.eq(
             0,
             requests.expire(HologramCutRequests.READ_TIMEOUT_NS - 1)
@@ -33,8 +33,8 @@ public final class HologramCutRequestRegression {
             requests.expire(Long.MAX_VALUE)
                 .size(),
             "timeouts never schedule recurring retries");
-        SimpleAssert.that(!requests.observeHeld(false), "putting the tool away sends no request");
-        SimpleAssert.that(requests.observeHeld(true), "returning to the tool refreshes once");
+        SimpleAssert.that(!requests.observeStorageContext(false), "leaving Cut context sends no request");
+        SimpleAssert.that(requests.observeStorageContext(true), "returning to Cut context refreshes once");
         requests.begin("retry", "list", "", 1);
         SimpleAssert.that(requests.acknowledge("initial") == null, "an expired old read cannot consume a new request");
         SimpleAssert.eq("list", requests.acknowledge("retry").action, "only the matching read is acknowledged");
@@ -71,7 +71,7 @@ public final class HologramCutRequestRegression {
         requests.expire(HologramCutRequests.READ_TIMEOUT_NS);
         SimpleAssert.that(!requests.busy(), "a lost preview does not permanently disable controls");
         requests.clear();
-        SimpleAssert.that(requests.observeHeld(true), "a new world starts an independent sync lifecycle");
+        SimpleAssert.that(requests.observeStorageContext(true), "a new world starts an independent sync lifecycle");
         SimpleAssert.that(requests.acknowledge("preview") == null, "old-world ACK cannot restore cleared state");
 
         HologramCutNotice notice = new HologramCutNotice();
@@ -112,14 +112,14 @@ public final class HologramCutRequestRegression {
     private static void exitActivityOwnership() {
         for (String action : new String[] { "cut", "paste", "undo" }) {
             HologramCutRequests requests = new HologramCutRequests();
-            requests.observeHeld(true);
+            requests.observeStorageContext(true);
             requests.begin("directory", "list", "", 0);
             requests.begin("write", action, "entry", 0);
             requests.begin("old-preview", "preview", "entry", 0);
             requests.exitActivity();
             SimpleAssert.that(requests.writing(), "Escape retains the authoritative " + action + " outcome");
             SimpleAssert.that(requests.active("list"), "Escape retains a pending directory read");
-            SimpleAssert.that(!requests.observeHeld(true), "Escape does not trigger another equip refresh");
+            SimpleAssert.that(!requests.observeStorageContext(true), "Escape does not trigger another directory refresh");
             SimpleAssert.that(!requests.active("preview"), "Escape retires the local preview request");
             requests.begin("new-preview", "preview", "entry", 1);
             SimpleAssert.that(requests.acknowledge("old-preview") == null, "old preview cannot revive after reentry");

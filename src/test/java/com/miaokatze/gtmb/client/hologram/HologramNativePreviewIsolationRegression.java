@@ -78,10 +78,14 @@ public final class HologramNativePreviewIsolationRegression {
                     .block(true) == block,
                 "native fixture registry resolves the current block");
             SimpleAssert.that(
-                state.cells.get(0).targetDisplay.hasKey("nativeTile", 10),
+                state.cells.get(0)
+                    .display(false)
+                    .hasKey("nativeTile", 10),
                 "planned native payload remains a compound after snapshot copy");
             SimpleAssert.that(
-                state.cells.get(0).actualDisplay.hasKey("nativeTile", 10),
+                state.cells.get(0)
+                    .display(true)
+                    .hasKey("nativeTile", 10),
                 "current native payload remains a compound after snapshot copy");
             SimpleAssert
                 .that(HologramNativeTiles.supported(block), "public adapter recognizes the registered block family");
@@ -140,7 +144,9 @@ public final class HologramNativePreviewIsolationRegression {
                 .eq(before, state.fullData(), "mutating a serializer's input never changes the source snapshot");
             SimpleAssert.eq(
                 "minecraft:planks",
-                state.cells.get(0).targetDisplay.getCompoundTag("nativeTile")
+                state.cells.get(0)
+                    .display(false)
+                    .getCompoundTag("nativeTile")
                     .getCompoundTag("material")
                     .getString("block"),
                 "nested material NBT is copied before native hydration");

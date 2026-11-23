@@ -50,7 +50,9 @@ public final class HologramAeWorldPreviewVerification {
             boolean fmp = block.getClass()
                 .getName()
                 .equals("codechicken.multipart.BlockMultipart")
-                && hasAeBus((current ? cell.actualDisplay : cell.targetDisplay).getCompoundTag("nativeTile"));
+                && hasAeBus(
+                    cell.display(current)
+                        .getCompoundTag("nativeTile"));
             if (!cbc && !fmp) continue;
             cables++;
             require(
