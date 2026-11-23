@@ -30,6 +30,7 @@ public final class HologramLocalPreviewRegression {
         compactDenseRegion();
         sharedPlainDisplay();
         sourceReuse();
+        savedPrivateMaterialSource();
         earlyDisplay();
         displayPicture();
         uploadRepresentation();
@@ -579,6 +580,105 @@ public final class HologramLocalPreviewRegression {
         } finally {
             java.nio.file.Files.deleteIfExists(file);
         }
+    }
+
+    static void savedPrivateMaterialSource() throws Exception {
+        NBTTagCompound data = new NBTTagCompound();
+        data.setString("fixture", "opaque-payload-not-a-material-identity");
+        String encoded = java.util.Base64.getEncoder()
+            .encodeToString(com.miaokatze.gtmb.hologram.HologramSnapshotCodec.compress(data));
+        String source = "{\"schema\":2,\"encoding\":\"gtmb-dictionary-1\","
+            + "\"blueprint\":{\"schema\":2,\"retainedNbtKeys\":[],\"cells\":[[0,{\"x\":1}],[0,{\"x\":2}],"
+            + "[1,{\"x\":3}],[2,{\"x\":4}],[3,{\"x\":5}],[4,{\"x\":6}],[5,{\"x\":7}],"
+            + "[6,{\"x\":8}],[7,{\"x\":9}],[8,{\"x\":10}],[9,{\"x\":11}],[10,{\"x\":12}]]},"
+            + "\"materials\":[{\"block\":\"detached:unregistered\",\"item\":\"detached:unregistered\"},"
+            + "{\"block\":\"detached:unregistered\",\"item\":\"detached:unregistered\",\"prompt\":\"fixture\"},"
+            + "{\"block\":\"detached:unregistered\",\"item\":\"detached:unregistered\",\"metadata\":1,\"damage\":1},"
+            + "{\"block\":\"detached:unregistered\",\"item\":\"detached:unregistered\",\"controller\":true,\"facing\":3},"
+            + "{\"block\":\"minecraft:air\"},"
+            + "{\"block\":\"minecraft:air\",\"itemNbt\":0},"
+            + "{\"block\":\"detached:unregistered\",\"item\":\"detached:unregistered\",\"tileNbt\":0},"
+            + "{\"block\":\"detached:unregistered\",\"item\":\"detached:unregistered\",\"excluded\":true},"
+            + "{\"block\":\"detached:unregistered\",\"item\":\"detached:unregistered\",\"metadata\":1.2},"
+            + "{\"block\":\"detached:unregistered\",\"item\":\"detached:unregistered\",\"futureMaterialField\":true},"
+            + "{\"block\":\"minecraft:air\",\"metadata\":16}],"
+            + "\"nbt\":[\"" + encoded + "\"]}";
+        byte[] compact = source.getBytes(StandardCharsets.UTF_8);
+        var regular = HologramBlueprintPreview.displayInput(compact, null);
+        var privateDecode = HologramBlueprintPreview.displayInput(compact, null, true);
+        var sidecar = privateDecode.savedMaterials;
+        SimpleAssert.that(
+            regular.savedMaterials == null && sidecar != null && regular.snapshot.equals(privateDecode.snapshot)
+                && regular.cells.size() == privateDecode.cells.size() && regular.cells.size() == 11,
+            "ordinary display metadata and included geometry do not acquire extra material fields");
+        SimpleAssert.that(
+            sidecar.variants().size() == 3 && sidecar.variants().get(0).cells() == 3
+                && sidecar.variants().get(1).variant().damage() == 1
+                && sidecar.variants().get(2).variant().controller()
+                && sidecar.variants().get(2).variant().facing() == 3,
+            "dictionary duplicates coalesce only on exact detached source identity; a saved controller is a target");
+        SimpleAssert.that(
+            sidecar.airCells() == 1 && sidecar.payloadCells() == 2 && sidecar.unsupportedCells() == 3
+                && sidecar.limitCells() == 0 && sidecar.retentionNeedsReview(),
+            "malformed air is an unknown descriptor, not harmless air; payload and retention uncertainty stay separate");
+        SimpleAssert.that(
+            !sidecar.toString().contains(encoded)
+                && sidecar.variants().stream().noneMatch(row -> row.variant().toString().contains(encoded)),
+            "no opaque data becomes an exposed material variant");
+        byte[] expanded = ("{\"blueprint\":{\"schema\":2,\"cells\":[{\"block\":\"detached:display\","
+            + "\"item\":\"detached:display\"}]}}").getBytes(StandardCharsets.UTF_8);
+        SimpleAssert.eq(
+            null, HologramBlueprintPreview.displayInput(expanded, null, true).savedMaterials,
+            "expanded input remains outside this compact sidecar");
+        var draft = HologramLocalBlueprintDocument.open(expanded, "").freeze();
+        SimpleAssert.eq(
+            null, HologramBlueprintPreview.displayInput(draft, () -> true, null).savedMaterials,
+            "frozen draft takes the existing preview path");
+
+        java.nio.file.Path file = java.nio.file.Files.createTempFile("gtmb-private-material-fixture-", ".json");
+        try {
+            java.nio.file.Files.write(file, compact);
+            HologramLibraryClient library = new HologramLibraryClient();
+            String localId = "local_00000000-1111-2222-3333-444444444444", key = "local:" + localId;
+            var saved = library.readDisplaySource(key, file, localId, "");
+            SimpleAssert.that(saved.savedMaterials != null, "captured local JSON opts in without claiming managed index or pair proof");
+            saved.compactCells = null;
+            saved.snapshot = null;
+            library.retainDisplaySource(saved);
+            var warm = library.readDisplaySource(key, file, localId, "");
+            SimpleAssert.that(
+                warm == saved && warm.savedMaterials == saved.savedMaterials,
+                "matching stamp reuses the tally on the same captured bytes; it does not prove on-disk equality");
+            SimpleAssert.eq(
+                null, library.readDisplaySource(key, file, localId, "public_fixture").savedMaterials,
+                "a read tagged public cannot borrow the private tally, even with a colliding key and stamp");
+            java.nio.file.Files.write(file, compactWithAnotherCell(source));
+            var reread = library.readDisplaySource(key, file, localId, "");
+            SimpleAssert.that(
+                reread != saved && reread.savedMaterials.variants().get(0).cells() == 4,
+                "a size-changing fixture invalidates the existing file stamp and gets a new captured tally");
+        } finally {
+            java.nio.file.Files.deleteIfExists(file);
+        }
+
+        int limit = HologramSavedMaterialSource.MAX_TRACKED_DESCRIPTORS;
+        com.google.gson.JsonObject schema = new com.google.gson.JsonObject();
+        schema.addProperty("schema", 2);
+        com.google.gson.JsonObject variant = new com.google.gson.JsonObject();
+        variant.addProperty("block", "detached:bounded");
+        variant.addProperty("item", "detached:bounded");
+        var bounded = new HologramSavedMaterialSource.Tally(schema, 65536);
+        bounded.include(limit - 1, variant);
+        bounded.include(limit, variant);
+        bounded.include(65535, null);
+        var facts = bounded.snapshot();
+        SimpleAssert.that(
+            facts.variants().size() == 1 && facts.variants().get(0).cells() == 1 && facts.limitCells() == 2,
+            "high dictionary indices stay explicitly unknown without growing storage with palette width");
+    }
+
+    private static byte[] compactWithAnotherCell(String source) {
+        return source.replace("[10,{\"x\":12}]", "[10,{\"x\":12}],[0,{\"x\":13}]").getBytes(StandardCharsets.UTF_8);
     }
 
     private static void earlyDisplay() {

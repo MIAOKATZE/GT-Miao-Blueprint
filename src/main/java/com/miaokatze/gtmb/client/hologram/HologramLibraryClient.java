@@ -173,6 +173,8 @@ final class HologramLibraryClient {
         final FrozenDraft draft;
         NBTTagCompound snapshot;
         HologramBlueprintPreview.CompactCells compactCells;
+        // Client-only facts about this exact captured local JSON; not managed membership or a verified PNG pair.
+        HologramSavedMaterialSource savedMaterials;
         // Stays attached to these exact bytes when the transient geometry is released after browsing.
         boolean compactSource;
         private boolean checkedStoredUse; // set only by the single IO worker for these immutable bytes
@@ -1509,7 +1511,9 @@ final class HologramLibraryClient {
         synchronized (localPreviews) {
             cached = localPreviews.get(key);
         }
-        if (cached != null && stamp.equals(cached.stamp)) {
+        if (cached != null && stamp.equals(cached.stamp) && localId.equals(cached.localId)
+            && publicId.equals(cached.publicId)) {
+            // The existing stamp is a reuse hint, not proof that on-disk content still equals the captured bytes.
             if (thumbnail && cached.thumbnail == null) queueBrowseImage(cached, path, token, epoch);
             return cached;
         }
@@ -1518,10 +1522,14 @@ final class HologramLibraryClient {
         DisplaySource source = new DisplaySource(key, stamp, json, null, localId, publicId, "", "");
         if (thumbnail) queueBrowseImage(source, path, token, epoch);
         observeDisplay(token, "library.parse", 0, 0, "");
-        HologramBlueprintPreview.DisplayInput input = HologramBlueprintPreview
-            .displayInput(json, (done, total) -> observeDisplay(token, "library.parse", done, total, "cells"));
+        // savedPath also serves untracked portable files. A local selection is not durable index membership.
+        boolean savedPrivate = publicId.isEmpty() && localId.matches("local_[a-fA-F0-9-]{36}")
+            && key.equals("local:" + localId);
+        HologramBlueprintPreview.DisplayInput input = HologramBlueprintPreview.displayInput(
+            json, (done, total) -> observeDisplay(token, "library.parse", done, total, "cells"), savedPrivate);
         source.snapshot = input.snapshot;
         source.compactCells = input.cells;
+        source.savedMaterials = input.savedMaterials;
         source.compactSource = input.cells != null;
         return source;
     }
@@ -1915,6 +1923,7 @@ final class HologramLibraryClient {
 
     private static long retainedPreviewBytes(DisplaySource source) {
         return source.json.length + (source.artifact == null ? 0L : source.artifact.length)
+            + (source.savedMaterials == null ? 0L : source.savedMaterials.estimatedBytes())
             + (source.state == null ? 0L : source.state.cells.size() * ESTIMATED_CELL_BYTES)
             + (source.thumbnail == null ? 0L : (long) source.thumbnail.getWidth() * source.thumbnail.getHeight() * 4);
     }
