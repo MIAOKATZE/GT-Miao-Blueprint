@@ -86,6 +86,10 @@ final class HologramLibraryMaterialForecast {
         return unpriced;
     }
 
+    int airCells() {
+        return airCells;
+    }
+
     /**
      * Client main thread adapter. Only already classified ordinary identities reach the supplied resolver.
      * No default resolver: community providers may override vanilla identities and must not be probed here.

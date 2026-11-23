@@ -5,12 +5,19 @@ package com.miaokatze.gtmb.client.hologram;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 
+import net.minecraft.block.Block;
 import net.minecraft.init.Blocks;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.tileentity.TileEntity;
+import net.minecraft.world.World;
 
 import com.google.gson.JsonObject;
+import com.miaokatze.gtmb.api.GTMBExtensions;
+import com.miaokatze.gtmb.api.NativePlacement;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
 /** Headless coverage of the projection and the explicit client item/stock adapter, not a placement witness. */
@@ -21,6 +28,7 @@ final class HologramLibraryMaterialForecastRegression {
     static void run() {
         unmasked();
         masked();
+        descriptiveRows();
     }
 
     private static void unmasked() {
@@ -116,6 +124,93 @@ final class HologramLibraryMaterialForecastRegression {
             forecast.candidates().isEmpty() && forecast.unpriced().retention() == 1
                 && rows.getBoolean("retentionNeedsReview") && rows.getLong("unaccounted") == 1,
             "an explicit retention mask is unknown, not a zero item budget");
+    }
+
+    private static void descriptiveRows() {
+        var tally = new HologramSavedMaterialSource.Tally(blueprint(), 4);
+        tally.include(0, row("stone", 0));
+        for (int i = 1; i < 32; i++) tally.include(0, null);
+        tally.include(1, row("stonebrick", 2));
+        JsonObject mismatched = row("stone", 0);
+        mismatched.addProperty("item", "minecraft:cobblestone");
+        tally.include(2, mismatched);
+        tally.include(3, row("air", 0));
+        var forecast = HologramLibraryMaterialForecast.project(tally.snapshot());
+
+        ItemStack[] inventory = new ItemStack[36];
+        inventory[0] = new ItemStack(Blocks.stone, 64, 0); // The caller's protected slot is never counted.
+        inventory[1] = new ItemStack(Blocks.stone, 32, 0);
+        inventory[2] = new ItemStack(Blocks.stone, 16, 0);
+        inventory[3] = new ItemStack(Blocks.stone, 64, 1);
+        inventory[4] = new ItemStack(Blocks.stone, 64, 0);
+        inventory[4].setTagCompound(new NBTTagCompound()); // Even an empty tag is not the raw untagged identity.
+        inventory[5] = new ItemStack(Blocks.cobblestone, 64, 0);
+        inventory[6] = new ItemStack(Blocks.stonebrick, 64, 2);
+        AtomicInteger itemCalls = new AtomicInteger();
+        inventory[7] = new ItemStack(new Item() {
+            @Override
+            public int getDamage(ItemStack ignored) {
+                itemCalls.incrementAndGet();
+                throw new AssertionError("an unrelated inventory item must not run its damage callback");
+            }
+
+            @Override
+            public String getItemStackDisplayName(ItemStack ignored) {
+                itemCalls.incrementAndGet();
+                throw new AssertionError("a description must not call an item display callback");
+            }
+        }, 64, 0);
+        inventory[8] = new ItemStack(Blocks.stone, 0, 0);
+
+        AtomicInteger providerCalls = new AtomicInteger();
+        String providerId = "gtmb_test:description_throwing_provider";
+        try (var installed = NativePlacement.register(providerId,
+            new NativePlacement.Adapter() {
+                public boolean supports(Block block) {
+                    providerCalls.incrementAndGet();
+                    throw new AssertionError("a plain description must not probe native providers");
+                }
+
+                public TileEntity create(Block block, int meta, NBTTagCompound tag, World world) {
+                    providerCalls.incrementAndGet();
+                    throw new AssertionError("a plain description must not create a tile");
+                }
+
+                public List<ItemStack> materials(Block block, int meta, TileEntity tile) {
+                    providerCalls.incrementAndGet();
+                    throw new AssertionError("a plain description must not compute native costs");
+                }
+            })) {
+            SimpleAssert.that(installed.active(), "the throwing fixture must be registered while observing");
+            var description = HologramLibraryMaterialDescription.describe(forecast, inventory, 0);
+            var stone = description.rows().get(0);
+            var stonebrick = description.rows().get(1);
+            SimpleAssert.that(description.rows().size() == 2 && description.unlistedCells() == 1
+                && description.airCells() == 1, "shape/alias mismatch is unlisted and plain air is separate");
+            SimpleAssert.that("minecraft:stone".equals(stone.identity().registry()) && stone.blueprintCells() == 32
+                && Long.valueOf(48).equals(stone.visibleBackpackCount()),
+                "the recorded 32 cells and the 48 observed exact items are independent facts");
+            SimpleAssert.that("minecraft:stonebrick".equals(stonebrick.identity().registry())
+                && stonebrick.blueprintCells() == 1 && stonebrick.visibleBackpackCount() == null,
+                "an unresolved but recognized source row remains visible without a zero stock");
+            SimpleAssert.that(HologramLibraryMaterialDescription.describe(null, inventory, 0) == null
+                && HologramLibraryMaterialDescription.describe(forecast, null, 0).rows().get(0)
+                    .visibleBackpackCount() == null
+                && HologramLibraryMaterialDescription.describe(forecast, inventory, -1).rows().get(0)
+                    .visibleBackpackCount() == null
+                && HologramLibraryMaterialDescription.describe(forecast, inventory, 9).rows().get(0)
+                    .visibleBackpackCount() == null,
+                "an absent capture, unavailable inventory and unverified projector slot cannot imply zero");
+            var empty = HologramLibraryMaterialDescription.describe(forecast, new ItemStack[36], 0);
+            SimpleAssert.eq(Long.valueOf(0), empty.rows().get(0).visibleBackpackCount(),
+                "only a proved observable empty inventory has a zero");
+            inventory[1].stackSize = 1;
+            SimpleAssert.eq(Long.valueOf(48), stone.visibleBackpackCount(), "the publication retains no live stacks");
+        }
+        SimpleAssert.eq(0, providerCalls.get(), "no native provider callback ran");
+        SimpleAssert.eq(0, itemCalls.get(), "no dynamic inventory item callback ran");
+        SimpleAssert.that(GTMBExtensions.descriptors().stream().noneMatch(row -> providerId.equals(row.id)),
+            "the hostile fixture owns and retires only its one test registration");
     }
 
     private static JsonObject blueprint() {
