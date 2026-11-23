@@ -61,6 +61,10 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
         return placements.values().iterator();
     }
 
+    int recordedPlacementCount() {
+        return placements.size();
+    }
+
     boolean takeChanged() {
         boolean result = changed;
         changed = false;
