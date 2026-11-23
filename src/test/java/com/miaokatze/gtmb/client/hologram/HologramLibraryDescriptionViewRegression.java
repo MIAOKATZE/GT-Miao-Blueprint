@@ -93,7 +93,8 @@ final class HologramLibraryDescriptionViewRegression {
         build.setAccessible(true);
         var panel = (ModularPanel) build.invoke(dialog);
         List<String> labels = panel.getChildren().stream().filter(TextWidget.class::isInstance)
-            .map(widget -> ((TextWidget<?>) widget).getKey().get()).toList();
+            .map(widget -> ((TextWidget<?>) widget).getKey().get())
+            .collect(java.util.stream.Collectors.toList());
         SimpleAssert.that(labels.contains("蓝图记录格数") && labels.contains("本机背包同物品")
             && labels.stream().anyMatch(text -> text.contains("施工用量未核算")) && !labels.contains("需求")
             && !labels.contains("缺失") && !labels.contains("背包差额"),

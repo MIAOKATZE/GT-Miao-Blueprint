@@ -4,7 +4,7 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import java.util.Arrays;
-import java.util.List;
+import java.util.Collections;
 import java.util.function.Supplier;
 
 import net.minecraft.client.Minecraft;
@@ -126,7 +126,7 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
             if (result == null) status += " · 本机没有可核对的来源记录";
             else if (result.unlistedCells() > 0) status += " · " + result.unlistedCells() + " 格未列明";
             cached = new LocalFrame(new NBTTagCompound(), "已锁定蓝图 · 整份范围", status,
-                "本机没有可列明的蓝图材料记录", canObserve, result == null ? List.of() : result.rows());
+                "本机没有可列明的蓝图材料记录", canObserve, result == null ? Collections.emptyList() : result.rows());
         }
     }
 

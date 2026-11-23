@@ -4,6 +4,7 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 
 import net.minecraft.block.Block;
@@ -30,7 +31,7 @@ final class HologramLibraryMaterialDescription {
     record Description(List<Row> rows, long unlistedCells, int airCells) {
 
         Description {
-            rows = List.copyOf(rows);
+            rows = Collections.unmodifiableList(new ArrayList<>(rows));
         }
     }
 

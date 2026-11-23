@@ -708,7 +708,8 @@ public final class HologramLocalPreviewRegression {
                 "compatibility filename still previews, but it has no durable index provenance");
             reader.retainDisplaySource(fallback);
 
-            java.nio.file.Files.writeString(index, id + "=" + member.getFileName() + "\n");
+            java.nio.file.Files.write(index, (id + "=" + member.getFileName() + "\n")
+                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
             var selection = store.savedDisplayPath(id);
             var managed = reader.readSavedDisplaySource(id, selection, false, 0, 0);
             SimpleAssert.that(
