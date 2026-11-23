@@ -14,6 +14,19 @@ final class HologramPlacementConfirmation {
 
     private HologramPlacementConfirmation() {}
 
+    /** A visible native projection is not a complete construction target. */
+    static String localStructureReviewBlocker(HologramState state) {
+        NBTTagCompound data = state.data;
+        if (!data.getBoolean("localStandardController")) return "";
+        if (data.getBoolean("localStructureUnavailable") || !data.getBoolean("supported"))
+            return "当前控制器没有可用于施工的原生结构。";
+        if (data.getBoolean("capturePending") || !data.getBoolean("projectionDataComplete"))
+            return "正在采集结构，请稍候。";
+        if (data.getBoolean("localPlanPending")) return "施工计划正在更新，请稍候。";
+        if (state.cells.isEmpty()) return "当前控制器没有可用于施工的结构格。";
+        return "";
+    }
+
     static boolean lockedBlueprint(NBTTagCompound state) {
         return state.getBoolean("virtual") && state.getBoolean("virtualPlacement") && state.getBoolean("virtualLocked");
     }

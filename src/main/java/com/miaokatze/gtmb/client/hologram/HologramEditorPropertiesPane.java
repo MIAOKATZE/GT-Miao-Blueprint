@@ -312,6 +312,7 @@ final class HologramEditorPropertiesPane {
             && (!state.getBoolean("virtual")
                 || state.getBoolean("virtualPlacement") && state.getBoolean("virtualLocked"))
             && state.getBoolean("target")
+            && HologramPlacementConfirmation.localStructureReviewBlocker(ui.session.state()).isEmpty()
             && (state.getBoolean("supported") || state.getInteger("mode") == 0);
     }
 
@@ -321,6 +322,8 @@ final class HologramEditorPropertiesPane {
         if (state.getBoolean("virtual") && !state.getBoolean("virtualPlacement")) return "从蓝图库选择蓝图进入世界放置。";
         if (state.getBoolean("virtual") && !state.getBoolean("virtualLocked")) return "先在世界右键确定放置位置。";
         if (!state.getBoolean("target")) return "尚无施工目标。";
+        String localBlocker = HologramPlacementConfirmation.localStructureReviewBlocker(ui.session.state());
+        if (!localBlocker.isEmpty()) return localBlocker;
         if (!state.getBoolean("supported") && state.getInteger("mode") != 0) return "当前结构不支持此施工模式。";
         return "核对真实材料与改动；在原材料确认窗口最终确认后才施工。";
     }

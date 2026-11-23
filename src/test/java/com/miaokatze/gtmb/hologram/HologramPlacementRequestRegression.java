@@ -340,6 +340,38 @@ final class HologramPlacementRequestRegression {
             () -> true);
         if (all.cells().size() != 2 || all.cells().stream().anyMatch(cell -> cell.x() == 0 && cell.y() == 0 && cell.z() == 0))
             throw new AssertionError("Controller build included its protected anchor");
+
+        NBTTagCompound hint = displayedRow(12, 64, 0, false);
+        hint.setString("wantId", "structurelib:blockhint");
+        hint.setBoolean("missingBlock", true);
+        hint.setBoolean("iconOnly", true);
+        hint.setString("status", "unsupported");
+        hint.removeTag("targetStack");
+        cells.appendTag(hint);
+        rejectUnresolvedDisplayed(displayed, anchor);
+
+        displayed.setInteger("scope", 2);
+        displayed.setInteger("selected", 1);
+        displayed.setIntArray("selectedIndices", new int[] { 1 });
+        HologramProjectedPlacement.Plan concrete = HologramProjectedPlacement.compileDisplayed(
+            displayed, anchor, 256, () -> true);
+        if (concrete.cells().size() != 1 || concrete.cells().get(0).x() != 1 || concrete.cells().get(0).y() != 1
+            || concrete.needs().size() != 1 || concrete.needs().get(0).count() != 1)
+            throw new AssertionError("An out-of-scope hint blocked a known target or widened the requested scope");
+
+        displayed.setInteger("selected", 3);
+        displayed.setIntArray("selectedIndices", new int[] { 3 });
+        rejectUnresolvedDisplayed(displayed, anchor);
+    }
+
+    private static void rejectUnresolvedDisplayed(NBTTagCompound displayed, int[] anchor) throws IOException {
+        try {
+            HologramProjectedPlacement.compileDisplayed(displayed, anchor, 256, () -> true);
+        } catch (IOException expected) {
+            if (!"所选范围包含未确定材料的结构格，请先明确目标方块".equals(expected.getMessage())) throw expected;
+            return;
+        }
+        throw new AssertionError("An unresolved native hint became a placeable operation");
     }
 
     private static void testOrdinaryEligibility() throws IOException {

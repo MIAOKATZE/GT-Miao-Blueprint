@@ -347,10 +347,22 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     }
 
     void reviewLocalConstruction(NBTTagCompound settings) {
-        if (!localControllerStandard() || !controllerContextCurrent(false) || localExecutionRequest != null) return;
+        if (!localControllerStandard()) return;
+        if (localExecutionRequest != null) {
+            ui.session.notice("上一次施工核对尚未结束，请稍候。");
+            return;
+        }
         Minecraft client = minecraft();
         HologramState displayed = ui.session.state();
-        if (displayed.cells.isEmpty() || displayed.data.getBoolean("capturePending")) return;
+        String blocker = HologramPlacementConfirmation.localStructureReviewBlocker(displayed);
+        if (!blocker.isEmpty()) {
+            ui.session.notice(blocker);
+            return;
+        }
+        if (!controllerContextCurrent(false)) {
+            ui.session.notice("控制器或手持投影仪已变化，请重新打开结构。");
+            return;
+        }
         if (displayed.data.getInteger("mode") != 0) {
             settings.setInteger("mode", displayed.data.getInteger("mode"));
             HologramClient.prepareExplicitControllerOperation(openingController, localControllerSide, settings, displayed);
@@ -383,7 +395,9 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
                         if (!id.equals(localExecutionRequest)) return;
                         if (client.currentScreen != this || !controllerContextCurrent(false)
                             || displayed.cells != ui.session.state().cells) {
-                            localExecutionRequest = null;
+                            if (client.currentScreen == this)
+                                localExecutionFailed(id, "施工目标或手持投影仪已变化，请重新核对。");
+                            else localExecutionRequest = null;
                             return;
                         }
                         try {
