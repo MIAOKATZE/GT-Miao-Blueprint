@@ -197,42 +197,51 @@ public final class HologramNetwork {
     }
 
     public static void sendAction(NBTTagCompound tag) {
-        if ("cancelProjectedPlacement".equals(tag.getString("action")))
+        String action = tag.getString("action");
+        if ("projectedPlacement".equals(action))
+            throw new IllegalArgumentException("Projected placement requires the bounded upload");
+        if ("cancelProjectedPlacement".equals(action))
             HologramPlacementUpload.finishedClient(tag.getString("placementRequestId"));
         if (channel == null) return;
         if ("placeTextBox".equals(tag.getString("op"))) HologramAttachmentUpload.send(tag);
         else channel.sendToServer(new Action(tag));
     }
 
-    /** Complete compression on the client worker before committing the explicit placement request. */
-    public static Action prepareProjectedPlacement(NBTTagCompound tag) throws IOException {
+    /** Placement has no generic Action send path: even one-frame requests use the bounded transport. */
+    public static HologramPlacementUpload.Prepared prepareProjectedPlacement(NBTTagCompound tag,
+        java.util.function.BooleanSupplier current) throws IOException {
         if (!"projectedPlacement".equals(tag.getString("action"))) throw new IOException("未知的施工请求");
         HologramPlacementRequest.Header header = HologramPlacementRequest.header(tag);
-        Action action = new Action(tag);
+        NBTTagCompound envelope = (NBTTagCompound) tag.copy();
+        markSnapshotCapabilities(envelope);
         byte[] bytes;
         try {
-            bytes = HologramSnapshotCodec.compress(action.tag, HologramPlacementUpload.MAX_EXPANDED,
-                HologramPlacementUpload.MAX_COMPRESSED);
+            bytes = HologramSnapshotCodec.compress(envelope, HologramPlacementUpload.MAX_EXPANDED,
+                HologramPlacementUpload.MAX_COMPRESSED, current);
         } catch (IOException invalid) {
             throw new IOException("施工清单超过传输上限或包含无效数据，请检查或拆分施工范围", invalid);
         }
-        // The GZIP trailer of the buffer we just produced contains its uncompressed byte count.
-        int trailer = bytes.length - 4;
-        long expanded = (bytes[trailer] & 255L) | (bytes[trailer + 1] & 255L) << 8
-            | (bytes[trailer + 2] & 255L) << 16
-            | (bytes[trailer + 3] & 255L) << 24;
-        if (bytes.length <= MAX_BYTES && expanded <= action.expandedBudget()) ((Packet) action).prepared = bytes;
-        else {
-            action.placementUpload = HologramPlacementUpload.prepare(header.id(), bytes);
-            action.tag = new NBTTagCompound();
-        }
-        return action;
+        if (!current.getAsBoolean()) throw new IOException("施工准备已取消");
+        return HologramPlacementUpload.prepare(header.id(), bytes);
     }
 
-    public static void sendPreparedPlacement(Action action) {
-        if (channel == null) return;
-        if (action.placementUpload != null) HologramPlacementUpload.send(action.placementUpload);
-        else if (((Packet) action).prepared != null) channel.sendToServer(action);
+    public static void sendPreparedPlacement(HologramPlacementUpload.Prepared prepared,
+        java.util.function.BooleanSupplier current) throws IOException {
+        if (channel == null) throw new IOException("施工上传缺少当前客户端连接");
+        HologramPlacementUpload.send(prepared, current);
+    }
+
+    public static void discardPreparedPlacement(java.util.UUID id) {
+        HologramPlacementUpload.finishedClient(id.toString());
+    }
+
+    /** Only called after complete ordered and digest-verified placement upload on the server thread. */
+    static void receiveUploadedPlacement(EntityPlayerMP player, NBTTagCompound tag) {
+        // A streamed placement should advertise the same snapshot flow as the legacy direct Action,
+        // without admitting an unrelated control operation through the placement decoder.
+        if (tag.getInteger("clientSnapshotFlow") == HologramSnapshotFlowControl.VERSION)
+            snapshotFlow(player).credit.capable();
+        HologramProjectedPlacementService.receive(player, tag);
     }
 
     static void clientPlacementFailure(String id, String reason) {
@@ -1370,8 +1379,6 @@ public final class HologramNetwork {
     public static class Packet implements IMessage {
 
         NBTTagCompound tag = new NBTTagCompound();
-        private byte[] prepared;
-
         public Packet() {}
 
         Packet(NBTTagCompound tag) {
@@ -1402,7 +1409,7 @@ public final class HologramNetwork {
 
         public void toBytes(ByteBuf buf) {
             try {
-                byte[] bytes = prepared == null ? CompressedStreamTools.compress(tag) : prepared;
+                byte[] bytes = CompressedStreamTools.compress(tag);
                 if (bytes.length > MAX_BYTES) throw new IllegalArgumentException("hologram packet size");
                 buf.writeInt(bytes.length);
                 buf.writeBytes(bytes);
@@ -1422,9 +1429,13 @@ public final class HologramNetwork {
         }
     }
 
-    public static final class Action extends Packet {
+    private static void markSnapshotCapabilities(NBTTagCompound tag) {
+        tag.setInteger("clientSnapshotProtocol", 1);
+        tag.setInteger("clientSnapshotPalette", HologramSnapshotPalette.VERSION);
+        tag.setInteger("clientSnapshotFlow", HologramSnapshotFlowControl.VERSION);
+    }
 
-        HologramPlacementUpload.Prepared placementUpload;
+    public static final class Action extends Packet {
 
         @Override
         protected int expandedBudget() {
@@ -1435,9 +1446,7 @@ public final class HologramNetwork {
 
         Action(NBTTagCompound tag) {
             super(tag);
-            this.tag.setInteger("clientSnapshotProtocol", 1);
-            this.tag.setInteger("clientSnapshotPalette", HologramSnapshotPalette.VERSION);
-            this.tag.setInteger("clientSnapshotFlow", HologramSnapshotFlowControl.VERSION);
+            markSnapshotCapabilities(this.tag);
         }
     }
 
