@@ -82,7 +82,8 @@ mapOf(
     "runFloodLightsModelTest" to "com.miaokatze.gtmb.client.compat.floodlights.FloodLightsModelRegression",
     "runStorageDrawersModelTest" to "com.miaokatze.gtmb.client.compat.storagedrawers.StorageDrawersModelRegression",
     "runInvisibleModelTest" to "com.miaokatze.gtmb.client.hologram.NativeInvisibleRegression",
-    "runStorageCompatibilityTest" to "com.miaokatze.gtmb.hologram.StorageContainerCompatibilityRegression"
+    "runStorageCompatibilityTest" to "com.miaokatze.gtmb.hologram.StorageContainerCompatibilityRegression",
+    "runMeOutputDisplayTest" to "com.miaokatze.gtmb.client.hologram.HologramMeOutputDisplayRegression"
 ).forEach { (taskName, entryPoint) ->
     tasks.register<JavaExec>(taskName) {
         group = "verification"

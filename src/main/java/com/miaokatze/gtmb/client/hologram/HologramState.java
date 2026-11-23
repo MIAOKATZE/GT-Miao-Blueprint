@@ -326,6 +326,7 @@ final class HologramState {
         private int minY, maxY, minWorldX, maxWorldX, minWorldY, maxWorldY, minWorldZ, maxWorldZ;
         private HologramState result;
         private final boolean displayRows;
+        private final boolean showMeOutputCapacity;
         private final boolean anonymousCompact;
         private final HologramBlueprintPreview.CompactCells compactCells;
         private final List<HologramControllerTarget.Cell> controllerCells;
@@ -368,6 +369,7 @@ final class HologramState {
             descriptors = packed ? new java.util.IdentityHashMap<>() : null;
             displayDescriptors = displayRows && !packed && compactCells == null ? new HashMap<>() : null;
             this.displayRows = displayRows;
+            showMeOutputCapacity = displayRows && HologramBlueprintPreview.showMeOutputCapacity(source);
             this.compactCells = compactCells;
             anonymousCompact = compactCells != null && !compactCells.editorRows();
             this.controllerCells = controllerCells;
@@ -510,7 +512,7 @@ final class HologramState {
             if (displayRows) try {
                 Cell shared = displayDescriptors == null ? null : plainDisplayCell(row);
                 if (shared != null) return shared;
-                HologramBlueprintPreview.completeCell(row);
+                HologramBlueprintPreview.completeCell(row, showMeOutputCapacity);
             } catch (java.io.IOException invalid) {
                 throw new IllegalArgumentException(invalid.getMessage(), invalid);
             }
@@ -540,7 +542,7 @@ final class HologramState {
                 boolean withoutPayload = !definition.hasKey("previewTile", 10)
                     && !definition.hasKey("previewItemTag", 10);
                 try {
-                    HologramBlueprintPreview.completeCell(definition);
+                    HologramBlueprintPreview.completeCell(definition, showMeOutputCapacity);
                 } catch (java.io.IOException invalid) {
                     throw new IllegalArgumentException(invalid.getMessage(), invalid);
                 }
@@ -566,7 +568,7 @@ final class HologramState {
                 descriptor.setInteger("targetFacing", material.facing);
                 descriptor.setString("previewItem", material.item);
                 descriptor.setInteger("previewDamage", material.damage);
-                HologramBlueprintPreview.completeCell(descriptor);
+                HologramBlueprintPreview.completeCell(descriptor, showMeOutputCapacity);
                 DescriptorTemplate candidate = new DescriptorTemplate(descriptor, true);
                 if (candidate.plainTarget()) {
                     template = candidate;

@@ -48,6 +48,7 @@ import com.miaokatze.gtmb.hologram.HologramAeNativePreview;
 import com.miaokatze.gtmb.client.hologram.HologramLocalSaveTrace.Stage;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec;
+import com.miaokatze.gtmb.hologram.HologramGtMeOutputDisplay;
 import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.EditorRows;
 import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.FrozenDraft;
 import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
@@ -701,16 +702,32 @@ public final class HologramBlueprintPreview {
 
     /** Registry resolution and audited AE visual factories run only in the client render context. */
     private static HologramState completeSnapshot(NBTTagCompound data) throws IOException {
+        boolean showMeOutputCapacity = showMeOutputCapacity(data);
         NBTTagList cells = data.getTagList("cells", 10);
         for (int i = 0; i < cells.tagCount(); i++) {
             NBTTagCompound cell = cells.getCompoundTagAt(i);
-            completeCell(cell);
+            completeCell(cell, showMeOutputCapacity);
         }
         return new HologramState(data);
     }
 
-    /** Resolve one disposable display row on the client thread, without world or payment validation. */
+    /** A saved local draft keeps original payload bytes even when author selection omits some from placement. */
+    static boolean showMeOutputCapacity(NBTTagCompound data) {
+        if (data.getBoolean("localMaterialPolicyPresent") && !data.getBoolean("retainNbt")) return false;
+        if (!data.hasKey("retainedNbtKeys")) return true;
+        NBTTagList retained = data.getTagList("retainedNbtKeys", 8);
+        for (int i = 0; i < retained.tagCount(); i++) {
+            if ("baseCapacity".equals(retained.getStringTagAt(i))) return true;
+        }
+        return false;
+    }
+
     static void completeCell(NBTTagCompound cell) throws IOException {
+        completeCell(cell, true);
+    }
+
+    /** Resolve one disposable display row on the client thread, without world or payment validation. */
+    static void completeCell(NBTTagCompound cell, boolean showMeOutputCapacity) throws IOException {
         Object item = Item.itemRegistry.getObject(cell.getString("previewItem"));
         ItemStack stack = item instanceof Item ? new ItemStack((Item) item, 1, cell.getInteger("previewDamage")) : null;
         if (stack == null && !cell.getString("previewItem")
@@ -765,6 +782,8 @@ public final class HologramBlueprintPreview {
                 tile.getTag("gt.covers")
                     .copy());
         }
+        if (showMeOutputCapacity && (!cell.hasKey("previewItemTag") || cell.hasKey("previewItemTag", 10)))
+            HologramGtMeOutputDisplay.observeStored(block, stack, tile, display);
         if (stack != null) cell.setTag("targetStack", stack.writeToNBT(new NBTTagCompound()));
         cell.setTag("targetDisplay", display);
         cell.setString("id", cell.getString("wantId"));
