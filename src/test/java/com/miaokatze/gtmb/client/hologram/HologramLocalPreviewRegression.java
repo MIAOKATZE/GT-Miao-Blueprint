@@ -31,6 +31,7 @@ public final class HologramLocalPreviewRegression {
         sharedPlainDisplay();
         sourceReuse();
         savedPrivateMaterialSource();
+        indexedMaterialSourceCapture();
         earlyDisplay();
         displayPicture();
         uploadRepresentation();
@@ -679,6 +680,54 @@ public final class HologramLocalPreviewRegression {
 
     private static byte[] compactWithAnotherCell(String source) {
         return source.replace("[10,{\"x\":12}]", "[10,{\"x\":12}],[0,{\"x\":13}]").getBytes(StandardCharsets.UTF_8);
+    }
+
+    static void indexedMaterialSourceCapture() throws Exception {
+        var game = java.nio.file.Files.createTempDirectory("gtmb-indexed-material-source-");
+        var libraryDir = java.nio.file.Files.createDirectory(game.resolve("MiaoBlueprints"));
+        String id = "local_aabbccdd-1111-2222-3333-444444444444";
+        var member = libraryDir.resolve(id + ".json");
+        var index = libraryDir.resolve(".gtmb-blueprint-files.properties");
+        try {
+            byte[] compact = ("{\"schema\":2,\"encoding\":\"gtmb-dictionary-1\","
+                + "\"blueprint\":{\"schema\":2,\"cells\":[[0,{\"x\":1}]]},"
+                + "\"materials\":[{\"block\":\"minecraft:stone\",\"item\":\"minecraft:stone\"}],\"nbt\":[]}")
+                    .getBytes(StandardCharsets.UTF_8);
+            java.nio.file.Files.write(member, compact);
+            HologramClientLibrary store = new HologramClientLibrary(game);
+            HologramLibraryClient reader = new HologramLibraryClient();
+            var before = store.savedDisplayPath(id);
+            var fallback = reader.readSavedDisplaySource(id, before, false, 0, 0);
+            SimpleAssert.that(
+                before.path().equals(store.savedPath(id)) && !before.indexed() && fallback.savedMaterials != null
+                    && !fallback.capturedIndexedMaterialSource(),
+                "compatibility filename still previews, but it has no durable index provenance");
+            reader.retainDisplaySource(fallback);
+
+            java.nio.file.Files.writeString(index, id + "=" + member.getFileName() + "\n");
+            var selection = store.savedDisplayPath(id);
+            var managed = reader.readSavedDisplaySource(id, selection, false, 0, 0);
+            SimpleAssert.that(
+                selection.path().equals(before.path()) && selection.indexed() && managed != fallback
+                    && managed.capturedIndexedMaterialSource(),
+                "a chosen indexed source carries its own provenance even when the JSON stamp is unchanged");
+            reader.retainDisplaySource(managed);
+            SimpleAssert.that(
+                managed == reader.readSavedDisplaySource(id, store.savedDisplayPath(id), false, 0, 0),
+                "same indexed capture can use the existing cache without re-parsing the JSON");
+
+            java.nio.file.Files.delete(index);
+            var later = reader.readSavedDisplaySource(id, store.savedDisplayPath(id), false, 0, 0);
+            SimpleAssert.that(
+                later != managed && !later.capturedIndexedMaterialSource()
+                    && managed.capturedIndexedMaterialSource(),
+                "removed index mapping cannot borrow indexed provenance for a fresh read; old proofs are historical");
+        } finally {
+            java.nio.file.Files.deleteIfExists(index);
+            java.nio.file.Files.deleteIfExists(member);
+            java.nio.file.Files.deleteIfExists(libraryDir);
+            java.nio.file.Files.deleteIfExists(game);
+        }
     }
 
     private static void earlyDisplay() {
