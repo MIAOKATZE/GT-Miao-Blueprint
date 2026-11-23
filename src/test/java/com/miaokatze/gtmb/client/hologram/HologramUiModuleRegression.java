@@ -39,6 +39,7 @@ public final class HologramUiModuleRegression {
         confirmedLibraryTargets();
         configurationPresetPresence();
         controllerConstructionConfirmation();
+        localControllerConstructionEntry();
         presentationSnapshotFailure();
         authorSaveKeepsIdentityChoiceAfterRotation();
         localAuthorSavePrivacyRoundTrip();
@@ -631,6 +632,44 @@ public final class HologramUiModuleRegression {
                 "a controller with no remaining actionable work still has a disabled confirm button");
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("controller construction confirmation", failure);
+        }
+    }
+
+    private static void localControllerConstructionEntry() {
+        try {
+            HologramUiModules ui = headlessUi();
+            NBTTagCompound data = new NBTTagCompound();
+            data.setBoolean("target", true);
+            data.setBoolean("supported", true);
+            data.setBoolean("localStandardController", true);
+            data.setBoolean("structureProjection", true);
+            data.setBoolean("capturePending", true);
+            NBTTagList rows = new NBTTagList();
+            NBTTagCompound row = new NBTTagCompound();
+            row.setString("wantId", "minecraft:stone");
+            rows.appendTag(row);
+            data.setTag("cells", rows);
+            HologramState state = new HologramState(data);
+            setUiField(ui.session, "state", state);
+            HologramEditorPropertiesPane pane = new HologramEditorPropertiesPane(ui);
+            var canReview = HologramEditorPropertiesPane.class.getDeclaredMethod("canReviewConstruction");
+            var reason = HologramEditorPropertiesPane.class.getDeclaredMethod("constructionReason");
+            canReview.setAccessible(true);
+            reason.setAccessible(true);
+            SimpleAssert.that(!(Boolean) canReview.invoke(pane), "unsettled native capture cannot review construction");
+            SimpleAssert.eq("正在采集结构，请稍候。", reason.invoke(pane), "capture reason is visible before review");
+            state.data.setBoolean("capturePending", false);
+            SimpleAssert.that(!(Boolean) canReview.invoke(pane), "visible geometry alone cannot review construction");
+            state.data.setBoolean("projectionDataComplete", true);
+            state.data.setBoolean("localPlanPending", true);
+            SimpleAssert.that(!(Boolean) canReview.invoke(pane), "an in-flight plan cannot review construction");
+            SimpleAssert.eq("施工计划正在更新，请稍候。", reason.invoke(pane), "pending plan has actionable status");
+            state.data.setBoolean("localPlanPending", false);
+            SimpleAssert.that((Boolean) canReview.invoke(pane), "settled target enables only the review entry");
+            SimpleAssert.that(!HologramPlacementConfirmation.canBuild(state.data, 0),
+                "settled local preview is not authoritative material confirmation");
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("local controller construction entry", failure);
         }
     }
 
