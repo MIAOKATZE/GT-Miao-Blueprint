@@ -386,7 +386,8 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
                     }
                     intent.setTag("cells", cells);
                     var plan = com.miaokatze.gtmb.hologram.HologramProjectedPlacement.compileDisplayed(
-                        intent, anchor, height, () -> id.equals(localExecutionRequest));
+                        intent, anchor, height, () -> id.equals(localExecutionRequest),
+                        index -> displayed.cells.get(index).capturedNativeTarget());
                     NBTTagCompound request = com.miaokatze.gtmb.hologram.HologramPlacementRequest.encode(
                         id, anchor, plan, intent);
                     var upload = com.miaokatze.gtmb.hologram.HologramNetwork.prepareProjectedPlacement(

@@ -170,7 +170,9 @@ final class HologramLocalBlueprintStructure {
                     break;
                 }
             }
-            if (stack == null && !"minecraft:air".equals(target)) continue;
+            // This snapshot is produced by this editor's own detached controller capture, not read from the file.
+            // Keep the editable, itemless geometry; the portable data does not convey construction authority.
+            if (stack == null && !"minecraft:air".equals(target) && !HologramNativeSourceWater.previewRow(row)) continue;
             Cell cell = stack == null ? new Cell() : HologramPresets.cell(stack, x, y, z, facing, false);
             cell.x = x;
             cell.y = y;
