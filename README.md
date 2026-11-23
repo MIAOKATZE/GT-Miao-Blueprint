@@ -9,15 +9,17 @@
   <a href="LICENSE"><img alt="Code license AGPL-3.0" src="https://img.shields.io/badge/License-AGPL--3.0-blue.svg"></a>
   <img alt="Minecraft 1.7.10" src="https://img.shields.io/badge/Minecraft-1.7.10-blue.svg">
   <img alt="Forge 10.13.4.1614" src="https://img.shields.io/badge/Forge-10.13.4.1614-blue.svg">
-  <img alt="GTMB 0.3.32" src="https://img.shields.io/badge/GTMB-0.3.32-blue.svg">
-  <img alt="MIAOKATZE Core 0.2.25+" src="https://img.shields.io/badge/Core-0.2.25%2B-blue.svg">
+  <img alt="GTMB latest release" src="https://img.shields.io/github/v/release/MIAOKATZE/GT-Miao-Blueprint?label=GTMB&amp;color=green">
   <a href="https://github.com/GTNewHorizons/GT-New-Horizons-Modpack"><img alt="GTNH2.9.0 正式版" src="https://img.shields.io/badge/GTNH-2.9.0-blue.svg"></a>
   <a href="https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases"><img alt="Releases" src="https://img.shields.io/badge/Downloads-Releases-green.svg"></a>
 </p>
 
-**必需前置：当前开发源码的客户端与服务端均需 [MIAOKATZE Core 0.2.25 或更新版本](https://github.com/MIAOKATZE/MIAOKATZE-Core)**。请在两端手动安装随本体发布的 Core 普通 JAR。
+| 前置 / Requirement | 版本 / Version |
+| --- | --- |
+| GTNH | 2.9.0 |
+| [MIAOKATZE Core](https://github.com/MIAOKATZE/MIAOKATZE-Core) | [见对应版本的 Release / See the corresponding release](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases) |
 
-默认编译坐标与 FalsePatternLib 缺包下载声明均为 **Core 0.2.25**。当前公开 Maven 尚无该坐标。
+客户端和服务端均须手动安装随本体发布的 Core 普通 JAR。源码构建依赖与自动补齐版本以本仓依赖声明为准。
 
 <p align="center">
   <a href="https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases">下载 / Download</a> ·
@@ -364,10 +366,10 @@ ME 缺料可明确提交**独立的真实 AE 合成订单**；关闭窗口后继
 
 | 项目 / Requirement | 版本或说明 / Version or notes |
 | --- | --- |
-| **目标整包 / Target pack** | **GTNH 2.9.0 正式版**；当前源码版本 **GTMB 0.3.32** |
+| **目标整包 / Target pack** | **GTNH 2.9.0 正式版**；版本见[最新发布版 / Latest release](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases/latest) |
 | **游戏与加载器 / Game & loader** | Minecraft **1.7.10** · Forge **10.13.4.1614** |
 | **安装位置 / Install on** | **客户端与服务端均需安装 / Both client and server** |
-| **必需依赖 / Required mods** | **MIAOKATZE Core ≥ 0.2.25**；另需目标整包中的 GregTech、StructureLib、Applied Energistics 2、GTNHLib、ModularUI、ModularUI2 **2.3.94-1.7.10**。 |
+| **必需依赖 / Required mods** | **MIAOKATZE Core**（版本要求见[对应 Release](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases)）；另需目标整包中的 GregTech、StructureLib、Applied Energistics 2、GTNHLib、ModularUI、ModularUI2 **2.3.94-1.7.10**。 |
 | **可选模组 / Optional mod** | **GTIT**；兼容版本可提供猫猫机兑换。 / Compatible versions add the vending-machine exchange. |
 | **下载 / Download** | [GitHub Releases](https://github.com/MIAOKATZE/GT-Miao-Blueprint/releases) |
 
