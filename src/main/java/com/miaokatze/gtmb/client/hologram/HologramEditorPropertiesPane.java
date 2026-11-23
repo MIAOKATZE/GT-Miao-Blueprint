@@ -231,19 +231,21 @@ final class HologramEditorPropertiesPane {
     }
 
     private IWidget meOutputCapacity(boolean current) {
-        return HologramEditorNativeTheme.label(() -> meOutputCapacityText(ui.session.selectedCell(), current))
+        return HologramEditorNativeTheme.label(() -> meOutputCapacityText(
+            ui.session.state(), ui.session.selectedCell(), current))
             .widthRel(1f)
             .height(24)
-            .setEnabledIf(w -> hasMeOutputCapacity(ui.session.selectedCell(), current));
+            .setEnabledIf(w -> hasMeOutputCapacity(ui.session.state(), ui.session.selectedCell(), current));
     }
 
-    private static boolean hasMeOutputCapacity(HologramState.Cell cell, boolean current) {
+    private static boolean hasMeOutputCapacity(HologramState view, HologramState.Cell cell, boolean current) {
         return cell != null && (cell.hasDisplayTag(current, HologramGtMeOutputDisplay.ITEMS, 4)
-            || cell.hasDisplayTag(current, HologramGtMeOutputDisplay.MILLIBUCKETS, 4));
+            || cell.hasDisplayTag(current, HologramGtMeOutputDisplay.MILLIBUCKETS, 4))
+            && (current || HologramBlueprintPreview.editorAllowsMeOutputCapacity(view.data));
     }
 
-    static String meOutputCapacityText(HologramState.Cell cell, boolean current) {
-        if (!hasMeOutputCapacity(cell, current)) return "";
+    static String meOutputCapacityText(HologramState view, HologramState.Cell cell, boolean current) {
+        if (!hasMeOutputCapacity(view, cell, current)) return "";
         NBTTagCompound display = cell.display(current);
         long items = HologramGtMeOutputDisplay.read(display, false);
         long fluid = HologramGtMeOutputDisplay.read(display, true);
