@@ -25,6 +25,7 @@ import com.google.gson.JsonObject;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec;
 import com.miaokatze.gtmb.hologram.HologramGtMeOutputDisplay;
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument;
 import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
 import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
@@ -61,6 +62,7 @@ public final class HologramMeOutputDisplayRegression {
             GregTechAPI.METATILEENTITIES[BUS] = prototype(MTEHatchOutputBusME.class);
             GregTechAPI.METATILEENTITIES[FLUID] = prototype(MTEHatchOutputME.class);
             reopened(host);
+            editableAuthorRetention();
             live(BUS, MTEHatchOutputBusME.class, 8192L, MTEHatchOutputBusME.DEFAULT_CAPACITY, false);
             live(FLUID, MTEHatchOutputME.class, 2097152L, MTEHatchOutputME.DEFAULT_CAPACITY, true);
             staysBlocked(host);
@@ -97,13 +99,13 @@ public final class HologramMeOutputDisplayRegression {
         byte[] frozen = compact.clone();
         HologramState result = displayed(compact);
         SimpleAssert.eq(7, result.cells.size(), "full target display has all original cells");
-        expect(result.cells.get(0), 8192L, false, "8,192 items");
-        expect(result.cells.get(1), 2097152L, true, "2,097,152 mB");
-        expect(result.cells.get(2), Long.MAX_VALUE, false, "∞ items");
-        expect(result.cells.get(3), 0, false, "");
-        expect(result.cells.get(4), 0, true, "");
-        expect(result.cells.get(5), 0, false, "");
-        expect(result.cells.get(6), 32768L, false, "32,768 items");
+        expect(result, 0, 8192L, false, "8,192 items");
+        expect(result, 1, 2097152L, true, "2,097,152 mB");
+        expect(result, 2, Long.MAX_VALUE, false, "∞ items");
+        expect(result, 3, 0, false, "");
+        expect(result, 4, 0, true, "");
+        expect(result, 5, 0, false, "");
+        expect(result, 6, 32768L, false, "32,768 items");
         for (int i = 0; i < 6; i++) {
             ItemStack target = result.cells.get(i).targetStack;
             SimpleAssert.that(target != null && Item.getItemFromBlock(host) == target.getItem(),
@@ -118,18 +120,111 @@ public final class HologramMeOutputDisplayRegression {
         // The bytes are still physically present in the source; only author policy turns the extra visual line off.
         blueprint.addProperty("retainNbt", false);
         HologramState filteredAll = displayed(encode(root));
-        expect(filteredAll.cells.get(0), 0, false, "");
-        expect(filteredAll.cells.get(6), 0, false, "");
+        expect(filteredAll, 0, 0, false, "");
+        expect(filteredAll, 6, 0, false, "");
         blueprint.addProperty("retainNbt", true);
         JsonArray allow = new JsonArray();
         allow.add(new com.google.gson.JsonPrimitive("unrelatedObservation"));
         blueprint.add("retainedNbtKeys", allow);
         HologramState selective = displayed(encode(root));
-        expect(selective.cells.get(1), 0, true, "");
-        expect(selective.cells.get(6), 0, false, "");
+        expect(selective, 1, 0, true, "");
+        expect(selective, 6, 0, false, "");
         allow.add(new com.google.gson.JsonPrimitive("baseCapacity"));
         HologramState allowed = displayed(encode(root));
-        expect(allowed.cells.get(1), 2097152L, true, "2,097,152 mB");
+        expect(allowed, 1, 2097152L, true, "2,097,152 mB");
+    }
+
+    private static void editableAuthorRetention() throws Exception {
+        JsonObject root = new JsonObject();
+        root.addProperty("schema", 2);
+        JsonObject blueprint = new JsonObject();
+        root.add("blueprint", blueprint);
+        blueprint.addProperty("schema", 2);
+        blueprint.add("palette", new JsonArray());
+        JsonArray cells = new JsonArray();
+        blueprint.add("cells", cells);
+        cells.add(row(0, BUS, saved(BUS, 8192L), null));
+        cells.add(row(1, FLUID, null, itemTag(2097152L)));
+
+        expectEditableAuthorRetention(root, true); // document default: retain all
+        blueprint.addProperty("retainNbt", false);
+        expectEditableAuthorRetention(root, false);
+        blueprint.addProperty("retainNbt", true);
+        JsonArray selected = new JsonArray();
+        blueprint.add("retainedNbtKeys", selected);
+        selected.add(new com.google.gson.JsonPrimitive("unrelatedObservation"));
+        expectEditableAuthorRetention(root, false);
+        selected.add(new com.google.gson.JsonPrimitive("baseCapacity"));
+        expectEditableAuthorRetention(root, true);
+
+        NBTTagCompound malformed = HologramLocalBlueprintDocument.open(encode(root), "").snapshotMetadata();
+        malformed.setInteger("blueprintRetainNbt", 1);
+        SimpleAssert.that(!HologramBlueprintPreview.editorAllowsMeOutputCapacity(malformed),
+            "malformed editor authoring policy cannot enable the display marker");
+    }
+
+    private static void expectEditableAuthorRetention(JsonObject root, boolean visible) throws Exception {
+        byte[] exact = encode(root);
+        var opened = HologramLocalBlueprintDocument.openForEditor(exact, "", () -> true);
+        var editor = opened.editor();
+        SimpleAssert.that(editor != null, "expected real file-backed compact authoring rows");
+        assertEditableCapacity(new HologramState.Preparation(
+            editor.metadata(), true, new HologramBlueprintPreview.CompactCells(editor)), visible);
+
+        var document = opened.document();
+        NBTTagCompound ordinary = document.snapshot();
+        NBTTagCompound captured = ordinary.getTagList("cells", 10).getCompoundTagAt(0);
+        SimpleAssert.that(captured.getCompoundTag("previewTile").hasKey("baseCapacity", 4)
+            && !captured.hasKey("targetDisplay") && !captured.hasKey(HologramGtMeOutputDisplay.ITEMS)
+            && !captured.getCompoundTag("previewTile").hasKey(HologramGtMeOutputDisplay.ITEMS),
+            "authoring snapshot keeps native NBT, not the derived display scalar");
+        // Even contrary browse keys must not override a genuine editable document's authoring policy.
+        ordinary.setBoolean("localMaterialPolicyPresent", true);
+        ordinary.setBoolean("retainNbt", !visible);
+        assertEditableCapacity(new HologramState.Preparation(ordinary, true, null), visible);
+        var rows = document.detachedEditorRows(() -> true);
+        rows.metadata().setInteger("dimension", 7);
+        HologramState detached = assertEditableCapacity(new HologramState.Preparation(
+            rows.metadata(), true, new HologramBlueprintPreview.CompactCells(rows)), visible);
+        Object world = new Object(), connection = new Object(), player = new Object();
+        var reuse = HologramLocalPresentation.capture(document, detached, world, connection, player, 7, 3, true);
+        SimpleAssert.that(reuse != null, "exact same-owner authoring view is reusable");
+        HologramState rebased = reuse.rebase(document.resumePresentationMetadata(() -> true));
+        SimpleAssert.that(rebased != null && rebased.cells == detached.cells,
+            "policy-correct detached geometry is reused under fresh authoring metadata");
+        assertEditableCaptions(rebased, visible);
+
+        NBTTagCompound changed = new NBTTagCompound();
+        changed.setBoolean("all", true);
+        changed.setBoolean("retainNbt", !visible);
+        document.apply("configureBlueprintNbt", changed);
+        SimpleAssert.that(!reuse.current(document, world, connection, player, 7, 3)
+            && reuse.rebase(document.resumePresentationMetadata(() -> true)) == null,
+            "a policy revision cannot reuse the previous retained token");
+        HologramState after = rebased.withMetadata(document.snapshotMetadata());
+        SimpleAssert.that(rebased.cells == after.cells && rebased.regions == after.regions,
+            "policy toggles keep the original view geometry");
+        assertEditableCaptions(after, !visible);
+        document.apply("editUndo", new NBTTagCompound());
+        HologramState undone = after.withMetadata(document.snapshotMetadata());
+        SimpleAssert.that(rebased.cells == undone.cells, "restoring author policy does not replace the captured cells");
+        assertEditableCaptions(undone, visible);
+    }
+
+    private static HologramState assertEditableCapacity(HologramState.Preparation preparation, boolean visible) {
+        while (!preparation.step(3, Long.MAX_VALUE)) {}
+        HologramState view = preparation.result();
+        assertEditableCaptions(view, visible);
+        SimpleAssert.that(!view.cells.get(0).targetStack.hasTagCompound(),
+            "tile-derived display capacity remains outside the editable target stack");
+        SimpleAssert.eq(itemTag(2097152L), view.cells.get(1).targetStack.getTagCompound(),
+            "authoring display policy does not rewrite the original item tag");
+        return view;
+    }
+
+    private static void assertEditableCaptions(HologramState view, boolean visible) {
+        expect(view, 0, 8192L, false, visible ? "8,192 items" : "");
+        expect(view, 1, 2097152L, true, visible ? "2,097,152 mB" : "");
     }
 
     private static HologramState displayed(byte[] compact) throws Exception {
@@ -145,10 +240,11 @@ public final class HologramMeOutputDisplayRegression {
             root.toString().getBytes(StandardCharsets.UTF_8), HologramBlueprintArtifact.MAX_JSON_BYTES);
     }
 
-    private static void expect(HologramState.Cell cell, long value, boolean fluid, String suffix) {
+    private static void expect(HologramState view, int index, long value, boolean fluid, String suffix) {
+        HologramState.Cell cell = view.cells.get(index);
         SimpleAssert.eq(value, HologramGtMeOutputDisplay.read(cell.display(false), fluid), "typed output capacity");
         SimpleAssert.eq(0L, HologramGtMeOutputDisplay.read(cell.display(false), !fluid), "opposite family absent");
-        String caption = HologramEditorPropertiesPane.meOutputCapacityText(cell, false);
+        String caption = HologramEditorPropertiesPane.meOutputCapacityText(view, cell, false);
         SimpleAssert.eq(suffix.isEmpty() ? "" : "Target base buffer: " + suffix, caption, "visible subtitle");
     }
 
@@ -184,7 +280,8 @@ public final class HologramMeOutputDisplayRegression {
         cell.setTag("actualDisplay", actual);
         SimpleAssert.eq(
             "Current base buffer: " + amount,
-            HologramEditorPropertiesPane.meOutputCapacityText(new HologramState.Cell(0, cell), true),
+            HologramEditorPropertiesPane.meOutputCapacityText(
+                new HologramState(new NBTTagCompound()), new HologramState.Cell(0, cell), true),
             "native installed output shows its base capacity separately");
         SimpleAssert.eq(upgraded, capacity.getLong(value), "observed provider stays unchanged");
         capacity.setLong(value, ordinary);
