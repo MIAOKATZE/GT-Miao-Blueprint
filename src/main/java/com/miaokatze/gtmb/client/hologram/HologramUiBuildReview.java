@@ -66,14 +66,80 @@ final class HologramUiBuildReview {
             next.data.getBoolean("moving"));
     }
 
-    private HologramMaterialConfirmationDialog materialDialog;
+    private HologramMaterialConfirmationDialog materialDialog, localMaterialDialog;
+    private HologramLocalMaterialReview localMaterials;
+    private int localMaterialSelectionVersion;
     private NBTTagCompound presentedMaterialState;
     private long presentedMaterialRevision = -1;
+
+    boolean openNativeLocalMaterials() {
+        HologramScreen root = ui.host == null ? null : ui.host.parent();
+        HologramState state = ui.session.state();
+        if (!state.data.getBoolean("localStandardController") || state.data.getInteger("mode") != 0) return false;
+        if (root == null || !root.localMaterialOwnerCurrent(ui)) {
+            closeLocalMaterials();
+            ui.session.notice("控制器或手持投影仪已变化，请重新打开结构。");
+            return true; // A stale local control must not fall through to the legacy query.
+        }
+        String blocker = HologramPlacementConfirmation.localStructureReviewBlocker(state);
+        if (!blocker.isEmpty()) ui.session.notice(blocker);
+        else {
+            localMaterials = new HologramLocalMaterialReview(state, ui.config.configuration());
+            localMaterialSelectionVersion = ui.preview.selection().version();
+        }
+        return true;
+    }
+
+    HologramLocalMaterialReview localMaterials() {
+        return localMaterials;
+    }
+
+    private boolean localMaterialsCurrent() {
+        HologramScreen root = ui.host == null ? null : ui.host.parent();
+        return localMaterials != null && root != null && root.localMaterialOwnerCurrent(ui)
+            && localMaterials.current(ui.session.state(), ui.preview.layer())
+            && localMaterialSelectionVersion == ui.preview.selection().version();
+    }
+
+    void closeLocalMaterials() {
+        localMaterials = null;
+        if (localMaterialDialog != null) localMaterialDialog.close();
+    }
+
+    void refreshLocalMaterials() {
+        if (!localMaterialsCurrent()) {
+            closeLocalMaterials();
+            return;
+        }
+        net.minecraft.entity.player.EntityPlayer player = ui.host.minecraft().thePlayer;
+        if (player != null) localMaterials.refresh(player.inventory.mainInventory, player.inventory.currentItem);
+    }
+
+    boolean localSubmitAvailable() {
+        // Estimates never grant or deny construction permission. The existing execution path rechecks the plan.
+        return localMaterialsCurrent() && ui.session.editable();
+    }
+
+    void submitLocalMaterials() {
+        if (!localMaterialsCurrent()) {
+            closeLocalMaterials();
+            return;
+        }
+        if (!ui.session.editable()) return;
+        NBTTagCompound settings = localMaterials.settings();
+        closeLocalMaterials();
+        // The existing execution preparation owns context checks, upload and the final server review.
+        ui.host.parent().reviewLocalConstruction(settings);
+    }
+
+    private HologramMaterialConfirmationDialog activeMaterialDialog() {
+        return localMaterialDialog != null && localMaterialDialog.isOpen() ? localMaterialDialog : materialDialog;
+    }
 
     void tickMaterialDialog() {
         updateMaterialReviewPresentation();
         if (ui.host == null || ui.host.parent() == null) return;
-        boolean show = confirmation && !ui.session.state().data.getBoolean("placementValidating")
+        boolean unobstructed = !ui.session.state().data.getBoolean("placementValidating")
             && !ui.nbt.nbtDrawer()
             && !ui.bindings.networkDrawer()
             && !ui.identity.deidentificationDrawer()
@@ -82,32 +148,41 @@ final class HologramUiBuildReview {
             && !ui.library.discardReview()
             && !ui.library.overwriteReview()
             && !ui.processing.processingPresetSaveReview();
+        if (localMaterials != null && !localMaterialsCurrent()) closeLocalMaterials();
+        boolean local = localMaterials != null && !confirmation && unobstructed;
+        net.minecraft.entity.player.EntityPlayer player = ui.host.minecraft().thePlayer;
+        if (local && player != null) {
+            localMaterials.tick(player.inventory.mainInventory, player.inventory.currentItem);
+            if (localMaterialDialog == null) localMaterialDialog = new HologramMaterialConfirmationDialog(ui, true);
+        }
+        if (localMaterialDialog != null) localMaterialDialog.tick(local && player != null);
+        boolean show = confirmation && unobstructed;
         if (materialDialog == null && show) materialDialog = new HologramMaterialConfirmationDialog(ui);
         if (materialDialog != null) materialDialog.tick(show);
     }
 
     boolean materialDialogOpen() {
-        return materialDialog != null && materialDialog.isOpen();
+        return activeMaterialDialog() != null && activeMaterialDialog().isOpen();
     }
 
     boolean consumeMaterialDialogKey(int key) {
-        return materialDialog != null && materialDialog.consumeKey(key);
+        return activeMaterialDialog() != null && activeMaterialDialog().consumeKey(key);
     }
 
     boolean consumeMaterialDialogBack(ModularPanel panel) {
-        return materialDialog != null && materialDialog.consumeBack(panel);
+        return activeMaterialDialog() != null && activeMaterialDialog().consumeBack(panel);
     }
 
     int[] materialControlPoint(int id) {
-        return materialDialog == null ? null : materialDialog.controlPoint(id);
+        return activeMaterialDialog() == null ? null : activeMaterialDialog().controlPoint(id);
     }
 
     boolean materialControlEnabled(int id) {
-        return materialDialog != null && materialDialog.controlEnabled(id);
+        return activeMaterialDialog() != null && activeMaterialDialog().controlEnabled(id);
     }
 
     NBTTagCompound materialDialogProbeState() {
-        return materialDialog == null ? new NBTTagCompound() : materialDialog.probeState();
+        return activeMaterialDialog() == null ? new NBTTagCompound() : activeMaterialDialog().probeState();
     }
 
     private void updateMaterialReviewPresentation() {
@@ -245,6 +320,7 @@ final class HologramUiBuildReview {
                     && !ui.session.state().data.getBoolean("virtualLocked")) ui.session.send("lockVirtual", null, true);
                 return true;
             case 50:
+                if (ui.session.editable() && openNativeLocalMaterials()) return true;
                 if (ui.session.editable() && (!ui.session.state().data.getBoolean("virtual")
                     || ui.session.state().data.getBoolean("virtualPlacement")
                         && ui.session.state().data.getBoolean("virtualLocked"))) {
@@ -343,6 +419,7 @@ final class HologramUiBuildReview {
     }
 
     void resetSession(long nonce) {
+        closeLocalMaterials();
         seenPlacementReviewNonce = nonce;
         seenOperationReviewSequence = -1;
         requestedOperationReviewSequence = -1;
@@ -366,6 +443,7 @@ final class HologramUiBuildReview {
     }
 
     void pauseForImport() {
+        closeLocalMaterials();
         confirmation = false;
     }
 
@@ -514,6 +592,7 @@ final class HologramUiBuildReview {
     }
 
     void commandPending() {
+        closeLocalMaterials();
         confirmation = false;
     }
 
