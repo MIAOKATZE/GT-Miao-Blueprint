@@ -32,7 +32,7 @@ public final class HologramControllerDetailsRegression {
         var block = new HologramControllerTarget.Cell(
             16, 64, 0, 0, 0, 0, "minecraft:air", "minecraft:stone", 0, 0, Blocks.air, Blocks.stone, null,
             new ItemStack(Blocks.stone), null, null, false, false, false, "missing", "block", "", "block", "",
-            -1, -1, null, null, -1, true);
+            -1, -1, null, null, -1, true, HologramControllerTarget.TargetKind.MATERIAL);
         var targetPreparation = new HologramState.Preparation(
             new HologramControllerTarget.Projection(target, java.util.Collections.singletonList(block)));
         SimpleAssert.that(targetPreparation.step(4, Long.MAX_VALUE), "typed target prepares a complete spatial index");
@@ -91,7 +91,7 @@ public final class HologramControllerDetailsRegression {
             var block = new HologramControllerTarget.Cell(
                 16, 64, 0, 0, 0, 0, "minecraft:air", "minecraft:stone", 0, 0, Blocks.air, Blocks.stone, null,
                 new ItemStack(Blocks.stone), null, null, false, false, false, "missing", "block", "", "block", "",
-                -1, -1, null, null, -1, true);
+                -1, -1, null, null, -1, true, HologramControllerTarget.TargetKind.MATERIAL);
             NBTTagCompound header = new NBTTagCompound();
             header.setString("session", "local-facing");
             header.setString("generation", "read-1");

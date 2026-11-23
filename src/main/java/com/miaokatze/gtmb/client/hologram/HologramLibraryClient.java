@@ -5,6 +5,7 @@ package com.miaokatze.gtmb.client.hologram;
 
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayOutputStream;
+import java.io.IOException;
 import java.nio.file.Paths;
 import java.util.Arrays;
 import java.util.UUID;
@@ -1949,9 +1950,12 @@ final class HologramLibraryClient {
 
     private boolean displayContextCurrent() {
         Minecraft mc = Minecraft.getMinecraft();
+        return libraryConnectionCurrent(mc) && (!quickPreview || sameQuickTool(mc) && quickScreenAllowed(mc));
+    }
+
+    private boolean libraryConnectionCurrent(Minecraft mc) {
         return mc.theWorld != null && mc.theWorld == libraryWorld && mc.getNetHandler() == libraryConnection
-            && mc.thePlayer != null && mc.thePlayer.getUniqueID().equals(libraryActor)
-            && (!quickPreview || sameQuickTool(mc) && quickScreenAllowed(mc));
+            && mc.thePlayer != null && mc.thePlayer.getUniqueID().equals(libraryActor);
     }
 
     private void tickBrowsePreview(long nanos) {
@@ -2055,16 +2059,20 @@ final class HologramLibraryClient {
                     worldHeight,
                     () -> token == generation && request.equals(placementRequest));
             NBTTagCompound action = com.miaokatze.gtmb.hologram.HologramPlacementRequest.encode(request, anchor, plan);
-            HologramNetwork.Action prepared = HologramNetwork.prepareProjectedPlacement(action);
+            var prepared = HologramNetwork.prepareProjectedPlacement(
+                action, () -> token == generation && request.equals(placementRequest));
             main(() -> {
-                if (token != generation || !request.equals(placementRequest)
-                    || !submission.current()
-                    || !sameQuickTool(Minecraft.getMinecraft())) return;
-                localProgressPhase = "library.session";
-                lastActivity = System.nanoTime();
-                status = "正在核对现场和施工材料";
-                placementRequestSent = true;
-                HologramNetwork.sendPreparedPlacement(prepared);
+                if (!placementOwnerCurrent(token, request, submission)) return;
+                try {
+                    HologramNetwork.sendPreparedPlacement(
+                        prepared, () -> placementOwnerCurrent(token, request, submission));
+                    localProgressPhase = "library.session";
+                    lastActivity = System.nanoTime();
+                    status = "正在核对现场和施工材料";
+                    placementRequestSent = true;
+                } catch (IOException | RuntimeException failure) {
+                    finishProjectedPlacement(false, "施工上传失败，" + HologramUiText.reason(failure.getMessage()));
+                }
             });
         }, failure -> {
             if (request.equals(placementRequest))
@@ -2073,14 +2081,19 @@ final class HologramLibraryClient {
         return true;
     }
 
+    private boolean placementOwnerCurrent(long token, UUID request, HologramLocalPlacement.Submission submission) {
+        Minecraft mc = Minecraft.getMinecraft();
+        return token == generation && request.equals(placementRequest) && submission.current()
+            && libraryConnectionCurrent(mc) && sameQuickTool(mc);
+    }
+
     boolean acceptProjectedPlacement(NBTTagCompound receipt) {
         if (!receipt.hasKey("placementRequestId", 8)) return false;
         UUID request = placementRequest;
         if (request == null || !request.toString()
             .equals(receipt.getString("placementRequestId"))
             || placementSubmission == null
-            || !placementSubmission.current()
-            || !sameQuickTool(Minecraft.getMinecraft())) return true;
+            || !placementOwnerCurrent(generation, request, placementSubmission)) return true;
         boolean accepted = receipt.getBoolean("placementRequestAccepted");
         finishProjectedPlacement(
             accepted,
@@ -2095,14 +2108,22 @@ final class HologramLibraryClient {
     private boolean cancelProjectedPlacement(String reason) {
         UUID request = placementRequest;
         if (request == null) return false;
-        if (placementRequestSent && placementSubmission != null && placementSubmission.current()) {
-            NBTTagCompound action = new NBTTagCompound();
-            action.setString("action", "cancelProjectedPlacement");
-            action.setString("placementRequestId", request.toString());
-            HologramNetwork.sendAction(action);
-        }
+        retirePlacementTransport(request);
         finishProjectedPlacement(false, reason);
         return true;
+    }
+
+    private void retirePlacementTransport(UUID request) {
+        HologramNetwork.discardPreparedPlacement(request);
+        if (!placementRequestSent || !libraryConnectionCurrent(Minecraft.getMinecraft())) return;
+        NBTTagCompound action = new NBTTagCompound();
+        action.setString("action", "cancelProjectedPlacement");
+        action.setString("placementRequestId", request.toString());
+        try {
+            HologramNetwork.sendAction(action);
+        } catch (RuntimeException disconnected) {
+            // The original world/connection or bounded idle lease will retire the server copy.
+        }
     }
 
     private void finishProjectedPlacement(boolean accepted, String detail) {
@@ -2198,6 +2219,8 @@ final class HologramLibraryClient {
     private void cancel(String reason, boolean cancelled) {
         savePreviewPose = null;
         boolean localDisplay = localDisplayTask || placementRequest != null;
+        UUID placement = placementRequest;
+        if (placement != null) retirePlacementTransport(placement);
         long cancelledTask = backgroundTaskToken;
         SaveCommand cancelledCommand = draftSave;
         if (cancelledCommand != null) cancelledSourceSave = new SaveCommand(

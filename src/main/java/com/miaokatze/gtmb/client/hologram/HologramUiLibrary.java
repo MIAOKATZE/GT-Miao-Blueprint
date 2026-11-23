@@ -4,6 +4,7 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import static com.miaokatze.gtmb.client.hologram.HologramUiCanvas.*;
+import static com.miaokatze.gtmb.client.hologram.HologramUiText.projector;
 import static net.minecraft.client.gui.Gui.*;
 
 import java.util.ArrayList;
@@ -58,6 +59,15 @@ final class HologramUiLibrary {
 
     void cancelLocalAttachment(long request) {
         localWorkspace.cancelAttachment(request);
+    }
+
+    void resumeCapture(com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument document,
+        HologramLocalPresentation remembered) {
+        localWorkspace.resumeCapture(document, remembered);
+    }
+
+    void retireLocalResume() {
+        localWorkspace.retireResume();
     }
 
     void tickLocalWorkspace() {
@@ -540,44 +550,46 @@ final class HologramUiLibrary {
     }
 
     String nativeStatus() {
-        if (ui.session.isTutorial()) return "独立教学示例，不连接真实蓝图库";
+        if (ui.session.isTutorial()) return projector("library.tutorial");
         if (localBusy() && !localWorkspace.status()
             .isEmpty()) return localWorkspace.status();
         String status = HologramLibraryClient.INSTANCE.status();
         if (!status.isEmpty()) return status;
         NBTTagCompound config = HologramLibraryClient.INSTANCE.config();
         if (dedicatedLibrary() && config.hasKey("permissionGroup", 8))
-            return "权限组：" + config.getString("permissionGroup")
-                + " · 发布"
-                + (config.getBoolean("canPublish") ? "允许" : "禁止")
-                + " · 下载"
-                + (config.getBoolean("canDownload") ? "允许" : "禁止")
-                + " · 配额 "
-                + config.getInteger("memberQuota");
+            return projector(
+                "library.permissions",
+                config.getString("permissionGroup"),
+                config.getBoolean("canPublish") ? projector("library.allowed") : projector("library.denied"),
+                config.getBoolean("canDownload") ? projector("library.allowed") : projector("library.denied"),
+                config.getInteger("memberQuota"));
         return blueprintSaveState();
     }
 
     String nativeReviewTitle() {
-        if (clearWorkspaceReview()) return "清空当前工作区？";
-        if (projectionDiscardReview()) return "丢弃当前投影？";
-        return ui.processing.processingPresetSaveReview() ? "保存流程预设" : overwriteReview ? "确认覆盖蓝图" : "放弃未保存改动";
+        if (clearWorkspaceReview()) return projector("dialog.clear_title");
+        if (projectionDiscardReview()) return projector("dialog.projection_title");
+        return ui.processing.processingPresetSaveReview() ? projector("dialog.preset_title") : overwriteReview ? projector("dialog.overwrite_title") : projector("dialog.discard_title");
     }
 
     String nativeReviewBody() {
-        if (clearWorkspaceReview()) return "清空将丢弃当前内容及未保存改动。取消会保留当前工作区。";
-        if (projectionDiscardReview()) return "打开蓝图将丢弃当前投影及投影记忆。取消会保留当前投影。";
-        return overwriteReview ? "将以当前蓝图替换：" + overwriteName
-            : deferredLibraryAction == 299 ? "放弃当前草稿及未保存改动，返回蓝图库。已保存文件保留。" : "继续将放弃未保存改动并切换蓝图；取消返回原稿。";
+        if (clearWorkspaceReview()) return projector("dialog.clear_body");
+        if (projectionDiscardReview()) return projector("dialog.projection_body");
+        return overwriteReview ? projector("dialog.overwrite_body", overwriteName)
+            : deferredLibraryAction == 299 ? projector("dialog.discard_draft_body") : projector("dialog.switch_body");
     }
 
     String nativeReviewTarget() {
-        if (clearWorkspaceReview()) return "已保存蓝图文件保留。";
-        if (projectionDiscardReview()) return "丢弃后需右击控制器重新开启投影模式。";
-        if (overwriteReview) return "目标：" + overwriteTarget;
-        if (!deferredLibraryTargetName.isEmpty()) return "将切换到：" + deferredLibraryTargetName;
-        return sourceSwitchProposal == null ? "可先取消并保存当前稿。"
-            : "将导入：" + ("openController".equals(sourceSwitchProposal.getString("op")) ? "新控制器结构"
-                : "importArea".equals(sourceSwitchProposal.getString("op")) ? "新的框选区域" : "所选蓝图");
+        if (clearWorkspaceReview()) return projector("dialog.clear_target");
+        if (projectionDiscardReview()) return projector("dialog.projection_target");
+        if (overwriteReview) return projector("dialog.overwrite_target", overwriteTarget);
+        if (!deferredLibraryTargetName.isEmpty()) return projector("dialog.switch_target", deferredLibraryTargetName);
+        return sourceSwitchProposal == null ? projector("dialog.save_first")
+            : projector(
+                "dialog.import_target",
+                "openController".equals(sourceSwitchProposal.getString("op")) ? projector("dialog.import_controller")
+                    : "importArea".equals(sourceSwitchProposal.getString("op")) ? projector("dialog.import_area")
+                        : projector("dialog.import_blueprint"));
     }
 
     boolean projectionDiscardReview() {
@@ -1312,7 +1324,8 @@ final class HologramUiLibrary {
         if (source.isEmpty() && row.getString("id")
             .equals(ui.session.state().data.getString("selectedPresetId")))
             source = ui.session.state().data.getString("sourceMod");
-        return source.isEmpty() ? row.getInteger("schema") >= 2 ? "自定义蓝图" : "结构模板" : source;
+        if (!source.isEmpty()) return source;
+        return row.getInteger("schema") >= 2 ? projector("library.source_custom") : projector("library.source_template");
     }
 
     NBTTagCompound blueprintSaveOptions() {

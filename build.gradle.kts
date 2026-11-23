@@ -73,6 +73,7 @@ tasks.register<JavaExec>("runHologramTest") {
 tasks.named("check") { dependsOn("runHologramTest") }
 
 mapOf(
+    "runProjectorLocalizationTest" to "com.miaokatze.gtmb.client.hologram.HologramProjectorLocalizationRegression",
     "runUnsavedPlacementRegression" to "com.miaokatze.gtmb.hologram.HologramUnsavedPlacementRegression",
     "runAttachmentSnapshotRegression" to "com.miaokatze.gtmb.hologram.HologramAttachmentSnapshotRegression",
     "runCookingCompatibilityTest" to "com.miaokatze.gtmb.compat.cookingforblockheads.CookingForBlockheadsRegression",
@@ -81,7 +82,8 @@ mapOf(
     "runFloodLightsModelTest" to "com.miaokatze.gtmb.client.compat.floodlights.FloodLightsModelRegression",
     "runStorageDrawersModelTest" to "com.miaokatze.gtmb.client.compat.storagedrawers.StorageDrawersModelRegression",
     "runInvisibleModelTest" to "com.miaokatze.gtmb.client.hologram.NativeInvisibleRegression",
-    "runStorageCompatibilityTest" to "com.miaokatze.gtmb.hologram.StorageContainerCompatibilityRegression"
+    "runStorageCompatibilityTest" to "com.miaokatze.gtmb.hologram.StorageContainerCompatibilityRegression",
+    "runMeOutputDisplayTest" to "com.miaokatze.gtmb.client.hologram.HologramMeOutputDisplayRegression"
 ).forEach { (taskName, entryPoint) ->
     tasks.register<JavaExec>(taskName) {
         group = "verification"

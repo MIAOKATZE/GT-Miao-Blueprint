@@ -9,6 +9,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.Random;
 import java.util.UUID;
+import java.util.concurrent.TimeUnit;
 
 import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemStack;
@@ -49,8 +50,21 @@ final class HologramPlacementRequestRegression {
             NBTTagCompound tag = HologramPlacementRequest.encode(id, new int[] { 100, 64, 200 }, plan);
             HologramPlacementRequest.Header header = HologramPlacementRequest.header(tag);
             HologramPlacementRequest.Decoded decoded = HologramPlacementRequest.decode(header, tag, 256);
-            if (HologramNetwork.prepareProjectedPlacement(tag).placementUpload != null)
-                throw new AssertionError("A small execution request no longer uses the normal Action packet");
+            HologramPlacementUpload.Prepared small = HologramNetwork.prepareProjectedPlacement(tag, () -> true);
+            if (small.frameCount() != 1 || !id.equals(small.id))
+                throw new AssertionError("A small execution request did not use the same bounded upload");
+            NBTTagCompound smallRestored = reassemble(small);
+            if (smallRestored.getInteger("clientSnapshotFlow") != HologramSnapshotFlowControl.VERSION
+                || tag.hasKey("clientSnapshotFlow") || HologramPlacementRequest.decode(
+                    HologramPlacementRequest.header(smallRestored), smallRestored, 256).size() != 2)
+                throw new AssertionError("Streamed review lost the normal next-snapshot credit capability or plan");
+            expectFailure(() -> HologramNetwork.prepareProjectedPlacement(tag, () -> false));
+            try {
+                HologramNetwork.sendAction(tag);
+                throw new AssertionError("The generic outbound Action still accepts a placement request");
+            } catch (IllegalArgumentException expected) {
+                // New clients cannot accidentally reintroduce the unsegmented path.
+            }
             if (!id.toString()
                 .equals(header.id()) || decoded.size() != 2
                 || decoded.cell(0).x() != -2
@@ -79,7 +93,10 @@ final class HologramPlacementRequestRegression {
             deviceRoundTrip(id);
             localController(id);
             testOrdinaryEligibility();
+            placementWindow(id);
+            mediumPlacement(tag);
             segmentedPlacement(id, tag);
+            overBudgetPreparation(tag);
             byte[] detachedCells = ("{\"schema\":2,\"blueprint\":{\"schema\":2,\"id\":\"old\",\"name\":\"Old\","
                 + "\"structures\":[{\"id\":\"removed-provider\",\"sourceClass\":\"missing.Source\",\"main\":0}],"
                 + "\"cells\":[{\"x\":0,\"y\":0,\"z\":0,\"block\":\"minecraft:stone\",\"item\":\"minecraft:stone\","
@@ -94,23 +111,103 @@ final class HologramPlacementRequestRegression {
         }
     }
 
-    private static void segmentedPlacement(UUID id, NBTTagCompound seed) throws IOException, InterruptedException {
+    private static void placementWindow(UUID id) {
+        Object connection = new Object();
+        HologramPlacementUpload.SendWindow window = new HologramPlacementUpload.SendWindow(id, connection, 6, 0);
+        for (int i = 0; i < 4; i++)
+            if (window.nextFrame() != i) throw new AssertionError("Placement did not issue its four credits");
+        long second = TimeUnit.SECONDS.toNanos(1);
+        window.acknowledge(id, connection, 5, second);
+        window.acknowledge(id, new Object(), 4, second);
+        window.acknowledge(UUID.randomUUID(), connection, 4, second);
+        if (window.nextFrame() != -1 || window.acknowledged() != 0)
+            throw new AssertionError("Wrong owner, request or unsent ack released a placement credit");
+        window.acknowledge(id, connection, 2, second);
+        if (window.nextFrame() != 4 || window.nextFrame() != 5 || window.nextFrame() != -1)
+            throw new AssertionError("Placement ack did not release the exact capacity");
+        window.acknowledge(id, connection, 2, 29 * second);
+        window.acknowledge(id, connection, 6, 32 * second);
+        if (!window.expired(32 * second) || window.acknowledged() != 2 || window.complete())
+            throw new AssertionError("A duplicate or expired ack revived the placement upload");
+        HologramPlacementUpload.SendWindow between = new HologramPlacementUpload.SendWindow(id, connection, 8, 0);
+        for (int i = 0; i < 6; i++) {
+            if (between.nextFrame() != i) throw new AssertionError("Valid placement credits were lost");
+            between.acknowledge(id, connection, i + 1, (i + 1) * 15 * second);
+        }
+        if (!between.expired(91 * second)) throw new AssertionError("Progress defeated the absolute placement limit");
+    }
+
+    private static NBTTagCompound geometry(NBTTagCompound seed, int cells, int spread) {
         NBTTagCompound plan = (NBTTagCompound) seed.copy();
         plan.setIntArray("placementAnchor", new int[] { 0, 0, 0 });
-        int count = 360_000;
-        int[] operations = new int[4 * count];
+        int[] operations = new int[4 * cells];
         Random random = new Random(123_365);
-        for (int i = 0; i < count; i++) {
+        for (int i = 0; i < cells; i++) {
             operations[4 * i] = i;
             operations[4 * i + 1] = i & 255;
-            operations[4 * i + 2] = random.nextInt(60_000_000) - 30_000_000;
+            operations[4 * i + 2] = random.nextInt(2 * spread) - spread;
         }
         plan.setIntArray("placementOperations", operations);
-        plan.getTagList("placementMaterials", 10).getCompoundTagAt(0).setInteger("count", count);
-        if (HologramNetwork.prepareProjectedPlacement(plan).placementUpload == null)
-            throw new AssertionError("The large placement is still routed through the single packet");
+        plan.getTagList("placementMaterials", 10).getCompoundTagAt(0).setInteger("count", cells);
+        return plan;
+    }
+
+    private static void mediumPlacement(NBTTagCompound seed) throws IOException, InterruptedException {
+        int cells = 123_369;
+        NBTTagCompound plan = geometry(seed, cells, 1024);
+        HologramPlacementUpload.Prepared upload = HologramNetwork.prepareProjectedPlacement(plan, () -> true);
+        if (upload.bytes() <= Short.MAX_VALUE || upload.bytes() >= 1024 * 1024)
+            throw new AssertionError("Synthetic placement no longer covers the release's unsafe selection gap");
+        NBTTagCompound restored = reassemble(upload);
+        if (!Arrays.equals(restored.getIntArray("placementOperations"), plan.getIntArray("placementOperations"))
+            || !restored.getTag("placementMaterials").equals(plan.getTag("placementMaterials"))
+            || !restored.getTag("placementVariants").equals(plan.getTag("placementVariants"))
+            || restored.getInteger("clientSnapshotFlow") != HologramSnapshotFlowControl.VERSION
+            || HologramPlacementRequest.decode(HologramPlacementRequest.header(restored), restored, 256).size() != cells)
+            throw new AssertionError("The medium streamed placement could not hand off an exact review request");
+    }
+
+    private static NBTTagCompound reassemble(HologramPlacementUpload.Prepared prepared) throws IOException {
+        HologramPlacementUpload.Assembly assembly = new HologramPlacementUpload.Assembly(prepared.frame(0));
+        ByteBuf wire = Unpooled.buffer();
+        try {
+            for (int index = 0; index < prepared.frameCount(); index++) {
+                wire.clear();
+                wire.writeByte(10); // SimpleImpl discriminator included in Forge's complete custom payload length.
+                prepared.frame(index).toBytes(wire);
+                if (wire.readableBytes() > 16_441 || wire.readableBytes() >= Short.MAX_VALUE)
+                    throw new AssertionError("An emitted placement frame exceeds its C17 envelope");
+                wire.skipBytes(1);
+                HologramPlacementUpload.Fragment received = new HologramPlacementUpload.Fragment();
+                received.fromBytes(wire);
+                byte[] progress = assembly.accept(received);
+                if ((progress != null) != (index == prepared.frameCount() - 1))
+                    throw new AssertionError("Placement finalized on the wrong fragment");
+            }
+        } finally {
+            wire.release();
+        }
+        return assembly.decode();
+    }
+
+    private static void overBudgetPreparation(NBTTagCompound seed) throws IOException {
+        NBTTagCompound plan = (NBTTagCompound) seed.copy();
+        char[] filler = new char[60_000];
+        Arrays.fill(filler, 'a');
+        String field = new String(filler);
+        for (int i = 0; i <= HologramPlacementUpload.MAX_EXPANDED / filler.length; i++)
+            plan.setString("testSize" + i, field);
+        expectFailure(() -> HologramNetwork.prepareProjectedPlacement(plan, () -> true));
+    }
+
+    private static void segmentedPlacement(UUID id, NBTTagCompound seed) throws IOException, InterruptedException {
+        int count = 650_000;
+        NBTTagCompound plan = geometry(seed, count, 30_000_000);
+        int[] operations = plan.getIntArray("placementOperations");
+        HologramPlacementUpload.Prepared prepared = HologramNetwork.prepareProjectedPlacement(plan, () -> true);
+        if (prepared.bytes() <= 100 * Short.MAX_VALUE)
+            throw new AssertionError("Large placement did not exercise 100× the old safe payload in aggregate");
         byte[] compressed = HologramSnapshotCodec.compress(plan);
-        if (compressed.length <= 1024 * 1024) throw new AssertionError("Large placement did not exceed old single-packet cap");
         byte[] checksum = HologramPlacementUpload.digest(compressed);
         HologramPlacementUpload.Fragment first = fragment(id, compressed, checksum, 0);
         ByteBuf wire = Unpooled.buffer();
@@ -144,7 +241,7 @@ final class HologramPlacementRequestRegression {
             corrupt.accept(frame);
         }
         expectFailure(corrupt::decode);
-        NBTTagCompound restored = assembly.decode();
+        NBTTagCompound restored = reassemble(prepared);
         HologramPlacementRequest.Decoded decoded = HologramPlacementRequest.decode(
             HologramPlacementRequest.header(restored), restored, 256);
         if (decoded.size() != count || decoded.cell(count - 1).x() != count - 1
@@ -243,6 +340,38 @@ final class HologramPlacementRequestRegression {
             () -> true);
         if (all.cells().size() != 2 || all.cells().stream().anyMatch(cell -> cell.x() == 0 && cell.y() == 0 && cell.z() == 0))
             throw new AssertionError("Controller build included its protected anchor");
+
+        NBTTagCompound hint = displayedRow(12, 64, 0, false);
+        hint.setString("wantId", "structurelib:blockhint");
+        hint.setBoolean("missingBlock", true);
+        hint.setBoolean("iconOnly", true);
+        hint.setString("status", "unsupported");
+        hint.removeTag("targetStack");
+        cells.appendTag(hint);
+        rejectUnresolvedDisplayed(displayed, anchor);
+
+        displayed.setInteger("scope", 2);
+        displayed.setInteger("selected", 1);
+        displayed.setIntArray("selectedIndices", new int[] { 1 });
+        HologramProjectedPlacement.Plan concrete = HologramProjectedPlacement.compileDisplayed(
+            displayed, anchor, 256, () -> true);
+        if (concrete.cells().size() != 1 || concrete.cells().get(0).x() != 1 || concrete.cells().get(0).y() != 1
+            || concrete.needs().size() != 1 || concrete.needs().get(0).count() != 1)
+            throw new AssertionError("An out-of-scope hint blocked a known target or widened the requested scope");
+
+        displayed.setInteger("selected", 3);
+        displayed.setIntArray("selectedIndices", new int[] { 3 });
+        rejectUnresolvedDisplayed(displayed, anchor);
+    }
+
+    private static void rejectUnresolvedDisplayed(NBTTagCompound displayed, int[] anchor) throws IOException {
+        try {
+            HologramProjectedPlacement.compileDisplayed(displayed, anchor, 256, () -> true);
+        } catch (IOException expected) {
+            if (!"所选范围包含未确定材料的结构格，请先明确目标方块".equals(expected.getMessage())) throw expected;
+            return;
+        }
+        throw new AssertionError("An unresolved native hint became a placeable operation");
     }
 
     private static void testOrdinaryEligibility() throws IOException {

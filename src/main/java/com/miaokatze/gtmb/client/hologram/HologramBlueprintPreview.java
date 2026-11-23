@@ -48,6 +48,8 @@ import com.miaokatze.gtmb.hologram.HologramAeNativePreview;
 import com.miaokatze.gtmb.client.hologram.HologramLocalSaveTrace.Stage;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec;
+import com.miaokatze.gtmb.hologram.HologramGtMeOutputDisplay;
+import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.DetachedEditorRows;
 import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.EditorRows;
 import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.FrozenDraft;
 import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
@@ -194,6 +196,7 @@ public final class HologramBlueprintPreview {
 
         private final int[] locations;
         private final EditorRows editor;
+        private final boolean editable;
         private final int[] bounds;
         private NBTTagCompound[] materials;
         private int size;
@@ -201,6 +204,7 @@ public final class HologramBlueprintPreview {
         CompactCells(int cells, int materials) {
             locations = new int[Math.multiplyExact(cells, 4)];
             editor = null;
+            editable = false;
             bounds = new int[] { Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE,
                 Integer.MIN_VALUE, Integer.MIN_VALUE };
             this.materials = new NBTTagCompound[materials];
@@ -209,9 +213,19 @@ public final class HologramBlueprintPreview {
         CompactCells(EditorRows editor) {
             locations = null;
             this.editor = editor;
+            editable = true;
             bounds = editor.bounds();
             materials = editor.materials();
             size = editor.rows().cells();
+        }
+
+        CompactCells(DetachedEditorRows editor) {
+            locations = editor.coordinates();
+            this.editor = null;
+            editable = true;
+            bounds = editor.bounds();
+            materials = editor.materials();
+            size = locations.length / 4;
         }
 
         private void add(int x, int y, int z, int material) {
@@ -244,7 +258,7 @@ public final class HologramBlueprintPreview {
         }
 
         boolean editorRows() {
-            return editor != null;
+            return editable;
         }
 
         int[] bounds() {
@@ -701,16 +715,46 @@ public final class HologramBlueprintPreview {
 
     /** Registry resolution and audited AE visual factories run only in the client render context. */
     private static HologramState completeSnapshot(NBTTagCompound data) throws IOException {
+        boolean showMeOutputCapacity = showMeOutputCapacity(data);
         NBTTagList cells = data.getTagList("cells", 10);
         for (int i = 0; i < cells.tagCount(); i++) {
             NBTTagCompound cell = cells.getCompoundTagAt(i);
-            completeCell(cell);
+            completeCell(cell, showMeOutputCapacity);
         }
         return new HologramState(data);
     }
 
-    /** Resolve one disposable display row on the client thread, without world or payment validation. */
+    /** Browse snapshots filter on projection; editable observations survive metadata-only policy changes. */
+    static boolean showMeOutputCapacity(NBTTagCompound data) {
+        if (localEditor(data)) return true;
+        if (data.getBoolean("localMaterialPolicyPresent") && !data.getBoolean("retainNbt")) return false;
+        return !data.hasKey("retainedNbtKeys") || includesMeOutputCapacity(data.getTagList("retainedNbtKeys", 8));
+    }
+
+    /** Only the local editor's target caption uses its live, typed authoring policy. */
+    static boolean editorAllowsMeOutputCapacity(NBTTagCompound data) {
+        return !localEditor(data) || data.hasKey("blueprintRetainNbt", 1) && data.getBoolean("blueprintRetainNbt")
+            && data.hasKey("blueprintNbtAll", 1)
+            && (data.getBoolean("blueprintNbtAll") || includesMeOutputCapacity(data.getTagList("blueprintNbtKeys", 8)));
+    }
+
+    private static boolean localEditor(NBTTagCompound data) {
+        return data.hasKey("localBlueprintDocument", 1) && data.getBoolean("localBlueprintDocument");
+    }
+
+    private static boolean includesMeOutputCapacity(NBTTagList retained) {
+        for (int i = 0; i < retained.tagCount(); i++) {
+            if ("baseCapacity".equals(retained.getStringTagAt(i))) return true;
+        }
+        return false;
+    }
+
     static void completeCell(NBTTagCompound cell) throws IOException {
+        completeCell(cell, true);
+    }
+
+    /** Resolve one disposable display row on the client thread, without world or payment validation. */
+    static void completeCell(NBTTagCompound cell, boolean showMeOutputCapacity) throws IOException {
         Object item = Item.itemRegistry.getObject(cell.getString("previewItem"));
         ItemStack stack = item instanceof Item ? new ItemStack((Item) item, 1, cell.getInteger("previewDamage")) : null;
         if (stack == null && !cell.getString("previewItem")
@@ -765,6 +809,8 @@ public final class HologramBlueprintPreview {
                 tile.getTag("gt.covers")
                     .copy());
         }
+        if (showMeOutputCapacity && (!cell.hasKey("previewItemTag") || cell.hasKey("previewItemTag", 10)))
+            HologramGtMeOutputDisplay.observeStored(block, stack, tile, display);
         if (stack != null) cell.setTag("targetStack", stack.writeToNBT(new NBTTagCompound()));
         cell.setTag("targetDisplay", display);
         cell.setString("id", cell.getString("wantId"));

@@ -416,7 +416,8 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
             if (constructable == null) throw new IOException("LOCAL_DECLARATION_UNAVAILABLE");
             boolean structureCompat = controllerId < 0 && IMultiblockInfoContainer.contains(detachedTile.getClass());
             nativePreview = new HologramNativeStructurePreview(
-                detachedTile, detachedContext, constructable, structureCompat, previewTrigger(null, settings));
+                detachedTile, detachedContext, constructable, structureCompat, previewTrigger(null, settings),
+                controllerId >= 0 ? this::createNativeController : null);
         }
         if (!nativePreview.advance(deadline)) return false;
         nativePlacements = nativePreview.placements();
@@ -565,7 +566,7 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         String wantId = block == null ? "" : String.valueOf(registeredTarget);
         Block hint = StructureLibAPI.getBlockHint();
         ItemStack target = cell.anchor ? cell.actualStack : cell.previewStack != null ? cell.previewStack
-            : block == null || block == hint || block == Blocks.air ? null
+            : cell.nativeSourceWater || block == null || block == hint || block == Blocks.air ? null
                 : HologramBlockIdentity.materialStack(block, wantMeta);
         Block actualBlock = cell.anchor ? block : Blocks.air;
         String id = cell.anchor ? wantId : "minecraft:air";
@@ -610,7 +611,9 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
             cell.anchor ? "protected" : cell.unknown ? "unsupported" : "missing", cell.role, cell.family,
             target != null && target.getItem() instanceof ItemMachines ? "item" : cell.renderKind,
             cell.anchor ? "" : cell.prompt, actualFacing, cell.anchor ? cell.actualFacing : cell.previewFacing,
-            cell.hintIcons == null ? null : cell.hintIcons.clone(), hintTint, cell.hintIndex, observationMissing);
+            cell.hintIcons == null ? null : cell.hintIcons.clone(), hintTint, cell.hintIndex, observationMissing,
+            cell.nativeSourceWater ? HologramControllerTarget.TargetKind.MACHINE_SOURCE_WATER
+                : HologramControllerTarget.TargetKind.MATERIAL);
     }
 
     private void writeCandidates(NBTTagCompound row, HologramCapture.Cell cell, ItemStack material) {

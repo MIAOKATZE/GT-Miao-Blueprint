@@ -66,12 +66,13 @@ public final class HologramPrivateEditPerformanceRegression {
             SimpleAssert.eq(Preset.REGULAR, nextStartup, "explicit regular");
             var later = HologramPrivateEditPerformance.capture(ID, nextStartup, true);
             var opened = HologramLocalBlueprintDocument.openForEditor(fixture(), ID, () -> true);
-            NBTTagCompound a = opened.document().snapshot(), b = opened.document().snapshot();
-            var first = new HologramState.Preparation(a, true);
-            var next = new HologramState.Preparation(b, true);
-            SimpleAssert.eq(Preset.FAST, accepted.bind(opened.document(), opened.editor(), a, first, true)
+            var rows = opened.document().detachedEditorRows(() -> true);
+            NBTTagCompound a = rows.metadata(), b = rows.metadata();
+            var first = new HologramState.Preparation(a, true, new HologramBlueprintPreview.CompactCells(rows));
+            var next = new HologramState.Preparation(b, true, new HologramBlueprintPreview.CompactCells(rows));
+            SimpleAssert.eq(Preset.FAST, accepted.bind(opened.document(), true, a, first, true)
                 .forPreparation(first, true), "accepted task is immutable across preference change");
-            SimpleAssert.eq(Preset.REGULAR, later.bind(opened.document(), opened.editor(), b, next, true)
+            SimpleAssert.eq(Preset.REGULAR, later.bind(opened.document(), true, b, next, true)
                 .forPreparation(next, true), "next startup setting does not replace already accepted intent");
             byte[] oversized = new byte[4097];
             byte[] prefix = "ordinaryOpenPreset=fast\n".getBytes(StandardCharsets.US_ASCII);
@@ -98,16 +99,17 @@ public final class HologramPrivateEditPerformanceRegression {
         byte[] bytes = fixture();
         var open = HologramLocalBlueprintDocument.openForEditor(bytes, ID, () -> true);
         var doc = open.document();
-        NBTTagCompound base = doc.snapshot();
-        var prep = new HologramState.Preparation(base, true);
+        var rows = doc.detachedEditorRows(() -> true);
+        NBTTagCompound base = rows.metadata();
+        var prep = new HologramState.Preparation(base, true, new HologramBlueprintPreview.CompactCells(rows));
         var fast = HologramPrivateEditPerformance.capture(ID, Preset.FAST, true);
         SimpleAssert.that(open.editor() == null && !doc.packedAuthoring(), "natural expanded ordinary route");
-        var selected = fast.bind(doc, open.editor(), base, prep, true);
-        SimpleAssert.eq(null, fast.bind(doc, null, base, prep, false), "lost initial source owner");
+        var selected = fast.bind(doc, true, base, prep, true);
+        SimpleAssert.eq(null, fast.bind(doc, true, base, prep, false), "lost initial source owner");
         SimpleAssert.eq(null, selected.forPreparation(new HologramState.Preparation(doc.snapshot(), true), true),
             "a bound mode cannot migrate to a different preparation");
         SimpleAssert.eq(null, selected.forPreparation(prep, false), "lost active source graph uses existing fallback");
-        SimpleAssert.eq(null, HologramPrivateEditPerformance.capture(OTHER, Preset.FAST, true).bind(doc, null, base, prep, true),
+        SimpleAssert.eq(null, HologramPrivateEditPerformance.capture(OTHER, Preset.FAST, true).bind(doc, true, base, prep, true),
             "no substitute document can use another admitted preference");
         SimpleAssert.eq(51_200, selected.forPreparation(prep, true).workCap, "Fast cap");
         SimpleAssert.eq(10_000_000L, selected.forPreparation(prep, true).softNanos, "Fast cooperative time");
@@ -118,35 +120,50 @@ public final class HologramPrivateEditPerformanceRegression {
         var compactOpen = HologramLocalBlueprintDocument.openForEditor(compact, ID, () -> true, view -> {}, false);
         SimpleAssert.that(compactOpen.editor() != null && !compactOpen.document().packedAuthoring(),
             "naturally compact viewport does not depend on retained packed-authoring flag");
-        SimpleAssert.eq(null, fast.bind(compactOpen.document(), compactOpen.editor(), base, prep, true),
+        SimpleAssert.eq(null, fast.bind(compactOpen.document(), false, base, prep, true),
             "compact viewport always keeps the existing preparation");
         var retained = HologramLocalBlueprintDocument.openForEditor(compact, ID, () -> true, view -> {}, true);
         SimpleAssert.that(retained.document().packedAuthoring(), "managed compact fixture retains its native packed document");
-        SimpleAssert.eq(null, fast.bind(retained.document(), null, base, prep, true),
+        SimpleAssert.eq(null, fast.bind(retained.document(), true, base, prep, true),
             "packed authoring cannot select an ordinary preset");
         NBTTagCompound wire = HologramSnapshotCodec.decode(HologramSnapshotCodec.compressPacked(doc.snapshot()));
         SimpleAssert.that(HologramSnapshotPalette.isPacked(wire), "real packed wire provenance, not merely a tag spelling");
-        SimpleAssert.eq(null, fast.bind(doc, null, wire, new HologramState.Preparation(wire, true), true),
+        SimpleAssert.eq(null, fast.bind(doc, true, wire, new HologramState.Preparation(wire, true), true),
             "packed snapshot cannot use an ordinary preset");
         for (String flag : new String[] { "structureProjection", "displayPartial", "partial" }) {
             NBTTagCompound other = doc.snapshot();
             other.setBoolean(flag, true);
-            SimpleAssert.eq(null, fast.bind(doc, null, other, new HologramState.Preparation(other, true), true),
+            SimpleAssert.eq(null, fast.bind(doc, true, other, new HologramState.Preparation(other, true), true),
                 "nonordinary snapshot uses existing fallback");
         }
         NBTTagCompound empty = doc.snapshot();
         empty.setTag("cells", new NBTTagList());
-        SimpleAssert.eq(null, fast.bind(doc, null, empty, new HologramState.Preparation(empty, true), true),
+        SimpleAssert.eq(null, fast.bind(doc, true, empty, new HologramState.Preparation(empty, true), true),
             "no tuning for an empty or shortcut cursor");
 
+        int[] largePositions = new int[32_768 * 4];
+        for (int row = 0; row < 32_768; row++) largePositions[row * 4] = row;
+        var largeRows = new HologramLocalBlueprintDocument.DetachedEditorRows(base, largePositions,
+            rows.materials(), new int[] { 0, 0, 0, 32_767, 0, 0 });
+        var shortcut = new HologramState.Preparation(base, true, new HologramBlueprintPreview.CompactCells(largeRows));
+        SimpleAssert.that(shortcut.canPrepareCompactIndex(), "large low-cardinality materialized view uses detached index");
+        SimpleAssert.eq(null, fast.bind(doc, true, base, shortcut, true),
+            "Fast preference never pulls an eligible detached view back into cooperative client preparation");
+
         var legacy = new HologramState.Preparation(doc.snapshot(), true);
-        var regular = new HologramState.Preparation(doc.snapshot(), true);
+        var regular = new HologramState.Preparation(base, true, new HologramBlueprintPreview.CompactCells(rows));
         settle(legacy, 512, 2_000_000L);
         settle(regular, Preset.REGULAR.workCap, Preset.REGULAR.softNanos);
         settle(prep, selected.forPreparation(prep, true).workCap, selected.forPreparation(prep, true).softNanos);
-        SimpleAssert.eq(legacy.result().fullData(), prep.result().fullData(), "Fast retains whole typed view");
-        SimpleAssert.eq(legacy.result().fullData(), regular.result().fullData(), "Regular retains whole typed view");
-        SimpleAssert.eq(null, fast.bind(doc, null, base, prep, true), "no retuning an already prepared cursor");
+        SimpleAssert.eq(regular.result().fullData(), prep.result().fullData(), "Fast/Regular retain the same modern typed view");
+        var baseline = legacy.result();
+        var modernView = prep.result();
+        for (int i = 0; i < baseline.cells.size(); i++) {
+            var old = baseline.cells.get(i);
+            var modern = modernView.cells.get(i);
+            SimpleAssert.eq(old.tag(), modern.tag(), "modern descriptor retains ordinary exposed row contents");
+        }
+        SimpleAssert.eq(null, fast.bind(doc, true, base, prep, true), "no retuning an already prepared cursor");
         SimpleAssert.that(Arrays.equals(bytes, doc.artifact()) && doc.revision() == 0 && !doc.dirty(),
             "preparation settings do not change saved source, revision or editability");
     }
