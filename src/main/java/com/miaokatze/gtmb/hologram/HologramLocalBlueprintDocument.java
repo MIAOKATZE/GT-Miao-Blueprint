@@ -191,6 +191,11 @@ public final class HologramLocalBlueprintDocument {
     public record EditorRows(NBTTagCompound metadata, HologramBlueprintCompactCodec.DisplayRows rows,
         NBTTagCompound[] materials, int[] bounds) {}
 
+    /** Exact editable ordinals projected from an in-memory ordinary draft, not from a second disk decode. */
+    @Desugar
+    public record DetachedEditorRows(NBTTagCompound metadata, int[] coordinates, NBTTagCompound[] materials,
+        int[] bounds) {}
+
     @Desugar
     public record Opened(HologramLocalBlueprintDocument document, EditorRows editor) {}
 
@@ -1630,6 +1635,78 @@ public final class HologramLocalBlueprintDocument {
         state.setTag("cellNbtEntries", rows);
     }
 
+    /** Identity and cardinality of a complete, accepted local editor presentation. No cell walk. */
+    public boolean ownsPresentation(String session, long revision, int cells) {
+        return this.session.equals(session) && this.revision == revision && cells > 0 && cells == viewCellCount();
+    }
+
+    /** New screen metadata from the current draft, without row projection or retired command receipts. */
+    public NBTTagCompound resumePresentationMetadata(java.util.function.BooleanSupplier current) throws IOException {
+        if (!current.getAsBoolean()) throw new IOException("蓝图恢复已取消");
+        NBTTagCompound metadata = editorMetadata(current);
+        metadata.removeTag("textPlacementAck");
+        return metadata;
+    }
+
+    @Desugar
+    private record EditorDescriptor(NBTTagCompound scalarFields, String tilePayload, String itemPayload) {
+
+        static EditorDescriptor of(NBTTagCompound descriptor, Cell source) {
+            boolean tile = descriptor.hasKey("previewTile", 10), item = descriptor.hasKey("previewItemTag", 10);
+            if (!tile && !item) return new EditorDescriptor(descriptor, null, null);
+            NBTTagCompound scalar = new NBTTagCompound();
+            for (Object name : descriptor.func_150296_c()) {
+                String key = (String) name;
+                if (!"previewTile".equals(key) && !"previewItemTag".equals(key)) scalar.setTag(key, descriptor.getTag(key));
+            }
+            // Opaque native tags use exact original encoded equality, not NBT's Float/Double comparison.
+            // Distinct input payloads remain distinct even if their display bytes happen to be equivalent.
+            return new EditorDescriptor(scalar, tile ? source.tileNbt : null, item ? source.itemNbt : null);
+        }
+    }
+
+    /** The ordinary draft uses the same descriptor/coordinate viewport as file-backed compact opens. */
+    public DetachedEditorRows detachedEditorRows(java.util.function.BooleanSupplier current) throws IOException {
+        requireMaterialized();
+        if (!current.getAsBoolean()) throw new IOException("蓝图预览已取消");
+        long expectedRevision = revision;
+        List<Cell> source = document.cells;
+        HologramBlueprintLimits.require(source.size());
+        int[] coordinates = new int[Math.multiplyExact(source.size(), 4)];
+        int[] bounds = { Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE,
+            Integer.MIN_VALUE, Integer.MIN_VALUE };
+        Map<EditorDescriptor, Integer> ids = new HashMap<>();
+        List<NBTTagCompound> materials = new ArrayList<>();
+        VisualPayloads payloads = new VisualPayloads();
+        for (int i = 0; i < source.size(); i++) {
+            if ((i & 255) == 0 && (!current.getAsBoolean() || revision != expectedRevision))
+                throw new IOException("蓝图预览已取消");
+            Cell cell = source.get(i);
+            NBTTagCompound descriptor = cellRow(cell, payloads, false);
+            EditorDescriptor key = EditorDescriptor.of(descriptor, cell);
+            Integer id = ids.get(key);
+            if (id == null) {
+                id = materials.size();
+                ids.put(key, id);
+                materials.add(descriptor);
+            }
+            int at = i * 4;
+            coordinates[at] = cell.x;
+            coordinates[at + 1] = cell.y;
+            coordinates[at + 2] = cell.z;
+            coordinates[at + 3] = id;
+            bounds[0] = Math.min(bounds[0], cell.x);
+            bounds[1] = Math.min(bounds[1], cell.y);
+            bounds[2] = Math.min(bounds[2], cell.z);
+            bounds[3] = Math.max(bounds[3], cell.x);
+            bounds[4] = Math.max(bounds[4], cell.y);
+            bounds[5] = Math.max(bounds[5], cell.z);
+        }
+        NBTTagCompound state = editorMetadata(current);
+        if (!current.getAsBoolean() || revision != expectedRevision) throw new IOException("蓝图预览已取消");
+        return new DetachedEditorRows(state, coordinates, materials.toArray(new NBTTagCompound[0]), bounds);
+    }
+
     /** Editable rows use precisely the portable document order, including disabled and missing-mod cells. */
     public NBTTagCompound snapshot() throws IOException {
         requireMaterialized();
@@ -1662,6 +1739,10 @@ public final class HologramLocalBlueprintDocument {
     }
 
     private NBTTagCompound editorMetadata() throws IOException {
+        return editorMetadata(() -> true);
+    }
+
+    private NBTTagCompound editorMetadata(java.util.function.BooleanSupplier current) throws IOException {
         NBTTagCompound state = snapshotMetadata();
         NBTTagList structures = new NBTTagList();
         for (Structure structure : document.structures) {
@@ -1686,18 +1767,24 @@ public final class HologramLocalBlueprintDocument {
             hints.appendTag(row);
         }
         state.setTag("hintAreas", hints);
-        HologramAttachmentSnapshot.expand(state, () -> true);
+        HologramAttachmentSnapshot.expand(state, current);
         return state;
     }
 
     private static NBTTagCompound cellRow(Cell cell, VisualPayloads payloads) {
+        return cellRow(cell, payloads, true);
+    }
+
+    private static NBTTagCompound cellRow(Cell cell, VisualPayloads payloads, boolean coordinates) {
         NBTTagCompound row = new NBTTagCompound();
-        row.setInteger("x", cell.x);
-        row.setInteger("y", cell.y);
-        row.setInteger("z", cell.z);
-        row.setInteger("dx", cell.x);
-        row.setInteger("dy", cell.y);
-        row.setInteger("dz", cell.z);
+        if (coordinates) {
+            row.setInteger("x", cell.x);
+            row.setInteger("y", cell.y);
+            row.setInteger("z", cell.z);
+            row.setInteger("dx", cell.x);
+            row.setInteger("dy", cell.y);
+            row.setInteger("dz", cell.z);
+        }
         ItemStack stack = cell.stack();
         Block block = text(cell.block).isEmpty() && stack != null ? Block.getBlockFromItem(stack.getItem())
             : cell.block();
@@ -1711,7 +1798,7 @@ public final class HologramLocalBlueprintDocument {
         row.setString("previewItem", missing ? "" : text(cell.item));
         row.setInteger("previewDamage", cell.damage);
         if (!missing) {
-            NBTTagCompound tile = payloads.copy(cell.tileNbt), item = payloads.copy(cell.itemNbt);
+            NBTTagCompound tile = payloads.value(cell.tileNbt, coordinates), item = payloads.value(cell.itemNbt, coordinates);
             if (tile != null) row.setTag("previewTile", tile);
             if (item != null) row.setTag("previewItemTag", item);
         }
@@ -1760,7 +1847,7 @@ public final class HologramLocalBlueprintDocument {
         private long total;
         private boolean exceeded;
 
-        NBTTagCompound copy(String source) {
+        NBTTagCompound value(String source, boolean detachedCopy) {
             if (text(source).isEmpty()) return null;
             if (total >= MAX_BYTES) {
                 exceeded = true;
@@ -1783,8 +1870,8 @@ public final class HologramLocalBlueprintDocument {
                     decoded.put(source, payload);
                 }
                 total += size;
-                // The client renderer restores stable registry IDs in its own copy.
-                return (NBTTagCompound) payload.copy();
+                // Dictionary descriptors are immutable until CompactCells.copyMaterial prepares a native template.
+                return detachedCopy ? (NBTTagCompound) payload.copy() : payload;
             } catch (IOException unavailable) {
                 sizes.put(source, -1);
                 return null;

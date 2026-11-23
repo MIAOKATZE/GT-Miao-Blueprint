@@ -133,6 +133,61 @@ final class HologramState {
         }
     }
 
+    /** One sealed CPU view, without NBT metadata, graph, publication ancestry or renderer state. */
+    static final class LocalGeometry {
+
+        private final List<Cell> cells, plainDisplayExamples;
+        private final List<Material> materials;
+        private final HologramRegionCache regions;
+        private final java.util.Map<String, List<Integer>> structureMembers;
+        private final int minY, maxY, minWorldX, minWorldY, minWorldZ, maxWorldX, maxWorldY, maxWorldZ;
+        private final boolean fullBaseline;
+
+        LocalGeometry(HologramState view) {
+            cells = view.cells;
+            regions = view.regions;
+            materials = view.materials;
+            structureMembers = view.structureMembers;
+            plainDisplayExamples = view.plainDisplayExamples;
+            fullBaseline = view.fullBaseline;
+            minY = view.minY;
+            maxY = view.maxY;
+            minWorldX = view.minWorldX;
+            minWorldY = view.minWorldY;
+            minWorldZ = view.minWorldZ;
+            maxWorldX = view.maxWorldX;
+            maxWorldY = view.maxWorldY;
+            maxWorldZ = view.maxWorldZ;
+        }
+
+        HologramState rebase(NBTTagCompound fresh) {
+            return new HologramState(fresh, this);
+        }
+    }
+
+    /** A new local presentation, retaining only sealed CPU geometry and no old publication lineage. */
+    private HologramState(NBTTagCompound fresh, LocalGeometry geometry) {
+        data = metadata(fresh);
+        session = data.getString("session");
+        cells = geometry.cells;
+        regions = geometry.regions;
+        materials = geometry.materials;
+        structureMembers = geometry.structureMembers;
+        plainDisplayExamples = geometry.plainDisplayExamples;
+        fullBaseline = geometry.fullBaseline;
+        parsedCells = 0; // no cell rows projected or parsed for this publication
+        parentIdentity = controllerTargetIdentity = null;
+        changedIndices = new int[0];
+        minY = geometry.minY;
+        maxY = geometry.maxY;
+        minWorldX = geometry.minWorldX;
+        minWorldY = geometry.minWorldY;
+        minWorldZ = geometry.minWorldZ;
+        maxWorldX = geometry.maxWorldX;
+        maxWorldY = geometry.maxWorldY;
+        maxWorldZ = geometry.maxWorldZ;
+    }
+
     private HologramState(ControllerDetails ready) {
         HologramState geometry = ready.geometry;
         data = ready.data;
@@ -454,6 +509,10 @@ final class HologramState {
                 lastStepWork++;
             }
             return stage == 4;
+        }
+
+        boolean usesEditorCells() {
+            return compactCells != null && compactCells.editorRows();
         }
 
         boolean canPrepareCompactIndex() {
