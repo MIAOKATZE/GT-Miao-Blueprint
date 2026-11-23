@@ -5,6 +5,7 @@ package com.miaokatze.gtmb.client.hologram;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.function.BooleanSupplier;
 import java.util.function.Supplier;
 
@@ -16,6 +17,7 @@ import com.cleanroommc.modularui.utils.Alignment;
 import com.cleanroommc.modularui.widgets.ButtonWidget;
 import com.cleanroommc.modularui.widgets.ListWidget;
 import com.cleanroommc.modularui.widgets.layout.Flow;
+import com.miaokatze.gtmb.hologram.HologramGtMeOutputDisplay;
 
 /** Native right dock. The domain modules remain the sole authority for selection and edits. */
 final class HologramEditorPropertiesPane {
@@ -64,6 +66,8 @@ final class HologramEditorPropertiesPane {
             HologramState.Cell cell = ui.session.selectedCell();
             return cell == null ? "目标：未选中" : "目标：" + ui.preview.cellName(cell, false);
         }));
+        target.child(meOutputCapacity(true));
+        target.child(meOutputCapacity(false));
         Flow grade = row();
         grade.setEnabledIf(w -> ui.config.primaryCapability() != null);
         sizingSections.add(grade);
@@ -224,6 +228,34 @@ final class HologramEditorPropertiesPane {
         list.child(action(94, () -> "仓室预设", this::canHatchPreset, this::hatchPresetReason));
         structureRoot = pane(list);
         return structureRoot;
+    }
+
+    private IWidget meOutputCapacity(boolean current) {
+        return HologramEditorNativeTheme.label(() -> meOutputCapacityText(ui.session.selectedCell(), current))
+            .widthRel(1f)
+            .height(24)
+            .setEnabledIf(w -> hasMeOutputCapacity(ui.session.selectedCell(), current));
+    }
+
+    private static boolean hasMeOutputCapacity(HologramState.Cell cell, boolean current) {
+        return cell != null && (cell.hasDisplayTag(current, HologramGtMeOutputDisplay.ITEMS, 4)
+            || cell.hasDisplayTag(current, HologramGtMeOutputDisplay.MILLIBUCKETS, 4));
+    }
+
+    static String meOutputCapacityText(HologramState.Cell cell, boolean current) {
+        if (!hasMeOutputCapacity(cell, current)) return "";
+        NBTTagCompound display = cell.display(current);
+        long items = HologramGtMeOutputDisplay.read(display, false);
+        long fluid = HologramGtMeOutputDisplay.read(display, true);
+        if ((items == 0) == (fluid == 0)) return "";
+        long capacity = items != 0 ? items : fluid;
+        String value = capacity == Long.MAX_VALUE ? "∞" : String.format(Locale.ROOT, "%,d", capacity);
+        String key = current ? "current" : "target";
+        String type = items != 0 ? "items" : "fluid";
+        String fallback = (current ? "Current" : "Target") + " base buffer: %1$s " + (items != 0 ? "items" : "mB");
+        String template = HologramUiText.localized("gtmb.hologram.meOutput." + key + "." + type, fallback);
+        // Only the known token is interpolated; an invalid external language override cannot break the panel.
+        return (template.contains("%1$s") ? template : fallback).replace("%1$s", value);
     }
 
     IWidget buildMaterials() {
