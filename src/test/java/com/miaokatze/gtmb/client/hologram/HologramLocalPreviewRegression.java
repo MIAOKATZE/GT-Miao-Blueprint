@@ -34,6 +34,7 @@ public final class HologramLocalPreviewRegression {
         indexedMaterialSourceCapture();
         HologramLibraryMaterialForecastRegression.run();
         HologramLibrarySecondUseRegression.run();
+        HologramLibraryDescriptionViewRegression.run();
         earlyDisplay();
         displayPicture();
         uploadRepresentation();

@@ -3,6 +3,10 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import java.util.Arrays;
+import java.util.List;
+import java.util.function.Supplier;
+
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.item.ItemStack;
@@ -21,22 +25,14 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
 
     private final HologramLocalPlacement placement;
     private final Ticket ticket;
-    private final LocalFrame frame;
+    private final CapturedDescription description;
     private HologramMaterialConfirmationDialog dialog;
 
     HologramLibraryMaterialReviewScreen(HologramLocalPlacement placement, Submission frozen, Minecraft client) {
         super("library_material_review", 1, 1);
         this.placement = placement;
         ticket = new Ticket(placement, frozen, client, this);
-        frame = unknownFrame(frozen.source());
-    }
-
-    static LocalFrame unknownFrame(HologramLibraryClient.DisplaySource captured) {
-        HologramLibraryMaterialForecast forecast = HologramLibraryMaterialForecast.fromCapture(captured);
-        // No production resolver has proved these costs yet. Never attempt a download or server quote to fill them.
-        NBTTagCompound rows = forecast == null ? new NBTTagCompound() : forecast.stockRows(null, null, -1);
-        return new LocalFrame(rows, "已锁定蓝图 · 整份范围", "材料未核算 · 尚未查询服务端或 AE",
-            "本机无法确认此蓝图的材料需求", true);
+        description = new CapturedDescription(HologramLibraryMaterialForecast.fromCapture(frozen.source()));
     }
 
     @Override
@@ -54,7 +50,9 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
 
     @Override
     public LocalFrame localFrame() {
-        return ticket.current(Minecraft.getMinecraft()) ? frame : null;
+        Minecraft client = Minecraft.getMinecraft();
+        return ticket.current(client)
+            ? description.frame(() -> client.thePlayer.inventory.mainInventory, ticket.slot) : null;
     }
 
     @Override
@@ -73,8 +71,9 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
                     returnToWorld(client);
                     HologramClient.selectionNotice("未开始施工核验；位置保留，请重新打开材料窗口。");
                 }
+            } else if (action == LocalAction.REFRESH && ticket.current(client)) {
+                description.refresh(() -> client.thePlayer.inventory.mainInventory, ticket.slot);
             }
-            // Refresh cannot update unavailable sources. Keep the same local frame and never request stock.
         });
     }
 
@@ -99,6 +98,38 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
         ticket.retire();
     }
 
+    /** The frozen source projection survives local stock refresh; only an owned sample reads slots. */
+    static final class CapturedDescription {
+
+        private static final int MAIN_SLOTS = 36;
+        private final HologramLibraryMaterialForecast forecast;
+        private LocalFrame cached;
+
+        CapturedDescription(HologramLibraryMaterialForecast forecast) {
+            this.forecast = forecast;
+        }
+
+        LocalFrame frame(Supplier<ItemStack[]> mainInventory, int toolSlot) {
+            if (cached == null) refresh(mainInventory, toolSlot);
+            return cached;
+        }
+
+        void refresh(Supplier<ItemStack[]> mainInventory, int toolSlot) {
+            boolean canObserve = forecast != null && !forecast.candidates().isEmpty();
+            if (!canObserve && cached != null) return;
+            ItemStack[] source = canObserve ? mainInventory.get() : null;
+            ItemStack[] observed = source == null || source.length < MAIN_SLOTS ? null
+                : source.length == MAIN_SLOTS ? source : Arrays.copyOf(source, MAIN_SLOTS);
+            HologramLibraryMaterialDescription.Description result =
+                HologramLibraryMaterialDescription.describe(forecast, observed, toolSlot);
+            String status = "施工用量未核算";
+            if (result == null) status += " · 本机没有可核对的来源记录";
+            else if (result.unlistedCells() > 0) status += " · " + result.unlistedCells() + " 格未列明";
+            cached = new LocalFrame(new NBTTagCompound(), "已锁定蓝图 · 整份范围", status,
+                "本机没有可列明的蓝图材料记录", canObserve, result == null ? List.of() : result.rows());
+        }
+    }
+
     static final class Ticket {
 
         private final HologramLocalPlacement placement;
@@ -121,7 +152,8 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
 
         boolean current(Minecraft client) {
             return !retired && client != null && client.currentScreen == owner && !placement.submitting()
-                && frozen.current(placement, client) && ItemNekoHologramProjector.isProjector(tool)
+                && frozen.current(placement, client) && !client.thePlayer.isDead
+                && ItemNekoHologramProjector.isProjector(tool)
                 && client.thePlayer.dimension == dimension && client.thePlayer.inventory.currentItem == slot
                 && client.thePlayer.getHeldItem() == tool && toolId.equals(id(tool));
         }
