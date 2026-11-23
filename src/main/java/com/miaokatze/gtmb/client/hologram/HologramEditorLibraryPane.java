@@ -3,6 +3,8 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import static com.miaokatze.gtmb.client.hologram.HologramUiText.projector;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -86,7 +88,7 @@ final class HologramEditorLibraryPane {
             .childPadding(3)
             .collapseDisabledChild(true);
         page.child(
-            HologramEditorNativeTheme.label(() -> "Ctrl+S 保存当前编辑蓝图；公库来源保存为本地副本。")
+            HologramEditorNativeTheme.label(() -> projector("library.save_shortcut"))
                 .widthRel(1f)
                 .height(30));
         IWidget name = ui.shell.adoptField(ui.library.presetNameField())
@@ -114,31 +116,31 @@ final class HologramEditorLibraryPane {
         page.child(
             action(
                 140,
-                () -> ui.library.overwriteMode() ? "更新此蓝图" : "保存蓝图",
+                () -> ui.library.overwriteMode() ? projector("library.update") : projector("library.save"),
                 ui.library::nativeCanSave,
-                () -> "保存沿用原作者处理、结构封面与最终写盘回执；覆盖前核对真实目标。").widthRel(1f)
+                () -> projector("library.save_help")).widthRel(1f)
                     .height(20));
         page.child(
-            action(132, () -> "另存为新蓝图", ui.library::nativeCanSave, () -> "保留当前原图，另存新的蓝图与结构封面。").widthRel(1f)
+            action(132, () -> projector("library.save_copy"), ui.library::nativeCanSave, () -> projector("library.save_copy_help")).widthRel(1f)
                 .height(18));
         page.child(
             HologramEditorNativeTheme.label(ui.library::nativeStatus)
                 .widthRel(1f)
                 .height(36));
         page.child(
-            HologramEditorNativeTheme.label(() -> "封面与文件", HologramEditorNativeTheme.TITLE)
+            HologramEditorNativeTheme.label(() -> projector("library.files"), HologramEditorNativeTheme.TITLE)
                 .widthRel(1f)
                 .height(20));
         page.child(
-            HologramEditorNativeTheme.label(() -> "保存时沿用现有结构预览与 PNG 封面流程。")
+            HologramEditorNativeTheme.label(() -> projector("library.files_help"))
                 .widthRel(1f)
                 .height(30));
         page.child(
             action(
                 159,
-                () -> "导出 JSON / PNG",
+                () -> projector("library.export"),
                 () -> idle() && !ui.library.nativeDedicated() && ui.library.selectedPresetExists(),
-                () -> "导出所选已保存蓝图及其原有 PNG 文件。").widthRel(1f)
+                () -> projector("library.export_help")).widthRel(1f)
                     .height(18));
         save = new HologramRecessedList().paperEdges()
             .name("blueprint_save_content")
@@ -165,7 +167,7 @@ final class HologramEditorLibraryPane {
                             (context, x, y, width, height, theme) -> HologramEditorIcons
                                 .draw("library", x, y, width, false, true, false, false)))
                 .child(
-                    HologramEditorNativeTheme.label(() -> "蓝图库", HologramEditorNativeTheme.TITLE)
+                    HologramEditorNativeTheme.label(() -> projector("library.title"), HologramEditorNativeTheme.TITLE)
                         .name("library_title")
                         .expanded()
                         .height(20))
@@ -173,22 +175,22 @@ final class HologramEditorLibraryPane {
                     HologramEditorNativeTheme
                         .flatIconButton(
                             "collapse-right",
-                            () -> "收起蓝图库",
+                            () -> projector("library.collapse"),
                             ui.shell::toggleLibrary,
                             () -> true,
                             () -> false)
                         .size(HologramEditorNativeTheme.ICON_BUTTON)));
-        ButtonWidget<?> website = action(309, () -> "蓝图站 ↗", this::websiteReady, () -> "在浏览器打开蓝图站。")
+        ButtonWidget<?> website = action(309, () -> projector("library.website"), this::websiteReady, () -> projector("library.website_help"))
             .name("library_website")
             .expanded()
             .height(20);
         ButtonWidget<?> manage = localIcon(
             HologramEditorControlIds.LIBRARY + 3,
             "settings",
-            () -> "管理",
+            () -> projector("library.manage"),
             () -> true,
             () -> pages.setPage(1),
-            () -> "蓝图库管理，保留工作区。").name("library_manage")
+            () -> projector("library.manage_help")).name("library_manage")
                 .expanded()
                 .height(20);
         page.child(
@@ -213,7 +215,7 @@ final class HologramEditorLibraryPane {
                         .height(18)));
         IWidget filter = HologramEditorNativeTheme.textField(search, 120)
             .name("library_search")
-            .hintText("搜索蓝图")
+            .hintText(projector("library.search"))
             .widthRel(1f)
             .height(20);
         ui.shell.registerTarget("library.search", filter);
@@ -225,7 +227,7 @@ final class HologramEditorLibraryPane {
             .sizeRel(1f)
             .expanded();
         rowList.child(
-            HologramEditorNativeTheme.label(() -> catalogTotal == 0 ? "暂无保存蓝图\n可从蓝图站获取，或编辑后保存。" : "没有匹配的蓝图")
+            HologramEditorNativeTheme.label(() -> catalogTotal == 0 ? projector("library.empty") : projector("library.no_match"))
                 .widthRel(1f)
                 .height(44)
                 .setEnabledIf(widget -> total == 0));
@@ -274,9 +276,9 @@ final class HologramEditorLibraryPane {
                 .child(
                     action(
                         208,
-                        () -> "上页",
+                        () -> projector("library.previous"),
                         () -> idle() && ui.library.nativeServerPage() > 0,
-                        () -> "读取服务器上一页，保留当前工作区。").width(40)
+                        () -> projector("library.previous_help")).width(40)
                             .height(18))
                 .child(
                     HologramEditorNativeTheme
@@ -286,24 +288,24 @@ final class HologramEditorLibraryPane {
                 .child(
                     action(
                         209,
-                        () -> "下页",
+                        () -> projector("library.next"),
                         () -> idle() && ui.library.nativeServerPage() + 1 < ui.library.nativeServerPages(),
-                        () -> "读取服务器下一页，保留当前工作区。").width(40)
+                        () -> projector("library.next_help")).width(40)
                             .height(18)));
         footer.child(
             action(
                 311,
-                () -> "放置当前蓝图",
+                () -> projector("library.place_current"),
                 ui.library::nativeCanPlaceCurrent,
-                () -> "直接放置当前工作区（包含已附加的文字与图片），无需保存。锁定后仍须核对材料并确认施工。").name("place_current_blueprint")
+                () -> projector("library.place_current_help")).name("place_current_blueprint")
                     .widthRel(1f)
                     .height(HologramEditorNativeTheme.PRIMARY_BUTTON_HEIGHT));
         footer.child(
             action(
                 141,
-                () -> "放置所选蓝图",
+                () -> projector("library.place_selected"),
                 () -> idle() && ui.library.selectedPresetExists() && ui.library.nativeCanReadSelected(),
-                () -> "进入真实世界定位，锁定后校验材料并确认施工。").widthRel(1f)
+                () -> projector("library.place_selected_help")).widthRel(1f)
                     .height(HologramEditorNativeTheme.PRIMARY_BUTTON_HEIGHT));
         Flow secondary = Flow.col()
             .widthRel(1f)
@@ -313,14 +315,14 @@ final class HologramEditorLibraryPane {
             actionIcon(
                 203,
                 "network",
-                () -> ui.library.publicLibrary() ? "下载至客户端" : "上传 / 更新公库",
+                () -> ui.library.publicLibrary() ? projector("library.download") : projector("library.publish"),
                 () -> idle() && ui.library.nativeDedicated()
                     && ui.library.selectedPresetExists()
                     && ui.library.nativeCanTransferSelected(),
-                () -> "沿用原 JSON / PNG 传输、权限与配额。").widthRel(1f)
+                () -> projector("library.transfer_help")).widthRel(1f)
                     .height(20));
         secondary.child(
-            action(299, () -> "放弃当前草稿", () -> idle() && !ui.session.state().cells.isEmpty(), () -> "确认后放弃当前草稿；已保存文件保留。")
+            action(299, () -> projector("library.discard"), () -> idle() && !ui.session.state().cells.isEmpty(), () -> projector("library.discard_help"))
                 .widthRel(1f)
                 .height(20));
         footer.child(secondary);
@@ -339,23 +341,23 @@ final class HologramEditorLibraryPane {
                 .height(20)
                 .childPadding(3)
                 .child(
-                    HologramEditorNativeTheme.label(() -> "蓝图库管理")
+                    HologramEditorNativeTheme.label(() -> projector("library.manage_title"))
                         .expanded()
                         .height(20))
                 .child(
                     localIcon(
                         HologramEditorControlIds.LIBRARY + 5,
                         "back",
-                        () -> "返回",
+                        () -> projector("library.back"),
                         () -> true,
                         () -> pages.setPage(0),
-                        () -> "返回蓝图库，保留搜索与滚动位置。").width(60)
+                        () -> projector("library.back_help")).width(60)
                             .height(18))
                 .child(
                     HologramEditorNativeTheme
                         .flatIconButton(
                             "collapse-right",
-                            () -> "收起蓝图库",
+                            () -> projector("library.collapse"),
                             ui.shell::toggleLibrary,
                             () -> true,
                             () -> false)
@@ -371,17 +373,17 @@ final class HologramEditorLibraryPane {
             localIcon(
                 HologramEditorControlIds.LIBRARY + 4,
                 "reset-view",
-                () -> "刷新目录",
+                () -> projector("library.refresh"),
                 this::idle,
                 ui.library::nativeRefreshCatalog,
-                () -> "刷新真实目录，保留当前工作区。").expanded()
+                () -> projector("library.refresh_help")).expanded()
                     .height(18));
         catalog.child(
             action(
                 139,
-                () -> "编辑所选",
+                () -> projector("library.edit_selected"),
                 () -> idle() && ui.library.selectedPresetExists() && ui.library.nativeCanReadSelected(),
-                () -> "编辑库中所选蓝图。").expanded()
+                () -> projector("library.edit_selected_help")).expanded()
                     .height(18));
         list.child(catalog);
         Flow maintenance = Flow.row()
@@ -392,62 +394,62 @@ final class HologramEditorLibraryPane {
             localIcon(
                 HologramEditorControlIds.LIBRARY + 6,
                 "delete",
-                () -> "删除所选蓝图",
+                () -> projector("library.delete_selected"),
                 this::canDelete,
                 () -> ui.router.activate(ui.library.nativeDedicated() ? 205 : 175),
-                () -> "沿用原删除确认与权限校验。").expanded()
+                () -> projector("library.delete_help")).expanded()
                     .height(18));
         maintenance.child(
             action(
                 226,
-                () -> "升级／紧凑化",
+                () -> projector("library.upgrade"),
                 ui.library::nativeCanUpgrade,
-                () -> "批量检查蓝图库；同版本的展开档也会紧凑化。无法安全转换则保留原件。服务器公库仅管理员可操作。")
+                () -> projector("library.upgrade_help"))
                     .expanded()
                     .height(18));
         list.child(maintenance);
         list.child(
             action(
                 207,
-                () -> "服务器库设置 · OP 4",
+                () -> projector("library.server_settings"),
                 () -> !ui.session.isTutorial() && ui.library.nativeAdmin(),
-                () -> "设置服务器上传、下载与每人配额。").widthRel(1f)
+                () -> projector("library.server_settings_help")).widthRel(1f)
                     .height(18));
         list.child(
             action(
                 142,
-                () -> "保留 NBT " + (ui.processing.retainNbt() ? "✓" : "×"),
+                () -> projector("library.keep_nbt", ui.processing.retainNbt() ? "✓" : "×"),
                 this::editing,
-                () -> "本次蓝图的 NBT 保留选择与资源审核。").widthRel(1f)
+                () -> projector("library.keep_nbt_help")).widthRel(1f)
                     .height(18));
         list.child(
             action(
                 143,
-                () -> "保留覆盖板 " + (ui.processing.retainCovers() ? "✓" : "×"),
+                () -> projector("library.keep_covers", ui.processing.retainCovers() ? "✓" : "×"),
                 this::editing,
-                () -> "覆盖板与内部资源分别审核、付款。").widthRel(1f)
+                () -> projector("library.keep_covers_help")).widthRel(1f)
                     .height(18));
         list.child(
-            action(227, () -> "全局提示词", this::editing, () -> "编辑整份蓝图的提示。").widthRel(1f)
+            action(227, () -> projector("editor.global_prompt"), this::editing, () -> projector("library.global_prompt_help")).widthRel(1f)
                 .height(18));
         list.child(
             action(
                 161,
-                () -> "导入命名文件",
+                () -> projector("library.import_named"),
                 this::idle,
-                () -> "在保存页名称框填写客户端文件名。").widthRel(1f)
+                () -> projector("library.import_named_help")).widthRel(1f)
                     .height(18));
         list.child(
             localIcon(
                 HologramEditorControlIds.LIBRARY + 7,
                 "settings",
-                () -> "紧凑化命名文件",
+                () -> projector("library.compact_named"),
                 ui.library::nativeCanUpgradeNamed,
                 ui.library::nativeUpgradeNamed,
-                () -> "仅处理名称框明确指定的无封面旧分享文件，不改其他蓝图。").widthRel(1f)
+                () -> projector("library.compact_named_help")).widthRel(1f)
                     .height(18));
         list.child(
-            action(150, () -> "来源版本", () -> true, () -> "查看来源与依赖。").widthRel(1f)
+            action(150, () -> projector("library.source_version"), () -> true, () -> projector("library.source_version_help")).widthRel(1f)
                 .height(18));
         list.child(
             HologramEditorNativeTheme.label(ui.library::nativeStatus)
@@ -514,7 +516,11 @@ final class HologramEditorLibraryPane {
             .tooltipBuilder(t -> t.addLine(rowTooltip(slot)))
             .tooltipAutoUpdate(true);
         IDrawable count = IKey
-            .dynamic(() -> row(slot).getInteger("cells") + " 格 · " + row(slot).getInteger("structures") + " 结构")
+            .dynamic(
+                () -> projector(
+                    "library.row_counts",
+                    row(slot).getInteger("cells"),
+                    row(slot).getInteger("structures")))
             .color(HologramEditorNativeTheme.MUTED)
             .shadow(false)
             .alignment(Alignment.CenterLeft);
@@ -556,17 +562,17 @@ final class HologramEditorLibraryPane {
 
     private ButtonWidget<?> source(boolean server) {
         BooleanSupplier available = () -> idle() && (ui.library.nativeDedicated() || !server);
-        ButtonWidget<?> button = HologramEditorNativeTheme.button(() -> server ? "服务器" : "客户端", null, () -> {
+        ButtonWidget<?> button = HologramEditorNativeTheme.button(() -> server ? projector("library.server") : projector("library.client"), null, () -> {
             if (ui.library.publicLibrary() != server) defer(
                 () -> {
                     if (available.getAsBoolean() && ui.library.publicLibrary() != server) ui.router.activate(201);
                 });
         }, available, () -> ui.library.publicLibrary() == server, false);
-        button.tooltipBuilder(t -> t.addLine(server ? "浏览真实服务器目录，保留当前工作区。" : "浏览真实客户端目录，保留当前工作区。"));
+        button.tooltipBuilder(t -> t.addLine(server ? projector("library.server_help") : projector("library.client_help")));
         ui.shell.registerControl(
             201,
             button,
-            () -> server ? "服务器" : "客户端",
+            () -> server ? projector("library.server") : projector("library.client"),
             () -> available.getAsBoolean() && ui.library.publicLibrary() != server);
         ui.shell.registerTarget(server ? "library.source.server" : "library.source.client", button);
         return button;
@@ -574,7 +580,7 @@ final class HologramEditorLibraryPane {
 
     private ButtonWidget<?> saveMode(boolean overwrite) {
         BooleanSupplier available = () -> !ui.session.isTutorial() && !ui.library.browsePreviewActive();
-        ButtonWidget<?> button = HologramEditorNativeTheme.button(() -> overwrite ? "选择覆盖目标" : "保存当前蓝图", null, () -> {
+        ButtonWidget<?> button = HologramEditorNativeTheme.button(() -> overwrite ? projector("library.choose_overwrite") : projector("library.save_current"), null, () -> {
             if (ui.library.overwriteMode() != overwrite) defer(() -> {
                 if (!available.getAsBoolean() || ui.library.overwriteMode() == overwrite) return;
                 ui.router.activate(222);
@@ -584,7 +590,7 @@ final class HologramEditorLibraryPane {
         ui.shell.registerControl(
             222,
             button,
-            () -> overwrite ? "选择覆盖目标" : "保存当前蓝图",
+            () -> overwrite ? projector("library.choose_overwrite") : projector("library.save_current"),
             () -> available.getAsBoolean() && ui.library.overwriteMode() != overwrite);
         ui.shell.registerTarget(overwrite ? "library.save.overwrite" : "library.save.asNew", button);
         return button;
@@ -592,13 +598,13 @@ final class HologramEditorLibraryPane {
 
     private String overwriteTargetLabel() {
         String target = ui.library.overwriteTarget();
-        if (target.isEmpty()) return "在右侧蓝图库点击要覆盖的目标；当前草稿保持。";
+        if (target.isEmpty()) return projector("library.choose_overwrite_help");
         NBTTagList source = ui.library.nativeRows();
         for (int i = 0; i < source.tagCount(); i++) {
             NBTTagCompound row = source.getCompoundTagAt(i);
-            if (target.equals(row.getString("id"))) return "覆盖目标：" + row.getString("name");
+            if (target.equals(row.getString("id"))) return projector("library.overwrite_target", row.getString("name"));
         }
-        return "覆盖目标：" + target;
+        return projector("library.overwrite_target", target);
     }
 
     private void offset(int delta) {
@@ -633,18 +639,17 @@ final class HologramEditorLibraryPane {
     private String rowTooltip(int slot) {
         NBTTagCompound row = row(slot);
         return row.getString("name") + "\n"
-            + row.getInteger("cells")
-            + " 格 · "
-            + row.getInteger("structures")
-            + " 结构 · "
+            + projector("library.row_counts", row.getInteger("cells"), row.getInteger("structures"))
+            + " · "
             + ui.library.blueprintSource(row)
-            + "\n作者："
-            + row.getString("authorName")
+            + "\n"
+            + projector("library.author", row.getString("authorName"))
             + (ui.library.nativeDedicated() && ui.library.publicLibrary()
-                ? "\n上传者（服务器验证）：" + row.getString("uploadedBy")
+                ? "\n" + projector("library.uploader", row.getString("uploadedBy"))
                 : "")
-            + (row.getBoolean("fullyVoucherCovered") ? "\n" + HologramVoucherRibbon.HELP : "")
-            + (ui.library.overwriteMode() ? "\n仅选择覆盖目标；保存时确认。" : "\n点击切换主场景；未保存内容先确认一次。");
+            + (row.getBoolean("fullyVoucherCovered") ? "\n" + projector("library.voucher_help") : "")
+            + "\n"
+            + (ui.library.overwriteMode() ? projector("library.row_overwrite") : projector("library.row_browse"));
     }
 
     private boolean idle() {
@@ -704,7 +709,7 @@ final class HologramEditorLibraryPane {
     }
 
     private ButtonWidget<?> local(int id, Supplier<String> label, BooleanSupplier enabled, Runnable action) {
-        return ui.shell.nativeAction(id, label, enabled, () -> "管理当前目录视图，保留工作区。")
+        return ui.shell.nativeAction(id, label, enabled, () -> projector("library.view_help"))
             .onMousePressed(button -> {
                 if (button == 0 && enabled.getAsBoolean()) action.run();
                 return true;
