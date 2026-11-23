@@ -1223,11 +1223,12 @@ final class HologramUiPreview {
                 if (ui.session.editable()) {
                     if (ui.review.openNativeLocalMaterials()) return true;
                     HologramScreen root = ui.host.parent();
-                    if (root != null && root.localWorkspaceView()) root.checkLocalMaterials();
-                    else {
-                        ui.session.awaitingScan(true);
-                        ui.session.send("scan", null, true);
+                    if (root != null && root.localWorkspaceView()) {
+                        ui.session.notice("当前视图没有可用的本地材料估算；本次未核验服务器库存或回收结果。");
+                        return true;
                     }
+                    ui.session.awaitingScan(true);
+                    ui.session.send("scan", null, true);
                 }
                 return true;
             case 64:

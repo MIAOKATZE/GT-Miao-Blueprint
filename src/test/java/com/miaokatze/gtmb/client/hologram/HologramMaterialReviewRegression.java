@@ -254,11 +254,21 @@ public final class HologramMaterialReviewRegression {
 
             LocalView view = ui.review;
             SimpleAssert.that(
-                ui.review.openNativeLocalMaterials() && view.localFrame() != null,
-                "matching physical controller, player, screen and graph publish a local material frame");
+                ui.preview.activateControl(26) && view.localFrame() != null && ui.session.sequence() == 0,
+                "material view 26 opens the matching mode 0 local estimate without a session command");
             view.localAction(LocalAction.BACK);
             SimpleAssert.that(
                 view.localFrame() == null && ui.session.sequence() == 0, "the native port's Back is purely local");
+            for (int mode : new int[] {1, 2}) {
+                NBTTagCompound otherMode = (NBTTagCompound) metadata.copy();
+                otherMode.setInteger("mode", mode);
+                assertLocalMaterialViewUnknown(ui, screen, otherMode);
+            }
+            NBTTagCompound localWorkspace = (NBTTagCompound) metadata.copy();
+            localWorkspace.removeTag("localStandardController");
+            localWorkspace.setBoolean("localWorkspace", true);
+            assertLocalMaterialViewUnknown(ui, screen, localWorkspace);
+            field(HologramUiSession.class, "state").set(ui.session, new HologramState(metadata));
             ui.review.openNativeLocalMaterials();
             player.inventory.currentItem = 1;
             SimpleAssert.that(view.localFrame() == null && !view.localSubmitAvailable(),
@@ -298,6 +308,18 @@ public final class HologramMaterialReviewRegression {
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("cannot construct the headless material pane owner", failure);
         }
+    }
+
+    private static void assertLocalMaterialViewUnknown(HologramUiModules ui, HologramScreen screen,
+        NBTTagCompound metadata) throws ReflectiveOperationException {
+        HologramState state = new HologramState(metadata);
+        field(HologramUiSession.class, "state").set(ui.session, state);
+        ui.session.notice("");
+        SimpleAssert.that(
+            ui.preview.activateControl(26) && ui.session.notice().contains("未核验服务器库存或回收结果")
+                && ui.review.localFrame() == null && ui.session.state() == state && !ui.session.awaitingScan()
+                && ui.session.sequence() == 0 && field(HologramScreen.class, "localMaterialRequest").get(screen) == null,
+            "local material view without a supported estimate reports unknown and starts no scan or stock request");
     }
 
     private static void graphlessLocalViewControls() {
