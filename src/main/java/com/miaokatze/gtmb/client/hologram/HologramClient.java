@@ -53,6 +53,8 @@ public final class HologramClient {
     private static com.miaokatze.gtmb.hologram.HologramLocalAreaCapture localAreaCapture;
     private static com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument localWorkspaceDraft;
     private static Object localDraftWorld, localDraftConnection, localDraftPlayer;
+    private static HologramLocalPresentation localDraftPresentation;
+    private static int localDraftDimension;
 
     static volatile HologramState state;
 
@@ -1530,16 +1532,29 @@ public final class HologramClient {
         HologramScreen screen = HologramScreen.localWorkspace(held, mc.thePlayer.dimension);
         screen.openFrom(mc.currentScreen);
         if (mc.currentScreen == screen && localWorkspaceDraft != null && localDraftWorld == mc.theWorld
-            && localDraftConnection == mc.getNetHandler() && localDraftPlayer == mc.thePlayer)
-            screen.ui.library.openCapture(localWorkspaceDraft, "");
+            && localDraftConnection == mc.getNetHandler() && localDraftPlayer == mc.thePlayer
+            && localDraftDimension == mc.thePlayer.dimension) {
+            HologramLocalPresentation remembered = localDraftPresentation;
+            localDraftPresentation = null;
+            screen.ui.library.resumeCapture(localWorkspaceDraft, remembered);
+        }
     }
 
     static void rememberLocalDocument(com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument document) {
+        rememberLocalDocument(document, null, false);
+    }
+
+    static void rememberLocalDocument(com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument document,
+        HologramState accepted, boolean idle) {
         Minecraft mc = Minecraft.getMinecraft();
         localWorkspaceDraft = document;
         localDraftWorld = document == null ? null : mc.theWorld;
         localDraftConnection = document == null ? null : mc.getNetHandler();
         localDraftPlayer = document == null ? null : mc.thePlayer;
+        localDraftDimension = localDraftPlayer == null ? Integer.MIN_VALUE : mc.thePlayer.dimension;
+        localDraftPresentation = mc.thePlayer == null ? null : HologramLocalPresentation.capture(
+            document, accepted, localDraftWorld, localDraftConnection, localDraftPlayer, mc.thePlayer.dimension,
+            HologramTextures.resourceGeneration(), idle);
     }
 
     public static void openSettings() {

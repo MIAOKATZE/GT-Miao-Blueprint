@@ -61,6 +61,15 @@ final class HologramUiLibrary {
         localWorkspace.cancelAttachment(request);
     }
 
+    void resumeCapture(com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument document,
+        HologramLocalPresentation remembered) {
+        localWorkspace.resumeCapture(document, remembered);
+    }
+
+    void retireLocalResume() {
+        localWorkspace.retireResume();
+    }
+
     void tickLocalWorkspace() {
         localWorkspace.tick();
     }
