@@ -492,6 +492,20 @@ final class HologramClientLibrary {
         return file(id);
     }
 
+    @com.github.bsideup.jabel.Desugar
+    record SavedDisplayPath(Path path, boolean indexed) {}
+
+    /** Resolve one display path using a single index read, without adopting a portable file. */
+    synchronized SavedDisplayPath savedDisplayPath(String id) throws IOException {
+        if (id == null || !id.matches("local_[a-fA-F0-9-]{36}")) throw new IOException("客户端蓝图 ID 无效");
+        Path indexed = HologramBlueprintFiles.indexedPath(directory, id);
+        if (indexed != null && Files.isRegularFile(indexed, LinkOption.NOFOLLOW_LINKS))
+            return new SavedDisplayPath(indexed, true);
+        Path original = indexed == null ? directory.resolve(id + ".json") : indexed;
+        return new SavedDisplayPath(Files.isRegularFile(original) ? original : displayPaths.getOrDefault(id, original),
+            false);
+    }
+
     String savedName(String id) throws IOException {
         return string(blueprint(read(id)), "name");
     }

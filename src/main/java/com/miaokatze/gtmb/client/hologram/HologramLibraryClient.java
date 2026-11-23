@@ -171,6 +171,7 @@ final class HologramLibraryClient {
         final String key, stamp, localId, publicId, revision;
         final byte[] json;
         final FrozenDraft draft;
+        private final boolean indexedDisplayPath;
         NBTTagCompound snapshot;
         HologramBlueprintPreview.CompactCells compactCells;
         // Client-only facts about this exact captured local JSON; not managed membership or a verified PNG pair.
@@ -194,11 +195,12 @@ final class HologramLibraryClient {
 
         DisplaySource(String key, String stamp, byte[] json, NBTTagCompound snapshot, String localId, String publicId,
             String hash, String revision) {
-            this(key, stamp, json, snapshot, localId, publicId, hash, revision, null);
+            this(key, stamp, json, snapshot, localId, publicId, hash, revision, null, false);
         }
 
         private DisplaySource(String key, String stamp, byte[] json, NBTTagCompound snapshot, String localId,
-            String publicId, String hash, String revision, FrozenDraft draft) {
+            String publicId, String hash, String revision, FrozenDraft draft, boolean indexedDisplayPath) {
+            this.indexedDisplayPath = indexedDisplayPath;
             this.key = key;
             this.stamp = stamp;
             this.json = json;
@@ -208,6 +210,11 @@ final class HologramLibraryClient {
             this.publicId = publicId;
             this.hash = hash;
             this.revision = revision;
+        }
+
+        /** Historical observation on this capture; not a live index check, a pair receipt, or placement authority. */
+        boolean capturedIndexedMaterialSource() {
+            return indexedDisplayPath && savedMaterials != null;
         }
     }
 
@@ -1438,7 +1445,7 @@ final class HologramLibraryClient {
         status = "正在读取蓝图预览";
         localProgressPhase = "library.read";
         work(() -> {
-            DisplaySource source = readDisplaySource("local:" + id, store.savedPath(id), id, "", !placement, token, epoch);
+            DisplaySource source = readSavedDisplaySource(id, store.savedDisplayPath(id), !placement, token, epoch);
             if (placement) source.requireStoredUse();
             main(() -> {
                 if (discardedBrowse(token, epoch, placement)) return;
@@ -1457,7 +1464,7 @@ final class HologramLibraryClient {
             HologramBlueprintPreview.DisplayInput input = HologramBlueprintPreview.displayInput(
                 draft, () -> token == generation,
                 (done, total) -> observeDisplay(token, "library.parse", done, total, "cells"));
-            DisplaySource source = new DisplaySource("draft", "", null, input.snapshot, "", "", "", "", draft);
+            DisplaySource source = new DisplaySource("draft", "", null, input.snapshot, "", "", "", "", draft, false);
             source.compactCells = input.cells;
             main(() -> { if (!discardedBrowse(token, epoch, true)) startDisplay(source, true, epoch); });
         }, failure -> failTask("preview.decode", "当前蓝图预览失败，" + HologramUiText.reason(failure.getMessage())));
@@ -1501,25 +1508,31 @@ final class HologramLibraryClient {
 
     DisplaySource readDisplaySource(String key, java.nio.file.Path path, String localId, String publicId)
         throws java.io.IOException {
-        return readDisplaySource(key, path, localId, publicId, false, generation, browseEpoch);
+        return readDisplaySource(key, path, localId, publicId, false, generation, browseEpoch, false);
+    }
+
+    DisplaySource readSavedDisplaySource(String id, HologramClientLibrary.SavedDisplayPath selected, boolean thumbnail,
+        long token, long epoch) throws java.io.IOException {
+        return readDisplaySource("local:" + id, selected.path(), id, "", thumbnail, token, epoch, selected.indexed());
     }
 
     private DisplaySource readDisplaySource(String key, java.nio.file.Path path, String localId, String publicId,
-        boolean thumbnail, long token, long epoch) throws java.io.IOException {
+        boolean thumbnail, long token, long epoch, boolean indexedDisplayPath) throws java.io.IOException {
         String stamp = fileStamp(path);
         DisplaySource cached;
         synchronized (localPreviews) {
             cached = localPreviews.get(key);
         }
         if (cached != null && stamp.equals(cached.stamp) && localId.equals(cached.localId)
-            && publicId.equals(cached.publicId)) {
+            && publicId.equals(cached.publicId) && indexedDisplayPath == cached.indexedDisplayPath) {
             // The existing stamp is a reuse hint, not proof that on-disk content still equals the captured bytes.
             if (thumbnail && cached.thumbnail == null) queueBrowseImage(cached, path, token, epoch);
             return cached;
         }
         byte[] json = readDisplayBytes(path, HologramBlueprintArtifact.MAX_JSON_BYTES);
         if (!stamp.equals(fileStamp(path))) throw new java.io.IOException("蓝图文件已变化，请重试");
-        DisplaySource source = new DisplaySource(key, stamp, json, null, localId, publicId, "", "");
+        DisplaySource source = new DisplaySource(key, stamp, json, null, localId, publicId, "", "", null,
+            indexedDisplayPath);
         if (thumbnail) queueBrowseImage(source, path, token, epoch);
         observeDisplay(token, "library.parse", 0, 0, "");
         // savedPath also serves untracked portable files. A local selection is not durable index membership.
@@ -1545,7 +1558,7 @@ final class HologramLibraryClient {
         work(() -> {
             HologramClientLibrary.LastSource source = store.lastSource(connection);
             DisplaySource display = !source.publicLibrary && !source.localId.isEmpty()
-                ? readDisplaySource("local:" + source.localId, store.savedPath(source.localId), source.localId, "")
+                ? readSavedDisplaySource(source.localId, store.savedDisplayPath(source.localId), false, token, browseEpoch)
                 : null;
             if (display != null) display.requireStoredUse();
             main(() -> {
@@ -1797,9 +1810,10 @@ final class HologramLibraryClient {
         work(() -> {
             DisplaySource source;
             String localId = id.startsWith("local_") ? id : "local_" + id;
-            if (localId.matches("local_[a-fA-F0-9-]{36}") && java.nio.file.Files.isRegularFile(store.savedPath(localId)))
-                source = readDisplaySource(
-                    "local:" + localId, store.savedPath(localId), localId, "", !placement, token, epoch);
+            HologramClientLibrary.SavedDisplayPath saved = localId.matches("local_[a-fA-F0-9-]{36}")
+                ? store.savedDisplayPath(localId) : null;
+            if (saved != null && java.nio.file.Files.isRegularFile(saved.path()))
+                source = readSavedDisplaySource(localId, saved, !placement, token, epoch);
             else {
                 String key = id.startsWith("legacy:") ? id : "legacy:" + id;
                 String stamp = fileStamp(store.legacyCatalogPath());
