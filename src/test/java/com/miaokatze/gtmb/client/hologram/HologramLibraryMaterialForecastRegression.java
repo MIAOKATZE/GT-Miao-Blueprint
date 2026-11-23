@@ -98,8 +98,9 @@ final class HologramLibraryMaterialForecastRegression {
             throw new AssertionError("nonordinary, tagged and extension source descriptors cannot reach the resolver");
         }, new ItemStack[] {new ItemStack(Blocks.stone, 60, 0), stone, fakeStock,
             new ItemStack(Blocks.stonebrick, 1, 1)}, 0);
-        SimpleAssert.eq(forecast.candidates().stream().map(HologramLibraryMaterialForecast.Need::identity).toList(),
-            List.copyOf(calls), "client resolver sees each ordinary candidate once, never unknown source forms");
+        SimpleAssert.eq(forecast.candidates().stream().map(HologramLibraryMaterialForecast.Need::identity)
+            .collect(java.util.stream.Collectors.toList()),
+            new ArrayList<>(calls), "client resolver sees each ordinary candidate once, never unknown source forms");
         var rows = new HologramMaterialReview();
         rows.updateLocal(stock);
         SimpleAssert.that(

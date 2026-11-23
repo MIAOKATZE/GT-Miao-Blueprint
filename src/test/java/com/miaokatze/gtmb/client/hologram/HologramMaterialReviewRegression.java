@@ -7,7 +7,6 @@ import java.lang.reflect.Field;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityClientPlayerMP;
@@ -367,9 +366,9 @@ public final class HologramMaterialReviewRegression {
                 "local widgets consume the detached row model without an authority graph");
             var controls = (Map<?, ?>) field(HologramMaterialConfirmationDialog.class, "enabledControls").get(dialog);
             var buttons = panel.getChildren().stream().filter(child -> child instanceof ButtonWidget<?>)
-                .map(child -> (ButtonWidget<?>) child).toList();
+                .map(child -> (ButtonWidget<?>) child).collect(java.util.stream.Collectors.toList());
             SimpleAssert.that(
-                controls.keySet().equals(Set.of(247, 54, 55)) && buttons.size() == 3,
+                controls.keySet().equals(new java.util.HashSet<>(java.util.Arrays.asList(247, 54, 55))) && buttons.size() == 3,
                 "local review retains only Refresh/Back/Submit with their existing ids, no AE/quote controls");
             SimpleAssert.that(
                 dialog.consumeKey(org.lwjgl.input.Keyboard.KEY_RETURN) && actions.isEmpty(),
@@ -378,7 +377,7 @@ public final class HologramMaterialReviewRegression {
                 button.playClickSound(false); // No Minecraft audio manager in this fixture.
                 button.onMousePressed(0);
             }
-            SimpleAssert.eq(List.of(LocalAction.REFRESH, LocalAction.BACK, LocalAction.SUBMIT), actions,
+            SimpleAssert.eq(java.util.Arrays.asList(LocalAction.REFRESH, LocalAction.BACK, LocalAction.SUBMIT), actions,
                 "actual existing widgets dispatch the corresponding local verbs");
             frame[0] = null;
             dialog.tick(true);
