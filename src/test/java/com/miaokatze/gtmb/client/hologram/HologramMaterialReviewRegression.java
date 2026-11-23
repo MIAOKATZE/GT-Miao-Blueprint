@@ -4,6 +4,10 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityClientPlayerMP;
@@ -17,6 +21,12 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.tileentity.TileEntity;
 
+import com.cleanroommc.modularui.api.IPanelHandler;
+import com.cleanroommc.modularui.screen.ModularPanel;
+import com.cleanroommc.modularui.widgets.ButtonWidget;
+import com.miaokatze.gtmb.client.hologram.HologramMaterialConfirmationDialog.LocalAction;
+import com.miaokatze.gtmb.client.hologram.HologramMaterialConfirmationDialog.LocalFrame;
+import com.miaokatze.gtmb.client.hologram.HologramMaterialConfirmationDialog.LocalView;
 import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 import com.miaokatze.gtmb.hologram.HologramMaterialQuote;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
@@ -114,6 +124,7 @@ public final class HologramMaterialReviewRegression {
         detachedBackpackEstimate();
         detachedNativeScope();
         staleNativeOwner();
+        graphlessLocalViewControls();
     }
 
     private static void detachedBackpackEstimate() {
@@ -241,11 +252,18 @@ public final class HologramMaterialReviewRegression {
             metadata.setTag("cells", cells);
             field(HologramUiSession.class, "state").set(ui.session, new HologramState(metadata));
 
+            LocalView view = ui.review;
             SimpleAssert.that(
-                ui.review.openNativeLocalMaterials() && ui.review.localMaterials() != null,
-                "matching physical controller, player, screen and graph can open a local material estimate");
+                ui.review.openNativeLocalMaterials() && view.localFrame() != null,
+                "matching physical controller, player, screen and graph publish a local material frame");
+            view.localAction(LocalAction.BACK);
+            SimpleAssert.that(
+                view.localFrame() == null && ui.session.sequence() == 0, "the native port's Back is purely local");
+            ui.review.openNativeLocalMaterials();
             player.inventory.currentItem = 1;
-            ui.review.refreshLocalMaterials();
+            SimpleAssert.that(view.localFrame() == null && !view.localSubmitAvailable(),
+                "the port does not publish stale rows or offer submission");
+            view.localAction(LocalAction.REFRESH);
             SimpleAssert.that(
                 ui.review.localMaterials() == null && ui.review.openNativeLocalMaterials()
                     && ui.review.localMaterials() == null,
@@ -254,7 +272,7 @@ public final class HologramMaterialReviewRegression {
             player.inventory.currentItem = 0;
             ui.review.openNativeLocalMaterials();
             world.tile = new TileEntity();
-            ui.review.submitLocalMaterials();
+            view.localAction(LocalAction.SUBMIT);
             SimpleAssert.that(
                 ui.review.localMaterials() == null && ui.session.sequence() == 0,
                 "an old pane cannot send or submit after the controller tile is replaced");
@@ -263,22 +281,89 @@ public final class HologramMaterialReviewRegression {
             ui.review.openNativeLocalMaterials();
             SimpleAssert.that(ui.review.localMaterials() != null, "original owner can open a fresh pane");
             client.thePlayer = (EntityClientPlayerMP) unsafe.allocateInstance(EntityClientPlayerMP.class);
-            ui.review.refreshLocalMaterials(); // Replacement player has no inventory; the fence must run first.
+            view.localAction(LocalAction.REFRESH); // Replacement player has no inventory; the fence must run first.
             SimpleAssert.that(ui.review.localMaterials() == null, "stale review never reads another player's inventory");
 
             client.thePlayer = player;
             ui.review.openNativeLocalMaterials();
             screen.ui = new HologramUiModules(screen);
-            ui.review.submitLocalMaterials();
+            view.localAction(LocalAction.SUBMIT);
             SimpleAssert.that(ui.review.localMaterials() == null, "an inactive workspace graph cannot submit");
 
             screen.ui = ui;
             ui.review.openNativeLocalMaterials();
             client.currentScreen = null;
-            ui.review.refreshLocalMaterials();
+            view.localAction(LocalAction.REFRESH);
             SimpleAssert.that(ui.review.localMaterials() == null, "an inactive root screen cannot refresh");
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("cannot construct the headless material pane owner", failure);
+        }
+    }
+
+    private static void graphlessLocalViewControls() {
+        try {
+            var actions = new ArrayList<LocalAction>();
+            NBTTagList rows = new NBTTagList();
+            rows.appendTag(HologramMaterialQuote.itemRow(new ItemStack(Items.diamond), 2, 0));
+            NBTTagCompound data = new NBTTagCompound();
+            data.setTag("rows", rows);
+            LocalFrame[] frame = {new LocalFrame(data, "fixture scope", "fixture summary", "fixture empty", true)};
+            LocalView view = new LocalView() {
+
+                @Override
+                public LocalFrame localFrame() {
+                    return frame[0];
+                }
+
+                @Override
+                public boolean localSubmitAvailable() {
+                    return frame[0] != null;
+                }
+
+                @Override
+                public void localAction(LocalAction action) {
+                    actions.add(action);
+                }
+            };
+            HologramMaterialConfirmationDialog dialog =
+                new HologramMaterialConfirmationDialog(new ModularPanel("fixture_root"), view);
+            // Replace only panel attachment bookkeeping; the material panel, model and buttons are real.
+            boolean[] attached = {true};
+            IPanelHandler attachment = (IPanelHandler) java.lang.reflect.Proxy.newProxyInstance(
+                IPanelHandler.class.getClassLoader(), new Class<?>[] {IPanelHandler.class}, (proxy, method, arguments) -> {
+                    if ("isPanelOpen".equals(method.getName())) return attached[0];
+                    if ("closePanel".equals(method.getName())) attached[0] = false;
+                    return null;
+                });
+            field(HologramMaterialConfirmationDialog.class, "handler").set(dialog, attachment);
+            dialog.tick(true);
+            var build = HologramMaterialConfirmationDialog.class.getDeclaredMethod("build");
+            build.setAccessible(true);
+            ModularPanel panel = (ModularPanel) build.invoke(dialog);
+            SimpleAssert.that(
+                "gtmb_local_material_review".equals(panel.getName()) && dialog.probeState(null).getInteger("rows") == 1,
+                "local widgets consume the detached row model without an authority graph");
+            var controls = (Map<?, ?>) field(HologramMaterialConfirmationDialog.class, "enabledControls").get(dialog);
+            var buttons = panel.getChildren().stream().filter(child -> child instanceof ButtonWidget<?>)
+                .map(child -> (ButtonWidget<?>) child).toList();
+            SimpleAssert.that(
+                controls.keySet().equals(Set.of(247, 54, 55)) && buttons.size() == 3,
+                "local review retains only Refresh/Back/Submit with their existing ids, no AE/quote controls");
+            SimpleAssert.that(
+                dialog.consumeKey(org.lwjgl.input.Keyboard.KEY_RETURN) && actions.isEmpty(),
+                "Enter still does not act on a local estimate");
+            for (ButtonWidget<?> button : buttons) {
+                button.playClickSound(false); // No Minecraft audio manager in this fixture.
+                button.onMousePressed(0);
+            }
+            SimpleAssert.eq(List.of(LocalAction.REFRESH, LocalAction.BACK, LocalAction.SUBMIT), actions,
+                "actual existing widgets dispatch the corresponding local verbs");
+            frame[0] = null;
+            dialog.tick(true);
+            SimpleAssert.that(
+                !dialog.isOpen() && actions.size() == 3, "a stale owner frame closes the local modal without dispatch");
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("cannot construct the detached material view widgets", failure);
         }
     }
 

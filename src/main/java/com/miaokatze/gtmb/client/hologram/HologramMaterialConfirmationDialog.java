@@ -33,14 +33,36 @@ import com.cleanroommc.modularui.widget.Widget;
 import com.cleanroommc.modularui.widget.scroll.VerticalScrollData;
 import com.cleanroommc.modularui.widgets.ButtonWidget;
 import com.cleanroommc.modularui.widgets.Dialog;
+import com.github.bsideup.jabel.Desugar;
 
 /** Independent MUI2 material review, with framework scrolling/clipping and bounded visible-row rendering. */
 final class HologramMaterialConfirmationDialog {
 
     private static final int WIDTH = 632, HEIGHT = 446, ROW_HEIGHT = 44, LIST_HEIGHT = 198;
     private static final int LIST_WIDTH = 604, ROW_INSET = 7, ROW_WIDTH = LIST_WIDTH - ROW_INSET * 2 - 6;
+    enum LocalAction {
+        BACK, REFRESH, SUBMIT
+    }
+
+    /** The port lends its current detached rows for read-only rendering. */
+    @Desugar
+    record LocalFrame(NBTTagCompound rows, String scope, String status, String emptyLabel, boolean ready) {}
+
+    /** Only detached rendering data and explicit user actions cross this boundary. */
+    interface LocalView {
+
+        LocalFrame localFrame(); // null if the owning screen/source is no longer current
+
+        boolean localSubmitAvailable();
+
+        void localAction(LocalAction action); // Revalidate deferred callbacks before using local or server data.
+    }
+
+    private final ModularPanel parent;
     private final HologramUiModules ui;
+    private final LocalView localView;
     private final boolean local;
+    private LocalFrame localFrame;
     private final HologramMaterialReview materials = new HologramMaterialReview();
     private final IPanelHandler handler;
     private final VerticalScrollData scroll = new VerticalScrollData();
@@ -70,26 +92,31 @@ final class HologramMaterialConfirmationDialog {
     }
 
     HologramMaterialConfirmationDialog(HologramUiModules ui) {
-        this(ui, false);
+        this(ui.host.parent().panel(), ui, null);
     }
 
-    HologramMaterialConfirmationDialog(HologramUiModules ui, boolean local) {
+    HologramMaterialConfirmationDialog(ModularPanel parent, LocalView localView) {
+        this(parent, null, java.util.Objects.requireNonNull(localView));
+    }
+
+    private HologramMaterialConfirmationDialog(ModularPanel parent, HologramUiModules ui, LocalView localView) {
+        this.parent = parent;
         this.ui = ui;
-        this.local = local;
-        handler = IPanelHandler.simple(
-            ui.host.parent()
-                .panel(),
-            (panel, player) -> build(),
-            true);
+        this.localView = localView;
+        local = localView != null;
+        handler = IPanelHandler.simple(parent, (panel, player) -> build(), true);
         scroll.setScrollSpeed(ROW_HEIGHT);
     }
 
     void tick(boolean show) {
-        if (local && !show) {
-            close();
-            return;
+        if (local) {
+            localFrame = show ? localView.localFrame() : null;
+            if (localFrame == null) {
+                close();
+                return;
+            }
         }
-        boolean resized = local ? materials.updateLocal(ui.review.localMaterials().visible()) : materials.update(state());
+        boolean resized = local ? materials.updateLocal(localFrame.rows()) : materials.update(state());
         if (resized && canvas != null) {
             listResizes++;
             canvas.height(Math.max(LIST_HEIGHT, materials.size() * ROW_HEIGHT))
@@ -127,36 +154,36 @@ final class HologramMaterialConfirmationDialog {
             default -> null;
         };
         if (bounds == null) return null;
-        int w = ui.host.parent()
-            .getScreen()
-            .getScreenArea().width;
-        int h = ui.host.parent()
-            .getScreen()
-            .getScreenArea().height;
+        int w = parent.getScreen().getScreenArea().width;
+        int h = parent.getScreen().getScreenArea().height;
         float scale = Math.min(1f, Math.min(w / (float) (WIDTH + 12), h / (float) (HEIGHT + 12)));
         return new int[] { Math.round((w - WIDTH * scale) / 2f + (bounds[0] + bounds[2] / 2f) * scale),
             Math.round((h - HEIGHT * scale) / 2f + (bounds[1] + 11.5f) * scale) };
     }
 
-    NBTTagCompound probeState() {
+    NBTTagCompound probeState(HologramUiModules graph) {
         NBTTagCompound result = new NBTTagCompound();
         result.setBoolean("open", isOpen());
         result.setInteger("rows", materials.size());
         result.setInteger("scroll", scroll.getScroll());
         result.setLong("drawnFrames", drawnFrames);
         result.setInteger("drawRowBound", LIST_HEIGHT / ROW_HEIGHT + 2);
-        result.setBoolean("orderActive", orderActive());
-        result.setBoolean("voucherEnabled", voucherEnabled());
-        result.setBoolean("voucherSelected", voucherSelected());
-        result.setBoolean("quotePending", ui.session.materialReviewPending());
         result.setInteger("panelBuilds", panelBuilds);
         result.setInteger("listResizes", listResizes);
         result.setInteger("listIdentity", System.identityHashCode(list));
         result.setInteger("canvasIdentity", System.identityHashCode(canvas));
-        result.setInteger("cellsIdentity", System.identityHashCode(ui.session.state().cells));
         result.setInteger("firstRowIdentity", System.identityHashCode(materials.row(0)));
-        result.setInteger("cacheSummaryColor", ui.review.lastCacheReviewColor());
-        result.setString("cacheSummary", ui.review.lastCacheReviewSummary());
+        if (graph != null) {
+            HologramState state = graph.session.state();
+            result.setBoolean("orderActive", state.data.getCompoundTag("materialOrder").getBoolean("active")
+                || HologramBackgroundTasks.materialTask());
+            result.setBoolean("voucherEnabled", state.data.getCompoundTag("decorativeVoucher").getBoolean("enabled"));
+            result.setBoolean("voucherSelected", graph.session.materialVoucherSelected());
+            result.setBoolean("quotePending", graph.session.materialReviewPending());
+            result.setInteger("cellsIdentity", System.identityHashCode(state.cells));
+            result.setInteger("cacheSummaryColor", graph.review.lastCacheReviewColor());
+            result.setString("cacheSummary", graph.review.lastCacheReviewSummary());
+        }
         for (Map.Entry<Integer, IntSupplier> entry : controlAccents.entrySet()) result.setInteger(
             "accent" + entry.getKey(),
             entry.getValue()
@@ -178,7 +205,7 @@ final class HologramMaterialConfirmationDialog {
     }
 
     private void back() {
-        if (local) ui.review.closeLocalMaterials();
+        if (local) localView.localAction(LocalAction.BACK);
         else if (orderActive()) ui.router.closeRoot();
         else action(54);
     }
@@ -274,12 +301,14 @@ final class HologramMaterialConfirmationDialog {
             panel.child(HologramMuiTheme.label(
                 () -> "非施工报价。AE 下单、抵扣和最终施工确认仍在服务端核验页。",
                 14, 316, 604, 16, HologramMuiTheme.MUTED));
-            panel.child(button(247, () -> "刷新本地背包", 338, 369, 132, ui.review::refreshLocalMaterials,
-                () -> ui.review.localMaterials() != null && ui.review.localMaterials().ready(), () -> 0));
-            panel.child(button(54, () -> "返回预览", 14, 402, 160, ui.review::closeLocalMaterials,
+            panel.child(button(247, () -> "刷新本地背包", 338, 369, 132,
+                () -> localView.localAction(LocalAction.REFRESH), () -> localFrame != null && localFrame.ready(),
+                () -> 0));
+            panel.child(button(54, () -> "返回预览", 14, 402, 160, () -> localView.localAction(LocalAction.BACK),
                 () -> true, () -> 0));
-            panel.child(button(55, () -> "提交施工并核验…", 184, 402, 434, ui.review::submitLocalMaterials,
-                ui.review::localSubmitAvailable, () -> HologramUiAccent.INFORMATION));
+            panel.child(button(55, () -> "提交施工并核验…", 184, 402, 434,
+                () -> localView.localAction(LocalAction.SUBMIT), localView::localSubmitAvailable,
+                () -> HologramUiAccent.INFORMATION));
             return panel;
         }
         panel.child(
@@ -413,15 +442,11 @@ final class HologramMaterialConfirmationDialog {
 
     private String scopeLabel() {
         if (!local) return ui.review.constructionScopeLabel(true);
-        HologramLocalMaterialReview estimate = ui.review.localMaterials();
-        return estimate == null ? "" : estimate.scopeLabel();
+        return localFrame == null ? "" : localFrame.scope();
     }
 
     private String status() {
-        if (local) {
-            HologramLocalMaterialReview estimate = ui.review.localMaterials();
-            return estimate == null ? "" : estimate.status();
-        }
+        if (local) return localFrame == null ? "" : localFrame.status();
         if (!ui.session.notice()
             .isEmpty()) return ui.session.notice();
         if (state().getBoolean("localPlanPending")) return "材料规划更新中；完成后再核对清单。";
@@ -441,9 +466,7 @@ final class HologramMaterialConfirmationDialog {
     }
 
     private String localEmptyLabel() {
-        HologramLocalMaterialReview estimate = ui.review.localMaterials();
-        if (estimate == null || !estimate.ready()) return "正在本地统计…";
-        return estimate.empty() ? "所选范围没有目标材料" : "本机没有可列出的材料";
+        return localFrame == null || !localFrame.ready() ? "正在本地统计…" : localFrame.emptyLabel();
     }
 
     private String reviewHint() {

@@ -10,10 +10,13 @@ import java.util.List;
 import net.minecraft.nbt.NBTTagCompound;
 
 import com.cleanroommc.modularui.screen.ModularPanel;
+import com.miaokatze.gtmb.client.hologram.HologramMaterialConfirmationDialog.LocalAction;
+import com.miaokatze.gtmb.client.hologram.HologramMaterialConfirmationDialog.LocalFrame;
+import com.miaokatze.gtmb.client.hologram.HologramMaterialConfirmationDialog.LocalView;
 import com.miaokatze.gtmb.client.hologram.HologramUiMemory.UiMemory;
 
 /** Internal review workflow; composed by the workstation, never part of the mod extension API. */
-final class HologramUiBuildReview {
+final class HologramUiBuildReview implements LocalView {
 
     private final HologramUiModules ui;
 
@@ -115,9 +118,26 @@ final class HologramUiBuildReview {
         if (player != null) localMaterials.refresh(player.inventory.mainInventory, player.inventory.currentItem);
     }
 
-    boolean localSubmitAvailable() {
+    @Override
+    public LocalFrame localFrame() {
+        if (!localMaterialsCurrent()) return null;
+        return new LocalFrame(localMaterials.visible(), localMaterials.scopeLabel(), localMaterials.status(),
+            localMaterials.empty() ? "所选范围没有目标材料" : "本机没有可列出的材料", localMaterials.ready());
+    }
+
+    @Override
+    public boolean localSubmitAvailable() {
         // Estimates never grant or deny construction permission. The existing execution path rechecks the plan.
         return localMaterialsCurrent() && ui.session.editable();
+    }
+
+    @Override
+    public void localAction(LocalAction action) {
+        switch (action) {
+            case BACK -> closeLocalMaterials();
+            case REFRESH -> refreshLocalMaterials();
+            case SUBMIT -> submitLocalMaterials();
+        }
     }
 
     void submitLocalMaterials() {
@@ -153,7 +173,8 @@ final class HologramUiBuildReview {
         net.minecraft.entity.player.EntityPlayer player = ui.host.minecraft().thePlayer;
         if (local && player != null) {
             localMaterials.tick(player.inventory.mainInventory, player.inventory.currentItem);
-            if (localMaterialDialog == null) localMaterialDialog = new HologramMaterialConfirmationDialog(ui, true);
+            if (localMaterialDialog == null)
+                localMaterialDialog = new HologramMaterialConfirmationDialog(ui.host.parent().panel(), this);
         }
         if (localMaterialDialog != null) localMaterialDialog.tick(local && player != null);
         boolean show = confirmation && unobstructed;
@@ -182,7 +203,7 @@ final class HologramUiBuildReview {
     }
 
     NBTTagCompound materialDialogProbeState() {
-        return activeMaterialDialog() == null ? new NBTTagCompound() : activeMaterialDialog().probeState();
+        return activeMaterialDialog() == null ? new NBTTagCompound() : activeMaterialDialog().probeState(ui);
     }
 
     private void updateMaterialReviewPresentation() {
