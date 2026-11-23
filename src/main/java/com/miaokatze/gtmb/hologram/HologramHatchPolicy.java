@@ -3,6 +3,7 @@
 
 package com.miaokatze.gtmb.hologram;
 
+import java.lang.ref.WeakReference;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
@@ -44,6 +45,19 @@ public final class HologramHatchPolicy {
     private static final Map<IStructureElement<?>, List<IHatchElement<?>>> ELEMENT_DECLARED = new WeakHashMap<>();
     private static final Map<Object, Predicate<ItemStack>> COLD_BUILDERS = new WeakHashMap<>();
     private static final Map<IStructureElement<?>, Predicate<ItemStack>> COLD_ELEMENTS = new WeakHashMap<>();
+    private static final Map<Object, Object> NATIVE_BROWSE_BUILDERS = new WeakHashMap<>();
+    private static final Map<IStructureElement<?>, NativeBrowse> NATIVE_BROWSE_ELEMENTS = new WeakHashMap<>();
+
+    private static final class NativeBrowse {
+
+        final WeakReference<Object> builder;
+        final Object declaration;
+
+        NativeBrowse(Object builder, Object declaration) {
+            this.builder = new WeakReference<>(builder);
+            this.declaration = declaration;
+        }
+    }
 
     public static synchronized List<IHatchElement<?>> declared(IStructureElement<?> element) {
         List<IHatchElement<?>> types = ELEMENT_DECLARED.get(element);
@@ -97,6 +111,9 @@ public final class HologramHatchPolicy {
         entries.forEach((type, count) -> values.put(type, Math.max(0, count.intValue())));
         REQUIREMENTS.put(builder, values);
         COLD_BUILDERS.remove(builder);
+        // The atLeast mixin supplies this after declare. Unlike declaration proof, native preview can
+        // ask a mixed role's own item filter on an owned, unfilled controller.
+        if (!DECLARED.containsKey(builder)) NATIVE_BROWSE_BUILDERS.put(builder, new Object());
         try {
             Predicate<ItemStack> cold = coldPreviewRule(DECLARED.get(builder), entries);
             if (cold != null) COLD_BUILDERS.put(builder, cold);
@@ -186,6 +203,7 @@ public final class HologramHatchPolicy {
         boolean sharedBlacklist) {
         SINGLE_IDS.remove(builder);
         COLD_BUILDERS.remove(builder);
+        NATIVE_BROWSE_BUILDERS.remove(builder);
         List<IHatchElement<?>> declared = new ArrayList<>(elements);
         // Native decorators preserve the reviewed matching declaration, independently of their count/adder callbacks.
         if (declared.stream()
@@ -277,6 +295,7 @@ public final class HologramHatchPolicy {
         REQUIREMENTS.remove(builder);
         DECLARED.remove(builder);
         COLD_BUILDERS.remove(builder);
+        NATIVE_BROWSE_BUILDERS.remove(builder);
     }
 
     public static synchronized void singleId(Object builder, int id) {
@@ -330,6 +349,18 @@ public final class HologramHatchPolicy {
         if (element != null && DECLARED.containsKey(builder)) ELEMENT_DECLARED.put(element, DECLARED.get(builder));
         Predicate<ItemStack> cold = COLD_BUILDERS.get(builder);
         if (cold != null && element != null) COLD_ELEMENTS.put(element, cold);
+        Object browse = NATIVE_BROWSE_BUILDERS.get(builder);
+        if (element != null && browse != null) NATIVE_BROWSE_ELEMENTS.put(element, new NativeBrowse(builder, browse));
+    }
+
+    /** Only the plain native atLeast filter; arbitrary filters and wrappers do not inherit this marker. */
+    static synchronized boolean nativeBrowseAtLeast(IStructureElement<?> element) {
+        NativeBrowse browse = NATIVE_BROWSE_ELEMENTS.get(element);
+        // A native leaf closes over the mutable builder; a later filter change invalidates older leaves too.
+        if (browse == null || NATIVE_BROWSE_BUILDERS.get(browse.builder.get()) != browse.declaration) return false;
+        Method factory = HologramDeclarationWrappers.factory(element.getClass());
+        return factory != null && factory.getDeclaringClass() == gregtech.api.util.HatchElementBuilder.class
+            && "build".equals(factory.getName());
     }
 
     /** Known native reference offers, not structural or auto-placement authority. */
