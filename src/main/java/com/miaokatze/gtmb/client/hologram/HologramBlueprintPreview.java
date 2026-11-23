@@ -102,6 +102,11 @@ public final class HologramBlueprintPreview {
     /** Worker-side local file decoding. Native resolution remains in the client preparation cursor. */
     static DisplayInput displayInput(byte[] bytes, java.util.function.BiConsumer<Integer, Integer> progress)
         throws IOException {
+        return displayInput(bytes, progress, false);
+    }
+
+    static DisplayInput displayInput(byte[] bytes, java.util.function.BiConsumer<Integer, Integer> progress,
+        boolean savedPrivateSource) throws IOException {
         try {
             HologramBlueprintCompactCodec.DisplayRows view = HologramBlueprintCompactCodec.displayGeometry(bytes);
             if (!view.compact()) return new DisplayInput(
@@ -111,6 +116,8 @@ public final class HologramBlueprintPreview {
             Payloads payloads = new Payloads();
             boolean[] excluded = new boolean[view.materials()];
             long[] materialBytes = new long[view.materials()];
+            HologramSavedMaterialSource.Tally tally = savedPrivateSource
+                ? new HologramSavedMaterialSource.Tally(view.blueprint, view.materials()) : null;
             if (progress != null) progress.accept(0, view.cells());
             for (int index = 0; index < view.cells(); index++) {
                 if (progress != null && ((index + 1) & 255) == 0) progress.accept(index + 1, view.cells());
@@ -131,10 +138,11 @@ public final class HologramBlueprintPreview {
                     materialBytes[material] = payloads.total - before;
                 } else payloads.account(materialBytes[material]);
                 cells.add(x, y, z, material);
+                if (tally != null) tally.include(material, definition);
             }
             if (cells.size() == 0) throw new IOException("Blueprint preview has no buildable cells");
             if (progress != null) progress.accept(view.cells(), view.cells());
-            return new DisplayInput(displayMetadata(view.blueprint), cells);
+            return new DisplayInput(displayMetadata(view.blueprint), cells, tally == null ? null : tally.snapshot());
         } catch (RuntimeException invalid) {
             throw new IOException("Invalid blueprint preview JSON", invalid);
         }
@@ -184,10 +192,16 @@ public final class HologramBlueprintPreview {
 
         final NBTTagCompound snapshot;
         final CompactCells cells;
+        final HologramSavedMaterialSource savedMaterials;
 
         DisplayInput(NBTTagCompound snapshot, CompactCells cells) {
+            this(snapshot, cells, null);
+        }
+
+        DisplayInput(NBTTagCompound snapshot, CompactCells cells, HologramSavedMaterialSource savedMaterials) {
             this.snapshot = snapshot;
             this.cells = cells;
+            this.savedMaterials = savedMaterials;
         }
     }
 
