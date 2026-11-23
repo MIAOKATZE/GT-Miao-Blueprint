@@ -1221,6 +1221,7 @@ final class HologramUiPreview {
                 return true;
             case 26:
                 if (ui.session.editable()) {
+                    if (ui.review.openNativeLocalMaterials()) return true;
                     HologramScreen root = ui.host.parent();
                     if (root != null && root.localWorkspaceView()) root.checkLocalMaterials();
                     else {

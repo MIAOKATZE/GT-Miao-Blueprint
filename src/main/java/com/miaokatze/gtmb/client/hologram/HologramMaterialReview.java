@@ -17,6 +17,7 @@ import com.miaokatze.gtmb.hologram.HologramMaterialQuote;
 final class HologramMaterialReview {
 
     private NBTTagCompound quote;
+    private boolean local;
     private boolean current;
     private boolean itemShortage, voucherDemand;
     private NBTTagList rows = new NBTTagList();
@@ -28,14 +29,25 @@ final class HologramMaterialReview {
         }
     };
 
+    boolean updateLocal(NBTTagCompound estimate) {
+        current = false; // A detached material list is never proof for a transaction.
+        return updateRows(estimate, true);
+    }
+
     boolean update(NBTTagCompound state) {
         NBTTagCompound next = state.getCompoundTag("materialQuote");
-        current = next.getBoolean("complete") && (!next.hasKey("session", 8) || next.getString("session")
+        current = next.getBoolean("complete") && !next.getBoolean("localEstimate") && (!next.hasKey("session", 8) || next.getString("session")
             .equals(state.getString("session")))
             && (!next.hasKey("planRevision", 4) || next.getLong("planRevision") == state.getLong("planRevision"))
             && (!next.hasKey("placementReviewNonce", 4)
                 || next.getLong("placementReviewNonce") == state.getLong("placementReviewNonce"));
-        if (quote == next) return false;
+        return updateRows(next, next.getBoolean("localEstimate"));
+    }
+
+    private boolean updateRows(NBTTagCompound next, boolean local) {
+        if (this.local != local) visible.clear();
+        else if (quote == next) return false;
+        this.local = local;
         quote = next;
         NBTTagList nextRows = next.getTagList("rows", 10);
         boolean resized = rows.tagCount() != nextRows.tagCount();
@@ -76,7 +88,7 @@ final class HologramMaterialReview {
         if (index < 0 || index >= size()) return null;
         Row cached = visible.get(index);
         if (cached == null) {
-            cached = new Row(rows.getCompoundTagAt(index), index);
+            cached = new Row(rows.getCompoundTagAt(index), index, local);
             visible.put(index, cached);
         }
         return cached;
@@ -97,13 +109,14 @@ final class HologramMaterialReview {
         final FluidStack fluid;
         final boolean shortage, tagged;
 
-        Row(NBTTagCompound data, int index) {
+        Row(NBTTagCompound data, int index, boolean local) {
             this.data = data;
             this.index = index;
             required = amount(data, "required");
-            available = data.getBoolean("unlimited") ? "∞" : amount(data, "available");
-            missing = amount(data, "missing");
-            shortage = !"0".equals(missing) && !missing.isEmpty();
+            boolean stockUnknown = local && !data.getBoolean("availableKnown");
+            available = stockUnknown ? "未知" : data.getBoolean("unlimited") ? "∞" : amount(data, "available");
+            missing = stockUnknown ? "未知" : amount(data, "missing");
+            shortage = !stockUnknown && !"0".equals(missing) && !missing.isEmpty();
             unit = data.getString("unit");
             // Numeric registry IDs are not portable across installations. Never fall back to an unrelated item.
             item = HologramMaterialQuote.readItem(data);

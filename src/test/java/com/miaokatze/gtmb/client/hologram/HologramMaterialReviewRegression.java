@@ -3,11 +3,21 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import java.lang.reflect.Field;
+
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.entity.EntityClientPlayerMP;
+import net.minecraft.client.gui.GuiScreen;
+import net.minecraft.client.multiplayer.WorldClient;
+import net.minecraft.client.network.NetHandlerPlayClient;
+import net.minecraft.entity.player.InventoryPlayer;
 import net.minecraft.init.Items;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
+import net.minecraft.tileentity.TileEntity;
 
+import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 import com.miaokatze.gtmb.hologram.HologramMaterialQuote;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
@@ -101,6 +111,201 @@ public final class HologramMaterialReviewRegression {
         metadataFence();
         contextAndUnchangedChoices();
         incompleteEstimateCannotEnableConfirmation();
+        detachedBackpackEstimate();
+        detachedNativeScope();
+        staleNativeOwner();
+    }
+
+    private static void detachedBackpackEstimate() {
+        ItemStack first = new ItemStack(Items.diamond, 3, 7);
+        ItemStack second = new ItemStack(Items.diamond, 9, 7);
+        first.setTagCompound(new NBTTagCompound());
+        first.getTagCompound().setString("variant", "first");
+        second.setTagCompound(new NBTTagCompound());
+        second.getTagCompound().setString("variant", "second");
+        ItemStack protectedStack = first.copy();
+        protectedStack.stackSize = 30;
+        NBTTagList demand = new NBTTagList();
+        demand.appendTag(HologramMaterialQuote.itemRow(first, 8L, 0L));
+        demand.appendTag(HologramMaterialQuote.itemRow(second, 8L, 0L));
+        NBTTagCompound resource = new NBTTagCompound();
+        resource.setString("kind", "energy");
+        resource.setString("requiredExact", "987654321123456789123456789");
+        demand.appendTag(resource);
+        NBTTagCompound theory = new NBTTagCompound();
+        theory.setBoolean("complete", true);
+        theory.setTag("rows", demand);
+
+        HologramMaterialReview model = new HologramMaterialReview();
+        NBTTagCompound visible =
+            HologramLocalMaterialReview.stockRows(theory, new ItemStack[] {first, second, protectedStack}, 2);
+        model.updateLocal(visible);
+        SimpleAssert.that(
+            "3".equals(model.row(0).available) && "5".equals(model.row(0).missing)
+                && "9".equals(model.row(1).available) && "0".equals(model.row(1).missing),
+            "detached backpack uses exact NBT, excludes protected slot, and reports only a backpack delta");
+        SimpleAssert.that(
+            "987654321123456789123456789".equals(model.row(2).required)
+                && "未知".equals(model.row(2).available) && "未知".equals(model.row(2).missing)
+                && !model.row(2).shortage,
+            "an unobserved resource is neither zero nor a definite shortage");
+        SimpleAssert.that(
+            theory.getBoolean("complete") && !visible.hasKey("complete")
+                && !demand.getCompoundTagAt(0).hasKey("availableKnown")
+                && !model.ready() && !model.hasItemShortage() && !model.hasVoucherDemand(),
+            "local display does not mutate theory or grant any server quote capability");
+        model.updateLocal(HologramLocalMaterialReview.stockRows(theory, null, 2));
+        SimpleAssert.that(
+            "未知".equals(model.row(0).available) && "未知".equals(model.row(0).missing),
+            "disabled or unsynced backpack is not reported as an observed zero");
+    }
+
+    private static void detachedNativeScope() {
+        NBTTagCompound source = new NBTTagCompound();
+        source.setLong("planRevision", 4);
+        NBTTagList cells = new NBTTagList();
+        cells.appendTag(estimateCell(0, false, true)); // Uncharged machine anchor.
+        cells.appendTag(estimateCell(1, false, true)); // Outside selection.
+        cells.appendTag(estimateCell(2, false, true)); // Known selected target.
+        cells.appendTag(estimateCell(3, false, false)); // Selected, target unresolved.
+        cells.appendTag(estimateCell(4, true, true)); // Excluded, even when selected.
+        source.setTag("cells", cells);
+        HologramState displayed = new HologramState(source);
+        NBTTagCompound config = new NBTTagCompound();
+        config.setInteger("scope", 2);
+        config.setInteger("layer", 7);
+        config.setInteger("selected", 2);
+        config.setIntArray("selectedIndices", new int[] {0, 2, 3, 4});
+        config.setBoolean("materialMain", true);
+        HologramLocalMaterialReview review = new HologramLocalMaterialReview(displayed, config);
+        ItemStack[] backpack = {new ItemStack(net.minecraft.init.Blocks.stone, 2, 0)};
+        for (int i = 0; i < 6 && !review.ready(); i++) review.tick(backpack, -1);
+
+        HologramMaterialReview model = new HologramMaterialReview();
+        model.updateLocal(review.visible());
+        SimpleAssert.that(
+            review.ready() && review.status().contains("1 格未核算") && model.size() == 1
+                && "1".equals(model.row(0).required) && "2".equals(model.row(0).available),
+            "native estimate includes only the selected scope, reports missing identity, and excludes the anchor");
+        SimpleAssert.that(review.current(displayed, 7) && !review.current(displayed, 8), "local review is layer-bound");
+        NBTTagCompound newer = new NBTTagCompound();
+        newer.setLong("planRevision", 5);
+        SimpleAssert.that(!review.current(displayed.withMetadata(newer), 7), "local review is revision-bound");
+        config.setIntArray("selectedIndices", new int[] {1});
+        SimpleAssert.that(review.settings().getIntArray("selectedIndices").length == 4, "scope is frozen for submission");
+    }
+
+    private static NBTTagCompound estimateCell(int x, boolean excluded, boolean known) {
+        NBTTagCompound cell = new NBTTagCompound();
+        cell.setInteger("x", x);
+        cell.setInteger("dx", x);
+        cell.setString("wantId", "minecraft:stone");
+        cell.setBoolean("inScope", true);
+        cell.setBoolean("excluded", excluded);
+        if (known) cell.setTag("targetStack", new ItemStack(net.minecraft.init.Blocks.stone).writeToNBT(new NBTTagCompound()));
+        return cell;
+    }
+
+    private static void staleNativeOwner() {
+        try {
+            sun.misc.Unsafe unsafe = (sun.misc.Unsafe) field(sun.misc.Unsafe.class, "theUnsafe").get(null);
+            Minecraft client = (Minecraft) unsafe.allocateInstance(Minecraft.class);
+            OwnerWorld world = (OwnerWorld) unsafe.allocateInstance(OwnerWorld.class);
+            EntityClientPlayerMP player = (EntityClientPlayerMP) unsafe.allocateInstance(EntityClientPlayerMP.class);
+            NetHandlerPlayClient connection = (NetHandlerPlayClient) unsafe.allocateInstance(NetHandlerPlayClient.class);
+            field(EntityClientPlayerMP.class, "sendQueue").set(player, connection);
+            player.inventory = new InventoryPlayer(player);
+            ItemStack tool = new ItemStack(new ItemNekoHologramProjector());
+            player.inventory.mainInventory[0] = tool;
+            client.thePlayer = player;
+            client.theWorld = world;
+            TileEntity tile = new TileEntity();
+            tile.setWorldObj(world);
+            world.tile = tile;
+            HologramScreen screen = (HologramScreen) unsafe.allocateInstance(HologramScreen.class);
+            field(GuiScreen.class, "mc").set(screen, client);
+            client.currentScreen = screen;
+            HologramUiModules ui = new HologramUiModules(screen);
+            screen.ui = ui;
+            field(HologramScreen.class, "openedPlayer").set(screen, player);
+            field(HologramScreen.class, "openingController").set(screen, tile);
+            field(HologramScreen.class, "openingConnection").set(screen, connection);
+            field(HologramScreen.class, "openingTool").set(screen, tool);
+            field(HologramScreen.class, "openingToolId").set(screen, "");
+            NBTTagCompound metadata = new NBTTagCompound();
+            metadata.setBoolean("localStandardController", true);
+            metadata.setBoolean("supported", true);
+            metadata.setBoolean("projectionDataComplete", true);
+            NBTTagList cells = new NBTTagList();
+            cells.appendTag(estimateCell(1, false, true));
+            metadata.setTag("cells", cells);
+            field(HologramUiSession.class, "state").set(ui.session, new HologramState(metadata));
+
+            SimpleAssert.that(
+                ui.review.openNativeLocalMaterials() && ui.review.localMaterials() != null,
+                "matching physical controller, player, screen and graph can open a local material estimate");
+            player.inventory.currentItem = 1;
+            ui.review.refreshLocalMaterials();
+            SimpleAssert.that(
+                ui.review.localMaterials() == null && ui.review.openNativeLocalMaterials()
+                    && ui.review.localMaterials() == null,
+                "changed slot retires refresh; stale opening is handled locally rather than using the legacy query");
+
+            player.inventory.currentItem = 0;
+            ui.review.openNativeLocalMaterials();
+            world.tile = new TileEntity();
+            ui.review.submitLocalMaterials();
+            SimpleAssert.that(
+                ui.review.localMaterials() == null && ui.session.sequence() == 0,
+                "an old pane cannot send or submit after the controller tile is replaced");
+
+            world.tile = tile;
+            ui.review.openNativeLocalMaterials();
+            SimpleAssert.that(ui.review.localMaterials() != null, "original owner can open a fresh pane");
+            client.thePlayer = (EntityClientPlayerMP) unsafe.allocateInstance(EntityClientPlayerMP.class);
+            ui.review.refreshLocalMaterials(); // Replacement player has no inventory; the fence must run first.
+            SimpleAssert.that(ui.review.localMaterials() == null, "stale review never reads another player's inventory");
+
+            client.thePlayer = player;
+            ui.review.openNativeLocalMaterials();
+            screen.ui = new HologramUiModules(screen);
+            ui.review.submitLocalMaterials();
+            SimpleAssert.that(ui.review.localMaterials() == null, "an inactive workspace graph cannot submit");
+
+            screen.ui = ui;
+            ui.review.openNativeLocalMaterials();
+            client.currentScreen = null;
+            ui.review.refreshLocalMaterials();
+            SimpleAssert.that(ui.review.localMaterials() == null, "an inactive root screen cannot refresh");
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("cannot construct the headless material pane owner", failure);
+        }
+    }
+
+    private static Field field(Class<?> type, String name) throws ReflectiveOperationException {
+        Field result = type.getDeclaredField(name);
+        result.setAccessible(true);
+        return result;
+    }
+
+    private static final class OwnerWorld extends WorldClient {
+
+        TileEntity tile;
+
+        private OwnerWorld() {
+            super(null, null, 0, null, null);
+            throw new AssertionError("Use the fixture without creating a real world");
+        }
+
+        @Override
+        public boolean blockExists(int x, int y, int z) {
+            return true;
+        }
+
+        @Override
+        public TileEntity getTileEntity(int x, int y, int z) {
+            return tile;
+        }
     }
 
     private static void incompleteEstimateCannotEnableConfirmation() {

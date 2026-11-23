@@ -163,6 +163,14 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         return ui.session.state().data.getBoolean("localStandardController");
     }
 
+    /** Read-only ownership check for the detached material pane and its deferred controls. */
+    boolean localMaterialOwnerCurrent(HologramUiModules graph) {
+        Minecraft client = minecraft();
+        return client != null && client.currentScreen == this && ui == graph && localControllerStandard()
+            && openedPlayer != null && openedPlayer == client.thePlayer && openedDimension == client.thePlayer.dimension
+            && controllerContextCurrent(false);
+    }
+
     HologramLocalMachineState localMachineState() {
         if (!localControllerStandard() || !controllerContextCurrent(false)) return HologramLocalMachineState.UNKNOWN;
         return HologramLocalMachineState.read(openingController);
@@ -819,6 +827,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             ui.memory.rememberUi();
             ui.preview.releasePointerCapture();
             ui.tools.closeTransient();
+            ui.review.closeLocalMaterials();
             ui.shell.pauseWorkspace();
             ui.workspaces.acknowledged();
             ui = workspaceGraphs.retain(next, () -> {
@@ -943,6 +952,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     @Override
     public void onGuiClosed() {
+        ui.review.closeLocalMaterials();
         ui.tutorial.closeWithoutProgress();
         ui.tools.closeTransient();
         ui.canvas.layout()
