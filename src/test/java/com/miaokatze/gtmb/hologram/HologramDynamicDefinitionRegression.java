@@ -405,6 +405,7 @@ final class HologramDynamicDefinitionRegression {
     static final class DynamicController extends MTEEnhancedMultiBlockBase<DynamicController> {
 
         int tier = 1, persistentTail = 3, definitionBuilds, constructions;
+        IStructureDefinition<DynamicController> presetActionDefinition;
 
         DynamicController() {
             super("dynamic_definition_fixture");
@@ -413,6 +414,7 @@ final class HologramDynamicDefinitionRegression {
         @Override
         public IStructureDefinition<DynamicController> getStructureDefinition() {
             definitionBuilds++;
+            if (presetActionDefinition != null) return presetActionDefinition;
             String[] rows = new String[60 + tier];
             Arrays.fill(rows, new String(new char[100]).replace('\0', 'A'));
             return StructureDefinition.<DynamicController>builder()
@@ -425,6 +427,10 @@ final class HologramDynamicDefinitionRegression {
         @Override
         public void construct(ItemStack trigger, boolean hints) {
             constructions++;
+            if (presetActionDefinition != null) {
+                HologramCapture.piece(this, "preset", trigger, hints, -1, 0, 0);
+                return;
+            }
             tier = ChannelDataAccessor.getChannelData(trigger, "shape");
             HologramChannelTrace.record(trigger, "shape", tier, 1);
             // Raw harness invokes the same hook installed at native buildPiece HEAD by Mixin.

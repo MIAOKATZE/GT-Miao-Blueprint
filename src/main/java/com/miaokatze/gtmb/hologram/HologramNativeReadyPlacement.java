@@ -28,6 +28,7 @@ final class HologramNativeReadyPlacement {
         "editorWorkspaceEpoch", "planRevision", "sourceRevision");
     private static final long LIFETIME_NANOS = 30_000_000_000L;
     private static final int SLICE_ROWS = 256;
+    private static final String RECOVERY_PENDING = "存在待核定施工凭据，未开始放置。";
 
     private final String id;
     private final HologramSession session;
@@ -81,6 +82,7 @@ final class HologramNativeReadyPlacement {
             if (!enabled() || !matches(s, player, request) || !ready(s))
                 refusal = "当前没有同版本、已准备且受支持的原生放置计划。";
             else if (s.nativeReadyPlacement != null) refusal = "正在核对另一条原生放置请求。";
+            else if (HologramConstructionJournal.pending(player)) refusal = RECOVERY_PENDING;
             else {
                 s.nativeReadyPlacement = new HologramNativeReadyPlacement(s, id, System.nanoTime());
                 return;
@@ -129,8 +131,7 @@ final class HologramNativeReadyPlacement {
             || s.presentationTransition != null || s.structureSavePreparation != null
             || !HologramEditorWorkspaceRegistry.idle(s) || HologramProjectedPlacementService.preparing(s.player)
             || HologramPlacementUpload.active(s.player) || !HologramStructureProjection.operationPrepared(s)
-            || !s.capture.readyPlacementSource(s) || !s.nativeReadyBill.observedStockSufficient(s)
-            || !s.capture.sourceCurrent(HologramSessionPolicy.trigger(s))) return false;
+            || !s.nativeReadyBill.observedStockSufficient(s) || !s.capture.readyPlacementCurrent(s)) return false;
         int size = s.capture.cells.size();
         return s.expectedBlocks.size() == size && s.expectedMeta.size() == size && s.expectedTiles.size() == size
             && s.expectedFacings.size() == size && s.planStatus.size() == size && s.planTargets.size() == size;
@@ -180,7 +181,7 @@ final class HologramNativeReadyPlacement {
         var progress = sweep.inspect(slice, index -> {
             HologramCapture.Cell cell = capture.cells.get(index);
             if (cell.anchor) {
-                if (anchor || !HologramExecutionReview.retainedPhysicalAnchor(s, cell))
+                if (anchor || !HologramExecutionReview.retainedPhysicalAnchor(s, cell, true))
                     throw new IOException("原生控制器已变更。");
                 anchor = true;
                 return true;
@@ -210,6 +211,9 @@ final class HologramNativeReadyPlacement {
                 throw new IOException("原生施工材料已不足。");
         }
         if (stockCursor < bill.rows().size()) return false;
+        if (!bill.declarationCurrent() || !capture.readyPlacementCurrent(s))
+            throw new IOException("原生放置计划或当前目标已变更。");
+        if (HologramConstructionJournal.pending(s.player)) throw new IOException(RECOVERY_PENDING);
         s.work = work;
         HologramPlacementJobs.begin(s, null);
         HologramStructureProjection.dismissOperationReview(s);

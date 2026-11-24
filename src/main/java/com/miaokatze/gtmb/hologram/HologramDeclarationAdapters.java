@@ -127,6 +127,11 @@ public final class HologramDeclarationAdapters {
         return GENERATION.get();
     }
 
+    /** Unlike the interpretation cache generation, includes first-time element registrations. */
+    static long admissionGeneration() {
+        return MODIFICATIONS.get() + READER_GENERATION.get();
+    }
+
     /** Reader lifecycle is global; element registrations only expire interpretations that actually read that key. */
     static final class Bindings {
 
@@ -136,9 +141,14 @@ public final class HologramDeclarationAdapters {
         private boolean changed;
 
         String validityFailure() {
+            return validityFailure(true);
+        }
+
+        String validityFailure(boolean refresh) {
             if (changed || readers != READER_GENERATION.get()) return "SOURCE_DECLARATIONS_CHANGED";
             long current = MODIFICATIONS.get();
             if (checked == current) return null;
+            if (!refresh) return "SOURCE_DECLARATIONS_CHANGED";
             synchronized (DECLARATIONS) {
                 for (Map.Entry<IStructureElement<?>, Long> entry : elements.entrySet()) if (entry.getValue()
                     .longValue() != VERSIONS.getOrDefault(entry.getKey(), 0L)) {
