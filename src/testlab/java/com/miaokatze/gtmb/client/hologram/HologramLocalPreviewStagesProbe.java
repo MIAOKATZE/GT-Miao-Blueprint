@@ -50,7 +50,10 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
 import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
+import com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec;
+import com.miaokatze.gtmb.hologram.HologramBlueprintFiles;
 import com.miaokatze.gtmb.hologram.HologramMaterialQuote;
+import com.miaokatze.gtmb.hologram.HologramMaterials;
 import com.miaokatze.gtmb.hologram.HologramNativeControllerBrowserReference;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
 import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
@@ -95,6 +98,13 @@ final class HologramLocalPreviewStagesProbe {
     private final long started = System.nanoTime();
     private final Path output;
     private final boolean construction = Boolean.getBoolean(FLAG + "Construction");
+    private final boolean materialsOnly = materialsOnlyEnabled();
+    private final boolean pressureReview = pressureReviewEnabled();
+    private volatile HologramPressureReviewCase pressure;
+    private boolean pressureFinished;
+    private ItemStack pressureTool;
+    private NBTTagList pressureInventory;
+    private HologramLocalMaterialQuietCase materials;
     private final boolean postFocus = construction || Boolean.getBoolean(FLAG + "PostFocus");
     private final NativeParity parity = NativeParity.configured();
     private final boolean fixedNativeEbf = fixedNativeEbfEnabled();
@@ -122,7 +132,7 @@ final class HologramLocalPreviewStagesProbe {
     private final int x, y, z, toolSlot, stoneSlot;
     private final String actorName;
     private final String localId = "local_" + UUID.fromString(System.getProperty("miaotest.host.runId"));
-    private final ItemStack originalTool, fixtureTool;
+    private final ItemStack originalTool, originalStone, fixtureTool;
     private final MovingObjectPosition originalHit;
     private final float yaw, pitch;
     private volatile boolean fixtureReady;
@@ -162,6 +172,14 @@ final class HologramLocalPreviewStagesProbe {
         return Boolean.getBoolean(FLAG);
     }
 
+    static boolean materialsOnlyEnabled() {
+        return Boolean.getBoolean(HologramLocalMaterialQuietCase.FLAG);
+    }
+
+    static boolean pressureReviewEnabled() {
+        return Boolean.getBoolean(HologramPressureReviewCase.FLAG);
+    }
+
     static boolean fixedNativeEbfEnabled() {
         return Boolean.getBoolean(HologramEbfFixedControls.FLAG);
     }
@@ -175,6 +193,13 @@ final class HologramLocalPreviewStagesProbe {
         yaw = mc.thePlayer.rotationYaw;
         pitch = mc.thePlayer.rotationPitch;
         actorName = mc.thePlayer.getCommandSenderName();
+        if (materialsOnly) require(!construction && !fixedNativeEbf && parity == null && timingMode.isEmpty()
+            && !workbenchStages && System.getProperty(SOURCE, "").isEmpty(),
+            "Material browse has one ordinary stone source and no construction or alternate workload");
+        if (pressureReview) require(postFocus && !construction && !materialsOnly && !fixedNativeEbf
+            && parity == null && timingMode.isEmpty() && !workbenchStages
+            && !System.getProperty(SOURCE, "").isEmpty() && Boolean.getBoolean("gtmb.projectedPlacementGuardTrace"),
+            "Pressure review is a separate owned PostFocus run with the frozen pair and guard trace");
         if (fixedNativeEbf) {
             fixedEbfActor = mc.thePlayer.getUniqueID();
             require(parity == NativeParity.EBF && !postFocus && timingMode.isEmpty() && !workbenchStages
@@ -186,6 +211,7 @@ final class HologramLocalPreviewStagesProbe {
         toolSlot = mc.thePlayer.inventory.currentItem;
         stoneSlot = (toolSlot + 1) % 9;
         originalTool = mc.thePlayer.getHeldItem();
+        originalStone = mc.thePlayer.inventory.getStackInSlot(stoneSlot);
         originalHit = mc.objectMouseOver;
         fixtureTool = new ItemStack(ProjectorRegistry.projector);
         evidence.put("schema", "gtmb-local-preview-stages-v1");
@@ -229,6 +255,9 @@ final class HologramLocalPreviewStagesProbe {
             if (fixtureReady || fixtureFailure != null) {
                 if (fixedNativeEbf && fixtureReady) sampleFixedEbfInventory(world);
                 if (construction && serverActor != null) observeWorld(world);
+                HologramPressureReviewCase observed = pressure;
+                if (pressureReview && observed != null)
+                    observed.observeServer(world, serverActor, pressureTool, pressureInventory);
                 if (solarTelemetryRequested && !solarTelemetrySent) {
                     BaseMetaTileEntity base = (BaseMetaTileEntity) world.getTileEntity(x, y, z);
                     base.enableWorking();
@@ -262,12 +291,31 @@ final class HologramLocalPreviewStagesProbe {
             if (parity == NativeParity.SOLAR || parity == NativeParity.ENTANGLER)
                 ((BaseMetaTileEntity) world.getTileEntity(x, y, z)).disableWorking();
             world.markBlockForUpdate(x, y, z);
-            if (construction) {
+            if (pressureReview) {
+                require(actor instanceof EntityPlayerMP && !(actor instanceof FakePlayer)
+                    && !actor.capabilities.isCreativeMode && actor.capabilities.allowEdit
+                    && !actor.canCommandSenderUseCommand(2, "give"),
+                    "Pressure review requires the actual editable non-OP survival actor");
+                serverActor = (EntityPlayerMP) actor;
+                serverToolBefore = actor.inventory.getStackInSlot(toolSlot);
+                serverStoneBefore = actor.inventory.getStackInSlot(stoneSlot);
+                pressureTool = new ItemStack(ProjectorRegistry.projector);
+                NBTTagCompound ownedId = new NBTTagCompound();
+                ownedId.setString("gtitHologramToolId", UUID.randomUUID().toString());
+                pressureTool.setTagCompound(ownedId);
+                var settings = HologramMaterials.read(pressureTool);
+                settings.me = false;
+                HologramMaterials.write(pressureTool, settings);
+                actor.inventory.setInventorySlotContents(toolSlot, pressureTool);
+                pressureInventory = actor.inventory.writeToNBT(new NBTTagList());
+                actor.inventoryContainer.detectAndSendChanges();
+            }
+            if (construction || materialsOnly) {
                 require(
                     actor instanceof EntityPlayerMP && !(actor instanceof FakePlayer)
                         && !actor.capabilities.isCreativeMode
                         && stones(actor) == 0,
-                    "Construction proof requires the real survival actor with no existing stones");
+                    "Stone fixture requires the real survival actor with no existing stones");
                 serverActor = (EntityPlayerMP) actor;
                 serverToolBefore = actor.inventory.getStackInSlot(toolSlot);
                 serverStoneBefore = actor.inventory.getStackInSlot(stoneSlot);
@@ -314,7 +362,8 @@ final class HologramLocalPreviewStagesProbe {
         evidence.put("stage", stage);
         evidence.put("worldInputFocused", HologramClient.worldInputFocused());
         if (fixtureFailure != null) throw new IllegalStateException("Owned fixture failed", fixtureFailure);
-        boolean expired = System.nanoTime() - started >= 90_000_000_000L;
+        long budget = pressureReview && pressure != null ? 300_000_000_000L : 90_000_000_000L;
+        boolean expired = System.nanoTime() - started >= budget;
         if (expired && timingMaterial != null) {
             evidence.put("pendingWorkbenchInitializationNanos", timingWorkbenchInitNanos);
             evidence.put("pendingWorkbenchInitializationActivity", timingWorkbenchActivity);
@@ -333,7 +382,8 @@ final class HologramLocalPreviewStagesProbe {
             if (!fixtureReady || !(mc.theWorld.getTileEntity(x, y, z) instanceof BaseMetaTileEntity base)
                 || !fixtureController(base)
                 || !postFocus && !HologramClient.worldInputFocused()) return false;
-            if (construction
+            if (pressureReview && !ItemStack.areItemStacksEqual(pressureTool, mc.thePlayer.getHeldItem())) return false;
+            if ((construction || materialsOnly)
                 && (!ItemNekoHologramProjector.isProjector(mc.thePlayer.getHeldItem()) || stones(mc.thePlayer) != 1))
                 return false;
             if (fixedNativeEbf) {
@@ -347,7 +397,7 @@ final class HologramLocalPreviewStagesProbe {
                 evidence.put("ownedControllerFixtureSetupCount", 1);
             }
             observeOutbound();
-            if (!construction && !fixedNativeEbf) mc.thePlayer.inventory.setInventorySlotContents(toolSlot, fixtureTool);
+            if (!construction && !materialsOnly && !pressureReview && !fixedNativeEbf) mc.thePlayer.inventory.setInventorySlotContents(toolSlot, fixtureTool);
             look(mc, x + .5, y + .5, z + .5);
             require(hitAt(mc, x, y, z), "EntityRenderer crosshair missed the real controller");
             controllerClicked = System.nanoTime();
@@ -448,14 +498,22 @@ final class HologramLocalPreviewStagesProbe {
             evidence.put("privateMovingPresentedNanos", System.nanoTime() - privateRequested);
             evidence.put("movingFirstLists", witness.lists);
             evidence.put("movingFirstAnchor", firstAnchor);
-            // Move the real camera ray from the control block to the ground beside the player.
-            look(mc, x - 1.5, y - .5, z - 1.5);
+            // The ordinary move witness serves one stone. This preflight only requires the actual first visible anchor.
+            if (!pressureReview) look(mc, x - 1.5, y - .5, z - 1.5);
             stage++;
         } else if (stage == 4) {
             zero("privateMoving");
             MiaoVisonLiteRenderer.WorldRenderWitness witness = witness();
             int[] moved = HologramLocalPlacement.INSTANCE.anchor();
-            if (witness == null || witness.generation <= movedGeneration
+            if (pressureReview) {
+                require(mc.currentScreen == null && moved != null && Arrays.equals(firstAnchor, moved)
+                    && mc.theWorld.blockExists(moved[0], moved[1], moved[2])
+                    && com.miaokatze.gtmb.hologram.HologramWorldFlow.withinPreviewReach(mc.thePlayer.posX,
+                        mc.thePlayer.posY + mc.thePlayer.getEyeHeight(), mc.thePlayer.posZ, moved[0], moved[1], moved[2]),
+                    "Frozen archive's first actually drawn aim is no longer the current loaded and reachable anchor");
+                if (witness == null || !Arrays.equals(witness.anchor(), moved)) return false;
+                evidence.put("lockedAtFirstVisibleAnchor", true);
+            } else if (witness == null || witness.generation <= movedGeneration
                 || moved == null
                 || Arrays.equals(firstAnchor, moved)
                 || !Arrays.equals(witness.anchor(), moved)) return false;
@@ -490,6 +548,21 @@ final class HologramLocalPreviewStagesProbe {
             evidence.put("lockedDrawnLists", witness.lists);
             evidence.put("lockedWorldTicks", mc.theWorld.getTotalWorldTime() - lockedTick);
             zero("privateLockedPresented");
+            if (pressureReview) {
+                pressure = new HologramPressureReviewCase(mc, lockedAnchor);
+                evidence.put("pressureReview", pressure.evidence);
+                placementUse(mc);
+                require(mc.currentScreen instanceof HologramLibraryMaterialReviewScreen,
+                    "Second ordinary PostFocus use did not open the local review");
+                stage = 10;
+                return false;
+            }
+            if (materialsOnly) {
+                materials = new HologramLocalMaterialQuietCase(mc, lockedAnchor, packets());
+                evidence.put("ordinaryMaterialBrowse", materials.evidence);
+                stage = 8;
+                return false;
+            }
             submitInput = true;
             placementUse(mc);
             require(HologramLocalPlacement.INSTANCE.submitting(), "Explicit second right-click did not submit");
@@ -509,6 +582,21 @@ final class HologramLocalPreviewStagesProbe {
             stage++;
         } else if (stage == 7) {
             if (construction) return constructionStep(mc);
+            if (!finish(mc)) return false;
+            evidence.put("passed", true);
+            return true;
+        } else if (stage == 8) {
+            if (!materials.step(mc, packets(), () -> placementUse(mc))) return false;
+            stage = 9;
+        } else if (stage == 9) {
+            if (!finish(mc)) return false;
+            require(packets().isEmpty(), "Unexpected GTMB writes during material fixture teardown");
+            evidence.put("passed", true);
+            return true;
+        } else if (stage == 10) {
+            if (!pressure.step(mc)) return false;
+            stage = 11;
+        } else if (stage == 11) {
             if (!finish(mc)) return false;
             evidence.put("passed", true);
             return true;
@@ -1358,6 +1446,8 @@ final class HologramLocalPreviewStagesProbe {
         require(!construction || supplied.isEmpty(), "Paid one-stone proof requires its own construction document");
         if (!supplied.isEmpty()) {
             HologramBlueprintArtifact.Artifact pair = HologramBlueprintArtifact.readPair(Paths.get(supplied));
+            if (pressureReview) require(HologramPressureReviewCase.matchesFrozen(pair),
+                "Pressure review requires the exact frozen original-123369 pair");
             json = pair.json;
             png = pair.png;
         } else {
@@ -1367,13 +1457,24 @@ final class HologramLocalPreviewStagesProbe {
                 HologramBlueprintArtifact.HEIGHT,
                 BufferedImage.TYPE_INT_RGB);
             require(ImageIO.write(thumbnail, "png", buffer), "PNG required");
-            HologramBlueprintArtifact.Artifact pair = HologramBlueprintArtifact
-                .prepareSave(stoneBlueprint(), buffer.toByteArray());
+            byte[] source = stoneBlueprint();
+            if (materialsOnly) source = HologramBlueprintCompactCodec.recompress(
+                source, HologramBlueprintArtifact.MAX_JSON_BYTES);
+            HologramBlueprintArtifact.Artifact pair = HologramBlueprintArtifact.prepareSave(source, buffer.toByteArray());
             json = pair.json;
             png = pair.png;
         }
-        HologramBlueprintArtifact.writePair(path, json, png);
-        evidence.put("privateSourceKind", supplied.isEmpty() ? "owned schema2 saved pair" : "supplied saved pair");
+        if (materialsOnly || pressureReview) {
+            var saved = HologramBlueprintArtifact.writePairPending(path, json, png, () -> true);
+            try {
+                HologramBlueprintFiles.track(library, localId, saved);
+            } catch (java.io.IOException | RuntimeException failure) {
+                saved.rollback();
+                throw failure;
+            }
+        } else HologramBlueprintArtifact.writePair(path, json, png);
+        evidence.put("privateSourceKind", pressureReview ? "exact frozen 123369 pair" : materialsOnly ? "owned indexed compact one-stone pair"
+            : supplied.isEmpty() ? "owned schema2 saved pair" : "supplied saved pair");
         HologramBlueprintArtifact.Artifact staged = HologramBlueprintArtifact.readPair(path);
         evidence.put("privateSourceJsonSha256", staged.jsonSha256);
         evidence.put("privateSourcePngSha256", staged.pngSha256);
@@ -1397,7 +1498,7 @@ final class HologramLocalPreviewStagesProbe {
         version.addProperty("gtnhVersionSource", "unavailable");
         blueprint.add("nativeBlueprint", version);
         JsonArray cells = new JsonArray();
-        int size = construction ? 1 : 3;
+        int size = construction || materialsOnly ? 1 : 3;
         for (int x = 0; x < size; x++) {
             JsonObject cell = new JsonObject();
             cell.addProperty("item", "minecraft:stone");
@@ -1449,7 +1550,11 @@ final class HologramLocalPreviewStagesProbe {
                         outbound.merge(name, 1, Integer::sum);
                         if (placement != null) projectedPlacement = placement;
                     }
-                    if (construction && submitInput) context.write(message, promise);
+                    HologramPressureReviewCase owned = pressure;
+                    if (materialsOnly || construction && submitInput
+                        || pressureReview && owned != null && owned.forward(message,
+                            message instanceof HologramNetwork.Action ? (NBTTagCompound) action.get(message) : null))
+                        context.write(message, promise);
                     else {
                         io.netty.util.ReferenceCountUtil.release(message);
                         promise.setSuccess();
@@ -1480,10 +1585,11 @@ final class HologramLocalPreviewStagesProbe {
 
     boolean finish(Minecraft mc) throws Exception {
         if (finished) return true;
-        if (construction) {
+        if (construction || materialsOnly || pressureReview) {
             restoreServerInventory = true;
             if (mc.thePlayer != null && (!serverInventoryRestored
-                || !ItemStack.areItemStacksEqual(originalTool, mc.thePlayer.inventory.getStackInSlot(toolSlot))))
+                || !ItemStack.areItemStacksEqual(originalTool, mc.thePlayer.inventory.getStackInSlot(toolSlot))
+                || (materialsOnly || pressureReview) && !ItemStack.areItemStacksEqual(originalStone, mc.thePlayer.inventory.getStackInSlot(stoneSlot))))
                 return false;
         }
         if (fixtureStore != null) {
@@ -1513,15 +1619,24 @@ final class HologramLocalPreviewStagesProbe {
         if (controller != null && mc.currentScreen == controller
             || constructionReview != null && mc.currentScreen == constructionReview
             || timingScreen != null && mc.currentScreen == timingScreen
-            || mc.currentScreen instanceof HologramPlacementLoadingScreen) mc.displayGuiScreen(null);
+            || mc.currentScreen instanceof HologramPlacementLoadingScreen
+            || (materialsOnly || pressureReview) && mc.currentScreen instanceof HologramLibraryMaterialReviewScreen) mc.displayGuiScreen(null);
         if (construction) HologramClient.clearProjection();
-        if (channel != null && channel.pipeline()
+        if (!pressureReview && channel != null && channel.pipeline()
             .get(HANDLER) != null) channel.pipeline()
                 .remove(HANDLER);
         evidence.put("outboundIncludingTeardown", packets());
         if (fixedEbfEnabledMetrics) HologramRuntimeMetrics.setEnabled(false);
+        if (materials != null) materials.close();
         finished = true;
         return true;
+    }
+
+    void retirePressureObserver() throws Exception {
+        if (!pressureReview || pressureFinished) return;
+        if (pressure != null) pressure.close();
+        if (channel != null && channel.pipeline().get(HANDLER) != null) channel.pipeline().remove(HANDLER);
+        pressureFinished = true;
     }
 
     private static Field field(Class<?> owner, String name) throws ReflectiveOperationException {
