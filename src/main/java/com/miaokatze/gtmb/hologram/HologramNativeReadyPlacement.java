@@ -6,8 +6,10 @@ package com.miaokatze.gtmb.hologram;
 import java.io.IOException;
 import java.util.AbstractList;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
-import java.util.Objects;
 import java.util.RandomAccess;
 import java.util.Set;
 import java.util.UUID;
@@ -23,9 +25,9 @@ import com.miaokatze.gtmb.api.StructureSources;
 final class HologramNativeReadyPlacement {
 
     static final String FLAG = "nativeReadyPlace";
-    private static final Set<String> FIELDS = Set.of(
+    private static final Set<String> FIELDS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
         "action", FLAG, "placementRequestId", "session", "x", "y", "z", "side", "uiSequence",
-        "editorWorkspaceEpoch", "planRevision", "sourceRevision");
+        "editorWorkspaceEpoch", "planRevision", "sourceRevision")));
     private static final long LIFETIME_NANOS = 30_000_000_000L;
     private static final int SLICE_ROWS = 256;
     private static final String RECOVERY_PENDING = "存在待核定施工凭据，未开始放置。";
@@ -240,7 +242,7 @@ final class HologramNativeReadyPlacement {
 
         @Override
         public Integer get(int index) {
-            Objects.checkIndex(index, size);
+            if (index < 0 || index >= size) throw new IndexOutOfBoundsException("index " + index + ", size " + size);
             return pages.get(index / PAGE_ROWS)[index % PAGE_ROWS];
         }
 
