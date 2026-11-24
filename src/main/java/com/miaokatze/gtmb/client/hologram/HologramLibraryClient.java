@@ -2615,6 +2615,8 @@ final class HologramLibraryClient {
             PublicIdentity publicIdentity = incomingPublic;
             incomingPublic = null;
             boolean capturePreview = incomingCapturePreview;
+            // Done retires the public transfer; verification, import, and display from here are local.
+            if (publicRequest != null && publicIdentity != null && !capturePreview) localDisplayTask = true;
             boolean localSaveReceipt = incomingLocalSaveReceipt;
             long saveRevision = incomingSaveRevision;
             long token = generation;

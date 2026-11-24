@@ -34,6 +34,7 @@ public final class HologramLibrarySaveLifecycleRegression {
             detachedFailureAndRetry();
             encodingFailureAndImmediateRetry();
             timeoutAndHeaderRefusalKeepTheirFailureReason();
+            publicDownloadCancelStopsAtLocalHandoff();
             freshPreviewAndAdmissionOwnTheirIdleBudget();
             exactUiTerminalReleasesSaveButtons();
             cancelledSourceRetainsBaselineOrRecoversOnce();
@@ -677,6 +678,116 @@ public final class HologramLibrarySaveLifecycleRegression {
                 && client.status()
                     .contains(HologramProgressView.phase("library.prepare")),
             "translation of a technical failure preserves its actual UI phase suffix");
+    }
+
+    private static void publicDownloadCancelStopsAtLocalHandoff() throws IOException, ReflectiveOperationException {
+        Field singleton = null;
+        for (Field field : net.minecraft.client.Minecraft.class.getDeclaredFields())
+            if (field.getType() == net.minecraft.client.Minecraft.class
+                && java.lang.reflect.Modifier.isStatic(field.getModifiers())) singleton = field;
+        if (singleton == null) throw new NoSuchFieldException("Minecraft singleton");
+        singleton.setAccessible(true);
+        Object previousClient = singleton.get(null);
+        Field channel = com.miaokatze.gtmb.hologram.HologramNetwork.class.getDeclaredField("channel");
+        channel.setAccessible(true);
+        Object previousChannel = channel.get(null);
+        Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        unsafeField.setAccessible(true);
+        sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
+        HologramLibraryClient client = client();
+        set(client, "store", new HologramClientLibrary(Paths.get("build", "unused-public-download-lifecycle")));
+        ThreadPoolExecutor worker = (ThreadPoolExecutor) get(client, "worker");
+        worker.setThreadFactory(task -> null);
+        try {
+            singleton.set(null, unsafe.allocateInstance(net.minecraft.client.Minecraft.class));
+            PublicDownloadWire wire = (PublicDownloadWire) unsafe.allocateInstance(PublicDownloadWire.class);
+            wire.requests = new java.util.ArrayList<>();
+            channel.set(null, wire);
+            Method receive = HologramLibraryClient.class.getDeclaredMethod("receive", NBTTagCompound.class);
+            receive.setAccessible(true);
+            String id = "public_" + java.util.UUID.randomUUID();
+            byte[] json = ("{\"schema\":2,\"blueprint\":{\"schema\":2,\"id\":\"" + id
+                + "\",\"name\":\"Lifecycle\",\"cells\":[{\"x\":0,\"y\":0,\"z\":0,\"block\":\"minecraft:stone\"}]}}")
+                    .getBytes(StandardCharsets.UTF_8);
+            java.awt.image.BufferedImage cover = new java.awt.image.BufferedImage(
+                HologramBlueprintArtifact.WIDTH, HologramBlueprintArtifact.HEIGHT, java.awt.image.BufferedImage.TYPE_INT_RGB);
+            java.io.ByteArrayOutputStream png = new java.io.ByteArrayOutputStream();
+            javax.imageio.ImageIO.write(cover, "png", png);
+            byte[] artifact = HologramBlueprintArtifact.encode(json, png.toByteArray());
+            for (boolean done : new boolean[] { false, true }) {
+                set(client, "selectedServer", id);
+                client.downloadSelected();
+                long task = client.backgroundTaskToken();
+                SimpleAssert.that(task > 0 && wire.requests.size() == 1
+                    && "download".equals(wire.requests.remove(0).getString("op")), "download starts once");
+                String transfer = java.util.UUID.randomUUID().toString();
+                NBTTagCompound packet = new NBTTagCompound();
+                packet.setString("op", "downloadBegin");
+                packet.setLong("clientTaskToken", task);
+                packet.setString("purpose", "public");
+                packet.setString("id", id);
+                packet.setString("sourceHash", com.miaokatze.gtmb.hologram.HologramBlueprintContentHash.of(json, id));
+                packet.setLong("sourceRevision", 1);
+                packet.setString("transfer", transfer);
+                packet.setInteger("artifactVersion", HologramBlueprintArtifact.VERSION);
+                packet.setString("encoding", "identity");
+                packet.setString("hash", HologramBlueprintArtifact.hash(artifact));
+                packet.setInteger("total", artifact.length);
+                packet.setInteger("decodedTotal", artifact.length);
+                receive.invoke(client, packet);
+                SimpleAssert.that((Boolean) get(client, "downloadBeginAccepted"), "matching public header accepted");
+                packet.setString("op", "downloadChunk");
+                packet.setInteger("index", 0);
+                packet.setByteArray("data", artifact);
+                receive.invoke(client, packet);
+                if (done) {
+                    packet.setString("op", "downloadDone");
+                    receive.invoke(client, packet);
+                    SimpleAssert.that((Boolean) get(client, "downloadDoneAccepted") && worker.getQueue().size() == 1,
+                        "completed download is queued for local verification, but worker has not started");
+                }
+                client.cancel();
+                SimpleAssert.eq(done ? 0 : 1, wire.requests.size(), "only an unfinished public download sends cancel");
+                if (!done) {
+                    NBTTagCompound cancel = wire.requests.remove(0);
+                    SimpleAssert.eq("cancel", cancel.getString("op"), "active transport is cancelled");
+                    SimpleAssert.eq(task, cancel.getLong("clientTaskToken"), "cancel is scoped to that task");
+                    SimpleAssert.eq(transfer, cancel.getString("transfer"), "cancel names its own live transfer");
+                }
+                SimpleAssert.that(!client.busy() && worker.getQueue().isEmpty(), "local cancel releases the client owner");
+            }
+        } finally {
+            worker.shutdownNow();
+            channel.set(null, previousChannel);
+            singleton.set(null, previousClient);
+        }
+    }
+
+    private static final class PublicDownloadWire extends cpw.mods.fml.common.network.simpleimpl.SimpleNetworkWrapper {
+
+        java.util.List<NBTTagCompound> requests;
+
+        private PublicDownloadWire() {
+            super("gtmb_test_download"); // Tests allocate without registering a Forge channel.
+        }
+
+        @Override
+        public void sendToServer(cpw.mods.fml.common.network.simpleimpl.IMessage message) {
+            io.netty.buffer.ByteBuf buf = io.netty.buffer.Unpooled.buffer();
+            try {
+                message.toBytes(buf);
+                int version = buf.readInt();
+                SimpleAssert.eq(com.miaokatze.gtmb.hologram.HologramLibraryProtocol.VERSION, version, "request wire version");
+                byte[] bytes = new byte[buf.readInt()];
+                buf.readBytes(bytes);
+                requests.add(net.minecraft.nbt.CompressedStreamTools.func_152457_a(bytes,
+                    new net.minecraft.nbt.NBTSizeTracker(1_048_576)));
+            } catch (IOException invalid) {
+                throw new AssertionError("public download request fixture", invalid);
+            } finally {
+                buf.release();
+            }
+        }
     }
 
     private static void settingsReplyRequiresMatchingWrite() throws ReflectiveOperationException {
