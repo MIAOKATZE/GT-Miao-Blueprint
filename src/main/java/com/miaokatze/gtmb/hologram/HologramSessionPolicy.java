@@ -5,6 +5,7 @@ package com.miaokatze.gtmb.hologram;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.init.Blocks;
@@ -233,6 +234,36 @@ final class HologramSessionPolicy {
         for (Object key : active.func_150296_c())
             ChannelDataAccessor.setChannelData(result, (String) key, active.getInteger((String) key));
         return result;
+    }
+
+    /**
+     * No new tool identity is minted here. Vanilla's air-use handler may replace the held stack
+     * with a byte-equivalent copy. Unlike a fresh stack or a changed configuration, a copy with
+     * the existing server tool UUID is already the same logical tool once a session is admitted.
+     */
+    static final class PreparationTool {
+
+        private final ItemStack original, equivalent;
+
+        PreparationTool(ItemStack held) {
+            original = held;
+            equivalent = canonicalToolId(held) ? held.copy() : null;
+        }
+
+        boolean matches(ItemStack held) {
+            return original == held || equivalent != null && ItemStack.areItemStacksEqual(equivalent, held);
+        }
+
+        private static boolean canonicalToolId(ItemStack held) {
+            if (held == null || !held.hasTagCompound()) return false;
+            String id = held.getTagCompound().getString(HologramSessionKeys.TOOL_ID);
+            if (id.length() != 36) return false;
+            try {
+                return UUID.fromString(id).toString().equals(id);
+            } catch (IllegalArgumentException invalid) {
+                return false;
+            }
+        }
     }
 
     static ItemStack currentTool(HologramSession s) {
