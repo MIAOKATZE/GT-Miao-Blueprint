@@ -14,6 +14,8 @@ import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.IBlockAccess;
 import net.minecraft.world.World;
 
+import com.miaokatze.gtmb.api.ClientRendering;
+
 import cpw.mods.fml.client.registry.ISimpleBlockRenderingHandler;
 
 /** Client extension for audited static ISBRH families. Register in client initialization only. */
@@ -105,7 +107,10 @@ public final class HologramNativeRenderRegistry {
     }
 
     static boolean hasCommunityAdapters() {
-        return !ADAPTERS.isEmpty() || !MULTIPART_ADAPTERS.isEmpty();
+        if (!MULTIPART_ADAPTERS.isEmpty()) return true;
+        // Some stock static models use the same ordered registration path as public extensions.
+        for (Adapter adapter : ADAPTERS) if (!ClientRendering.stockDeferredWorldBridge(adapter)) return true;
+        return false;
     }
 
     /** Remove an adapter when its client integration is disabled or replaced. */

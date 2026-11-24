@@ -9,6 +9,9 @@ import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.IBlockAccess;
 import net.minecraft.world.World;
 
+import com.miaokatze.gtmb.client.compat.botania.BotaniaClientCompatibility;
+import com.miaokatze.gtmb.client.compat.cookingforblockheads.CookingForBlockheadsClientCompatibility;
+import com.miaokatze.gtmb.client.compat.floodlights.FloodLightsClientCompatibility;
 import com.miaokatze.gtmb.client.hologram.HologramNativeRenderRegistry;
 
 import cpw.mods.fml.client.registry.ISimpleBlockRenderingHandler;
@@ -63,10 +66,29 @@ public final class ClientRendering {
         default void prepare(Object detachedPart) throws ReflectiveOperationException {}
     }
 
+    private abstract static class NativeBridge implements HologramNativeRenderRegistry.Adapter {
+
+        private final boolean deferredWorldOccupancy;
+
+        private NativeBridge(Adapter adapter) {
+            Class<?> type = adapter.getClass();
+            // These exact final stock adapters identify blocks without reading world state. Their geometry
+            // receives full snapshot access, independently of the renderer's deferred face/outline index.
+            deferredWorldOccupancy = type == BotaniaClientCompatibility.class
+                || type == CookingForBlockheadsClientCompatibility.class
+                || type == FloodLightsClientCompatibility.class;
+        }
+    }
+
+    /** Internal renderer query. Extensions cannot mark their registrations as audited. */
+    public static boolean stockDeferredWorldBridge(HologramNativeRenderRegistry.Adapter adapter) {
+        return adapter instanceof NativeBridge bridge && bridge.deferredWorldOccupancy;
+    }
+
     public static GTMBExtensions.Registration register(String id, Adapter adapter) {
         if (adapter == null) throw new IllegalArgumentException("adapter");
         return GTMBExtensions.install(id, "native-render", () -> {
-            HologramNativeRenderRegistry.Adapter bridge = new HologramNativeRenderRegistry.Adapter() {
+            HologramNativeRenderRegistry.Adapter bridge = new NativeBridge(adapter) {
 
                 public boolean supports(Block block) {
                     return adapter.supports(block);
