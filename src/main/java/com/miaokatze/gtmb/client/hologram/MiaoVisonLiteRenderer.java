@@ -2905,7 +2905,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         if (layer != Integer.MAX_VALUE || !state.completeBaseline() || state.data.getBoolean("displayPartial")
             || state.topologyChanged || state.changedIndices.length != 0 || !state.changedPreviousCells.isEmpty()
             || state.cells.size() < LOCAL_WORLD_MIN_CELLS || state.regions.regions.size() > LOCAL_WORLD_MAX_REGIONS
-            || !"local-preview".equals(state.session) || !state.data.getBoolean("localPreview")
+            || !"local-preview".equals(state.data.getString("session")) || !state.data.getBoolean("localPreview")
             || !state.data.getBoolean("virtual") || !state.data.getBoolean("virtualPlacement")
             || state.data.getInteger("mode") == 2 || HologramNativeRenderRegistry.hasCommunityAdapters()) return false;
         // The old group order was the order of each group's first eligible cell. If a region starts with

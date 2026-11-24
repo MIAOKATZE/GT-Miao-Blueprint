@@ -417,10 +417,8 @@ public final class HologramRenderingRegression {
 
     static void localWorldRegionHalo() {
         NBTTagCompound src = new NBTTagCompound();
-        src.setString("session", "local-preview");
-        src.setBoolean("localPreview", true);
-        src.setBoolean("virtual", true);
-        src.setBoolean("virtualPlacement", true);
+        src.setString("session", "blueprint-artifact");
+        src.setInteger("mode", 0);
         NBTTagList rows = new NBTTagList();
         rows.appendTag(haloRow(-1, 15, 15, "minecraft:stone")); // visible center at a negative region edge
         rows.appendTag(haloRow(0, 15, 15, "minecraft:stone")); // material face occlusion across +X
@@ -434,7 +432,12 @@ public final class HologramRenderingRegression {
             rows.appendTag(haloRow(x, i >> 4 & 15, i >> 8 & 15, "minecraft:stone"));
         }
         src.setTag("cells", rows);
-        HologramState state = new HologramState(src);
+        HologramState artifact = new HologramState(src);
+        HologramState state = HologramLocalPlacement.displayForPlacement(artifact, 0);
+        SimpleAssert.eq("blueprint-artifact", state.session, "saved source identity survives world placement");
+        SimpleAssert.eq("local-preview", state.data.getString("session"), "only placement metadata marks the world view");
+        SimpleAssert.that(state.cells == artifact.cells && state.regions == artifact.regions && state.completeBaseline(),
+            "the installed world display uses the complete authoritative artifact geometry");
         Class<?> renderer = MiaoVisonLiteRenderer.class;
         try {
             Field owner = renderer.getDeclaredField("worldState"), layer = renderer.getDeclaredField("worldLayer"),
@@ -476,7 +479,10 @@ public final class HologramRenderingRegression {
 
             MiaoVisonLiteRenderer.releaseWorld();
             owner.set(null, state);
-            SimpleAssert.eq(Boolean.TRUE, seed.invoke(null, state, Integer.MAX_VALUE), "exact local baseline admitted");
+            SimpleAssert.eq(Boolean.FALSE, seed.invoke(null, artifact, Integer.MAX_VALUE),
+                "a bare saved artifact cannot use the world-placement path");
+            SimpleAssert.eq(Boolean.TRUE, seed.invoke(null, state, Integer.MAX_VALUE),
+                "an installed saved artifact must not be rejected by its canonical source session");
             mode.setBoolean(null, true);
             java.util.Map<?, ?> seeded = (java.util.Map<?, ?>) groups.get(null);
             SimpleAssert.eq(oldOrder, new java.util.ArrayList<>(seeded.keySet()), "original region submission order");

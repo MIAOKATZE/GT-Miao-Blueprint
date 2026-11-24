@@ -116,18 +116,22 @@ final class HologramLocalPlacement {
         world = mc.theWorld;
         connection = mc.getNetHandler();
         player = mc.thePlayer;
+        display = displayForPlacement(prepared.state, mc.thePlayer.dimension);
+        mc.displayGuiScreen(null);
+    }
+
+    static HologramState displayForPlacement(HologramState artifact, int dimension) {
         NBTTagCompound metadata = new NBTTagCompound();
         metadata.setString("session", "local-preview");
         metadata.setBoolean("localPreview", true);
         metadata.setBoolean("virtual", true);
         metadata.setBoolean("virtualPlacement", true);
         metadata.setBoolean("moving", true);
-        metadata.setInteger("dimension", mc.thePlayer.dimension);
+        metadata.setInteger("dimension", dimension);
         metadata.setInteger("x", 0);
         metadata.setInteger("y", 0);
         metadata.setInteger("z", 0);
-        display = prepared.state.withMetadata(metadata);
-        mc.displayGuiScreen(null);
+        return artifact.withMetadata(metadata);
     }
 
     void tick() {
