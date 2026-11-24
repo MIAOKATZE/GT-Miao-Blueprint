@@ -185,6 +185,56 @@ public final class HologramLocalPreviewRegression {
             "the already frozen placement remains byte-exact after later edits and saves");
     }
 
+    private static void openingCamera(HologramState prefix, HologramState full) {
+        var area = new com.miaokatze.miaokatzecore.api.camera.ViewportCoordinates(11, 23, 240, 170);
+        var resized = new com.miaokatze.miaokatzecore.api.camera.ViewportCoordinates(11, 24, 240, 170);
+        var view = new HologramOpeningPreview(prefix, Math.PI / 4);
+        SimpleAssert.that(!view.navigable(prefix, area, 7) && !view.press(20, 40, 1),
+            "a decoded prefix is not a drawn camera frame");
+        view.observe(full, area, 7, 8, 114);
+        SimpleAssert.that(!view.navigable(prefix, area, 7), "an installed or retired frame cannot certify another prefix");
+        view.observe(prefix, area, 7, 8, 114);
+        SimpleAssert.that(view.navigable(prefix, area, 7) && !view.navigable(full, area, 7)
+            && !view.navigable(prefix, resized, 7) && !view.navigable(prefix, area, 8),
+            "opening navigation requires the actual source, GUI rectangle and resource generation");
+        view.observe(null, area, 7, 0, 0);
+        SimpleAssert.that(view.navigable(null, area, 7), "another draw of the same prefix may still be in progress");
+        var start = view.pose();
+        SimpleAssert.that(!view.press(20, 40, 0) && view.press(20, 40, 1), "only right/middle own opening gestures");
+        view.release(21, 41, 1);
+        SimpleAssert.eq(start, view.pose(), "a short right release neither rotates nor enters any edit handler");
+        SimpleAssert.that(view.press(20, 40, 1), "a rendered prefix starts a right drag");
+        view.drag(22, 40, 1);
+        view.drag(26, 42, 1);
+        view.release(28, 43, 1);
+        SimpleAssert.that(view.pose().yaw() < start.yaw() && view.pose().pitch() > start.pitch(),
+            "successive input coordinates rotate without waiting for another draw");
+        SimpleAssert.that(view.press(20, 40, 2), "a rendered prefix starts a middle drag");
+        view.release(22, 49, 2);
+        SimpleAssert.that(view.pose().y() != 0, "middle drag pans in the same presented coordinate frame");
+        view.scroll(1);
+        view.fixed(0, Math.PI / 2);
+        view.move(.025, 1, 1);
+        SimpleAssert.that(view.pose().zoom() > 1 && view.pose().pitch() == Math.PI / 2,
+            "wheel and camera commands change only the independent opening pose");
+        SimpleAssert.eq(view.pose(), view.forInstalled(full), "whole-source fit and all six pose fields survive install");
+        SimpleAssert.eq(null, view.forInstalled(prefix), "a partial state never becomes the installed owner");
+        NBTTagCompound shifted = new NBTTagCompound();
+        shifted.setInteger("x", 42);
+        SimpleAssert.eq(null, view.forInstalled(full.withMetadata(shifted)),
+            "another anchor cannot adopt the old coordinate frame");
+        SimpleAssert.that(view.press(20, 40, 1), "a gesture may be in flight when install wins");
+        var installed = view.forInstalled(full);
+        view.observe(prefix, resized, 8, 8, 114);
+        view.release(50, 50, 1);
+        SimpleAssert.eq(installed, view.pose(), "a fresh draw after a resize or reload cannot revive the old gesture");
+        SimpleAssert.that(view.press(20, 40, 1), "the new rectangle can own a new press");
+        view.invalidate();
+        view.release(50, 50, 1);
+        SimpleAssert.that(!view.navigable(prefix, resized, 8), "a disposed scene does not keep navigation authority");
+        SimpleAssert.eq(installed, view.pose(), "a retired opening press cannot transfer its release to the new view");
+    }
+
     private static void packedEditorParity() throws Exception {
         String descriptor = "\"block\":\"minecraft:stone\",\"item\":\"minecraft:stone\","
             + "\"structureIds\":[\"controller\"],\"prompt\":\"member note\","
@@ -249,6 +299,7 @@ public final class HologramLocalPreviewRegression {
             expanded.result().regions.bounds()[3],
             prefix.regions.bounds()[3],
             "early camera fits the whole target");
+        openingCamera(prefix, packed.result());
 
         NBTTagCompound edit = new NBTTagCompound();
         edit.setString("prompt", "new blueprint note");

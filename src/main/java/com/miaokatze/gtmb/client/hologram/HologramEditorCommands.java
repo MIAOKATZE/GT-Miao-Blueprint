@@ -191,7 +191,8 @@ final class HologramEditorCommands {
             || ui.host.minecraft().currentScreen != ui.host.parent()
             || ui.shell.fieldFocused()
             || ui.shortcuts.captureBinding() >= 0
-            || !(cameraNavigation(name) || "air".equals(name) ? ui.shell.sceneNavigable() : sceneAvailable())
+            || !(cameraNavigation(name) || "air".equals(name) && !ui.library.openingLocalSource()
+                ? ui.shell.sceneNavigable() : sceneAvailable())
             || ui.tools.modalOpen()
             || ui.tools.pointerCaptured()
             || ui.preview.inventory()
@@ -357,7 +358,8 @@ final class HologramEditorCommands {
     String reason(String name) {
         if (get(name) == null) return "未知编辑器命令";
         if (workspaceCommand(name)) return ui.workspaces.switching() ? "正在切换工作区，请等待回执" : "";
-        if (ui.workspaces.emptyProjection()) return "shortcuts".equals(name) ? "" : "右击控制器开启投影模式";
+        if (ui.workspaces.emptyProjection() && !(cameraNavigation(name) && ui.library.openingLocalSource()))
+            return "shortcuts".equals(name) ? "" : "右击控制器开启投影模式";
         if (cameraNavigation(name)) return ui.shell.sceneNavigable() ? "" : "先关闭当前窗口或等待蓝图显示，再调整视角";
         if ("viewWorkspace".equals(name)) return viewContextAvailable() ? "" : "先完成当前窗口或任务，再查看视图与工作区";
         if (legacyViewCommand(name)) {
@@ -457,18 +459,9 @@ final class HologramEditorCommands {
                     .selectRelated(ui.session.state(), "sameTypeAdd".equals(name));
                 syncSelection();
             }
-            case "frontView" -> {
-                ui.preview.yaw(ui.preview.frontCameraYaw() - Math.PI / 4);
-                ui.preview.pitch(0);
-            }
-            case "rightView" -> {
-                ui.preview.yaw(ui.preview.frontCameraYaw() + Math.PI / 4);
-                ui.preview.pitch(0);
-            }
-            case "topView" -> {
-                ui.preview.yaw(ui.preview.frontCameraYaw());
-                ui.preview.pitch(Math.PI / 2);
-            }
+            case "frontView" -> ui.preview.fixedCamera(-Math.PI / 4, 0);
+            case "rightView" -> ui.preview.fixedCamera(Math.PI / 4, 0);
+            case "topView" -> ui.preview.fixedCamera(0, Math.PI / 2);
             case "floatingTools" -> ui.tools.toggleFloating();
             case "viewWorkspace" -> ui.tools.openViewWorkspace();
             case "air", "cameraLeft", "cameraRight", "cameraForward", "cameraBack" -> { /* held gesture */ }

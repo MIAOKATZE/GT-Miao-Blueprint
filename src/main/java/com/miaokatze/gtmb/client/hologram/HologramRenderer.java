@@ -52,6 +52,10 @@ final class HologramRenderer {
         BROWSE.sceneClosed();
     }
 
+    static void retireOpeningPrefix(HologramState prefix) {
+        if (EDITOR.owns(prefix)) EDITOR.close();
+    }
+
     static void controllerDetailsPublished(HologramState previous, HologramState next) {
         if (next.reusesControllerGeometry(previous)) EDITOR.retainLocalPresentation(previous, next);
     }

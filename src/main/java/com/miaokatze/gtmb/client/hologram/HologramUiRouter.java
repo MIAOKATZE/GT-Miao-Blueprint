@@ -867,8 +867,10 @@ final class HologramUiRouter {
                                     ui.config.capabilities()
                                         .tagCount() - 4),
                                 ui.config.drawerOffset() + (wheel > 0 ? -1 : 1))));
-                } else if (ui.canvas.inViewport(mx, my) && !ui.preview.previewBlockedAt(mx, my))
-                    ui.preview.zoom(ui.preview.zoom() * (wheel > 0 ? 1.1 : 1 / 1.1));
+                } else if (ui.canvas.inViewport(mx, my) && !ui.preview.previewBlockedAt(mx, my)) {
+                    if (ui.library.openingLocalSource()) ui.preview.scrollNativeScene(wheel);
+                    else ui.preview.zoom(ui.preview.zoom() * (wheel > 0 ? 1.1 : 1 / 1.1));
+                }
         }
     }
 
