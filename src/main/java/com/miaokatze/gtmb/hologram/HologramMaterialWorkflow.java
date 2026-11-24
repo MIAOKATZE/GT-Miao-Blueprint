@@ -101,7 +101,11 @@ final class HologramMaterialWorkflow {
     }
 
     static void validateConfirmation(HologramSession s, NBTTagCompound action) throws IOException {
-        requireReview(s, action);
+        validateStart(s, action, false);
+    }
+
+    static void validateStart(HologramSession s, NBTTagCompound action, boolean direct) throws IOException {
+        requireReview(s, action, direct);
         if (HologramAeCraftingOrders.active(s.player)) throw new IOException("请等待 AE 合成完成并刷新材料后再施工");
         validateVoucherChoice(s, action);
     }
@@ -208,12 +212,15 @@ final class HologramMaterialWorkflow {
     }
 
     private static void requireReview(HologramSession s, NBTTagCompound action) throws IOException {
+        requireReview(s, action, false);
+    }
+
+    private static void requireReview(HologramSession s, NBTTagCompound action, boolean direct) throws IOException {
         HologramGeometryEdits.validate(s);
         if (!s.virtual || s.virtualPreset == null
             || !s.virtualPlacement
             || !s.virtualLocked
-            || !s.blueprintAwaitingConfirmation
-            || !s.placementReviewIssued
+            || (direct ? s.executionRequestId.isEmpty() : !s.blueprintAwaitingConfirmation || !s.placementReviewIssued)
             || s.job == 1
             || s.job == 2
             || !s.id.equals(action.getString("session"))) throw new IOException("请先确定蓝图位置并打开材料确认");

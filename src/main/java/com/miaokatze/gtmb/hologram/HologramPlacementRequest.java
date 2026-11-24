@@ -24,7 +24,7 @@ import com.github.bsideup.jabel.Desugar;
 /** An execution request contains block operations and a material bill, never a blueprint document. */
 public final class HologramPlacementRequest {
 
-    private static final int VERSION = 2;
+    private static final int VERSION = 2, DIRECT_VERSION = 4;
     private static final int MAX_VARIANTS = 4096;
     private static final int MAX_QUOTE_ITEMS = 512;
     private static final int MAX_PAYLOAD = 512 * 1024;
@@ -87,6 +87,14 @@ public final class HologramPlacementRequest {
         return tag;
     }
 
+    /** Same bounded construction geometry; old servers must reject, never turn a place click into a quote. */
+    public static NBTTagCompound encodeDirect(UUID id, int[] anchor, HologramProjectedPlacement.Plan plan)
+        throws IOException {
+        NBTTagCompound tag = encode(id, anchor, plan);
+        tag.setInteger("placementWireVersion", DIRECT_VERSION);
+        return tag;
+    }
+
     /** A stock query sends only item quantities, with no coordinates or construction authority. */
     public static NBTTagCompound encodeMaterialCheck(UUID requestId, NBTTagCompound displayedState) throws IOException {
         NBTTagList cells = displayedState.getTagList("cells", 10);
@@ -120,7 +128,7 @@ public final class HologramPlacementRequest {
     }
 
     static Map<Material, Integer> materialCheck(NBTTagCompound request) throws IOException {
-        requestId(request);
+        requestId(request, VERSION);
         if (!request.hasKey("placementMaterials", 9) || request.hasKey("placementAnchor")
             || request.hasKey("placementVariants") || request.hasKey("placementOperations")) throw malformed();
         NBTTagList rows = request.getTagList("placementMaterials", 10);
@@ -143,10 +151,12 @@ public final class HologramPlacementRequest {
             || !tag.hasKey("placementOperations", 11)
             || !tag.hasKey("placementVariants", 9)
             || !tag.hasKey("placementMaterials", 9)) throw malformed();
-        String id = requestId(tag);
+        boolean direct = tag.getInteger("placementWireVersion") == DIRECT_VERSION;
+        String id = requestId(tag, direct ? DIRECT_VERSION : VERSION);
         int[] anchor = tag.getIntArray("placementAnchor");
-        if (anchor.length != 3) throw malformed();
-        return new Header(id, anchor[0], anchor[1], anchor[2], sourceOptions(tag));
+        if (anchor.length != 3 || direct && (!"projectedPlacement".equals(tag.getString("action"))
+            || tag.hasKey("materialSources"))) throw malformed();
+        return new Header(id, anchor[0], anchor[1], anchor[2], sourceOptions(tag), direct);
     }
 
     private static void writeSources(NBTTagCompound request, NBTTagCompound displayed) throws IOException {
@@ -175,8 +185,8 @@ public final class HologramPlacementRequest {
         return options.getBoolean(key);
     }
 
-    private static String requestId(NBTTagCompound tag) throws IOException {
-        if (!tag.hasKey("placementWireVersion", 3) || tag.getInteger("placementWireVersion") != VERSION)
+    private static String requestId(NBTTagCompound tag, int version) throws IOException {
+        if (!tag.hasKey("placementWireVersion", 3) || tag.getInteger("placementWireVersion") != version)
             throw malformed();
         String id = tag.getString("placementRequestId");
         try {
@@ -272,7 +282,7 @@ public final class HologramPlacementRequest {
     }
 
     @Desugar
-    record Header(String id, int x, int y, int z, SourceOptions sources) {}
+    record Header(String id, int x, int y, int z, SourceOptions sources, boolean direct) {}
 
     @Desugar
     record SourceOptions(Boolean main, Boolean containers, Boolean me, int priority) {

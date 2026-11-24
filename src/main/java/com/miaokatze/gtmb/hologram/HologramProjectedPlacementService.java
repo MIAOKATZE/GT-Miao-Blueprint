@@ -149,12 +149,12 @@ final class HologramProjectedPlacementService {
                 Throwable reason = failure instanceof ExecutionException && failure.getCause() != null
                     ? failure.getCause()
                     : failure;
-                reply(job.player, job.header.id(), false, reason.getMessage());
+                job.refuse(reason.getMessage());
                 pending.remove();
             } catch (RuntimeException | LinkageError failure) {
                 HologramAreaPreparation.cancel(job.decoding);
                 GTMiaoBlueprint.LOG.warn("Projected placement preparation failed", failure);
-                reply(job.player, job.header.id(), false, "施工准备失败，未进行扣料或建造");
+                job.refuse("施工准备失败，未进行扣料或建造");
                 pending.remove();
             } catch (InterruptedException interrupted) {
                 Thread.currentThread()
@@ -270,6 +270,8 @@ final class HologramProjectedPlacementService {
         private final List<Resolved> variants = new ArrayList<>();
         private HologramPlacementRequest.Decoded decoded;
         private HologramSession session;
+        private HologramResourcePlanner.PlanTask directPlan;
+        private HologramExecutionReview.Start directStart;
         private int operation, pass;
 
         private Job(EntityPlayerMP player, HologramPlacementRequest.Header header, NBTTagCompound tag) {
@@ -323,7 +325,19 @@ final class HologramProjectedPlacementService {
             return null;
         }
 
+        private void refuse(String reason) {
+            if (!header.direct()) {
+                reply(player, header.id(), false, reason);
+                return;
+            }
+            retire(player, header.id());
+            // A publication failure must not be reported as a refusal after entering the live job.
+            if (session == null || session.job != 1 || HologramWorkspace.find(player.getUniqueID()) != session)
+                reply(player, header.id(), false, reason);
+        }
+
         private boolean step(long deadline) throws IOException, ExecutionException, InterruptedException {
+            if (directPlan != null) return startDirect(deadline);
             requireCurrent(Phase.WAIT);
             if (decoded == null) {
                 if (!decoding.isDone()) return false;
@@ -368,10 +382,44 @@ final class HologramProjectedPlacementService {
             }
             if (pass < 2) return false;
             requireCurrent(Phase.PUBLISH);
+            if (header.direct()) {
+                if (!session.executionNetworks.isEmpty())
+                    throw new IOException("需明确配置蓝图网络，未开始施工");
+                session.materialSettings.me = false;
+                directPlan = HologramResourcePlanner.beginPlan(session);
+                return startDirect(deadline);
+            }
             HologramWorkspace.activate(player.getUniqueID(), session);
             if (!HologramProjectorWorkflow.openPlacementReview(session, player))
                 throw new IOException("材料核对未能启动，请重新确认");
             reply(player, header.id(), true, null);
+            return true;
+        }
+
+        private boolean startDirect(long deadline) throws IOException {
+            requireCurrent(Phase.PUBLISH);
+            if (HologramConstructionJournal.pending(player)) throw new IOException("存在待核定施工凭据");
+            var sources = HologramMaterials.read(player.getHeldItem());
+            if (sources.main != session.materialSettings.main || sources.containers != session.materialSettings.containers
+                || sources.priority != session.materialSettings.priority)
+                throw new IOException("材料来源设置已变化，未开始施工");
+            if (directStart == null) {
+                long remaining = Math.max(0L, deadline - System.nanoTime());
+                if (remaining == 0 || !directPlan.step(Integer.MAX_VALUE, remaining)) return false;
+                if (session.planMissing != 0 || !session.planRecoveryFits)
+                    throw new IOException("施工材料不足或无法安全施工，未开始施工");
+                if (!session.blueprintEnergy.empty() || session.blueprintResources != null
+                    && (!session.blueprintResources.fluids.isEmpty() || !session.blueprintResources.essentia.isEmpty()))
+                    throw new IOException("此蓝图有需另行明确的设备资源，未开始施工");
+                directStart = new HologramExecutionReview.Start(session, new NBTTagCompound(), true);
+            }
+            if (!directStart.step(session, deadline)) return false;
+            if (session.job != 1) throw new IOException(session.status.isEmpty() ? "未开始施工" : session.status);
+            session.open = true;
+            session.openPurpose = "blueprintPlacement";
+            HologramWorkspace.activate(player.getUniqueID(), session);
+            reply(player, header.id(), true, null); // This path acknowledges a real job, never plan preparation.
+            HologramSnapshots.send(session);
             return true;
         }
 

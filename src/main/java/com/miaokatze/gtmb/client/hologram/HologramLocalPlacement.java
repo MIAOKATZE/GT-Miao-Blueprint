@@ -176,9 +176,9 @@ final class HologramLocalPlacement {
         }
     }
 
-    boolean submitFrozen(Submission submission) {
+    boolean submitFrozen(Submission submission, boolean direct) {
         if (submitting || !submission.current()) return false;
-        submitting = HologramLibraryClient.INSTANCE.prepareLocalPlacement(submission);
+        submitting = HologramLibraryClient.INSTANCE.prepareLocalPlacement(submission, direct);
         if (submitting) Minecraft.getMinecraft().displayGuiScreen(new HologramPlacementLoadingScreen());
         return submitting;
     }

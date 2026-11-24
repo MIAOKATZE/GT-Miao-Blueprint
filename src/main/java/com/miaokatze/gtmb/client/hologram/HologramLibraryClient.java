@@ -97,6 +97,7 @@ final class HologramLibraryClient {
     private boolean quickPreview;
     private HologramLocalPlacement.Submission placementSubmission;
     private volatile UUID placementRequest;
+    private boolean directPlacement;
     private boolean placementRequestSent;
     private PublicRead publicRead;
     private PublicIdentity incomingPublic;
@@ -2042,7 +2043,7 @@ final class HologramLibraryClient {
             && (ticket.placement() || ticket.epoch() == browseEpoch) && displayContextCurrent();
     }
 
-    boolean prepareLocalPlacement(HologramLocalPlacement.Submission submission) {
+    boolean prepareLocalPlacement(HologramLocalPlacement.Submission submission, boolean direct) {
         if (submission == null || !submission.current() || busy()) return false;
         DisplaySource source = submission.source();
         if (!beginBackgroundTask("准备施工并核对材料")) return false;
@@ -2051,6 +2052,7 @@ final class HologramLibraryClient {
         placementRequest = request;
         placementRequestSent = false;
         placementSubmission = submission;
+        directPlacement = direct;
         quickTool = mc.thePlayer.getHeldItem();
         quickSlot = mc.thePlayer.inventory.currentItem;
         quickToolId = quickTool instanceof net.minecraft.item.ItemStack
@@ -2076,7 +2078,9 @@ final class HologramLibraryClient {
                     pose,
                     worldHeight,
                     () -> token == generation && request.equals(placementRequest));
-            NBTTagCompound action = com.miaokatze.gtmb.hologram.HologramPlacementRequest.encode(request, anchor, plan);
+            NBTTagCompound action = direct
+                ? com.miaokatze.gtmb.hologram.HologramPlacementRequest.encodeDirect(request, anchor, plan)
+                : com.miaokatze.gtmb.hologram.HologramPlacementRequest.encode(request, anchor, plan);
             var prepared = HologramNetwork.prepareProjectedPlacement(
                 action, () -> token == generation && request.equals(placementRequest));
             main(() -> {
@@ -2086,7 +2090,7 @@ final class HologramLibraryClient {
                         prepared, () -> placementOwnerCurrent(token, request, submission));
                     localProgressPhase = "library.session";
                     lastActivity = System.nanoTime();
-                    status = "正在核对现场和施工材料";
+                    status = direct ? "施工请求已发送，等待服务器开始" : "正在核对现场和施工材料";
                     placementRequestSent = true;
                 } catch (IOException | RuntimeException failure) {
                     finishProjectedPlacement(false, "施工上传失败，" + HologramUiText.reason(failure.getMessage()));
@@ -2115,7 +2119,8 @@ final class HologramLibraryClient {
         boolean accepted = receipt.getBoolean("placementRequestAccepted");
         finishProjectedPlacement(
             accepted,
-            accepted ? "施工位置已确认，正在打开材料核算" : HologramUiText.reason(receipt.getString("errorMessage")));
+            accepted ? directPlacement ? "服务器已开始施工，请查看实际施工进度" : "施工位置已确认，正在打开材料核算"
+                : HologramUiText.reason(receipt.getString("errorMessage")));
         return true;
     }
 
@@ -2126,8 +2131,9 @@ final class HologramLibraryClient {
     private boolean cancelProjectedPlacement(String reason) {
         UUID request = placementRequest;
         if (request == null) return false;
+        boolean uncertain = directPlacement && placementRequestSent;
         retirePlacementTransport(request);
-        finishProjectedPlacement(false, reason);
+        finishProjectedPlacement(false, uncertain ? "已请求取消；如服务器已开始，请从施工任务停止" : reason);
         return true;
     }
 
@@ -2148,6 +2154,7 @@ final class HologramLibraryClient {
         placementRequest = null;
         placementRequestSent = false;
         placementSubmission = null;
+        directPlacement = false;
         preparing = false;
         status = detail;
         if (accepted) {
@@ -2313,6 +2320,7 @@ final class HologramLibraryClient {
         placementSubmission = null;
         placementRequest = null;
         placementRequestSent = false;
+        directPlacement = false;
         HologramLocalPlacement.INSTANCE.retry();
         ready = inFlight = preparing = false;
         if (pendingDiskSave != null) preparing = true;

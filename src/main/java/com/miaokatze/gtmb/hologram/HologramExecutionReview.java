@@ -145,11 +145,16 @@ final class HologramExecutionReview {
         private final HologramPlanClassifier classifier;
         private final TreeMap<Long, Integer> ordered = new TreeMap<>();
         private final long started = System.nanoTime();
-        private final boolean creative;
+        private final boolean creative, direct;
         private Iterator<Integer> work;
         private int cursor, blocked, protectedCells, unsupported, satisfied;
 
         Start(HologramSession s, NBTTagCompound request) {
+            this(s, request, false);
+        }
+
+        Start(HologramSession s, NBTTagCompound request, boolean direct) {
+            this.direct = direct;
             classifier = new HologramPlanClassifier(s);
             creative = s.player.capabilities.isCreativeMode;
             approval.setString("session", s.id);
@@ -170,6 +175,7 @@ final class HologramExecutionReview {
                 int index = cursor++;
                 HologramCapture.Cell cell = s.capture.cells.get(index);
                 if (!HologramPlanPolicy.expectedCurrent(s, index)) {
+                    if (direct) throw new IOException("现场已变化，未开始施工");
                     refresh(s, "现场或区块加载状态已变化，正在重新核对施工范围");
                     return true;
                 }
@@ -180,6 +186,8 @@ final class HologramExecutionReview {
                     throw new IOException("施工设备状态无法安全解析：" + cell.resourceError);
                 switch (status) {
                     case "pending" -> {
+                        if (direct && creative && s.expectedBlocks.get(index) != net.minecraft.init.Blocks.air)
+                            throw new IOException("目标位置不为空，直接施工不会清理原方块");
                         long order = ((long) cell.y << 52) | ((long) (cell.z + 30_000_000) << 26)
                             | (cell.x + 30_000_000L);
                         ordered.put(order, index);
@@ -191,6 +199,8 @@ final class HologramExecutionReview {
             }
             if (cursor < s.capture.cells.size()) return false;
             if (blocked > 0) throw new IOException("选定范围有 " + blocked + " 格被占用，请清空后重试");
+            if (direct && (protectedCells != 0 || unsupported != 0))
+                throw new IOException("范围内有保护或不支持的位置，未开始施工");
             if (ordered.isEmpty()) {
                 s.status = "没有需要且可安全施工的位置。已满足 " + satisfied + " 格，保护或占位 " + protectedCells
                     + " 格，不支持 " + unsupported + " 格";
@@ -200,8 +210,9 @@ final class HologramExecutionReview {
             while (work.hasNext() && System.nanoTime() < deadline) s.work.add(work.next());
             if (work.hasNext()) return false;
             if (!HologramBuildPreparation.aeReady(s)) return true;
-            HologramMaterialWorkflow.validateConfirmation(s, approval);
+            HologramMaterialWorkflow.validateStart(s, approval, direct);
             if (HologramPlacementJobs.approvedMaterials(s, approval)) {
+                if (direct && s.planMissing != 0) throw new IOException("施工材料不足，未开始施工");
                 HologramPlacementJobs.begin(s, approval);
                 s.blueprintAwaitingConfirmation = false;
             }

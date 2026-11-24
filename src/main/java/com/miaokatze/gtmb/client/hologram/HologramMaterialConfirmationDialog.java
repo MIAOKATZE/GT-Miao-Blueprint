@@ -62,6 +62,10 @@ final class HologramMaterialConfirmationDialog {
 
         boolean localSubmitAvailable();
 
+        default String localSubmitLabel() {
+            return "提交施工并核验…";
+        }
+
         void localAction(LocalAction action); // Revalidate deferred callbacks before using local or server data.
     }
 
@@ -331,7 +335,7 @@ final class HologramMaterialConfirmationDialog {
                 () -> 0));
             panel.child(button(54, () -> "返回预览", 14, 402, 160, () -> localView.localAction(LocalAction.BACK),
                 () -> true, () -> 0));
-            panel.child(button(55, () -> "提交施工并核验…", 184, 402, 434,
+            panel.child(button(55, localView::localSubmitLabel, 184, 402, 434,
                 () -> localView.localAction(LocalAction.SUBMIT), localView::localSubmitAvailable,
                 () -> HologramUiAccent.INFORMATION));
             return panel;

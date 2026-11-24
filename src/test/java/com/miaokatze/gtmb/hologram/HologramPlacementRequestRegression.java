@@ -31,7 +31,44 @@ final class HologramPlacementRequestRegression {
 
     private HologramPlacementRequestRegression() {}
 
+    public static void main(String[] args) {
+        testDirectIntent();
+        System.out.println("Standard direct placement wire regression passed.");
+    }
+
+    private static void testDirectIntent() {
+        var cell = new HologramProjectedPlacement.Cell(0, 0, 0, "minecraft:cobblestone", 0,
+            "minecraft:cobblestone", 0, -1);
+        var plan = new HologramProjectedPlacement.Plan(Collections.singletonList(cell),
+            Collections.singletonList(new HologramProjectedPlacement.Need("minecraft:cobblestone", 0, 1)));
+        UUID id = UUID.randomUUID();
+        int[] anchor = { 1, 64, 1 };
+        try {
+            NBTTagCompound legacy = HologramPlacementRequest.encode(id, anchor, plan);
+            if (HologramPlacementRequest.header(legacy).direct()) throw new AssertionError("Legacy is review-only");
+            NBTTagCompound direct = HologramPlacementRequest.encodeDirect(id, anchor, plan);
+            var restored = reassemble(HologramNetwork.prepareProjectedPlacement(direct, () -> true));
+            var header = HologramPlacementRequest.header(restored);
+            if (!header.direct() || !header.id().equals(id.toString())
+                || HologramPlacementRequest.decode(header, restored, 256).size() != 1)
+                throw new AssertionError("Explicit direct intent must cross the same bounded placement upload");
+            NBTTagCompound sources = (NBTTagCompound) direct.copy();
+            sources.setTag("materialSources", new NBTTagCompound());
+            expectFailure(() -> HologramPlacementRequest.header(sources));
+            NBTTagCompound mismatched = (NBTTagCompound) direct.copy();
+            mismatched.setInteger("placementWireVersion", 3);
+            expectFailure(() -> HologramPlacementRequest.header(mismatched));
+            NBTTagCompound oldOp = (NBTTagCompound) direct.copy();
+            oldOp.setString("action", "checkPlacementMaterials");
+            expectFailure(() -> HologramPlacementRequest.header(oldOp));
+            expectFailure(() -> HologramPlacementRequest.materialCheck(oldOp));
+        } catch (IOException | InterruptedException failure) {
+            throw new AssertionError("Standard direct placement wire regression", failure);
+        }
+    }
+
     static void run() {
+        testDirectIntent();
         HologramProjectedPlacement.Cell first = new HologramProjectedPlacement.Cell(
             -2,
             0,
