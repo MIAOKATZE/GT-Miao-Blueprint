@@ -170,18 +170,23 @@ final class HologramResourcePlanner {
     /** Area imports plan into an unactivated virtual staging session. */
     static PlanTask beginPlan(HologramSession staging) {
         if (!staging.virtual) throw new IllegalArgumentException("Staged planning requires a virtual session");
-        return new PlanTask(staging);
+        return new PlanTask(staging, false);
     }
 
     /** Native capture finalization reuses the same bounded planner on the owning server thread. */
     static PlanTask beginCapturePlan(HologramSession staging) {
-        return new PlanTask(staging);
+        return beginCapturePlan(staging, false);
+    }
+
+    static PlanTask beginCapturePlan(HologramSession staging, boolean observeNativeItems) {
+        return new PlanTask(staging, observeNativeItems);
     }
 
     static final class PlanTask {
 
         private final HologramSession s;
         private final HologramCapture capture;
+        private final boolean observeNativeItems;
         private final Thread owner = Thread.currentThread();
         private final List<int[]> geometry = new ArrayList<>();
         private HologramVirtualAllocationTask allocation;
@@ -193,9 +198,14 @@ final class HologramResourcePlanner {
         private boolean needsExterior, structureFound;
         private HologramHatchGeometry.Exterior outside = HologramHatchGeometry.Exterior.EMPTY;
 
-        private PlanTask(HologramSession s) {
+        private PlanTask(HologramSession s, boolean observeNativeItems) {
             this.s = s;
+            this.observeNativeItems = observeNativeItems;
             capture = s.capture;
+        }
+
+        HologramNativeItemBill nativeItemBill() {
+            return done() && resources != null ? resources.nativeItemBill() : null;
         }
 
         boolean step(int maxWork, long maxNanos) {
@@ -385,7 +395,7 @@ final class HologramResourcePlanner {
             } else if (stage == 7) {
                 if (cursor < s.capture.cells.size()) classify(cursor++);
                 else {
-                    resources = new HologramResourceTask(s, classifier);
+                    resources = new HologramResourceTask(s, classifier, observeNativeItems);
                     stage = 8;
                 }
             } else if (stage == 8) {
