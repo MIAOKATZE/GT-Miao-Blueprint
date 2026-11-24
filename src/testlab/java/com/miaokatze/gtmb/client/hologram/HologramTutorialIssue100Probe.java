@@ -72,6 +72,22 @@ public final class HologramTutorialIssue100Probe {
     private String failure;
 
     static boolean install() {
+        String mode = "gtmb.testlab.localPreviewStages";
+        boolean timedPreview = Boolean.getBoolean(mode + "WorldTiming");
+        boolean firstDrawOnly = Boolean.getBoolean(mode + "WorldTimingFirstDrawOnly");
+        boolean pressure = HologramLocalPreviewStagesProbe.pressureReviewEnabled();
+        if (timedPreview || firstDrawOnly || pressure) require(
+            timedPreview == firstDrawOnly && !(timedPreview && pressure)
+                && Boolean.getBoolean("gtmb.testlab.tutorialIssue100")
+                && Boolean.getBoolean("miaotest.host.environment") && HologramLocalPreviewStagesProbe.enabled()
+                && Boolean.getBoolean(mode + "PostFocus") && !Boolean.getBoolean(mode + "Construction")
+                && !Boolean.getBoolean(mode + "DirectConstruction")
+                && !HologramLocalPreviewStagesProbe.materialsOnlyEnabled()
+                && !HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled()
+                && !Boolean.getBoolean(mode + "WorkbenchStages") && !Boolean.getBoolean(mode + "ExerciseCandidates")
+                && System.getProperty(mode + "Timing", "").isEmpty()
+                && System.getProperty(mode + "NativeParity", "").isEmpty(),
+            "Choose only pressure review or first-draw-only preview in the owned PostFocus profile");
         if (HologramEbfFixedControls.coilOnlyEnabled()) require(
             HologramEbfFixedControls.coilProfileAllowed(Boolean.getBoolean("gtmb.testlab.tutorialIssue100"),
                 Boolean.getBoolean("miaotest.host.environment"), HologramLocalPreviewStagesProbe.enabled(),
@@ -87,6 +103,11 @@ public final class HologramTutorialIssue100Probe {
             Boolean.getBoolean("gtmb.testlab.tutorialIssue100") && Boolean.getBoolean("miaotest.host.environment")
                 && HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled() && HologramLocalPreviewStagesProbe.enabled(),
             "Prepared stock is only allowed in the exact isolated fixed EBF profile");
+        require(!(HologramLocalPreviewStagesProbe.materialsOnlyEnabled()
+            || HologramLocalPreviewStagesProbe.pressureReviewEnabled())
+            || Boolean.getBoolean("gtmb.testlab.tutorialIssue100") && Boolean.getBoolean("miaotest.host.environment")
+                && HologramLocalPreviewStagesProbe.enabled(),
+            "Material browse requires the existing lease-owned integrated route");
         if (!Boolean.getBoolean("gtmb.testlab.tutorialIssue100")) return false;
         require(!HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled() || HologramLocalPreviewStagesProbe.enabled(),
             "Fixed native EBF requires the existing lease-owned local-preview route");
@@ -203,9 +224,11 @@ public final class HologramTutorialIssue100Probe {
                     }
                     if (!localPreviewStages.step(mc)) return;
                     if (HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled()
-                        || HologramLocalPreviewStagesProbe.worldTimingEnabled()) {
+                        || HologramLocalPreviewStagesProbe.worldTimingEnabled()
+                        || HologramLocalPreviewStagesProbe.materialsOnlyEnabled()
+                        || HologramLocalPreviewStagesProbe.pressureReviewEnabled()) {
                         transition(6);
-                        return; // preview-only terminal; no Issue100 playback runs afterward
+                        return; // standalone probe; no Issue100 playback runs afterward
                     }
                 }
                 inventoryBefore = inventory(mc);
@@ -462,6 +485,7 @@ public final class HologramTutorialIssue100Probe {
             && !environment.get("registered")
                 .getAsBoolean();
         if (!stopped || mc.theWorld != null || mc.thePlayer != null) return;
+        if (localPreviewStages != null) localPreviewStages.retirePressureObserver();
         complete = true;
         FMLCommonHandler.instance()
             .bus()
@@ -511,6 +535,25 @@ public final class HologramTutorialIssue100Probe {
             Files.write(output.resolve("gtmb-world-projection-timing.json"), json(receipt),
                 java.nio.file.StandardOpenOption.CREATE_NEW);
             HologramTestLabUiProfile.install(); // Standard menu receipt still owns the host client exit.
+        } else if (HologramLocalPreviewStagesProbe.pressureReviewEnabled()) {
+            if ((!exactWorldOwned || noServerCreated) && failure == null) failure = "No lease-owned pressure review";
+            receipt.put("schema", "gtmb-frozen-123369-review-only-v1");
+            receipt.put("outcome", failure == null ? "PASS" : "FAIL");
+            receipt.put("failure", failure);
+            receipt.put("businessTransport", "One current UI-generated Fragment upload. Only quote, refusal or cancel; never final confirm/pay/AE.");
+            Files.write(output.resolve("gtmb-frozen-123369-review-only.json"), json(receipt),
+                java.nio.file.StandardOpenOption.CREATE_NEW);
+            HologramTestLabUiProfile.install();
+        } else if (HologramLocalPreviewStagesProbe.materialsOnlyEnabled()) {
+            if ((!exactWorldOwned || noServerCreated) && failure == null) failure = "No lease-owned material browse";
+            receipt.put("schema", "gtmb-ordinary-local-materials-v1");
+            receipt.put("outcome", failure == null ? "PASS" : "FAIL");
+            receipt.put("failure", failure);
+            receipt.put("businessTransport", "Integrated client/server, passive GTMB application-message and codec counts");
+            Files.write(output.resolve("gtmb-ordinary-local-materials.json"), json(receipt),
+                java.nio.file.StandardOpenOption.CREATE_NEW);
+            // The registered host finishes from its normal native menu profile; the world case has its own receipt.
+            HologramTestLabUiProfile.install();
         } else {
             Files.write(output.resolve("gtmb-issue100-tutorial.json"), json(receipt));
             if (!HologramRenderParityProbe.install(originalMenu, output, run, failure)) HologramTestLabUiProfile.install();
