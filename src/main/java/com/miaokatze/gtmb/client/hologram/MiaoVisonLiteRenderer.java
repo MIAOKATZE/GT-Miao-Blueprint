@@ -2412,22 +2412,47 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         private static final int[][] OFFSETS = { { -1, 0, 0 }, { 1, 0, 0 }, { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 },
             { 0, 0, 1 }, { -1, -1, 0 }, { 1, -1, 0 }, { -1, 1, 0 }, { 1, 1, 0 }, { -1, 0, -1 }, { 1, 0, -1 },
             { -1, 0, 1 }, { 1, 0, 1 }, { 0, -1, -1 }, { 0, 1, -1 }, { 0, -1, 1 }, { 0, 1, 1 } };
-        private static final int[] ADDRESSES = buildAddresses();
-        private static final short[][] EDGE_MASKS = buildEdgeMasks();
+        // Only the editor's region/BitSet path needs a per-local-position address table.
+        private static final class RegionAddresses {
+
+            static final int[] VALUES = buildAddresses();
+        }
+
+        private static final class EdgeMasks {
+
+            static final short[][] VALUES = buildEdgeMasks();
+        }
 
         private BoundaryNeighborhood() {}
 
         static int edges(java.util.BitSet[] regions, int local) {
             int occupied = 0, start = local * OFFSETS.length;
             for (int i = 0; i < OFFSETS.length; i++) {
-                int address = ADDRESSES[start + i];
+                int address = RegionAddresses.VALUES[start + i];
                 java.util.BitSet region = regions[address >>> 12];
                 if (region != null && region.get(address & 4095)) occupied |= 1 << i;
             }
+            return edgeMask(occupied);
+        }
+
+        /** The world's twelve edges touch only the center and eighteen distinct neighbors. */
+        static int worldEdges(int x, int y, int z, HologramSelectionOutline.Occupancy cells) {
+            if (!cells.contains(x, y, z)) return 0;
+            int occupied = 0;
+            for (int i = 0; i < OFFSETS.length; i++) {
+                int[] offset = OFFSETS[i];
+                if (cells.contains(x + offset[0], y + offset[1], z + offset[2])) occupied |= 1 << i;
+            }
+            return edgeMask(occupied);
+        }
+
+        private static int edgeMask(int occupied) {
+            // An isolated block (including a one-block cold projection) needs no lookup table.
+            if (occupied == 0) return (1 << EDGES.length) - 1;
             int yz = (occupied >>> 2 & 15) | (occupied >>> 10 & 240);
             int xz = (occupied & 3) | (occupied >>> 2 & 12) | (occupied >>> 6 & 240);
             int xy = (occupied & 15) | (occupied >>> 2 & 240);
-            return EDGE_MASKS[0][yz] | EDGE_MASKS[1][xz] | EDGE_MASKS[2][xy];
+            return EdgeMasks.VALUES[0][yz] | EdgeMasks.VALUES[1][xz] | EdgeMasks.VALUES[2][xy];
         }
 
         private static int[] buildAddresses() {
@@ -3042,22 +3067,11 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                 ((color >> 8) & 255) / 255f,
                 (color & 255) / 255f,
                 c.anchor ? .95f : .65f);
-            for (int[] edge : EDGES) {
-                double[] a = VERTICES[edge[0]], b = VERTICES[edge[1]];
-                int axis = a[0] != b[0] ? 0 : a[1] != b[1] ? 1 : 2;
-                int x = c.x + (int) (Math.min(a[0], b[0]) + .5);
-                int y = c.y + (int) (Math.min(a[1], b[1]) + .5);
-                int z = c.z + (int) (Math.min(a[2], b[2]) + .5);
-                if (!HologramSelectionOutline.ownsEdge(
-                    c.x,
-                    c.y,
-                    c.z,
-                    x,
-                    y,
-                    z,
-                    axis,
-                    (xx, yy, zz) -> worldOutlineCells.contains(coordinate(xx, yy, zz)))) continue;
-                for (int v : edge)
+            int outline = BoundaryNeighborhood.worldEdges(
+                c.x, c.y, c.z, (x, y, z) -> worldOutlineCells.contains(coordinate(x, y, z)));
+            for (int edge = 0; edge < EDGES.length; edge++) {
+                if ((outline & 1 << edge) == 0) continue;
+                for (int v : EDGES[edge])
                     t.addVertex(c.x + .5 + VERTICES[v][0], c.y + .5 + VERTICES[v][1], c.z + .5 + VERTICES[v][2]);
             }
             lastWorldGeometry++;
