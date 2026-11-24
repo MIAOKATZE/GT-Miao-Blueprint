@@ -246,6 +246,17 @@ public final class HologramMaterialQuote {
             s.blueprintResourceMissing = s.materialQuote.getString("firstMissing");
     }
 
+    /** A direct job has an authoritative priced plan, not a published/selected material quote. */
+    static void stampDirectPlan(HologramSession s) {
+        if (s.executionRequestId.isEmpty() || s.job != 0 || s.localPlanPending || s.jobVoucherRequested)
+            throw new IllegalStateException("Direct plan requires a private unreviewed placement");
+        NBTTagCompound witness = new NBTTagCompound();
+        stamp(s, witness);
+        // Keep live recheckBuild on its full resource-refresh path; no quote rows are being asserted here.
+        witness.setBoolean("complete", false);
+        s.materialQuote = witness;
+    }
+
     private static void stamp(HologramSession s, NBTTagCompound quote) {
         quote.setLong("voucherRulesRevision", DecorationVoucherConfig.revision());
         quote.setBoolean("decorationVoucherEnabled", HologramDecorationVoucher.enabled());
