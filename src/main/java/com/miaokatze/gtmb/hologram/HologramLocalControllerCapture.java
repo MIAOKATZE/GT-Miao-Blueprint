@@ -561,6 +561,8 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         state.setInteger("z", z);
         state.setInteger("side", side);
         state.setInteger("selected", -1);
+        // Voltage labels come from the client GT registry, not the structure's material channels.
+        state.setInteger("hatchTierMax", gregtech.api.enums.GTValues.VN.length - 1);
         for (String key : new String[] { "main", "mode", "scope", "layer", "materialPriority" })
             state.setInteger(key, settings.getInteger(key));
         for (String key : new String[] { "mainExplicit", "noHatches", "materialMain", "materialContainers",
