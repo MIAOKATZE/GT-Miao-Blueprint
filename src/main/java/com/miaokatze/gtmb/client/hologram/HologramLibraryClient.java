@@ -83,6 +83,7 @@ final class HologramLibraryClient {
     private long pendingConfigRevision = -1;
     private byte[] outgoing;
     private HologramLibraryProtocol.UploadWindow uploadWindow;
+    private PublicUpload publicUpload;
     private int nextChunk, sentBytes, incomingTotal, incomingIndex, page, pages = 1;
     private boolean ready, inFlight, loading, preparing;
     private HologramLibraryDownload.Assembly incoming;
@@ -145,6 +146,63 @@ final class HologramLibraryClient {
             this.epoch = epoch;
             this.server = server;
             this.refresh = refresh;
+        }
+    }
+
+    /** One in-memory publication receipt owner; retains no JSON/PNG or chunk buffers after cancel. */
+    static final class PublicUpload {
+
+        static final long RECEIPT_NANOS = TimeUnit.SECONDS.toNanos(120);
+        final HologramClientLibrary store;
+        final HologramLibraryProtocol.UploadWindow window;
+        final Object handler, world;
+        final UUID actor;
+        final String server, localId, replaceId, artifactHash;
+        boolean cancelled, linking, expiryReported, checkRequested, checked;
+        long cancelledAt;
+        String committedId;
+
+        PublicUpload(HologramClientLibrary store, HologramLibraryProtocol.UploadWindow window,
+            Object handler, Object world, UUID actor, String server, String localId, String replaceId, String artifactHash) {
+            this.store = store;
+            this.window = window;
+            this.handler = handler;
+            this.world = world;
+            this.actor = actor;
+            this.server = server;
+            this.localId = localId;
+            this.replaceId = replaceId;
+            this.artifactHash = artifactHash;
+        }
+
+        boolean matchesOwner(Object sender, Object world, UUID actor, String server) {
+            return handler != null && sender == handler && this.world != null && this.world == world
+                && this.actor != null && this.actor.equals(actor) && this.server.equals(server);
+        }
+
+        boolean expired(long now) {
+            return cancelled && committedId == null && now - cancelledAt >= RECEIPT_NANOS;
+        }
+
+        boolean accept(NBTTagCompound reply, long now) {
+            if (committedId != null || expired(now) || !"uploaded".equals(reply.getString("op"))
+                || !reply.hasKey("id", 8)) return false;
+            String id = reply.getString("id");
+            if (!id.startsWith("public_") || id.length() != 43 || !replaceId.isEmpty() && !replaceId.equals(id))
+                return false;
+            try {
+                String uuid = id.substring(7);
+                if (!UUID.fromString(uuid).toString().equals(uuid) || !window.complete(reply)) return false;
+            } catch (IllegalArgumentException | IOException invalid) {
+                return false;
+            }
+            committedId = id;
+            return true;
+        }
+
+        void persistLink() throws IOException {
+            if (committedId == null) throw new IOException("Public upload has no matching commit receipt");
+            store.reconcileUploadedId(server, localId, replaceId, committedId);
         }
     }
 
@@ -495,10 +553,14 @@ final class HologramLibraryClient {
 
     void install() {
         HologramBlueprintPreview.install();
-        HologramNetwork.setLibraryReceiver(reply -> {
+        HologramNetwork.setLibraryReceiver((reply, sender) -> {
             long token = generation;
-            Minecraft.getMinecraft()
-                .func_152344_a(() -> { if (token == generation) receive(reply); });
+            Minecraft mc = Minecraft.getMinecraft();
+            mc.func_152344_a(() -> {
+                if ("uploaded".equals(reply.getString("op"))) {
+                    if (libraryConnectionCurrent(mc)) receivePublicUpload(reply, sender, System.nanoTime());
+                } else if (token == generation) receive(reply);
+            });
         });
     }
 
@@ -521,6 +583,7 @@ final class HologramLibraryClient {
             settingsProgress.clear();
             configWritePending = false;
             pendingConfigRevision = -1;
+            publicUpload = null;
             cancel("蓝图连接已变化", false);
             PendingDiskSave abandoned = pendingDiskSave;
             pendingDiskSave = null;
@@ -554,6 +617,12 @@ final class HologramLibraryClient {
                 publicArtifacts.clear();
                 publicArtifactBytes = 0;
             }
+        }
+        PublicUpload attempt = publicUpload;
+        if (attempt != null && !attempt.expiryReported && attempt.expired(System.nanoTime())
+            && backgroundTaskToken == 0 && !busy()) {
+            attempt.expiryReported = true;
+            status = "上次上传结果未确认；重新上传前请先检查服务器蓝图库";
         }
         if (lastDisplayFrame == 0 || System.nanoTime() - lastDisplayFrame >= 60_000_000L)
             tickBrowsePreview(5_000_000L);
@@ -994,6 +1063,8 @@ final class HologramLibraryClient {
             || loading
             || preparing
             || pendingDiskSave != null
+            || publicUpload != null && publicUpload.committedId != null
+                && backgroundTaskToken == publicUpload.window.task()
             || quickPreview;
     }
 
@@ -1397,8 +1468,12 @@ final class HologramLibraryClient {
             status = "你所在的权限组不允许发布公共蓝图";
             return;
         }
-        if (busy() || selectedLocal.isEmpty() || !beginBackgroundTask("上传蓝图")) return;
+        if (busy() || selectedLocal.isEmpty() || !allowPublicUploadRetry(System.nanoTime())
+            || !beginBackgroundTask("上传蓝图")) return;
         ensureStore();
+        HologramClientLibrary targetStore = store;
+        Object targetHandler = libraryConnection, targetWorld = libraryWorld;
+        UUID targetActor = libraryActor;
         String id = selectedLocal;
         long token = generation;
         String targetServer = connection;
@@ -1406,11 +1481,11 @@ final class HologramLibraryClient {
         localProgressPhase = "library.read";
         status = "正在读取客户端蓝图，准备上传";
         work(() -> {
-            byte[] bytes = store.publicationArtifact(id);
+            byte[] bytes = targetStore.publicationArtifact(id);
             String hash = HologramBlueprintArtifact.hash(bytes);
-            String replaceId = store.uploadedId(targetServer, id);
+            String replaceId = targetStore.uploadedId(targetServer, id);
             main(() -> {
-                if (generation != token) return;
+                if (generation != token || !libraryConnectionCurrent(Minecraft.getMinecraft())) return;
                 preparing = false;
                 outgoing = bytes;
                 outgoingId = UUID.randomUUID().toString();
@@ -1427,9 +1502,83 @@ final class HologramLibraryClient {
                 status = "上传中 · 等待服务器接收";
                 lastActivity = System.nanoTime();
                 uploadWindow = new HologramLibraryProtocol.UploadWindow(begin);
+                publicUpload = new PublicUpload(targetStore, uploadWindow, targetHandler, targetWorld,
+                    targetActor, targetServer, id, replaceId, hash);
                 HologramNetwork.sendLibrary(begin);
             });
         });
+    }
+
+    private boolean allowPublicUploadRetry(long now) {
+        PublicUpload attempt = publicUpload;
+        if (attempt == null) return true;
+        if (attempt.committedId != null) {
+            if (!attempt.linking) linkPublicUpload(attempt);
+            return false;
+        }
+        if (!attempt.expired(now)) {
+            status = "正在等待服务器确认上次上传结果，请不要重复发布";
+            return false;
+        }
+        if (attempt.checked) {
+            publicUpload = null;
+            return true;
+        }
+        status = "上次上传结果未确认；请检查服务器蓝图库，再决定是否重新上传";
+        if (!attempt.checkRequested && !refreshingServer) {
+            attempt.checkRequested = true;
+            refreshServer(page);
+        }
+        return false;
+    }
+
+    private void receivePublicUpload(NBTTagCompound reply, Object sender, long now) {
+        PublicUpload attempt = publicUpload;
+        if (attempt == null || libraryConnection != sender
+            || !attempt.matchesOwner(sender, libraryWorld, libraryActor, connection)
+            || !attempt.accept(reply, now)) return;
+        if (!attempt.cancelled) {
+            lastActivity = now;
+            outgoing = null;
+            uploadWindow = null;
+            outgoingId = "";
+            ready = inFlight = false;
+            status = "已上传至服务器蓝图库";
+            progressCompleted();
+            selectedServer = attempt.committedId;
+            refreshServer(page);
+        }
+        linkPublicUpload(attempt);
+    }
+
+    private void linkPublicUpload(PublicUpload attempt) {
+        attempt.linking = true;
+        try {
+            // Once a receipt is validated, only this identity may update the durable alias map.
+            // Cancellation/generation cleanup must not discard that write.
+            worker.execute(() -> {
+                try {
+                    attempt.persistLink();
+                    main(() -> publicUploadLinked(attempt, true));
+                } catch (IOException | RuntimeException failure) {
+                    main(() -> publicUploadLinked(attempt, false));
+                }
+            });
+        } catch (java.util.concurrent.RejectedExecutionException busy) {
+            publicUploadLinked(attempt, false);
+        }
+    }
+
+    private void publicUploadLinked(PublicUpload attempt, boolean saved) {
+        if (publicUpload != attempt) return;
+        attempt.linking = false;
+        if (saved) publicUpload = null;
+        String detail = saved ? attempt.cancelled ? "取消前服务器已发布蓝图，本地关联已保留" : "蓝图已上传"
+            : "服务器已发布蓝图，但本地关联未保存；再次点击只重试保存关联";
+        if (backgroundTaskToken == attempt.window.task()) {
+            finishBackgroundTask(attempt.window.task(), true, detail);
+            status = detail;
+        } else if (backgroundTaskToken == 0 && !busy()) status = detail;
     }
 
     /** Display reads use file identity; content admission starts only for a placement action. */
@@ -2247,6 +2396,14 @@ final class HologramLibraryClient {
         UUID placement = placementRequest;
         if (placement != null) retirePlacementTransport(placement);
         long cancelledTask = backgroundTaskToken;
+        PublicUpload attempt = publicUpload;
+        if (attempt != null && !attempt.cancelled && attempt.committedId == null && attempt.window.task() == cancelledTask) {
+            if (attempt.window.fullySent()) {
+                attempt.cancelled = true;
+                attempt.cancelledAt = System.nanoTime();
+                if (cancelled) reason = "已请求取消；服务器可能已发布，正在等待确认";
+            } else publicUpload = null;
+        }
         SaveCommand cancelledCommand = draftSave;
         if (cancelledCommand != null) cancelledSourceSave = new SaveCommand(
             cancelledCommand.task,
@@ -2366,7 +2523,10 @@ final class HologramLibraryClient {
             pages = Math.max(1, reply.getInteger("pages"));
             serverCatalogReplies = Math.max(0, serverCatalogReplies - 1);
             refreshingServer = serverCatalogReplies > 0;
-            if (!refreshingServer) serverCatalogProgress.finish(System.nanoTime());
+            if (!refreshingServer) {
+                serverCatalogProgress.finish(System.nanoTime());
+                if (publicUpload != null && publicUpload.checkRequested) publicUpload.checked = true;
+            }
             if (reply.hasKey("admin")) {
                 config.setBoolean("admin", reply.getBoolean("admin"));
                 config.setBoolean("readOnly", !reply.getBoolean("admin"));
@@ -2476,22 +2636,6 @@ final class HologramLibraryClient {
                 }
             }
             inFlight = uploadWindow.inFlight();
-        } else if ("uploaded".equals(op)) {
-            if (!matchesOutgoing(reply) || !completedUpload(reply)) return;
-            long completedTask = backgroundTaskToken;
-            outgoing = null;
-            uploadWindow = null;
-            outgoingId = "";
-            ready = inFlight = false;
-            status = "已上传至服务器蓝图库";
-            progressCompleted();
-            selectedServer = reply.getString("id");
-            String serverKey = connection, localId = outgoingLocal, publicId = selectedServer;
-            work(() -> {
-                store.uploadedId(serverKey, localId, publicId);
-                main(() -> finishBackgroundTask(completedTask, true, "蓝图已上传"));
-            });
-            refreshServer(page);
         } else if ("deleted".equals(op)) {
             deletingServer = false;
             knownQuickSource = -1;
@@ -2705,6 +2849,7 @@ final class HologramLibraryClient {
             cancel("服务器：" + HologramUiText.reason(reply.getString("message")), false);
             refreshingServer = false;
             serverCatalogReplies = 0;
+            if (publicUpload != null) publicUpload.checkRequested = false;
             localCatalogProgress.clear();
             serverCatalogProgress.clear();
             settingsProgress.clear();
