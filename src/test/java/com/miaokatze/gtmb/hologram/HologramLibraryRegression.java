@@ -66,6 +66,7 @@ public final class HologramLibraryRegression {
         uploadWindowAndMailboxes();
         uploadAdmissionLifecycle();
         downloads();
+        publicDownloadPreservesPortableArtifact();
         downloadReservations();
         taskCorrelation();
         configuration();
@@ -851,6 +852,118 @@ public final class HologramLibraryRegression {
             Arrays
                 .equals(maximum, HologramLibraryDownload.decode(full.bytes, full.encoding, maximum.length, full.hash)),
             "maximum JSON plus PNG artifact survives bounded whole-file decode and final SHA");
+    }
+
+    private static void publicDownloadPreservesPortableArtifact() throws Exception {
+        Field channel = HologramNetwork.class.getDeclaredField("channel");
+        channel.setAccessible(true);
+        Object previous = channel.get(null);
+        Path directory = Files.createTempDirectory("gtmb-public-download-");
+        Path entries = directory.resolve("entries");
+        HologramServerLibrary store = new HologramServerLibrary(entries, directory.resolve("library.cfg"));
+        try {
+            LibraryReplyCapture capture = (LibraryReplyCapture) unsafe().allocateInstance(LibraryReplyCapture.class);
+            capture.replies = new ArrayList<>();
+            channel.set(null, capture);
+            runWorker(store, () -> store.changeConfig(true, 1, 128, 512, 2));
+            Object owner = peer(player(UUID.randomUUID(), "PublicDownloadPublisher"));
+            Object reader = peer(player(UUID.randomUUID(), "PublicDownloadReader"));
+            HologramPresets.Preset source = blueprint();
+            java.awt.image.BufferedImage image = new java.awt.image.BufferedImage(
+                HologramBlueprintArtifact.WIDTH,
+                HologramBlueprintArtifact.HEIGHT,
+                java.awt.image.BufferedImage.TYPE_INT_RGB);
+            java.util.Random pixels = new java.util.Random(16265L);
+            for (int y = 0; y < 96; y++) for (int x = 0; x < 96; x++) image.setRGB(x, y, pixels.nextInt());
+            transfer(store, owner, HologramServerLibrary.encodeShare(source), "", false, image);
+            String id = HologramBlueprintFiles.managedPublic(entries).keySet().iterator().next();
+            Path json = HologramBlueprintFiles.resolve(entries, id);
+            Path png = HologramBlueprintArtifact.previewPath(json);
+            byte[] storedJson = Files.readAllBytes(json), storedPng = Files.readAllBytes(png);
+            capture.replies.clear();
+            NBTTagCompound list = HologramLibraryProtocol.request("list");
+            runWorker(store, () -> handle(store, reader, list));
+            NBTTagCompound row = capture.onlyListReply(0, 1, 1, 1).getCompoundTagAt(0);
+            SimpleAssert.eq(id, row.getString("id"), "reader catalog exposes the committed public ID");
+            SimpleAssert.that(!row.getBoolean("mine"), "fixture uses an independent reader, not the publisher");
+
+            NBTTagCompound download = HologramLibraryProtocol.request("download");
+            download.setString("id", id);
+            download.setString("sourceHash", row.getString("sourceHash"));
+            download.setLong("sourceRevision", row.getLong("sourceRevision"));
+            download.setLong("clientTaskToken", 7L);
+            runWorker(store, () -> handle(store, reader, download));
+            SimpleAssert.eq(1, capture.replies.size(), "download starts with one header");
+            NBTTagCompound header = wireReply(capture.replies.remove(0));
+            SimpleAssert.eq("downloadBegin", header.getString("op"), "header arrives before chunks");
+            SimpleAssert.eq(id, header.getString("id"), "header binds the requested public entry");
+            SimpleAssert.eq(row.getString("sourceHash"), header.getString("sourceHash"), "header preserves content identity");
+            SimpleAssert.eq(row.getLong("sourceRevision"), header.getLong("sourceRevision"), "header preserves catalog revision");
+            SimpleAssert.that(HologramLibraryDownload.taskMatches(7, header), "header belongs to the reader's task");
+
+            HologramLibraryDownload.Assembly assembly = new HologramLibraryDownload.Assembly(header.getInteger("total"));
+            Method sendDownload = HologramServerLibrary.class.getDeclaredMethod("sendDownload", reader.getClass(),
+                long.class);
+            sendDownload.setAccessible(true);
+            long now = System.nanoTime();
+            for (int i = 0; i < 8 && get(reader, "download") != null; i++) {
+                long poll = now + TimeUnit.MILLISECONDS.toNanos(100L * i);
+                runWorker(store, () -> sendDownload.invoke(store, reader, poll));
+            }
+            SimpleAssert.that(capture.replies.size() >= 3, "fixture spans multiple chunks and a completion");
+            for (int i = 0; i < capture.replies.size(); i++) {
+                NBTTagCompound reply = wireReply(capture.replies.get(i));
+                SimpleAssert.that(HologramLibraryDownload.taskMatches(7, reply), "packet belongs to the reader's task");
+                SimpleAssert.eq(header.getString("transfer"), reply.getString("transfer"), "packet belongs to the header");
+                if (i == capture.replies.size() - 1)
+                    SimpleAssert.eq("downloadDone", reply.getString("op"), "only the last packet completes");
+                else {
+                    SimpleAssert.eq("downloadChunk", reply.getString("op"), "payload packets precede completion");
+                    assembly.append(reply.getInteger("index"), reply.getByteArray("data"));
+                }
+            }
+            byte[] bytes = HologramLibraryDownload.decode(assembly.finish(), header.getString("encoding"),
+                header.getInteger("decodedTotal"), header.getString("hash"));
+            HologramBlueprintArtifact.Artifact received = HologramBlueprintArtifact.decode(bytes);
+            var portable = HologramBlueprintCompactCodec.parseStored(received.json, HologramBlueprintArtifact.MAX_JSON_BYTES);
+            SimpleAssert.that(portable.compact() && !portable.root().has("owner") && !portable.root().has("uploadedBy"),
+                "download stays compact and does not carry server catalog ownership");
+            HologramPresets.Preset decoded = HologramBlueprintSharing.decodeStored(received.json);
+            SimpleAssert.eq(source.authorUuid, decoded.authorUuid, "portable author identity is preserved");
+            SimpleAssert.eq(source.authorName, decoded.authorName, "portable author name is preserved");
+            SimpleAssert.eq("minecraft:stone", decoded.cells.get(0).block, "portable document keeps the exact block");
+            java.awt.image.BufferedImage preview = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(received.png));
+            int[] expected = image.getRGB(0, 0, image.getWidth(), image.getHeight(), null, 0, image.getWidth());
+            int[] actual = preview.getRGB(0, 0, preview.getWidth(), preview.getHeight(), null, 0, preview.getWidth());
+            SimpleAssert.that(Arrays.equals(expected, actual), "rebound portable PNG preserves all pixels");
+            SimpleAssert.that(Arrays.equals(storedJson, Files.readAllBytes(json))
+                && Arrays.equals(storedPng, Files.readAllBytes(png)), "public read never rewrites the server's pair");
+            SimpleAssert.eq(0, get(store, "activeDownloads"), "successful delivery releases the transfer");
+            SimpleAssert.eq(0L, get(store, "downloadBytes"), "successful delivery releases the byte reservation");
+            capture.replies.clear();
+            runWorker(store, () -> handle(store, reader, list));
+            SimpleAssert.eq(row, capture.onlyListReply(0, 1, 1, 1).getCompoundTagAt(0),
+                "a public download does not change the reader's catalog identity");
+        } finally {
+            channel.set(null, previous);
+            store.stop();
+            try (java.util.stream.Stream<Path> files = Files.walk(directory)) {
+                for (Path path : (Iterable<Path>) files.sorted(Comparator.reverseOrder())::iterator)
+                    Files.deleteIfExists(path);
+            }
+        }
+    }
+
+    private static NBTTagCompound wireReply(NBTTagCompound reply) {
+        io.netty.buffer.ByteBuf wire = Unpooled.buffer();
+        try {
+            new HologramNetwork.LibraryReply(reply).toBytes(wire);
+            HologramNetwork.LibraryReply incoming = new HologramNetwork.LibraryReply();
+            incoming.fromBytes(wire);
+            return incoming.tag;
+        } finally {
+            wire.release();
+        }
     }
 
     private static void downloadReservations() throws Exception {
@@ -2052,6 +2165,11 @@ public final class HologramLibraryRegression {
             HologramBlueprintArtifact.WIDTH,
             HologramBlueprintArtifact.HEIGHT,
             java.awt.image.BufferedImage.TYPE_INT_RGB);
+        transfer(store, peer, bytes, replace, wrongHash, image);
+    }
+
+    private static void transfer(HologramServerLibrary store, Object peer, byte[] bytes, String replace,
+        boolean wrongHash, java.awt.image.BufferedImage image) throws Exception {
         java.io.ByteArrayOutputStream png = new java.io.ByteArrayOutputStream();
         javax.imageio.ImageIO.write(image, "png", png);
         bytes = HologramBlueprintArtifact.encode(bytes, png.toByteArray());
