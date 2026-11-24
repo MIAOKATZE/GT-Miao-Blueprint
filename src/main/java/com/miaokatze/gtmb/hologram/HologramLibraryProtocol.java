@@ -157,9 +157,13 @@ public final class HologramLibraryProtocol {
             return true;
         }
 
+        public boolean fullySent() {
+            return ready && sent == chunks;
+        }
+
         public boolean complete(NBTTagCompound reply) throws IOException {
             if (!matches(reply)) return false;
-            if (!ready || sent != chunks) throw new IOException("Upload completed before all bytes were sent");
+            if (!fullySent()) throw new IOException("Upload completed before all bytes were sent");
             return true;
         }
     }

@@ -38,7 +38,7 @@ public final class HologramNetwork {
     private static SimpleNetworkWrapper channel;
     private static volatile Consumer<NBTTagCompound> receiver;
     private static volatile Consumer<NBTTagCompound> interactionSender;
-    private static volatile Consumer<NBTTagCompound> libraryReceiver;
+    private static volatile java.util.function.BiConsumer<NBTTagCompound, Object> libraryReceiver;
     private static volatile Consumer<NBTTagCompound> libraryProbeReceiver;
     private static volatile Consumer<NBTTagCompound> cutReceiver;
     private static volatile Consumer<NBTTagCompound> progressReceiver;
@@ -466,7 +466,7 @@ public final class HologramNetwork {
         }
     }
 
-    public static void setLibraryReceiver(Consumer<NBTTagCompound> value) {
+    public static void setLibraryReceiver(java.util.function.BiConsumer<NBTTagCompound, Object> value) {
         libraryReceiver = value;
     }
 
@@ -571,8 +571,8 @@ public final class HologramNetwork {
     public static final class LibraryClientHandler implements IMessageHandler<LibraryReply, IMessage> {
 
         public IMessage onMessage(LibraryReply message, MessageContext context) {
-            Consumer<NBTTagCompound> current = libraryReceiver;
-            if (current != null) current.accept(message.tag);
+            java.util.function.BiConsumer<NBTTagCompound, Object> current = libraryReceiver;
+            if (current != null) current.accept(message.tag, context.netHandler);
             Consumer<NBTTagCompound> probe = libraryProbeReceiver;
             if (probe != null) probe.accept((NBTTagCompound) message.tag.copy());
             return null;

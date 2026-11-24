@@ -35,6 +35,7 @@ public final class HologramLibrarySaveLifecycleRegression {
             encodingFailureAndImmediateRetry();
             timeoutAndHeaderRefusalKeepTheirFailureReason();
             publicDownloadCancelStopsAtLocalHandoff();
+            publicUploadCancelReconcilesCommittedReceipt();
             freshPreviewAndAdmissionOwnTheirIdleBudget();
             exactUiTerminalReleasesSaveButtons();
             cancelledSourceRetainsBaselineOrRecoversOnce();
@@ -761,6 +762,169 @@ public final class HologramLibrarySaveLifecycleRegression {
             channel.set(null, previousChannel);
             singleton.set(null, previousClient);
         }
+    }
+
+    private static void publicUploadCancelReconcilesCommittedReceipt()
+        throws IOException, ReflectiveOperationException {
+        java.nio.file.Path game = java.nio.file.Files.createTempDirectory("gtmb-upload-receipt-");
+        HologramLibraryClient client = client();
+        HologramClientLibrary store = new HologramClientLibrary(game);
+        ThreadPoolExecutor worker = (ThreadPoolExecutor) get(client, "worker");
+        worker.setThreadFactory(task -> null);
+        Field channel = com.miaokatze.gtmb.hologram.HologramNetwork.class.getDeclaredField("channel");
+        channel.setAccessible(true);
+        Object previousChannel = channel.get(null);
+        Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        unsafeField.setAccessible(true);
+        try {
+            PublicDownloadWire wire = (PublicDownloadWire) ((sun.misc.Unsafe) unsafeField.get(null))
+                .allocateInstance(PublicDownloadWire.class);
+            wire.requests = new java.util.ArrayList<>();
+            channel.set(null, wire);
+            Object handler = new Object(), world = new Object();
+            java.util.UUID actor = java.util.UUID.randomUUID();
+            String server = "fixture";
+            set(client, "store", store);
+            set(client, "libraryConnection", handler);
+            set(client, "libraryWorld", world);
+            set(client, "libraryActor", actor);
+            set(client, "connection", server);
+
+            byte[] json = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.recompress(
+                ("{\"schema\":2,\"blueprint\":{\"schema\":2,\"name\":\"Publication receipt\",\"controllerType\":\"area\","
+                    + "\"id\":\"local_22222222-2222-2222-2222-222222222222\","
+                    + "\"authorName\":\"Fixture\",\"authorUuid\":\"33333333-3333-3333-3333-333333333333\",\"createdAt\":1,"
+                    + "\"nativeBlueprint\":{\"formatVersion\":1,\"gtmbVersion\":\"0.3.42\","
+                    + "\"gtnhVersion\":\"unknown\",\"gtnhVersionSource\":\"unavailable\"},"
+                    + "\"cells\":[{\"x\":0,\"y\":0,\"z\":0,\"block\":\"minecraft:stone\","
+                    + "\"item\":\"minecraft:stone\",\"count\":1,\"facing\":-1}]}}")
+                        .getBytes(StandardCharsets.UTF_8),
+                HologramBlueprintArtifact.MAX_JSON_BYTES);
+            java.awt.image.BufferedImage cover = new java.awt.image.BufferedImage(
+                HologramBlueprintArtifact.WIDTH, HologramBlueprintArtifact.HEIGHT, java.awt.image.BufferedImage.TYPE_INT_RGB);
+            java.io.ByteArrayOutputStream png = new java.io.ByteArrayOutputStream();
+            javax.imageio.ImageIO.write(cover, "png", png);
+            String localId = store.save(json, png.toByteArray(), "");
+            byte[] pair = store.publicationArtifact(localId);
+            String other = "local_33333333-3333-3333-3333-333333333333";
+            String unrelatedPublic = "public_aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+            store.uploadedId("other-server", localId, unrelatedPublic);
+            String remoteId = "public_11111111-1111-1111-1111-111111111111";
+            Method receive = HologramLibraryClient.class.getDeclaredMethod(
+                "receivePublicUpload", NBTTagCompound.class, Object.class, long.class);
+            receive.setAccessible(true);
+            Method retry = HologramLibraryClient.class.getDeclaredMethod("allowPublicUploadRetry", long.class);
+            retry.setAccessible(true);
+            Method linked = HologramLibraryClient.class.getDeclaredMethod(
+                "publicUploadLinked", HologramLibraryClient.PublicUpload.class, boolean.class);
+            linked.setAccessible(true);
+
+            NBTTagCompound reply = beginPublicUpload(client, store, pair, handler, world, actor, server, localId, 41, true);
+            reply.setString("id", remoteId);
+            HologramLibraryClient.PublicUpload owned =
+                (HologramLibraryClient.PublicUpload) get(client, "publicUpload");
+            client.cancel();
+            long receivedAt = owned.cancelledAt + 1;
+            SimpleAssert.that(owned.cancelled && get(client, "outgoing") == null && !client.busy()
+                && wire.requests.size() == 1, "UI cancel stops transport and releases the foreground task and pair bytes");
+            NBTTagCompound cancel = wire.requests.remove(0);
+            SimpleAssert.eq(reply.getString("transfer"), cancel.getString("transfer"), "cancel is scoped to its own upload");
+            SimpleAssert.that(!(Boolean) retry.invoke(client, receivedAt) && wire.requests.isEmpty(),
+                "an immediate retry while commit is unresolved cannot publish a duplicate");
+
+            receive.invoke(client, reply, new Object(), receivedAt);
+            for (String field : new String[] { "transfer", "clientTaskToken", "id" }) {
+                NBTTagCompound wrong = (NBTTagCompound) reply.copy();
+                wrong.setString(field, "wrong");
+                receive.invoke(client, wrong, handler, receivedAt);
+            }
+            set(client, "libraryActor", java.util.UUID.randomUUID());
+            receive.invoke(client, reply, handler, receivedAt);
+            set(client, "libraryActor", actor);
+            SimpleAssert.that(worker.getQueue().isEmpty() && owned.committedId == null
+                && store.uploadedId(server, localId).isEmpty(), "wrong context or receipt cannot link an upload");
+
+            set(client, "selectedLocal", other);
+            set(client, "selectedServer", unrelatedPublic);
+            receive.invoke(client, reply, handler, receivedAt);
+            receive.invoke(client, reply, handler, receivedAt);
+            SimpleAssert.that(owned.linking && worker.getQueue().size() == 1 && wire.requests.isEmpty(),
+                "one valid delayed committed receipt queues one link without reviving or refreshing the task");
+            client.cancel();
+            SimpleAssert.eq(1, worker.getQueue().size(), "a later generation change does not discard its validated link");
+            owned.persistLink();
+            linked.invoke(client, owned, true);
+            worker.getQueue().clear();
+            SimpleAssert.eq(remoteId, new HologramClientLibrary(game).uploadedId(server, localId),
+                "after restart the next explicit upload uses the committed server row as its replacement");
+            SimpleAssert.eq(unrelatedPublic, store.uploadedId("other-server", localId), "an unrelated mapping is untouched");
+            SimpleAssert.eq(unrelatedPublic, get(client, "selectedServer"), "a late receipt cannot select a new gallery row");
+            receive.invoke(client, reply, handler, receivedAt);
+            SimpleAssert.that(worker.getQueue().isEmpty(), "a consumed receipt is never replayed");
+
+            NBTTagCompound partial =
+                beginPublicUpload(client, store, pair, handler, world, actor, server, localId, 42, false);
+            partial.setString("id", remoteId);
+            client.cancel();
+            wire.requests.clear();
+            receive.invoke(client, partial, handler, System.nanoTime());
+            SimpleAssert.that(get(client, "publicUpload") == null && worker.getQueue().isEmpty(),
+                "cancel before the final send retires the upload immediately");
+
+            NBTTagCompound expired =
+                beginPublicUpload(client, store, pair, handler, world, actor, server, localId, 43, true);
+            expired.setString("id", remoteId);
+            client.cancel();
+            wire.requests.clear();
+            HologramLibraryClient.PublicUpload old =
+                (HologramLibraryClient.PublicUpload) get(client, "publicUpload");
+            long afterExpiry = old.cancelledAt + HologramLibraryClient.PublicUpload.RECEIPT_NANOS;
+            receive.invoke(client, expired, handler, afterExpiry);
+            SimpleAssert.that(worker.getQueue().isEmpty() && !(Boolean) retry.invoke(client, afterExpiry)
+                && wire.requests.size() == 1 && "list".equals(wire.requests.remove(0).getString("op")),
+                "expiry means unknown, and first retry asks for a fresh list rather than sending upload bytes");
+            SimpleAssert.that(!(Boolean) retry.invoke(client, afterExpiry) && wire.requests.isEmpty(),
+                "unresolved upload cannot bypass the pending gallery refresh");
+            Method regular = HologramLibraryClient.class.getDeclaredMethod("receive", NBTTagCompound.class);
+            regular.setAccessible(true);
+            NBTTagCompound listed = new NBTTagCompound();
+            listed.setString("op", "list");
+            regular.invoke(client, listed);
+            SimpleAssert.that((Boolean) retry.invoke(client, afterExpiry) && wire.requests.isEmpty(),
+                "the next explicit retry after review can proceed, but no automatic upload is sent");
+        } finally {
+            worker.shutdownNow();
+            channel.set(null, previousChannel);
+            try (java.util.stream.Stream<java.nio.file.Path> files = java.nio.file.Files.walk(game)) {
+                for (java.nio.file.Path path : (Iterable<java.nio.file.Path>)
+                    files.sorted(java.util.Comparator.reverseOrder())::iterator) java.nio.file.Files.deleteIfExists(path);
+            }
+        }
+    }
+
+    private static NBTTagCompound beginPublicUpload(HologramLibraryClient client, HologramClientLibrary store,
+        byte[] pair, Object handler, Object world, java.util.UUID actor, String server, String localId, long task,
+        boolean fullySent) throws IOException, ReflectiveOperationException {
+        String transfer = java.util.UUID.randomUUID().toString();
+        var window = new com.miaokatze.gtmb.hologram.HologramLibraryProtocol.UploadWindow(transfer, task, pair.length);
+        NBTTagCompound header = new NBTTagCompound();
+        header.setString("transfer", transfer);
+        header.setLong("clientTaskToken", task);
+        header.setInteger("nextIndex", 0);
+        window.ready(header);
+        if (fullySent) window.sent(0);
+        SimpleAssert.eq(fullySent, window.fullySent(), "compact pair fixture fits one transfer fragment");
+        set(client, "backgroundTaskToken", task);
+        set(client, "outgoingId", transfer);
+        set(client, "outgoing", pair);
+        set(client, "uploadWindow", window);
+        set(client, "publicUpload", new HologramLibraryClient.PublicUpload(store, window, handler, world, actor, server,
+            localId, store.uploadedId(server, localId), HologramBlueprintArtifact.hash(pair)));
+        NBTTagCompound receipt = new NBTTagCompound();
+        receipt.setString("op", "uploaded");
+        receipt.setLong("clientTaskToken", task);
+        receipt.setString("transfer", transfer);
+        return receipt;
     }
 
     private static final class PublicDownloadWire extends cpw.mods.fml.common.network.simpleimpl.SimpleNetworkWrapper {

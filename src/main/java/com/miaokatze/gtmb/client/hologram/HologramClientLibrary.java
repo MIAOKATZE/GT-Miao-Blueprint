@@ -539,6 +539,16 @@ final class HologramClientLibrary {
         writeLinks(links);
     }
 
+    void reconcileUploadedId(String server, String localId, String expected, String publicId) throws IOException {
+        file(localId);
+        java.util.Properties links = links();
+        String key = linkKey(server, localId), current = links.getProperty(key, "");
+        if (publicId.equals(current)) return;
+        if (!expected.equals(current)) throw new IOException("Public upload link changed during publication");
+        links.setProperty(key, publicId);
+        writeLinks(links);
+    }
+
     void forgetUpload(String server, String publicId) throws IOException {
         java.util.Properties links = links();
         String prefix = UUID.nameUUIDFromBytes(server.getBytes(StandardCharsets.UTF_8)) + ".";
