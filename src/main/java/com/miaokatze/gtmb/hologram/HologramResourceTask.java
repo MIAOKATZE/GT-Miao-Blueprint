@@ -22,6 +22,7 @@ final class HologramResourceTask {
 
     private final HologramSession s;
     private final HologramPlanClassifier classifier;
+    private final HologramNativeItemBill nativeItems;
     private final Map<ExactKey, ItemStack> stacks = new LinkedHashMap<>();
     private final Map<ExactKey, Integer> counts = new LinkedHashMap<>();
     private final Map<ExactKey, Long> decorReserved = new HashMap<>();
@@ -40,8 +41,17 @@ final class HologramResourceTask {
     private long checked;
 
     HologramResourceTask(HologramSession s, HologramPlanClassifier classifier) {
+        this(s, classifier, false);
+    }
+
+    HologramResourceTask(HologramSession s, HologramPlanClassifier classifier, boolean observeNativeItems) {
         this.s = s;
         this.classifier = classifier;
+        nativeItems = observeNativeItems ? new HologramNativeItemBill(s) : null;
+    }
+
+    HologramNativeItemBill nativeItemBill() {
+        return done() && nativeItems != null && nativeItems.current(s) ? nativeItems : null;
     }
 
     boolean done() {
@@ -103,6 +113,7 @@ final class HologramResourceTask {
         try {
             advanceChecked();
         } catch (IOException invalid) {
+            if (nativeItems != null) nativeItems.rejectUnsupported();
             if (stage != 1) {
                 s.planRecoveryFits = false;
                 s.blueprintResourceMissing = invalid.getMessage();
@@ -181,7 +192,9 @@ final class HologramResourceTask {
                 Map.Entry<ExactKey, ItemStack> entry = shells.next();
                 int available = HologramMaterialAccess
                     .shellCount(s, entry.getValue(), Math.max(4096, s.capture.cells.size()));
-                s.planMissing += Math.max(0, counts.get(entry.getKey()) - available);
+                int required = counts.get(entry.getKey());
+                s.planMissing += Math.max(0, required - available);
+                if (nativeItems != null) nativeItems.record(entry.getValue(), required, available);
                 checked++;
             } else if (s.virtual && s.virtualPreset != null
                 && s.virtualPreset.schema >= 2
@@ -274,6 +287,7 @@ final class HologramResourceTask {
             }
         } else if (stage == 12) {
             if (cursor == s.capture.cells.size()) {
+                if (nativeItems != null) nativeItems.finish();
                 stage = 13;
                 return;
             }
@@ -336,6 +350,8 @@ final class HologramResourceTask {
         if (HologramSessionPolicy.ignoredPlacementAir(s, c, i)) return;
         if (!HologramSessionPolicy.inScope(s, c, i) || !"pending".equals(c.status)) return;
         ItemStack target = HologramCellPolicy.targetFor(s, c, i);
+        if (nativeItems != null && (target == null || !c.tileNbt.isEmpty() || !c.itemNbt.isEmpty()
+            || c.userPosition || c.attachmentPlacementProof != null)) nativeItems.rejectUnsupported();
         if (s.mode != 2 && s.virtual && s.virtualPreset.schema >= 2 && !classifier.emptyOrdinary(s, c, i)) {
             try {
                 HologramEnergyPayload.Prepared[] prepared = new HologramEnergyPayload.Prepared[1];
@@ -363,6 +379,7 @@ final class HologramResourceTask {
                 if (descriptor == null && !HologramMaterialAccess.freeShell(s, c, target))
                     addShell(HologramEssentia.shellMaterial(target));
                 else if (descriptor != null) {
+                    if (nativeItems != null) nativeItems.rejectUnsupported();
                     HologramDecorMaterials.Quote quote = decorReport.quote(
                         HologramMaterialAccess.payableDecoration(s, c, descriptor),
                         (stack, limit) -> (int) Math.max(
@@ -378,6 +395,7 @@ final class HologramResourceTask {
                     decorReport.commit(quote);
                 }
             } catch (IOException failure) {
+                if (nativeItems != null) nativeItems.rejectUnsupported();
                 s.planRecoveryFits = false;
                 s.blueprintResourceMissing = failure.getMessage();
             }

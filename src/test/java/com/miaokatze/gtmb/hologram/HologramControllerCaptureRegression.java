@@ -864,6 +864,7 @@ public final class HologramControllerCaptureRegression {
             scanScopes(s, energy, muffler);
             explicitNativeOperationOptions(s);
             operationReviews(s, energy, muffler);
+            boundedNativeItemBill(s, energy, muffler);
         } finally {
             HologramWorkspace.clear();
             if (source != null) source.close();
@@ -874,6 +875,64 @@ public final class HologramControllerCaptureRegression {
             GregTechAPI.METATILEENTITIES[energyId] = previousEnergy;
             GregTechAPI.METATILEENTITIES[mufflerId] = previousMuffler;
         }
+    }
+
+    private static void boundedNativeItemBill(HologramSession s, ItemStack energy, ItemStack muffler) {
+        s.mode = 0;
+        s.job = 0;
+        s.materialSettings.me = false;
+        s.materialSettings.containers = false;
+        s.materialSettings.main = true;
+        s.materialContext = null;
+        var visibleQuote = s.materialQuote;
+        ItemStack stock = s.player.inventory.mainInventory[1];
+        stock.stackSize = 1;
+        HologramNativeItemBill insufficient = finishNativeItemBill(s);
+        SimpleAssert.that(insufficient != null && insufficient.current(s) && !insufficient.observedStockSufficient(s) && insufficient.missing() == 1
+            && s.planMissing == 1 && insufficient.rows().size() == 2,
+            "one-short native item result is retained as a refusal, never partial authority");
+        for (HologramNativeItemBill.Row row : insufficient.rows()) {
+            if (HologramValues.same(row.item(), energy)) {
+                SimpleAssert.that(row.required == 2 && row.available == 1, "two GT energy hatches use one exact row");
+                ItemStack copy = row.item();
+                copy.setItemDamage(0);
+                SimpleAssert.that(HologramValues.same(row.item(), energy),
+                    "plan-owned row identity cannot be mutated by the consumer");
+            } else SimpleAssert.that(HologramValues.same(row.item(), muffler)
+                && row.required == 1 && row.available == 1, "distinct GT muffler identity and demand");
+        }
+        SimpleAssert.that(s.job == 0 && stock.stackSize == 1 && s.materialQuote == visibleQuote,
+            "capturing item demand does not publish a quote, start a job, or debit inventory");
+        stock.stackSize = 2;
+        HologramNativeItemBill stocked = finishNativeItemBill(s);
+        SimpleAssert.that(stocked != null && stocked.observedStockSufficient(s) && stocked.missing() == 0
+            && s.planMissing == 0 && !insufficient.current(s) && stock.stackSize == 2,
+            "fresh exact stock clears shortage and retires previous plan receipt without debit");
+        s.scope = 1;
+        SimpleAssert.that(!stocked.current(s), "proof does not authorize a different cell scope");
+        s.scope = 0;
+        s.jobVoucherRequested = true;
+        SimpleAssert.eq(null, finishNativeItemBill(s), "an explicit voucher requires the existing full payment path");
+        s.jobVoucherRequested = false;
+        s.materialSettings.me = true;
+        s.materialContext = null;
+        var unsupported = new HologramNativeItemBill(s);
+        unsupported.finish();
+        SimpleAssert.that(!unsupported.observedStockSufficient(s),
+            "ME-backed settings cannot borrow the ordinary proof");
+    }
+
+    private static HologramNativeItemBill finishNativeItemBill(HologramSession s) {
+        HologramResourcePlanner.PlanTask task = HologramResourcePlanner.beginCapturePlan(s, true);
+        SimpleAssert.eq(null, task.nativeItemBill(), "no partially checked bill leaks from native plan");
+        int ticks = 0;
+        while (!task.step(1, Long.MAX_VALUE)) {
+            SimpleAssert.that(task.lastWork() <= 1 && task.nativeItemBill() == null,
+                "native bill follows one-unit plan slices and remains private until completion");
+            if (++ticks > 1000) throw new AssertionError("bounded native planner did not finish");
+        }
+        SimpleAssert.that(ticks > 3 && task.lastWork() <= 1, "includes exact-stock observations in existing budget");
+        return task.nativeItemBill();
     }
 
     private static NBTTagCompound presetAction(HologramSession s, String operation) {
