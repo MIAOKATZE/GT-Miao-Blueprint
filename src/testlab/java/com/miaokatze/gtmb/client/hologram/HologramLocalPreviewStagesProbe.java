@@ -1268,7 +1268,8 @@ final class HologramLocalPreviewStagesProbe {
             mui.getContext().updateState(point[0], point[1], 0);
             mui.onFrameUpdate();
             var panel = mui.getPanelManager().getOpenPanels().stream()
-                .filter(p -> "gtmb_local_material_review".equals(p.getName())).findFirst().orElseThrow();
+                .filter(p -> "gtmb_local_material_review".equals(p.getName())).findFirst()
+                .orElseThrow(() -> new IllegalStateException("Missing owned local material review panel"));
             var buttons = panel.getChildren().stream()
                 .filter(com.cleanroommc.modularui.widgets.ButtonWidget.class::isInstance)
                 .collect(java.util.stream.Collectors.toList());
