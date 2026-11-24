@@ -385,6 +385,14 @@ final class HologramActionDispatcher {
             HologramSnapshots.send(s);
             return;
         }
+        if (operationPreflight && action.hasKey("nativeOperationOpenId")) {
+            if (s.job != 1 && s.job != 2 && validNativeOperationOptions(s, action)) {
+                HologramSession bound = s;
+                HologramStructureProjection.requestOperationReview(bound, () -> configure(bound, action, true));
+            } else s.status = "原生操作目标或参数已变化，请重新打开控制器";
+            HologramSnapshots.send(s);
+            return;
+        }
         if (s.job != 1 && s.job != 2
             && !"selectStructure".equals(op)
             && !"configure".equals(op)
@@ -789,8 +797,30 @@ final class HologramActionDispatcher {
             && HologramValues.same(ItemStack.loadItemStackFromNBT(action.getCompoundTag("expectedSample")), actual);
     }
 
+    private static boolean validNativeOperationOptions(HologramSession s, NBTTagCompound action) {
+        if (!action.getBoolean("operationPreflight") || !action.hasKey("nativeOperationOpenId", 4)
+            || s.controllerOpenId <= 0 || action.getLong("nativeOperationOpenId") != s.controllerOpenId
+            || !action.hasKey("mode", 3) || action.getInteger("mode") < 1 || action.getInteger("mode") > 2
+            || !action.hasKey("main", 3) || !action.hasKey("channels", 10) || !action.hasKey("noHatches", 1)
+            || !action.hasKey("facing", 3) || !action.hasKey("scope", 3) || !action.hasKey("layer", 3)
+            || !action.hasKey("selected", 3) || !action.hasKey("selectedIndices", 11)
+            || action.hasKey("hatchProfile") || action.hasKey("applyHatchPreset")
+            || !HologramEditorWorkspaceRegistry.physicalProjection(s) || s.capture == null) return false;
+        int max = s.capture.cells.size(), selected = action.getInteger("selected");
+        int[] indices = action.getIntArray("selectedIndices");
+        if (selected < -1 || selected >= max || indices.length > max
+            || action.getInteger("scope") >= 2 && selected < 0 && indices.length == 0
+            || action.getInteger("scope") == 3 && selected < 0) return false;
+        for (int index : indices) if (index < 0 || index >= max) return false;
+        return true;
+    }
+
     /** Selection and scope changes refresh the diff without redistributing existing automatic targets. */
     static boolean configure(HologramSession s, NBTTagCompound action) {
+        return configure(s, action, false);
+    }
+
+    private static boolean configure(HologramSession s, NBTTagCompound action, boolean operationPreflight) {
         String activeStructure = s.virtual ? s.blueprintActiveStructure : s.areaStructureId;
         if (action.hasKey("structureId", 8) && !activeStructure.equals(action.getString("structureId"))) {
             s.status = "结构选择已变化，请重新打开参数面板";
@@ -901,6 +931,7 @@ final class HologramActionDispatcher {
             for (int index : action.getIntArray("selectedIndices"))
                 if (s.capture != null && index >= 0 && index < s.capture.cells.size()) s.selectedIndices.add(index);
         }
+        if (operationPreflight) return true; // The native operation review recaptures once with these settings.
         if (geometryChanged || s.capturePending) HologramBuildPreparation.scan(s);
         else {
             s.job = 0;
