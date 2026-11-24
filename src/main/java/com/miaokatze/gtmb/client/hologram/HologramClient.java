@@ -2131,7 +2131,13 @@ public final class HologramClient {
                         mc.thePlayer.addChatMessage(new net.minecraft.util.ChatComponentText(nbt.getString("status")));
                 }
             }
-            if (controllerRetired) HologramUiMemory.forget(cancelled);
+            Minecraft mc = Minecraft.getMinecraft();
+            if (mc.currentScreen instanceof HologramScreen screen && !screen.ui.tutorial.active()
+                && HologramPlacementReviewContext.cancelledExecutionView(nbt, screen.ui.session.state())) {
+                // The accepted ghost was handed off; this retired execution has no live editor to keep.
+                mc.displayGuiScreen(null);
+                HologramUiMemory.forget(cancelled);
+            } else if (controllerRetired) HologramUiMemory.forget(cancelled);
             return;
         }
         if (hideControllerSnapshot(nbt)) return;

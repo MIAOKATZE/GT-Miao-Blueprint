@@ -45,6 +45,37 @@ public final class HologramPlacementReviewContextRegression {
             "a dismissed screen's presentation context cannot reopen from background updates");
     }
 
+    /** The real server action and its terminal DTO feed the same ownership check as the foreground callback. */
+    public static void executionRetirement(NBTTagCompound displayed, NBTTagCompound terminal) {
+        HologramState original = new HologramState(displayed);
+        SimpleAssert.that(HologramPlacementReviewContext.cancelledExecutionView(terminal, original),
+            "Back retires the exact displayed server execution instead of stranding a pending library drawer");
+        NBTTagCompound replacement = (NBTTagCompound) displayed.copy();
+        replacement.setString("executionRequestId", "new-execution");
+        SimpleAssert.that(!HologramPlacementReviewContext.cancelledExecutionView(terminal, new HologramState(replacement)),
+            "a late retirement cannot dismiss a replacement request");
+        replacement = (NBTTagCompound) displayed.copy();
+        replacement.setString("session", "new-workspace");
+        SimpleAssert.that(!HologramPlacementReviewContext.cancelledExecutionView(terminal, new HologramState(replacement)),
+            "a late retirement cannot dismiss another session even with the request copied");
+        replacement = (NBTTagCompound) displayed.copy();
+        replacement.removeTag("executionRequestId");
+        SimpleAssert.that(!HologramPlacementReviewContext.cancelledExecutionView(terminal, new HologramState(replacement)),
+            "ordinary library and preview screens have no execution to retire");
+        NBTTagCompound other = (NBTTagCompound) terminal.copy();
+        other.setString("generation", "other-generation");
+        SimpleAssert.that(!HologramPlacementReviewContext.cancelledExecutionView(other, original),
+            "an inconsistent terminal generation does not dismiss the foreground");
+        other = (NBTTagCompound) terminal.copy();
+        other.removeTag("executionRequestId");
+        SimpleAssert.that(!HologramPlacementReviewContext.cancelledExecutionView(other, original),
+            "legacy session-only cancellations never acquire authority over a foreground execution");
+        other = (NBTTagCompound) terminal.copy();
+        other.removeTag("cancelled");
+        SimpleAssert.that(!HologramPlacementReviewContext.cancelledExecutionView(other, original),
+            "a nonterminal result does not dismiss a matching review");
+    }
+
     private static void terminalWorkspaceReopening() {
         for (int job : new int[] { 3, 4, 5 }) {
             NBTTagCompound complete = placement(job);

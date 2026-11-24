@@ -13,6 +13,16 @@ final class HologramPlacementReviewContext {
     private String session = "";
     private long nonce;
 
+    /** A terminal execution owns only the screen still displaying that exact server request. */
+    static boolean cancelledExecutionView(NBTTagCompound terminal, HologramState foreground) {
+        if (foreground == null || !terminal.getBoolean("cancelled")) return false;
+        String request = terminal.getString("executionRequestId");
+        return !request.isEmpty() && !foreground.session.isEmpty()
+            && foreground.session.equals(terminal.getString("session"))
+            && foreground.session.equals(terminal.getString("generation"))
+            && request.equals(foreground.data.getString("executionRequestId"));
+    }
+
     static boolean returnToWorld(NBTTagCompound state) {
         // Terminal jobs keep their placement flags for results; they no longer own world-preview navigation.
         return state.getBoolean("virtual") && state.getBoolean("virtualPlacement")

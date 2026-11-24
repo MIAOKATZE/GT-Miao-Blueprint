@@ -903,15 +903,19 @@ final class HologramSnapshots {
 
     private static void sendComplete(HologramSession s) {
         if (s.cancelled) {
-            NBTTagCompound cancelled = new NBTTagCompound();
-            cancelled.setString("session", s.id);
-            cancelled.setString("generation", s.id);
-            cancelled.setBoolean("cancelled", true);
-            HologramWorkspace.snapshotSink()
-                .send(s.player, cancelled);
+            HologramWorkspace.snapshotSink().send(s.player, cancellation(s));
             return;
         }
         HologramSnapshotPreparation.start(s);
+    }
+
+    static NBTTagCompound cancellation(HologramSession s) {
+        NBTTagCompound terminal = new NBTTagCompound();
+        terminal.setString("session", s.id);
+        terminal.setString("generation", s.id);
+        terminal.setBoolean("cancelled", true);
+        if (!s.executionRequestId.isEmpty()) terminal.setString("executionRequestId", s.executionRequestId);
+        return terminal;
     }
 
     private static void writeOperationReview(HologramSession s, NBTTagCompound state) {
