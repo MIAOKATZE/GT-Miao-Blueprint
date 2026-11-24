@@ -731,7 +731,7 @@ final class HologramEditorShell {
         Supplier<String> tooltip, boolean iconOnly, java.util.function.IntConsumer dispatch) {
         boolean primary = id == 140 || id == 141 || id == 210 || id == 224 || id == 54;
         Runnable invoke = () -> ui.host.parent()
-            .deferAction(() -> {
+            .deferNativeCommand(() -> {
                 if (!enabled.getAsBoolean()) return;
                 try (HologramMuiCanvasScreen.FieldGraph ignored = ui.host.parent()
                     .fieldGraph(ui)) {

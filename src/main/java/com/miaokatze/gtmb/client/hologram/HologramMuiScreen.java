@@ -80,6 +80,14 @@ abstract class HologramMuiScreen extends GuiScreenWrapper {
         deferredAction.offer(guardDeferredAction(action));
     }
 
+    final void deferNativeCommand(Runnable action) {
+        deferredAction.offerNativeCommand(guardDeferredAction(action));
+    }
+
+    final void deferEscapeAction(Runnable action) {
+        deferredAction.offerEscape(guardDeferredAction(action));
+    }
+
     /** Return whether this tick accepted the intent, so a playback producer can retry without getting stuck. */
     final boolean tryDeferAction(Runnable action) {
         return deferredAction.tryOffer(guardDeferredAction(action));
