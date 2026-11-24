@@ -362,6 +362,7 @@ final class HologramControllerCapture {
             return;
         }
         s.captureWork = null;
+        s.nativeReadyBill = work.planner == null ? null : work.planner.nativeItemBill();
         s.status = s.capture.incomplete ? "结构采集不完整，高级施工已阻止"
             : s.operationReviewSequence == s.uiSequence ? "施工计划已准备，请核对材料与位置后确认施工" : "预览已采集；未知元素及机器部件保持保护";
         scheduleCaptureRetry(s);
@@ -515,7 +516,9 @@ final class HologramControllerCapture {
                         cell.excluded = edit.getValue().excluded;
                     }
                 }
-                planner = HologramResourcePlanner.beginCapturePlan(s);
+                planner = HologramResourcePlanner.beginCapturePlan(
+                    s,
+                    HologramNativeReadyPlacement.enabled() && s.capture.readyPlacementSource(s));
                 stage = 6;
             }
         }

@@ -32,7 +32,7 @@ final class HologramPlacementAdmissionSweep {
             this.clock = clock;
         }
 
-        private boolean take() {
+        boolean take() {
             if (remaining == 0 || clock.getAsLong() >= deadline) return false;
             remaining--;
             return true;

@@ -1518,7 +1518,13 @@ public final class HologramNetwork {
             return;
         }
         if ("cancelProjectedPlacement".equals(action)) {
-            HologramProjectedPlacementService.cancel(player, tag.getString("placementRequestId"));
+            String requestId = tag.getString("placementRequestId");
+            if (!HologramNativeReadyPlacement.cancel(player, requestId))
+                HologramProjectedPlacementService.cancel(player, requestId);
+            return;
+        }
+        if ("useBlock".equals(action) && tag.hasKey(HologramNativeReadyPlacement.FLAG)) {
+            HologramNativeReadyPlacement.receive(player, tag);
             return;
         }
         if (HologramDemolition.active(player) && !action.isEmpty()) {

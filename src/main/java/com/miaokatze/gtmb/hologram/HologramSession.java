@@ -35,6 +35,8 @@ final class HologramSession {
     String executionRequestId = "";
     final Map<String, NBTTagCompound> executionNetworks = new LinkedHashMap<>();
     HologramExecutionReview.Start executionStart;
+    HologramNativeReadyPlacement nativeReadyPlacement;
+    HologramNativeItemBill nativeReadyBill;
 
     final EntityPlayerMP player;
     final World libraryWorld;
@@ -198,7 +200,7 @@ final class HologramSession {
     final HologramDeclarationCollector declarations = new HologramDeclarationCollector();
     final IdentityHashMap<IStructureElement<?>, List<IStructureElement<?>>> hatchParts = new IdentityHashMap<>();
     final IdentityHashMap<IStructureElement<?>, Map<gregtech.api.interfaces.IHatchElement<?>, Integer>> hatchRequirements = new IdentityHashMap<>();
-    final List<Integer> work = new ArrayList<>();
+    List<Integer> work = new ArrayList<>();
     final List<ItemStack> recovered = new ArrayList<>();
     final List<Integer> ackIndices = new ArrayList<>(), ackSuccesses = new ArrayList<>();
     final HologramJobPublication jobPublication = new HologramJobPublication();

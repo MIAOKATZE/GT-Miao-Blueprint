@@ -114,6 +114,7 @@ final class HologramResourcePlanner {
     }
 
     private static void resetPlan(HologramSession s, boolean verifyReplacement) {
+        s.nativeReadyBill = null;
         s.ae.invalidate();
         s.replacementAuthorized = false;
         s.replacementReady = verifyReplacement && !HologramSessionPolicy.authoring(s)

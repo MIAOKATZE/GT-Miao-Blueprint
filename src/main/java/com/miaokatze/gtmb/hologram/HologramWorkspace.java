@@ -37,6 +37,7 @@ final class HologramWorkspace {
             HologramNetwork.sendControllerProjectionRetired(projection, "");
         }
         if (previous != null && previous != session) {
+            HologramNativeReadyPlacement.cancel(previous);
             if (previous.currentPlacementTask != null) previous.currentPlacementTask.cancel();
             previous.presentationTransition = null;
             HologramDeferredPlanRefresh.cancel(previous);
@@ -58,6 +59,7 @@ final class HologramWorkspace {
     }
 
     static void retireFieldProjection(HologramSession projection, String reason) {
+        HologramNativeReadyPlacement.cancel(projection);
         HologramAeCraftingOrders.cancelForSession(projection, "现场已失效，AE 缺料订单已取消");
         if (projection.job == 1 || projection.job == 2) {
             projection.job = 4;
@@ -148,6 +150,7 @@ final class HologramWorkspace {
         if (find(origin.player.getUniqueID()) != origin || !presentationAllowed(origin)
             || !origin.id.equals(transition.originId)
             || origin.uiSequence != transition.sequence) return false;
+        HologramNativeReadyPlacement.cancel(origin);
         HologramDeferredPlanRefresh.suspend(origin);
         origin.presentationTransition = null;
         target.uiSequence = transition.sequence;
@@ -300,6 +303,7 @@ final class HologramWorkspace {
             area.cancelImportWork();
         }
         for (HologramSession s : all) {
+            HologramNativeReadyPlacement.cancel(s);
             if (s.currentPlacementTask != null) s.currentPlacementTask.cancel();
             HologramDeferredPlanRefresh.cancel(s);
             HologramSession.cancelCaptureRetry(s);
