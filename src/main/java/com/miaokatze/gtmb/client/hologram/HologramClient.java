@@ -230,7 +230,8 @@ public final class HologramClient {
                         if (nbt.getBoolean("workspaceUiOnly") && nbt.getBoolean("open")
                             && state != null
                             && state.session.equals(nbt.getString("session"))
-                            && state.data.getBoolean("snapshotPending")) {
+                            && (state.data.getBoolean("snapshotPending")
+                                || controllerOpen.answers(nbt, nbt.getLong("controllerOpenId")))) {
                             boolean controller = "controllerStructure".equals(nbt.getString("openPurpose"));
                             if (!controller || !nbt.getBoolean("workspaceCapturePending"))
                                 requestFullSnapshot(state.session, controller ? nbt.getLong("controllerOpenId") : 0);
@@ -2143,7 +2144,11 @@ public final class HologramClient {
         if (hideControllerSnapshot(nbt)) return;
         HologramScreen opening = openingControllerScreen();
         boolean controllerAnswer = opening != null && controllerOpen.answers(nbt, opening.controllerRequest());
-        if (controllerAnswer
+        boolean controllerComplete = controllerAnswer && controllerOpen.completedAnswer(nbt, opening.controllerRequest());
+        boolean sourceSwitch = opening != null && controllerOpen.sourceSwitchRequired(nbt, opening.controllerRequest());
+        if (opening != null && controllerRequest == opening.controllerRequest() && !controllerAnswer && !sourceSwitch)
+            return;
+        if ((controllerAnswer || sourceSwitch)
             && (!opening.controllerOpeningCurrent() || !opening.acceptsControllerTool(nbt.getString("toolId")))) {
             opening.closeControllerOpening();
             HologramBackgroundTasks.hiddenControllerSnapshot(nbt);
@@ -2245,12 +2250,19 @@ public final class HologramClient {
             .suppress(next.session, nbt.getLong("uiSequence"), nbt.getBoolean("open"), nbt.getBoolean("areaImporting")))
             return;
         if (opening != null) {
-            if (!controllerAnswer || nbt.getBoolean("partial")) return;
-            if (next.data.getBoolean("snapshotPending") && "controllerStructure".equals(nbt.getString("openPurpose"))) {
-                controllerOpen.expectLegacyBaseline(nbt);
-                return;
+            if (sourceSwitch) {
+                // Show the previous workspace's discard confirmation; the explicit operation is not transferable.
+                opening.controllerOpened(false);
+                controllerOpen.dismiss(controllerRequest);
+            } else {
+                if (!controllerAnswer || nbt.getBoolean("partial")) return;
+                if (next.data.getBoolean("snapshotPending") && "controllerStructure".equals(nbt.getString("openPurpose"))) {
+                    controllerOpen.expectLegacyBaseline(nbt);
+                    return;
+                }
+                if (!controllerComplete) return;
+                opening.controllerOpened(true);
             }
-            opening.controllerOpened();
             controllerOpen.installed();
         }
         if (openingCutWorkspace) {

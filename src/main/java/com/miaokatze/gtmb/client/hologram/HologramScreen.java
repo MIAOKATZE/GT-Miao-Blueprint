@@ -834,12 +834,13 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
                 .getString("gtitHologramToolId");
     }
 
-    void controllerOpened() {
+    void controllerOpened(boolean continueExplicitOperation) {
         long controllerOpenId = controllerRequest;
         controllerRequest = 0;
         NBTTagCompound operation = explicitControllerOperation;
         explicitControllerOperation = null;
-        if (operation != null) tryDeferAction(() -> reviewExplicitControllerOperation(operation, controllerOpenId));
+        if (continueExplicitOperation && operation != null)
+            tryDeferAction(() -> reviewExplicitControllerOperation(operation, controllerOpenId));
         openingController = null;
         openingConnection = null;
         openingTool = null;
