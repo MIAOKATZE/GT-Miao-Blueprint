@@ -4,6 +4,8 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.io.IOException;
+import java.lang.reflect.Field;
+import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.Collections;
@@ -11,10 +13,16 @@ import java.util.Random;
 import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 
+import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
+import net.minecraft.network.NetHandlerPlayServer;
+import net.minecraft.world.World;
+
+import com.miaokatze.gtmb.hologram.HologramProjectedPlacementGuardTrace.Reason;
+import com.miaokatze.gtmb.testutil.SimpleAssert;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -46,6 +54,7 @@ final class HologramPlacementRequestRegression {
             Arrays.asList(first, second),
             Collections.singletonList(new HologramProjectedPlacement.Need("minecraft:stone", 0, 2)));
         try {
+            serverPreparationToolGuards(plan);
             UUID id = UUID.randomUUID();
             NBTTagCompound tag = HologramPlacementRequest.encode(id, new int[] { 100, 64, 200 }, plan);
             HologramPlacementRequest.Header header = HologramPlacementRequest.header(tag);
@@ -165,6 +174,139 @@ final class HologramPlacementRequestRegression {
             || restored.getInteger("clientSnapshotFlow") != HologramSnapshotFlowControl.VERSION
             || HologramPlacementRequest.decode(HologramPlacementRequest.header(restored), restored, 256).size() != cells)
             throw new AssertionError("The medium streamed placement could not hand off an exact review request");
+    }
+
+    /**
+     * The stock C08 handler can assign ItemStack.copyItemStack to the same held slot. Run the real
+     * upload-current and projected Job guard branches on that detached stack; never instantiate a world write task.
+     */
+    private static void serverPreparationToolGuards(HologramProjectedPlacement.Plan plan) throws IOException {
+        EntityPlayerMP player = null, foreign = null;
+        try {
+            Field access = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+            access.setAccessible(true);
+            sun.misc.Unsafe unsafe = (sun.misc.Unsafe) access.get(null);
+            Class<HologramServiceEditRegression.ReadOnlyWorld> worldType = HologramServiceEditRegression.ReadOnlyWorld.class;
+            var world = (HologramServiceEditRegression.ReadOnlyWorld) unsafe.allocateInstance(worldType);
+            var otherWorld = (HologramServiceEditRegression.ReadOnlyWorld) unsafe.allocateInstance(worldType);
+            Method factory = HologramLibraryServiceRegression.class.getDeclaredMethod(
+                "player", sun.misc.Unsafe.class, worldType, UUID.class, String.class);
+            factory.setAccessible(true);
+            UUID actor = UUID.randomUUID();
+            player = (EntityPlayerMP) factory.invoke(null, unsafe, world, actor, "PreparationToolFixture");
+            foreign = (EntityPlayerMP) factory.invoke(null, unsafe, world, actor, "OtherPreparationFixture");
+            player.posX = .5;
+            player.posY = 64;
+            player.posZ = .5;
+            ItemStack original = player.getHeldItem();
+            String id = UUID.randomUUID().toString();
+            NBTTagCompound identity = new NBTTagCompound();
+            identity.setString(HologramSessionKeys.TOOL_ID, id);
+            identity.setInteger("gtitHologramMain", 1);
+            original.setTagCompound(identity);
+
+            NBTTagCompound tag = HologramPlacementRequest.encode(UUID.randomUUID(), new int[] {0, 64, 0}, plan);
+            var header = HologramPlacementRequest.header(tag);
+            var upload = HologramNetwork.prepareProjectedPlacement(tag, () -> true);
+            Class<?> incomingType = Class.forName(HologramPlacementUpload.class.getName() + "$Incoming");
+            var incomingCtor = incomingType.getDeclaredConstructor(
+                EntityPlayerMP.class, World.class, NetHandlerPlayServer.class, HologramPlacementUpload.Fragment.class);
+            incomingCtor.setAccessible(true);
+            var current = incomingType.getDeclaredMethod("current");
+            current.setAccessible(true);
+            var ownership = incomingType.getDeclaredMethod("ownedBy", EntityPlayerMP.class);
+            ownership.setAccessible(true);
+            Class<?> jobType = Class.forName(HologramProjectedPlacementService.class.getName() + "$Job");
+            var jobCtor = jobType.getDeclaredConstructor(
+                EntityPlayerMP.class, HologramPlacementRequest.Header.class, NBTTagCompound.class);
+            jobCtor.setAccessible(true);
+            var firstRejection = jobType.getDeclaredMethod("firstRejection");
+            firstRejection.setAccessible(true);
+            NetHandlerPlayServer connection = player.playerNetServerHandler;
+            Object incoming = incomingCtor.newInstance(player, world, connection, upload.frame(0));
+            Object job = jobCtor.newInstance(player, header, tag);
+            assertPreparation(current, incoming, firstRejection, job, true, null, "original captured slot");
+            ItemStack detached = ItemStack.copyItemStack(original);
+            SimpleAssert.that(detached != original, "the vanilla use copy changes Java reference");
+            player.inventory.mainInventory[0] = detached;
+            assertPreparation(current, incoming, firstRejection, job, true, null, "exact canonical held copy");
+            SimpleAssert.that(!Boolean.TRUE.equals(ownership.invoke(incoming, foreign)), "same UUID is not the same player");
+
+            player.inventory.mainInventory[1] = detached;
+            player.inventory.currentItem = 1;
+            assertPreparation(current, incoming, firstRejection, job, false, Reason.SLOT_CHANGED, "wrong slot");
+            player.inventory.currentItem = 0;
+            player.worldObj = otherWorld;
+            assertPreparation(current, incoming, firstRejection, job, false, Reason.WORLD_CHANGED, "wrong world");
+            player.worldObj = world;
+            player.posX = 100;
+            SimpleAssert.eq(Reason.ANCHOR_REACH, firstRejection.invoke(job), "copy does not bypass anchor reach");
+            player.posX = .5;
+            world.unloaded = true;
+            SimpleAssert.eq(Reason.ANCHOR_NOT_LOADED, firstRejection.invoke(job), "copy does not bypass loaded anchor");
+            world.unloaded = false;
+            Field sessionsField = HologramWorkspace.class.getDeclaredField("SESSIONS");
+            sessionsField.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            var sessions = (java.util.Map<UUID, HologramSession>) sessionsField.get(null);
+            sessions.put(actor, new HologramSession(player, 0, 64, 0, false, 1));
+            try {
+                assertPreparation(current, incoming, firstRejection, job, false, Reason.WORKSPACE_CHANGED,
+                    "changed workspace");
+            } finally {
+                sessions.remove(actor);
+            }
+            player.playerNetServerHandler = foreign.playerNetServerHandler;
+            SimpleAssert.eq(false, current.invoke(incoming), "another connected handler is not the upload owner");
+            player.playerNetServerHandler = null;
+            assertPreparation(current, incoming, firstRejection, job, false, Reason.CONNECTION_CLOSED, "disconnected");
+            player.playerNetServerHandler = connection;
+            player.capabilities.allowEdit = false;
+            assertPreparation(current, incoming, firstRejection, job, false, Reason.EDIT_DISABLED, "edit permission");
+            player.capabilities.allowEdit = true;
+
+            ItemStack wrongId = detached.copy();
+            wrongId.getTagCompound().setString(HologramSessionKeys.TOOL_ID, UUID.randomUUID().toString());
+            ItemStack changedState = detached.copy();
+            changedState.getTagCompound().setInteger("gtitHologramMain", 2);
+            ItemStack changedCount = detached.copy();
+            changedCount.stackSize++;
+            ItemStack changedDamage = detached.copy();
+            changedDamage.setItemDamage(1);
+            ItemStack wrongItem = new ItemStack(Blocks.stone);
+            wrongItem.setTagCompound((NBTTagCompound) identity.copy());
+            for (ItemStack replaced : Arrays.asList(wrongId, changedState, changedCount, changedDamage, wrongItem)) {
+                player.inventory.mainInventory[0] = replaced;
+                assertPreparation(current, incoming, firstRejection, job, false, Reason.STACK_REPLACED,
+                    "replacement differs in captured identity or tool state");
+            }
+            original.getTagCompound().setInteger("gtitHologramMain", 2);
+            player.inventory.mainInventory[0] = original;
+            assertPreparation(current, incoming, firstRejection, job, true, null, "original ref semantics unchanged");
+            player.inventory.mainInventory[0] = original.copy();
+            assertPreparation(current, incoming, firstRejection, job, false, Reason.STACK_REPLACED,
+                "a detached replacement must match the immutable pre-copy capture");
+
+            ItemStack virgin = new ItemStack(original.getItem());
+            player.inventory.mainInventory[0] = virgin;
+            Object unstampedIncoming = incomingCtor.newInstance(player, world, connection, upload.frame(0));
+            Object unstampedJob = jobCtor.newInstance(player, header, tag);
+            assertPreparation(current, unstampedIncoming, firstRejection, unstampedJob, true, null, "untagged original");
+            player.inventory.mainInventory[0] = virgin.copy();
+            assertPreparation(current, unstampedIncoming, firstRejection, unstampedJob, false, Reason.STACK_REPLACED,
+                "untagged lookalikes receive no replacement authority");
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError("real projected preparation guards", failure);
+        } finally {
+            if (player != null && player.playerNetServerHandler != null) player.playerNetServerHandler.netManager.channel().close();
+            if (foreign != null && foreign.playerNetServerHandler != null) foreign.playerNetServerHandler.netManager.channel().close();
+        }
+    }
+
+    private static void assertPreparation(Method current, Object incoming, Method firstRejection, Object job,
+        boolean accepted, Reason reason, String label) throws ReflectiveOperationException {
+        SimpleAssert.eq(accepted, current.invoke(incoming), "upload preparation: " + label);
+        SimpleAssert.eq(reason, firstRejection.invoke(job), "projected job first rejection: " + label);
     }
 
     private static NBTTagCompound reassemble(HologramPlacementUpload.Prepared prepared) throws IOException {
