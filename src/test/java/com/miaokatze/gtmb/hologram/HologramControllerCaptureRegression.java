@@ -918,7 +918,7 @@ public final class HologramControllerCaptureRegression {
             }
 
             var wrongCell = s.capture.cells.stream().filter(cell -> HologramElementCatalog.nativeAir(cell.element))
-                .findFirst().orElseThrow();
+                .findFirst().orElseThrow(() -> new java.util.NoSuchElementException("No value present"));
             NBTTagCompound wrongHatch = nativeReview(s, 0, 0);
             wrongHatch.setTag(HologramNativeOperationChoices.KEY, nativeHatchChoice(wrongCell, energy, -1));
             HologramActionDispatcher.handle(s.player, wrongHatch);
@@ -1079,7 +1079,7 @@ public final class HologramControllerCaptureRegression {
             System.clearProperty(flag);
             NBTTagCompound off = nativeReadyRequest(s);
             HologramNativeReadyPlacement.receive(s.player, off, receipt);
-            SimpleAssert.that(s.nativeReadyPlacement == null && receipts.equals(java.util.List.of(
+            SimpleAssert.that(s.nativeReadyPlacement == null && receipts.equals(java.util.Collections.singletonList(
                 off.getString("placementRequestId") + ":false")), "default off never queues construction");
 
             System.setProperty(flag, "true");
@@ -1303,7 +1303,8 @@ public final class HologramControllerCaptureRegression {
             invalid.getCompoundTag("channels").setInteger("native_fixture_tier", 4);
             var refused = new java.util.ArrayList<Boolean>();
             HologramNativeCompactStart.receive(player, invalid, (p, request, accepted, reason) -> refused.add(accepted));
-            SimpleAssert.that(refused.equals(java.util.List.of(false)) && HologramWorkspace.find(player.getUniqueID()) == null,
+            SimpleAssert.that(refused.equals(java.util.Collections.singletonList(false))
+                && HologramWorkspace.find(player.getUniqueID()) == null,
                 "server refuses a typed channel outside the declaration domain without touching any workspace");
             HologramSession original = new HologramSession(player, prior.x, prior.y, prior.z, true, prior.side);
             HologramWorkspace.activate(player.getUniqueID(), original);
@@ -1313,7 +1314,7 @@ public final class HologramControllerCaptureRegression {
             other.setString("placementRequestId", cancelId);
             original.job = 1;
             HologramNativeCompactStart.receive(player, other, (p, request, accepted, reason) -> refused.add(accepted));
-            SimpleAssert.that(refused.equals(java.util.List.of(false, false))
+            SimpleAssert.that(refused.equals(java.util.Arrays.asList(false, false))
                 && HologramWorkspace.find(player.getUniqueID()) == original && original.job == 1,
                 "a compact request cannot replace a live busy workspace");
             original.job = 0;
@@ -1321,7 +1322,7 @@ public final class HologramControllerCaptureRegression {
             other.setString("placementRequestId", cancelId);
             HologramNativeCompactStart.receive(player, other, (p, request, accepted, reason) -> refused.add(accepted));
             SimpleAssert.that(HologramNativeCompactStart.cancel(player, cancelId)
-                && refused.equals(java.util.List.of(false, false, false))
+                && refused.equals(java.util.Arrays.asList(false, false, false))
                 && HologramWorkspace.find(player.getUniqueID()) == original && original.editorWorkspaceEpoch == oldEpoch,
                 "cancelling private preparation restores the exact previous workspace and epoch");
             HologramWorkspace.clear();
@@ -1518,7 +1519,8 @@ public final class HologramControllerCaptureRegression {
     }
 
     private static void retainedPhysicalAnchor(HologramSession s) {
-        HologramCapture.Cell anchor = s.capture.cells.stream().filter(cell -> cell.anchor).findFirst().orElseThrow();
+        HologramCapture.Cell anchor = s.capture.cells.stream().filter(cell -> cell.anchor).findFirst()
+            .orElseThrow(() -> new java.util.NoSuchElementException("No value present"));
         SimpleAssert.that(HologramExecutionReview.retainedPhysicalAnchor(s, anchor),
             "only the exact existing physical controller can be retained without adding work");
         for (HologramCapture.Cell cell : s.capture.cells)
