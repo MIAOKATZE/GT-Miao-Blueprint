@@ -242,6 +242,9 @@ public final class HologramRegressionTest {
         cases.put(
             "same_owner_local_editor_resume_reuses_cells_without_retired_metadata",
             com.miaokatze.gtmb.client.hologram.HologramLocalPresentationRegression::run);
+        cases.put(
+            "final_editor_disposal_retires_open_but_preserves_durable_save",
+            com.miaokatze.gtmb.client.hologram.HologramLocalViewDisposalRegression::run);
         cases.put("native_channels_fallback_and_arbitrary_keys", HologramRegressionTest::channels);
         cases.put("unadapted_channels_are_editable_and_reach_native_trigger", HologramRegressionTest::openChannels);
         cases.put("packet_snapshot_roundtrip_keeps_all_channel_values", HologramRegressionTest::packetRoundTrip);

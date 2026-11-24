@@ -1182,9 +1182,20 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         return true;
     }
 
-    private void deferControllerClose() {
+    private void deferControllerClose(boolean escape) {
         HologramClient.controllerOpen.dismiss(controllerRequest);
-        deferAction(this::closeControllerOpening);
+        deferRootBack(escape, this::closeControllerOpening);
+    }
+
+    private void deferRootBack(boolean escape, Runnable action) {
+        if (!escape) {
+            deferAction(action);
+            return;
+        }
+        HologramUiModules inputOwner = ui;
+        deferEscapeAction(() -> {
+            if (ui == inputOwner) action.run();
+        });
     }
 
     private HologramScreen(String topic, boolean replay, Runnable returnToStorage) {
@@ -1340,7 +1351,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
                     !graph.library.localBusy() && graph.session.pendingSequence() < 0
                         && !graph.session.isTutorial()
                         && openedPresentationResources == HologramTextures.resourceGeneration());
-                graph.library.retireLocalResume();
+                graph.library.retireLocalView();
                 graph.shell.close();
                 graph.canvas.layout()
                     .release();
@@ -1553,20 +1564,20 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     @Override
     protected boolean muiKeyBefore(char character, int key) {
-        boolean back = key == org.lwjgl.input.Keyboard.KEY_ESCAPE
-            || key == org.lwjgl.input.Keyboard.KEY_E && !ui.router.textFieldFocused();
+        boolean escape = key == org.lwjgl.input.Keyboard.KEY_ESCAPE;
+        boolean back = escape || key == org.lwjgl.input.Keyboard.KEY_E && !ui.router.textFieldFocused();
         if (controllerRequest > 0) {
-            if (back) deferControllerClose();
+            if (back) deferControllerClose(escape);
             return true;
         }
         if (back && ui.tutorial.active()) {
-            deferAction(ui.tutorial::closeWithoutProgress);
+            deferRootBack(escape, ui.tutorial::closeWithoutProgress);
             return true;
         }
         if (ui.tutorial.blockInput()) return true;
         if (detached) return true;
         if (back && ui.textBoxes.editorOpen()) {
-            deferAction(ui.textBoxes::consumeEditorBack);
+            deferRootBack(escape, ui.textBoxes::consumeEditorBack);
             return true;
         }
         if (key == org.lwjgl.input.Keyboard.KEY_ESCAPE && ui.router.textFieldFocused()) {
@@ -1576,7 +1587,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             return true;
         }
         if (back) {
-            deferAction(ui.router::back);
+            deferRootBack(escape, ui.router::back);
             return true;
         }
         return false;
@@ -1585,7 +1596,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     @Override
     protected boolean muiMouseBefore(int button) {
         if (controllerRequest > 0) {
-            if (ui.shell.controllerOpeningExitHovered(button)) deferControllerClose();
+            if (ui.shell.controllerOpeningExitHovered(button)) deferControllerClose(false);
             return true;
         }
         if (ui.tutorial.blockInput()) return button != 0 || !ui.tutorial.navigationContains(

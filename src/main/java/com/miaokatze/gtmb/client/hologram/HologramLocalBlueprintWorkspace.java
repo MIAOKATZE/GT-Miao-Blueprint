@@ -84,6 +84,7 @@ final class HologramLocalBlueprintWorkspace {
         final PresentationOwner owner;
         final HologramLocalBlueprintDocument draft;
         final HologramPrivateEditPerformance.Request privateEdit;
+        final boolean viewOnly;
         HologramPrivateEditPerformance.Bound privateEditPreparation;
         volatile long revision;
         HologramState.Preparation preparation;
@@ -105,11 +106,12 @@ final class HologramLocalBlueprintWorkspace {
         HologramLocalHistoryTrace historyTrace;
 
         Task(HologramState source, PresentationOwner owner, HologramLocalBlueprintDocument draft,
-            HologramPrivateEditPerformance.Request privateEdit) {
+            HologramPrivateEditPerformance.Request privateEdit, boolean viewOnly) {
             this.source = source;
             this.owner = owner;
             this.draft = draft;
             this.privateEdit = privateEdit;
+            this.viewOnly = viewOnly;
             revision = draft == null ? -1 : draft.revision();
         }
     }
@@ -180,7 +182,7 @@ final class HologramLocalBlueprintWorkspace {
     }
 
     void openCapture(HologramLocalBlueprintDocument document, String notice) {
-        Task current = begin("正在准备本地蓝图");
+        Task current = beginView("正在准备本地蓝图", null);
         if (current != null) work(current, () -> prepareView(current, document, notice));
     }
 
@@ -190,7 +192,7 @@ final class HologramLocalBlueprintWorkspace {
 
     private void resumeCapture(HologramLocalBlueprintDocument document, HologramLocalPresentation remembered,
         boolean retried) {
-        Task task = begin("正在准备本地蓝图");
+        Task task = beginView("正在准备本地蓝图", null);
         if (task == null) return;
         Minecraft client = ui.host.minecraft();
         task.opening = true;
@@ -226,10 +228,10 @@ final class HologramLocalBlueprintWorkspace {
         });
     }
 
-    /** A final root disposal retires this view-only task, not an authored in-flight Save Current. */
-    void retireResume() {
+    /** Final root disposal ends presentation work, not an authored in-flight Save Current. */
+    void retireView() {
         Task current = task;
-        if (current != null && current.resumeDocument != null) task = null;
+        if (current != null && current.viewOnly) task = null;
     }
 
     private void retireStaleView(Task stale) {
@@ -254,7 +256,7 @@ final class HologramLocalBlueprintWorkspace {
     }
 
     void openPublic(String id) {
-        Task current = begin("正在读取服务器蓝图");
+        Task current = beginView("正在读取服务器蓝图", null);
         if (current == null) return;
         current.opening = true;
         HologramLibraryClient.INSTANCE.openPublic(
@@ -349,13 +351,15 @@ final class HologramLocalBlueprintWorkspace {
     }
 
     private void open(FileSource source, String localId, boolean explicitPrivateEdit) {
-        Task current = begin("正在读取客户端蓝图", explicitPrivateEdit ? localId : null);
+        Task current = beginView("正在读取客户端蓝图", explicitPrivateEdit ? localId : null);
         if (current == null) return;
         current.opening = true;
         work(current, () -> prepareOpen(current, source.read(), localId, "已打开客户端蓝图"));
     }
 
     private void prepareOpen(Task current, EditorSource source, String localId, String notice) throws IOException {
+        // A file read already in progress may finish after disposal. Do not then start decoding it.
+        if (retiredView(current)) return;
         var opened = HologramLocalBlueprintDocument.openStoredForEditor(
             source.json(),
             localId,
@@ -989,10 +993,14 @@ final class HologramLocalBlueprintWorkspace {
     }
 
     private Task begin(String message) {
-        return begin(message, null);
+        return begin(message, null, false);
     }
 
-    private Task begin(String message, String explicitPrivateEditId) {
+    private Task beginView(String message, String explicitPrivateEditId) {
+        return begin(message, explicitPrivateEditId, true);
+    }
+
+    private Task begin(String message, String explicitPrivateEditId, boolean viewOnly) {
         if (busy()) return null;
         Minecraft mc = ui.host.minecraft();
         HologramState source = ui.session.state();
@@ -1006,7 +1014,7 @@ final class HologramLocalBlueprintWorkspace {
         var privateEdit = explicitPrivateEditId == null ? null
             : HologramPrivateEditPerformance
                 .capture(explicitPrivateEditId, HologramClient.privateEditPreset(), privateEditRootCurrent(mc));
-        Task current = new Task(source, owner, ui.session.document(), privateEdit);
+        Task current = new Task(source, owner, ui.session.document(), privateEdit, viewOnly);
         current.message = message;
         task = current;
         ui.session.notice(message);
@@ -1124,18 +1132,23 @@ final class HologramLocalBlueprintWorkspace {
         });
     }
 
+    private boolean retiredView(Task candidate) {
+        return candidate.viewOnly && task != candidate;
+    }
+
     private void work(Task current, FileWork operation) {
+        if (retiredView(current)) return; // A late server response must not enqueue an old editor open.
         try {
             IO.execute(() -> {
                 try {
                     if (current(current)) operation.run();
-                    else failed(current, new IOException("蓝图已修改，请重试"));
+                    else if (!retiredView(current)) failed(current, new IOException("蓝图已修改，请重试"));
                 } catch (IOException | RuntimeException failure) {
-                    failed(current, failure);
+                    if (!retiredView(current)) failed(current, failure);
                 }
             });
         } catch (RuntimeException failure) {
-            failed(current, failure);
+            if (!retiredView(current)) failed(current, failure);
         }
     }
 

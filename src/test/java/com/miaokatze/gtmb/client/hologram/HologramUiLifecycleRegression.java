@@ -25,6 +25,7 @@ public final class HologramUiLifecycleRegression {
 
     public static void run() {
         deferredIntent();
+        deferredEscapePriority();
         dismissEmptyNetworkDrawer();
         try {
             libraryKeepsTheFirstHandler();
@@ -96,6 +97,44 @@ public final class HologramUiLifecycleRegression {
             Arrays.asList("confirm", "retry", "player navigation", "animation retry"),
             calls,
             "rejected playback neither replaces player input nor falsely claims to be queued");
+    }
+
+    private static void deferredEscapePriority() {
+        HologramUiDeferredAction queue = new HologramUiDeferredAction();
+        List<String> calls = new ArrayList<>();
+        queue.offerNativeCommand(() -> calls.add("settings launch"));
+        queue.offerEscape(() -> calls.add("escape"));
+        queue.offerEscape(() -> calls.add("repeat"));
+        queue.offerNativeCommand(() -> calls.add("late settings launch"));
+        SimpleAssert.that(calls.isEmpty(), "Escape arbitration never calls a native button or GUI inline");
+        queue.run(true);
+        queue.run(true);
+        SimpleAssert.eq(Arrays.asList("escape"), calls, "Escape supersedes only the unexecuted native command");
+
+        queue.offer(() -> calls.add("accepted internal callback"));
+        queue.offerEscape(() -> {
+            calls.add("route top modal");
+            queue.offer(() -> calls.add("modal's own close"));
+        });
+        queue.run(true);
+        SimpleAssert.eq(Arrays.asList("escape", "route top modal"), calls,
+            "the existing modal owner can defer its close without a stale callback taking the slot");
+        queue.run(true);
+        SimpleAssert.eq(Arrays.asList("escape", "route top modal", "modal's own close"), calls,
+            "modal follow-up does not run inline or dismiss another layer");
+        queue.run(true);
+        SimpleAssert.eq(Arrays.asList("escape", "route top modal", "modal's own close", "accepted internal callback"), calls,
+            "only unrelated already accepted work survives, and runs after dismissal if the screen remains active");
+
+        queue.offer(() -> calls.add("wrong-screen callback"));
+        queue.offerEscape(() -> calls.add("wrong-screen escape"));
+        queue.run(false);
+        queue.run(true);
+        queue.offerEscape(() -> queue.offer(() -> calls.add("closed-modal follow-up")));
+        queue.run(true);
+        queue.clear();
+        queue.run(true);
+        SimpleAssert.eq(4, calls.size(), "replacing or suspending the owning screen retires all intents");
     }
 
     @SuppressWarnings("unchecked")

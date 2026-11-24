@@ -3,10 +3,11 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
-/** One input intent per screen; screen suspension retires it before any later reopen. */
+/** Screen-owned input intents run after MUI input dispatch and retire on suspension. */
 final class HologramUiDeferredAction {
 
-    private Runnable pending;
+    private Runnable pending, escape, escapeFollowup;
+    private boolean pendingNativeCommand, dispatchingEscape;
 
     void offer(Runnable action) {
         tryOffer(action);
@@ -14,18 +15,61 @@ final class HologramUiDeferredAction {
 
     /** A playback producer must keep retrying when a player's input already owns this tick. */
     boolean tryOffer(Runnable action) {
-        if (pending != null) return false;
+        return tryOffer(action, false);
+    }
+
+    void offerNativeCommand(Runnable action) {
+        tryOffer(action, true);
+    }
+
+    private boolean tryOffer(Runnable action, boolean nativeCommand) {
+        if (dispatchingEscape) {
+            // The current modal may itself ask to defer its close; never execute that inline or lose it to
+            // an unrelated already accepted callback parked in the ordinary slot.
+            if (escapeFollowup != null) return false;
+            escapeFollowup = action;
+            return true;
+        }
+        if (pending != null || escape != null || escapeFollowup != null) return false;
         pending = action;
+        pendingNativeCommand = nativeCommand;
         return true;
     }
 
+    void offerEscape(Runnable action) {
+        // A repeat before the visible layer closes is still the same dismissal.
+        if (dispatchingEscape || escape != null || escapeFollowup != null) return;
+        if (pendingNativeCommand) {
+            pending = null;
+            pendingNativeCommand = false;
+        }
+        escape = action;
+    }
+
     void run(boolean active) {
+        if (!active) {
+            clear();
+            return;
+        }
+        if (escape != null || escapeFollowup != null) {
+            Runnable action = escape != null ? escape : escapeFollowup;
+            escape = escapeFollowup = null;
+            dispatchingEscape = true;
+            try {
+                action.run();
+            } finally {
+                dispatchingEscape = false;
+            }
+            return;
+        }
         Runnable action = pending;
         pending = null;
-        if (active && action != null) action.run();
+        pendingNativeCommand = false;
+        if (action != null) action.run();
     }
 
     void clear() {
-        pending = null;
+        pending = escape = escapeFollowup = null;
+        pendingNativeCommand = false;
     }
 }

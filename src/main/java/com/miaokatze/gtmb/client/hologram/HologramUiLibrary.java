@@ -66,8 +66,8 @@ final class HologramUiLibrary {
         localWorkspace.resumeCapture(document, remembered);
     }
 
-    void retireLocalResume() {
-        localWorkspace.retireResume();
+    void retireLocalView() {
+        localWorkspace.retireView();
     }
 
     void tickLocalWorkspace() {
