@@ -38,6 +38,7 @@ public final class HologramRenderingRegression {
         editorDescriptorOwnership();
         worldRegionCandidates();
         worldIndexPublications();
+        localWorldRegionHalo();
         sourceSwitchFence();
         cameraNavigationWhilePreparing();
         orderedPreviewBatches();
@@ -412,6 +413,143 @@ public final class HologramRenderingRegression {
         } finally {
             MiaoVisonLiteRenderer.releaseWorld();
         }
+    }
+
+    static void localWorldRegionHalo() {
+        NBTTagCompound src = new NBTTagCompound();
+        src.setString("session", "local-preview");
+        src.setBoolean("localPreview", true);
+        src.setBoolean("virtual", true);
+        src.setBoolean("virtualPlacement", true);
+        NBTTagList rows = new NBTTagList();
+        rows.appendTag(haloRow(-1, 15, 15, "minecraft:stone")); // visible center at a negative region edge
+        rows.appendTag(haloRow(0, 15, 15, "minecraft:stone")); // material face occlusion across +X
+        rows.appendTag(haloRow(0, 16, 15, "minecraft:stone")); // outline ownership across +X/+Y
+        rows.appendTag(haloRow(0, 16, 16, "minecraft:stone")); // three-axis corner is never consulted
+        rows.appendTag(haloRow(-1, 14, 15, "minecraft:glass")); // not a full opaque material occluder
+        rows.appendTag(haloRow(0, 15, 15, "minecraft:glass")); // union of eligibility, even for duplicate coordinates
+        rows.appendTag(haloRow(1, 15, 15, "minecraft:air")); // a filtered row is not occupancy
+        for (int i = 0; i < 32768; i++) {
+            int x = 256 + ((i >> 12) * 48) + (i & 15);
+            rows.appendTag(haloRow(x, i >> 4 & 15, i >> 8 & 15, "minecraft:stone"));
+        }
+        src.setTag("cells", rows);
+        HologramState state = new HologramState(src);
+        Class<?> renderer = MiaoVisonLiteRenderer.class;
+        try {
+            Field owner = renderer.getDeclaredField("worldState"), layer = renderer.getDeclaredField("worldLayer"),
+                cursor = renderer.getDeclaredField("worldIndex"), mode = renderer.getDeclaredField("localWorldRegions"),
+                groups = renderer.getDeclaredField("worldGroups"), outline = renderer.getDeclaredField("worldOutlineCells"),
+                opaque = renderer.getDeclaredField("worldOccluders");
+            Method position = renderer.getDeclaredMethod("coordinate", int.class, int.class, int.class),
+                index = renderer.getDeclaredMethod("indexWorld", HologramState.class, long.class),
+                seed = renderer.getDeclaredMethod("seedLocalWorldRegions", HologramState.class, int.class),
+                face = renderer.getDeclaredMethod(
+                    "worldFaceVisible", HologramState.Cell.class, HologramTextures.Material.class, int[].class);
+            for (AccessibleObject member : new AccessibleObject[] {
+                owner, layer, cursor, mode, groups, outline, opaque, position, index, seed, face })
+                member.setAccessible(true);
+
+            MiaoVisonLiteRenderer.releaseWorld();
+            owner.set(null, state);
+            layer.setInt(null, Integer.MAX_VALUE);
+            index.invoke(null, state, Long.MAX_VALUE);
+            List<?> oldOrder = new java.util.ArrayList<>(((java.util.Map<?, ?>) groups.get(null)).keySet());
+            Object center = position.invoke(null, -1, 0, 0);
+            Object side = position.invoke(null, 0, 15, 15);
+            Object edge = position.invoke(null, 0, 16, 15);
+            Object corner = position.invoke(null, 0, 16, 16);
+            Object glass = position.invoke(null, -1, 14, 15);
+            Object filtered = position.invoke(null, 1, 15, 15);
+            java.util.Set<?> oldOutline = new java.util.HashSet<>((java.util.Set<?>) outline.get(null));
+            java.util.Set<?> oldOpaque = new java.util.HashSet<>((java.util.Set<?>) opaque.get(null));
+            SimpleAssert.that(oldOpaque.contains(side) && !oldOpaque.contains(glass),
+                "the baseline really distinguishes full opaque stone from glass");
+            HologramTextures.Material cube = new HologramTextures.Material(
+                null, null, Collections.emptyList(), false, false, false, false);
+            Object oldStoneFace = face.invoke(null, state.cells.get(0), cube, new int[] { 1, 0, 0 });
+            Object oldGlassFace = face.invoke(null, state.cells.get(0), cube, new int[] { 0, -1, 0 });
+            SimpleAssert.eq(Boolean.FALSE, oldStoneFace, "the full cross-region neighbor hides its material face");
+            SimpleAssert.eq(Boolean.TRUE, oldGlassFace, "transparent geometry preserves the adjacent material face");
+            int oldEdges = MiaoVisonLiteRenderer.BoundaryNeighborhood.worldEdges(
+                -1, 15, 15, (x, y, z) -> oldOutline.contains(invokePosition(position, x, y, z)));
+
+            MiaoVisonLiteRenderer.releaseWorld();
+            owner.set(null, state);
+            SimpleAssert.eq(Boolean.TRUE, seed.invoke(null, state, Integer.MAX_VALUE), "exact local baseline admitted");
+            mode.setBoolean(null, true);
+            java.util.Map<?, ?> seeded = (java.util.Map<?, ?>) groups.get(null);
+            SimpleAssert.eq(oldOrder, new java.util.ArrayList<>(seeded.keySet()), "original region submission order");
+            Object visible = seeded.get(center);
+            Method ready = renderer.getDeclaredMethod(
+                "readyForWorldGeometry", HologramState.class, visible.getClass(), long.class);
+            ready.setAccessible(true);
+            SimpleAssert.eq(Boolean.FALSE, ready.invoke(null, state, visible, System.nanoTime() - 1),
+                "an expired frame cannot submit an incomplete halo");
+            mode.setBoolean(null, false);
+            SimpleAssert.eq(Boolean.FALSE, ready.invoke(null, state, visible, Long.MAX_VALUE),
+                "the legacy all-index gate cannot draw yet");
+            mode.setBoolean(null, true);
+            SimpleAssert.eq(Boolean.TRUE, ready.invoke(null, state, visible, Long.MAX_VALUE),
+                "the first visible region can enter the unchanged batch compiler");
+            java.util.Set<?> localOutline = (java.util.Set<?>) outline.get(null);
+            java.util.Set<?> localOpaque = (java.util.Set<?>) opaque.get(null);
+            SimpleAssert.eq(0, cursor.getInt(null), "first visible region cannot depend on reading the global cursor");
+            SimpleAssert.eq(4, localOutline.size(), "no distant or triple-axis corner rows before the first group");
+            SimpleAssert.that(localOutline.contains(side) && localOutline.contains(edge) && !localOutline.contains(corner)
+                && !localOutline.contains(filtered) && localOpaque.contains(side) && !localOpaque.contains(glass),
+                "exact cross-region occupancy and opaque decisions, including duplicate/filter/partial cases");
+            int localEdges = MiaoVisonLiteRenderer.BoundaryNeighborhood.worldEdges(
+                -1, 15, 15, (x, y, z) -> localOutline.contains(invokePosition(position, x, y, z)));
+            SimpleAssert.eq(oldEdges, localEdges, "cross-region outline edge ownership is identical");
+            SimpleAssert.eq(oldStoneFace, face.invoke(null, state.cells.get(0), cube, new int[] { 1, 0, 0 }),
+                "material hiding across the negative region edge is identical");
+            SimpleAssert.eq(oldGlassFace, face.invoke(null, state.cells.get(0), cube, new int[] { 0, -1, 0 }),
+                "nonopaque neighbor draws the same material face");
+
+            NBTTagCompound delta = new NBTTagCompound();
+            delta.setBoolean("partial", true);
+            delta.setString("session", state.session);
+            delta.setLong("baseRevision", 0);
+            delta.setLong("planRevision", 1);
+            delta.setInteger("cellCount", state.cells.size());
+            HologramState next = HologramState.apply(state, delta);
+            HologramRenderer.snapshotChanged(state, next);
+            SimpleAssert.that(!mode.getBoolean(null) && ((java.util.Map<?, ?>) groups.get(null)).isEmpty(),
+                "a received replacement can never inherit a partial local index");
+            SimpleAssert.eq(Boolean.FALSE, seed.invoke(null, state, 15), "explicit layers use the existing path");
+            HologramNativeRenderRegistry.Adapter external = block -> false;
+            HologramNativeRenderRegistry.register(external);
+            try {
+                SimpleAssert.eq(Boolean.FALSE, seed.invoke(null, state, Integer.MAX_VALUE),
+                    "a registered extension keeps the established path");
+            } finally {
+                HologramNativeRenderRegistry.unregister(external);
+            }
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError(failure);
+        } finally {
+            MiaoVisonLiteRenderer.releaseWorld();
+        }
+    }
+
+    private static Object invokePosition(Method position, int x, int y, int z) {
+        try {
+            return position.invoke(null, x, y, z);
+        } catch (ReflectiveOperationException failure) {
+            throw new AssertionError(failure);
+        }
+    }
+
+    private static NBTTagCompound haloRow(int x, int y, int z, String want) {
+        NBTTagCompound row = new NBTTagCompound();
+        row.setInteger("x", x);
+        row.setInteger("y", y);
+        row.setInteger("z", z);
+        row.setInteger("dy", y);
+        row.setString("id", "minecraft:air");
+        row.setString("wantId", want);
+        return row;
     }
 
     private static void worldRegionCandidates() {

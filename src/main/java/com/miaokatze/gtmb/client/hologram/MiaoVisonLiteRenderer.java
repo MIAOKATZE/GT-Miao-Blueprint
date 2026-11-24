@@ -173,6 +173,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     private static int worldLayer = Integer.MAX_VALUE;
     private static final long WORLD_BUILD_NANOS = 3_000_000L;
     private static final int WORLD_MESH_BATCH = 256;
+    private static final int LOCAL_WORLD_MIN_CELLS = 32_768, LOCAL_WORLD_MAX_REGIONS = 1024;
     private static final MiaoVisonLiteSession<Coordinate, WorldGroup> WORLD_SESSION = new MiaoVisonLiteSession<>();
     private static final Map<Coordinate, WorldGroup> worldGroups = WORLD_SESSION.regions();
     private static final MiaoVisonLiteSpatialIndex<WorldGroup> worldSpatialIndex = new MiaoVisonLiteSpatialIndex<>(16);
@@ -182,6 +183,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     private static final Set<Coordinate> worldOccluders = new HashSet<>();
     private static final Set<Coordinate> worldOutlineCells = new HashSet<>();
     private static int worldIndex;
+    private static boolean localWorldRegions;
     private HologramState boundsState;
     private double boundsX, boundsY, boundsZ, boundsExtent;
     int[] moveOffset = new int[3];
@@ -280,7 +282,10 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     static void worldSnapshotChanged(HologramState previous, HologramState next, Set<HologramRegionCache.Key> dirty,
         HologramPreviewAssets assets) {
         if (worldState == previous) {
-            if (worldIndex != previous.cells.size()) {
+            if (localWorldRegions) {
+                // World deltas still use the established full-index path.
+                clearWorldGroups();
+            } else if (worldIndex != previous.cells.size()) {
                 // A metadata-only publication shares the unfinished occupancy index, including its cursor.
                 if (next.changedIndices.length != 0 || !next.changedPreviousCells.isEmpty()) clearWorldGroups();
             } else {
@@ -2665,13 +2670,18 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             clearWorldGroups();
             worldState = state;
             worldLayer = projectionLayer;
+            localWorldRegions = seedLocalWorldRegions(state, projectionLayer);
             lastWorldGeometry = lastWorldGTGeometry = lastWorldFallback = lastWorldMatched = lastWorldGhosts = 0;
         }
+        if (localWorldRegions && HologramNativeRenderRegistry.hasCommunityAdapters()) {
+            clearWorldGroups();
+            HologramPreviewAssets.active().clear();
+            HologramTextures.begin(state);
+        }
         HologramBlockRender.beginViewport(state);
-        // Indexing and list compilation share a small frame budget. No structure coordinates
-        // are discarded; distant groups remain cached and are built when the player approaches.
+        // Indexing and list compilation share the original per-frame budget.
         long deadline = System.nanoTime() + WORLD_BUILD_NANOS;
-        indexWorld(state, deadline);
+        if (!localWorldRegions) indexWorld(state, deadline);
         int[] anchor = state.data.getBoolean("virtual") && state.data.getBoolean("moving")
             ? HologramClient.movingAnchor(state)
             : null;
@@ -2733,8 +2743,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                     || !frustum.isBoundingBoxInFrustum(AxisAlignedBB.getBoundingBox(gx, gy, gz, ex, ey, ez))) continue;
                 if (group.directGeometry != null && !group.directGeometry.belongsTo(meshFrame))
                     invalidateWorldGroup(group);
-                // Finish occupancy first so faces shared by different groups stay hidden.
-                if (worldIndex == state.cells.size()) {
+                if (readyForWorldGeometry(state, group, deadline)) {
                     while (group.built < group.cells.size() && System.nanoTime() < deadline) {
                         if (!compileWorldGroup(group, state.data.getInteger("mode") == 2, meshFrame)) break;
                     }
@@ -2809,6 +2818,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         worldOccluders.clear();
         worldOutlineCells.clear();
         worldIndex = 0;
+        localWorldRegions = false;
     }
 
     /** Cached geometry calls this tiny list, so a local lock changes color without rebuilding the blueprint. */
@@ -2834,6 +2844,10 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     /** Rebuild only affected cached groups; visual receipts never replace snapshot cells. */
     static void jobVisualChanged(HologramState state, int[] indices) {
         if (worldState != state || indices.length == 0) return;
+        if (localWorldRegions) {
+            clearWorldGroups();
+            return;
+        }
         Set<Coordinate> touched = new HashSet<>();
         for (int index : indices) {
             HologramState.Cell cell = state.cells.get(index);
@@ -2879,14 +2893,63 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             indexWorldCell(state, state.cells.get(worldIndex++));
     }
 
+    private static boolean includedWorldCell(HologramState state, HologramState.Cell cell, int layer) {
+        return !HologramJobVisuals.completed(state, cell)
+            && (cell.anchor || layer == Integer.MAX_VALUE || cell.dy == layer)
+            && (cell.anchor || !cell.id.equals("minecraft:air") || !cell.wantId.equals("minecraft:air")
+                || cell.role.contains("interface"));
+    }
+
+    /** Seed the small authoritative region directory, not the contents of all regions. */
+    private static boolean seedLocalWorldRegions(HologramState state, int layer) {
+        if (layer != Integer.MAX_VALUE || !state.completeBaseline() || state.data.getBoolean("displayPartial")
+            || state.topologyChanged || state.changedIndices.length != 0 || !state.changedPreviousCells.isEmpty()
+            || state.cells.size() < LOCAL_WORLD_MIN_CELLS || state.regions.regions.size() > LOCAL_WORLD_MAX_REGIONS
+            || !"local-preview".equals(state.session) || !state.data.getBoolean("localPreview")
+            || !state.data.getBoolean("virtual") || !state.data.getBoolean("virtualPlacement")
+            || state.data.getInteger("mode") == 2 || HologramNativeRenderRegistry.hasCommunityAdapters()) return false;
+        // The old group order was the order of each group's first eligible cell. If a region starts with
+        // a filtered row its directory order is not proof of that order; retain the established path.
+        int firstOrdinal = -1;
+        for (List<HologramState.Cell> region : state.regions.regions.values()) {
+            if (region.isEmpty()) return false;
+            HologramState.Cell first = region.get(0);
+            if (first.index <= firstOrdinal || state.cells.get(first.index) != first
+                || !includedWorldCell(state, first, layer)) return false;
+            firstOrdinal = first.index;
+        }
+        for (Map.Entry<HologramRegionCache.Key, List<HologramState.Cell>> entry : state.regions.regions.entrySet()) {
+            HologramRegionCache.Key key = entry.getKey();
+            WorldGroup group = new WorldGroup(key.x << 4, key.y << 4, key.z << 4);
+            group.localSource = entry.getValue();
+            worldGroups.put(coordinate(key.x, key.y, key.z), group);
+            worldSpatialIndex.add(group.x, group.y, group.z, group);
+        }
+        return true;
+    }
+
+    private static boolean readyForWorldGeometry(HologramState state, WorldGroup visible, long deadline) {
+        if (!localWorldRegions) return worldIndex == state.cells.size();
+        if (visible.localHaloReady) return true;
+        // Outline edges read at most two adjacent axes; material faces read one. For retained native
+        // geometry, HologramBlockRender still has the full authoritative snapshot as its access.
+        int gx = visible.x >> 4, gy = visible.y >> 4, gz = visible.z >> 4;
+        for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++) {
+            if (dx != 0 && dy != 0 && dz != 0) continue;
+            WorldGroup region = worldGroups.get(coordinate(gx + dx, gy + dy, gz + dz));
+            if (region == null) continue; // Absent in the complete source directory, not merely unindexed.
+            while (region.localCursor < region.localSource.size()) {
+                if (System.nanoTime() >= deadline) return false;
+                HologramState.Cell cell = region.localSource.get(region.localCursor++);
+                if (includedWorldCell(state, cell, worldLayer)) indexWorldCell(state, cell, region);
+            }
+        }
+        visible.localHaloReady = true;
+        return true;
+    }
+
     private static void indexWorldCell(HologramState state, HologramState.Cell c) {
-        boolean removal = state.data.getInteger("mode") == 2;
-        boolean virtual = state.data.getBoolean("virtual");
-        if (HologramJobVisuals.completed(state, c)) return;
-        if (!c.anchor && worldLayer != Integer.MAX_VALUE && c.dy != worldLayer) return;
-        if (!c.anchor && c.id.equals("minecraft:air")
-            && c.wantId.equals("minecraft:air")
-            && !c.role.contains("interface")) return;
+        if (!includedWorldCell(state, c, worldLayer)) return;
         Coordinate key = coordinate(c.x >> 4, c.y >> 4, c.z >> 4);
         WorldGroup group = worldGroups.get(key);
         if (group == null) {
@@ -2894,6 +2957,12 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             worldGroups.put(key, group);
             worldSpatialIndex.add(group.x, group.y, group.z, group);
         }
+        indexWorldCell(state, c, group);
+    }
+
+    private static void indexWorldCell(HologramState state, HologramState.Cell c, WorldGroup group) {
+        boolean removal = state.data.getInteger("mode") == 2;
+        boolean virtual = state.data.getBoolean("virtual");
         group.cells.add(c);
         worldOutlineCells.add(coordinate(c.x, c.y, c.z));
         if ((!c.anchor || virtual) && !removal
@@ -3087,6 +3156,9 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         final int x, y, z;
         final List<HologramState.Cell> cells = new ArrayList<>();
         final List<WorldBatch> batches = new ArrayList<>();
+        List<HologramState.Cell> localSource;
+        int localCursor;
+        boolean localHaloReady;
         MiaoVisonLiteMesh directGeometry;
         int built;
         int geometry, gt, fallback, ghosts;
