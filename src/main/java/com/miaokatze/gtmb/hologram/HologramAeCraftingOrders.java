@@ -82,9 +82,10 @@ public final class HologramAeCraftingOrders {
 
     static boolean matchesActiveOrder(HologramSession s, NBTTagCompound action) {
         Order order = currentOrder(s);
-        return order != null && action.hasKey("planRevision", 4)
-            && action.getLong("planRevision") == order.revision
-            && action.hasKey("placementReviewNonce", 4)
+        return order != null && order.id.equals(action.getString("orderId"))
+            && s.id.equals(action.getString("session")) && action.hasKey("planRevision", 4)
+            && s.planRevision == order.revision && action.getLong("planRevision") == order.revision
+            && s.placementReviewNonce == order.reviewNonce && action.hasKey("placementReviewNonce", 4)
             && action.getLong("placementReviewNonce") == order.reviewNonce;
     }
 

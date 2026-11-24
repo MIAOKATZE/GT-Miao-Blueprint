@@ -404,7 +404,9 @@ final class HologramMaterialConfirmationDialog {
                 340,
                 160,
                 this::order,
-                () -> orderActive() || editable() && !ui.session.materialReviewPending()
+                () -> orderActive() ? HologramMaterialOrderLifecycle.cancellable(state().getCompoundTag("materialOrder"),
+                    ui.review.confirmedRevision(), state().getLong("placementReviewNonce"))
+                    : editable() && !ui.session.materialReviewPending()
                     && state().getBoolean("materialOrderingAvailable")
                     && materials.hasItemShortage(),
                 () -> orderActive() ? HologramUiAccent.WARNING : recommendOrder() ? HologramUiAccent.SUGGESTION : 0)
@@ -593,9 +595,9 @@ final class HologramMaterialConfirmationDialog {
             return;
         }
         NBTTagCompound request = new NBTTagCompound();
-        request.setLong("planRevision", ui.review.confirmedRevision());
-        request.setLong("placementReviewNonce", state().getLong("placementReviewNonce"));
-        ui.session.send("cancelMaterialOrder", request, true);
+        if (HologramMaterialOrderLifecycle.writeCancel(request, state().getCompoundTag("materialOrder"),
+            ui.review.confirmedRevision(), state().getLong("placementReviewNonce")))
+            ui.session.send("cancelMaterialOrder", request, true);
     }
 
     private ButtonWidget<?> button(int id, Supplier<String> text, int x, int y, int width, Runnable action,

@@ -37,11 +37,11 @@ final class HologramMaterialWorkflow {
                 requireProjectionRefresh(s, action);
             else if ("orderMissingMaterials".equals(op) || "setDecorativeVoucher".equals(op))
                 requireMaterialReview(s, action);
-            else if (cancellingOrder && HologramEditorWorkspaceRegistry.physicalProjection(s)) {
+            else if (!(cancellingOrder && HologramEditorWorkspaceRegistry.physicalProjection(s))) requireReview(s, action);
+            if ("cancelMaterialOrder".equals(op)) {
+                // Sequential orders can share a review. Only its acknowledged order may be cancelled.
                 if (!HologramAeCraftingOrders.matchesActiveOrder(s, action))
                     throw new IOException("AE 缺料订单已变化，请重新核对当前订单");
-            } else requireReview(s, action);
-            if ("cancelMaterialOrder".equals(op)) {
                 HologramAeCraftingOrders.cancel(s.player, "AE 缺料订单已取消；已入网材料保留，待交付产物存入玩家回收暂存");
                 s.status = "AE 缺料订单已取消；已入网材料保留，待交付产物存入玩家回收暂存";
             } else if ("setDecorativeVoucher".equals(op)) {
