@@ -3,6 +3,8 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.io.IOException;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 import java.util.UUID;
@@ -16,10 +18,10 @@ import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 public final class HologramCompactNativeRequest {
 
     static final String FLAG = "nativeCompactPlace";
-    private static final Set<String> FIELDS = Set.of(
+    private static final Set<String> FIELDS = Collections.unmodifiableSet(new HashSet<>(Arrays.asList(
         "action", FLAG, "placementRequestId", "x", "y", "z", "side", "slot", "controller", "facing",
         "main", "mainExplicit", "channels", "noHatches", "materialMain", "materialContainers", "materialMe",
-        "materialPriority");
+        "materialPriority")));
 
     private HologramCompactNativeRequest() {}
 
