@@ -23,6 +23,7 @@ import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 /** Lightweight local modal over the already-present world ghost; no second workspace or source read. */
 final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implements LocalView {
 
+    private static final boolean LEGACY_REVIEW = Boolean.getBoolean("gtmb.legacyPlacementReview");
     private final HologramLocalPlacement placement;
     private final Ticket ticket;
     private final CapturedDescription description;
@@ -56,6 +57,11 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
     }
 
     @Override
+    public String localSubmitLabel() {
+        return LEGACY_REVIEW ? LocalView.super.localSubmitLabel() : "开始施工（使用已启用的背包或容器，不动 AE）";
+    }
+
+    @Override
     public boolean localSubmitAvailable() {
         return ticket.current(Minecraft.getMinecraft());
     }
@@ -67,7 +73,7 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
             if (action == LocalAction.BACK) returnToWorld(client);
             else if (action == LocalAction.SUBMIT) {
                 Submission frozen = ticket.consume(client);
-                if (frozen != null && !placement.submitFrozen(frozen)) {
+                if (frozen != null && !placement.submitFrozen(frozen, !LEGACY_REVIEW)) {
                     returnToWorld(client);
                     HologramClient.selectionNotice("未开始施工核验；位置保留，请重新打开材料窗口。");
                 }
