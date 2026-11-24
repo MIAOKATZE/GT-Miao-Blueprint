@@ -79,11 +79,23 @@ final class HologramStructureProjection {
 
     /** Prepare a new native plan for review; consent to the previous projection never starts placement. */
     static void requestOperationReview(HologramSession s) {
-        requestOperationReview(s, null);
+        if (!requiresDestructiveReview(s)) {
+            requestOperationReview(s, null);
+            return;
+        }
+        // The advanced controller route already has server-owned configuration. Verify the
+        // selected coordinates survive recapture just as for the explicit native options route.
+        s.nativeOperationInputs = new HologramNativeOperationChoices();
+        try {
+            requestOperationReview(s, null);
+        } finally {
+            s.nativeOperationInputs = null;
+        }
     }
 
     static void requestOperationReview(HologramSession s, java.util.function.BooleanSupplier configure) {
         s.operationReviewSequence = -1;
+        if (s.operationScope != null) s.operationScope.close();
         s.jobVoucherRequested = false;
         if (showing(s)) prepareOperation(s, configure == null ? () -> true : configure);
         else {
@@ -99,12 +111,17 @@ final class HologramStructureProjection {
         }
         if (s.capture == null || s.capture.projectionOnly || s.capture.incomplete) return;
         s.operationReviewSequence = s.uiSequence;
+        if (s.nativeOperationInputs != null && (requiresDestructiveReview(s) || s.nativeOperationInputs.hasHatches())) {
+            s.operationScope = new OperationScope(s);
+            if (operationPrepared(s)) s.operationScope.finish(s);
+        }
         s.status = s.capturePending ? "正在准备施工计划；完成后请核对材料与位置" : "施工计划已准备，请核对材料与位置后确认施工";
     }
 
     static boolean dismissOperationReview(HologramSession s) {
         if (s.operationReviewSequence < 0 || !HologramEditorWorkspaceRegistry.physicalProjection(s)) return false;
         s.operationReviewSequence = -1;
+        if (s.operationScope != null) s.operationScope.close();
         if (s.job != 1 && s.job != 2) s.jobVoucherRequested = false;
         s.placementReviewNonce++;
         s.forcePlacementReady = false;
@@ -121,6 +138,102 @@ final class HologramStructureProjection {
             && !s.capture.incomplete
             && !s.capturePending
             && s.captureWork == null;
+    }
+
+    private static boolean requiresDestructiveReview(HologramSession s) {
+        return !s.virtual && (s.mode == 1 || s.mode == 2)
+            && HologramEditorWorkspaceRegistry.physicalProjection(s);
+    }
+
+    static boolean requiresLockedScope(HologramSession s) {
+        return requiresDestructiveReview(s) || !s.virtual && s.operationScope != null
+            && HologramEditorWorkspaceRegistry.physicalProjection(s);
+    }
+
+    static boolean operationScopeLocked(HologramSession s) {
+        return s.operationScope != null && s.operationScope.current(s);
+    }
+
+    static void finishOperationScope(HologramSession s, HologramControllerCapture.FinishWork finished) {
+        if (s.operationScope != null && s.operationScope.pending == finished) s.operationScope.finish(s);
+    }
+
+    static boolean allowLockedConfirmation(HologramSession s, NBTTagCompound action, String op) {
+        if (!"build".equals(op) || !operationScopeLocked(s)
+            || !action.hasKey("placementReviewNonce", 4)
+            || action.getLong("placementReviewNonce") != s.placementReviewNonce) {
+            s.status = "请重新打开控制器施工核对，并确认当前范围";
+            return false;
+        }
+        if (!s.operationScope.matches(s, action)) {
+            dismissOperationReview(s);
+            s.status = "已核对的施工范围已变化，请重新选择并确认";
+            return false;
+        }
+        return true;
+    }
+
+    /** The exact planner scope after native recapture and coordinate remapping. */
+    static final class OperationScope {
+
+        private final long epoch, openedSequence, controllerOpenId;
+        private HologramControllerCapture.FinishWork pending;
+        private HologramCapture capture;
+        private long revision;
+        private int mode, scope, layer, selected;
+        private int[] indices;
+
+        OperationScope(HologramSession s) {
+            epoch = s.editorWorkspaceEpoch;
+            openedSequence = s.operationReviewSequence;
+            controllerOpenId = s.controllerOpenId;
+            pending = s.captureWork;
+        }
+
+        void finish(HologramSession s) {
+            pending = null;
+            if (!operationPrepared(s) || openedSequence != s.operationReviewSequence
+                || openedSequence != s.uiSequence || epoch != s.editorWorkspaceEpoch) return;
+            capture = s.capture;
+            revision = s.planRevision;
+            mode = s.mode;
+            scope = s.scope;
+            layer = s.layer;
+            selected = s.selected;
+            indices = s.selectedIndices.stream().mapToInt(Integer::intValue).sorted().toArray();
+        }
+
+        void close() {
+            pending = null;
+            capture = null;
+            indices = null;
+        }
+
+        boolean current(HologramSession s) {
+            return indices != null && s.operationReviewSequence >= 0 && epoch == s.editorWorkspaceEpoch
+                && controllerOpenId == s.controllerOpenId && capture == s.capture && revision == s.planRevision
+                && mode == s.mode && scope == s.scope && layer == s.layer && selected == s.selected
+                && operationPrepared(s);
+        }
+
+        boolean matches(HologramSession s, NBTTagCompound action) {
+            if (indices.length != s.selectedIndices.size() || !sameIfPresent(action, "mode", mode)
+                || !sameIfPresent(action, "scope", scope)
+                || !sameIfPresent(action, "layer", layer)
+                || !sameIfPresent(action, "selected", selected)) return false;
+            for (int index : indices) if (!s.selectedIndices.contains(index)) return false;
+            if (!action.hasKey("selectedIndices")) return true;
+            if (!action.hasKey("selectedIndices", 11)) return false;
+            int[] submitted = action.getIntArray("selectedIndices");
+            if (submitted.length != indices.length) return false;
+            submitted = submitted.clone();
+            java.util.Arrays.sort(submitted);
+            return java.util.Arrays.equals(indices, submitted);
+        }
+
+        private static boolean sameIfPresent(NBTTagCompound action, String key, int value) {
+            return !action.hasKey(key) || action.hasKey(key, 3) && action.getInteger(key) == value;
+        }
     }
 
     static void finishHatchConfiguration(HologramSession s) {
@@ -265,6 +378,7 @@ final class HologramStructureProjection {
         state.setBoolean("projectionDataComplete", true);
         state.setBoolean("operationPrepared", false);
         state.setBoolean("operationReviewRequired", false);
+        state.setBoolean("operationScopeLocked", false);
         state.setBoolean("quotesIncomplete", false);
         state.setBoolean("supported", true);
         state.setBoolean("target", s.target != null);

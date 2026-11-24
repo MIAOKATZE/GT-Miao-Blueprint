@@ -1814,6 +1814,15 @@ public final class HologramUiModuleRegression {
                 Arrays.equals(indices, request.getIntArray("selectedIndices")),
                 op + " retains every selected cell, including configure scope=2 and processing NBT fallback");
         }
+        NBTTagCompound locked = new NBTTagCompound();
+        locked.setLong("placementReviewNonce", 41L);
+        HologramUiSession.buildOutgoingRequest(
+            "build", locked, 9, () -> { throw new AssertionError("locked review fetched local selection"); },
+            "module-a", "session-a", true);
+        SimpleAssert.that(!locked.hasKey("selected") && !locked.hasKey("selectedIndices")
+            && locked.getLong("placementReviewNonce") == 41L && "session-a".equals(locked.getString("session")),
+            "locked native review supplies only existing approval/ownership fields and never local selection");
+
         NBTTagCompound explicit = new NBTTagCompound();
         explicit.setIntArray("indices", new int[] { 2, 5 });
         explicit.setIntArray("selectedIndices", new int[] { 8 });

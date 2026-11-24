@@ -214,6 +214,7 @@ final class HologramSession {
     boolean open;
     long planRevision, uiSequence, batchSeq;
     long operationReviewSequence = -1;
+    HologramStructureProjection.OperationScope operationScope;
     HologramWorkspace.PresentationTransition presentationTransition;
     long configurationAcceptedSequence = -1;
     final HologramAeProtocol.State ae = new HologramAeProtocol.State();

@@ -269,6 +269,7 @@ final class HologramControllerCapture {
             && s.capture != null
             && s.capture.pending ? s.capture : null;
         if (work == null) {
+            s.operationScope = null;
             if (s.nativeCompactSource == null) HologramMaterialAccess.refreshMaterialChoices(s);
             boolean calibrate = s.calibratePending, build = !resetAttempts && s.buildAfterCapture;
             HologramSession.cancelCaptureRetry(s);
@@ -368,6 +369,7 @@ final class HologramControllerCapture {
         s.status = s.capture.incomplete ? "结构采集不完整，高级施工已阻止"
             : s.operationReviewSequence == s.uiSequence ? "施工计划已准备，请核对材料与位置后确认施工" : "预览已采集；未知元素及机器部件保持保护";
         scheduleCaptureRetry(s);
+        HologramStructureProjection.finishOperationScope(s, work);
         if (s.calibratePending && !s.capturePending) {
             s.calibratePending = false;
             if (!s.capture.incomplete) applyCurrentCalibration(s);
