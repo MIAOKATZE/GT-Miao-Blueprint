@@ -20,6 +20,7 @@ final class HologramActionDispatcher {
         if (s == null || s.player != player || s.cancelled || !s.id.equals(action.getString("session"))) return;
         if (action.hasKey("editorWorkspaceEpoch") && (!action.hasKey("editorWorkspaceEpoch", 4)
             || action.getLong("editorWorkspaceEpoch") != s.editorWorkspaceEpoch)) return;
+        if (!"requestFullSnapshot".equals(action.getString("op"))) HologramNativeReadyPlacement.cancel(s);
         if ("dismissOperationReview".equals(action.getString("op"))) {
             if (HologramSessionPolicy.currentTool(s) != null && action.hasKey("reviewSequence", 4)
                 && action.getLong("reviewSequence") == s.operationReviewSequence

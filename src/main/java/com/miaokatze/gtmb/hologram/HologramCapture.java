@@ -487,6 +487,17 @@ public final class HologramCapture {
         return false;
     }
 
+    /** A ready native job may not run custom callbacks or inherited world reads in the new intake path. */
+    boolean readyPlacementSource(HologramSession s) {
+        return sourceBinding != null && sourceResolution != null && sourceResolution.policy == null
+            && sourceBinding.machine == s.machine && sourceBinding.world == s.libraryWorld
+            && sourceBinding.worldTile == s.target && sourceBinding.x == s.x && sourceBinding.y == s.y
+            && sourceBinding.z == s.z && sourceBinding.facing.ordinal() == s.facing
+            && !sourceResolution.hasObservedReadSet() && ownSources.observations.isEmpty()
+            && inheritedSources.isEmpty() && retainedSources.isEmpty() && memberSources.isEmpty()
+            && definition != null && HologramStructureCursor.supports(definition);
+    }
+
     /** Runtime-only, graph-free qualification. Serialization deliberately carries only its metadata receipt. */
     static final class SourceAuthority {
 
