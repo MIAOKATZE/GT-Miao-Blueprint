@@ -10,7 +10,10 @@ import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
@@ -34,6 +37,8 @@ import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 import com.mojang.authlib.GameProfile;
 
+import cpw.mods.fml.common.network.simpleimpl.IMessage;
+import cpw.mods.fml.common.network.simpleimpl.SimpleNetworkWrapper;
 import io.netty.buffer.Unpooled;
 
 /** Real Forge configuration, NBT packets, disk publishing and explicit OP-entry permissions. */
@@ -67,6 +72,7 @@ public final class HologramLibraryRegression {
         permissionGroups();
         hydration();
         ownershipAndPublishing();
+        publicationLeavesPageRefreshToClient();
         directoryLayout();
         brokenStorageFailsClosed();
         permissions();
@@ -1486,6 +1492,117 @@ public final class HologramLibraryRegression {
                 "failed hash never publishes an entry");
         } finally {
             store.stop();
+        }
+    }
+
+    private static void publicationLeavesPageRefreshToClient() throws Exception {
+        Field channel = HologramNetwork.class.getDeclaredField("channel");
+        channel.setAccessible(true);
+        Object previous = channel.get(null);
+        Path directory = Files.createTempDirectory("gtmb-public-pagination-");
+        HologramServerLibrary store = new HologramServerLibrary(
+            directory.resolve("entries"),
+            directory.resolve("library.cfg"));
+        try {
+            // Use the real worker/transfer, but substitute the outbound reply boundary instead of starting Forge.
+            LibraryReplyCapture capture = (LibraryReplyCapture) unsafe().allocateInstance(LibraryReplyCapture.class);
+            capture.replies = new ArrayList<>();
+            channel.set(null, capture);
+            int entryCount = HologramLibraryProtocol.PAGE_SIZE + 1;
+            runWorker(store, () -> store.changeConfig(true, 1, 128, 512, entryCount));
+            Object owner = peer(player(UUID.randomUUID(), "PagedPublisher"));
+            HologramPresets.Preset source = blueprint();
+            byte[] bytes = HologramServerLibrary.encodeShare(source);
+            String lastId = "";
+            int seedReplies = 0;
+            for (int i = 0; i < entryCount; i++) {
+                transfer(store, owner, bytes, "", false);
+                seedReplies += capture.replies.size();
+                lastId = capture.uploadedId();
+                capture.replies.clear();
+            }
+
+            NBTTagCompound list = HologramLibraryProtocol.request("list");
+            list.setInteger("page", 1);
+            runWorker(store, () -> handle(store, owner, list));
+            NBTTagCompound before = capture.onlyListReply(1, 2, entryCount, 1).getCompoundTagAt(0);
+            SimpleAssert.eq(lastId, before.getString("id"), "last published entry is alone on page two");
+
+            source.name = "Updated on page two";
+            source.cells.get(0).x = 1;
+            transfer(store, owner, HologramServerLibrary.encodeShare(source), lastId, false);
+            SimpleAssert.eq(lastId, capture.uploadedId(), "replacement keeps its public ID");
+            SimpleAssert.that(capture.replies.isEmpty(), "replacement does not send an unsolicited catalog page");
+            SimpleAssert.eq(2 * entryCount, seedReplies, "new uploads also send only ready and committed replies");
+
+            // The uploader can refresh the open second page without requesting the first page again.
+            runWorker(store, () -> handle(store, owner, list));
+            NBTTagCompound after = capture.onlyListReply(1, 2, entryCount, 1).getCompoundTagAt(0);
+            SimpleAssert.eq(lastId, after.getString("id"), "same page still contains the replacement ID");
+            SimpleAssert.eq(source.name, after.getString("name"), "explicit page refresh sees the replacement label");
+            SimpleAssert.that(
+                !before.getString("sourceHash").equals(after.getString("sourceHash"))
+                    && after.getLong("sourceRevision") > before.getLong("sourceRevision"),
+                "explicit refresh sees new content and its newer revision");
+
+            list.setInteger("page", 0);
+            runWorker(store, () -> handle(store, owner, list));
+            capture.onlyListReply(0, 2, entryCount, HologramLibraryProtocol.PAGE_SIZE);
+            NBTTagCompound delete = HologramLibraryProtocol.request("delete");
+            delete.setString("id", lastId);
+            runWorker(store, () -> handle(store, owner, delete));
+            SimpleAssert.eq(2, capture.replies.size(), "delete still sends its existing completion and first-page list");
+            NBTTagCompound deleted = capture.replies.remove(0);
+            SimpleAssert.eq("deleted", deleted.getString("op"), "delete completion is first");
+            SimpleAssert.eq(lastId, deleted.getString("id"), "delete completion identifies the removed entry");
+            capture.onlyListReply(0, 1, entryCount - 1, HologramLibraryProtocol.PAGE_SIZE);
+        } finally {
+            channel.set(null, previous);
+            store.stop();
+            try (java.util.stream.Stream<Path> files = Files.walk(directory)) {
+                for (Path path : (Iterable<Path>) files.sorted(Comparator.reverseOrder())::iterator)
+                    Files.deleteIfExists(path);
+            }
+        }
+    }
+
+    private static final class LibraryReplyCapture extends SimpleNetworkWrapper {
+
+        List<NBTTagCompound> replies;
+
+        private LibraryReplyCapture() {
+            super("gtmb_test_capture"); // The fixture allocates this without registering a channel.
+        }
+
+        @Override
+        public void sendTo(IMessage message, EntityPlayerMP player) {
+            replies.add(((HologramNetwork.LibraryReply) message).tag);
+        }
+
+        String uploadedId() {
+            SimpleAssert.that(replies.size() >= 2, "upload replies include ready and committed");
+            NBTTagCompound ready = replies.remove(0);
+            NBTTagCompound uploaded = replies.remove(0);
+            SimpleAssert.eq("uploadReady", ready.getString("op"), "upload is admitted");
+            SimpleAssert.eq("uploaded", uploaded.getString("op"), "upload is committed");
+            SimpleAssert.that(
+                !ready.getString("transfer").isEmpty()
+                    && ready.getString("transfer").equals(uploaded.getString("transfer")),
+                "ready and committed belong to the same upload");
+            SimpleAssert.that(uploaded.getString("id").startsWith("public_"), "upload gets a public ID");
+            return uploaded.getString("id");
+        }
+
+        NBTTagList onlyListReply(int page, int pages, int total, int rows) {
+            SimpleAssert.eq(1, replies.size(), "list has one response");
+            NBTTagCompound list = replies.remove(0);
+            SimpleAssert.eq("list", list.getString("op"), "list response operation");
+            SimpleAssert.eq(page, list.getInteger("page"), "requested page");
+            SimpleAssert.eq(pages, list.getInteger("pages"), "catalog page count");
+            SimpleAssert.eq(total, list.getInteger("total"), "catalog entry count");
+            NBTTagList entries = list.getTagList("entries", 10);
+            SimpleAssert.eq(rows, entries.tagCount(), "page row count");
+            return entries;
         }
     }
 

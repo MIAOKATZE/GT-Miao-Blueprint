@@ -588,7 +588,6 @@ final class HologramServerLibrary {
         result.setString("transfer", upload.transfer);
         result.setString("cleanupWarning", cleanupWarning);
         send(peer, result);
-        list(peer, 0);
     }
 
     private void list(Peer peer, int requestedPage) {
