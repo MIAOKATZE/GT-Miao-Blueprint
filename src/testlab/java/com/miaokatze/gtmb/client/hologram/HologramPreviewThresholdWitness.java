@@ -32,14 +32,19 @@ final class HologramPreviewThresholdWitness {
     }
 
     void observe(HologramState expected, MiaoVisonLiteRenderer.MaterialPresentation drawn) {
-        if (started == 0 || expected == null || drawn == null || drawn.state() != expected
-            || drawn.drawnAtNanos() < started || drawn.serial() <= lastDraw || !drawn.bodyMaterial()) return;
+        if (started == 0 || expected == null
+            || drawn == null
+            || drawn.state() != expected
+            || drawn.drawnAtNanos() < started
+            || drawn.serial() <= lastDraw
+            || !drawn.bodyMaterial()) return;
         lastDraw = drawn.serial();
         if (first == null) {
             firstAt = drawn.drawnAtNanos();
             first = frame(drawn);
         }
-        if (complete == null && drawn.complete() && !expected.data.getBoolean("displayPartial")
+        if (complete == null && drawn.complete()
+            && !expected.data.getBoolean("displayPartial")
             && (expectedCells <= 0 || drawn.submittedCells() == expectedCells)
             && drawn.submittedCells() == expected.cells.size()) {
             completeAt = drawn.drawnAtNanos();

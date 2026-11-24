@@ -12,7 +12,11 @@ import java.util.function.LongSupplier;
 /** Bounded, ordered work staging only. The caller owns the scope, world proof, payment, and final job admission. */
 final class HologramPlacementAdmissionSweep {
 
-    enum Progress { PENDING, COMPLETE, RETIRED }
+    enum Progress {
+        PENDING,
+        COMPLETE,
+        RETIRED
+    }
 
     @FunctionalInterface
     interface CellCheck {
@@ -82,7 +86,8 @@ final class HologramPlacementAdmissionSweep {
 
     boolean drain(Slice slice, IntConsumer accept) {
         if (retired || cursor != cellCount) return false;
-        if (work == null) work = ordered.values().iterator();
+        if (work == null) work = ordered.values()
+            .iterator();
         while (work.hasNext() && slice.take()) accept.accept(work.next());
         return !work.hasNext();
     }

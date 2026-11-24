@@ -358,8 +358,8 @@ final class HologramServerLibrary {
             handle(peer, request);
         } catch (IOException | RuntimeException invalid) {
             String op = request.getString("op");
-            if (HologramLibraryProtocol.uploadChunk(request) || "uploadBegin".equals(op)
-                || "previewBegin".equals(op)) abort(peer);
+            if (HologramLibraryProtocol.uploadChunk(request) || "uploadBegin".equals(op) || "previewBegin".equals(op))
+                abort(peer);
             error(peer, invalid.getMessage(), request.getLong("clientTaskToken"));
         }
     }
@@ -417,10 +417,8 @@ final class HologramServerLibrary {
             NBTTagCompound deleted = HologramLibraryProtocol.reply("deleted");
             deleted.setString("id", id);
             send(peer, deleted);
-        } else if ("uploadBegin".equals(op) || "previewBegin".equals(op))
-            begin(peer, request);
-        else if ("uploadChunk".equals(op) || "previewChunk".equals(op))
-            append(peer, request);
+        } else if ("uploadBegin".equals(op) || "previewBegin".equals(op)) begin(peer, request);
+        else if ("uploadChunk".equals(op) || "previewChunk".equals(op)) append(peer, request);
         else if ("download".equals(op)) {
             Entry entry = publicEntry(request);
             if (request.hasKey("sourceRevision") || request.hasKey("sourceHash")) requirePublicRevision(entry, request);
@@ -511,8 +509,7 @@ final class HologramServerLibrary {
         Upload upload = peer.upload;
         if (upload == null || !admitted(peer, request)) throw new IOException("Unknown upload");
         boolean previewChunk = "previewChunk".equals(request.getString("op"));
-        if (previewChunk != upload.previewUpload)
-            throw new IOException("Transfer purpose mismatch");
+        if (previewChunk != upload.previewUpload) throw new IOException("Transfer purpose mismatch");
         byte[] bytes = request.getByteArray("data");
         HologramLibraryProtocol
             .chunk(upload.total, upload.offset, upload.index, request.getInteger("index"), bytes.length);
@@ -743,13 +740,16 @@ final class HologramServerLibrary {
                     throw new IOException("Library connection or runtime changed");
                 HologramBlueprintArtifact.Artifact original = storedArtifact(previous);
                 byte[] source = HologramBlueprintPreviewBinding.sourceJson(original.json);
-                byte[] compact = HologramBlueprintUpgrade.migrate(source, HologramBlueprintArtifact.MAX_JSON_BYTES,
+                byte[] compact = HologramBlueprintUpgrade.migrate(
+                    source,
+                    HologramBlueprintArtifact.MAX_JSON_BYTES,
                     () -> peer.online && peer.admin && token > peer.retiredThrough && !closed && epoch == runtimeEpoch);
                 if (source == compact) {
                     row.setString("state", "current");
                     current++;
                 } else {
-                    HologramBlueprintArtifact.Artifact migratedPair = HologramBlueprintArtifact.transfer(compact, original);
+                    HologramBlueprintArtifact.Artifact migratedPair = HologramBlueprintArtifact
+                        .transfer(compact, original);
                     compact = migratedPair.json;
                     byte[] bound = migratedPair.png;
                     Envelope envelope = new Envelope();
@@ -757,16 +757,22 @@ final class HologramServerLibrary {
                     envelope.uploadedBy = previous.uploadedBy;
                     // Reuse already admitted immutable cells; the IO worker must not re-resolve registries.
                     HologramPresets.Preset migrated = previous.blueprint;
-                    if (HologramBlueprintUpgrade.status(migrated.nativeBlueprint == null ? ""
-                        : migrated.nativeBlueprint.gtmbVersion) > 0) {
+                    if (HologramBlueprintUpgrade
+                        .status(migrated.nativeBlueprint == null ? "" : migrated.nativeBlueprint.gtmbVersion) > 0) {
                         migrated = HologramSnapshotMetadataSource.copyMetadata(previous.blueprint);
                         migrated.cells.addAll(previous.blueprint.cells);
                         migrated.palette.addAll(previous.blueprint.palette);
-                        com.google.gson.JsonObject header = HologramBlueprintCompactCodec.displayRows(compact).blueprint;
-                        migrated.nativeBlueprint = new com.google.gson.Gson().fromJson(header.get("nativeBlueprint"),
-                            HologramBlueprintVersions.Metadata.class);
-                        migrated.modVersions.put("gtmb", header.getAsJsonObject("modVersions").get("gtmb").getAsString());
-                        migrated.fullyVoucherCovered = header.get("fullyVoucherCovered").getAsBoolean();
+                        com.google.gson.JsonObject header = HologramBlueprintCompactCodec
+                            .displayRows(compact).blueprint;
+                        migrated.nativeBlueprint = new com.google.gson.Gson()
+                            .fromJson(header.get("nativeBlueprint"), HologramBlueprintVersions.Metadata.class);
+                        migrated.modVersions.put(
+                            "gtmb",
+                            header.getAsJsonObject("modVersions")
+                                .get("gtmb")
+                                .getAsString());
+                        migrated.fullyVoucherCovered = header.get("fullyVoucherCovered")
+                            .getAsBoolean();
                     }
                     envelope.blueprint = migrated;
                     Entry replacement = new Entry(
@@ -1318,7 +1324,8 @@ final class HologramServerLibrary {
             this(envelope, bytes, hash, revision, json, true);
         }
 
-        Entry(Envelope envelope, int bytes, String hash, long revision, byte[] json, boolean compactSource) throws IOException {
+        Entry(Envelope envelope, int bytes, String hash, long revision, byte[] json, boolean compactSource)
+            throws IOException {
             this.compactSource = compactSource;
             dtoBytes = HologramTrustedBlueprintCache.dtoWeight(envelope.blueprint, json.length);
             storedJsonHash = HologramBlueprintArtifact.hash(json);

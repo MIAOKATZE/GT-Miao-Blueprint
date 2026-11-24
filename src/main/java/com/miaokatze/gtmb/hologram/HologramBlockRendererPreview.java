@@ -32,21 +32,26 @@ final class HologramBlockRendererPreview {
     private final Method hasChanged;
 
     static boolean required(Object context) {
-        return context != null && CRITICAL.equals(context.getClass().getName());
+        return context != null && CRITICAL.equals(
+            context.getClass()
+                .getName());
     }
 
     HologramBlockRendererPreview(TileEntity controller) throws IOException {
-        if (!Loader.isModLoaded("blockrenderer6343")) throw new IOException("LOCAL_CRITICAL_PREVIEW_REQUIRES_BLOCKRENDERER");
+        if (!Loader.isModLoaded("blockrenderer6343"))
+            throw new IOException("LOCAL_CRITICAL_PREVIEW_REQUIRES_BLOCKRENDERER");
         try {
             Class<? extends World> tracked = Class.forName(TRACKED_WORLD, false, getClass().getClassLoader())
                 .asSubclass(World.class);
-            if (!DUMMY_WORLD.equals(tracked.getSuperclass().getName()))
+            if (!DUMMY_WORLD.equals(
+                tracked.getSuperclass()
+                    .getName()))
                 throw new IOException("LOCAL_CRITICAL_PREVIEW_WORLD_UNAVAILABLE");
             GregTechAPI.addDummyWorld(tracked);
             world = HologramResourceWorld.create(() -> create(tracked));
-            Object blockMap = tracked.getField("blockMap").get(world);
-            if (!(blockMap instanceof Map<?, ?> map))
-                throw new IOException("LOCAL_CRITICAL_PREVIEW_WORLD_UNAVAILABLE");
+            Object blockMap = tracked.getField("blockMap")
+                .get(world);
+            if (!(blockMap instanceof Map<?, ?>map)) throw new IOException("LOCAL_CRITICAL_PREVIEW_WORLD_UNAVAILABLE");
             positions = map.keySet();
             hasChanged = tracked.getMethod("hasChanged");
             int x = controller.xCoord, y = controller.yCoord, z = controller.zCoord;
@@ -59,7 +64,8 @@ final class HologramBlockRendererPreview {
 
     private static World create(Class<? extends World> type) {
         try {
-            return type.getConstructor().newInstance();
+            return type.getConstructor()
+                .newInstance();
         } catch (ReflectiveOperationException unavailable) {
             throw new IllegalStateException(unavailable);
         }
@@ -93,7 +99,12 @@ final class HologramBlockRendererPreview {
         int z = CoordinatePacker.unpackZ(position);
         requirePortableHeight(y, controllerY);
         return new HologramNativePreviewWorld.Placement(
-            x, y, z, world.getBlock(x, y, z), world.getBlockMetadata(x, y, z), world.getTileEntity(x, y, z));
+            x,
+            y,
+            z,
+            world.getBlock(x, y, z),
+            world.getBlockMetadata(x, y, z),
+            world.getTileEntity(x, y, z));
     }
 
     static void requirePortableHeight(int y, int controllerY) throws IOException {

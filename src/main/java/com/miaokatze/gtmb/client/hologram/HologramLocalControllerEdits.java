@@ -26,8 +26,7 @@ final class HologramLocalControllerEdits {
 
     static boolean handles(String operation) {
         return switch (operation) {
-            case "pin", "sourcePin", "customPin", "restoreCell", "clearPin", "hatchFacing", "hatchPreset",
-                "clearHatchPreset" -> true;
+            case "pin", "sourcePin", "customPin", "restoreCell", "clearPin", "hatchFacing", "hatchPreset", "clearHatchPreset" -> true;
             default -> false;
         };
     }
@@ -61,15 +60,17 @@ final class HologramLocalControllerEdits {
         for (int index : indices) {
             HologramState.Cell current = base.cells.get(index);
             if (current.anchor) continue;
-            NBTTagCompound row = current.tag(), original = initial.cells.get(index).tag();
+            NBTTagCompound row = current.tag(), original = initial.cells.get(index)
+                .tag();
             if (restore || clearPreset && "preset".equals(row.getString("pinScope"))) {
                 row = original;
             } else if ("hatchFacing".equals(operation)) {
                 int facing = request.getInteger("facing");
-                if (!request.hasKey("facing", 3) || facing < -1 || facing > 5 || current.targetStack == null
+                if (!request.hasKey("facing", 3) || facing < -1
+                    || facing > 5
+                    || current.targetStack == null
                     || !(current.targetStack.getItem() instanceof ItemMachines)
-                    || facing >= 0 && !allowsFacing(row, facing))
-                    throw new IOException("该结构格不支持所选方向");
+                    || facing >= 0 && !allowsFacing(row, facing)) throw new IOException("该结构格不支持所选方向");
                 setFacing(row, original, current.targetStack, facing);
             } else if (tierPreset) {
                 if ("manual".equals(row.getString("pinScope"))) continue;
@@ -77,7 +78,8 @@ final class HologramLocalControllerEdits {
                 int tier = request.getInteger("tier"), choice = -1;
                 int offered = nativeCandidateCount(row, current.candidates.size());
                 for (int i = 0; i < tiers.length && i < offered; i++) {
-                    if (tiers[i] == tier || request.getBoolean("downgrade") && tiers[i] >= 0 && tiers[i] < tier
+                    if (tiers[i] == tier || request.getBoolean("downgrade") && tiers[i] >= 0
+                        && tiers[i] < tier
                         && (choice == -1 || tiers[i] > tiers[choice])) choice = i;
                     if (tiers[i] == tier) break;
                 }
@@ -108,14 +110,17 @@ final class HologramLocalControllerEdits {
         }
         patch.setString("status", "已更新本地结构规划");
         HologramState result = HologramState.apply(base, patch);
-        if (onEdit != null) for (int i = 0; i < rows.tagCount(); i++)
-            onEdit.accept(result.cells.get(rows.getCompoundTagAt(i).getInteger("index")));
+        if (onEdit != null) for (int i = 0; i < rows.tagCount(); i++) onEdit.accept(
+            result.cells.get(
+                rows.getCompoundTagAt(i)
+                    .getInteger("index")));
         return result;
     }
 
     private static int nativeCandidateCount(NBTTagCompound row, int size) {
         if (!row.hasKey("nativeCandidateCount")) return size;
-        if (!row.hasKey("nativeCandidateCount", 3) || row.getTagList("candidates", 10).tagCount() != size) return 0;
+        if (!row.hasKey("nativeCandidateCount", 3) || row.getTagList("candidates", 10)
+            .tagCount() != size) return 0;
         int count = row.getInteger("nativeCandidateCount");
         return count >= 0 && count <= size ? count : 0;
     }
@@ -152,7 +157,8 @@ final class HologramLocalControllerEdits {
     }
 
     private static boolean allowsFacing(NBTTagCompound row, int facing) {
-        return Arrays.stream(row.getIntArray("hatchFacings")).anyMatch(direction -> direction == facing);
+        return Arrays.stream(row.getIntArray("hatchFacings"))
+            .anyMatch(direction -> direction == facing);
     }
 
     private static void setFacing(NBTTagCompound row, NBTTagCompound original, ItemStack target, int override) {
@@ -161,8 +167,10 @@ final class HologramLocalControllerEdits {
         row.setBoolean("hasFacingPin", override >= 0);
         if (override < 0) {
             row.setInteger("targetFacing", originalTarget ? original.getInteger("targetFacing") : -1);
-            if (originalTarget && original.hasKey("targetDisplay", 10))
-                row.setTag("targetDisplay", original.getCompoundTag("targetDisplay").copy());
+            if (originalTarget && original.hasKey("targetDisplay", 10)) row.setTag(
+                "targetDisplay",
+                original.getCompoundTag("targetDisplay")
+                    .copy());
             else row.removeTag("targetDisplay");
         } else {
             row.setInteger("targetFacing", override);

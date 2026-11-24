@@ -36,8 +36,8 @@ final class HologramGiantHistoryTiming {
         requests.add(current);
     }
 
-    void press(HologramScreen screen, HologramLocalBlueprintDocument draft, String operation,
-        int rows, long sequence, long pressed) {
+    void press(HologramScreen screen, HologramLocalBlueprintDocument draft, String operation, int rows, long sequence,
+        long pressed) {
         press = pressed;
         expectedRows = rows;
         library = screen.ui.library;
@@ -62,8 +62,11 @@ final class HologramGiantHistoryTiming {
         if (state != preState || state.data.getLong("planRevision") != trace.sourceRevision + 1
             || state.data.getLong("uiSequence") != trace.sequence) return;
         var material = HologramRenderer.editorMaterialPresentation();
-        if (material == null || material.serial() <= preSerial || material.state() != state || !material.bodyMaterial()
-            || !material.complete() || material.submittedCells() != expectedRows) return;
+        if (material == null || material.serial() <= preSerial
+            || material.state() != state
+            || !material.bodyMaterial()
+            || !material.complete()
+            || material.submittedCells() != expectedRows) return;
         postState = state;
         postSerial = material.serial();
         postAt = System.nanoTime();
@@ -96,7 +99,10 @@ final class HologramGiantHistoryTiming {
 
     static boolean actualFrame(Object accepted, Object post, long serial, long drawnSerial, long press, long postAt,
         long end) {
-        return accepted != null && accepted == post && serial > 0 && serial == drawnSerial && press <= postAt
+        return accepted != null && accepted == post
+            && serial > 0
+            && serial == drawnSerial
+            && press <= postAt
             && postAt <= end;
     }
 
@@ -134,9 +140,13 @@ final class HologramGiantHistoryTiming {
         result.put("requests", requests);
         result.put("workCap", 512);
         result.put("budgetNanos", 2_000_000L);
-        result.put("budgetStopOrder", "complete, then work cap, then time; reaching cap does not test the time predicate");
+        result.put(
+            "budgetStopOrder",
+            "complete, then work cap, then time; reaching cap does not test the time predicate");
         result.put("unit", "cell rows plus region seals, material rows and membership lists");
-        result.put("memorySample", "JVM heap and cumulative GC before dispatch and after each exact full-frame END; not peaks");
+        result.put(
+            "memorySample",
+            "JVM heap and cumulative GC before dispatch and after each exact full-frame END; not peaks");
         return result;
     }
 }

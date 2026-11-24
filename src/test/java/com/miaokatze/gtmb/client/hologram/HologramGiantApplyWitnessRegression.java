@@ -17,11 +17,14 @@ public final class HologramGiantApplyWitnessRegression {
     public static void run() {
         Object source = new Object(), draft = new Object();
         var packed = new HologramGiantApplyWitness(source, draft, 7, 11, true);
-        check(ORIGINAL_REVISION, packed.observe(source, draft, PROMPT, 11, true, true, true, 7, 7),
-            "slow worker");
-        check(DRAFT_ADVANCED, packed.observe(source, draft, PROMPT, 11, true, true, true, 7, 8),
+        check(ORIGINAL_REVISION, packed.observe(source, draft, PROMPT, 11, true, true, true, 7, 7), "slow worker");
+        check(
+            DRAFT_ADVANCED,
+            packed.observe(source, draft, PROMPT, 11, true, true, true, 7, 8),
             "draft advanced before task revision");
-        check(TASK_ADVANCED, packed.observe(source, draft, PROMPT, 11, true, true, true, 8, 8),
+        check(
+            TASK_ADVANCED,
+            packed.observe(source, draft, PROMPT, 11, true, true, true, 8, 8),
             "worker already queued client ACK");
         check(null, packed.observe(null, draft, PROMPT, 11, true, true, true, 8, 8), "task fully retired");
         check(null, packed.observe(new Object(), draft, PROMPT, 11, true, true, true, 8, 8), "replaced source");
@@ -35,7 +38,9 @@ public final class HologramGiantApplyWitnessRegression {
         check(null, packed.observe(source, draft, PROMPT, 11, true, true, true, 6, 7), "stale task");
         check(null, packed.observe(source, draft, PROMPT, 11, true, true, true, 9, 9), "unrelated revision");
         var ordinary = new HologramGiantApplyWitness(source, draft, 7, 11, false);
-        check(TASK_ADVANCED, ordinary.observe(source, draft, PROMPT, 11, true, true, false, 8, 8),
+        check(
+            TASK_ADVANCED,
+            ordinary.observe(source, draft, PROMPT, 11, true, true, false, 8, 8),
             "same proof for ordinary storage");
     }
 

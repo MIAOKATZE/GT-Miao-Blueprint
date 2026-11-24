@@ -258,7 +258,8 @@ final class HologramBlueprintSharing {
             validatePresetSchema(
                 root.getAsJsonObject()
                     .get("blueprint"));
-            JsonObject blueprint = root.getAsJsonObject().getAsJsonObject("blueprint");
+            JsonObject blueprint = root.getAsJsonObject()
+                .getAsJsonObject("blueprint");
             if (!historical || blueprint.has("nativeBlueprint")) HologramBlueprintVersions.validateJson(blueprint);
             Share share = GSON.fromJson(root, Share.class);
             return share.blueprint;

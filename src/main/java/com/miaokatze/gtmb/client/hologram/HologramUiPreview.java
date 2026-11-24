@@ -287,8 +287,7 @@ final class HologramUiPreview {
         MiaoVisonLiteRenderer viewport = HologramRenderer.editor();
         viewport.selection = this.selection;
         viewport.moveOffset = this.gizmo.offset();
-        viewport.showEmptyCells = this.inventory || ui.position.positionDrawer()
-            || ui.preview.airSelectionHeld();
+        viewport.showEmptyCells = this.inventory || ui.position.positionDrawer() || ui.preview.airSelectionHeld();
         HologramRenderer.projectionLayer = this.allLayers ? Integer.MAX_VALUE : this.layer;
         viewport.selectedStructureId = ui.config.selectedStructureId();
         drawRect(viewportX(), viewportY(), viewportX() + viewportWidth(), viewportY() + height, 0xff0c1e28);
@@ -405,8 +404,24 @@ final class HologramUiPreview {
         viewport.selection = null;
         viewport.selectedStructureId = "";
         viewport.preview(
-            opening, x, y, width, height, yaw, pitch, zoom, camera.x, camera.y, camera.z,
-            allLayers ? Integer.MAX_VALUE : layer, view, -1, -1, -1, -1, false);
+            opening,
+            x,
+            y,
+            width,
+            height,
+            yaw,
+            pitch,
+            zoom,
+            camera.x,
+            camera.y,
+            camera.z,
+            allLayers ? Integer.MAX_VALUE : layer,
+            view,
+            -1,
+            -1,
+            -1,
+            -1,
+            false);
         return true;
     }
 
@@ -479,7 +494,8 @@ final class HologramUiPreview {
     }
 
     private boolean browseMeshInteractive() {
-        return browseState != null && HologramRenderer.browse().previewMeshVisible(browseState);
+        return browseState != null && HologramRenderer.browse()
+            .previewMeshVisible(browseState);
     }
 
     private boolean drawBrowseImage(HologramLibraryClient library, int height) {
@@ -554,7 +570,8 @@ final class HologramUiPreview {
             : cell == null
                 ? ui.session.state().data.getInteger("y") + (ui.session.state().minY + ui.session.state().maxY) / 2
                 : cell.y;
-        int[] voxel = HologramRenderer.editor().pickEmptyVoxel(ui.session.state(), mx, my, planeY);
+        int[] voxel = HologramRenderer.editor()
+            .pickEmptyVoxel(ui.session.state(), mx, my, planeY);
         if (voxel == null) return null;
         String structure = ui.config.selectedStructureId();
         if (!structure.isEmpty()) {
@@ -818,21 +835,23 @@ final class HologramUiPreview {
 
     boolean previewFrameReady(int x, int y, int width, int height) {
         boolean renderedEmpty = HologramRenderer.editor().showEmptyCells;
-        return HologramRenderer.editor().previewPresented(
-            ui.session.state(),
-            x,
-            y,
-            width,
-            height,
-            yaw,
-            pitch,
-            zoom,
-            camera.x,
-            camera.y,
-            camera.z,
-            allLayers ? Integer.MAX_VALUE : layer,
-            view,
-            renderedEmpty) && renderedEmpty == (inventory || ui.position.positionDrawer() || airSelectionHeld());
+        return HologramRenderer.editor()
+            .previewPresented(
+                ui.session.state(),
+                x,
+                y,
+                width,
+                height,
+                yaw,
+                pitch,
+                zoom,
+                camera.x,
+                camera.y,
+                camera.z,
+                allLayers ? Integer.MAX_VALUE : layer,
+                view,
+                renderedEmpty)
+            && renderedEmpty == (inventory || ui.position.positionDrawer() || airSelectionHeld());
     }
 
     boolean previewNavigable() {
@@ -1089,7 +1108,11 @@ final class HologramUiPreview {
             .held("cameraForward") ? 1 : 0)
             - (ui.tools.commands()
                 .held("cameraBack") ? 1 : 0);
-        double speed = Math.max(2, HologramRenderer.editor().previewExtent() * .6) / this.zoom;
+        double speed = Math.max(
+            2,
+            HologramRenderer.editor()
+                .previewExtent() * .6)
+            / this.zoom;
         this.camera.move(this.yaw, (now - previous) / 1_000_000_000.0, right, forward, speed);
     }
 
@@ -1217,7 +1240,8 @@ final class HologramUiPreview {
                 }
                 return true;
             case 23:
-                if (ui.session.editable() && ui.host.parent() != null) ui.host.parent().rescanDisplayedStructure();
+                if (ui.session.editable() && ui.host.parent() != null) ui.host.parent()
+                    .rescanDisplayedStructure();
                 return true;
             case 26:
                 if (ui.session.editable()) {

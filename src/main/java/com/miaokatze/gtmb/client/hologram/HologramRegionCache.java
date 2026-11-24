@@ -171,10 +171,11 @@ final class HologramRegionCache {
 
     private static Long2ObjectOpenHashMap<Region> packedRegions(Map<Key, List<HologramState.Cell>> regions) {
         Long2ObjectOpenHashMap<Region> packed = new Long2ObjectOpenHashMap<>(regions.size());
-        regions.forEach((key, region) -> {
-            if (canPack(key.x, key.y, key.z))
-                packed.put(CoordinatePacker.pack(key.x, key.y, key.z), (Region) region);
-        });
+        regions.forEach(
+            (key, region) -> {
+                if (canPack(key.x, key.y, key.z))
+                    packed.put(CoordinatePacker.pack(key.x, key.y, key.z), (Region) region);
+            });
         return packed;
     }
 

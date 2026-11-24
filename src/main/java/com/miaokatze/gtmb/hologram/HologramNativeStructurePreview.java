@@ -118,8 +118,8 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
             blockRenderer = null;
             world = memory;
         }
-        sourceWater = memory != null && context != null && HologramNativeSourceWater.reviewedController(context.getClass())
-            ? new LinkedHashSet<>() : null;
+        sourceWater = memory != null && context != null
+            && HologramNativeSourceWater.reviewedController(context.getClass()) ? new LinkedHashSet<>() : null;
         PreviewPlayer actor = new PreviewPlayer(world);
         survivalEnvironment = ISurvivalBuildEnvironment.create(items, actor);
         candidateEnvironment = AutoPlaceEnvironment.fromLegacy(items, actor, message -> {});
@@ -134,7 +134,8 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
 
     /** Each placement pass is atomic. Additional native passes can run on following client ticks. */
     boolean advance(long deadline) throws IOException {
-        if (closed || done || Thread.currentThread() != owner) throw new IllegalStateException("LOCAL_NATIVE_PREVIEW_SCOPE");
+        if (closed || done || Thread.currentThread() != owner)
+            throw new IllegalStateException("LOCAL_NATIVE_PREVIEW_SCOPE");
         try {
             controller.setWorldObj(world);
             HologramChannelTrace.Scope trace = HologramChannelTrace.begin(context);
@@ -170,7 +171,8 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
                             rounds++;
                         }
                     } finally {
-                        HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_NATIVE_PASSES, passStart);
+                        HologramRuntimeMetrics
+                            .finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_NATIVE_PASSES, passStart);
                     }
                     break;
                 } while (System.nanoTime() < deadline);
@@ -208,7 +210,8 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
         boolean atLimit = elements.size() + wideElements.size() >= HologramBlueprintLimits.MAX_CELLS;
         if (HologramNativePreviewWorld.packable(x, y, z)) {
             long positionKey = CoordinatePacker.pack(x, y, z);
-            if (sourceWater != null && instrumented && (!atLimit || elements.containsKey(positionKey))
+            if (sourceWater != null && instrumented
+                && (!atLimit || elements.containsKey(positionKey))
                 && !(x == controller.xCoord && y == controller.yCoord && z == controller.zCoord)) {
                 Position position = new Position(x, y, z);
                 if (HologramNativeSourceWater.reviewedSlot(event.getElement())) sourceWater.add(position);
@@ -230,13 +233,15 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
         List<HologramNativePreviewWorld.Placement> generated = new ArrayList<>();
         for (Position p : sourceWater) {
             if (!memory.blockExists(p.x(), p.y(), p.z())
-                || !HologramNativeSourceWater.missingFromDetachedPreview(memory.getBlock(p.x(), p.y(), p.z()))) continue;
+                || !HologramNativeSourceWater.missingFromDetachedPreview(memory.getBlock(p.x(), p.y(), p.z())))
+                continue;
             HologramBlueprintLimits.require(memory.recordedPlacementCount() + generated.size() + 2);
             generated.add(new HologramNativePreviewWorld.Placement(p.x(), p.y(), p.z(), Blocks.water, 0, null));
         }
         if (generated.isEmpty()) return;
         Iterator<HologramNativePreviewWorld.Placement> nativeRows = placements, waterRows = generated.iterator();
         placements = new Iterator<HologramNativePreviewWorld.Placement>() {
+
             @Override
             public boolean hasNext() {
                 return nativeRows.hasNext() || waterRows.hasNext();
@@ -348,7 +353,13 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
             try {
                 chain = isChain(element);
                 blocks = element.getBlocksToPlace(
-                    context, emptyWorld, cell.x, cell.y, cell.z, trigger.copy(), candidateEnvironment);
+                    context,
+                    emptyWorld,
+                    cell.x,
+                    cell.y,
+                    cell.z,
+                    trigger.copy(),
+                    candidateEnvironment);
             } catch (RuntimeException | LinkageError unavailable) {
                 // An opaque sibling must not suppress separately readable native hatch branches.
             }
@@ -364,8 +375,12 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
             if (hatch) cell.role = "hatch";
             if (first && reusablePreviewOptions(element)) sharedOptions.put(
                 element,
-                new PreviewOptions(cell.candidates, cell.candidateComplete, cell.candidateBoundary,
-                    cell.nativeCandidateCount, hatch));
+                new PreviewOptions(
+                    cell.candidates,
+                    cell.candidateComplete,
+                    cell.candidateBoundary,
+                    cell.nativeCandidateCount,
+                    hatch));
         } catch (RuntimeException | LinkageError unavailable) {
             cell.candidateBoundary = "原生结构元素未提供可读取选项";
         } finally {
@@ -393,17 +408,20 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
         Object fresh = HologramStructureDiscovery.context(pristine);
         World pristineWorld = pristine.getWorldObj();
         if (pristine == controller || !(pristineWorld instanceof HologramResourceWorld)
-            || pristineWorld == emptyWorld || pristineWorld == world || fresh == context || fresh == null
-            || fresh.getClass() != context.getClass())
-            throw new IOException("LOCAL_NATIVE_HATCH_CONTEXT_UNAVAILABLE");
-        AutoPlaceEnvironment environment =
-            AutoPlaceEnvironment.fromLegacy(new HologramNativePreviewItems(), new PreviewPlayer(pristineWorld), msg -> {});
-        return (element, x, y, z, sample) ->
-            ((IStructureElement) element).getBlocksToPlace(fresh, pristineWorld, x, y, z, sample, environment);
+            || pristineWorld == emptyWorld
+            || pristineWorld == world
+            || fresh == context
+            || fresh == null
+            || fresh.getClass() != context.getClass()) throw new IOException("LOCAL_NATIVE_HATCH_CONTEXT_UNAVAILABLE");
+        AutoPlaceEnvironment environment = AutoPlaceEnvironment
+            .fromLegacy(new HologramNativePreviewItems(), new PreviewPlayer(pristineWorld), msg -> {});
+        return (element, x, y, z, sample) -> ((IStructureElement) element)
+            .getBlocksToPlace(fresh, pristineWorld, x, y, z, sample, environment);
     }
 
     @FunctionalInterface
     interface ControllerFactory {
+
         TileEntity create() throws IOException;
     }
 
@@ -435,11 +453,13 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
 
     private static Predicate<ItemStack> coldHatches(IStructureElement<?> element, int depth,
         IdentityHashMap<IStructureElement<?>, Boolean> seen) throws ReflectiveOperationException {
-        if (element == null || depth == 0 || seen.size() >= 128 || seen.put(element, Boolean.TRUE) != null
+        if (element == null || depth == 0
+            || seen.size() >= 128
+            || seen.put(element, Boolean.TRUE) != null
             || HologramDeclarationAdapters.declaration(element) != null) return null;
         Predicate<ItemStack> known = HologramHatchPolicy.coldPreviewPredicate(element);
         if (known != null) return known;
-        if (element instanceof IStructureElementChain<?> chain) {
+        if (element instanceof IStructureElementChain<?>chain) {
             IStructureElement<?>[] children = HologramDeclarationWrappers.nativeChainChildren(chain);
             if (children == null || children.length > 64) return null;
             Predicate<ItemStack> result = null;
@@ -454,8 +474,10 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
         // Native atLeast's matcher is trigger-invariant. Its transparent channel wrapper still runs unaltered
         // in the settled query above; never unroll a conditional, lazy, contextual, or extension wrapper.
         return switch (factory.getName()) {
-            case "withChannel", "onElementPass", "onElementFail", "withDescription" ->
-                coldHatches(HologramDeclarationWrappers.nativeBacking(element), depth - 1, seen);
+            case "withChannel", "onElementPass", "onElementFail", "withDescription" -> coldHatches(
+                HologramDeclarationWrappers.nativeBacking(element),
+                depth - 1,
+                seen);
             default -> null;
         };
     }
@@ -467,7 +489,8 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
         if (blocks != null) try {
             complete = readSettledOffers(stacks, blocks, chain, catalog);
         } catch (RuntimeException | LinkageError unavailable) {
-            // A bad settled predicate still must not erase independently proved manual options or lift auto eligibility.
+            // A bad settled predicate still must not erase independently proved manual options or lift auto
+            // eligibility.
             stacks.clear();
         }
         int nativeCount = stacks.size();
@@ -479,8 +502,8 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
         cell.nativeCandidateCount = supplemental ? nativeCount : -1;
         cell.candidates = new ArrayList<>(stacks.values());
         cell.candidateComplete = complete && !supplemental;
-        cell.candidateBoundary = supplemental ? "本地目录含空结构的仓室候选，不代表自动补仓" : complete ? ""
-            : blocks == null ? "原生结构元素未提供可读取选项" : "选项来自本地物品目录";
+        cell.candidateBoundary = supplemental ? "本地目录含空结构的仓室候选，不代表自动补仓"
+            : complete ? "" : blocks == null ? "原生结构元素未提供可读取选项" : "选项来自本地物品目录";
     }
 
     private static boolean readSettledOffers(Map<HologramBlueprintResources.ExactKey, ItemStack> stacks,
@@ -507,7 +530,8 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
             if (predicate != null) for (ItemStack candidate : catalog.get()) {
                 if (stacks.size() >= MAX_CANDIDATES) break;
                 ItemStack sample = HologramNativePreviewItems.match(predicate, candidate);
-                if (sample != null && sample.getItemDamage() >= 0 && sample.getItemDamage() != 32767) add(stacks, sample);
+                if (sample != null && sample.getItemDamage() >= 0 && sample.getItemDamage() != 32767)
+                    add(stacks, sample);
                 if (stacks.size() == MAX_CANDIDATES) break;
             }
         }
@@ -536,7 +560,8 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
                 for (ItemStack candidate : catalog.get()) {
                     if (!(candidate.getItem() instanceof ItemMachines)) continue;
                     ItemStack sample = HologramNativePreviewItems.match(predicate, candidate);
-                    if (sample != null && sample.getItemDamage() >= 0 && sample.getItemDamage() != 32767) add(stacks, sample);
+                    if (sample != null && sample.getItemDamage() >= 0 && sample.getItemDamage() != 32767)
+                        add(stacks, sample);
                     if (stacks.size() == MAX_CANDIDATES) break;
                 }
             } catch (RuntimeException | LinkageError unavailable) {
@@ -566,7 +591,8 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
         sharedOptions.clear();
         coldCandidates.clear();
         if (nativeHatchChooser != null) nativeHatchChooser.clear();
-        placements = Collections.<HologramNativePreviewWorld.Placement>emptyList().iterator();
+        placements = Collections.<HologramNativePreviewWorld.Placement>emptyList()
+            .iterator();
     }
 
     @Desugar

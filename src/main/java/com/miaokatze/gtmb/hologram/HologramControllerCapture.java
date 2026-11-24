@@ -250,13 +250,14 @@ final class HologramControllerCapture {
         s.job = 4;
         s.phase = "STOPPED";
         s.status = reason;
-        if (s.nativeCompactStart == null && HologramWorkspace.find(s.player.getUniqueID()) == s) HologramNetwork.transportFailure(
-            s.player,
-            s.id,
-            s.uiSequence,
-            "capture.prepare",
-            s.blueprintClientTaskToken,
-            new IllegalStateException(reason, failure));
+        if (s.nativeCompactStart == null && HologramWorkspace.find(s.player.getUniqueID()) == s)
+            HologramNetwork.transportFailure(
+                s.player,
+                s.id,
+                s.uiSequence,
+                "capture.prepare",
+                s.blueprintClientTaskToken,
+                new IllegalStateException(reason, failure));
     }
 
     private static void collectNative(HologramSession s, boolean resetAttempts) {
@@ -327,10 +328,15 @@ final class HologramControllerCapture {
             if (resumed == null) s.captureAttempts++;
             ItemStack initialTrigger = HologramSessionPolicy.trigger(s);
             s.capture = s.nativeCompactSource != null ? HologramCapture.collectCompact(s, initialTrigger, resumed)
-                : projection ? HologramCapture
-                .collectProjection(s.machine, initialTrigger, s.machine.getExtendedFacing(), s.captureIntent, resumed)
-                : HologramCapture
-                    .collect(s.machine, initialTrigger, s.machine.getExtendedFacing(), s.captureIntent, resumed);
+                : projection
+                    ? HologramCapture.collectProjection(
+                        s.machine,
+                        initialTrigger,
+                        s.machine.getExtendedFacing(),
+                        s.captureIntent,
+                        resumed)
+                    : HologramCapture
+                        .collect(s.machine, initialTrigger, s.machine.getExtendedFacing(), s.captureIntent, resumed);
             if (s.capture.pending) {
                 scheduleCaptureRetry(s);
                 return;
@@ -340,10 +346,15 @@ final class HologramControllerCapture {
             ItemStack observedTrigger = HologramSessionPolicy.trigger(s);
             if (!s.capture.incomplete && !ItemStack.areItemStackTagsEqual(initialTrigger, observedTrigger)) {
                 s.capture = s.nativeCompactSource != null ? HologramCapture.collectCompact(s, observedTrigger, null)
-                    : projection ? HologramCapture
-                    .collectProjection(s.machine, observedTrigger, s.machine.getExtendedFacing(), s.captureIntent, null)
-                    : HologramCapture
-                        .collect(s.machine, observedTrigger, s.machine.getExtendedFacing(), s.captureIntent);
+                    : projection
+                        ? HologramCapture.collectProjection(
+                            s.machine,
+                            observedTrigger,
+                            s.machine.getExtendedFacing(),
+                            s.captureIntent,
+                            null)
+                        : HologramCapture
+                            .collect(s.machine, observedTrigger, s.machine.getExtendedFacing(), s.captureIntent);
                 if (s.capture.pending) {
                     scheduleCaptureRetry(s);
                     return;
@@ -537,8 +548,7 @@ final class HologramControllerCapture {
                 if (!reviewSelection.hasNext()) finishReview(s);
                 else {
                     int selected = reviewSelection.next();
-                    if (selected < 0 || !HologramSessionPolicy
-                        .inScope(s, s.capture.cells.get(selected), selected))
+                    if (selected < 0 || !HologramSessionPolicy.inScope(s, s.capture.cells.get(selected), selected))
                         refuseReview(s, "原生施工选择已变化，请重新选择完整范围。");
                 }
             }
@@ -561,9 +571,8 @@ final class HologramControllerCapture {
             }
             s.scanSelectedPosition = null;
             s.scanSelectedPositions.clear();
-            planner = HologramResourcePlanner.beginCapturePlan(
-                s,
-                HologramNativeReadyPlacement.enabled() && s.capture.readyPlacementSource(s));
+            planner = HologramResourcePlanner
+                .beginCapturePlan(s, HologramNativeReadyPlacement.enabled() && s.capture.readyPlacementSource(s));
             stage = 7;
         }
     }

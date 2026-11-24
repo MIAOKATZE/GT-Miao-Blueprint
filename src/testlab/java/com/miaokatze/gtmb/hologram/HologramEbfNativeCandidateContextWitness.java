@@ -37,16 +37,18 @@ public final class HologramEbfNativeCandidateContextWitness {
     private HologramEbfNativeCandidateContextWitness() {}
 
     public static Map<String, Object> measure(ItemStack controller, int controllerMeta, ExtendedFacing facing,
-        NBTTagCompound settings,
-        int dx, int dy, int dz, ItemStack nativeTarget, List<ItemStack> displayedOptions) throws java.io.IOException {
+        NBTTagCompound settings, int dx, int dy, int dz, ItemStack nativeTarget, List<ItemStack> displayedOptions)
+        throws java.io.IOException {
         require(dy == 3, "Expected a stock EBF top output row");
-        require(ItemMachines.getMetaTileEntity(nativeTarget) instanceof MTEHatchOutput,
+        require(
+            ItemMachines.getMetaTileEntity(nativeTarget) instanceof MTEHatchOutput,
             "Expected a real native output hatch target");
         BaseMetaTileEntity used = detached(controller, controllerMeta, facing);
         BaseMetaTileEntity pristine = detached(controller, controllerMeta, facing);
         MTEElectricBlastFurnace usedMachine = (MTEElectricBlastFurnace) used.getMetaTileEntity();
         MTEElectricBlastFurnace pristineMachine = (MTEElectricBlastFurnace) pristine.getMetaTileEntity();
-        require(used != pristine && usedMachine != pristineMachine && used.getWorldObj() != pristine.getWorldObj(),
+        require(
+            used != pristine && usedMachine != pristineMachine && used.getWorldObj() != pristine.getWorldObj(),
             "A/B must not share a tile, machine or world");
         ItemStack trigger = HologramLocalControllerCapture.previewTrigger(null, settings);
         ChannelDataAccessor.setChannelData(trigger, "gt_hatch", 1);
@@ -56,7 +58,11 @@ public final class HologramEbfNativeCandidateContextWitness {
 
         HologramCapture.Cell detail;
         try (HologramNativeStructurePreview preview = new HologramNativeStructurePreview(
-            used, usedMachine, usedMachine, false, trigger.copy())) {
+            used,
+            usedMachine,
+            usedMachine,
+            false,
+            trigger.copy())) {
             boolean done = false;
             for (int i = 0; i < 32 && !done; i++) done = preview.advance(System.nanoTime() + 10_000_000L);
             require(done, "The separately owned EBF preview did not converge");
@@ -64,10 +70,15 @@ public final class HologramEbfNativeCandidateContextWitness {
         }
         long usedCount = HatchElement.OutputHatch.count(usedMachine);
         require(detail.element instanceof IStructureElementChain<?>, "Expected the stock output/casing chain");
-        require(used.getWorldObj().getTileEntity(0, ANCHOR_Y, 0) == used
-            && pristine.getWorldObj().getTileEntity(0, ANCHOR_Y, 0) == pristine
-            && used.getWorldObj().getBlock(dx, ANCHOR_Y + dy, dz) == Blocks.air
-            && pristine.getWorldObj().getBlock(dx, ANCHOR_Y + dy, dz) == Blocks.air,
+        require(
+            used.getWorldObj()
+                .getTileEntity(0, ANCHOR_Y, 0) == used
+                && pristine.getWorldObj()
+                    .getTileEntity(0, ANCHOR_Y, 0) == pristine
+                && used.getWorldObj()
+                    .getBlock(dx, ANCHOR_Y + dy, dz) == Blocks.air
+                && pristine.getWorldObj()
+                    .getBlock(dx, ANCHOR_Y + dy, dz) == Blocks.air,
             "A/B must query equivalent empty declaration worlds, each owning its own anchor");
         Predicate<ItemStack> post = predicate(detail.element, usedMachine, used, trigger, dx, dy, dz);
         Predicate<ItemStack> pre = predicate(detail.element, pristineMachine, pristine, trigger, dx, dy, dz);
@@ -83,9 +94,19 @@ public final class HologramEbfNativeCandidateContextWitness {
         Map<String, Object> proof = new LinkedHashMap<>();
         proof.put("relative", new int[] { dx, dy, dz });
         proof.put("facing", facing.toString());
-        proof.put("trigger", trigger.writeToNBT(new NBTTagCompound()).toString());
-        proof.put("nativeTarget", nativeTarget.writeToNBT(new NBTTagCompound()).toString());
-        proof.put("alternate", alternate == null ? null : alternate.writeToNBT(new NBTTagCompound()).toString());
+        proof.put(
+            "trigger",
+            trigger.writeToNBT(new NBTTagCompound())
+                .toString());
+        proof.put(
+            "nativeTarget",
+            nativeTarget.writeToNBT(new NBTTagCompound())
+                .toString());
+        proof.put(
+            "alternate",
+            alternate == null ? null
+                : alternate.writeToNBT(new NBTTagCompound())
+                    .toString());
         proof.put("freshNativeAccepted", freshNative);
         proof.put("usedNativeAccepted", usedNative);
         proof.put("freshAlternateAccepted", freshAlternate);
@@ -98,17 +119,30 @@ public final class HologramEbfNativeCandidateContextWitness {
         proof.put("displayedFreshAlternateIndex", exactIndex(displayedOptions, alternate));
         proof.put("pristineCount", freshCount);
         proof.put("usedCount", usedCount);
-        proof.put("normalUsedCandidateDamage", detail.candidates == null ? Collections.emptyList()
-            : detail.candidates.stream().map(ItemStack::getItemDamage).collect(java.util.stream.Collectors.toList()));
-        proof.put("demonstrated", usedCount > 0 && freshNative && !usedNative && freshAlternate && !usedAlternate
-            && casingBoth && controllerRejected && sameCountsAfterReads);
+        proof.put(
+            "normalUsedCandidateDamage",
+            detail.candidates == null ? Collections.emptyList()
+                : detail.candidates.stream()
+                    .map(ItemStack::getItemDamage)
+                    .collect(java.util.stream.Collectors.toList()));
+        proof.put(
+            "demonstrated",
+            usedCount > 0 && freshNative
+                && !usedNative
+                && freshAlternate
+                && !usedAlternate
+                && casingBoth
+                && controllerRejected
+                && sameCountsAfterReads);
         return proof;
     }
 
     private static BaseMetaTileEntity detached(ItemStack controller, int meta, ExtendedFacing facing) {
         IMetaTileEntity prototype = ItemMachines.getMetaTileEntity(controller);
-        require(prototype != null && prototype.getClass() == MTEElectricBlastFurnace.class
-            && !(prototype instanceof INEIPreviewModifier), "Only the unmodified stock EBF may be probed");
+        require(
+            prototype != null && prototype.getClass() == MTEElectricBlastFurnace.class
+                && !(prototype instanceof INEIPreviewModifier),
+            "Only the unmodified stock EBF may be probed");
         HologramResourceWorld world = HologramResourceWorld.declarations(GregTechAPI.sBlockMachines, meta);
         TileEntity tile = GregTechAPI.sBlockMachines.createTileEntity(world, meta);
         require(tile instanceof BaseMetaTileEntity, "Missing detached EBF tile");
@@ -121,12 +155,16 @@ public final class HologramEbfNativeCandidateContextWitness {
         world.tile = base;
         base.setInitialValuesAsNBT(null, (short) controller.getItemDamage());
         IMetaTileEntity machine = base.getMetaTileEntity();
-        require(machine != prototype && machine != null && machine.getClass() == MTEElectricBlastFurnace.class
-            && !(machine instanceof INEIPreviewModifier) && base.getWorldObj() == world,
+        require(
+            machine != prototype && machine != null
+                && machine.getClass() == MTEElectricBlastFurnace.class
+                && !(machine instanceof INEIPreviewModifier)
+                && base.getWorldObj() == world,
             "EBF must have an independent known implementation with no preview hook");
         if (base.getFrontFacing() != facing.getDirection()) base.setFrontFacing(facing.getDirection());
         MTEElectricBlastFurnace furnace = (MTEElectricBlastFurnace) machine;
-        require(furnace.getExtendedFacing() == facing || furnace.checkedSetExtendedFacing(facing),
+        require(
+            furnace.getExtendedFacing() == facing || furnace.checkedSetExtendedFacing(facing),
             "Cannot match the stock test controller's alignment");
         return base;
     }
@@ -136,8 +174,8 @@ public final class HologramEbfNativeCandidateContextWitness {
         BaseMetaTileEntity base, ItemStack trigger, int dx, int dy, int dz) {
         // The pinned stock EBF top HatchElementBuilder and casing factory do not use an actor. No live context is used.
         AutoPlaceEnvironment env = AutoPlaceEnvironment.fromLegacy(new HologramNativePreviewItems(), null, msg -> {});
-        IStructureElement.BlocksToPlace blocks = element.getBlocksToPlace(
-            machine, base.getWorldObj(), dx, ANCHOR_Y + dy, dz, trigger.copy(), env);
+        IStructureElement.BlocksToPlace blocks = element
+            .getBlocksToPlace(machine, base.getWorldObj(), dx, ANCHOR_Y + dy, dz, trigger.copy(), env);
         require(blocks != null && blocks.getPredicate() != null, "Missing native output predicate");
         return blocks.getPredicate();
     }

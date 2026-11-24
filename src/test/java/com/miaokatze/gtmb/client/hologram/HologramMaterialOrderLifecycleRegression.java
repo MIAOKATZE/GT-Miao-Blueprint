@@ -35,13 +35,18 @@ public final class HologramMaterialOrderLifecycleRegression {
             orders.receive(world, connection, base, running),
             "the exact current order admits its first publication");
         NBTTagCompound cancel = new NBTTagCompound();
-        SimpleAssert.that(!HologramMaterialOrderLifecycle.writeCancel(cancel, new NBTTagCompound(), 9, 5)
-            && cancel.hasNoTags(), "a pending order sends no cancellation");
-        SimpleAssert.that(!HologramMaterialOrderLifecycle.writeCancel(cancel, orders.order(), 9, 6)
-            && cancel.hasNoTags(), "another review cannot label a cancellation");
-        SimpleAssert.that(HologramMaterialOrderLifecycle.writeCancel(cancel, orders.order(), 9, 5)
-            && "first".equals(cancel.getString("orderId")) && cancel.getLong("planRevision") == 9
-            && cancel.getLong("placementReviewNonce") == 5, "cancellation identifies the acknowledged order and review");
+        SimpleAssert.that(
+            !HologramMaterialOrderLifecycle.writeCancel(cancel, new NBTTagCompound(), 9, 5) && cancel.hasNoTags(),
+            "a pending order sends no cancellation");
+        SimpleAssert.that(
+            !HologramMaterialOrderLifecycle.writeCancel(cancel, orders.order(), 9, 6) && cancel.hasNoTags(),
+            "another review cannot label a cancellation");
+        SimpleAssert.that(
+            HologramMaterialOrderLifecycle.writeCancel(cancel, orders.order(), 9, 5)
+                && "first".equals(cancel.getString("orderId"))
+                && cancel.getLong("planRevision") == 9
+                && cancel.getLong("placementReviewNonce") == 5,
+            "cancellation identifies the acknowledged order and review");
         HologramState progressed = orders.apply(base);
         SimpleAssert.that(
             progressed.cells == base.cells && progressed.materials == base.materials

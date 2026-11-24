@@ -63,8 +63,8 @@ public final class HologramLocalAreaCapture implements AutoCloseable {
         minX = bounds[0];
         minY = bounds[1];
         minZ = bounds[2];
-        if (!HologramWorldFlow.worldPosition(minX, minY, minZ, world.getHeight()) || !HologramWorldFlow
-            .worldPosition(bounds[3], bounds[4], bounds[5], world.getHeight()))
+        if (!HologramWorldFlow.worldPosition(minX, minY, minZ, world.getHeight())
+            || !HologramWorldFlow.worldPosition(bounds[3], bounds[4], bounds[5], world.getHeight()))
             throw new IOException("区域超出世界坐标边界");
         regions = selection.resolvedRegions();
         cursor = new HologramAreaBlockCursor(regions);
@@ -87,10 +87,10 @@ public final class HologramLocalAreaCapture implements AutoCloseable {
             draft.palette.addAll(palette.values());
             palette.clear();
         }
-        if (!preparation.captureLocalShells(draft, budget, deadline) || !preparation.start(draft) || !preparation.ready())
-            return null;
-        HologramLocalBlueprintDocument result = HologramLocalBlueprintDocument.fromCapture(
-            preparation.result(), dimension, minX, minY, minZ);
+        if (!preparation.captureLocalShells(draft, budget, deadline) || !preparation.start(draft)
+            || !preparation.ready()) return null;
+        HologramLocalBlueprintDocument result = HologramLocalBlueprintDocument
+            .fromCapture(preparation.result(), dimension, minX, minY, minZ);
         close();
         return result;
     }
@@ -116,11 +116,10 @@ public final class HologramLocalAreaCapture implements AutoCloseable {
     }
 
     private boolean emptySection(int chunkX, int sectionY, int chunkZ) throws IOException {
-        if (!world.getChunkProvider().chunkExists(chunkX, chunkZ))
-            throw new IOException("区域包含未加载的客户端区块，请靠近后重试");
+        if (!world.getChunkProvider()
+            .chunkExists(chunkX, chunkZ)) throw new IOException("区域包含未加载的客户端区块，请靠近后重试");
         chunk = world.getChunkFromChunkCoords(chunkX, chunkZ);
-        if (chunk == null || chunk instanceof EmptyChunk)
-            throw new IOException("区域包含未加载的客户端区块，请靠近后重试");
+        if (chunk == null || chunk instanceof EmptyChunk) throw new IOException("区域包含未加载的客户端区块，请靠近后重试");
         readFrames(sectionY);
         ExtendedBlockStorage[] sections = chunk.getBlockStorageArray();
         return sectionY >= sections.length || sections[sectionY] == null || sections[sectionY].isEmpty();
@@ -132,8 +131,8 @@ public final class HologramLocalAreaCapture implements AutoCloseable {
             if (!(entity instanceof EntityItemFrame frame) || frame.isDead) continue;
             int x = MathHelper.floor_double(frame.posX), y = MathHelper.floor_double(frame.posY),
                 z = MathHelper.floor_double(frame.posZ);
-            if (regions.stream().noneMatch(region -> region.contains(x, y, z)) || !seenFrames.add(frame.getUniqueID()))
-                continue;
+            if (regions.stream()
+                .noneMatch(region -> region.contains(x, y, z)) || !seenFrames.add(frame.getUniqueID())) continue;
             if (seenFrames.size() > 1024) {
                 draft.sourceItemFramesTruncated = true;
                 break;
@@ -172,7 +171,8 @@ public final class HologramLocalAreaCapture implements AutoCloseable {
         cell.metadata = meta;
         if (tile instanceof IGregTechTileEntity gt) cell.facing = HologramBlockIdentity.front(gt);
         if (item != null && item.hasTagCompound()) {
-            HologramBlueprintNbt.Encoded encoded = HologramBlueprintNbt.encodeCapturedWithSize(block, item.getTagCompound());
+            HologramBlueprintNbt.Encoded encoded = HologramBlueprintNbt
+                .encodeCapturedWithSize(block, item.getTagCompound());
             cell.itemNbt = encoded.value;
             expandedNbt += encoded.expandedBytes;
         }
@@ -190,17 +190,16 @@ public final class HologramLocalAreaCapture implements AutoCloseable {
         }
         positions.put(position(x, y, z), cell);
         draft.cells.add(cell);
-        if (item != null) palette.computeIfAbsent(
-            cell.item + ":" + cell.damage,
-            ignored -> HologramPresets.cell(item, 0, 0, 0, -1, false));
+        if (item != null) palette
+            .computeIfAbsent(cell.item + ":" + cell.damage, ignored -> HologramPresets.cell(item, 0, 0, 0, -1, false));
     }
 
     private boolean readStructures(int budget, long deadline) throws IOException {
         if (structureIndex >= controllers.size()) return true;
         TileEntity tile = controllers.get(structureIndex);
         if (structureCapture == null) {
-            int side = tile instanceof IGregTechTileEntity gt && gt.getFrontFacing() != null
-                ? gt.getFrontFacing().ordinal() : 1;
+            int side = tile instanceof IGregTechTileEntity gt && gt.getFrontFacing() != null ? gt.getFrontFacing()
+                .ordinal() : 1;
             NBTTagCompound settings = HologramLocalControllerCapture.toolSettings(tool);
             structureCapture = new HologramLocalControllerCapture(tile, dimension, side, tool, settings, "");
             structure = controller(tile, settings);
@@ -243,28 +242,33 @@ public final class HologramLocalAreaCapture implements AutoCloseable {
             saved.controllerId = gt.getMetaTileID();
             if (gt.getMetaTileEntity() != null) controller = gt.getMetaTileEntity();
         }
-        saved.name = controller.getClass().getSimpleName();
-        saved.sourceClass = controller.getClass().getName();
+        saved.name = controller.getClass()
+            .getSimpleName();
+        saved.sourceClass = controller.getClass()
+            .getName();
         saved.sourceMod = HologramSessionPolicy.sourceMod(controller.getClass());
         saved.main = Math.max(1, settings.getInteger("main"));
         saved.mainExplicit = settings.getBoolean("mainExplicit");
         saved.noHatches = settings.getBoolean("noHatches");
         NBTTagCompound channels = settings.getCompoundTag("channels");
-        for (Object key : channels.func_150296_c()) saved.channels.put(String.valueOf(key), channels.getInteger(String.valueOf(key)));
+        for (Object key : channels.func_150296_c())
+            saved.channels.put(String.valueOf(key), channels.getInteger(String.valueOf(key)));
         return saved;
     }
 
     private void bind(NBTTagCompound row, String id) {
-        HologramPresets.Cell cell = positions.get(position(row.getInteger("x"), row.getInteger("y"), row.getInteger("z")));
+        HologramPresets.Cell cell = positions
+            .get(position(row.getInteger("x"), row.getInteger("y"), row.getInteger("z")));
         if (cell == null || cell.controller) return;
         addMembership(cell, id);
-        if (cell.structureRole == null && !row.getString("role").isEmpty()) cell.structureRole = row.getString("role");
-        if (cell.structureFamily == null && !row.getString("family").isEmpty())
-            cell.structureFamily = row.getString("family");
-        if (cell.structureHint == null && !row.getString("prompt").isEmpty()) cell.structureHint = row.getString("prompt");
-        if (row.hasKey("candidateComplete", 1))
-            cell.structureCandidatesComplete = row.getBoolean("candidateComplete")
-                && !Boolean.FALSE.equals(cell.structureCandidatesComplete);
+        if (cell.structureRole == null && !row.getString("role")
+            .isEmpty()) cell.structureRole = row.getString("role");
+        if (cell.structureFamily == null && !row.getString("family")
+            .isEmpty()) cell.structureFamily = row.getString("family");
+        if (cell.structureHint == null && !row.getString("prompt")
+            .isEmpty()) cell.structureHint = row.getString("prompt");
+        if (row.hasKey("candidateComplete", 1)) cell.structureCandidatesComplete = row.getBoolean("candidateComplete")
+            && !Boolean.FALSE.equals(cell.structureCandidatesComplete);
         NBTTagList candidates = row.getTagList("candidates", 10);
         if (candidates.tagCount() == 0) return;
         List<ItemStack> stacks = new ArrayList<>(candidates.tagCount());
@@ -275,7 +279,8 @@ public final class HologramLocalAreaCapture implements AutoCloseable {
         List<HologramPresets.Target> targets = HologramBlueprintData.savedTargets(stacks);
         if (cell.allowedTargets == null) cell.allowedTargets = targets;
         else cell.allowedTargets.removeIf(
-            old -> targets.stream().noneMatch(next -> next.item.equals(old.item) && next.damage == old.damage));
+            old -> targets.stream()
+                .noneMatch(next -> next.item.equals(old.item) && next.damage == old.damage));
     }
 
     private static void addMembership(HologramPresets.Cell cell, String id) {

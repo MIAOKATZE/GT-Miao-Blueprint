@@ -34,6 +34,7 @@ final class HologramLinkNodePreview {
     private static Map<HologramState.Cell, List<Node>[]> nodes() {
         return HologramPreviewAssets.active().linkNodes.nodes;
     }
+
     private static final Map<String, ResourceLocation[]> TEXTURES = new HashMap<>();
     private static final String VISUALS = "com.miaokatze.gtswn.client.render.LinkNodeVisuals";
     private static final String CONFIG = "com.miaokatze.gtswn.config.Config";

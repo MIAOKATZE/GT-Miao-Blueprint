@@ -32,7 +32,11 @@ record HologramLocalMachineState(Operation operation, int tier) {
     };
 
     enum Operation {
-        UNKNOWN("Unknown"), ACTIVE("Active"), IDLE("Idle"), DISABLED("Disabled");
+
+        UNKNOWN("Unknown"),
+        ACTIVE("Active"),
+        IDLE("Idle"),
+        DISABLED("Disabled");
 
         private final String key;
 
@@ -66,7 +70,8 @@ record HologramLocalMachineState(Operation operation, int tier) {
 
     String caption() {
         String status = StatCollector.translateToLocal(operation.key);
-        return tier > 0 ? status + " · " + StatCollector.translateToLocalFormatted("gtmb.hologram.localMachineTier", tier)
+        return tier > 0
+            ? status + " · " + StatCollector.translateToLocalFormatted("gtmb.hologram.localMachineTier", tier)
             : status;
     }
 }

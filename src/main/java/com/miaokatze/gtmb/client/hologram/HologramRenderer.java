@@ -110,7 +110,8 @@ final class HologramRenderer {
 
     static MiaoVisonLiteRenderer viewportFor(HologramState state) {
         return state != null && (BROWSE.owns(state) || state == HologramLibraryClient.INSTANCE.browsePreviewState())
-            ? BROWSE : EDITOR;
+            ? BROWSE
+            : EDITOR;
     }
 
     static HologramState previewDisplayState() {

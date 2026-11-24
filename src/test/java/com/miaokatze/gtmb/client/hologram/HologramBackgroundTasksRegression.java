@@ -183,10 +183,13 @@ public final class HologramBackgroundTasksRegression {
         snapshot.setBoolean("capturePending", true);
         SimpleAssert.that(!owner.finishScanSnapshot(snapshot, 6, false), "capture progress still owns the scan");
         snapshot.setBoolean("capturePending", false);
-        SimpleAssert.that(owner.finishScanSnapshot(snapshot, 6, false) && !owner.busy(),
+        SimpleAssert.that(
+            owner.finishScanSnapshot(snapshot, 6, false) && !owner.busy(),
             "an accepted final snapshot releases the scan even without an installed view");
         SimpleAssert.that(!owner.finishScanSnapshot(snapshot, 6, false), "duplicate completion has no effect");
-        SimpleAssert.eq(java.util.Collections.singletonList(HologramTaskOwner.Result.SUCCESS), results,
+        SimpleAssert.eq(
+            java.util.Collections.singletonList(HologramTaskOwner.Result.SUCCESS),
+            results,
             "the finished scan has one terminal result");
     }
 

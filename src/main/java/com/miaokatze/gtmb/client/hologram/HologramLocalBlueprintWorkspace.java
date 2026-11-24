@@ -188,7 +188,8 @@ final class HologramLocalBlueprintWorkspace {
         resumeCapture(document, remembered, false);
     }
 
-    private void resumeCapture(HologramLocalBlueprintDocument document, HologramLocalPresentation remembered, boolean retried) {
+    private void resumeCapture(HologramLocalBlueprintDocument document, HologramLocalPresentation remembered,
+        boolean retried) {
         Task task = begin("正在准备本地蓝图");
         if (task == null) return;
         Minecraft client = ui.host.minecraft();
@@ -236,14 +237,20 @@ final class HologramLocalBlueprintWorkspace {
         task = null;
         // A save that committed on the old window may advance the retained document while this window opens.
         // Retry once from the same live draft and new revision, never an old row or an old prepared view.
-        if (stale.resumeDocument != null && !stale.resumeRetried && screenCurrent(stale)
+        if (stale.resumeDocument != null && !stale.resumeRetried
+            && screenCurrent(stale)
             && stale.resumeDocument.revision() != stale.resumeRevision) resumeCapture(stale.resumeDocument, null, true);
     }
 
     private boolean resumeOwner(HologramLocalBlueprintDocument document, HologramLocalPresentation remembered) {
         Minecraft mc = ui.host.minecraft();
-        return mc.thePlayer != null && remembered.current(document, mc.theWorld, mc.getNetHandler(), mc.thePlayer,
-            mc.thePlayer.dimension, HologramTextures.resourceGeneration());
+        return mc.thePlayer != null && remembered.current(
+            document,
+            mc.theWorld,
+            mc.getNetHandler(),
+            mc.thePlayer,
+            mc.thePlayer.dimension,
+            HologramTextures.resourceGeneration());
     }
 
     void openPublic(String id) {
@@ -252,8 +259,9 @@ final class HologramLocalBlueprintWorkspace {
         current.opening = true;
         HologramLibraryClient.INSTANCE.openPublic(
             id,
-            json -> work(current, () -> prepareOpen(
-                current, new EditorSource(json, LocalEditorOrigin.STRICT), "", "已打开服务器蓝图的本地副本")),
+            json -> work(
+                current,
+                () -> prepareOpen(current, new EditorSource(json, LocalEditorOrigin.STRICT), "", "已打开服务器蓝图的本地副本")),
             reason -> failed(current, new IOException(reason)));
     }
 
@@ -273,14 +281,16 @@ final class HologramLocalBlueprintWorkspace {
         work(current, () -> {
             String alias = shareName(name);
             if (id.startsWith("legacy:")) {
-                HologramBlueprintFiles.exportHistoricShare(directory, alias, store.readLegacyDocument(id), () -> current(current));
+                HologramBlueprintFiles
+                    .exportHistoricShare(directory, alias, store.readLegacyDocument(id), () -> current(current));
                 main(() -> exported(current));
                 return;
             }
             String localId = id.startsWith("local_") ? id : "local_" + id;
             Path source = store.savedPath(localId);
             if (!java.nio.file.Files.isRegularFile(HologramBlueprintArtifact.previewPath(source))) {
-                HologramBlueprintFiles.exportHistoricShare(directory, alias, store.readPrivateDocument(localId), () -> current(current));
+                HologramBlueprintFiles
+                    .exportHistoricShare(directory, alias, store.readPrivateDocument(localId), () -> current(current));
                 main(() -> exported(current));
                 return;
             }
@@ -347,8 +357,12 @@ final class HologramLocalBlueprintWorkspace {
 
     private void prepareOpen(Task current, EditorSource source, String localId, String notice) throws IOException {
         var opened = HologramLocalBlueprintDocument.openStoredForEditor(
-            source.json(), localId, () -> current(current),
-            editor -> stageView(current, null, editor, editor.metadata(), notice), PACKED_AUTHORING, source.origin());
+            source.json(),
+            localId,
+            () -> current(current),
+            editor -> stageView(current, null, editor, editor.metadata(), notice),
+            PACKED_AUTHORING,
+            source.origin());
         if (opened.editor() == null) prepareView(current, opened.document(), notice);
         else main(() -> {
             if (!current(current) || !screenCurrent(current)) return;
@@ -388,7 +402,11 @@ final class HologramLocalBlueprintWorkspace {
                     return;
                 }
                 HologramBlueprintPreview.captureOwned(
-                    renderSnapshot, json, yaw, pitch, trace,
+                    renderSnapshot,
+                    json,
+                    yaw,
+                    pitch,
+                    trace,
                     // captureOwned checks this on RenderTick END, before actual submission/readback.
                     () -> {
                         boolean owned = current(current) && clientCurrent(current);
@@ -416,7 +434,8 @@ final class HologramLocalBlueprintWorkspace {
                             throw failure;
                         }
                         main(() -> saved(current, prepared, pending.exactJson()));
-                    }), failure -> failed(current, failure));
+                    }),
+                    failure -> failed(current, failure));
             });
         }));
     }
@@ -447,9 +466,14 @@ final class HologramLocalBlueprintWorkspace {
 
     HologramLocalHistoryTrace watchHistory(String op, HologramState source, HologramLocalBlueprintDocument draft,
         long nextSequence, long pressNanos) {
-        if (!HologramLocalHistoryTrace.isHistory(op) || historyWatch != null || busy() || draft == null
-            || ui.session.document() != draft || draft.packedAuthoring() || ui.session.state() != source
-            || ui.host.minecraft().currentScreen != ui.host.parent() || nextSequence != ui.session.sequence() + 1
+        if (!HologramLocalHistoryTrace.isHistory(op) || historyWatch != null
+            || busy()
+            || draft == null
+            || ui.session.document() != draft
+            || draft.packedAuthoring()
+            || ui.session.state() != source
+            || ui.host.minecraft().currentScreen != ui.host.parent()
+            || nextSequence != ui.session.sequence() + 1
             || draft.revision() != ui.session.revision()) return null;
         var trace = new HologramLocalHistoryTrace(op, draft.revision(), nextSequence, pressNanos, System::nanoTime);
         historyWatch = new HistoryWatch(trace, source, draft);
@@ -466,8 +490,14 @@ final class HologramLocalBlueprintWorkspace {
         var watch = historyWatch;
         if (watch == null || !HologramLocalHistoryTrace.isHistory(current.operation)) return;
         historyWatch = null;
-        if (watch.trace.admit(current.operation, request.getLong("planRevision"), current.sequence,
-            watch.source, current.source, watch.draft, current.draft,
+        if (watch.trace.admit(
+            current.operation,
+            request.getLong("planRevision"),
+            current.sequence,
+            watch.source,
+            current.source,
+            watch.draft,
+            current.draft,
             current.revision == watch.trace.sourceRevision && request.hasKey("planRevision", 4)
                 && screenCurrent(current))) {
             current.historyTrace = watch.trace;
@@ -536,7 +566,8 @@ final class HologramLocalBlueprintWorkspace {
                     return;
                 }
                 try {
-                    current.draft.acceptPackedMaterialization(converted, current.revision, () -> materializationOwner(current));
+                    current.draft
+                        .acceptPackedMaterialization(converted, current.revision, () -> materializationOwner(current));
                     mark(trace, Stage.MATERIALIZE_CLIENT_DONE);
                     resume.run();
                 } catch (IOException | RuntimeException failure) {
@@ -554,7 +585,8 @@ final class HologramLocalBlueprintWorkspace {
         current.revision = current.draft.revision();
         boolean changed = current.revision != previous;
         HistoryDelta history = changed && HologramLocalHistoryTrace.isHistory(current.operation)
-            ? current.draft.historyDelta(previous) : null;
+            ? current.draft.historyDelta(previous)
+            : null;
         if (history != null) {
             publishCertifiedHistory(current, history);
             return;
@@ -562,7 +594,8 @@ final class HologramLocalBlueprintWorkspace {
         NBTTagCompound annotation = changed ? current.draft.annotationDelta() : null;
         boolean packedHeaderHistory = current.draft.packedAuthoring()
             && ("editUndo".equals(current.operation) || "editRedo".equals(current.operation));
-        if (changed && annotation == null && !packedHeaderHistory
+        if (changed && annotation == null
+            && !packedHeaderHistory
             && !HologramLocalBlueprintDocument.metadataOnlyEdit(current.operation))
             prepareView(current, current.draft, "");
         else {
@@ -581,7 +614,8 @@ final class HologramLocalBlueprintWorkspace {
                 HologramState base = ui.session.state();
                 HologramState next;
                 try {
-                    next = annotation == null ? base.withMetadata(metadata) : applyAnnotation(base, metadata, annotation);
+                    next = annotation == null ? base.withMetadata(metadata)
+                        : applyAnnotation(base, metadata, annotation);
                 } catch (IllegalArgumentException invalidBaseline) {
                     work(current, () -> prepareView(current, current.draft, ""));
                     return;
@@ -612,15 +646,21 @@ final class HologramLocalBlueprintWorkspace {
             }
             var base = ui.session.state();
             var frame = HologramRenderer.editorMaterialPresentation();
-            boolean exact = ui.host.minecraft().currentScreen == ui.host.parent()
-                && base == current.source && ui.session.document() == current.draft
+            boolean exact = ui.host.minecraft().currentScreen == ui.host.parent() && base == current.source
+                && ui.session.document() == current.draft
                 && hasHistoryCertificate(current.draft.historyDelta(delta.fromRevision()), delta)
-                && ui.session.sequence() == current.sequence && metadata.getLong("uiSequence") == current.sequence
+                && ui.session.sequence() == current.sequence
+                && metadata.getLong("uiSequence") == current.sequence
                 && frame != null
-                && frame.state() == base && frame.complete() && frame.bodyMaterial()
-                && frame.submittedCells() == delta.cellCount() && HologramRenderer.previewDisplayState() == base
-                && HologramRenderer.previewMeshReady(base) && !ui.shell.hasModalPanel()
-                && ui.shell.scene() instanceof HologramEditorSceneWidget view && view.editFrameReady();
+                && frame.state() == base
+                && frame.complete()
+                && frame.bodyMaterial()
+                && frame.submittedCells() == delta.cellCount()
+                && HologramRenderer.previewDisplayState() == base
+                && HologramRenderer.previewMeshReady(base)
+                && !ui.shell.hasModalPanel()
+                && ui.shell.scene() instanceof HologramEditorSceneWidget view
+                && view.editFrameReady();
             long patchBegin = trace == null ? 0 : trace.now();
             HologramState next = null;
             if (exact) try {
@@ -632,7 +672,8 @@ final class HologramLocalBlueprintWorkspace {
                 work(current, () -> prepareView(current, current.draft, ""));
                 return;
             }
-            if (trace != null) trace.certified(delta.header(), delta.cellCount(), enqueued, started, patchBegin, trace.now());
+            if (trace != null)
+                trace.certified(delta.header(), delta.cellCount(), enqueued, started, patchBegin, trace.now());
             task = null;
             publishOwnedLocalView(current, current.draft, next);
         });
@@ -643,20 +684,34 @@ final class HologramLocalBlueprintWorkspace {
     }
 
     static HologramState certifiedHistoryView(HologramState base, NBTTagCompound metadata, HistoryDelta delta) {
-        if (base == null || delta == null || !base.data.getBoolean("localBlueprintDocument")
-            || !base.data.getBoolean("blueprintEditing") || !base.data.getBoolean("virtual")
-            || !base.data.getBoolean("target") || base.data.getBoolean("displayPartial")
-            || base.data.getBoolean("areaSelectionShell") || base.data.getBoolean("virtualPlacement")
-            || base.data.getLong("planRevision") != delta.fromRevision() || delta.revision() != delta.fromRevision() + 1
-            || base.cells.size() != delta.cellCount() || metadata.getLong("planRevision") != delta.revision()
-            || !metadata.getBoolean("localBlueprintDocument") || !base.session.equals(metadata.getString("session"))
-            || !base.data.getString("generation").equals(metadata.getString("generation"))
-            || metadata.hasKey("cells") || metadata.hasKey("topology") || metadata.hasKey("structures")
-            || metadata.hasKey("hintAreas") || metadata.hasKey("materials")) return null;
+        if (base == null || delta == null
+            || !base.data.getBoolean("localBlueprintDocument")
+            || !base.data.getBoolean("blueprintEditing")
+            || !base.data.getBoolean("virtual")
+            || !base.data.getBoolean("target")
+            || base.data.getBoolean("displayPartial")
+            || base.data.getBoolean("areaSelectionShell")
+            || base.data.getBoolean("virtualPlacement")
+            || base.data.getLong("planRevision") != delta.fromRevision()
+            || delta.revision() != delta.fromRevision() + 1
+            || base.cells.size() != delta.cellCount()
+            || metadata.getLong("planRevision") != delta.revision()
+            || !metadata.getBoolean("localBlueprintDocument")
+            || !base.session.equals(metadata.getString("session"))
+            || !base.data.getString("generation")
+                .equals(metadata.getString("generation"))
+            || metadata.hasKey("cells")
+            || metadata.hasKey("topology")
+            || metadata.hasKey("structures")
+            || metadata.hasKey("hintAreas")
+            || metadata.hasKey("materials")) return null;
         HologramState next;
         if (delta.header()) {
-            if (!base.data.getString("blueprintPrompt").equals(delta.expectedPrompt())
-                || !metadata.getString("blueprintPrompt").equals(delta.prompt())) return null;
+            if (!base.data.getString("blueprintPrompt")
+                .equals(delta.expectedPrompt())
+                || !metadata.getString("blueprintPrompt")
+                    .equals(delta.prompt()))
+                return null;
             next = base.withMetadata(metadata);
         } else {
             // Existing partial construction shallow-copies the page directory and region maps. Constrain those
@@ -666,15 +721,28 @@ final class HologramLocalBlueprintWorkspace {
                 || !boundedSinglePromptView(base.cells.size(), base.regions.regions.size())) return null;
             for (var area : base.regions.regions.values()) if (area.size() > 4096) return null;
             var row = base.cells.get(index);
-            if (row.index != index || row.x != delta.x() || row.y != delta.y() || row.z != delta.z()
-                || row.dx != delta.x() || row.dy != delta.y() || row.dz != delta.z() || row.anchor || row.iconOnly
-                || row.missingBlock || row.sourceMissing || !row.structureIds.isEmpty() || !row.networkGroup.isEmpty()
-                || !row.candidates.isEmpty() || row.hasDisplayTag(false, "nativeTile", 10)
+            if (row.index != index || row.x != delta.x()
+                || row.y != delta.y()
+                || row.z != delta.z()
+                || row.dx != delta.x()
+                || row.dy != delta.y()
+                || row.dz != delta.z()
+                || row.anchor
+                || row.iconOnly
+                || row.missingBlock
+                || row.sourceMissing
+                || !row.structureIds.isEmpty()
+                || !row.networkGroup.isEmpty()
+                || !row.candidates.isEmpty()
+                || row.hasDisplayTag(false, "nativeTile", 10)
                 || row.targetStack != null && (row.targetStack.hasTagCompound()
                     || row.targetStack.getItem() instanceof gregtech.common.blocks.ItemMachines)
-                || !row.prompt.equals(delta.expectedPrompt()) || row.excluded != delta.excluded()
-                || !row.wantId.equals(delta.block()) || row.wantMeta != delta.metadata()
-                || row.targetFacing != delta.facing() || base.regions.at(row.x, row.y, row.z) != row) return null;
+                || !row.prompt.equals(delta.expectedPrompt())
+                || row.excluded != delta.excluded()
+                || !row.wantId.equals(delta.block())
+                || row.wantMeta != delta.metadata()
+                || row.targetFacing != delta.facing()
+                || base.regions.at(row.x, row.y, row.z) != row) return null;
             NBTTagCompound annotation = new NBTTagCompound();
             annotation.setInteger("index", index);
             annotation.setBoolean("annotationOnly", true);
@@ -727,7 +795,13 @@ final class HologramLocalBlueprintWorkspace {
             HologramLocalHistoryTrace.mark(current.historyTrace, HologramLocalHistoryTrace.Stage.SNAPSHOT_BEGIN);
             var rows = document.detachedEditorRows(() -> current(current));
             HologramLocalHistoryTrace.mark(current.historyTrace, HologramLocalHistoryTrace.Stage.SNAPSHOT_END);
-            stageView(current, document, new HologramBlueprintPreview.CompactCells(rows), rows.metadata(), notice, true);
+            stageView(
+                current,
+                document,
+                new HologramBlueprintPreview.CompactCells(rows),
+                rows.metadata(),
+                notice,
+                true);
         }
     }
 
@@ -736,8 +810,9 @@ final class HologramLocalBlueprintWorkspace {
         stageView(current, document, new HologramBlueprintPreview.CompactCells(editor), source, notice, false);
     }
 
-    private void stageView(Task current, HologramLocalBlueprintDocument document, HologramBlueprintPreview.CompactCells cells,
-        NBTTagCompound source, String notice, boolean materializedProjection) {
+    private void stageView(Task current, HologramLocalBlueprintDocument document,
+        HologramBlueprintPreview.CompactCells cells, NBTTagCompound source, String notice,
+        boolean materializedProjection) {
         NBTTagCompound snapshot = commandResult(current, source, true, "");
         var history = current.historyTrace;
         HologramLocalHistoryTrace.mark(history, HologramLocalHistoryTrace.Stage.CLIENT_ENQUEUED);
@@ -759,7 +834,11 @@ final class HologramLocalBlueprintWorkspace {
                 current.packedEditor = true;
                 current.preparation = new HologramState.Preparation(snapshot, true, cells);
                 if (materializedProjection && current.privateEdit != null && current.privateEditPreparation == null)
-                    current.privateEditPreparation = current.privateEdit.bind(document, true, snapshot, current.preparation,
+                    current.privateEditPreparation = current.privateEdit.bind(
+                        document,
+                        true,
+                        snapshot,
+                        current.preparation,
                         document != current.draft && privateEditOwnerCurrent(current));
                 current.notice = notice;
                 HologramLocalHistoryTrace.mark(history, HologramLocalHistoryTrace.Stage.PREPARATION_READY);
@@ -807,8 +886,8 @@ final class HologramLocalBlueprintWorkspace {
 
     private void publishView(Task current) {
         if (current.destination == null || current.preparedView == null) return;
-        if (current.resumeDocument != null && (!current(current) || !screenCurrent(current)
-            || current.destination != current.resumeDocument)) {
+        if (current.resumeDocument != null
+            && (!current(current) || !screenCurrent(current) || current.destination != current.resumeDocument)) {
             retireStaleView(current);
             return;
         }
@@ -818,7 +897,8 @@ final class HologramLocalBlueprintWorkspace {
         else {
             HologramLocalHistoryTrace.end(current.historyTrace, HologramLocalHistoryTrace.Terminal.CANCELLED_OWNER);
             String fileId = current.destination.fileId();
-            if (current.resumeDocument == null && !fileId.isEmpty()) HologramLibraryClient.INSTANCE.select(false, fileId);
+            if (current.resumeDocument == null && !fileId.isEmpty())
+                HologramLibraryClient.INSTANCE.select(false, fileId);
             ui.session.installLocalDocument(current.destination, initial);
         }
         if (!current.notice.isEmpty()) ui.session.notice(current.notice);
@@ -828,7 +908,8 @@ final class HologramLocalBlueprintWorkspace {
         var history = current.historyTrace;
         HologramLocalHistoryTrace.mark(history, HologramLocalHistoryTrace.Stage.PUBLISH_BEGIN);
         ui.session.publishLocalDocument(destination, next);
-        if (history != null && ui.session.state() == next && ui.session.document() == destination
+        if (history != null && ui.session.state() == next
+            && ui.session.document() == destination
             && next.data.getLong("planRevision") == history.sourceRevision + 1
             && next.data.getLong("uiSequence") == history.sequence) {
             HologramLocalHistoryTrace.mark(history, HologramLocalHistoryTrace.Stage.PUBLISH_END);
@@ -850,7 +931,8 @@ final class HologramLocalBlueprintWorkspace {
         } else {
             int cap = Integer.MAX_VALUE;
             if (current.privateEditPreparation != null) {
-                var preset = current.privateEditPreparation.forPreparation(preparation, privateEditOwnerCurrent(current));
+                var preset = current.privateEditPreparation
+                    .forPreparation(preparation, privateEditOwnerCurrent(current));
                 if (preset != null) {
                     cap = preset.workCap;
                     nanos = preset.softNanos;
@@ -860,8 +942,13 @@ final class HologramLocalBlueprintWorkspace {
             int cellsBefore = history == null ? 0 : preparation.cellsPrepared();
             long start = history == null ? 0 : history.now();
             boolean complete = preparation.step(cap, nanos);
-            if (history != null) history.slice(start, history.now(), preparation.cellsPrepared() - cellsBefore,
-                preparation.lastStepWork, cap, complete);
+            if (history != null) history.slice(
+                start,
+                history.now(),
+                preparation.cellsPrepared() - cellsBefore,
+                preparation.lastStepWork,
+                cap,
+                complete);
             if (current.openingPreview == null && (!complete || current.destination == null))
                 current.openingPreview = preparation.firstDisplay();
             if (complete) {
@@ -910,10 +997,15 @@ final class HologramLocalBlueprintWorkspace {
         Minecraft mc = ui.host.minecraft();
         HologramState source = ui.session.state();
         PresentationOwner owner = new PresentationOwner(
-            mc.theWorld, mc.getNetHandler(), actor(mc), source.session, source.data.getLong("planRevision"));
+            mc.theWorld,
+            mc.getNetHandler(),
+            actor(mc),
+            source.session,
+            source.data.getLong("planRevision"));
         if (!owner.available()) return null;
-        var privateEdit = explicitPrivateEditId == null ? null : HologramPrivateEditPerformance.capture(
-            explicitPrivateEditId, HologramClient.privateEditPreset(), privateEditRootCurrent(mc));
+        var privateEdit = explicitPrivateEditId == null ? null
+            : HologramPrivateEditPerformance
+                .capture(explicitPrivateEditId, HologramClient.privateEditPreset(), privateEditRootCurrent(mc));
         Task current = new Task(source, owner, ui.session.document(), privateEdit);
         current.message = message;
         task = current;
@@ -950,12 +1042,18 @@ final class HologramLocalBlueprintWorkspace {
         Minecraft mc = ui.host.minecraft();
         HologramState active = ui.session.state();
         HologramScreen root = ui.host.parent();
-        if (candidate.resumeDocument != null && (root == null || root.ui != ui || mc.thePlayer == null
-            || mc.thePlayer != candidate.resumePlayer || mc.thePlayer.dimension != candidate.resumeDimension)) return false;
+        if (candidate.resumeDocument != null && (root == null || root.ui != ui
+            || mc.thePlayer == null
+            || mc.thePlayer != candidate.resumePlayer
+            || mc.thePlayer.dimension != candidate.resumeDimension)) return false;
         return (mc.currentScreen == root
             || mc.currentScreen instanceof HologramQuantumGroupsScreen quantum && quantum.editorIs(ui.host.parent()))
             && candidate.owner.sameSource(
-                mc.theWorld, mc.getNetHandler(), actor(mc), active.session, active.data.getLong("planRevision"));
+                mc.theWorld,
+                mc.getNetHandler(),
+                actor(mc),
+                active.session,
+                active.data.getLong("planRevision"));
     }
 
     private void failed(Task current, Throwable failure) {
@@ -974,9 +1072,10 @@ final class HologramLocalBlueprintWorkspace {
             task = null;
             boolean sameScreen = screenCurrent(current);
             end(trace, sameScreen && sameRevision ? Terminal.FAILED : Terminal.CANCELLED_OWNER);
-            if (current.historyTrace != null) HologramLocalHistoryTrace.end(current.historyTrace,
-                sameScreen && current.draft.revision() == current.revision
-                    ? HologramLocalHistoryTrace.Terminal.FAILED : HologramLocalHistoryTrace.Terminal.CANCELLED_OWNER);
+            if (current.historyTrace != null) HologramLocalHistoryTrace.end(
+                current.historyTrace,
+                sameScreen && current.draft.revision() == current.revision ? HologramLocalHistoryTrace.Terminal.FAILED
+                    : HologramLocalHistoryTrace.Terminal.CANCELLED_OWNER);
             if (!sameScreen) return;
             if (failure instanceof com.miaokatze.gtmb.hologram.HologramCompactRequiredException) {
                 ui.library.requireCompactUpdate();
@@ -984,12 +1083,15 @@ final class HologramLocalBlueprintWorkspace {
             }
             String reason = HologramUiText.reason(failure.getMessage());
             if (current.draft != null && !current.operation.isEmpty()) ui.session.publishLocalDocument(
-                current.draft, ui.session.state().withMetadata(commandResult(current, new NBTTagCompound(), false, reason)));
+                current.draft,
+                ui.session.state()
+                    .withMetadata(commandResult(current, new NBTTagCompound(), false, reason)));
             else ui.session.notice(reason);
         });
     }
 
-    private static NBTTagCompound commandResult(Task current, NBTTagCompound metadata, boolean accepted, String reason) {
+    private static NBTTagCompound commandResult(Task current, NBTTagCompound metadata, boolean accepted,
+        String reason) {
         if (current.operation.isEmpty()) return metadata;
         metadata.setLong("uiSequence", current.sequence);
         if (!accepted) metadata.setString("status", reason);
@@ -1003,7 +1105,8 @@ final class HologramLocalBlueprintWorkspace {
         if (HologramLocalBlueprintDocument.processingCommand(current.operation)) {
             metadata.setString("processingPresetOperation", current.operation);
             metadata.setBoolean("processingPresetOperationSuccess", accepted);
-            if ("configureBlueprintQuantumGroups".equals(current.operation)) metadata.setBoolean("quantumGroupsOperationSuccess", accepted);
+            if ("configureBlueprintQuantumGroups".equals(current.operation))
+                metadata.setBoolean("quantumGroupsOperationSuccess", accepted);
         }
         return metadata;
     }

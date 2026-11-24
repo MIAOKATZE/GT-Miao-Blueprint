@@ -136,7 +136,8 @@ public final class HologramPreviewUvRegression {
         installSentinel(submission, batches.get(1), 64);
         Object unchanged = field(
             batches.get(0)
-                .getClass().getSuperclass(),
+                .getClass()
+                .getSuperclass(),
             "slice").get(batches.get(0));
         Object versions = field(
             batches.get(1)
@@ -151,7 +152,8 @@ public final class HologramPreviewUvRegression {
         SimpleAssert.that(
             unchanged == field(
                 batches.get(0)
-                    .getClass().getSuperclass(),
+                    .getClass()
+                    .getSuperclass(),
                 "slice").get(batches.get(0)),
             "an unrelated slice is retained");
         prepare(submission);
@@ -193,17 +195,21 @@ public final class HologramPreviewUvRegression {
         Field live = field(MiaoVisonLiteRenderer.class, "previewSubmission");
         MiaoVisonLiteRenderer viewport = HologramRenderer.editor();
         Object saved = live.get(viewport);
-        com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteSession<?, ?> session =
-            (com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteSession<?, ?>)
-                field(MiaoVisonLiteRenderer.class, "session").get(viewport);
+        com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteSession<?, ?> session = (com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteSession<?, ?>) field(
+            MiaoVisonLiteRenderer.class,
+            "session").get(viewport);
         try {
             live.set(viewport, submission);
-            session.replaceSubmission((com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteSubmission<?>) coreSubmission(submission));
+            session.replaceSubmission(
+                (com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteSubmission<?>) coreSubmission(
+                    submission));
             method(MiaoVisonLiteRenderer.class, "invalidatePreviewDrawCache").invoke(HologramRenderer.editor());
             SimpleAssert.that(
                 live.get(HologramRenderer.editor()) == null,
                 "the existing reload/close invalidation owns all icon records and slices");
-            SimpleAssert.eq(0, field(coreSubmission(submission).getClass(), "retainedInts").getInt(coreSubmission(submission)),
+            SimpleAssert.eq(
+                0,
+                field(coreSubmission(submission).getClass(), "retainedInts").getInt(coreSubmission(submission)),
                 "the viewport releases retained CPU geometry");
         } finally {
             live.set(HologramRenderer.editor(), saved);
@@ -215,7 +221,10 @@ public final class HologramPreviewUvRegression {
         Constructor<?> constructor = TessellatorSlice.class.getDeclaredConstructors()[0];
         constructor.setAccessible(true);
         Object slice = constructor.newInstance(new int[ints], new byte[ints / 8], null, null);
-        field(batch.getClass().getSuperclass(), "slice").set(batch, slice);
+        field(
+            batch.getClass()
+                .getSuperclass(),
+            "slice").set(batch, slice);
         method(batch.getClass(), "captureVersions").invoke(batch);
         Field retained = field(coreSubmission(submission).getClass(), "retainedInts");
         retained.setInt(coreSubmission(submission), retained.getInt(coreSubmission(submission)) + ints);

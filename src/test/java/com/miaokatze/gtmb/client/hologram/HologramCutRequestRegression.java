@@ -17,8 +17,8 @@ public final class HologramCutRequestRegression {
         SimpleAssert.that(requests.observeStorageContext(true), "entering Cut mode requests one directory sync");
         requests.begin("initial", "list", "", 0);
         SimpleAssert.that(!requests.busy(), "a background directory read never locks editing");
-        for (int tick = 0; tick < 10000; tick++)
-            SimpleAssert.that(!requests.observeStorageContext(true), "an active Cut context never polls the directory again");
+        for (int tick = 0; tick < 10000; tick++) SimpleAssert
+            .that(!requests.observeStorageContext(true), "an active Cut context never polls the directory again");
         SimpleAssert.eq(
             0,
             requests.expire(HologramCutRequests.READ_TIMEOUT_NS - 1)
@@ -119,7 +119,8 @@ public final class HologramCutRequestRegression {
             requests.exitActivity();
             SimpleAssert.that(requests.writing(), "Escape retains the authoritative " + action + " outcome");
             SimpleAssert.that(requests.active("list"), "Escape retains a pending directory read");
-            SimpleAssert.that(!requests.observeStorageContext(true), "Escape does not trigger another directory refresh");
+            SimpleAssert
+                .that(!requests.observeStorageContext(true), "Escape does not trigger another directory refresh");
             SimpleAssert.that(!requests.active("preview"), "Escape retires the local preview request");
             requests.begin("new-preview", "preview", "entry", 1);
             SimpleAssert.that(requests.acknowledge("old-preview") == null, "old preview cannot revive after reentry");

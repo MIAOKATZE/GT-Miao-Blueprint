@@ -289,7 +289,8 @@ final class HologramEditorShell {
                     HologramEditorNativeTheme
                         .label(
                             () -> ui.workspaces.projection() ? projector("editor.controller_fixed")
-                                : ui.workspaces.isCut() ? projector("editor.cut_world") : ui.library.blueprintSaveState(),
+                                : ui.workspaces.isCut() ? projector("editor.cut_world")
+                                    : ui.library.blueprintSaveState(),
                             HologramEditorNativeTheme.MUTED)
                         .widthRel(1f)
                         .height(10)));
@@ -297,7 +298,12 @@ final class HologramEditorShell {
         bar.child(
             taskProgress.widthRel(.35f)
                 .height(20));
-        bar.child(headerButton(projector("editor.open_cuts"), "cut", () -> ui.workspaces.activateCut(), ui.workspaces::blueprint));
+        bar.child(
+            headerButton(
+                projector("editor.open_cuts"),
+                "cut",
+                () -> ui.workspaces.activateCut(),
+                ui.workspaces::blueprint));
         bar.child(headerButton(projector("library.title"), "library", () -> {
             if (!ui.workspaces.blueprint()) ui.workspaces.activateBlueprint();
             else toggleLibrary();
@@ -362,7 +368,8 @@ final class HologramEditorShell {
             .childPadding(4)
             .background(HologramEditorNativeTheme.PANEL);
         String[] icons = { "select", "structure", "process", "material", "network", "info", "place" };
-        String[] names = { "editor.properties", "editor.structure", "editor.processing", "editor.materials", "editor.network_launcher", "editor.hints", "editor.build_review" };
+        String[] names = { "editor.properties", "editor.structure", "editor.processing", "editor.materials",
+            "editor.network_launcher", "editor.hints", "editor.build_review" };
         int[] indices = { 0, 3, 1, 4, 5, 6, 8 };
         ListWidget<IWidget, ?> list = new ListWidget<>().widthRel(1f)
             .heightRel(1f)
@@ -499,7 +506,12 @@ final class HologramEditorShell {
                 .size(HologramEditorNativeTheme.ICON_BUTTON));
         heading.child(
             HologramEditorNativeTheme
-                .flatIconButton("collapse-right", () -> projector("editor.collapse_dock"), () -> setDockExpanded(false), () -> true, () -> false)
+                .flatIconButton(
+                    "collapse-right",
+                    () -> projector("editor.collapse_dock"),
+                    () -> setDockExpanded(false),
+                    () -> true,
+                    () -> false)
                 .size(HologramEditorNativeTheme.ICON_BUTTON));
         if (deferBlueprintPages) {
             blueprintSettingsPage = new ParentWidget<>().sizeRel(1f);
@@ -566,9 +578,12 @@ final class HologramEditorShell {
                     () -> projector("editor.cell_prompt_help")).widthRel(1f)
                         .height(18))
             .child(
-                nativeAction(227, () -> projector("editor.global_prompt"), () -> launcherAvailable(6) && ui.session.editable(), () -> projector("editor.global_prompt_help"))
-                    .widthRel(1f)
-                    .height(18))
+                nativeAction(
+                    227,
+                    () -> projector("editor.global_prompt"),
+                    () -> launcherAvailable(6) && ui.session.editable(),
+                    () -> projector("editor.global_prompt_help")).widthRel(1f)
+                        .height(18))
             .child(
                 nativeAction(
                     166,
@@ -589,7 +604,12 @@ final class HologramEditorShell {
             .background(HologramEditorNativeTheme.PANEL);
         collapsed.child(
             HologramEditorNativeTheme
-                .flatIconButton("library", () -> projector("editor.expand_library"), this::toggleLibrary, () -> true, () -> false)
+                .flatIconButton(
+                    "library",
+                    () -> projector("editor.expand_library"),
+                    this::toggleLibrary,
+                    () -> true,
+                    () -> false)
                 .size(HologramEditorNativeTheme.ICON_BUTTON));
         libraryBody = Flow.col()
             .width(libraryWidth)
@@ -606,7 +626,10 @@ final class HologramEditorShell {
 
     private void mountLibraryPane() {
         if (libraryBody.hasChildren()) return;
-        libraryBody.child(new ParentWidget<>().sizeRel(1f).expanded().child(library.build()));
+        libraryBody.child(
+            new ParentWidget<>().sizeRel(1f)
+                .expanded()
+                .child(library.build()));
         if (libraryBody.isValid()) libraryBody.scheduleResize();
     }
 
@@ -923,10 +946,18 @@ final class HologramEditorShell {
     }
 
     private void layoutInspector() {
-        if (!inspectorOpen || paused || ui.workspaces.isCut() || ui.workspaces.emptyProjection()
-            || dock == null || !dock.isValid() || dock.getPanel() != host
-            || inspectorBody == null || !inspectorBody.isValid() || inspectorBody.getPanel() != host
-            || content == null || !content.isValid() || content.getPanel() != host) return;
+        if (!inspectorOpen || paused
+            || ui.workspaces.isCut()
+            || ui.workspaces.emptyProjection()
+            || dock == null
+            || !dock.isValid()
+            || dock.getPanel() != host
+            || inspectorBody == null
+            || !inspectorBody.isValid()
+            || inspectorBody.getPanel() != host
+            || content == null
+            || !content.isValid()
+            || content.getPanel() != host) return;
         if (inspectorFloating) {
             int w = Math.min(inspectorWidth, Math.max(140, content.getArea().width - 12));
             int h = Math.min(inspectorHeight, Math.max(100, content.getArea().height - 16));
@@ -940,8 +971,13 @@ final class HologramEditorShell {
             int librarySpace = ui.workspaces.blueprint() ? libraryDrawer.isExpanded() ? libraryWidth : 18 : 0;
             int x = Math.max(0, content.getArea().width - librarySpace - w);
             placeInspector(inspectorBody, x, area[1] - origin[1], w, area[3]);
-        } else if (!layoutDockedInspector(inspectorBody, dock.getArea(), inspectorBody.getParent().getArea(),
-            dock.isExpanded(), dock.requiresResize())) return;
+        } else if (!layoutDockedInspector(
+            inspectorBody,
+            dock.getArea(),
+            inspectorBody.getParent()
+                .getArea(),
+            dock.isExpanded(),
+            dock.requiresResize())) return;
         if (!inspectorPositioned) {
             inspectorPositioned = true;
             inspectorBody.setEnabled(inspectorInteractive());
@@ -949,7 +985,8 @@ final class HologramEditorShell {
     }
 
     // Both MUI layout Areas are unscaled. The dock's transformed screen clip is not a layout unit.
-    static boolean layoutDockedInspector(Flow paper, Area slot, Area paperParent, boolean expanded, boolean resizePending) {
+    static boolean layoutDockedInspector(Flow paper, Area slot, Area paperParent, boolean expanded,
+        boolean resizePending) {
         if (!expanded || resizePending || slot.width < 100 || slot.height <= 0) return false;
         placeInspector(paper, slot.x - paperParent.x, slot.y - paperParent.y, slot.width, slot.height);
         return true;
@@ -957,8 +994,9 @@ final class HologramEditorShell {
 
     private static void placeInspector(Flow paper, int x, int y, int w, int h) {
         Area area = paper.getArea();
-        if (area.rx != x || area.ry != y || area.width != w || area.height != h)
-            paper.pos(x, y).size(w, h).scheduleResize();
+        if (area.rx != x || area.ry != y || area.width != w || area.height != h) paper.pos(x, y)
+            .size(w, h)
+            .scheduleResize();
     }
 
     private static final class InspectorOverlay extends ParentWidget<InspectorOverlay> {
@@ -1001,7 +1039,8 @@ final class HologramEditorShell {
         @Override
         public void draw(com.cleanroommc.modularui.screen.viewport.ModularGuiContext context,
             com.cleanroommc.modularui.theme.WidgetThemeEntry<?> theme) {
-            String[] titles = { "editor.properties", "editor.processing", "", "editor.structure", "editor.materials", "editor.network_panel", "editor.hints", "library.save", "editor.build_review" };
+            String[] titles = { "editor.properties", "editor.processing", "", "editor.structure", "editor.materials",
+                "editor.network_panel", "editor.hints", "library.save", "editor.build_review" };
             net.minecraft.client.gui.FontRenderer font = ui.host.minecraft().fontRenderer;
             String titleKey = titles[pages.getCurrentPageIndex()];
             String title = titleKey.isEmpty() ? "" : projector(titleKey);

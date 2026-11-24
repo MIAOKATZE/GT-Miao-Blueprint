@@ -334,7 +334,8 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
             dragX = mx;
             dragY = my;
         } else if (button == 0 && editable()) {
-            int picked = HologramRenderer.quantum().pick(mx, my);
+            int picked = HologramRenderer.quantum()
+                .pick(mx, my);
             for (int i = 0; i < model.nodes.size(); i++) if (model.nodes.get(i).cell == picked) {
                 model.click(i, controlHeld);
                 break;
@@ -458,7 +459,8 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
 
     @Override
     protected void onMuiClose() {
-        HologramRenderer.quantum().close();
+        HologramRenderer.quantum()
+            .close();
         Keyboard.enableRepeatEvents(false);
     }
 
@@ -484,7 +486,8 @@ public final class HologramQuantumGroupsScreen extends HologramMuiCanvasScreen {
         requireSmoke();
         int cell = model.nodes.get(index).cell;
         for (int y = VY + 1; y < VY + VH - 1; y++)
-            for (int x = VX + 1; x < VX + VW - 1; x++) if (HologramRenderer.quantum().pick(x, y) == cell) return point(x, y);
+            for (int x = VX + 1; x < VX + VW - 1; x++) if (HologramRenderer.quantum()
+                .pick(x, y) == cell) return point(x, y);
         throw new IllegalStateException("No actual visible quantum node hit region " + index);
     }
 

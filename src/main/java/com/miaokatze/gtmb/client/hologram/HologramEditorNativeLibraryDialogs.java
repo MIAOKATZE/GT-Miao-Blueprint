@@ -134,7 +134,8 @@ final class HologramEditorNativeLibraryDialogs {
                     .height(48));
             content.child(
                 HologramEditorNativeTheme
-                    .label(() -> kind == Kind.DELETE ? projector("library.delete_scope") : ui.library.nativeReviewTarget())
+                    .label(
+                        () -> kind == Kind.DELETE ? projector("library.delete_scope") : ui.library.nativeReviewTarget())
                     .sizeRel(1f)
                     .expanded());
         }
@@ -143,7 +144,11 @@ final class HologramEditorNativeLibraryDialogs {
             .height(24)
             .childPadding(8);
         ButtonWidget<?> cancel = ui.shell
-            .nativeAction(cancelId(kind), () -> kind == Kind.ADMIN ? projector("dialog.close") : projector("dialog.cancel"), () -> true, () -> projector("dialog.cancel_help"))
+            .nativeAction(
+                cancelId(kind),
+                () -> kind == Kind.ADMIN ? projector("dialog.close") : projector("dialog.cancel"),
+                () -> true,
+                () -> projector("dialog.cancel_help"))
             .widthRel(1f)
             .expanded()
             .height(24);
@@ -191,7 +196,8 @@ final class HologramEditorNativeLibraryDialogs {
                 : kind == Kind.ADMIN ? projector("dialog.confirm_admin")
                     : kind == Kind.OVERWRITE ? projector("dialog.confirm_overwrite")
                         : ui.library.clearWorkspaceReview() ? projector("dialog.confirm_clear")
-                            : ui.library.projectionDiscardReview() ? projector("dialog.confirm_projection") : projector("dialog.confirm_discard");
+                            : ui.library.projectionDiscardReview() ? projector("dialog.confirm_projection")
+                                : projector("dialog.confirm_discard");
         return ui.shell.nativeAction(id, label, enabled, () -> projector("dialog.confirm_help"))
             .onMousePressed(button -> {
                 if (button != 0 || !enabled.getAsBoolean() || desired() != kind) return true;
@@ -208,6 +214,7 @@ final class HologramEditorNativeLibraryDialogs {
 
     private String title(Kind kind) {
         return kind == Kind.ADMIN ? projector("library.admin_title")
-            : kind == Kind.DELETE ? projector("library.delete_selected") : kind == Kind.PRESET ? projector("dialog.preset_title") : ui.library.nativeReviewTitle();
+            : kind == Kind.DELETE ? projector("library.delete_selected")
+                : kind == Kind.PRESET ? projector("dialog.preset_title") : ui.library.nativeReviewTitle();
     }
 }

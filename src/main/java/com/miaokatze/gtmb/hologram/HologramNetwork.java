@@ -135,8 +135,16 @@ public final class HologramNetwork {
             HologramAttachmentUpload.Ack.class,
             9,
             Side.CLIENT);
-        channel.registerMessage(HologramPlacementUpload.Handler.class, HologramPlacementUpload.Fragment.class, 10, Side.SERVER);
-        channel.registerMessage(HologramPlacementUpload.AckHandler.class, HologramPlacementUpload.Ack.class, 11, Side.CLIENT);
+        channel.registerMessage(
+            HologramPlacementUpload.Handler.class,
+            HologramPlacementUpload.Fragment.class,
+            10,
+            Side.SERVER);
+        channel.registerMessage(
+            HologramPlacementUpload.AckHandler.class,
+            HologramPlacementUpload.Ack.class,
+            11,
+            Side.CLIENT);
         HologramAttachmentUpload.init(channel);
         HologramPlacementUpload.init(channel);
         HologramLibraryFacade.init();
@@ -216,8 +224,11 @@ public final class HologramNetwork {
         markSnapshotCapabilities(envelope);
         byte[] bytes;
         try {
-            bytes = HologramSnapshotCodec.compress(envelope, HologramPlacementUpload.MAX_EXPANDED,
-                HologramPlacementUpload.MAX_COMPRESSED, current);
+            bytes = HologramSnapshotCodec.compress(
+                envelope,
+                HologramPlacementUpload.MAX_EXPANDED,
+                HologramPlacementUpload.MAX_COMPRESSED,
+                current);
         } catch (IOException invalid) {
             throw new IOException("施工清单超过传输上限或包含无效数据，请检查或拆分施工范围", invalid);
         }
@@ -1379,6 +1390,7 @@ public final class HologramNetwork {
     public static class Packet implements IMessage {
 
         NBTTagCompound tag = new NBTTagCompound();
+
         public Packet() {}
 
         Packet(NBTTagCompound tag) {
@@ -1487,23 +1499,19 @@ public final class HologramNetwork {
             // because their textual representation exceeds an unrelated string budget.
             net.minecraft.world.World world = player.worldObj;
             HologramSessionPolicy.PreparationTool submittedTool = compactNative
-                ? new HologramSessionPolicy.PreparationTool(player.getHeldItem()) : null;
-            ServerTaskScheduler.scheduleServerTask(
-                () -> runQueuedAction(
-                    player,
-                    world,
-                    lease,
-                    () -> {
-                        if (compactNative && !submittedTool.matches(player.getHeldItem())) {
-                            if (HologramNativeCompactStart.canonical(compactId)
-                                && !HologramProjectedPlacementService.consumed(player, compactId)) {
-                                HologramProjectedPlacementService.retire(player, compactId);
-                                HologramProjectedPlacementService.reply(player, compactId, false, "手持投影仪已变化。");
-                            }
-                            return;
-                        }
-                        HologramControllerOpen.dispatch(player, msg.tag, () -> dispatch(player, msg.tag));
-                    }));
+                ? new HologramSessionPolicy.PreparationTool(player.getHeldItem())
+                : null;
+            ServerTaskScheduler.scheduleServerTask(() -> runQueuedAction(player, world, lease, () -> {
+                if (compactNative && !submittedTool.matches(player.getHeldItem())) {
+                    if (HologramNativeCompactStart.canonical(compactId)
+                        && !HologramProjectedPlacementService.consumed(player, compactId)) {
+                        HologramProjectedPlacementService.retire(player, compactId);
+                        HologramProjectedPlacementService.reply(player, compactId, false, "手持投影仪已变化。");
+                    }
+                    return;
+                }
+                HologramControllerOpen.dispatch(player, msg.tag, () -> dispatch(player, msg.tag));
+            }));
             return null;
         }
     }

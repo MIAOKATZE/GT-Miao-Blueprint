@@ -47,20 +47,46 @@ final class HologramLibraryDescriptionViewRegression {
         };
         LocalFrame first = observation.frame(backpack, 0);
         SimpleAssert.that(
-            first.description().size() == 2 && first.description().get(0).blueprintCells() == 2
-                && Long.valueOf(3).equals(first.description().get(0).visibleBackpackCount())
-                && first.description().get(1).visibleBackpackCount() == null && first.status().contains("1 格未列明"),
+            first.description()
+                .size() == 2
+                && first.description()
+                    .get(0)
+                    .blueprintCells() == 2
+                && Long.valueOf(3)
+                    .equals(
+                        first.description()
+                            .get(0)
+                            .visibleBackpackCount())
+                && first.description()
+                    .get(1)
+                    .visibleBackpackCount() == null
+                && first.status()
+                    .contains("1 格未列明"),
             "separate captured counts and observed backpack, excluding slot zero and storage past slot 35");
         inventory[4].stackSize = 8;
-        SimpleAssert.that(first == observation.frame(backpack, 0) && reads.get() == 1,
+        SimpleAssert.that(
+            first == observation.frame(backpack, 0) && reads.get() == 1,
             "ticks borrow the same frame without resampling inventory");
         observation.refresh(backpack, 0);
         LocalFrame fresh = observation.frame(backpack, 0);
-        SimpleAssert.that(reads.get() == 2 && Long.valueOf(9).equals(fresh.description().get(0).visibleBackpackCount())
-            && fresh.description().get(0).blueprintCells() == 2 && fresh.rows().hasNoTags(),
+        SimpleAssert.that(
+            reads.get() == 2 && Long.valueOf(9)
+                .equals(
+                    fresh.description()
+                        .get(0)
+                        .visibleBackpackCount())
+                && fresh.description()
+                    .get(0)
+                    .blueprintCells() == 2
+                && fresh.rows()
+                    .hasNoTags(),
             "local refresh reads another sample but never changes captured counts or creates a quote");
         observation.refresh(() -> new ItemStack[35], 0);
-        SimpleAssert.that(observation.frame(backpack, 0).description().get(0).visibleBackpackCount() == null,
+        SimpleAssert.that(
+            observation.frame(backpack, 0)
+                .description()
+                .get(0)
+                .visibleBackpackCount() == null,
             "an incomplete array is unknown, not zero stock");
         checkWidgets(fresh);
     }
@@ -86,23 +112,36 @@ final class HologramLibraryDescriptionViewRegression {
         var dialog = new HologramMaterialConfirmationDialog(new ModularPanel("description_fixture"), view);
         var field = HologramMaterialConfirmationDialog.class.getDeclaredField("handler");
         field.setAccessible(true);
-        field.set(dialog, Proxy.newProxyInstance(IPanelHandler.class.getClassLoader(), new Class<?>[] {IPanelHandler.class},
-            (proxy, method, args) -> "isPanelOpen".equals(method.getName()) ? Boolean.TRUE : null));
+        field.set(
+            dialog,
+            Proxy.newProxyInstance(
+                IPanelHandler.class.getClassLoader(),
+                new Class<?>[] { IPanelHandler.class },
+                (proxy, method, args) -> "isPanelOpen".equals(method.getName()) ? Boolean.TRUE : null));
         dialog.tick(true);
         var build = HologramMaterialConfirmationDialog.class.getDeclaredMethod("build");
         build.setAccessible(true);
         var panel = (ModularPanel) build.invoke(dialog);
-        List<String> labels = panel.getChildren().stream().filter(TextWidget.class::isInstance)
-            .map(widget -> ((TextWidget<?>) widget).getKey().get())
+        List<String> labels = panel.getChildren()
+            .stream()
+            .filter(TextWidget.class::isInstance)
+            .map(
+                widget -> ((TextWidget<?>) widget).getKey()
+                    .get())
             .collect(java.util.stream.Collectors.toList());
-        SimpleAssert.that(labels.contains("蓝图记录格数") && labels.contains("本机背包同物品")
-            && labels.stream().anyMatch(text -> text.contains("施工用量未核算")) && !labels.contains("需求")
-            && !labels.contains("缺失") && !labels.contains("背包差额"),
+        SimpleAssert.that(
+            labels.contains("蓝图记录格数") && labels.contains("本机背包同物品")
+                && labels.stream()
+                    .anyMatch(text -> text.contains("施工用量未核算"))
+                && !labels.contains("需求")
+                && !labels.contains("缺失")
+                && !labels.contains("背包差额"),
             "the actual shared descriptive pane uses neutral columns, no shortage or quote fields");
         var ordinary = HologramMaterialConfirmationDialog.class.getDeclaredField("materials");
         ordinary.setAccessible(true);
-        SimpleAssert.that(((HologramMaterialReview) ordinary.get(dialog)).size() == 0
-            && dialog.probeState(null).getInteger("rows") == 2,
+        SimpleAssert.that(
+            ((HologramMaterialReview) ordinary.get(dialog)).size() == 0 && dialog.probeState(null)
+                .getInteger("rows") == 2,
             "the descriptive pane bypasses native quote row decoding");
     }
 

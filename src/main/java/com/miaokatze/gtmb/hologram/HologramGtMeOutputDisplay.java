@@ -44,8 +44,11 @@ public final class HologramGtMeOutputDisplay {
 
     /** Copies only the verified capacity scalar; callers supply the already selected preview data. */
     public static void observeStored(Block block, ItemStack stack, NBTTagCompound tile, NBTTagCompound display) {
-        if (stack == null || block == null || block != GregTechAPI.sBlockMachines
-            || stack.getItem() == null || stack.getItem().getClass() != ItemMachines.class
+        if (stack == null || block == null
+            || block != GregTechAPI.sBlockMachines
+            || stack.getItem() == null
+            || stack.getItem()
+                .getClass() != ItemMachines.class
             || stack.getItem() != Item.getItemFromBlock(block)) return;
         int id = stack.getItemDamage();
         if (registeredOwner(id) == null) return;
@@ -64,7 +67,8 @@ public final class HologramGtMeOutputDisplay {
     }
 
     static void observeFilteredTile(Block block, ItemStack stack, NBTTagCompound tile, NBTTagCompound display) {
-        // A projected placement snapshot must not fall back to the material stack when author filtering omitted this key.
+        // A projected placement snapshot must not fall back to the material stack when author filtering omitted this
+        // key.
         if (tile != null && tile.hasKey(BASE_CAPACITY)) observeStored(block, stack, tile, display);
     }
 

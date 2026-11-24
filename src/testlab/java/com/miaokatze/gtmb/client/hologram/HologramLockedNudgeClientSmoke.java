@@ -232,8 +232,8 @@ public final class HologramLockedNudgeClientSmoke {
                 return false;
             }
             mc.thePlayer.rotationYaw = oldYaw;
-            if (MiaoVisonLiteRenderer.lastWorldGeometry == 0 || MiaoVisonLiteRenderer.lastWorldPlacementOutlineColor != 0x66d9ef)
-                return false;
+            if (MiaoVisonLiteRenderer.lastWorldGeometry == 0
+                || MiaoVisonLiteRenderer.lastWorldPlacementOutlineColor != 0x66d9ef) return false;
             if (!copyRawReceipt("v008-locked-nudge-after.nbt")) return false;
             capture.save("v008-locked-arrow-horizontal-vertical-repeat-no-consumption");
             return true;

@@ -26,8 +26,7 @@ public final class HologramLibraryService {
 
     /** No callback from a completed transfer can recreate or reopen a closed/replaced session. */
     public static boolean sessionCurrent(EntityPlayerMP player, NBTTagCompound request) {
-        return HologramLibraryFacade.enabled()
-            && connectedProjector(player)
+        return HologramLibraryFacade.enabled() && connectedProjector(player)
             && HologramService.librarySessionCurrent(player, request);
     }
 

@@ -19,7 +19,8 @@ public final class HologramAdjacentPreviewVerification {
     private HologramAdjacentPreviewVerification() {}
 
     public static NBTTagCompound verify(NBTTagCompound snapshot, boolean current) throws ReflectiveOperationException {
-        HologramState rendered = (HologramState) field(MiaoVisonLiteRenderer.class, "previewState").get(HologramRenderer.editor());
+        HologramState rendered = (HologramState) field(MiaoVisonLiteRenderer.class, "previewState")
+            .get(HologramRenderer.editor());
         require(
             rendered != null && rendered.data.equals(snapshot),
             "adjacency witness requires this actual editor snapshot");

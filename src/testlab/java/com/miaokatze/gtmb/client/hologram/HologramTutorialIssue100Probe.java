@@ -73,22 +73,28 @@ public final class HologramTutorialIssue100Probe {
 
     static boolean install() {
         if (HologramEbfFixedControls.coilOnlyEnabled()) require(
-            HologramEbfFixedControls.coilProfileAllowed(Boolean.getBoolean("gtmb.testlab.tutorialIssue100"),
-                Boolean.getBoolean("miaotest.host.environment"), HologramLocalPreviewStagesProbe.enabled(),
-                Boolean.getBoolean(HologramEbfPreparedStock.FLAG), HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled(),
+            HologramEbfFixedControls.coilProfileAllowed(
+                Boolean.getBoolean("gtmb.testlab.tutorialIssue100"),
+                Boolean.getBoolean("miaotest.host.environment"),
+                HologramLocalPreviewStagesProbe.enabled(),
+                Boolean.getBoolean(HologramEbfPreparedStock.FLAG),
+                HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled(),
                 System.getProperty("gtmb.testlab.localPreviewStagesNativeParity", ""),
                 Boolean.getBoolean("gtmb.testlab.localPreviewStagesConstruction")
                     || Boolean.getBoolean("gtmb.testlab.localPreviewStagesPostFocus")
                     || Boolean.getBoolean("gtmb.testlab.localPreviewStagesWorkbenchStages")
                     || Boolean.getBoolean("gtmb.testlab.localPreviewStagesExerciseCandidates")
-                    || !System.getProperty("gtmb.testlab.localPreviewStagesTiming", "").isEmpty()),
+                    || !System.getProperty("gtmb.testlab.localPreviewStagesTiming", "")
+                        .isEmpty()),
             "Coil-only native EBF requires the exact prepared-stock fixture profile and no alternate driver");
         if (Boolean.getBoolean(HologramEbfPreparedStock.FLAG)) require(
             Boolean.getBoolean("gtmb.testlab.tutorialIssue100") && Boolean.getBoolean("miaotest.host.environment")
-                && HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled() && HologramLocalPreviewStagesProbe.enabled(),
+                && HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled()
+                && HologramLocalPreviewStagesProbe.enabled(),
             "Prepared stock is only allowed in the exact isolated fixed EBF profile");
         if (!Boolean.getBoolean("gtmb.testlab.tutorialIssue100")) return false;
-        require(!HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled() || HologramLocalPreviewStagesProbe.enabled(),
+        require(
+            !HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled() || HologramLocalPreviewStagesProbe.enabled(),
             "Fixed native EBF requires the existing lease-owned local-preview route");
         HologramTutorialIssue100Probe probe = new HologramTutorialIssue100Probe();
         FMLCommonHandler.instance()
@@ -165,26 +171,43 @@ public final class HologramTutorialIssue100Probe {
                 save = parent.resolve("MiaoHost-" + run);
                 if (Boolean.getBoolean(HologramEbfPreparedStock.FLAG)) {
                     receipt.put("preparedStock", preparedStockReceipt);
-                    preparedStock = HologramEbfPreparedStock.read(mc.mcDataDir.toPath(), output,
-                        Paths.get(System.getProperty("miaotest.host.receiptDir")), run,
-                        System.getProperty("miaotest.host.actorUuid"), mc.getSession().getPlayerID(),
-                        System.getProperty(HologramEbfPreparedStock.SHA_FLAG), ProjectorRegistry.projector);
+                    preparedStock = HologramEbfPreparedStock.read(
+                        mc.mcDataDir.toPath(),
+                        output,
+                        Paths.get(System.getProperty("miaotest.host.receiptDir")),
+                        run,
+                        System.getProperty("miaotest.host.actorUuid"),
+                        mc.getSession()
+                            .getPlayerID(),
+                        System.getProperty(HologramEbfPreparedStock.SHA_FLAG),
+                        ProjectorRegistry.projector);
                 } else {
-                    JsonObject lease = read(mc.mcDataDir.toPath().resolve(".testlab-host/lease.json"));
-                    require(run.equals(lease.get("runId").getAsString()), "Exact host lease required");
+                    JsonObject lease = read(
+                        mc.mcDataDir.toPath()
+                            .resolve(".testlab-host/lease.json"));
+                    require(
+                        run.equals(
+                            lease.get("runId")
+                                .getAsString()),
+                        "Exact host lease required");
                 }
                 Files.createDirectory(save);
                 Map<String, Object> marker = new LinkedHashMap<>();
                 marker.put("runId", run);
                 marker.put("parent", parent.toString());
-                Files.write(save.resolve(".miaotest-host-owner.json"), json(marker),
-                    java.nio.file.StandardOpenOption.CREATE_NEW, java.nio.file.StandardOpenOption.WRITE);
+                Files.write(
+                    save.resolve(".miaotest-host-owner.json"),
+                    json(marker),
+                    java.nio.file.StandardOpenOption.CREATE_NEW,
+                    java.nio.file.StandardOpenOption.WRITE);
                 if (preparedStock != null) preparedStock.install(save, parent, preparedStockReceipt);
                 // HostEnvironment reads this only in FMLServerAboutToStartEvent, after the exact host lease/marker.
                 System.setProperty("miaotest.host.worldPath", save.toString());
                 receipt.put("ownedSave", save.toString());
-                receipt.put("actorMode", preparedStock == null ? "SURVIVAL; no OP or inventory fixture changes"
-                    : "SURVIVAL; no OP; explicit pre-login vanilla playerdata fixture, no live inventory injection");
+                receipt.put(
+                    "actorMode",
+                    preparedStock == null ? "SURVIVAL; no OP or inventory fixture changes"
+                        : "SURVIVAL; no OP; explicit pre-login vanilla playerdata fixture, no live inventory injection");
                 transition(1);
                 launchedWorld = true;
                 mc.launchIntegratedServer(
@@ -198,7 +221,8 @@ public final class HologramTutorialIssue100Probe {
                 require(!mc.thePlayer.capabilities.isCreativeMode, "Business actor must remain survival");
                 if (HologramLocalPreviewStagesProbe.enabled()) {
                     if (localPreviewStages == null) {
-                        if (preparedStock != null && !preparedStock.verifyClient(mc.thePlayer, preparedStockReceipt)) return;
+                        if (preparedStock != null && !preparedStock.verifyClient(mc.thePlayer, preparedStockReceipt))
+                            return;
                         localPreviewStages = new HologramLocalPreviewStagesProbe(mc, output, receipt);
                     }
                     if (!localPreviewStages.step(mc)) return;
@@ -501,10 +525,12 @@ public final class HologramTutorialIssue100Probe {
             receipt.put("schema", coil ? HologramEbfFixedControls.COIL_SCHEMA : "gtmb-stock-ebf-native-controls-v1");
             Files.write(
                 output.resolve(coil ? HologramEbfFixedControls.COIL_FILE : "gtmb-ebf-fixed-native.json"),
-                json(receipt), java.nio.file.StandardOpenOption.CREATE_NEW);
+                json(receipt),
+                java.nio.file.StandardOpenOption.CREATE_NEW);
         } else {
             Files.write(output.resolve("gtmb-issue100-tutorial.json"), json(receipt));
-            if (!HologramRenderParityProbe.install(originalMenu, output, run, failure)) HologramTestLabUiProfile.install();
+            if (!HologramRenderParityProbe.install(originalMenu, output, run, failure))
+                HologramTestLabUiProfile.install();
         }
     }
 

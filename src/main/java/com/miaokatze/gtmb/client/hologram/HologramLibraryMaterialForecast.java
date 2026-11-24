@@ -73,9 +73,10 @@ final class HologramLibraryMaterialForecast {
         List<Need> known = new ArrayList<>(counts.size());
         for (Map.Entry<Identity, Long> entry : counts.entrySet()) known.add(new Need(entry.getKey(), entry.getValue()));
         return new HologramLibraryMaterialForecast(
-            known, new Unpriced(source.payloadCells(), source.unsupportedCells(), source.limitCells(), nonOrdinary,
-                retained),
-            source.airCells(), source.retentionNeedsReview());
+            known,
+            new Unpriced(source.payloadCells(), source.unsupportedCells(), source.limitCells(), nonOrdinary, retained),
+            source.airCells(),
+            source.retentionNeedsReview());
     }
 
     List<Need> candidates() {
@@ -124,9 +125,15 @@ final class HologramLibraryMaterialForecast {
         theory.setLong("unaccounted", unpriced.cells() + unavailable);
         theory.setLong("unresolvedItems", unavailable);
         theory.setBoolean("retentionNeedsReview", retentionNeedsReview);
-        return HologramLocalMaterialReview.stockRows(theory, inventory, protectedSlot,
-            row -> resolved.get(new Identity(row.getString("itemRegistry"), row.getCompoundTag("item")
-                .getShort("Damage"))));
+        return HologramLocalMaterialReview.stockRows(
+            theory,
+            inventory,
+            protectedSlot,
+            row -> resolved.get(
+                new Identity(
+                    row.getString("itemRegistry"),
+                    row.getCompoundTag("item")
+                        .getShort("Damage"))));
     }
 
     private static Resolved resolve(ClientExactResolver resolver, Identity identity) {
@@ -134,9 +141,11 @@ final class HologramLibraryMaterialForecast {
         try {
             Resolved result = resolver.resolveOrdinary(identity);
             ItemStack sample = result == null ? null : result.sample();
-            return sample != null && identity.registry().equals(result.canonicalRegistry())
-                && sample.getItem() != null && !sample.hasTagCompound() && sample.getItemDamage() == identity.damage()
-                    ? result : null;
+            return sample != null && identity.registry()
+                .equals(result.canonicalRegistry())
+                && sample.getItem() != null
+                && !sample.hasTagCompound()
+                && sample.getItemDamage() == identity.damage() ? result : null;
         } catch (RuntimeException | LinkageError unavailable) {
             return null;
         }
@@ -145,8 +154,12 @@ final class HologramLibraryMaterialForecast {
     /** Fixed-cost candidates only, even at default pose. Aliases, mod blocks, and directional shapes stay unknown. */
     private static boolean ordinary(HologramSavedMaterialSource.Variant variant) {
         int damage = variant.damage();
-        if (variant.controller() || variant.facing() != -1 || damage < 0 || damage != variant.metadata()
-            || !variant.block().equals(variant.item())) return false;
+        if (variant.controller() || variant.facing() != -1
+            || damage < 0
+            || damage != variant.metadata()
+            || !variant.block()
+                .equals(variant.item()))
+            return false;
         return switch (variant.item()) {
             case "minecraft:stone", "minecraft:cobblestone", "minecraft:glass", "minecraft:brick_block" -> damage == 0;
             case "minecraft:stonebrick" -> damage <= 3;

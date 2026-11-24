@@ -177,8 +177,11 @@ final class HologramLocalPreviewStagesProbe {
         actorName = mc.thePlayer.getCommandSenderName();
         if (fixedNativeEbf) {
             fixedEbfActor = mc.thePlayer.getUniqueID();
-            require(parity == NativeParity.EBF && !postFocus && timingMode.isEmpty() && !workbenchStages
-                && !Boolean.getBoolean(FLAG + "ExerciseCandidates"),
+            require(
+                parity == NativeParity.EBF && !postFocus
+                    && timingMode.isEmpty()
+                    && !workbenchStages
+                    && !Boolean.getBoolean(FLAG + "ExerciseCandidates"),
                 "Fixed native EBF is a separate owned preview profile with no construction, alternate driver or timing");
             evidence.put("fixedNativeEbf", true);
             evidence.put("inventoryFixtureWrites", 0);
@@ -199,7 +202,8 @@ final class HologramLocalPreviewStagesProbe {
         evidence.put("constructionRequested", construction);
         evidence.put("observer", "actual FML client outbound IMessage pipeline, GTMB mod channel only");
         if (!timingMode.isEmpty()) {
-            require(("nei".equals(timingMode) || "gtmb".equals(timingMode)) && !construction,
+            require(
+                ("nei".equals(timingMode) || "gtmb".equals(timingMode)) && !construction,
                 "Timing mode must be 'nei' or 'gtmb' and runs separately from construction");
             evidence.put("timingMode", timingMode);
             evidence.put("timingRuns", timingRuns);
@@ -207,8 +211,13 @@ final class HologramLocalPreviewStagesProbe {
             if (strictTiming) evidence.put("strictPreviewThresholds", true);
         }
         if (parity != null) {
-            require(!construction, "Native controller parity and the construction positive control are separate fixtures");
-            evidence.put("nativeParityFixture", parity.name().toLowerCase(java.util.Locale.ROOT));
+            require(
+                !construction,
+                "Native controller parity and the construction positive control are separate fixtures");
+            evidence.put(
+                "nativeParityFixture",
+                parity.name()
+                    .toLowerCase(java.util.Locale.ROOT));
         }
     }
 
@@ -233,7 +242,13 @@ final class HologramLocalPreviewStagesProbe {
                     BaseMetaTileEntity base = (BaseMetaTileEntity) world.getTileEntity(x, y, z);
                     base.enableWorking();
                     // Exercise the normal incoming GT event without having to build all tiers in the fixture world.
-                    world.addBlockEvent(x, y, z, world.getBlock(x, y, z), GregTechTileClientEvents.CHANGE_CUSTOM_DATA, 6);
+                    world.addBlockEvent(
+                        x,
+                        y,
+                        z,
+                        world.getBlock(x, y, z),
+                        GregTechTileClientEvents.CHANGE_CUSTOM_DATA,
+                        6);
                     solarTelemetrySent = true;
                 }
                 return;
@@ -243,9 +258,13 @@ final class HologramLocalPreviewStagesProbe {
                 actor != null && world.blockExists(x, y, z) && world.isAirBlock(x, y, z),
                 "Owned-world controller fixture site unavailable");
             if (fixedNativeEbf) {
-                require(actor instanceof EntityPlayerMP && !(actor instanceof FakePlayer)
-                    && fixedEbfActor.equals(actor.getUniqueID()) && !actor.capabilities.isCreativeMode
-                    && actor.dimension == 0 && actor.inventory.currentItem == toolSlot && nativeProjector(actor.getHeldItem()),
+                require(
+                    actor instanceof EntityPlayerMP && !(actor instanceof FakePlayer)
+                        && fixedEbfActor.equals(actor.getUniqueID())
+                        && !actor.capabilities.isCreativeMode
+                        && actor.dimension == 0
+                        && actor.inventory.currentItem == toolSlot
+                        && nativeProjector(actor.getHeldItem()),
                     "PRECONDITION: the owned survival actor has no actual already-held projector; fixture not staged");
             }
             ItemStack item = parity == null ? ItemList.Machine_Multi_BlastFurnace.get(1) : parity.item();
@@ -255,8 +274,7 @@ final class HologramLocalPreviewStagesProbe {
                     && machines.placeBlockAt(item, actor, world, x, y, z, facing.ordinal(), .5F, .5F, .5F, 0),
                 "Native controller placement failed");
             require(
-                world.getTileEntity(x, y, z) instanceof BaseMetaTileEntity base
-                    && fixtureController(base),
+                world.getTileEntity(x, y, z) instanceof BaseMetaTileEntity base && fixtureController(base),
                 "Native controller fixture identity mismatch");
             ((BaseMetaTileEntity) world.getTileEntity(x, y, z)).setFrontFacing(facing);
             if (parity == NativeParity.SOLAR || parity == NativeParity.ENTANGLER)
@@ -284,28 +302,39 @@ final class HologramLocalPreviewStagesProbe {
 
     private static boolean nativeProjector(ItemStack held) {
         return ItemNekoHologramProjector.isProjector(held) && held.hasTagCompound()
-            && !held.getTagCompound().getString("gtitHologramToolId").isEmpty();
+            && !held.getTagCompound()
+                .getString("gtitHologramToolId")
+                .isEmpty();
     }
 
     private void sampleFixedEbfInventory(WorldServer world) {
         EntityPlayer player = world.getPlayerEntityByName(actorName);
-        require(player instanceof EntityPlayerMP && !(player instanceof FakePlayer) && !player.capabilities.isCreativeMode
-            && player.dimension == 0 && fixedEbfActor.equals(player.getUniqueID()), "Fixed EBF server actor changed");
+        require(
+            player instanceof EntityPlayerMP && !(player instanceof FakePlayer)
+                && !player.capabilities.isCreativeMode
+                && player.dimension == 0
+                && fixedEbfActor.equals(player.getUniqueID()),
+            "Fixed EBF server actor changed");
         var tile = world.getTileEntity(x, y, z);
-        require(tile instanceof BaseMetaTileEntity base && fixtureController(base)
-            && ((MTEElectricBlastFurnace) base.getMetaTileEntity()).getExtendedFacing()
-                == com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing.NORTH_NORMAL_NONE,
+        require(
+            tile instanceof BaseMetaTileEntity base && fixtureController(base)
+                && ((MTEElectricBlastFurnace) base.getMetaTileEntity()).getExtendedFacing()
+                    == com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing.NORTH_NORMAL_NONE,
             "Fixed EBF exact server controller/alignment changed");
         for (int dx = -1; dx <= 1; dx++) for (int dy = 0; dy <= 3; dy++) for (int dz = 0; dz <= 2; dz++) {
             if (dx == 0 && dy == 0 && dz == 0) continue;
-            require(world.blockExists(x + dx, y + dy, z + dz) && world.isAirBlock(x + dx, y + dy, z + dz)
-                && world.getTileEntity(x + dx, y + dy, z + dz) == null, "Fixed EBF server footprint changed");
+            require(
+                world.blockExists(x + dx, y + dy, z + dz) && world.isAirBlock(x + dx, y + dy, z + dz)
+                    && world.getTileEntity(x + dx, y + dy, z + dz) == null,
+                "Fixed EBF server footprint changed");
         }
         ebfServerFootprintVerified = true;
         int selected = player.inventory.currentItem;
         var current = player.inventory.writeToNBT(new NBTTagList());
         var baseline = ebfInventoryBaseline;
-        require(baseline == null || selected == toolSlot && baseline.equals(current), "Fixed EBF server inventory changed");
+        require(
+            baseline == null || selected == toolSlot && baseline.equals(current),
+            "Fixed EBF server inventory changed");
         ebfServerSlot = selected;
         ebfServerInventory = current;
     }
@@ -318,8 +347,11 @@ final class HologramLocalPreviewStagesProbe {
         if (expired && timingMaterial != null) {
             evidence.put("pendingWorkbenchInitializationNanos", timingWorkbenchInitNanos);
             evidence.put("pendingWorkbenchInitializationActivity", timingWorkbenchActivity);
-            evidence.put("pendingMaterialFrameThresholds", timingMaterial.receipt(
-                0, parity == NativeParity.SOLAR ? HologramPreviewThresholdWitness.SOLAR_COMPLETE_NANOS : 0));
+            evidence.put(
+                "pendingMaterialFrameThresholds",
+                timingMaterial.receipt(
+                    0,
+                    parity == NativeParity.SOLAR ? HologramPreviewThresholdWitness.SOLAR_COMPLETE_NANOS : 0));
         }
         require(
             !expired,
@@ -338,16 +370,19 @@ final class HologramLocalPreviewStagesProbe {
                 return false;
             if (fixedNativeEbf) {
                 var stock = mc.thePlayer.inventory.writeToNBT(new NBTTagList());
-                if (ebfServerInventory == null || ebfServerSlot != toolSlot || !stock.equals(ebfServerInventory)) return false;
+                if (ebfServerInventory == null || ebfServerSlot != toolSlot || !stock.equals(ebfServerInventory))
+                    return false;
                 ItemStack held = mc.thePlayer.getHeldItem();
-                require(nativeProjector(held),
+                require(
+                    nativeProjector(held),
                     "PRECONDITION: use a normal synchronized, already-held projector; no inventory fixture injection");
                 ebfInventoryBaseline = stock;
                 evidence.put("stockActorAndHeldProjectorVerified", true);
                 evidence.put("ownedControllerFixtureSetupCount", 1);
             }
             observeOutbound();
-            if (!construction && !fixedNativeEbf) mc.thePlayer.inventory.setInventorySlotContents(toolSlot, fixtureTool);
+            if (!construction && !fixedNativeEbf)
+                mc.thePlayer.inventory.setInventorySlotContents(toolSlot, fixtureTool);
             look(mc, x + .5, y + .5, z + .5);
             require(hitAt(mc, x, y, z), "EntityRenderer crosshair missed the real controller");
             controllerClicked = System.nanoTime();
@@ -390,12 +425,24 @@ final class HologramLocalPreviewStagesProbe {
                 if (fixedEbf == null) {
                     var report = new LinkedHashMap<String, Object>();
                     evidence.put(HologramEbfFixedControls.receiptKey(), report);
-                    fixedEbf = new HologramEbfFixedControls(mc, controller, x, y, z, controllerItem,
-                        report, this::requireNativeFootprint, ebfInventoryBaseline, toolSlot);
+                    fixedEbf = new HologramEbfFixedControls(
+                        mc,
+                        controller,
+                        x,
+                        y,
+                        z,
+                        controllerItem,
+                        report,
+                        this::requireNativeFootprint,
+                        ebfInventoryBaseline,
+                        toolSlot);
                 }
                 if (!fixedEbf.tick(mc)) return false;
-                require(fixtureFailure == null && ebfServerFootprintVerified && ebfInventoryBaseline.equals(ebfServerInventory)
-                    && ebfServerSlot == toolSlot, "Fixed EBF server stock proof missing");
+                require(
+                    fixtureFailure == null && ebfServerFootprintVerified
+                        && ebfInventoryBaseline.equals(ebfServerInventory)
+                        && ebfServerSlot == toolSlot,
+                    "Fixed EBF server stock proof missing");
                 evidence.put("serverStockAndEmptyFootprintUnchangedAfterSetup", true);
                 zero("fixedEbfPreviewVerified");
                 mc.displayGuiScreen(null);
@@ -523,8 +570,8 @@ final class HologramLocalPreviewStagesProbe {
     void guiPost(GuiScreen gui, long frame) {
         if (fixedEbf != null && !finished) fixedEbf.guiPost(gui, frame);
         if (!timingMode.isEmpty()) {
-            if (finished || stage != 1 || gui != timingScreen || timingFailure != null
-                || timingFrameToCapture != null) return;
+            if (finished || stage != 1 || gui != timingScreen || timingFailure != null || timingFrameToCapture != null)
+                return;
             if (timingMaterial != null && gui instanceof HologramScreen shown) {
                 timingMaterial.observe(shown.ui.session.state(), HologramRenderer.editorMaterialPresentation());
                 return;
@@ -532,11 +579,11 @@ final class HologramLocalPreviewStagesProbe {
             if (gui instanceof HologramScreen shown && workbench.guiPost(shown)) {
                 timingFrameToCapture = new LinkedHashMap<>();
                 timingDrawFrame = frame;
-            }
-            else if (gui instanceof GuiRecipe<?> recipe && timingNeiFrame == null) {
+            } else if (gui instanceof GuiRecipe<?>recipe && timingNeiFrame == null) {
                 long drawPost = System.nanoTime();
                 try {
-                    Map<String, Object> measured = HologramNeiFirstFrame.frame(Minecraft.getMinecraft(), recipe, controllerItem);
+                    Map<String, Object> measured = HologramNeiFirstFrame
+                        .frame(Minecraft.getMinecraft(), recipe, controllerItem);
                     if (measured.isEmpty()) return;
                     timingFrameToCapture = new LinkedHashMap<>(measured);
                     timingFrameToCapture.put("firstMaterialDrawPostNanos", drawPost - controllerClicked);
@@ -547,9 +594,11 @@ final class HologramLocalPreviewStagesProbe {
             }
             return;
         }
-        if (!finished && stage == 1 && workbench != null && gui instanceof HologramScreen shown
-            && shown.localControllerStandard() && (controller == null || gui == controller))
-            workbench.guiPost(shown);
+        if (!finished && stage == 1
+            && workbench != null
+            && gui instanceof HologramScreen shown
+            && shown.localControllerStandard()
+            && (controller == null || gui == controller)) workbench.guiPost(shown);
         if (finished || parity != null || stage != 1 || controller == null || gui != controller) return;
         HologramState state = controller.ui.session.state();
         NBTTagCompound witness = HologramRenderer.lessonInspection(state);
@@ -582,7 +631,9 @@ final class HologramLocalPreviewStagesProbe {
 
     void renderTail(long frame) throws Exception {
         if (fixedEbf != null && !finished) fixedEbf.renderEnd(Minecraft.getMinecraft(), frame);
-        if (!finished && stage == 1 && timingFrameToCapture != null && timingDrawFrame == frame - 1
+        if (!finished && stage == 1
+            && timingFrameToCapture != null
+            && timingDrawFrame == frame - 1
             && Minecraft.getMinecraft().currentScreen == timingScreen) {
             timingScreenshot(Minecraft.getMinecraft(), timingFrameToCapture);
             if (timingScreen instanceof HologramScreen) timingGtmbFrame = timingFrameToCapture;
@@ -616,10 +667,12 @@ final class HologramLocalPreviewStagesProbe {
         if (timingFailure != null) throw timingFailure;
         zero("timing." + stage);
         if (stage == 0) {
-            if (!fixtureReady || mc.currentScreen != null || mc.thePlayer.ticksExisted < reopenAtTick
+            if (!fixtureReady || mc.currentScreen != null
+                || mc.thePlayer.ticksExisted < reopenAtTick
                 || !postFocus && "gtmb".equals(timingMode) && !HologramClient.worldInputFocused()
                 || !(mc.theWorld.getTileEntity(x, y, z) instanceof BaseMetaTileEntity tile)
-                || !fixtureController(tile) || tile.getFrontFacing() != ForgeDirection.SOUTH) return false;
+                || !fixtureController(tile)
+                || tile.getFrontFacing() != ForgeDirection.SOUTH) return false;
             if (channel == null) observeOutbound();
             look(mc, x + .5, y + .5, z + .5);
             require(hitAt(mc, x, y, z), "The timing fixture is not at the player's crosshair");
@@ -632,14 +685,17 @@ final class HologramLocalPreviewStagesProbe {
                 HologramRuntimeMetrics.setEnabled(true);
                 if (strictTiming) timingMaterial = new HologramPreviewThresholdWitness(
                     parity == NativeParity.SOLAR ? SOLAR_BODY_CELLS + 1 : 0);
-                NBTTagCompound beforeOpen = HologramRuntimeMetrics.snapshot().getCompoundTag("activity");
+                NBTTagCompound beforeOpen = HologramRuntimeMetrics.snapshot()
+                    .getCompoundTag("activity");
                 controllerClicked = System.nanoTime();
                 if (postFocus) HologramScreen.localController(tile, mc.thePlayer.dimension, mc.objectMouseOver.sideHit)
                     .openFrom(mc.currentScreen);
                 else rightClick(mc);
                 timingWorkbenchInitNanos = System.nanoTime() - controllerClicked;
                 timingWorkbenchActivity = workbenchActivity(
-                    beforeOpen, HologramRuntimeMetrics.snapshot().getCompoundTag("activity"));
+                    beforeOpen,
+                    HologramRuntimeMetrics.snapshot()
+                        .getCompoundTag("activity"));
                 require(mc.currentScreen instanceof HologramScreen, "The timing fixture did not open the workbench");
                 timingScreen = mc.currentScreen;
                 if (timingMaterial != null) timingMaterial.start(controllerClicked);
@@ -656,33 +712,45 @@ final class HologramLocalPreviewStagesProbe {
                 if (workbench != null) workbench.observe(state);
                 return false;
             }
-            require(state.data.getInteger("main") == 1 && state.data.getCompoundTag("channels").hasNoTags(),
+            require(
+                state.data.getInteger("main") == 1 && state.data.getCompoundTag("channels")
+                    .hasNoTags(),
                 "GTMB timing fixture does not use the default trigger");
             if (timingMaterial != null) {
                 if (!timingMaterial.sawComplete()) return false;
-                long completeLimit = parity == NativeParity.SOLAR ? HologramPreviewThresholdWitness.SOLAR_COMPLETE_NANOS : 0;
+                long completeLimit = parity == NativeParity.SOLAR ? HologramPreviewThresholdWitness.SOLAR_COMPLETE_NANOS
+                    : 0;
                 sample = new LinkedHashMap<>();
                 sample.put("materialFrameThresholds", timingMaterial.receipt(0, completeLimit));
                 sample.put("firstMaterialNanos", timingMaterial.firstNanos());
                 sample.put("completedMaterialNanos", timingMaterial.completeNanos());
                 boolean workbenchPassed = timingWorkbenchInitNanos < HologramPreviewThresholdWitness.WORKBENCH_NANOS;
                 sample.put("workbenchInitializationPassed", workbenchPassed);
-                sample.put("workbenchInitializationLimitNanosExclusive", HologramPreviewThresholdWitness.WORKBENCH_NANOS);
-                sample.put("strictThresholdsPassed", workbenchPassed
-                    && (completeLimit == 0 || timingMaterial.completeNanos() < completeLimit));
+                sample
+                    .put("workbenchInitializationLimitNanosExclusive", HologramPreviewThresholdWitness.WORKBENCH_NANOS);
+                sample.put(
+                    "strictThresholdsPassed",
+                    workbenchPassed && (completeLimit == 0 || timingMaterial.completeNanos() < completeLimit));
                 if (parity == NativeParity.SOLAR) timingSolarStates.add(state);
                 timingMaterial = null;
             } else {
                 workbench.observe(state);
                 if (!workbench.sawMaterial() || timingGtmbFrame == null) return false;
-                sample = workbench.receipt(state, HologramRuntimeMetrics.snapshot().getTagList("loadStages", 10),
-                    Boolean.getBoolean(FLAG + "RequireEarly"), Boolean.getBoolean(FLAG + "RequireEarlyFrame"));
+                sample = workbench.receipt(
+                    state,
+                    HologramRuntimeMetrics.snapshot()
+                        .getTagList("loadStages", 10),
+                    Boolean.getBoolean(FLAG + "RequireEarly"),
+                    Boolean.getBoolean(FLAG + "RequireEarlyFrame"));
                 sample.putAll(timingGtmbFrame);
                 timingGtmbFrame = null;
             }
             sample.put("workbenchInitializationNanos", timingWorkbenchInitNanos);
             sample.put("workbenchInitializationActivity", timingWorkbenchActivity);
-            sample.put("screen", shown.getClass().getName());
+            sample.put(
+                "screen",
+                shown.getClass()
+                    .getName());
             sample.put("controllerMeta", controllerItem.getItemDamage());
             sample.put("facing", ForgeDirection.SOUTH.name());
             sample.put("main", 1);
@@ -710,14 +778,17 @@ final class HologramLocalPreviewStagesProbe {
         if (strictTiming) {
             for (int index = 0; index < timingSolarStates.size(); index++) {
                 Map<String, Object> nativeParity = new LinkedHashMap<>();
-                timingRuns.get(index).put("nativeFootprint", nativeParity);
+                timingRuns.get(index)
+                    .put("nativeFootprint", nativeParity);
                 requireNativeFootprint(timingSolarStates.get(index), nativeParity, ForgeDirection.SOUTH);
-                require(Integer.valueOf(SOLAR_BODY_CELLS).equals(nativeParity.get("nativeCells")),
+                require(
+                    Integer.valueOf(SOLAR_BODY_CELLS)
+                        .equals(nativeParity.get("nativeCells")),
                     "The timed Solar footprint lost native positions");
             }
             timingSolarStates.clear();
-            boolean passed = timingRuns.stream().allMatch(sampleResult ->
-                Boolean.TRUE.equals(sampleResult.get("strictThresholdsPassed")));
+            boolean passed = timingRuns.stream()
+                .allMatch(sampleResult -> Boolean.TRUE.equals(sampleResult.get("strictThresholdsPassed")));
             evidence.put("strictThresholdsPassed", passed);
             require(passed, "Workbench initialization or full Solar material rendering missed its deadline");
         }
@@ -743,7 +814,11 @@ final class HologramLocalPreviewStagesProbe {
         String name = "gtmb-timing-" + timingMode + "-" + (timingRuns.isEmpty() ? "first" : "reopen") + ".png";
         Files.createDirectories(output.resolve("screenshots"));
         ScreenShotHelper.saveScreenshot(output.toFile(), name, mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
-        require(Files.isRegularFile(output.resolve("screenshots").resolve(name)), "Timing screenshot missing");
+        require(
+            Files.isRegularFile(
+                output.resolve("screenshots")
+                    .resolve(name)),
+            "Timing screenshot missing");
         sample.put("framebuffer", "screenshots/" + name);
         sample.put("framebufferStage", "RenderTick.END after first observed material Draw.Post");
     }
@@ -780,11 +855,13 @@ final class HologramLocalPreviewStagesProbe {
         if (fixed) {
             evidence.put("pendingTelemetry", telemetry.caption());
             evidence.put("pendingNativeDataReadyNanos", parityDataReady - controllerClicked);
-            evidence.put("pendingNativeMeshDraws", MiaoVisonLiteRenderer.previewDirectMeshDraws - controllerDrawsAtStart);
+            evidence
+                .put("pendingNativeMeshDraws", MiaoVisonLiteRenderer.previewDirectMeshDraws - controllerDrawsAtStart);
             boolean synced = parityPass == 0 ? telemetry.operation() == HologramLocalMachineState.Operation.DISABLED
                 : telemetry.operation() == HologramLocalMachineState.Operation.IDLE && telemetry.tier() == 3;
             if (!synced) {
-                require(System.nanoTime() - parityDataReady < 4_000_000_000L,
+                require(
+                    System.nanoTime() - parityDataReady < 4_000_000_000L,
                     "Native data published but the expected machine sync is missing: " + evidence);
                 return false;
             }
@@ -799,8 +876,13 @@ final class HologramLocalPreviewStagesProbe {
         proof.put("dataReadyNanos", (installed > 0 ? installed : parityDataReady) - controllerClicked);
         proof.put("firstMaterialDrawNanos", firstDraw > 0 ? firstDraw - controllerClicked : null);
         if (workbench != null) {
-            proof.put("workbenchStages", workbench.receipt(state, stages,
-                Boolean.getBoolean(FLAG + "RequireEarly"), Boolean.getBoolean(FLAG + "RequireEarlyFrame")));
+            proof.put(
+                "workbenchStages",
+                workbench.receipt(
+                    state,
+                    stages,
+                    Boolean.getBoolean(FLAG + "RequireEarly"),
+                    Boolean.getBoolean(FLAG + "RequireEarlyFrame")));
             proof.put("orderedCandidateSamples", candidateSamples(state));
             List<int[]> unobserved = unobservedActualSamples(mc, state);
             proof.put("unobservedActualSamples", unobserved);
@@ -808,7 +890,10 @@ final class HologramLocalPreviewStagesProbe {
                 require(!unobserved.isEmpty(), "Fixture did not exercise any unobserved live positions");
         }
         if (fixed) {
-            proof.put("observedOperation", telemetry.operation().name());
+            proof.put(
+                "observedOperation",
+                telemetry.operation()
+                    .name());
             proof.put("observedTier", telemetry.tier());
             proof.put("observedCaption", telemetry.caption());
         }
@@ -830,7 +915,8 @@ final class HologramLocalPreviewStagesProbe {
         Map<String, String> actual = requireNativeFootprint(state, proof);
         if (parity == NativeParity.CENTER) {
             require(((Integer) proof.get("machineCells")) >= 7, "Mineral Integration Center preview ports are missing");
-            require(capability != null && capability.getInteger("current") == (parityPass == 0 ? 1 : parity.nextSignal),
+            require(
+                capability != null && capability.getInteger("current") == (parityPass == 0 ? 1 : parity.nextSignal),
                 "Mineral Integration Center must report its actual sector signal");
         }
         if (parity == NativeParity.CRITICAL)
@@ -847,7 +933,8 @@ final class HologramLocalPreviewStagesProbe {
                 if (cell.anchor || !mc.theWorld.blockExists(cell.x, cell.y, cell.z)) continue;
                 String actualId = net.minecraft.block.Block.blockRegistry
                     .getNameForObject(mc.theWorld.getBlock(cell.x, cell.y, cell.z));
-                require(actualId.equals(cell.id) && mc.theWorld.getBlockMetadata(cell.x, cell.y, cell.z) == cell.meta,
+                require(
+                    actualId.equals(cell.id) && mc.theWorld.getBlockMetadata(cell.x, cell.y, cell.z) == cell.meta,
                     "Local preview did not preserve the loaded position's actual block and metadata");
                 checked++;
             }
@@ -858,7 +945,8 @@ final class HologramLocalPreviewStagesProbe {
                 firstParityCells = actual;
                 beginParityEdit();
                 controller.ui.config.configure("main", parity.nextSignal);
-                require(controller.ui.session.state().data.getBoolean("capturePending"),
+                require(
+                    controller.ui.session.state().data.getBoolean("capturePending"),
                     "The production configuration did not queue a new solar capture");
                 zero("nativeChannelChanged");
                 return false;
@@ -878,13 +966,16 @@ final class HologramLocalPreviewStagesProbe {
 
         if (parityPass == 0) {
             firstParityCells = actual;
-            require(capability != null && capability.getBoolean("editable"), "Native channel is unavailable: " + parity.channel);
+            require(
+                capability != null && capability.getBoolean("editable"),
+                "Native channel is unavailable: " + parity.channel);
             NBTTagList options = capability.getTagList("options", 10);
             if (parity == NativeParity.CHEMICAL)
                 require(options.tagCount() == 9, "Chemical Plant requires eight casing choices and reset");
             int index = -1;
             for (int candidate = 0; candidate < options.tagCount(); candidate++) {
-                if (options.getCompoundTagAt(candidate).getInteger("value") == parity.nextSignal) {
+                if (options.getCompoundTagAt(candidate)
+                    .getInteger("value") == parity.nextSignal) {
                     index = candidate;
                     break;
                 }
@@ -900,9 +991,10 @@ final class HologramLocalPreviewStagesProbe {
             if (parity != NativeParity.CRITICAL) require(changed, "Native channel edit left the preview unchanged");
             if (parity == NativeParity.CENTER)
                 require(actual.size() > firstParityCells.size(), "Selecting six sectors must expand the footprint");
-            if (parity == NativeParity.GTNL || parity == NativeParity.TST)
-                require(firstParityCells.keySet().equals(actual.keySet()),
-                    "A material tier must preserve the original native coordinates");
+            if (parity == NativeParity.GTNL || parity == NativeParity.TST) require(
+                firstParityCells.keySet()
+                    .equals(actual.keySet()),
+                "A material tier must preserve the original native coordinates");
             zero("nativeChannelPresented");
             mc.displayGuiScreen(null);
             zero("nativeChannelEditorClosed");
@@ -917,7 +1009,8 @@ final class HologramLocalPreviewStagesProbe {
         parityPass++;
         parityDataReady = 0;
         controllerDrawsAtStart = MiaoVisonLiteRenderer.previewDirectMeshDraws;
-        activityBeforeParityEdit = HologramRuntimeMetrics.snapshot().getCompoundTag("activity");
+        activityBeforeParityEdit = HologramRuntimeMetrics.snapshot()
+            .getCompoundTag("activity");
         controllerClicked = System.nanoTime();
         if (workbenchStages)
             workbench = new HologramWorkbenchStagesWitness(controller.ui.session.state(), controllerClicked);
@@ -939,12 +1032,20 @@ final class HologramLocalPreviewStagesProbe {
             sample.put("relative", new int[] { cell.dx, cell.dy, cell.dz });
             sample.put("boundary", cell.candidateBoundary);
             sample.put("role", cell.role);
-            sample.put("candidateRoles", row.getTagList("candidateRoles", 8).toString());
+            sample.put(
+                "candidateRoles",
+                row.getTagList("candidateRoles", 8)
+                    .toString());
             sample.put("candidateTiers", row.getIntArray("candidateTiers"));
             sample.put("hatchFacings", row.getIntArray("hatchFacings"));
             sample.put("chosenChoice", cell.chosenChoice);
-            sample.put("candidates", cell.candidates.stream()
-                .map(stack -> stack.writeToNBT(new NBTTagCompound()).toString()).collect(Collectors.toList()));
+            sample.put(
+                "candidates",
+                cell.candidates.stream()
+                    .map(
+                        stack -> stack.writeToNBT(new NBTTagCompound())
+                            .toString())
+                    .collect(Collectors.toList()));
             result.add(sample);
             if (result.size() == 12) break;
         }
@@ -957,12 +1058,17 @@ final class HologramLocalPreviewStagesProbe {
         for (HologramState.Cell cell : state.cells) {
             if (cell.anchor) continue;
             int cx = cell.x >> 4, cz = cell.z >> 4;
-            boolean loaded = cell.y >= 0 && cell.y < world.getHeight() && world.getChunkProvider().chunkExists(cx, cz);
+            boolean loaded = cell.y >= 0 && cell.y < world.getHeight()
+                && world.getChunkProvider()
+                    .chunkExists(cx, cz);
             if (loaded && !(world.getChunkFromChunkCoords(cx, cz) instanceof EmptyChunk)) continue;
             NBTTagCompound row = cell.tag();
             // Chunk availability can change after sampling; assert only observations the capture declared missing.
             if (!row.getBoolean("localObservationMissing")) continue;
-            require(!cell.wantId.isEmpty() && cell.actualStack == null && !row.getString("reason").isEmpty(),
+            require(
+                !cell.wantId.isEmpty() && cell.actualStack == null
+                    && !row.getString("reason")
+                        .isEmpty(),
                 "An unreadable live position replaced or supplied a target observation");
             result.add(new int[] { cell.dx, cell.dy, cell.dz });
             if (result.size() == 3) break;
@@ -976,7 +1082,8 @@ final class HologramLocalPreviewStagesProbe {
         for (HologramState.Cell cell : baseline.cells) {
             if (cell.anchor || cell.candidates.isEmpty()) continue;
             if (manual == null) {
-                byte[] facingMasks = cell.tag().getByteArray("candidateFacingMasks");
+                byte[] facingMasks = cell.tag()
+                    .getByteArray("candidateFacingMasks");
                 for (int choice = 0; choice < Math.min(cell.candidates.size(), facingMasks.length); choice++) {
                     if (facingMasks[choice] == 0
                         || ItemStack.areItemStacksEqual(cell.targetStack, cell.candidates.get(choice))) continue;
@@ -986,7 +1093,8 @@ final class HologramLocalPreviewStagesProbe {
                 }
                 if (manual == cell) continue;
             }
-            int[] tiers = cell.tag().getIntArray("candidateTiers");
+            int[] tiers = cell.tag()
+                .getIntArray("candidateTiers");
             for (int choice = 0; choice < Math.min(cell.candidates.size(), tiers.length); choice++) {
                 if (tiers[choice] < 0) continue;
                 batch = cell;
@@ -1002,41 +1110,58 @@ final class HologramLocalPreviewStagesProbe {
         pin.setInteger("choiceindex", manualChoice);
         controller.ui.session.send("pin", pin, true);
         HologramState.Cell pinned = controller.ui.session.state().cells.get(manual.index);
-        require("manual".equals(pinned.pinScope)
-            && ItemStack.areItemStacksEqual(pinned.targetStack, manual.candidates.get(manualChoice)),
+        require(
+            "manual".equals(pinned.pinScope)
+                && ItemStack.areItemStacksEqual(pinned.targetStack, manual.candidates.get(manualChoice)),
             "Single-cell pin used a stale or reordered candidate");
-        int[] legalFacings = pinned.tag().getIntArray("hatchFacings");
+        int[] legalFacings = pinned.tag()
+            .getIntArray("hatchFacings");
         require(legalFacings.length > 0, "Native hatch pin did not publish the selected candidate's legal facings");
         controller.ui.preview.selected(manual.index);
         controller.ui.router.activate(99);
         HologramState.Cell turned = controller.ui.session.state().cells.get(manual.index);
-        require(turned.tag().getBoolean("hasFacingPin")
-            && Arrays.stream(legalFacings).anyMatch(direction -> direction == turned.targetFacing),
+        require(
+            turned.tag()
+                .getBoolean("hasFacingPin")
+                && Arrays.stream(legalFacings)
+                    .anyMatch(direction -> direction == turned.targetFacing),
             "The production facing control did not pin a declared legal direction");
         controller.ui.router.activate(102);
         HologramState.Cell auto = controller.ui.session.state().cells.get(manual.index);
-        require(!auto.tag().getBoolean("hasFacingPin") && !auto.tag().hasKey("targetDisplay")
-            && Arrays.equals(legalFacings, auto.tag().getIntArray("hatchFacings"))
-            && ItemStack.areItemStacksEqual(auto.targetStack, pinned.targetStack),
+        require(
+            !auto.tag()
+                .getBoolean("hasFacingPin")
+                && !auto.tag()
+                    .hasKey("targetDisplay")
+                && Arrays.equals(
+                    legalFacings,
+                    auto.tag()
+                        .getIntArray("hatchFacings"))
+                && ItemStack.areItemStacksEqual(auto.targetStack, pinned.targetStack),
             "The production Auto control did not restore native auto without dropping the selected hatch");
         NBTTagCompound preset = new NBTTagCompound();
         preset.setInteger("tier", tier);
         controller.ui.session.send("hatchPreset", preset, true);
         HologramState planned = controller.ui.session.state();
         HologramState.Cell presetCell = planned.cells.get(batch.index);
-        require("preset".equals(presetCell.pinScope)
-            && ItemStack.areItemStacksEqual(presetCell.targetStack, batch.candidates.get(batchChoice)),
+        require(
+            "preset".equals(presetCell.pinScope)
+                && ItemStack.areItemStacksEqual(presetCell.targetStack, batch.candidates.get(batchChoice)),
             "Tier preset missed its exact candidate row or picked a different item");
         HologramState.Cell kept = planned.cells.get(manual.index);
-        require("manual".equals(kept.pinScope) && ItemStack.areItemStacksEqual(kept.targetStack, pinned.targetStack),
+        require(
+            "manual".equals(kept.pinScope) && ItemStack.areItemStacksEqual(kept.targetStack, pinned.targetStack),
             "Tier preset overwrote the manual pin");
         controller.ui.session.send("clearHatchPreset", new NBTTagCompound(), true);
         controller.ui.session.send("restoreCell", pin, true);
         HologramState restored = controller.ui.session.state();
-        require(ItemStack.areItemStacksEqual(restored.cells.get(manual.index).targetStack, manual.targetStack)
-            && ItemStack.areItemStacksEqual(restored.cells.get(batch.index).targetStack, batch.targetStack),
+        require(
+            ItemStack.areItemStacksEqual(restored.cells.get(manual.index).targetStack, manual.targetStack)
+                && ItemStack.areItemStacksEqual(restored.cells.get(batch.index).targetStack, batch.targetStack),
             "Clear and restore failed to recover the original targets");
-        require(baseline.data.getString("generation").equals(restored.data.getString("generation")),
+        require(
+            baseline.data.getString("generation")
+                .equals(restored.data.getString("generation")),
             "Same-geometry candidate edits retired the geometry generation");
         zero("nativeCandidateEditsReturnedToBaseline");
         Map<String, Object> result = new LinkedHashMap<>();
@@ -1047,12 +1172,16 @@ final class HologramLocalPreviewStagesProbe {
         result.put("presetChoice", batchChoice);
         result.put("legalFacings", legalFacings);
         result.put("pinnedFacing", turned.targetFacing);
-        result.put("autoFacingRestored", !auto.tag().getBoolean("hasFacingPin"));
+        result.put(
+            "autoFacingRestored",
+            !auto.tag()
+                .getBoolean("hasFacingPin"));
         result.put("targetsRestored", true);
         return result;
     }
 
-    private Map<String, String> requireNativeFootprint(HologramState state, Map<String, Object> proof) throws Exception {
+    private Map<String, String> requireNativeFootprint(HologramState state, Map<String, Object> proof)
+        throws Exception {
         return requireNativeFootprint(state, proof, ForgeDirection.NORTH);
     }
 
@@ -1064,8 +1193,14 @@ final class HologramLocalPreviewStagesProbe {
             require(cell.prompt.isEmpty(), "Native structure text reached the player annotation layer");
             if (cell.anchor) {
                 anchors++;
-                require(cell.x == x && cell.y == y && cell.z == z && cell.dx == 0 && cell.dy == 0 && cell.dz == 0
-                    && cell.targetStack != null && controllerItem.isItemEqual(cell.targetStack),
+                require(
+                    cell.x == x && cell.y == y
+                        && cell.z == z
+                        && cell.dx == 0
+                        && cell.dy == 0
+                        && cell.dz == 0
+                        && cell.targetStack != null
+                        && controllerItem.isItemEqual(cell.targetStack),
                     "Controller anchor does not match the placed native fixture");
                 continue;
             }
@@ -1075,56 +1210,65 @@ final class HologramLocalPreviewStagesProbe {
             int machine = stack != null && stack.getItem() instanceof ItemMachines ? stack.getItemDamage() : -1;
             if (machine >= 0) ports++;
             String coordinate = HologramNativeControllerBrowserReference.position(cell.dx, cell.dy, cell.dz);
-            String row = HologramNativeControllerBrowserReference.block(
-                cell.wantId, cell.wantMeta, machine, cell.targetFacing);
+            String row = HologramNativeControllerBrowserReference
+                .block(cell.wantId, cell.wantMeta, machine, cell.targetFacing);
             require(actual.put(coordinate, row) == null, "Duplicate native footprint at " + coordinate);
         }
         proof.put("controllerAnchors", anchors);
         require(anchors == 1, "Native structure screen must retain the exact controller anchor");
         long referenceStarted = System.nanoTime();
-        Map<String, String> reference = HologramNativeControllerBrowserReference.cells(
-            controllerItem, facing, state.data.getInteger("main"), state.data.getCompoundTag("channels"));
+        Map<String, String> reference = HologramNativeControllerBrowserReference
+            .cells(controllerItem, facing, state.data.getInteger("main"), state.data.getCompoundTag("channels"));
         proof.put("blockRendererReferenceNanos", System.nanoTime() - referenceStarted);
         proof.put("nativeCells", actual.size());
         proof.put("blockRendererCells", reference.size());
         proof.put("machineCells", ports);
         proof.put("maximumRelativeY", maximumRelativeY);
-        proof.put("descriptions", state.data.getTagList("structureDescription", 8).tagCount());
+        proof.put(
+            "descriptions",
+            state.data.getTagList("structureDescription", 8)
+                .tagCount());
         ArrayList<String> differences = new ArrayList<>();
         for (Map.Entry<String, String> entry : reference.entrySet()) {
             String observed = actual.get(entry.getKey());
-            if (!entry.getValue().equals(observed) && differences.size() < 8)
+            if (!entry.getValue()
+                .equals(observed) && differences.size() < 8)
                 differences.add(entry.getKey() + " expected " + entry.getValue() + " observed " + observed);
         }
-        for (String coordinate : actual.keySet())
-            if (!reference.containsKey(coordinate) && differences.size() < 8)
-                differences.add(coordinate + " unexpected " + actual.get(coordinate));
+        for (String coordinate : actual.keySet()) if (!reference.containsKey(coordinate) && differences.size() < 8)
+            differences.add(coordinate + " unexpected " + actual.get(coordinate));
         proof.put("sampleDifferences", differences);
         proof.put("matchesBlockRenderer", actual.equals(reference));
-        require(!reference.isEmpty() && actual.equals(reference), "Native footprint differs from BlockRenderer: " + proof);
+        require(
+            !reference.isEmpty() && actual.equals(reference),
+            "Native footprint differs from BlockRenderer: " + proof);
         return actual;
     }
 
     private void requireLiveController(Minecraft mc) {
-        require(mc.theWorld.getTileEntity(x, y, z) instanceof BaseMetaTileEntity base
-            && fixtureController(base) && base.getFrontFacing() == ForgeDirection.NORTH, "Live controller changed during preview");
+        require(
+            mc.theWorld.getTileEntity(x, y, z) instanceof BaseMetaTileEntity base && fixtureController(base)
+                && base.getFrontFacing() == ForgeDirection.NORTH,
+            "Live controller changed during preview");
     }
 
     private enum NativeParity {
-        CENTER("com.miaokatze.gtsr.common.machine.orecenter.MTEMineralIntegrationCenter",
-            "gtsr.ore_integration_center", "ore_center_sectors", 6),
+
+        CENTER("com.miaokatze.gtsr.common.machine.orecenter.MTEMineralIntegrationCenter", "gtsr.ore_integration_center",
+            "ore_center_sectors", 6),
         CRITICAL("com.miaokatze.gtsr.common.machine.MTECriticalMachine", "gtsr.critical.solar", "main", 2),
-        SOLAR("com.miaokatze.gtsr.common.machine.MTELargeSolarOverpressureArray",
-            "gtsr.large.solar.overpressure.array", "main", 2),
-        TURBINE("com.miaokatze.gtsr.common.machine.MTEMegaSteamTurbineArray",
-            "gtsr.mega.steam.turbine.array", "lenght", 3),
-        ENTANGLER("com.miaokatze.gtsr.common.machine.MTESteamSingularityEntangler",
-            "gtsr.steam.singularity.entangler", "main", 1),
+        SOLAR("com.miaokatze.gtsr.common.machine.MTELargeSolarOverpressureArray", "gtsr.large.solar.overpressure.array",
+            "main", 2),
+        TURBINE("com.miaokatze.gtsr.common.machine.MTEMegaSteamTurbineArray", "gtsr.mega.steam.turbine.array", "lenght",
+            3),
+        ENTANGLER("com.miaokatze.gtsr.common.machine.MTESteamSingularityEntangler", "gtsr.steam.singularity.entangler",
+            "main", 1),
         CHEMICAL("gtPlusPlus.xmod.gregtech.common.tileentities.machines.multi.production.chemplant.MTEChemicalPlant",
             "", "casing", 8),
         GTNL("com.science.gtnl.common.machine.multiblock.structuralReconstructionPlan.ElectricBlastFurnace",
             "ElectricBlastFurnace", "coil", 2),
-        TST("com.Nxer.TwistSpaceTechnology.system.Disassembler.TST_Disassembler", "NameTSTDisassembler", "component", 2),
+        TST("com.Nxer.TwistSpaceTechnology.system.Disassembler.TST_Disassembler", "NameTSTDisassembler", "component",
+            2),
         EBF(MTEElectricBlastFurnace.class.getName(), "", "coil", 2);
 
         final String type, name, channel;
@@ -1143,7 +1287,9 @@ final class HologramLocalPreviewStagesProbe {
         }
 
         boolean matches(IMetaTileEntity machine) {
-            return machine != null && type.equals(machine.getClass().getName())
+            return machine != null && type.equals(
+                machine.getClass()
+                    .getName())
                 && (name.isEmpty() || name.equals(machine.getMetaName()));
         }
 
@@ -1166,17 +1312,24 @@ final class HologramLocalPreviewStagesProbe {
                 !review.localControllerStandard() && state.data.getBoolean("virtualLocked")
                     && state.data.getLong("placementReviewNonce") > 0
                     && state.data.getInteger("missing") == 0
-                    && projectedPlacement.getString("placementRequestId").equals(state.data.getString("executionRequestId")),
+                    && projectedPlacement.getString("placementRequestId")
+                        .equals(state.data.getString("executionRequestId")),
                 "Typed material review did not accept this locked single-stone placement");
-            require(state.session.equals(review.ui.session.state().session) && state.session.equals(quote.getString("session")),
+            require(
+                state.session.equals(review.ui.session.state().session)
+                    && state.session.equals(quote.getString("session")),
                 "Material review is for another session");
             NBTTagList rows = quote.getTagList("rows", 10);
             NBTTagCompound row = rows.getCompoundTagAt(0);
             ItemStack stone = HologramMaterialQuote.readItem(row);
             require(
-                rows.tagCount() == 1 && "item".equals(row.getString("kind")) && stone != null
-                    && stone.getItem() == Item.getItemFromBlock(Blocks.stone) && stone.getItemDamage() == 0
-                    && row.getLong("required") == 1 && row.getLong("available") == 1 && row.getLong("missing") == 0,
+                rows.tagCount() == 1 && "item".equals(row.getString("kind"))
+                    && stone != null
+                    && stone.getItem() == Item.getItemFromBlock(Blocks.stone)
+                    && stone.getItemDamage() == 0
+                    && row.getLong("required") == 1
+                    && row.getLong("available") == 1
+                    && row.getLong("missing") == 0,
                 "Authoritative material review must request exactly the one available stone");
             constructionReview = review;
             constructionSession = state.session;
@@ -1255,32 +1408,52 @@ final class HologramLocalPreviewStagesProbe {
     private void verifyProjectedPlacement() {
         NBTTagCompound payload = projectedPlacement;
         Set<?> keys = payload.func_150296_c();
-        require(PLACEMENT_FIELDS.equals(keys), "Typed placement sent an unexpected field or a blueprint payload: " + keys);
-        require(payload.hasKey("action", 8) && "projectedPlacement".equals(payload.getString("action"))
-            && payload.hasKey("placementRequestId", 8) && payload.hasKey("placementWireVersion", 3)
-            && payload.getInteger("placementWireVersion") == 2, "Typed placement wire identity missing");
+        require(
+            PLACEMENT_FIELDS.equals(keys),
+            "Typed placement sent an unexpected field or a blueprint payload: " + keys);
+        require(
+            payload.hasKey("action", 8) && "projectedPlacement".equals(payload.getString("action"))
+                && payload.hasKey("placementRequestId", 8)
+                && payload.hasKey("placementWireVersion", 3)
+                && payload.getInteger("placementWireVersion") == 2,
+            "Typed placement wire identity missing");
         String id = payload.getString("placementRequestId");
-        require(id.length() == 36 && UUID.fromString(id).toString().equals(id), "Placement request id is not canonical");
-        require(payload.hasKey("clientSnapshotProtocol", 3) && payload.getInteger("clientSnapshotProtocol") == 1
-            && payload.hasKey("clientSnapshotPalette", 3)
-            && payload.getInteger("clientSnapshotPalette") == HologramSnapshotPalette.VERSION
-            && payload.hasKey("clientSnapshotFlow", 3) && payload.getInteger("clientSnapshotFlow") == 1,
+        require(
+            id.length() == 36 && UUID.fromString(id)
+                .toString()
+                .equals(id),
+            "Placement request id is not canonical");
+        require(
+            payload.hasKey("clientSnapshotProtocol", 3) && payload.getInteger("clientSnapshotProtocol") == 1
+                && payload.hasKey("clientSnapshotPalette", 3)
+                && payload.getInteger("clientSnapshotPalette") == HologramSnapshotPalette.VERSION
+                && payload.hasKey("clientSnapshotFlow", 3)
+                && payload.getInteger("clientSnapshotFlow") == 1,
             "Playback did not observe the current Action snapshot transport envelope");
         require(Arrays.equals(lockedAnchor, payload.getIntArray("placementAnchor")), "Request anchor lost local lock");
         int[] operations = payload.getIntArray("placementOperations");
         NBTTagList variants = payload.getTagList("placementVariants", 10);
         NBTTagList materials = payload.getTagList("placementMaterials", 10);
-        require(operations.length > 0 && operations.length % 4 == 0 && variants.tagCount() > 0 && materials.tagCount() > 0,
+        require(
+            operations.length > 0 && operations.length % 4 == 0 && variants.tagCount() > 0 && materials.tagCount() > 0,
             "Missing projected operations, variants or material tally");
         if (construction) {
             NBTTagCompound variant = variants.getCompoundTagAt(0), material = materials.getCompoundTagAt(0);
-            require(Arrays.equals(operations, new int[] { 0, 0, 0, 0 }) && variants.tagCount() == 1
-                && materials.tagCount() == 1 && "minecraft:stone".equals(variant.getString("block"))
-                && "minecraft:stone".equals(variant.getString("item")) && variant.getInteger("metadata") == 0
-                && variant.getInteger("damage") == 0 && variant.getInteger("facing") == -1
-                && !variant.getBoolean("controller") && !variant.hasKey("device") && !variant.hasKey("itemState")
-                && "minecraft:stone".equals(material.getString("item")) && material.getInteger("damage") == 0
-                && material.getInteger("count") == 1, "Paid fixture expected one ordinary stone operation and one shell");
+            require(
+                Arrays.equals(operations, new int[] { 0, 0, 0, 0 }) && variants.tagCount() == 1
+                    && materials.tagCount() == 1
+                    && "minecraft:stone".equals(variant.getString("block"))
+                    && "minecraft:stone".equals(variant.getString("item"))
+                    && variant.getInteger("metadata") == 0
+                    && variant.getInteger("damage") == 0
+                    && variant.getInteger("facing") == -1
+                    && !variant.getBoolean("controller")
+                    && !variant.hasKey("device")
+                    && !variant.hasKey("itemState")
+                    && "minecraft:stone".equals(material.getString("item"))
+                    && material.getInteger("damage") == 0
+                    && material.getInteger("count") == 1,
+                "Paid fixture expected one ordinary stone operation and one shell");
         }
         evidence.put("submittedPlacementRequestId", id);
         evidence.put("submittedPlacementWireVersion", payload.getInteger("placementWireVersion"));

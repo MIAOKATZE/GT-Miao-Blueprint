@@ -40,7 +40,8 @@ public final class HologramProjectorLocalizationRegression {
         }
         for (String value : english.values()) {
             SimpleAssert.that(
-                value.codePoints().noneMatch(c -> Character.UnicodeScript.of(c) == Character.UnicodeScript.HAN),
+                value.codePoints()
+                    .noneMatch(c -> Character.UnicodeScript.of(c) == Character.UnicodeScript.HAN),
                 "English projector text contains untranslated Chinese: " + value);
         }
         inject("en_US");
@@ -51,13 +52,19 @@ public final class HologramProjectorLocalizationRegression {
         expect("Upgrade / Compact", "library.upgrade");
         expect("Controller Projection", "editor.controller");
         expect("7 cells · 2 structures", "library.row_counts", 7, 2);
-        expect("Permission group: Custom · Publish: Allowed · Download: Denied · Quota: 8",
-            "library.permissions", "Custom", HologramUiText.projector("library.allowed"),
-            HologramUiText.projector("library.denied"), 8);
+        expect(
+            "Permission group: Custom · Publish: Allowed · Download: Denied · Quota: 8",
+            "library.permissions",
+            "Custom",
+            HologramUiText.projector("library.allowed"),
+            HologramUiText.projector("library.denied"),
+            8);
         String authored = "原作者 100% \\n";
         expect("Author: " + authored, "library.author", authored);
-        expect("Delete blueprint: " + authored + "\nYour current draft stays open. This cannot be undone.",
-            "dialog.delete_body", authored);
+        expect(
+            "Delete blueprint: " + authored + "\nYour current draft stays open. This cannot be undone.",
+            "dialog.delete_body",
+            authored);
         inject("zh_CN");
         expect("蓝图库", "library.title");
         expect("7 格 · 2 结构", "library.row_counts", 7, 2);
@@ -94,7 +101,10 @@ public final class HologramProjectorLocalizationRegression {
                 SimpleAssert.that(separator > PREFIX.length(), "missing language key: " + line);
                 String key = line.substring(PREFIX.length(), separator);
                 String value = line.substring(separator + 1);
-                SimpleAssert.that(!value.trim().isEmpty(), "missing language value: " + key);
+                SimpleAssert.that(
+                    !value.trim()
+                        .isEmpty(),
+                    "missing language value: " + key);
                 SimpleAssert.that(entries.put(key, value) == null, "duplicate language key: " + key);
             }
         }

@@ -27,11 +27,19 @@ final class HologramProjectedPlacementGuardTraceRegression {
             List<String> log = new ArrayList<>();
             OneShot off = new OneShot(false);
             String message = oldMessage(reason);
-            SimpleAssert.eq(message, off.failure(phase, reason, log::add).getMessage(), "unchanged disabled reply");
+            SimpleAssert.eq(
+                message,
+                off.failure(phase, reason, log::add)
+                    .getMessage(),
+                "unchanged disabled reply");
             SimpleAssert.that(log.isEmpty(), "a disabled trace never calls its sink");
 
             OneShot on = new OneShot(true);
-            SimpleAssert.eq(message, on.failure(phase, reason, log::add).getMessage(), "unchanged enabled reply");
+            SimpleAssert.eq(
+                message,
+                on.failure(phase, reason, log::add)
+                    .getMessage(),
+                "unchanged enabled reply");
             SimpleAssert.eq(Collections.singletonList(line(phase, reason)), log, "only phase and reason are exposed");
             on.failure(Phase.PUBLISH, Reason.TIMEOUT, log::add);
             SimpleAssert.eq(1, log.size(), "a later rejection cannot emit another diagnostic");
@@ -41,9 +49,12 @@ final class HologramProjectedPlacementGuardTraceRegression {
         OneShot brokenSink = new OneShot(true);
         SimpleAssert.eq(
             oldMessage(Reason.ANCHOR_REACH),
-            brokenSink.failure(Phase.WAIT, Reason.ANCHOR_REACH, line -> {
-                throw new IllegalStateException("test sink unavailable");
-            }).getMessage(),
+            brokenSink
+                .failure(
+                    Phase.WAIT,
+                    Reason.ANCHOR_REACH,
+                    line -> { throw new IllegalStateException("test sink unavailable"); })
+                .getMessage(),
             "sink failure must not alter the IOException reply");
         brokenSink.failure(Phase.RECEIVE, Reason.SLOT_CHANGED, log::add);
         SimpleAssert.that(log.isEmpty(), "a failed sink attempt cannot rearm the trace");
@@ -53,8 +64,10 @@ final class HologramProjectedPlacementGuardTraceRegression {
         List<String> log = new ArrayList<>();
         HologramProjectedPlacementGuardTrace.failure(Phase.WAIT, Reason.ANCHOR_NOT_LOADED, log::add);
         HologramProjectedPlacementGuardTrace.failure(Phase.PUBLISH, Reason.WORKSPACE_CHANGED, log::add);
-        SimpleAssert.eq(on ? Collections.singletonList(line(Phase.WAIT, Reason.ANCHOR_NOT_LOADED))
-            : Collections.emptyList(), log, "startup JVM trace setting honors default off and optional one shot");
+        SimpleAssert.eq(
+            on ? Collections.singletonList(line(Phase.WAIT, Reason.ANCHOR_NOT_LOADED)) : Collections.emptyList(),
+            log,
+            "startup JVM trace setting honors default off and optional one shot");
     }
 
     private static String line(Phase phase, Reason reason) {

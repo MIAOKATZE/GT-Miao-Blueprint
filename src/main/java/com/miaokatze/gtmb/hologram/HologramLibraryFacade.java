@@ -166,8 +166,7 @@ public final class HologramLibraryFacade {
 
     /** Only the save receipt transport is available inside an integrated server. */
     static boolean integratedOperation(String operation) {
-        return "previewBegin".equals(operation)
-            || "previewChunk".equals(operation)
+        return "previewBegin".equals(operation) || "previewChunk".equals(operation)
             || "cancel".equals(operation)
             || "saveStatus".equals(operation)
             || "saveResultConsumed".equals(operation);

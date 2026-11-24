@@ -88,7 +88,8 @@ final class HologramUiBuildReview implements LocalView {
         if (!blocker.isEmpty()) ui.session.notice(blocker);
         else {
             localMaterials = new HologramLocalMaterialReview(state, ui.config.configuration());
-            localMaterialSelectionVersion = ui.preview.selection().version();
+            localMaterialSelectionVersion = ui.preview.selection()
+                .version();
         }
         return true;
     }
@@ -99,9 +100,11 @@ final class HologramUiBuildReview implements LocalView {
 
     private boolean localMaterialsCurrent() {
         HologramScreen root = ui.host == null ? null : ui.host.parent();
-        return localMaterials != null && root != null && root.localMaterialOwnerCurrent(ui)
+        return localMaterials != null && root != null
+            && root.localMaterialOwnerCurrent(ui)
             && localMaterials.current(ui.session.state(), ui.preview.layer())
-            && localMaterialSelectionVersion == ui.preview.selection().version();
+            && localMaterialSelectionVersion == ui.preview.selection()
+                .version();
     }
 
     void closeLocalMaterials() {
@@ -121,8 +124,12 @@ final class HologramUiBuildReview implements LocalView {
     @Override
     public LocalFrame localFrame() {
         if (!localMaterialsCurrent()) return null;
-        return new LocalFrame(localMaterials.visible(), localMaterials.scopeLabel(), localMaterials.status(),
-            localMaterials.empty() ? "所选范围没有目标材料" : "本机没有可列出的材料", localMaterials.ready());
+        return new LocalFrame(
+            localMaterials.visible(),
+            localMaterials.scopeLabel(),
+            localMaterials.status(),
+            localMaterials.empty() ? "所选范围没有目标材料" : "本机没有可列出的材料",
+            localMaterials.ready());
     }
 
     @Override
@@ -149,7 +156,8 @@ final class HologramUiBuildReview implements LocalView {
         NBTTagCompound settings = localMaterials.settings();
         closeLocalMaterials();
         // The existing execution preparation owns context checks, upload and the final server review.
-        ui.host.parent().reviewLocalConstruction(settings);
+        ui.host.parent()
+            .reviewLocalConstruction(settings);
     }
 
     private HologramMaterialConfirmationDialog activeMaterialDialog() {
@@ -159,8 +167,7 @@ final class HologramUiBuildReview implements LocalView {
     void tickMaterialDialog() {
         updateMaterialReviewPresentation();
         if (ui.host == null || ui.host.parent() == null) return;
-        boolean unobstructed = !ui.session.state().data.getBoolean("placementValidating")
-            && !ui.nbt.nbtDrawer()
+        boolean unobstructed = !ui.session.state().data.getBoolean("placementValidating") && !ui.nbt.nbtDrawer()
             && !ui.bindings.networkDrawer()
             && !ui.identity.deidentificationDrawer()
             && ui.ae.aeReview() == null
@@ -173,8 +180,10 @@ final class HologramUiBuildReview implements LocalView {
         net.minecraft.entity.player.EntityPlayer player = ui.host.minecraft().thePlayer;
         if (local && player != null) {
             localMaterials.tick(player.inventory.mainInventory, player.inventory.currentItem);
-            if (localMaterialDialog == null)
-                localMaterialDialog = new HologramMaterialConfirmationDialog(ui.host.parent().panel(), this);
+            if (localMaterialDialog == null) localMaterialDialog = new HologramMaterialConfirmationDialog(
+                ui.host.parent()
+                    .panel(),
+                this);
         }
         if (localMaterialDialog != null) localMaterialDialog.tick(local && player != null);
         boolean show = confirmation && unobstructed;

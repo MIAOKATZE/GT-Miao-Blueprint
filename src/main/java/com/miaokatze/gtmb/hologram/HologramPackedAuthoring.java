@@ -31,7 +31,8 @@ public final class HologramPackedAuthoring {
     }
 
     int size() {
-        return layout.rows().cells();
+        return layout.rows()
+            .cells();
     }
 
     Cell read(int ordinal) {

@@ -12,13 +12,36 @@ import java.util.function.LongSupplier;
 final class HologramLocalHistoryTrace {
 
     enum Stage {
-        ACCEPTED, IO_ENQUEUED, IO_STARTED, RESTORE_BEGIN, RESTORE_END, SNAPSHOT_BEGIN, SNAPSHOT_END,
-        CLIENT_ENQUEUED, CLIENT_STARTED, PREPARATION_READY, RESULT_BEGIN, RESULT_END, PUBLISH_BEGIN, PUBLISH_END
+        ACCEPTED,
+        IO_ENQUEUED,
+        IO_STARTED,
+        RESTORE_BEGIN,
+        RESTORE_END,
+        SNAPSHOT_BEGIN,
+        SNAPSHOT_END,
+        CLIENT_ENQUEUED,
+        CLIENT_STARTED,
+        PREPARATION_READY,
+        RESULT_BEGIN,
+        RESULT_END,
+        PUBLISH_BEGIN,
+        PUBLISH_END
     }
 
-    enum Terminal { PUBLISHED, CANCELLED_OWNER, FAILED, NOT_FULL_REBUILD, NOT_ADMITTED, OBSERVATION_ABORTED }
+    enum Terminal {
+        PUBLISHED,
+        CANCELLED_OWNER,
+        FAILED,
+        NOT_FULL_REBUILD,
+        NOT_ADMITTED,
+        OBSERVATION_ABORTED
+    }
 
-    enum Stop { COMPLETE, WORK_CAP, TIME_BUDGET }
+    enum Stop {
+        COMPLETE,
+        WORK_CAP,
+        TIME_BUDGET
+    }
 
     final String operation;
     final long sourceRevision, sequence;
@@ -47,9 +70,15 @@ final class HologramLocalHistoryTrace {
 
     synchronized boolean admit(String op, long revision, long uiSequence, Object wantedSource, Object source,
         Object wantedDraft, Object draft, boolean exactOwner) {
-        if (terminal != null || marks[Stage.ACCEPTED.ordinal()] >= 0 || !exactOwner
-            || wantedSource == null || source != wantedSource || wantedDraft == null || draft != wantedDraft
-            || !operation.equals(op) || sourceRevision != revision || sequence != uiSequence) return false;
+        if (terminal != null || marks[Stage.ACCEPTED.ordinal()] >= 0
+            || !exactOwner
+            || wantedSource == null
+            || source != wantedSource
+            || wantedDraft == null
+            || draft != wantedDraft
+            || !operation.equals(op)
+            || sourceRevision != revision
+            || sequence != uiSequence) return false;
         marks[Stage.ACCEPTED.ordinal()] = clock.getAsLong() - press;
         return true;
     }
@@ -104,7 +133,10 @@ final class HologramLocalHistoryTrace {
 
     synchronized boolean completeCertified(int expectedRows, boolean header) {
         if (terminal != Terminal.PUBLISHED || !(header ? "HEADER_PROMPT" : "CELL_PROMPT").equals(certifiedKind)
-            || certifiedRows != expectedRows || sliceCount != 0 || totalWork != 0 || cellRows != 0) return false;
+            || certifiedRows != expectedRows
+            || sliceCount != 0
+            || totalWork != 0
+            || cellRows != 0) return false;
         long last = 0;
         for (Stage stage : Stage.values()) {
             long at = marks[stage.ordinal()];
@@ -119,8 +151,10 @@ final class HologramLocalHistoryTrace {
     }
 
     synchronized boolean complete(int expectedRows) {
-        if (terminal != Terminal.PUBLISHED || sliceCount == 0 || cellRows != expectedRows
-            || stopped[Stop.COMPLETE.ordinal()] != 1 || totalWork < cellRows) return false;
+        if (terminal != Terminal.PUBLISHED || sliceCount == 0
+            || cellRows != expectedRows
+            || stopped[Stop.COMPLETE.ordinal()] != 1
+            || totalWork < cellRows) return false;
         long last = 0;
         for (long at : marks) {
             if (at < last) return false;

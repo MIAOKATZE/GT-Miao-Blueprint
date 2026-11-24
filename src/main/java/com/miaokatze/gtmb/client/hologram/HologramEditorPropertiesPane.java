@@ -59,7 +59,12 @@ final class HologramEditorPropertiesPane {
         target.child(label(() -> {
             HologramState.Cell cell = ui.session.selectedCell();
             return cell == null ? ""
-                : "位置 " + cell.dx + "," + cell.dy + "," + cell.dz + " · 当前："
+                : "位置 " + cell.dx
+                    + ","
+                    + cell.dy
+                    + ","
+                    + cell.dz
+                    + " · 当前："
                     + (cell.localObservationMissing() ? "未读取到现场" : ui.preview.cellName(cell, true));
         }));
         target.child(label(() -> {
@@ -158,8 +163,14 @@ final class HologramEditorPropertiesPane {
         Flow source = section();
         source.child(label(() -> "来源：" + sourceLabel(ui, ui.config.selectedStructureId())));
         Flow observed = row();
-        observed.setEnabledIf(w -> ui.host.parent().localControllerStandard());
-        observed.child(label(() -> ui.host.parent().localMachineState().caption()));
+        observed.setEnabledIf(
+            w -> ui.host.parent()
+                .localControllerStandard());
+        observed.child(
+            label(
+                () -> ui.host.parent()
+                    .localMachineState()
+                    .caption()));
         sizingSections.add(observed);
         source.child(observed);
         source.child(
@@ -231,16 +242,17 @@ final class HologramEditorPropertiesPane {
     }
 
     private IWidget meOutputCapacity(boolean current) {
-        return HologramEditorNativeTheme.label(() -> meOutputCapacityText(
-            ui.session.state(), ui.session.selectedCell(), current))
+        return HologramEditorNativeTheme
+            .label(() -> meOutputCapacityText(ui.session.state(), ui.session.selectedCell(), current))
             .widthRel(1f)
             .height(24)
             .setEnabledIf(w -> hasMeOutputCapacity(ui.session.state(), ui.session.selectedCell(), current));
     }
 
     private static boolean hasMeOutputCapacity(HologramState view, HologramState.Cell cell, boolean current) {
-        return cell != null && (cell.hasDisplayTag(current, HologramGtMeOutputDisplay.ITEMS, 4)
-            || cell.hasDisplayTag(current, HologramGtMeOutputDisplay.MILLIBUCKETS, 4))
+        return cell != null
+            && (cell.hasDisplayTag(current, HologramGtMeOutputDisplay.ITEMS, 4)
+                || cell.hasDisplayTag(current, HologramGtMeOutputDisplay.MILLIBUCKETS, 4))
             && (current || HologramBlueprintPreview.editorAllowsMeOutputCapacity(view.data));
     }
 
@@ -346,7 +358,8 @@ final class HologramEditorPropertiesPane {
             && (!state.getBoolean("virtual")
                 || state.getBoolean("virtualPlacement") && state.getBoolean("virtualLocked"))
             && state.getBoolean("target")
-            && HologramPlacementConfirmation.localStructureReviewBlocker(ui.session.state()).isEmpty()
+            && HologramPlacementConfirmation.localStructureReviewBlocker(ui.session.state())
+                .isEmpty()
             && (state.getBoolean("supported") || state.getInteger("mode") == 0);
     }
 

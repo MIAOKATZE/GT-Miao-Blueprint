@@ -122,9 +122,8 @@ public final class HologramCapabilities {
                 if (observed != null) declared.current = observed.current;
                 int minimum = channel.getMinimumValue();
                 int maximum = channel.getMaximumValue();
-                if (minimum > 0 && (long) maximum - minimum < 64)
-                    for (long value = minimum; value <= maximum; value++)
-                        declared.option((int) value, Long.toString(value), null);
+                if (minimum > 0 && (long) maximum - minimum < 64) for (long value = minimum; value <= maximum; value++)
+                    declared.option((int) value, Long.toString(value), null);
             }
             return this;
         }
@@ -198,7 +197,9 @@ public final class HologramCapabilities {
             NBTTagCompound option = new NBTTagCompound();
             option.setInteger("value", value);
             option.setBoolean("present", true);
-            option.setString("label", name != null ? name : stack != null ? stack.getDisplayName() : Integer.toString(value));
+            option.setString(
+                "label",
+                name != null ? name : stack != null ? stack.getDisplayName() : Integer.toString(value));
             if (stack != null) option.setTag("item", stack.writeToNBT(new NBTTagCompound()));
             options.add(option);
             editable = true;
@@ -223,9 +224,7 @@ public final class HologramCapabilities {
                 NBTTagCompound unset = new NBTTagCompound();
                 unset.setInteger("value", 0);
                 unset.setBoolean("present", false);
-                unset.setString(
-                    "label",
-                    "presence".equals(kind) ? "关闭" : "declared".equals(kind) ? "恢复默认" : "继承主信号");
+                unset.setString("label", "presence".equals(kind) ? "关闭" : "declared".equals(kind) ? "恢复默认" : "继承主信号");
                 values.appendTag(unset);
             }
             for (NBTTagCompound option : options) values.appendTag(option.copy());

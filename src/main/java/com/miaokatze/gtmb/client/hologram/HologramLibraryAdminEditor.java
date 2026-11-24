@@ -4,7 +4,6 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import static com.miaokatze.gtmb.client.hologram.HologramUiText.projector;
-
 import static net.minecraft.client.gui.Gui.drawRect;
 
 import java.io.IOException;
@@ -114,7 +113,8 @@ final class HologramLibraryAdminEditor {
         }
         if (!remove && !defaultGroup()) selected().getTagList("members", 8)
             .appendTag(new NBTTagString(id.toString()));
-        notice = remove || defaultGroup() ? projector("admin.reset_member_notice") : projector("admin.move_member_notice");
+        notice = remove || defaultGroup() ? projector("admin.reset_member_notice")
+            : projector("admin.move_member_notice");
     }
 
     boolean activate(int id) {
@@ -141,7 +141,8 @@ final class HologramLibraryAdminEditor {
                     break;
                 case 18002:
                     storeGroup();
-                    if (groups.size() >= HologramLibraryPermissions.MAX_GROUPS) throw new IOException(projector("admin.group_limit"));
+                    if (groups.size() >= HologramLibraryPermissions.MAX_GROUPS)
+                        throw new IOException(projector("admin.group_limit"));
                     NBTTagCompound group = new HologramLibraryPermissions.Group(
                         "group_" + UUID.randomUUID()
                             .toString()
@@ -189,7 +190,8 @@ final class HologramLibraryAdminEditor {
                     storeGroup();
                     HologramLibraryPermissions permissions = HologramLibraryPermissions.read(tags());
                     int up = Integer.parseInt(upload.getText()), down = Integer.parseInt(download.getText());
-                    if (up < 1 || up > 1024 || down < 1 || down > 1024) throw new IOException(projector("admin.bandwidth_error"));
+                    if (up < 1 || up > 1024 || down < 1 || down > 1024)
+                        throw new IOException(projector("admin.bandwidth_error"));
                     HologramLibraryClient.INSTANCE
                         .saveConfig(up, down, permissions.effective(null).quota, revision, permissions.tag());
                     saving = HologramLibraryClient.INSTANCE.configSavePending();
@@ -258,16 +260,20 @@ final class HologramLibraryAdminEditor {
                         .widthRel(1f)
                         .expanded()
                         .height(22))
-                .child(nativeButton(18001, () -> projector("admin.next_group"), () -> selected + 1 < groups.size()).width(68)));
+                .child(
+                    nativeButton(18001, () -> projector("admin.next_group"), () -> selected + 1 < groups.size())
+                        .width(68)));
         form.child(
             Flow.row()
                 .widthRel(1f)
                 .height(22)
                 .childPadding(4)
                 .child(
-                    nativeButton(18002, () -> projector("admin.add_group"), () -> groups.size() < HologramLibraryPermissions.MAX_GROUPS)
-                        .widthRel(1f)
-                        .expanded())
+                    nativeButton(
+                        18002,
+                        () -> projector("admin.add_group"),
+                        () -> groups.size() < HologramLibraryPermissions.MAX_GROUPS).widthRel(1f)
+                            .expanded())
                 .child(
                     nativeButton(18003, () -> projector("admin.delete_group"), () -> !defaultGroup()).widthRel(1f)
                         .expanded()));
@@ -279,13 +285,21 @@ final class HologramLibraryAdminEditor {
                 .height(22)
                 .childPadding(4)
                 .child(
-                    nativeButton(18004, () -> projector("admin.publish_state", projector(selected().getBoolean("publish") ? "library.allowed" : "library.denied")), () -> true)
-                        .widthRel(1f)
-                        .expanded())
+                    nativeButton(
+                        18004,
+                        () -> projector(
+                            "admin.publish_state",
+                            projector(selected().getBoolean("publish") ? "library.allowed" : "library.denied")),
+                        () -> true).widthRel(1f)
+                            .expanded())
                 .child(
-                    nativeButton(18005, () -> projector("admin.download_state", projector(selected().getBoolean("download") ? "library.allowed" : "library.denied")), () -> true)
-                        .widthRel(1f)
-                        .expanded()));
+                    nativeButton(
+                        18005,
+                        () -> projector(
+                            "admin.download_state",
+                            projector(selected().getBoolean("download") ? "library.allowed" : "library.denied")),
+                        () -> true).widthRel(1f)
+                            .expanded()));
         form.child(
             HologramEditorNativeTheme
                 .label(() -> defaultGroup() ? projector("admin.default_help") : projector("admin.registration_help"))
@@ -303,8 +317,11 @@ final class HologramLibraryAdminEditor {
                 .height(22)
                 .childPadding(4)
                 .child(
-                    nativeButton(18006, () -> defaultGroup() ? projector("admin.move_default") : projector("admin.move_member"), () -> true).widthRel(1f)
-                        .expanded())
+                    nativeButton(
+                        18006,
+                        () -> defaultGroup() ? projector("admin.move_default") : projector("admin.move_member"),
+                        () -> true).widthRel(1f)
+                            .expanded())
                 .child(
                     nativeButton(18007, () -> projector("admin.remove_member"), () -> !defaultGroup()).widthRel(1f)
                         .expanded()));
@@ -322,7 +339,11 @@ final class HologramLibraryAdminEditor {
                 .child(nativeButton(18008, () -> projector("admin.prev_member"), () -> memberPage > 0).width(88))
                 .child(
                     HologramEditorNativeTheme.label(
-                        () -> projector("admin.members", selected().getTagList("members", 8).tagCount(), memberPage + 1))
+                        () -> projector(
+                            "admin.members",
+                            selected().getTagList("members", 8)
+                                .tagCount(),
+                            memberPage + 1))
                         .widthRel(1f)
                         .expanded()
                         .height(22))

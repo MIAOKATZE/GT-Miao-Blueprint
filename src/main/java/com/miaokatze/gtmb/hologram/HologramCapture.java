@@ -258,8 +258,15 @@ public final class HologramCapture {
     }
 
     static HologramCapture collectCompact(HologramSession session, ItemStack trigger, HologramCapture resumed) {
-        return collect(session.machine, trigger, session.machine.getExtendedFacing(),
-            session.captureIntent, resumed, false, 0, session.nativeCompactSource);
+        return collect(
+            session.machine,
+            trigger,
+            session.machine.getExtendedFacing(),
+            session.captureIntent,
+            resumed,
+            false,
+            0,
+            session.nativeCompactSource);
     }
 
     /** Client-local templates walk a registered, fresh controller with an independent client budget. */
@@ -503,16 +510,26 @@ public final class HologramCapture {
     /** A ready native job may not run custom callbacks or inherited world reads in the new intake path. */
     boolean readyPlacementSource(HologramSession s) {
         return sourceBinding != null && sourceResolution != null
-            && (compactNative == null ? sourceResolution.status == StructureSources.Status.ABSENT
-                && sourceResolution.sourceId.isEmpty() && buildPieceCalls && nativeConstructCalls == 1
+            && (compactNative == null
+                ? sourceResolution.status == StructureSources.Status.ABSENT && sourceResolution.sourceId.isEmpty()
+                    && buildPieceCalls
+                    && nativeConstructCalls == 1
                 : compactNative == s.nativeCompactSource
                     && StructureSources.compactNative(s.machine.getClass()) == compactNative)
-            && sourceBinding.machine == s.machine && sourceBinding.world == s.libraryWorld
-            && sourceBinding.worldTile == s.target && sourceBinding.x == s.x && sourceBinding.y == s.y
-            && sourceBinding.z == s.z && sourceBinding.facing.ordinal() == s.facing
-            && !sourceResolution.hasObservedReadSet() && ownSources.observations.isEmpty()
-            && inheritedSources.isEmpty() && retainedSources.isEmpty() && memberSources.isEmpty()
-            && definition != null && HologramStructureCursor.supports(definition);
+            && sourceBinding.machine == s.machine
+            && sourceBinding.world == s.libraryWorld
+            && sourceBinding.worldTile == s.target
+            && sourceBinding.x == s.x
+            && sourceBinding.y == s.y
+            && sourceBinding.z == s.z
+            && sourceBinding.facing.ordinal() == s.facing
+            && !sourceResolution.hasObservedReadSet()
+            && ownSources.observations.isEmpty()
+            && inheritedSources.isEmpty()
+            && retainedSources.isEmpty()
+            && memberSources.isEmpty()
+            && definition != null
+            && HologramStructureCursor.supports(definition);
     }
 
     /** No captured read-set callbacks or per-element declaration refresh during compact admission. */

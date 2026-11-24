@@ -49,7 +49,9 @@ final class HologramConfigurationPresets {
 
     NBTTagCompound get(String name) {
         NBTTagCompound row = namedRow(name);
-        return row == null ? null : (NBTTagCompound) row.getCompoundTag("profile").copy();
+        return row == null ? null
+            : (NBTTagCompound) row.getCompoundTag("profile")
+                .copy();
     }
 
     private NBTTagCompound namedRow(String name) {

@@ -808,8 +808,8 @@ final class HologramWorldPlacementWorkflow {
     }
 
     private static void turnPreset(HologramPresets.Preset preset, boolean vertical, boolean authoring,
-        boolean placementData, boolean validateFinalPose, ExtendedFacing controller, Map<String, Integer> currentFacings,
-        int originX, int originY, int originZ) throws java.io.IOException {
+        boolean placementData, boolean validateFinalPose, ExtendedFacing controller,
+        Map<String, Integer> currentFacings, int originX, int originY, int originZ) throws java.io.IOException {
         Map<String, int[]> littleReferences = HologramBlockTransformLittleTiles
             .presetReferences(preset.cells, vertical);
         preset.controllerFacing = controller.ordinal();

@@ -287,14 +287,19 @@ final class HologramClientLibrary {
         java.util.function.BooleanSupplier stillCurrent, HologramLocalSaveTrace trace) throws IOException {
         HologramBlueprintArtifact.Artifact pair = prepared.bindLocalSave(id, freshlyCapturedPng);
         mark(trace, Stage.BOUND_PAIR_READY);
-        LocalSave saved = preparePrivateDocumentSave(pair.json, pair.png, id, stillCurrent, trace,
+        LocalSave saved = preparePrivateDocumentSave(
+            pair.json,
+            pair.png,
+            id,
+            stillCurrent,
+            trace,
             prepared.incompleteAuthorIntent());
         return new EditorSave(saved, pair.json);
     }
 
     private LocalSave preparePrivateDocumentSave(byte[] data, byte[] preview, String id,
-        java.util.function.BooleanSupplier stillCurrent, HologramLocalSaveTrace trace, LocalSaveIntent incompleteAuthorIntent)
-        throws IOException {
+        java.util.function.BooleanSupplier stillCurrent, HologramLocalSaveTrace trace,
+        LocalSaveIntent incompleteAuthorIntent) throws IOException {
         JsonObject blueprint = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.displayRows(data).blueprint;
         JsonObject header = blueprint(blueprint);
         mark(trace, Stage.PAIR_INPUT_READY);
@@ -313,8 +318,8 @@ final class HologramClientLibrary {
                     throw new IOException("本地蓝图已不在原保存槽位");
             } else if (indexed != null || Files.exists(previous, LinkOption.NOFOLLOW_LINKS)
                 || Files.exists(HologramBlueprintArtifact.previewPath(previous), LinkOption.NOFOLLOW_LINKS)) {
-                throw new IOException("本地蓝图新保存槽位已存在");
-            }
+                    throw new IOException("本地蓝图新保存槽位已存在");
+                }
         }
         if (!Files.exists(previous) && list().size() >= MAX_ENTRIES) throw new IOException("客户端蓝图库已满（128 项）");
         Path target = HologramBlueprintFiles.target(directory, id, data);
@@ -420,8 +425,9 @@ final class HologramClientLibrary {
 
     synchronized EditorSource readPrivateEditorSource(String id) throws IOException {
         Path indexed = HologramBlueprintFiles.indexedPath(directory, id);
-        if (indexed != null && Files.isRegularFile(indexed, LinkOption.NOFOLLOW_LINKS))
-            return new EditorSource(HologramBlueprintArtifact.readLocalJson(indexed), LocalEditorOrigin.TRACKED_PRIVATE);
+        if (indexed != null && Files.isRegularFile(indexed, LinkOption.NOFOLLOW_LINKS)) return new EditorSource(
+            HologramBlueprintArtifact.readLocalJson(indexed),
+            LocalEditorOrigin.TRACKED_PRIVATE);
         return new EditorSource(readPrivateDocument(id), LocalEditorOrigin.STRICT);
     }
 
@@ -434,7 +440,8 @@ final class HologramClientLibrary {
             return java.util.Collections.emptyList();
         List<Entry> entries = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
-        JsonObject root = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.readLegacyCatalog(legacyCatalogPath());
+        JsonObject root = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec
+            .readLegacyCatalog(legacyCatalogPath());
         for (JsonElement member : root.getAsJsonArray("presets")) {
             try {
                 JsonObject blueprint = blueprint(member.getAsJsonObject());
@@ -455,10 +462,11 @@ final class HologramClientLibrary {
         String memberId = id.startsWith("legacy:") ? id.substring("legacy:".length()) : id;
         if (!memberId.matches("[a-zA-Z0-9_-]{1,96}")) throw new IOException("旧蓝图 ID 无效");
         var catalog = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.readStoredCatalog(legacyCatalogPath());
-        for (JsonElement member : catalog.root().getAsJsonArray("presets")) {
+        for (JsonElement member : catalog.root()
+            .getAsJsonArray("presets")) {
             if (member.isJsonObject() && memberId.equals(string(member.getAsJsonObject(), "id")))
-                return com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.legacyCatalogMember(
-                    catalog, member.getAsJsonObject());
+                return com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec
+                    .legacyCatalogMember(catalog, member.getAsJsonObject());
         }
         throw new IOException("本地旧合集蓝图不存在");
     }
@@ -502,7 +510,8 @@ final class HologramClientLibrary {
         if (indexed != null && Files.isRegularFile(indexed, LinkOption.NOFOLLOW_LINKS))
             return new SavedDisplayPath(indexed, true);
         Path original = indexed == null ? directory.resolve(id + ".json") : indexed;
-        return new SavedDisplayPath(Files.isRegularFile(original) ? original : displayPaths.getOrDefault(id, original),
+        return new SavedDisplayPath(
+            Files.isRegularFile(original) ? original : displayPaths.getOrDefault(id, original),
             false);
     }
 

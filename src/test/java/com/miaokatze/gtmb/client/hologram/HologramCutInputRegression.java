@@ -193,9 +193,8 @@ public final class HologramCutInputRegression {
             area.point(2, 8, 72, 8, "replace");
             area.beginNext("subtract");
             fields[0].set(null, area);
-            SimpleAssert.that(
-                (Boolean) busy.invoke(cut),
-                "local subtract selection owns input without a server snapshot");
+            SimpleAssert
+                .that((Boolean) busy.invoke(cut), "local subtract selection owns input without a server snapshot");
             area.point(1, 2, 66, 2, "replace");
             area.point(2, 4, 68, 4, "replace");
             NBTTagCompound geometry = area.snapshot();
@@ -225,9 +224,8 @@ public final class HologramCutInputRegression {
 
             for (int i = 1; i < names.length; i++) {
                 fields[i].setBoolean(null, true);
-                SimpleAssert.that(
-                    (Boolean) busy.invoke(cut),
-                    "the local selection retains input while its capture is pending");
+                SimpleAssert
+                    .that((Boolean) busy.invoke(cut), "the local selection retains input while its capture is pending");
                 fields[i].setBoolean(null, false);
             }
             fields[0].set(null, null);
@@ -257,8 +255,8 @@ public final class HologramCutInputRegression {
         checkRecoveryRouting(false, "initial directory has not loaded");
         requests.expire(HologramCutRequests.READ_TIMEOUT_NS);
         checkRecoveryRouting(false, "directory sync timed out");
-        for (int tick = 0; tick < 100; tick++)
-            SimpleAssert.that(!requests.observeStorageContext(true), "a failed sync does not poll while the tool stays held");
+        for (int tick = 0; tick < 100; tick++) SimpleAssert
+            .that(!requests.observeStorageContext(true), "a failed sync does not poll while the tool stays held");
         SimpleAssert.that(!requests.active("list"), "opening a local switcher cannot restart a directory request");
 
         // The failed ACK removes the network request, but its directory failure must still gate cut actions.

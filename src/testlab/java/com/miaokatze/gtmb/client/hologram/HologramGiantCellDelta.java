@@ -29,30 +29,40 @@ final class HologramGiantCellDelta {
     }
 
     static HologramGiantCellDelta select(DisplayRows original, int target, int neighbor) {
-        if (!original.compact() || target < 0 || neighbor < 0 || target >= original.cells() || neighbor >= original.cells()
-            || target == neighbor || original.materialIndex(target) != original.materialIndex(neighbor)) return null;
+        if (!original.compact() || target < 0
+            || neighbor < 0
+            || target >= original.cells()
+            || neighbor >= original.cells()
+            || target == neighbor
+            || original.materialIndex(target) != original.materialIndex(neighbor)) return null;
         int[] a = xyz(original, target), b = xyz(original, neighbor);
         if (Math.abs((long) a[0] - b[0]) + Math.abs((long) a[1] - b[1]) + Math.abs((long) a[2] - b[2]) != 1)
             return null;
         JsonObject material = original.material(original.materialIndex(target));
         if (!value(material, "prompt").isEmpty() || value(material, "block").isEmpty()
             || "minecraft:air".equals(value(material, "block"))) return null;
-        return new HologramGiantCellDelta(target, neighbor, a, b,
-            present(material.get("excluded")) && material.get("excluded").getAsBoolean());
+        return new HologramGiantCellDelta(
+            target,
+            neighbor,
+            a,
+            b,
+            present(material.get("excluded")) && material.get("excluded")
+                .getAsBoolean());
     }
 
     void verify(DisplayRows original, DisplayRows saved) throws IOException {
         if (select(original, target, neighbor) == null || !Arrays.equals(targetXyz, xyz(original, target))
             || !Arrays.equals(neighborXyz, xyz(original, neighbor)))
             throw new IOException("CELL_PAIR: original target/control identity changed");
-        if (!saved.compact() || saved.cells() != original.cells() || !Arrays.equals(targetXyz, xyz(saved, target))
+        if (!saved.compact() || saved.cells() != original.cells()
+            || !Arrays.equals(targetXyz, xyz(saved, target))
             || !Arrays.equals(neighborXyz, xyz(saved, neighbor)))
             throw new IOException("CELL_PAIR: saved target/control geometry changed");
         JsonObject before = original.material(original.materialIndex(target));
         JsonObject edited = saved.material(saved.materialIndex(target));
         JsonObject untouched = saved.material(saved.materialIndex(neighbor));
-        if (saved.materialIndex(target) == saved.materialIndex(neighbor)
-            || !PROMPT.equals(value(edited, "prompt")) || !value(untouched, "prompt").isEmpty())
+        if (saved.materialIndex(target) == saved.materialIndex(neighbor) || !PROMPT.equals(value(edited, "prompt"))
+            || !value(untouched, "prompt").isEmpty())
             throw new IOException("CELL_PAIR: target-local annotation or descriptor split missing");
         sameMaterial(before, edited, target, true);
         sameMaterial(before, untouched, neighbor, false);

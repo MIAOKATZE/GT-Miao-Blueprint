@@ -72,14 +72,25 @@ final class HologramEbfPreparedStock {
         require(receiptRoot.equals(exactDirectory(hostOutput)), "EBF stock receipt roots differ");
         Path ownedGame = ownedGame(game, receiptRoot);
         var lease = readJson(exactDirectory(ownedGame.resolve(".testlab-host")).resolve("lease.json"));
-        require(REGISTRY.equals(Item.itemRegistry.getNameForObject(projector)), "EBF stock projector registry mismatch");
+        require(
+            REGISTRY.equals(Item.itemRegistry.getNameForObject(projector)),
+            "EBF stock projector registry mismatch");
         int registeredId = Item.getIdFromItem(projector);
         require(Item.getItemById(registeredId) == projector, "EBF stock projector ID remap mismatch");
         verifyLease(lease, run, actor, loginActor(titleProfileId), shaPin, receiptRoot);
         byte[] bytes = readBounded(receiptRoot.resolve(FILE));
         NBTTagCompound tag = validate(bytes, shaPin, registeredId);
-        return new HologramEbfPreparedStock(run, actor, shaPin, bytes, projector, registeredId,
-            (NBTTagCompound) tag.getTagList("Inventory", 10).getCompoundTagAt(0).getCompoundTag("tag").copy());
+        return new HologramEbfPreparedStock(
+            run,
+            actor,
+            shaPin,
+            bytes,
+            projector,
+            registeredId,
+            (NBTTagCompound) tag.getTagList("Inventory", 10)
+                .getCompoundTagAt(0)
+                .getCompoundTag("tag")
+                .copy());
     }
 
     void install(Path save, Path savesParent, Map<String, Object> receipt) throws IOException {
@@ -100,10 +111,16 @@ final class HologramEbfPreparedStock {
     boolean verifyServer(WorldServer world) throws IOException {
         if (nativeServerActorVerified) return true;
         if (world.playerEntities.isEmpty()) return false;
-        require(installed && world.playerEntities.size() == 1
-            && world.playerEntities.get(0) instanceof EntityPlayerMP real && !(real instanceof FakePlayer)
-            && real.worldObj == world && real.theItemInWorldManager.getGameType() == WorldSettings.GameType.SURVIVAL
-            && !world.getWorldInfo().areCommandsAllowed() && isOwnedStock(real), "Native server did not load exact ordinary stock actor");
+        require(
+            installed && world.playerEntities.size() == 1
+                && world.playerEntities.get(0) instanceof EntityPlayerMP real
+                && !(real instanceof FakePlayer)
+                && real.worldObj == world
+                && real.theItemInWorldManager.getGameType() == WorldSettings.GameType.SURVIVAL
+                && !world.getWorldInfo()
+                    .areCommandsAllowed()
+                && isOwnedStock(real),
+            "Native server did not load exact ordinary stock actor");
         nativeServerActorVerified = true;
         return true;
     }
@@ -117,42 +134,74 @@ final class HologramEbfPreparedStock {
     }
 
     private boolean isOwnedStock(EntityPlayer real) {
-        if (real == null || Item.getIdFromItem(projector) != registeredId || Item.getItemById(registeredId) != projector
-            || !actor.equals(real.getUniqueID()) || real.dimension != 0 || real.isDead
-            || real.capabilities.isCreativeMode || real.capabilities.allowFlying || real.capabilities.isFlying
+        if (real == null || Item.getIdFromItem(projector) != registeredId
+            || Item.getItemById(registeredId) != projector
+            || !actor.equals(real.getUniqueID())
+            || real.dimension != 0
+            || real.isDead
+            || real.capabilities.isCreativeMode
+            || real.capabilities.allowFlying
+            || real.capabilities.isFlying
             || real.inventory.currentItem != SLOT) return false;
         var held = real.getHeldItem();
-        return held != null && held.getItem() == projector && held.stackSize == 1 && held.getItemDamage() == 0
-            && held.hasTagCompound() && itemTag.equals(held.getTagCompound());
+        return held != null && held.getItem() == projector
+            && held.stackSize == 1
+            && held.getItemDamage() == 0
+            && held.hasTagCompound()
+            && itemTag.equals(held.getTagCompound());
     }
 
     static UUID loginActor(String id) throws IOException {
-        require(id != null && (id.matches("[0-9a-fA-F]{32}")
-            || id.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")),
+        require(
+            id != null && (id.matches("[0-9a-fA-F]{32}")
+                || id.matches("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")),
             "EBF stock requires an explicit normal launcher profile ID");
-        String canonical = id.replace("-", "").replaceFirst("(.{8})(.{4})(.{4})(.{4})(.{12})", "$1-$2-$3-$4-$5");
+        String canonical = id.replace("-", "")
+            .replaceFirst("(.{8})(.{4})(.{4})(.{4})(.{12})", "$1-$2-$3-$4-$5");
         return UUID.fromString(canonical);
     }
 
     static void verifyLease(JsonObject lease, String run, UUID actor, UUID launchActor, String shaPin, Path receiptRoot)
         throws IOException {
-        require(uuid(run) && run.equals(string(lease, "runId")) && actor != null && actor.equals(launchActor)
-            && shaPin != null && shaPin.matches("[0-9a-f]{64}") && lease.has("ebfPreparedStock")
-            && lease.get("ebfPreparedStock").isJsonObject(), "Exact prepared-stock run/profile/seal required");
+        require(
+            uuid(run) && run.equals(string(lease, "runId"))
+                && actor != null
+                && actor.equals(launchActor)
+                && shaPin != null
+                && shaPin.matches("[0-9a-f]{64}")
+                && lease.has("ebfPreparedStock")
+                && lease.get("ebfPreparedStock")
+                    .isJsonObject(),
+            "Exact prepared-stock run/profile/seal required");
         var pin = lease.getAsJsonObject("ebfPreparedStock");
-        String actorSha256 = HologramBlueprintArtifact.hash(actor.toString().getBytes(StandardCharsets.US_ASCII));
-        require(pin.entrySet().size() == 5 && SCHEMA.equals(string(pin, "schema"))
-            && actor.toString().equals(string(pin, "actorUuid")) && shaPin.equals(string(pin, "sha256"))
-            && actorSha256.equals(string(pin, "nativeDonorActorSha256"))
-            && receiptRoot.toString().equals(string(pin, "receiptRoot")), "EBF stock seal is unbound to the exact lease");
+        String actorSha256 = HologramBlueprintArtifact.hash(
+            actor.toString()
+                .getBytes(StandardCharsets.US_ASCII));
+        require(
+            pin.entrySet()
+                .size() == 5 && SCHEMA.equals(string(pin, "schema"))
+                && actor.toString()
+                    .equals(string(pin, "actorUuid"))
+                && shaPin.equals(string(pin, "sha256"))
+                && actorSha256.equals(string(pin, "nativeDonorActorSha256"))
+                && receiptRoot.toString()
+                    .equals(string(pin, "receiptRoot")),
+            "EBF stock seal is unbound to the exact lease");
     }
 
     static Path ownedGame(Path game, Path receipt) throws IOException {
         Path root = receipt.getParent();
-        require(root != null && root.getParent() != null && root.getFileName().toString().equals("receipts"),
+        require(
+            root != null && root.getParent() != null
+                && root.getFileName()
+                    .toString()
+                    .equals("receipts"),
             "Expected the same-run isolated QA receipt root");
-        Path expected = root.getParent().resolve("launcher-data").resolve("instances")
-            .resolve(receipt.getFileName()).resolve(".minecraft");
+        Path expected = root.getParent()
+            .resolve("launcher-data")
+            .resolve("instances")
+            .resolve(receipt.getFileName())
+            .resolve(".minecraft");
         Path actual = exactDirectory(game);
         require(expected.equals(actual), "EBF stock receipt does not belong to this isolated game instance");
         return actual;
@@ -161,26 +210,39 @@ final class HologramEbfPreparedStock {
     static Path destination(Path save, Path savesParent, String run, UUID actor) throws IOException {
         Path parent = exactDirectory(savesParent);
         Path exact = exactDirectory(save);
-        require(uuid(run) && exact.getParent().equals(parent) && exact.getFileName().toString().equals("MiaoHost-" + run),
+        require(
+            uuid(run) && exact.getParent()
+                .equals(parent)
+                && exact.getFileName()
+                    .toString()
+                    .equals("MiaoHost-" + run),
             "Refusing stock for a world outside the exact run-owned root");
         try (var entries = Files.newDirectoryStream(exact)) {
             var iterator = entries.iterator();
             require(iterator.hasNext(), "Owned EBF save marker missing");
             Path owned = iterator.next();
-            require(owned.getFileName().toString().equals(".miaotest-host-owner.json")
-                && Files.isRegularFile(owned, LinkOption.NOFOLLOW_LINKS) && !iterator.hasNext(),
+            require(
+                owned.getFileName()
+                    .toString()
+                    .equals(".miaotest-host-owner.json") && Files.isRegularFile(owned, LinkOption.NOFOLLOW_LINKS)
+                    && !iterator.hasNext(),
                 "Refusing a nonempty/preexisting stock world");
             var marker = readJson(owned);
-            require(run.equals(string(marker, "runId")) && parent.toString().equals(string(marker, "parent")),
+            require(
+                run.equals(string(marker, "runId")) && parent.toString()
+                    .equals(string(marker, "parent")),
                 "Expected the same canonical EBF world marker");
         }
         require(actor != null, "No exact actor for vanilla playerdata");
-        return exact.resolve("playerdata").resolve(actor + ".dat");
+        return exact.resolve("playerdata")
+            .resolve(actor + ".dat");
     }
 
     static Path exactDirectory(Path candidate) throws IOException {
-        Path normal = candidate.toAbsolutePath().normalize();
-        require(Files.isDirectory(normal, LinkOption.NOFOLLOW_LINKS) && normal.equals(normal.toRealPath()),
+        Path normal = candidate.toAbsolutePath()
+            .normalize();
+        require(
+            Files.isDirectory(normal, LinkOption.NOFOLLOW_LINKS) && normal.equals(normal.toRealPath()),
             "Expected exact canonical owned directory");
         return normal;
     }
@@ -206,7 +268,10 @@ final class HologramEbfPreparedStock {
     }
 
     static NBTTagCompound validate(byte[] bytes, String digest, int registeredId) throws IOException {
-        require(bytes.length > 0 && bytes.length <= MAX_COMPRESSED && HologramBlueprintArtifact.hash(bytes).equals(digest),
+        require(
+            bytes.length > 0 && bytes.length <= MAX_COMPRESSED
+                && HologramBlueprintArtifact.hash(bytes)
+                    .equals(digest),
             "EBF stock fixture digest mismatch");
         NBTTagCompound data;
         try (var zip = new GZIPInputStream(new ByteArrayInputStream(bytes));
@@ -216,9 +281,13 @@ final class HologramEbfPreparedStock {
         }
         var inventory = data.getTagList("Inventory", 10);
         var projected = inventory.getCompoundTagAt(0);
-        String id = projected.getCompoundTag("tag").getString("gtitHologramToolId");
-        require(uuid(id) && registeredId > 0 && registeredId <= Short.MAX_VALUE
-            && expectedData(id, registeredId).equals(data), "Unexpected field, item identity or default in EBF stock seed");
+        String id = projected.getCompoundTag("tag")
+            .getString("gtitHologramToolId");
+        require(
+            uuid(id) && registeredId > 0
+                && registeredId <= Short.MAX_VALUE
+                && expectedData(id, registeredId).equals(data),
+            "Unexpected field, item identity or default in EBF stock seed");
         return data;
     }
 
@@ -279,12 +348,16 @@ final class HologramEbfPreparedStock {
 
     private static String string(JsonObject object, String key) {
         var value = object.get(key);
-        return value != null && value.isJsonPrimitive() && value.getAsJsonPrimitive().isString() ? value.getAsString() : "";
+        return value != null && value.isJsonPrimitive()
+            && value.getAsJsonPrimitive()
+                .isString() ? value.getAsString() : "";
     }
 
     private static boolean uuid(String input) {
         try {
-            return input != null && UUID.fromString(input).toString().equals(input);
+            return input != null && UUID.fromString(input)
+                .toString()
+                .equals(input);
         } catch (IllegalArgumentException invalid) {
             return false;
         }

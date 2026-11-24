@@ -39,7 +39,10 @@ public final class HologramLocalPreviewRegression {
         displayPicture();
         uploadRepresentation();
         NBTTagCompound review = HologramLocalPlacement.reviewOptions();
-        SimpleAssert.eq(true, review.getBoolean("openReview"), "explicit local submission retains access to the existing server review");
+        SimpleAssert.eq(
+            true,
+            review.getBoolean("openReview"),
+            "explicit local submission retains access to the existing server review");
         SimpleAssert.eq(false, review.getBoolean("executeIntent"), "opening review cannot request construction");
         SimpleAssert.eq(false, review.hasKey("acknowledgedMaterials"), "display never invents a material acceptance");
         String json = "{\"blueprint\":{\"schema\":999,\"retainNbt\":false,\"retainCovers\":true,"
@@ -82,8 +85,12 @@ public final class HologramLocalPreviewRegression {
         Object world = new Object();
         Object connection = new Object();
         UUID actor = new UUID(0L, 1L);
-        HologramLocalBlueprintWorkspace.PresentationOwner pending =
-            new HologramLocalBlueprintWorkspace.PresentationOwner(world, connection, actor, "local-editor", 7L);
+        HologramLocalBlueprintWorkspace.PresentationOwner pending = new HologramLocalBlueprintWorkspace.PresentationOwner(
+            world,
+            connection,
+            actor,
+            "local-editor",
+            7L);
         SimpleAssert.that(
             pending.sameSource(world, connection, new UUID(0L, 1L), "local-editor", 7L),
             "the same actor can receive the prepared view");
@@ -131,20 +138,30 @@ public final class HologramLocalPreviewRegression {
             .encodeToString(com.miaokatze.gtmb.hologram.HologramSnapshotCodec.compress(payload));
         String json = "{\"schema\":2,\"extension\":{\"opaque\":true},\"blueprint\":{\"schema\":1,\"cells\":["
             + "{\"x\":-17,\"y\":-2,\"z\":16,\"item\":\"minecraft:stonebrick\",\"damage\":1,"
-            + "\"itemNbt\":\"" + encoded + "\",\"facing\":4},"
+            + "\"itemNbt\":\""
+            + encoded
+            + "\",\"facing\":4},"
             + "{\"x\":-16,\"y\":-2,\"z\":16,\"block\":\"missing:excluded\",\"excluded\":true}]}}";
         byte[] original = json.getBytes(StandardCharsets.UTF_8);
         HologramLocalBlueprintDocument document = HologramLocalBlueprintDocument.open(original, "");
         var frozen = document.freeze();
         NBTTagCompound oldCapture = HologramBlueprintPreview.snapshot(original);
-        SimpleAssert.eq(oldCapture, HologramBlueprintPreview.snapshot(frozen, () -> true),
+        SimpleAssert.eq(
+            oldCapture,
+            HologramBlueprintPreview.snapshot(frozen, () -> true),
             "typed display preserves legacy coordinates, material, facing, policy, NBT and exclusions");
         var input = HologramBlueprintPreview.displayInput(frozen, () -> true, null);
         HologramState.Preparation preparation = new HologramState.Preparation(input.snapshot, true, input.cells);
         while (!preparation.step(5, Long.MAX_VALUE)) {}
-        for (int i = 0; i < oldCapture.getTagList("cells", 10).tagCount(); i++)
-            HologramBlueprintPreview.completeCell(oldCapture.getTagList("cells", 10).getCompoundTagAt(i));
-        SimpleAssert.eq(new HologramState(oldCapture).fullData(), preparation.result().fullData(),
+        for (int i = 0; i < oldCapture.getTagList("cells", 10)
+            .tagCount(); i++)
+            HologramBlueprintPreview.completeCell(
+                oldCapture.getTagList("cells", 10)
+                    .getCompoundTagAt(i));
+        SimpleAssert.eq(
+            new HologramState(oldCapture).fullData(),
+            preparation.result()
+                .fullData(),
             "current draft compact state matches the artifact preview's native rows");
 
         NBTTagCompound edit = new NBTTagCompound();
@@ -155,13 +172,16 @@ public final class HologramLocalPreviewRegression {
         String saveId = "local_11111111-1111-1111-1111-111111111111";
         var save = document.prepareSaveDraft(options, "Author", java.util.UUID.fromString(saveId.substring(6)), saveId);
         byte[] sourceJson = save.artifact();
-        SimpleAssert.eq(HologramBlueprintPreview.snapshot(sourceJson),
+        SimpleAssert.eq(
+            HologramBlueprintPreview.snapshot(sourceJson),
             HologramBlueprintPreview.snapshot(save, () -> true),
             "save PNG captures the same original geometry as decoding the save version's exact bytes");
         document.saved(document.revision(), save, sourceJson);
-        SimpleAssert.that(!document.dirty() && Arrays.equals(sourceJson, document.artifact()),
+        SimpleAssert.that(
+            !document.dirty() && Arrays.equals(sourceJson, document.artifact()),
             "a committed frozen save installs the verified byte representation and clears dirty");
-        SimpleAssert.that(Arrays.equals(original, frozen.artifact()),
+        SimpleAssert.that(
+            Arrays.equals(original, frozen.artifact()),
             "the already frozen placement remains byte-exact after later edits and saves");
     }
 
@@ -171,16 +191,25 @@ public final class HologramLocalPreviewRegression {
             + "\"allowedTargets\":[{\"item\":\"minecraft:stone\",\"damage\":0,\"futureTarget\":17}],"
             + "\"futureCell\":{\"type\":\"preserved\"}";
         String json = "{\"schema\":2,\"futureEnvelope\":37,\"blueprint\":{\"schema\":2,\"cells\":["
-            + "{\"x\":-48,\"y\":-2,\"z\":3," + descriptor + "},"
+            + "{\"x\":-48,\"y\":-2,\"z\":3,"
+            + descriptor
+            + "},"
             + "{\"x\":64,\"y\":5,\"z\":-2,\"block\":\"missing:excluded\",\"excluded\":true},"
-            + "{\"x\":9,\"y\":-2,\"z\":3," + descriptor + "}],"
+            + "{\"x\":9,\"y\":-2,\"z\":3,"
+            + descriptor
+            + "}],"
             + "\"structures\":[{\"id\":\"controller\",\"name\":\"Fixture\"}],\"palette\":[]}}";
-        byte[] exact = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec
-            .recompress(json.getBytes(StandardCharsets.UTF_8), com.miaokatze.gtmb.hologram.HologramBlueprintArtifact.MAX_JSON_BYTES);
+        byte[] exact = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.recompress(
+            json.getBytes(StandardCharsets.UTF_8),
+            com.miaokatze.gtmb.hologram.HologramBlueprintArtifact.MAX_JSON_BYTES);
         java.util.concurrent.atomic.AtomicBoolean current = new java.util.concurrent.atomic.AtomicBoolean(true);
         try {
             HologramLocalBlueprintDocument.openForEditor(exact, "", current::get, editor -> {
-                SimpleAssert.eq(3, editor.rows().cells(), "staged render input already owns exact whole source coordinates");
+                SimpleAssert.eq(
+                    3,
+                    editor.rows()
+                        .cells(),
+                    "staged render input already owns exact whole source coordinates");
                 current.set(false);
             });
             throw new AssertionError("The separately staged author binding ignored cancellation");
@@ -188,39 +217,76 @@ public final class HologramLocalPreviewRegression {
             SimpleAssert.that(!current.get(), "validated render input publishes before editable materialization");
         }
         var opened = HologramLocalBlueprintDocument.openForEditor(exact, "", () -> true);
-        SimpleAssert.that(opened.editor() != null, "the persisted coordinate-first compact artifact uses packed editing");
+        SimpleAssert
+            .that(opened.editor() != null, "the persisted coordinate-first compact artifact uses packed editing");
         HologramState.Preparation packed = new HologramState.Preparation(
-            opened.editor().metadata(), true, new HologramBlueprintPreview.CompactCells(opened.editor()));
+            opened.editor()
+                .metadata(),
+            true,
+            new HologramBlueprintPreview.CompactCells(opened.editor()));
         SimpleAssert.that(!packed.step(1, Long.MAX_VALUE), "a packed editor produces a bounded initial prefix");
         HologramState prefix = packed.firstDisplay();
-        SimpleAssert.that(prefix.data.getBoolean("displayPartial") && prefix.cells.get(0).x == -48,
+        SimpleAssert.that(
+            prefix.data.getBoolean("displayPartial") && prefix.cells.get(0).x == -48,
             "the prefix has the real document ordinal and stays nonauthoritative");
         while (!packed.step(5, Long.MAX_VALUE)) {}
-        HologramState.Preparation expanded = new HologramState.Preparation(opened.document().snapshot(), true);
+        HologramState.Preparation expanded = new HologramState.Preparation(
+            opened.document()
+                .snapshot(),
+            true);
         while (!expanded.step(5, Long.MAX_VALUE)) {}
-        SimpleAssert.eq(expanded.result().fullData(), packed.result().fullData(),
+        SimpleAssert.eq(
+            expanded.result()
+                .fullData(),
+            packed.result()
+                .fullData(),
             "packed and expanded editor views retain the same native appearance, annotations, disabled and missing cells");
-        SimpleAssert.eq(expanded.result().structureMembers, packed.result().structureMembers,
+        SimpleAssert.eq(
+            expanded.result().structureMembers,
+            packed.result().structureMembers,
             "rich packed layout retains exact membership rather than the library's implicit group");
-        SimpleAssert.eq(expanded.result().regions.bounds()[3], prefix.regions.bounds()[3], "early camera fits the whole target");
+        SimpleAssert.eq(
+            expanded.result().regions.bounds()[3],
+            prefix.regions.bounds()[3],
+            "early camera fits the whole target");
 
         NBTTagCompound edit = new NBTTagCompound();
         edit.setString("prompt", "new blueprint note");
-        opened.document().apply("editBlueprintPrompt", edit);
-        var saved = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.parse(opened.document().artifact());
-        SimpleAssert.eq(37, saved.get("futureEnvelope").getAsInt(), "the compact reader retains future source metadata");
-        var row = saved.getAsJsonObject("blueprint").getAsJsonArray("cells").get(2).getAsJsonObject();
-        SimpleAssert.eq("preserved", row.getAsJsonObject("futureCell").get("type").getAsString(),
+        opened.document()
+            .apply("editBlueprintPrompt", edit);
+        var saved = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.parse(
+            opened.document()
+                .artifact());
+        SimpleAssert.eq(
+            37,
+            saved.get("futureEnvelope")
+                .getAsInt(),
+            "the compact reader retains future source metadata");
+        var row = saved.getAsJsonObject("blueprint")
+            .getAsJsonArray("cells")
+            .get(2)
+            .getAsJsonObject();
+        SimpleAssert.eq(
+            "preserved",
+            row.getAsJsonObject("futureCell")
+                .get("type")
+                .getAsString(),
             "a repeated compact descriptor keeps its per-cell opaque fields on edit");
-        SimpleAssert.eq(17, row.getAsJsonArray("allowedTargets").get(0).getAsJsonObject().get("futureTarget").getAsInt(),
+        SimpleAssert.eq(
+            17,
+            row.getAsJsonArray("allowedTargets")
+                .get(0)
+                .getAsJsonObject()
+                .get("futureTarget")
+                .getAsInt(),
             "typed shared material retains opaque candidate properties on edit");
     }
 
     private static void singleCellAnnotation() throws Exception {
         String json = "{\"cells\":[{\"x\":0,\"block\":\"minecraft:stone\"},"
             + "{\"x\":32,\"block\":\"minecraft:stone\"}]}";
-        HologramLocalBlueprintDocument document = HologramLocalBlueprintDocument.open(
-            json.getBytes(StandardCharsets.UTF_8), "");
+        HologramLocalBlueprintDocument document = HologramLocalBlueprintDocument
+            .open(json.getBytes(StandardCharsets.UTF_8), "");
         HologramState.Preparation preparation = new HologramState.Preparation(document.snapshot(), true);
         while (!preparation.step(5, Long.MAX_VALUE)) {}
         HologramState baseline = preparation.result();
@@ -229,18 +295,20 @@ public final class HologramLocalPreviewRegression {
         request.setString("prompt", "author note");
         request.setBoolean("excluded", true);
         document.apply("editCellFlags", request);
-        HologramState patched = HologramLocalBlueprintWorkspace.applyAnnotation(
-            baseline, document.snapshotMetadata(), document.annotationDelta());
+        HologramState patched = HologramLocalBlueprintWorkspace
+            .applyAnnotation(baseline, document.snapshotMetadata(), document.annotationDelta());
 
         SimpleAssert.that(patched.follows(baseline), "the annotation update preserves the local baseline lineage");
         SimpleAssert.eq(1, patched.parsedCells, "the actual single edit parses exactly one row");
         SimpleAssert.eq("author note", patched.cells.get(0).prompt, "the edited note replaces the displayed cell note");
         SimpleAssert.that(patched.cells.get(0).excluded, "the dirty cell carries the edited exclusion");
-        SimpleAssert.that(patched.regions.at(0, 0, 0) == patched.cells.get(0),
+        SimpleAssert.that(
+            patched.regions.at(0, 0, 0) == patched.cells.get(0),
             "the existing coordinate resolves to the new cell");
-        SimpleAssert.that(patched.cells.get(1) == baseline.cells.get(1)
-            && patched.regions.regions.get(new HologramRegionCache.Key(2, 0, 0))
-                == baseline.regions.regions.get(new HologramRegionCache.Key(2, 0, 0)),
+        SimpleAssert.that(
+            patched.cells.get(1) == baseline.cells.get(1)
+                && patched.regions.regions.get(new HologramRegionCache.Key(2, 0, 0))
+                    == baseline.regions.regions.get(new HologramRegionCache.Key(2, 0, 0)),
             "an unrelated cell and region retain their identity");
     }
 
@@ -606,37 +674,64 @@ public final class HologramLocalPreviewRegression {
             + "{\"block\":\"detached:unregistered\",\"item\":\"detached:unregistered\",\"metadata\":1.2},"
             + "{\"block\":\"detached:unregistered\",\"item\":\"detached:unregistered\",\"futureMaterialField\":true},"
             + "{\"block\":\"minecraft:air\",\"metadata\":16}],"
-            + "\"nbt\":[\"" + encoded + "\"]}";
+            + "\"nbt\":[\""
+            + encoded
+            + "\"]}";
         byte[] compact = source.getBytes(StandardCharsets.UTF_8);
         var regular = HologramBlueprintPreview.displayInput(compact, null);
         var privateDecode = HologramBlueprintPreview.displayInput(compact, null, true);
         var sidecar = privateDecode.savedMaterials;
         SimpleAssert.that(
-            regular.savedMaterials == null && sidecar != null && regular.snapshot.equals(privateDecode.snapshot)
-                && regular.cells.size() == privateDecode.cells.size() && regular.cells.size() == 11,
+            regular.savedMaterials == null && sidecar != null
+                && regular.snapshot.equals(privateDecode.snapshot)
+                && regular.cells.size() == privateDecode.cells.size()
+                && regular.cells.size() == 11,
             "ordinary display metadata and included geometry do not acquire extra material fields");
         SimpleAssert.that(
-            sidecar.variants().size() == 3 && sidecar.variants().get(0).cells() == 3
-                && sidecar.variants().get(1).variant().damage() == 1
-                && sidecar.variants().get(2).variant().controller()
-                && sidecar.variants().get(2).variant().facing() == 3,
+            sidecar.variants()
+                .size() == 3
+                && sidecar.variants()
+                    .get(0)
+                    .cells() == 3
+                && sidecar.variants()
+                    .get(1)
+                    .variant()
+                    .damage() == 1
+                && sidecar.variants()
+                    .get(2)
+                    .variant()
+                    .controller()
+                && sidecar.variants()
+                    .get(2)
+                    .variant()
+                    .facing() == 3,
             "dictionary duplicates coalesce only on exact detached source identity; a saved controller is a target");
         SimpleAssert.that(
-            sidecar.airCells() == 1 && sidecar.payloadCells() == 2 && sidecar.unsupportedCells() == 3
-                && sidecar.limitCells() == 0 && sidecar.retentionNeedsReview(),
+            sidecar.airCells() == 1 && sidecar.payloadCells() == 2
+                && sidecar.unsupportedCells() == 3
+                && sidecar.limitCells() == 0
+                && sidecar.retentionNeedsReview(),
             "malformed air is an unknown descriptor, not harmless air; payload and retention uncertainty stay separate");
         SimpleAssert.that(
-            !sidecar.toString().contains(encoded)
-                && sidecar.variants().stream().noneMatch(row -> row.variant().toString().contains(encoded)),
+            !sidecar.toString()
+                .contains(encoded) && sidecar.variants()
+                    .stream()
+                    .noneMatch(
+                        row -> row.variant()
+                            .toString()
+                            .contains(encoded)),
             "no opaque data becomes an exposed material variant");
         byte[] expanded = ("{\"blueprint\":{\"schema\":2,\"cells\":[{\"block\":\"detached:display\","
             + "\"item\":\"detached:display\"}]}}").getBytes(StandardCharsets.UTF_8);
         SimpleAssert.eq(
-            null, HologramBlueprintPreview.displayInput(expanded, null, true).savedMaterials,
+            null,
+            HologramBlueprintPreview.displayInput(expanded, null, true).savedMaterials,
             "expanded input remains outside this compact sidecar");
-        var draft = HologramLocalBlueprintDocument.open(expanded, "").freeze();
+        var draft = HologramLocalBlueprintDocument.open(expanded, "")
+            .freeze();
         SimpleAssert.eq(
-            null, HologramBlueprintPreview.displayInput(draft, () -> true, null).savedMaterials,
+            null,
+            HologramBlueprintPreview.displayInput(draft, () -> true, null).savedMaterials,
             "frozen draft takes the existing preview path");
 
         java.nio.file.Path file = java.nio.file.Files.createTempFile("gtmb-private-material-fixture-", ".json");
@@ -645,7 +740,9 @@ public final class HologramLocalPreviewRegression {
             HologramLibraryClient library = new HologramLibraryClient();
             String localId = "local_00000000-1111-2222-3333-444444444444", key = "local:" + localId;
             var saved = library.readDisplaySource(key, file, localId, "");
-            SimpleAssert.that(saved.savedMaterials != null, "captured local JSON opts in without claiming managed index or pair proof");
+            SimpleAssert.that(
+                saved.savedMaterials != null,
+                "captured local JSON opts in without claiming managed index or pair proof");
             saved.compactCells = null;
             saved.snapshot = null;
             library.retainDisplaySource(saved);
@@ -654,12 +751,15 @@ public final class HologramLocalPreviewRegression {
                 warm == saved && warm.savedMaterials == saved.savedMaterials,
                 "matching stamp reuses the tally on the same captured bytes; it does not prove on-disk equality");
             SimpleAssert.eq(
-                null, library.readDisplaySource(key, file, localId, "public_fixture").savedMaterials,
+                null,
+                library.readDisplaySource(key, file, localId, "public_fixture").savedMaterials,
                 "a read tagged public cannot borrow the private tally, even with a colliding key and stamp");
             java.nio.file.Files.write(file, compactWithAnotherCell(source));
             var reread = library.readDisplaySource(key, file, localId, "");
             SimpleAssert.that(
-                reread != saved && reread.savedMaterials.variants().get(0).cells() == 4,
+                reread != saved && reread.savedMaterials.variants()
+                    .get(0)
+                    .cells() == 4,
                 "a size-changing fixture invalidates the existing file stamp and gets a new captured tally");
         } finally {
             java.nio.file.Files.deleteIfExists(file);
@@ -677,12 +777,18 @@ public final class HologramLocalPreviewRegression {
         bounded.include(65535, null);
         var facts = bounded.snapshot();
         SimpleAssert.that(
-            facts.variants().size() == 1 && facts.variants().get(0).cells() == 1 && facts.limitCells() == 2,
+            facts.variants()
+                .size() == 1
+                && facts.variants()
+                    .get(0)
+                    .cells() == 1
+                && facts.limitCells() == 2,
             "high dictionary indices stay explicitly unknown without growing storage with palette width");
     }
 
     private static byte[] compactWithAnotherCell(String source) {
-        return source.replace("[10,{\"x\":12}]", "[10,{\"x\":12}],[0,{\"x\":13}]").getBytes(StandardCharsets.UTF_8);
+        return source.replace("[10,{\"x\":12}]", "[10,{\"x\":12}],[0,{\"x\":13}]")
+            .getBytes(StandardCharsets.UTF_8);
     }
 
     static void indexedMaterialSourceCapture() throws Exception {
@@ -702,20 +808,27 @@ public final class HologramLocalPreviewRegression {
             var before = store.savedDisplayPath(id);
             var fallback = reader.readSavedDisplaySource(id, before, false, 0, 0);
             SimpleAssert.that(
-                before.path().equals(store.savedPath(id)) && !before.indexed() && fallback.savedMaterials != null
+                before.path()
+                    .equals(store.savedPath(id)) && !before.indexed()
+                    && fallback.savedMaterials != null
                     && !fallback.capturedIndexedMaterialSource()
                     && HologramLibraryMaterialForecast.fromCapture(fallback) == null,
                 "compatibility filename still previews, but it has no durable index provenance");
             reader.retainDisplaySource(fallback);
 
-            java.nio.file.Files.write(index, (id + "=" + member.getFileName() + "\n")
-                .getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            java.nio.file.Files.write(
+                index,
+                (id + "=" + member.getFileName() + "\n").getBytes(java.nio.charset.StandardCharsets.UTF_8));
             var selection = store.savedDisplayPath(id);
             var managed = reader.readSavedDisplaySource(id, selection, false, 0, 0);
             SimpleAssert.that(
-                selection.path().equals(before.path()) && selection.indexed() && managed != fallback
+                selection.path()
+                    .equals(before.path()) && selection.indexed()
+                    && managed != fallback
                     && managed.capturedIndexedMaterialSource()
-                    && HologramLibraryMaterialForecast.fromCapture(managed).candidates().size() == 1,
+                    && HologramLibraryMaterialForecast.fromCapture(managed)
+                        .candidates()
+                        .size() == 1,
                 "a chosen indexed source carries its own provenance even when the JSON stamp is unchanged");
             reader.retainDisplaySource(managed);
             SimpleAssert.that(
@@ -727,7 +840,9 @@ public final class HologramLocalPreviewRegression {
             SimpleAssert.that(
                 later != managed && !later.capturedIndexedMaterialSource()
                     && managed.capturedIndexedMaterialSource()
-                    && HologramLibraryMaterialForecast.fromCapture(managed).candidates().size() == 1,
+                    && HologramLibraryMaterialForecast.fromCapture(managed)
+                        .candidates()
+                        .size() == 1,
                 "removed index mapping cannot borrow indexed provenance for a fresh read; old proofs are historical");
         } finally {
             java.nio.file.Files.deleteIfExists(index);

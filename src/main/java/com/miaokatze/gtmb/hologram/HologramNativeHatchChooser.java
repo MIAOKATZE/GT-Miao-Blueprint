@@ -65,14 +65,16 @@ final class HologramNativeHatchChooser {
     private void collect(IStructureElement<?> element, int x, int y, int z, ItemStack trigger, int depth,
         IdentityHashMap<IStructureElement<?>, Boolean> path, int[] remaining,
         Map<HologramBlueprintResources.ExactKey, ItemStack> result) {
-        if (element == null || depth > 8 || remaining[0]-- <= 0 || result.size() >= MAX_OPTIONS
+        if (element == null || depth > 8
+            || remaining[0]-- <= 0
+            || result.size() >= MAX_OPTIONS
             || queries >= MAX_QUERIES
             || path.put(element, Boolean.TRUE) != null) return;
         try {
             if (HologramDeclarationAdapters.declaration(element) != null) return;
             if (HologramHatchPolicy.nativeBrowseAtLeast(element)) {
                 read(element, x, y, z, trigger, result);
-            } else if (element instanceof IStructureElementChain<?> chain) {
+            } else if (element instanceof IStructureElementChain<?>chain) {
                 IStructureElement<?>[] children = HologramDeclarationWrappers.nativeChainChildren(chain);
                 if (children != null && children.length <= 64) for (IStructureElement<?> child : children)
                     collect(child, x, y, z, trigger, depth + 1, path, remaining, result);
@@ -82,13 +84,27 @@ final class HologramNativeHatchChooser {
                 switch (method.getName()) {
                     case "withChannel" -> {
                         String name = HologramDeclarationWrappers.channel(element);
-                        if (name != null)
-                            collect(HologramDeclarationWrappers.nativeBacking(element), x, y, z,
-                                ChannelDataAccessor.withChannel(trigger, name), depth + 1, path, remaining, result);
+                        if (name != null) collect(
+                            HologramDeclarationWrappers.nativeBacking(element),
+                            x,
+                            y,
+                            z,
+                            ChannelDataAccessor.withChannel(trigger, name),
+                            depth + 1,
+                            path,
+                            remaining,
+                            result);
                     }
-                    case "onElementPass", "onElementFail", "withDescription" ->
-                        collect(HologramDeclarationWrappers.nativeBacking(element), x, y, z, trigger, depth + 1,
-                            path, remaining, result);
+                    case "onElementPass", "onElementFail", "withDescription" -> collect(
+                        HologramDeclarationWrappers.nativeBacking(element),
+                        x,
+                        y,
+                        z,
+                        trigger,
+                        depth + 1,
+                        path,
+                        remaining,
+                        result);
                     default -> {}
                 }
             }
@@ -135,11 +151,13 @@ final class HologramNativeHatchChooser {
 
     @FunctionalInterface
     interface Query {
+
         IStructureElement.BlocksToPlace get(IStructureElement<?> element, int x, int y, int z, ItemStack trigger);
     }
 
     @FunctionalInterface
     interface QueryFactory {
+
         Query create() throws IOException;
     }
 }

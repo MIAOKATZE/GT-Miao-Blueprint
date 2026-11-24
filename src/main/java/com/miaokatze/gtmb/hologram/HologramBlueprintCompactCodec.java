@@ -70,8 +70,8 @@ public final class HologramBlueprintCompactCodec {
     /** Catalog hint from the root encoding member only. Not a substitute for validating the document on use. */
     public static boolean isCompactEncoding(JsonElement marker) throws IOException {
         if (marker == null) return false;
-        if (!marker.isJsonPrimitive() || !marker.getAsJsonPrimitive().isString()
-            || !ENCODING.equals(marker.getAsString())) throw new IOException("不支持的蓝图存储编码");
+        if (!marker.isJsonPrimitive() || !marker.getAsJsonPrimitive()
+            .isString() || !ENCODING.equals(marker.getAsString())) throw new IOException("不支持的蓝图存储编码");
         return true;
     }
 
@@ -82,9 +82,14 @@ public final class HologramBlueprintCompactCodec {
 
     /** Validates the compact dictionary without expanding a referenced cell. Also accepts bare historic presets. */
     static JsonObject storageDocument(byte[] bytes, int limit) throws IOException {
-        if (bytes == null || bytes.length == 0 || bytes.length > limit || limit < 1
-            || limit > HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES) throw new IOException("Blueprint JSON byte budget");
-        String text = StandardCharsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes)).toString();
+        if (bytes == null || bytes.length == 0
+            || bytes.length > limit
+            || limit < 1
+            || limit > HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES)
+            throw new IOException("Blueprint JSON byte budget");
+        String text = StandardCharsets.UTF_8.newDecoder()
+            .decode(java.nio.ByteBuffer.wrap(bytes))
+            .toString();
         HologramBlueprintSharing.boundedJson(text, limit);
         HologramBlueprintPreviewBinding.validate(text); // reject duplicate keys before a tree can discard a value
         JsonObject root = parseBounded(text, limit, false);
@@ -103,14 +108,13 @@ public final class HologramBlueprintCompactCodec {
     }
 
     static void requireRecompressibleEnvelope(JsonObject root) throws IOException {
-        if (root.has("materials") || root.has("nbt"))
-            throw new IOException("蓝图含紧凑格式保留字段，不能无损转换");
+        if (root.has("materials") || root.has("nbt")) throw new IOException("蓝图含紧凑格式保留字段，不能无损转换");
     }
 
     private static void storageSchema(JsonObject object) throws IOException {
         JsonElement schema = object.get("schema");
-        if (schema != null && (!schema.isJsonPrimitive() || !schema.getAsJsonPrimitive().isNumber()
-            || !("1".equals(schema.getAsString()) || "2".equals(schema.getAsString()))))
+        if (schema != null && (!schema.isJsonPrimitive() || !schema.getAsJsonPrimitive()
+            .isNumber() || !("1".equals(schema.getAsString()) || "2".equals(schema.getAsString()))))
             throw new IOException("不支持的蓝图 schema");
     }
 
@@ -487,7 +491,10 @@ public final class HologramBlueprintCompactCodec {
         if (blueprint == root) {
             root = new JsonObject();
             root.add("blueprint", blueprint);
-        } else if (root.has("schema") && "2".equals(root.get("schema").toString())) return stored;
+        } else if (root.has("schema") && "2".equals(
+            root.get("schema")
+                .toString()))
+            return stored;
         root.remove("previewBinding");
         root.addProperty("schema", 2);
         return HologramBlueprintSharing.encodeBounded(GSON, root, limit);
@@ -503,15 +510,22 @@ public final class HologramBlueprintCompactCodec {
     public static StoredDocument readStoredCatalog(java.nio.file.Path path) throws IOException {
         int limit = HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES;
         StoredDocument source = parseStored(HologramBlueprintSharing.readBytes(path, limit), limit);
-        array(source.root().get("presets"));
+        array(
+            source.root()
+                .get("presets"));
         return source;
     }
 
     /** Keep the encoding of the exact bytes, not the expanded tree returned by the general reader. */
     static StoredDocument parseStored(byte[] bytes, int limit) throws IOException {
-        if (bytes == null || bytes.length == 0 || bytes.length > limit || limit < 1
-            || limit > HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES) throw new IOException("Blueprint JSON byte budget");
-        String text = StandardCharsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes)).toString();
+        if (bytes == null || bytes.length == 0
+            || bytes.length > limit
+            || limit < 1
+            || limit > HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES)
+            throw new IOException("Blueprint JSON byte budget");
+        String text = StandardCharsets.UTF_8.newDecoder()
+            .decode(java.nio.ByteBuffer.wrap(bytes))
+            .toString();
         HologramBlueprintSharing.boundedJson(text, limit);
         HologramBlueprintPreviewBinding.validate(text);
         JsonObject original = parseObject(text);
@@ -602,9 +616,13 @@ public final class HologramBlueprintCompactCodec {
 
         JsonObject paletteCell(JsonElement reference) {
             JsonArray row = reference.getAsJsonArray();
-            JsonObject cell = cloneObject(material(row.get(0).getAsInt()));
-            for (Map.Entry<String, JsonElement> coordinate : row.get(1).getAsJsonObject().entrySet())
-                cell.add(coordinate.getKey(), coordinate.getValue());
+            JsonObject cell = cloneObject(
+                material(
+                    row.get(0)
+                        .getAsInt()));
+            for (Map.Entry<String, JsonElement> coordinate : row.get(1)
+                .getAsJsonObject()
+                .entrySet()) cell.add(coordinate.getKey(), coordinate.getValue());
             return cell;
         }
     }
@@ -633,8 +651,7 @@ public final class HologramBlueprintCompactCodec {
     static byte[] encodeLocalDocument(JsonObject root) throws IOException {
         int limit = HologramBlueprintArtifact.MAX_JSON_BYTES;
         if (measure(root) > limit || depth(root) > 32) throw new IOException("Expanded blueprint byte or depth budget");
-        if (root.has("materials") || root.has("nbt"))
-            return HologramBlueprintSharing.encodeBounded(GSON, root, limit);
+        if (root.has("materials") || root.has("nbt")) return HologramBlueprintSharing.encodeBounded(GSON, root, limit);
         return compactExpanded(root, limit, () -> true);
     }
 
@@ -759,8 +776,7 @@ public final class HologramBlueprintCompactCodec {
     static void validateLegacyRows(JsonObject blueprint) throws IOException {
         for (String field : new String[] { "cells", "palette" }) {
             JsonElement rows = blueprint.get(field);
-            if (rows != null && !rows.isJsonNull()
-                && array(rows).size() > (field.equals("palette") ? 4096 : MAX_CELLS))
+            if (rows != null && !rows.isJsonNull() && array(rows).size() > (field.equals("palette") ? 4096 : MAX_CELLS))
                 throw new IOException("Blueprint cell count budget");
         }
     }

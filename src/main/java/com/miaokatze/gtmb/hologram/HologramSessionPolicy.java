@@ -256,10 +256,13 @@ final class HologramSessionPolicy {
 
         private static boolean canonicalToolId(ItemStack held) {
             if (held == null || !held.hasTagCompound()) return false;
-            String id = held.getTagCompound().getString(HologramSessionKeys.TOOL_ID);
+            String id = held.getTagCompound()
+                .getString(HologramSessionKeys.TOOL_ID);
             if (id.length() != 36) return false;
             try {
-                return UUID.fromString(id).toString().equals(id);
+                return UUID.fromString(id)
+                    .toString()
+                    .equals(id);
             } catch (IllegalArgumentException invalid) {
                 return false;
             }

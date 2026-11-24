@@ -143,8 +143,11 @@ final class HologramLocalPlacement {
     }
 
     private boolean currentContext(Minecraft mc) {
-        return mc != null && mc.theWorld != null && mc.thePlayer != null && mc.theWorld == world
-            && mc.getNetHandler() == connection && mc.thePlayer == player;
+        return mc != null && mc.theWorld != null
+            && mc.thePlayer != null
+            && mc.theWorld == world
+            && mc.getNetHandler() == connection
+            && mc.thePlayer == player;
     }
 
     void turn(boolean vertical) {
@@ -183,7 +186,8 @@ final class HologramLocalPlacement {
     boolean submitFrozen(Submission submission, boolean direct) {
         if (submitting || !submission.current()) return false;
         submitting = HologramLibraryClient.INSTANCE.prepareLocalPlacement(submission, direct);
-        if (submitting) Minecraft.getMinecraft().displayGuiScreen(new HologramPlacementLoadingScreen());
+        if (submitting) Minecraft.getMinecraft()
+            .displayGuiScreen(new HologramPlacementLoadingScreen());
         return submitting;
     }
 
@@ -224,8 +228,10 @@ final class HologramLocalPlacement {
         }
 
         boolean current(HologramLocalPlacement owner, Minecraft client) {
-            return owner.display == display && owner.source == source && owner.locked
-                && owner.lockGeneration == lockGeneration && owner.currentContext(client)
+            return owner.display == display && owner.source == source
+                && owner.locked
+                && owner.lockGeneration == lockGeneration
+                && owner.currentContext(client)
                 && display.data.getInteger("dimension") == client.thePlayer.dimension;
         }
 

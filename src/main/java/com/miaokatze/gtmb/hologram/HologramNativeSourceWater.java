@@ -34,14 +34,15 @@ final class HologramNativeSourceWater {
     }
 
     static boolean reviewedSlot(IStructureElement<?> element) {
-        if (!(element instanceof IStructureElementChain<?> chain)) return false;
+        if (!(element instanceof IStructureElementChain<?>chain)) return false;
         try {
             IStructureElement<?>[] children = HologramDeclarationWrappers.nativeChainChildren(chain);
             if (children == null || children.length != 2 || children[1] != StructureUtility.isAir()) return false;
             Class<?> water = children[0].getClass();
             Method factory = HologramDeclarationWrappers.factory(water);
             if (factory == null || factory.getDeclaringClass() != GTStructureUtility.class
-                || !"ofAnyWater".equals(factory.getName()) || factory.getParameterCount() != 1
+                || !"ofAnyWater".equals(factory.getName())
+                || factory.getParameterCount() != 1
                 || factory.getParameterTypes()[0] != boolean.class) return false;
             // The exact dependency stores the invocation argument in this final field, not in its class identity.
             Field allowFlowing = water.getDeclaredField("val$allowFlowing");
@@ -72,17 +73,29 @@ final class HologramNativeSourceWater {
 
     static boolean matches(HologramControllerTarget.Cell captured, NBTTagCompound row) {
         return captured != null && captured.kind() == HologramControllerTarget.TargetKind.MACHINE_SOURCE_WATER
-            && source(captured.targetBlock(), captured.wantMeta()) && captured.targetStack() == null
+            && source(captured.targetBlock(), captured.wantMeta())
+            && captured.targetStack() == null
             && sourceRow(row)
-            && row.hasKey("x", 3) && row.hasKey("y", 3) && row.hasKey("z", 3)
-            && row.hasKey("dx", 3) && row.hasKey("dy", 3) && row.hasKey("dz", 3)
-            && captured.x() == row.getInteger("x") && captured.y() == row.getInteger("y")
-            && captured.z() == row.getInteger("z") && captured.dx() == row.getInteger("dx")
-            && captured.dy() == row.getInteger("dy") && captured.dz() == row.getInteger("dz");
+            && row.hasKey("x", 3)
+            && row.hasKey("y", 3)
+            && row.hasKey("z", 3)
+            && row.hasKey("dx", 3)
+            && row.hasKey("dy", 3)
+            && row.hasKey("dz", 3)
+            && captured.x() == row.getInteger("x")
+            && captured.y() == row.getInteger("y")
+            && captured.z() == row.getInteger("z")
+            && captured.dx() == row.getInteger("dx")
+            && captured.dy() == row.getInteger("dy")
+            && captured.dz() == row.getInteger("dz");
     }
 
     private static boolean sourceRow(NBTTagCompound row) {
-        return WATER_ID.equals(row.getString("wantId")) && row.hasKey("wantMeta", 3) && row.getInteger("wantMeta") == 0
-            && !row.hasKey("targetStack") && !row.getBoolean("anchor") && !row.getBoolean("missingBlock") && !row.getBoolean("iconOnly");
+        return WATER_ID.equals(row.getString("wantId")) && row.hasKey("wantMeta", 3)
+            && row.getInteger("wantMeta") == 0
+            && !row.hasKey("targetStack")
+            && !row.getBoolean("anchor")
+            && !row.getBoolean("missingBlock")
+            && !row.getBoolean("iconOnly");
     }
 }

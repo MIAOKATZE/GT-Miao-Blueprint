@@ -81,8 +81,10 @@ public final class HologramRenderingRegression {
             0f,
             MiaoVisonLiteRenderer.previewOutlineDensity(1, 1, 1),
             "subpixel default grids do not cover their material");
-        SimpleAssert
-            .eq(0f, MiaoVisonLiteRenderer.previewOutlineDensity(2, 9, 9), "two physical pixels is the hidden-grid boundary");
+        SimpleAssert.eq(
+            0f,
+            MiaoVisonLiteRenderer.previewOutlineDensity(2, 9, 9),
+            "two physical pixels is the hidden-grid boundary");
         SimpleAssert.eq(
             .5f,
             MiaoVisonLiteRenderer.previewOutlineDensity(4, 9, 9),
@@ -127,8 +129,10 @@ public final class HologramRenderingRegression {
 
     private static void occupancyBoundary() {
         HologramSelectionOutline.Occupancy one = (x, y, z) -> x == 0 && y == 0 && z == 0;
-        SimpleAssert
-            .eq(4095, MiaoVisonLiteRenderer.boundaryEdges(0, 0, 0, one), "a lone occupied voxel has its twelve real edges");
+        SimpleAssert.eq(
+            4095,
+            MiaoVisonLiteRenderer.boundaryEdges(0, 0, 0, one),
+            "a lone occupied voxel has its twelve real edges");
         HologramSelectionOutline.Occupancy pair = (x, y, z) -> (x == 0 || x == 1) && y == 0 && z == 0;
         SimpleAssert.that(
             (MiaoVisonLiteRenderer.boundaryEdges(0, 0, 0, pair) & 1 << 1) == 0,
@@ -152,7 +156,8 @@ public final class HologramRenderingRegression {
         cells.appendTag(boundaryCell(16, 0, 0, "minecraft:stone"));
         cells.appendTag(boundaryCell(-16, -16, -16, "minecraft:glass"));
         source.setTag("cells", cells);
-        MiaoVisonLiteRenderer.PreviewBoundary boundary = new MiaoVisonLiteRenderer.PreviewBoundary(new HologramState(source));
+        MiaoVisonLiteRenderer.PreviewBoundary boundary = new MiaoVisonLiteRenderer.PreviewBoundary(
+            new HologramState(source));
         int steps = 0;
         while (!boundary.complete() && steps++ < 20) {
             int count = boundary.cells.size();
@@ -200,11 +205,14 @@ public final class HologramRenderingRegression {
             + "{\"x\":15,\"y\":0,\"z\":0,\"block\":\"minecraft:stone\"},"
             + "{\"x\":16,\"y\":0,\"z\":0,\"block\":\"minecraft:stone\"}],\"palette\":[]}}";
         try {
-            byte[] exact = HologramBlueprintCompactCodec.recompress(
-                json.getBytes(StandardCharsets.UTF_8), HologramBlueprintArtifact.MAX_JSON_BYTES);
-            var editor = HologramLocalBlueprintDocument.openForEditor(exact, "", () -> true).editor();
+            byte[] exact = HologramBlueprintCompactCodec
+                .recompress(json.getBytes(StandardCharsets.UTF_8), HologramBlueprintArtifact.MAX_JSON_BYTES);
+            var editor = HologramLocalBlueprintDocument.openForEditor(exact, "", () -> true)
+                .editor();
             HologramState.Preparation prep = new HologramState.Preparation(
-                editor.metadata(), true, new HologramBlueprintPreview.CompactCells(editor));
+                editor.metadata(),
+                true,
+                new HologramBlueprintPreview.CompactCells(editor));
             prep.step(1, Long.MAX_VALUE);
             SimpleAssert.that(prep.firstDisplay().plainDisplayExamples.isEmpty(), "never schedule a partial editor");
             while (!prep.step(2, Long.MAX_VALUE)) {}
@@ -212,10 +220,16 @@ public final class HologramRenderingRegression {
             SimpleAssert.eq(1, state.plainDisplayExamples.size(), "one frozen appearance, even across region seams");
             HologramState.Cell first = state.cells.get(0), second = state.cells.get(1);
             SimpleAssert.that(first.descriptorIdentity() == second.descriptorIdentity(), "same template for topology");
-            SimpleAssert.that(first.display(false) != second.display(false) && first.hintIcons != second.hintIcons
-                && first.candidates != second.candidates, "editor still owns its per-cell mutable values");
-            first.display(false).setInteger("test", 7);
-            SimpleAssert.that(!second.display(false).hasKey("test"), "editing a row cannot modify its neighbor");
+            SimpleAssert.that(
+                first.display(false) != second.display(false) && first.hintIcons != second.hintIcons
+                    && first.candidates != second.candidates,
+                "editor still owns its per-cell mutable values");
+            first.display(false)
+                .setInteger("test", 7);
+            SimpleAssert.that(
+                !second.display(false)
+                    .hasKey("test"),
+                "editing a row cannot modify its neighbor");
         } catch (IOException invalid) {
             throw new AssertionError(invalid);
         }
@@ -343,8 +357,10 @@ public final class HologramRenderingRegression {
         });
         SimpleAssert.eq(expected, world, "world outline preserves exact per-cell edge ownership");
         SimpleAssert.eq(19, Integer.bitCount(queried[0]), "world outline reads only the center and 18 neighbors");
-        SimpleAssert.eq(0, MiaoVisonLiteRenderer.BoundaryNeighborhood.worldEdges(cx, cy, cz,
-            (x, y, z) -> (x != cx || y != cy || z != cz) && cells.contains(x, y, z)),
+        SimpleAssert.eq(
+            0,
+            MiaoVisonLiteRenderer.BoundaryNeighborhood
+                .worldEdges(cx, cy, cz, (x, y, z) -> (x != cx || y != cy || z != cz) && cells.contains(x, y, z)),
             "removed center owns no edge even with adjacent occupied cells");
         int local = ((cx & 15) << 8) | ((cy & 15) << 4) | (cz & 15);
         int actual = MiaoVisonLiteRenderer.BoundaryNeighborhood.edges(regions, local);
@@ -368,13 +384,12 @@ public final class HologramRenderingRegression {
         HologramState before = new HologramState(source);
         Class<?> renderer = MiaoVisonLiteRenderer.class;
         try {
-            Field owner = renderer.getDeclaredField("worldState"),
-                cursor = renderer.getDeclaredField("worldIndex"),
+            Field owner = renderer.getDeclaredField("worldState"), cursor = renderer.getDeclaredField("worldIndex"),
                 occupancy = renderer.getDeclaredField("worldOutlineCells");
             Method one = renderer.getDeclaredMethod("indexWorldCell", HologramState.class, HologramState.Cell.class),
                 finish = renderer.getDeclaredMethod("indexWorld", HologramState.class, long.class);
-            for (AccessibleObject field : new AccessibleObject[] {
-                owner, cursor, occupancy, one, finish }) field.setAccessible(true);
+            for (AccessibleObject field : new AccessibleObject[] { owner, cursor, occupancy, one, finish })
+                field.setAccessible(true);
             int[][] trials = { { 100, -1 }, { 0, -1 }, { 1000, -1 }, { 100, 3 }, { 100, 900 }, { 1000, 3 } };
             for (int[] trial : trials) {
                 MiaoVisonLiteRenderer.releaseWorld();
@@ -390,7 +405,8 @@ public final class HologramRenderingRegression {
                 patch.setInteger("cellCount", before.cells.size());
                 patch.setLong("uiSequence", 7);
                 if (changed >= 0) {
-                    NBTTagCompound row = (NBTTagCompound) rows.getCompoundTagAt(changed).copy();
+                    NBTTagCompound row = (NBTTagCompound) rows.getCompoundTagAt(changed)
+                        .copy();
                     row.setInteger("index", changed);
                     row.setString("id", "minecraft:air");
                     NBTTagList delta = new NBTTagList();
@@ -398,19 +414,24 @@ public final class HologramRenderingRegression {
                     patch.setTag("cells", delta);
                 }
                 HologramState after = HologramState.apply(before, patch);
-                if (changed < 0) SimpleAssert.that(after.cells == before.cells && after.regions == before.regions,
+                if (changed < 0) SimpleAssert.that(
+                    after.cells == before.cells && after.regions == before.regions,
                     "metadata shares original geometry");
                 HologramRenderer.snapshotChanged(before, after);
                 int saved = cursor.getInt(null);
                 finish.invoke(null, after, Long.MAX_VALUE);
                 int total = ((java.util.Set<?>) occupancy.get(null)).size();
                 SimpleAssert.eq(changed < 0 ? 1000 : 999, total, "all unfiltered cells must reach world occupancy");
-                SimpleAssert.eq(changed < 0 || prefix == 1000 ? prefix : 0, saved,
+                SimpleAssert.eq(
+                    changed < 0 || prefix == 1000 ? prefix : 0,
+                    saved,
                     "retain metadata prefix, restart incomplete changed geometry, patch complete geometry in place");
-                SimpleAssert.that(owner.get(null) == after && cursor.getInt(null) == after.cells.size(),
+                SimpleAssert.that(
+                    owner.get(null) == after && cursor.getInt(null) == after.cells.size(),
                     "the new state owns the fully resumed index");
                 HologramRenderer.snapshotChanged(after, before);
-                SimpleAssert.that(owner.get(null) == null && cursor.getInt(null) == 0,
+                SimpleAssert.that(
+                    owner.get(null) == null && cursor.getInt(null) == 0,
                     "a reverse publication cannot inherit another state's occupancy");
             }
         } catch (ReflectiveOperationException failure) {
@@ -440,23 +461,28 @@ public final class HologramRenderingRegression {
         HologramState artifact = new HologramState(src);
         HologramState state = HologramLocalPlacement.displayForPlacement(artifact, 0);
         SimpleAssert.eq("blueprint-artifact", state.session, "saved source identity survives world placement");
-        SimpleAssert.eq("local-preview", state.data.getString("session"), "only placement metadata marks the world view");
-        SimpleAssert.that(state.cells == artifact.cells && state.regions == artifact.regions && state.completeBaseline(),
+        SimpleAssert
+            .eq("local-preview", state.data.getString("session"), "only placement metadata marks the world view");
+        SimpleAssert.that(
+            state.cells == artifact.cells && state.regions == artifact.regions && state.completeBaseline(),
             "the installed world display uses the complete authoritative artifact geometry");
         Class<?> renderer = MiaoVisonLiteRenderer.class;
         try {
             Field owner = renderer.getDeclaredField("worldState"), layer = renderer.getDeclaredField("worldLayer"),
                 cursor = renderer.getDeclaredField("worldIndex"), mode = renderer.getDeclaredField("localWorldRegions"),
-                groups = renderer.getDeclaredField("worldGroups"), outline = renderer.getDeclaredField("worldOutlineCells"),
+                groups = renderer.getDeclaredField("worldGroups"),
+                outline = renderer.getDeclaredField("worldOutlineCells"),
                 opaque = renderer.getDeclaredField("worldOccluders");
             Method position = renderer.getDeclaredMethod("coordinate", int.class, int.class, int.class),
                 index = renderer.getDeclaredMethod("indexWorld", HologramState.class, long.class),
                 seed = renderer.getDeclaredMethod("seedLocalWorldRegions", HologramState.class, int.class),
                 face = renderer.getDeclaredMethod(
-                    "worldFaceVisible", HologramState.Cell.class, HologramTextures.Material.class, int[].class);
-            for (AccessibleObject member : new AccessibleObject[] {
-                owner, layer, cursor, mode, groups, outline, opaque, position, index, seed, face })
-                member.setAccessible(true);
+                    "worldFaceVisible",
+                    HologramState.Cell.class,
+                    HologramTextures.Material.class,
+                    int[].class);
+            for (AccessibleObject member : new AccessibleObject[] { owner, layer, cursor, mode, groups, outline, opaque,
+                position, index, seed, face }) member.setAccessible(true);
 
             MiaoVisonLiteRenderer.releaseWorld();
             owner.set(null, state);
@@ -471,51 +497,76 @@ public final class HologramRenderingRegression {
             Object filtered = position.invoke(null, 1, 15, 15);
             java.util.Set<?> oldOutline = new java.util.HashSet<>((java.util.Set<?>) outline.get(null));
             java.util.Set<?> oldOpaque = new java.util.HashSet<>((java.util.Set<?>) opaque.get(null));
-            SimpleAssert.that(oldOpaque.contains(side) && !oldOpaque.contains(glass),
+            SimpleAssert.that(
+                oldOpaque.contains(side) && !oldOpaque.contains(glass),
                 "the baseline really distinguishes full opaque stone from glass");
             HologramTextures.Material cube = new HologramTextures.Material(
-                null, null, Collections.emptyList(), false, false, false, false);
+                null,
+                null,
+                Collections.emptyList(),
+                false,
+                false,
+                false,
+                false);
             Object oldStoneFace = face.invoke(null, state.cells.get(0), cube, new int[] { 1, 0, 0 });
             Object oldGlassFace = face.invoke(null, state.cells.get(0), cube, new int[] { 0, -1, 0 });
             SimpleAssert.eq(Boolean.FALSE, oldStoneFace, "the full cross-region neighbor hides its material face");
             SimpleAssert.eq(Boolean.TRUE, oldGlassFace, "transparent geometry preserves the adjacent material face");
-            int oldEdges = MiaoVisonLiteRenderer.BoundaryNeighborhood.worldEdges(
-                -1, 15, 15, (x, y, z) -> oldOutline.contains(invokePosition(position, x, y, z)));
+            int oldEdges = MiaoVisonLiteRenderer.BoundaryNeighborhood
+                .worldEdges(-1, 15, 15, (x, y, z) -> oldOutline.contains(invokePosition(position, x, y, z)));
 
             MiaoVisonLiteRenderer.releaseWorld();
             owner.set(null, state);
-            SimpleAssert.eq(Boolean.FALSE, seed.invoke(null, artifact, Integer.MAX_VALUE),
+            SimpleAssert.eq(
+                Boolean.FALSE,
+                seed.invoke(null, artifact, Integer.MAX_VALUE),
                 "a bare saved artifact cannot use the world-placement path");
-            SimpleAssert.eq(Boolean.TRUE, seed.invoke(null, state, Integer.MAX_VALUE),
+            SimpleAssert.eq(
+                Boolean.TRUE,
+                seed.invoke(null, state, Integer.MAX_VALUE),
                 "an installed saved artifact must not be rejected by its canonical source session");
             mode.setBoolean(null, true);
             java.util.Map<?, ?> seeded = (java.util.Map<?, ?>) groups.get(null);
             SimpleAssert.eq(oldOrder, new java.util.ArrayList<>(seeded.keySet()), "original region submission order");
             Object visible = seeded.get(center);
-            Method ready = renderer.getDeclaredMethod(
-                "readyForWorldGeometry", HologramState.class, visible.getClass(), long.class);
+            Method ready = renderer
+                .getDeclaredMethod("readyForWorldGeometry", HologramState.class, visible.getClass(), long.class);
             ready.setAccessible(true);
-            SimpleAssert.eq(Boolean.FALSE, ready.invoke(null, state, visible, System.nanoTime() - 1),
+            SimpleAssert.eq(
+                Boolean.FALSE,
+                ready.invoke(null, state, visible, System.nanoTime() - 1),
                 "an expired frame cannot submit an incomplete halo");
             mode.setBoolean(null, false);
-            SimpleAssert.eq(Boolean.FALSE, ready.invoke(null, state, visible, Long.MAX_VALUE),
+            SimpleAssert.eq(
+                Boolean.FALSE,
+                ready.invoke(null, state, visible, Long.MAX_VALUE),
                 "the legacy all-index gate cannot draw yet");
             mode.setBoolean(null, true);
-            SimpleAssert.eq(Boolean.TRUE, ready.invoke(null, state, visible, Long.MAX_VALUE),
+            SimpleAssert.eq(
+                Boolean.TRUE,
+                ready.invoke(null, state, visible, Long.MAX_VALUE),
                 "the first visible region can enter the unchanged batch compiler");
             java.util.Set<?> localOutline = (java.util.Set<?>) outline.get(null);
             java.util.Set<?> localOpaque = (java.util.Set<?>) opaque.get(null);
             SimpleAssert.eq(0, cursor.getInt(null), "first visible region cannot depend on reading the global cursor");
             SimpleAssert.eq(4, localOutline.size(), "no distant or triple-axis corner rows before the first group");
-            SimpleAssert.that(localOutline.contains(side) && localOutline.contains(edge) && !localOutline.contains(corner)
-                && !localOutline.contains(filtered) && localOpaque.contains(side) && !localOpaque.contains(glass),
+            SimpleAssert.that(
+                localOutline.contains(side) && localOutline.contains(edge)
+                    && !localOutline.contains(corner)
+                    && !localOutline.contains(filtered)
+                    && localOpaque.contains(side)
+                    && !localOpaque.contains(glass),
                 "exact cross-region occupancy and opaque decisions, including duplicate/filter/partial cases");
-            int localEdges = MiaoVisonLiteRenderer.BoundaryNeighborhood.worldEdges(
-                -1, 15, 15, (x, y, z) -> localOutline.contains(invokePosition(position, x, y, z)));
+            int localEdges = MiaoVisonLiteRenderer.BoundaryNeighborhood
+                .worldEdges(-1, 15, 15, (x, y, z) -> localOutline.contains(invokePosition(position, x, y, z)));
             SimpleAssert.eq(oldEdges, localEdges, "cross-region outline edge ownership is identical");
-            SimpleAssert.eq(oldStoneFace, face.invoke(null, state.cells.get(0), cube, new int[] { 1, 0, 0 }),
+            SimpleAssert.eq(
+                oldStoneFace,
+                face.invoke(null, state.cells.get(0), cube, new int[] { 1, 0, 0 }),
                 "material hiding across the negative region edge is identical");
-            SimpleAssert.eq(oldGlassFace, face.invoke(null, state.cells.get(0), cube, new int[] { 0, -1, 0 }),
+            SimpleAssert.eq(
+                oldGlassFace,
+                face.invoke(null, state.cells.get(0), cube, new int[] { 0, -1, 0 }),
                 "nonopaque neighbor draws the same material face");
 
             NBTTagCompound delta = new NBTTagCompound();
@@ -526,14 +577,17 @@ public final class HologramRenderingRegression {
             delta.setInteger("cellCount", state.cells.size());
             HologramState next = HologramState.apply(state, delta);
             HologramRenderer.snapshotChanged(state, next);
-            SimpleAssert.that(!mode.getBoolean(null) && ((java.util.Map<?, ?>) groups.get(null)).isEmpty(),
+            SimpleAssert.that(
+                !mode.getBoolean(null) && ((java.util.Map<?, ?>) groups.get(null)).isEmpty(),
                 "a received replacement can never inherit a partial local index");
             SimpleAssert.eq(Boolean.FALSE, seed.invoke(null, state, 15), "explicit layers use the existing path");
             stockDeferredWorldBridges(seed, state);
             HologramNativeRenderRegistry.Adapter external = block -> false;
             HologramNativeRenderRegistry.register(external);
             try {
-                SimpleAssert.eq(Boolean.FALSE, seed.invoke(null, state, Integer.MAX_VALUE),
+                SimpleAssert.eq(
+                    Boolean.FALSE,
+                    seed.invoke(null, state, Integer.MAX_VALUE),
                     "a registered extension keeps the established path");
             } finally {
                 HologramNativeRenderRegistry.unregister(external);
@@ -545,7 +599,8 @@ public final class HologramRenderingRegression {
         }
     }
 
-    private static void stockDeferredWorldBridges(Method seed, HologramState state) throws ReflectiveOperationException {
+    private static void stockDeferredWorldBridges(Method seed, HologramState state)
+        throws ReflectiveOperationException {
         // API bridges from the real final module types, without starting their optional-mod renderers.
         Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
         unsafeField.setAccessible(true);
@@ -556,13 +611,19 @@ public final class HologramRenderingRegression {
                 BotaniaClientCompatibility.class,
                 CookingForBlockheadsClientCompatibility.class,
                 FloodLightsClientCompatibility.class))
-                registrations.add(ClientRendering.register(
-                    "gtmb:regression/deferred-world-" + registrations.size(), type.cast(unsafe.allocateInstance(type))));
-            SimpleAssert.eq(Boolean.TRUE, seed.invoke(null, state, Integer.MAX_VALUE),
+                registrations.add(
+                    ClientRendering.register(
+                        "gtmb:regression/deferred-world-" + registrations.size(),
+                        type.cast(unsafe.allocateInstance(type))));
+            SimpleAssert.eq(
+                Boolean.TRUE,
+                seed.invoke(null, state, Integer.MAX_VALUE),
                 "the three stock bridges do not disable installed local world indexing");
-            try (GTMBExtensions.Registration ignored = ClientRendering.register(
-                "gtmb:regression/deferred-world-external", block -> false)) {
-                SimpleAssert.eq(Boolean.FALSE, seed.invoke(null, state, Integer.MAX_VALUE),
+            try (GTMBExtensions.Registration ignored = ClientRendering
+                .register("gtmb:regression/deferred-world-external", block -> false)) {
+                SimpleAssert.eq(
+                    Boolean.FALSE,
+                    seed.invoke(null, state, Integer.MAX_VALUE),
                     "external API bridges retain the established whole-index fallback");
             } finally {
                 MiaoVisonLiteRenderer.releaseWorld();
@@ -676,11 +737,13 @@ public final class HologramRenderingRegression {
             java.lang.reflect.Constructor<?> constructor = cursor
                 .getDeclaredConstructor(MiaoVisonLiteRenderer.class, HologramState.class, boolean.class);
             constructor.setAccessible(true);
-            Object previousDisplay = displayed.get(HologramRenderer.editor()), previousPreparation = preparing.get(HologramRenderer.editor());
+            Object previousDisplay = displayed.get(HologramRenderer.editor()),
+                previousPreparation = preparing.get(HologramRenderer.editor());
             try {
                 // The scene has submitted this identity's light outline while its actual model cursor is incomplete.
                 displayed.set(HologramRenderer.editor(), state);
-                preparing.set(HologramRenderer.editor(), constructor.newInstance(HologramRenderer.editor(), state, true));
+                preparing
+                    .set(HologramRenderer.editor(), constructor.newInstance(HologramRenderer.editor(), state, true));
                 SimpleAssert.that(
                     !ui.preview.previewInteractive() && !ui.shell.sceneActive(),
                     "model reprojection keeps picking and geometry command context unavailable");
@@ -770,14 +833,16 @@ public final class HologramRenderingRegression {
         String[] names = { "previewPreparation", "previewState", "presentedState", "presentedRequest",
             "projectedRequest", "previewSubmitted", "displayedState" };
         Object[] saved = new Object[names.length];
-        for (int i = 0; i < names.length; i++) saved[i] = field(MiaoVisonLiteRenderer.class, names[i]).get(HologramRenderer.editor());
+        for (int i = 0; i < names.length; i++)
+            saved[i] = field(MiaoVisonLiteRenderer.class, names[i]).get(HologramRenderer.editor());
         HologramState state = ui.session.state();
         Class<?> preparationType = Class.forName(MiaoVisonLiteRenderer.class.getName() + "$PreviewPreparation"),
             projectionType = Class.forName(MiaoVisonLiteRenderer.class.getName() + "$PreviewProjection"),
             requestType = Class.forName(MiaoVisonLiteRenderer.class.getName() + "$PreviewRequest");
         java.lang.reflect.Constructor<?> preparationConstructor = preparationType
             .getDeclaredConstructor(MiaoVisonLiteRenderer.class, HologramState.class, boolean.class),
-            projectionConstructor = projectionType.getDeclaredConstructor(MiaoVisonLiteRenderer.class, HologramState.class, String.class),
+            projectionConstructor = projectionType
+                .getDeclaredConstructor(MiaoVisonLiteRenderer.class, HologramState.class, String.class),
             requestConstructor = requestType.getDeclaredConstructors()[0];
         preparationConstructor.setAccessible(true);
         projectionConstructor.setAccessible(true);
@@ -813,7 +878,8 @@ public final class HologramRenderingRegression {
         field(MiaoVisonLiteRenderer.class, "previewSubmitted").setBoolean(HologramRenderer.editor(), true);
         return () -> {
             try {
-                for (int i = 0; i < names.length; i++) field(MiaoVisonLiteRenderer.class, names[i]).set(HologramRenderer.editor(), saved[i]);
+                for (int i = 0; i < names.length; i++)
+                    field(MiaoVisonLiteRenderer.class, names[i]).set(HologramRenderer.editor(), saved[i]);
             } catch (ReflectiveOperationException failure) {
                 throw new AssertionError("restore headless presentation", failure);
             }
@@ -825,7 +891,8 @@ public final class HologramRenderingRegression {
         String[] fields = { "previewState", "presentedState", "presentedRequest", "projectedRequest", "previewKey",
             "previewSubmitted", "previewPreparation" };
         Object[] saved = new Object[fields.length];
-        for (int i = 0; i < fields.length; i++) saved[i] = field(MiaoVisonLiteRenderer.class, fields[i]).get(HologramRenderer.editor());
+        for (int i = 0; i < fields.length; i++)
+            saved[i] = field(MiaoVisonLiteRenderer.class, fields[i]).get(HologramRenderer.editor());
         try {
             Object preparation = preparationConstructor.newInstance(HologramRenderer.editor(), state, false);
             Class<?> type = preparation.getClass();
@@ -873,7 +940,8 @@ public final class HologramRenderingRegression {
                 boolean.class);
             cameraOnly.setAccessible(true);
             SimpleAssert.that(
-                !(boolean) cameraOnly.invoke(HologramRenderer.editor(), state, "next-pose", Integer.MAX_VALUE, 0, false),
+                !(boolean) cameraOnly
+                    .invoke(HologramRenderer.editor(), state, "next-pose", Integer.MAX_VALUE, 0, false),
                 "merely reaching N in a cold/dirty cursor cannot select synchronous camera presentation");
             field(type, "completeGeometryPresented").setBoolean(preparation, true);
             SimpleAssert.that(
@@ -883,14 +951,20 @@ public final class HologramRenderingRegression {
                 !(boolean) cameraOnly.invoke(HologramRenderer.editor(), state, "next-pose", 0, 0, false),
                 "a new layer is preparation invalidation, not a camera-only change");
             SimpleAssert.that(
-                !(boolean) cameraOnly.invoke(HologramRenderer.editor(), state, "next-pose", Integer.MAX_VALUE, 1, false),
+                !(boolean) cameraOnly
+                    .invoke(HologramRenderer.editor(), state, "next-pose", Integer.MAX_VALUE, 1, false),
                 "a new view is not a camera-only change");
             SimpleAssert.that(
                 !(boolean) cameraOnly.invoke(HologramRenderer.editor(), state, "next-pose", Integer.MAX_VALUE, 0, true),
                 "a visibility change is not a camera-only change");
             SimpleAssert.that(
-                !(boolean) cameraOnly
-                    .invoke(HologramRenderer.editor(), new HologramState(state.fullData()), "next-pose", Integer.MAX_VALUE, 0, false),
+                !(boolean) cameraOnly.invoke(
+                    HologramRenderer.editor(),
+                    new HologramState(state.fullData()),
+                    "next-pose",
+                    Integer.MAX_VALUE,
+                    0,
+                    false),
                 "another snapshot cannot borrow the old complete geometry stamp");
             SimpleAssert.that(ui.preview.previewInteractive(), "the exact complete presentation admits editing");
             ui.preview.scrollNativeScene(1);
@@ -928,7 +1002,8 @@ public final class HologramRenderingRegression {
             field(MiaoVisonLiteRenderer.class, "presentedRequest").set(HologramRenderer.editor(), null);
             SimpleAssert.that(!ui.preview.previewInteractive(), "a closed/unsubmitted scene cannot admit edits");
         } finally {
-            for (int i = 0; i < fields.length; i++) field(MiaoVisonLiteRenderer.class, fields[i]).set(HologramRenderer.editor(), saved[i]);
+            for (int i = 0; i < fields.length; i++)
+                field(MiaoVisonLiteRenderer.class, fields[i]).set(HologramRenderer.editor(), saved[i]);
         }
     }
 
@@ -954,7 +1029,8 @@ public final class HologramRenderingRegression {
             icon.setIconWidth(16);
             icon.setIconHeight(16);
             icon.initSprite(64, 64, 16, 16, false);
-            SimpleAssert.that(MiaoVisonLiteRenderer.stablePreviewIcon(icon), "exact static atlas UVs permit slice reuse");
+            SimpleAssert
+                .that(MiaoVisonLiteRenderer.stablePreviewIcon(icon), "exact static atlas UVs permit slice reuse");
             SimpleAssert.that(
                 !MiaoVisonLiteRenderer.stablePreviewIcon(new TextureAtlasSprite("fixture:custom") {}),
                 "custom sprite subclasses keep their live UV callbacks");
@@ -1073,8 +1149,8 @@ public final class HologramRenderingRegression {
                 SimpleAssert.eq(6d, moving.vertices.get(0)[0], "drag applies the existing projected horizontal shift");
                 SimpleAssert.eq(7d, moving.vertices.get(0)[1], "drag applies the existing projected vertical shift");
                 SimpleAssert.eq(.38f, (float) moving.vertices.get(0)[7], "drag preserves its original alpha");
-                double[] pickPoints = { 0, 0, 0, 10, 0, 0, 10, 10, 0, 0, 10, 0, 0, 0, 1,
-                    10, 0, 1, 10, 10, 1, 0, 10, 1 };
+                double[] pickPoints = { 0, 0, 0, 10, 0, 0, 10, 10, 0, 0, 10, 0, 0, 0, 1, 10, 0, 1, 10, 10, 1, 0, 10,
+                    1 };
                 List<Object> pickFaces = new java.util.ArrayList<>();
                 pickFaces.add(faceConstructor.newInstance(cell, pickPoints, 2, false, material.geometry.get(2)));
                 java.lang.reflect.Method hover = MiaoVisonLiteRenderer.class
@@ -1088,13 +1164,22 @@ public final class HologramRenderingRegression {
                 com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.setEnabled(true);
                 try {
                     invalidate.invoke(HologramRenderer.editor());
-                    SimpleAssert.eq(0, hover.invoke(HologramRenderer.editor(), pickFaces, 5, 5, true), "real polygon query picks its cell");
+                    SimpleAssert.eq(
+                        0,
+                        hover.invoke(HologramRenderer.editor(), pickFaces, 5, 5, true),
+                        "real polygon query picks its cell");
+                    SimpleAssert.eq(
+                        0,
+                        hover.invoke(HologramRenderer.editor(), pickFaces, 5, 5, true),
+                        "stationary hover retains the same hit");
                     SimpleAssert
-                        .eq(0, hover.invoke(HologramRenderer.editor(), pickFaces, 5, 5, true), "stationary hover retains the same hit");
-                    SimpleAssert.eq(scans + 1, MiaoVisonLiteRenderer.previewHoverScans, "stationary hover scans faces once");
+                        .eq(scans + 1, MiaoVisonLiteRenderer.previewHoverScans, "stationary hover scans faces once");
+                    SimpleAssert.eq(
+                        -1,
+                        hover.invoke(HologramRenderer.editor(), pickFaces, 15, 5, true),
+                        "mouse movement recomputes the hit");
                     SimpleAssert
-                        .eq(-1, hover.invoke(HologramRenderer.editor(), pickFaces, 15, 5, true), "mouse movement recomputes the hit");
-                    SimpleAssert.eq(scans + 2, MiaoVisonLiteRenderer.previewHoverScans, "mouse movement triggers one scan");
+                        .eq(scans + 2, MiaoVisonLiteRenderer.previewHoverScans, "mouse movement triggers one scan");
                     double[] projected = pickPoints.clone();
                     for (int at = 0; at < projected.length; at += 3) projected[at] += 20;
                     List<Object> rotated = new java.util.ArrayList<>();
@@ -1103,17 +1188,24 @@ public final class HologramRenderingRegression {
                         -1,
                         hover.invoke(HologramRenderer.editor(), rotated, 5, 5, true),
                         "reprojected geometry cannot reuse an old hit");
-                    SimpleAssert.eq(scans + 3, MiaoVisonLiteRenderer.previewHoverScans, "new projection triggers one scan");
+                    SimpleAssert
+                        .eq(scans + 3, MiaoVisonLiteRenderer.previewHoverScans, "new projection triggers one scan");
                     SimpleAssert.eq(
                         -1,
                         hover.invoke(HologramRenderer.editor(), rotated, 25, 5, false),
                         "viewport/preparation gate never reuses hover");
-                    SimpleAssert.eq(0, hover.invoke(HologramRenderer.editor(), rotated, 25, 5, true), "reopening picking recomputes hover");
-                    SimpleAssert.eq(scans + 4, MiaoVisonLiteRenderer.previewHoverScans, "gated query does not scan faces");
+                    SimpleAssert.eq(
+                        0,
+                        hover.invoke(HologramRenderer.editor(), rotated, 25, 5, true),
+                        "reopening picking recomputes hover");
+                    SimpleAssert
+                        .eq(scans + 4, MiaoVisonLiteRenderer.previewHoverScans, "gated query does not scan faces");
                     invalidate.invoke(HologramRenderer.editor());
                     rotated.clear();
-                    SimpleAssert
-                        .eq(-1, hover.invoke(HologramRenderer.editor(), rotated, 25, 5, true), "in-place scene clear cannot retain a hit");
+                    SimpleAssert.eq(
+                        -1,
+                        hover.invoke(HologramRenderer.editor(), rotated, 25, 5, true),
+                        "in-place scene clear cannot retain a hit");
                 } finally {
                     invalidate.invoke(HologramRenderer.editor());
                     MiaoVisonLiteRenderer.previewHoverScans = scans;
@@ -1147,7 +1239,8 @@ public final class HologramRenderingRegression {
             "cachedMarkers", "projectedFrame", "previewKey", "boundsState", "previewSubmitted", "presentedState",
             "presentedFrame", "presentedRequest", "previewSubmission", "hoverFaces" };
         Object[] saved = new Object[names.length];
-        for (int i = 0; i < names.length; i++) saved[i] = field(MiaoVisonLiteRenderer.class, names[i]).get(HologramRenderer.editor());
+        for (int i = 0; i < names.length; i++)
+            saved[i] = field(MiaoVisonLiteRenderer.class, names[i]).get(HologramRenderer.editor());
         java.util.Map<Object, Object> regions = (java.util.Map<Object, Object>) field(
             MiaoVisonLiteRenderer.class,
             "previewRegions").get(HologramRenderer.editor()), savedRegions = new java.util.LinkedHashMap<>(regions);
@@ -1165,7 +1258,10 @@ public final class HologramRenderingRegression {
             for (int frame = 0; frame < 6; frame++) {
                 tutorialPreparationFrame(world, teaching, ui, worldAssets, false);
             }
-            SimpleAssert.eq(1, HologramRenderer.previewMeshCompleted(teaching), "alternating world renders finish the teaching mesh");
+            SimpleAssert.eq(
+                1,
+                HologramRenderer.previewMeshCompleted(teaching),
+                "alternating world renders finish the teaching mesh");
             SimpleAssert.that(
                 !((List<?>) field(MiaoVisonLiteRenderer.class, "cachedFaces").get(HologramRenderer.editor())).isEmpty(),
                 "the isolated viewport publishes actual stone faces");
@@ -1189,11 +1285,13 @@ public final class HologramRenderingRegression {
                 .that(HologramClient.ownsNativeRenderSnapshot(ui), "read-only library ownership remains intact");
         } finally {
             tutorialSandbox.set(ui.tutorial, null);
-            for (int i = 0; i < names.length; i++) field(MiaoVisonLiteRenderer.class, names[i]).set(HologramRenderer.editor(), saved[i]);
+            for (int i = 0; i < names.length; i++)
+                field(MiaoVisonLiteRenderer.class, names[i]).set(HologramRenderer.editor(), saved[i]);
             regions.clear();
             regions.putAll(savedRegions);
             for (int i = 0; i < listNames.length; i++) {
-                List<Object> list = (List<Object>) field(MiaoVisonLiteRenderer.class, listNames[i]).get(HologramRenderer.editor());
+                List<Object> list = (List<Object>) field(MiaoVisonLiteRenderer.class, listNames[i])
+                    .get(HologramRenderer.editor());
                 list.clear();
                 list.addAll(savedLists[i]);
             }
@@ -1213,11 +1311,13 @@ public final class HologramRenderingRegression {
         Class<?> type = Class.forName(MiaoVisonLiteRenderer.class.getName() + "$PreviewPreparation");
         if (field(MiaoVisonLiteRenderer.class, "visibleState").get(HologramRenderer.editor()) != teaching) {
             field(MiaoVisonLiteRenderer.class, "visibleState").set(HologramRenderer.editor(), teaching);
-            ((java.util.Map<?, ?>) field(MiaoVisonLiteRenderer.class, "previewRegions").get(HologramRenderer.editor())).clear();
+            ((java.util.Map<?, ?>) field(MiaoVisonLiteRenderer.class, "previewRegions").get(HologramRenderer.editor()))
+                .clear();
             java.lang.reflect.Constructor<?> constructor = type
                 .getDeclaredConstructor(MiaoVisonLiteRenderer.class, HologramState.class, boolean.class);
             constructor.setAccessible(true);
-            field(MiaoVisonLiteRenderer.class, "previewPreparation").set(HologramRenderer.editor(), constructor.newInstance(HologramRenderer.editor(), teaching, true));
+            field(MiaoVisonLiteRenderer.class, "previewPreparation")
+                .set(HologramRenderer.editor(), constructor.newInstance(HologramRenderer.editor(), teaching, true));
         }
         java.lang.reflect.Method prepare = MiaoVisonLiteRenderer.class.getDeclaredMethod(
             "prepareProgressiveFrame",
@@ -1234,7 +1334,8 @@ public final class HologramRenderingRegression {
             double.class,
             double.class);
         prepare.setAccessible(true);
-        prepare.invoke(HologramRenderer.editor(), teaching, "tutorial-owner-pose", 0, 0, 380, 321, .4, .4, 1d, 0d, 0d, 0d);
+        prepare
+            .invoke(HologramRenderer.editor(), teaching, "tutorial-owner-pose", 0, 0, 380, 321, .4, .4, 1d, 0d, 0d, 0d);
         Object preparation = field(MiaoVisonLiteRenderer.class, "previewPreparation").get(HologramRenderer.editor());
         java.lang.reflect.Method advance = type
             .getDeclaredMethod("advance", int.class, int.class, boolean.class, String.class, long.class);
@@ -1294,15 +1395,16 @@ public final class HologramRenderingRegression {
             "projectedFrame", "previewSubmission", "hoverFaces", "previewCameraReprojects", "previewCameraOrderReuses",
             "previewCameraOrderSorts", "previewBrowseSurfaceReuses" };
         Object[] saved = new Object[names.length];
-        for (int i = 0; i < names.length; i++) saved[i] = field(MiaoVisonLiteRenderer.class, names[i]).get(HologramRenderer.editor());
+        for (int i = 0; i < names.length; i++)
+            saved[i] = field(MiaoVisonLiteRenderer.class, names[i]).get(HologramRenderer.editor());
         java.util.Map<Object, Object> regions = (java.util.Map<Object, Object>) field(
             MiaoVisonLiteRenderer.class,
             "previewRegions").get(HologramRenderer.editor());
         java.util.Map<Object, Object> savedRegions = new java.util.LinkedHashMap<>(regions);
         String[] listNames = { "nativePreviewCells", "linkedPreviewCells", "visibleCells" };
         List<?>[] lists = new List<?>[listNames.length];
-        for (int i = 0; i < lists.length; i++)
-            lists[i] = new java.util.ArrayList<>((List<?>) field(MiaoVisonLiteRenderer.class, listNames[i]).get(HologramRenderer.editor()));
+        for (int i = 0; i < lists.length; i++) lists[i] = new java.util.ArrayList<>(
+            (List<?>) field(MiaoVisonLiteRenderer.class, listNames[i]).get(HologramRenderer.editor()));
         java.util.BitSet published = (java.util.BitSet) field(MiaoVisonLiteRenderer.class, "publishedPreviewCells")
             .get(HologramRenderer.editor()), savedPublished = (java.util.BitSet) published.clone();
         java.util.Map<Integer, HologramTextures.Material> fixtureGlass = new java.util.HashMap<>();
@@ -1339,7 +1441,8 @@ public final class HologramRenderingRegression {
                 .entrySet())
                 regions.put(
                     entry.getKey(),
-                    prepareRegion.invoke(HologramRenderer.editor(), state, entry.getValue(), Integer.MAX_VALUE, 0, false));
+                    prepareRegion
+                        .invoke(HologramRenderer.editor(), state, entry.getValue(), Integer.MAX_VALUE, 0, false));
             Object preparation = preparationConstructor.newInstance(HologramRenderer.editor(), state, false);
             field(preparationType, "completed").setInt(preparation, state.cells.size());
             field(MiaoVisonLiteRenderer.class, "previewPreparation").set(HologramRenderer.editor(), preparation);
@@ -1355,8 +1458,9 @@ public final class HologramRenderingRegression {
                     missingIcon[0] = path == 1 || path >= 3;
                     String key = yaw + ":" + path;
                     if (path == 3 && yaw == 0) {
-                        field(MiaoVisonLiteRenderer.class, "projectedFrame")
-                            .set(HologramRenderer.editor(), new HologramEditorCameraFrame(0, 0, 380, 321, .13, .4, 1, 15, 0, 1, 6));
+                        field(MiaoVisonLiteRenderer.class, "projectedFrame").set(
+                            HologramRenderer.editor(),
+                            new HologramEditorCameraFrame(0, 0, 380, 321, .13, .4, 1, 15, 0, 1, 6));
                         SimpleAssert.eq(
                             false,
                             reproject.invoke(previousProjection, "across-facing-mask", false),
@@ -1377,8 +1481,10 @@ public final class HologramRenderingRegression {
                             1,
                             6));
                     if (path == 3) {
-                        List<?> faces = (List<?>) field(MiaoVisonLiteRenderer.class, "cachedFaces").get(HologramRenderer.editor());
-                        long reuseBefore = field(MiaoVisonLiteRenderer.class, "previewCameraOrderReuses").getLong(HologramRenderer.editor());
+                        List<?> faces = (List<?>) field(MiaoVisonLiteRenderer.class, "cachedFaces")
+                            .get(HologramRenderer.editor());
+                        long reuseBefore = field(MiaoVisonLiteRenderer.class, "previewCameraOrderReuses")
+                            .getLong(HologramRenderer.editor());
                         SimpleAssert.eq(
                             true,
                             reproject.invoke(previousProjection, key, false),
@@ -1388,10 +1494,12 @@ public final class HologramRenderingRegression {
                             "camera navigation retains the complete sorted storage");
                         if (yaw == 0) SimpleAssert.eq(
                             reuseBefore + 1,
-                            field(MiaoVisonLiteRenderer.class, "previewCameraOrderReuses").getLong(HologramRenderer.editor()),
+                            field(MiaoVisonLiteRenderer.class, "previewCameraOrderReuses")
+                                .getLong(HologramRenderer.editor()),
                             "resize and zoom preserve exact equal-depth ties and skip sorting");
                         for (Object face : faces) reprojected.add(faceSnapshot(face));
-                        for (Object outline : (List<?>) field(MiaoVisonLiteRenderer.class, "cachedOutlines").get(HologramRenderer.editor()))
+                        for (Object outline : (List<?>) field(MiaoVisonLiteRenderer.class, "cachedOutlines")
+                            .get(HologramRenderer.editor()))
                             SimpleAssert.eq(
                                 false,
                                 field(outline.getClass(), "fadeDefault").get(outline),
@@ -1399,13 +1507,14 @@ public final class HologramRenderingRegression {
                         continue;
                     }
                     for (String name : new String[] { "cachedFaces", "cachedOutlines", "cachedMarkers" })
-                        field(MiaoVisonLiteRenderer.class, name).set(HologramRenderer.editor(), new java.util.ArrayList<>());
+                        field(MiaoVisonLiteRenderer.class, name)
+                            .set(HologramRenderer.editor(), new java.util.ArrayList<>());
                     for (String name : listNames)
                         ((List<?>) field(MiaoVisonLiteRenderer.class, name).get(HologramRenderer.editor())).clear();
                     published.clear();
                     // The full read-only source can reuse local surfaces while its original cursor keeps the budget.
-                    Object projection = reusedProjectionConstructor.newInstance(HologramRenderer.editor(), state, key,
-                        previousProjection);
+                    Object projection = reusedProjectionConstructor
+                        .newInstance(HologramRenderer.editor(), state, key, previousProjection);
                     field(projectionType, "cacheBrowseSurfaces").setBoolean(projection, path == 1 || path == 4);
                     if (previousProjection != null) SimpleAssert.that(
                         field(projectionType, "faces").get(projection)
@@ -1413,7 +1522,8 @@ public final class HologramRenderingRegression {
                         "retired cursor output capacity is reused without a new aggregate backing array");
                     field(preparationType, "projection").set(preparation, projection);
                     if (path == 0 || path == 4) {
-                        long before = field(MiaoVisonLiteRenderer.class, "previewBrowseSurfaceReuses").getLong(HologramRenderer.editor());
+                        long before = field(MiaoVisonLiteRenderer.class, "previewBrowseSurfaceReuses")
+                            .getLong(HologramRenderer.editor());
                         int steps = 0;
                         while (field(projectionType, "published").getInt(projection) < state.cells.size()
                             && steps++ < 100) {
@@ -1424,7 +1534,8 @@ public final class HologramRenderingRegression {
                                 "read-only camera navigation still respects a bounded advance");
                         }
                         if (path == 4 && yaw != 0) SimpleAssert.that(
-                            field(MiaoVisonLiteRenderer.class, "previewBrowseSurfaceReuses").getLong(HologramRenderer.editor()) > before,
+                            field(MiaoVisonLiteRenderer.class, "previewBrowseSurfaceReuses")
+                                .getLong(HologramRenderer.editor()) > before,
                             "completed read-only source reuses the prior camera-facing local surfaces");
                     } else {
                         advance.invoke(projection, false, Integer.MAX_VALUE, Long.MAX_VALUE);
@@ -1434,7 +1545,8 @@ public final class HologramRenderingRegression {
                         state.cells.size(),
                         field(projectionType, "published").getInt(projection),
                         "the prepared camera path publishes every source cell in its single advance/publish");
-                    List<?> faces = (List<?>) field(MiaoVisonLiteRenderer.class, "cachedFaces").get(HologramRenderer.editor());
+                    List<?> faces = (List<?>) field(MiaoVisonLiteRenderer.class, "cachedFaces")
+                        .get(HologramRenderer.editor());
                     SimpleAssert.that(!faces.isEmpty(), "concave transparent multi-region fixture has real faces");
                     if (path == 0) {
                         reference = new java.util.ArrayList<>();
@@ -1473,7 +1585,8 @@ public final class HologramRenderingRegression {
                             java.util.Arrays.equals(reprojected.get(at), faceSnapshot(faces.get(at))),
                             "fresh projection preserves identical mixed-region vertices, exact depth ties and ordering");
                     }
-                    for (Object outline : (List<?>) field(MiaoVisonLiteRenderer.class, "cachedOutlines").get(HologramRenderer.editor()))
+                    for (Object outline : (List<?>) field(MiaoVisonLiteRenderer.class, "cachedOutlines")
+                        .get(HologramRenderer.editor()))
                         SimpleAssert.eq(
                             !missingIcon[0],
                             field(outline.getClass(), "fadeDefault").get(outline),
@@ -1486,8 +1599,8 @@ public final class HologramRenderingRegression {
                 field(preparationType, "boundary").get(blueprintPreparation) != null,
                 "ordinary Blueprint keeps its independent early occupancy outline");
             List<double[]> expected = new java.util.ArrayList<>();
-            for (Object face : (List<?>) field(MiaoVisonLiteRenderer.class, "cachedFaces").get(HologramRenderer.editor()))
-                expected.add(faceSnapshot(face));
+            for (Object face : (List<?>) field(MiaoVisonLiteRenderer.class, "cachedFaces")
+                .get(HologramRenderer.editor())) expected.add(faceSnapshot(face));
             state.data.setBoolean("structureProjection", true);
             Object direct = preparationConstructor.newInstance(HologramRenderer.editor(), state, true);
             SimpleAssert.that(
@@ -1495,9 +1608,11 @@ public final class HologramRenderingRegression {
                 "typed structure geometry needs no second all-cell occupancy pass");
             for (String name : new String[] { "cachedFaces", "cachedOutlines", "cachedMarkers" })
                 field(MiaoVisonLiteRenderer.class, name).set(HologramRenderer.editor(), new java.util.ArrayList<>());
-            for (String name : listNames) ((List<?>) field(MiaoVisonLiteRenderer.class, name).get(HologramRenderer.editor())).clear();
+            for (String name : listNames)
+                ((List<?>) field(MiaoVisonLiteRenderer.class, name).get(HologramRenderer.editor())).clear();
             published.clear();
-            Object directProjection = reusedProjectionConstructor.newInstance(HologramRenderer.editor(), state, "direct-structure", null);
+            Object directProjection = reusedProjectionConstructor
+                .newInstance(HologramRenderer.editor(), state, "direct-structure", null);
             field(preparationType, "projection").set(direct, directProjection);
             field(MiaoVisonLiteRenderer.class, "previewPreparation").set(HologramRenderer.editor(), direct);
             java.lang.reflect.Method advancePreparation = preparationType
@@ -1510,7 +1625,8 @@ public final class HologramRenderingRegression {
                 state.cells.size(),
                 field(projectionType, "published").getInt(directProjection),
                 "structure preparation reaches complete publication without awaiting an occupancy draw");
-            List<?> directFaces = (List<?>) field(MiaoVisonLiteRenderer.class, "cachedFaces").get(HologramRenderer.editor());
+            List<?> directFaces = (List<?>) field(MiaoVisonLiteRenderer.class, "cachedFaces")
+                .get(HologramRenderer.editor());
             SimpleAssert.eq(expected.size(), directFaces.size(), "direct structure path keeps full geometry coverage");
             for (int i = 0; i < expected.size(); i++) SimpleAssert.that(
                 java.util.Arrays.equals(expected.get(i), faceSnapshot(directFaces.get(i))),
@@ -1520,9 +1636,11 @@ public final class HologramRenderingRegression {
             else materials.put("minecraft:glass", previousGlass);
             regions.clear();
             regions.putAll(savedRegions);
-            for (int i = 0; i < names.length; i++) field(MiaoVisonLiteRenderer.class, names[i]).set(HologramRenderer.editor(), saved[i]);
+            for (int i = 0; i < names.length; i++)
+                field(MiaoVisonLiteRenderer.class, names[i]).set(HologramRenderer.editor(), saved[i]);
             for (int i = 0; i < listNames.length; i++) {
-                List<Object> list = (List<Object>) field(MiaoVisonLiteRenderer.class, listNames[i]).get(HologramRenderer.editor());
+                List<Object> list = (List<Object>) field(MiaoVisonLiteRenderer.class, listNames[i])
+                    .get(HologramRenderer.editor());
                 list.clear();
                 list.addAll(lists[i]);
             }
@@ -1637,7 +1755,8 @@ public final class HologramRenderingRegression {
         SimpleAssert.that(
             MiaoVisonLiteRenderer.completePreviewMaterial(material),
             "all cached real material samples permit density fading");
-        SimpleAssert.that(!MiaoVisonLiteRenderer.completePreviewMaterial(null), "absent material keeps diagnostic lines");
+        SimpleAssert
+            .that(!MiaoVisonLiteRenderer.completePreviewMaterial(null), "absent material keeps diagnostic lines");
         SimpleAssert.that(
             !MiaoVisonLiteRenderer.completePreviewMaterial(
                 new HologramTextures.Material(sides, sides, HologramGeometry.cube(), false, true, false, false)),

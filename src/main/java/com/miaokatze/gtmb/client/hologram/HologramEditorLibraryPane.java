@@ -121,8 +121,12 @@ final class HologramEditorLibraryPane {
                 () -> projector("library.save_help")).widthRel(1f)
                     .height(20));
         page.child(
-            action(132, () -> projector("library.save_copy"), ui.library::nativeCanSave, () -> projector("library.save_copy_help")).widthRel(1f)
-                .height(18));
+            action(
+                132,
+                () -> projector("library.save_copy"),
+                ui.library::nativeCanSave,
+                () -> projector("library.save_copy_help")).widthRel(1f)
+                    .height(18));
         page.child(
             HologramEditorNativeTheme.label(ui.library::nativeStatus)
                 .widthRel(1f)
@@ -180,10 +184,13 @@ final class HologramEditorLibraryPane {
                             () -> true,
                             () -> false)
                         .size(HologramEditorNativeTheme.ICON_BUTTON)));
-        ButtonWidget<?> website = action(309, () -> projector("library.website"), this::websiteReady, () -> projector("library.website_help"))
-            .name("library_website")
-            .expanded()
-            .height(20);
+        ButtonWidget<?> website = action(
+            309,
+            () -> projector("library.website"),
+            this::websiteReady,
+            () -> projector("library.website_help")).name("library_website")
+                .expanded()
+                .height(20);
         ButtonWidget<?> manage = localIcon(
             HologramEditorControlIds.LIBRARY + 3,
             "settings",
@@ -227,7 +234,8 @@ final class HologramEditorLibraryPane {
             .sizeRel(1f)
             .expanded();
         rowList.child(
-            HologramEditorNativeTheme.label(() -> catalogTotal == 0 ? projector("library.empty") : projector("library.no_match"))
+            HologramEditorNativeTheme
+                .label(() -> catalogTotal == 0 ? projector("library.empty") : projector("library.no_match"))
                 .widthRel(1f)
                 .height(44)
                 .setEnabledIf(widget -> total == 0));
@@ -322,9 +330,12 @@ final class HologramEditorLibraryPane {
                 () -> projector("library.transfer_help")).widthRel(1f)
                     .height(20));
         secondary.child(
-            action(299, () -> projector("library.discard"), () -> idle() && !ui.session.state().cells.isEmpty(), () -> projector("library.discard_help"))
-                .widthRel(1f)
-                .height(20));
+            action(
+                299,
+                () -> projector("library.discard"),
+                () -> idle() && !ui.session.state().cells.isEmpty(),
+                () -> projector("library.discard_help")).widthRel(1f)
+                    .height(20));
         footer.child(secondary);
         page.child(footer);
         ui.shell.registerTarget("library.footer", footer);
@@ -404,8 +415,7 @@ final class HologramEditorLibraryPane {
                 226,
                 () -> projector("library.upgrade"),
                 ui.library::nativeCanUpgrade,
-                () -> projector("library.upgrade_help"))
-                    .expanded()
+                () -> projector("library.upgrade_help")).expanded()
                     .height(18));
         list.child(maintenance);
         list.child(
@@ -430,8 +440,12 @@ final class HologramEditorLibraryPane {
                 () -> projector("library.keep_covers_help")).widthRel(1f)
                     .height(18));
         list.child(
-            action(227, () -> projector("editor.global_prompt"), this::editing, () -> projector("library.global_prompt_help")).widthRel(1f)
-                .height(18));
+            action(
+                227,
+                () -> projector("editor.global_prompt"),
+                this::editing,
+                () -> projector("library.global_prompt_help")).widthRel(1f)
+                    .height(18));
         list.child(
             action(
                 161,
@@ -449,8 +463,12 @@ final class HologramEditorLibraryPane {
                 () -> projector("library.compact_named_help")).widthRel(1f)
                     .height(18));
         list.child(
-            action(150, () -> projector("library.source_version"), () -> true, () -> projector("library.source_version_help")).widthRel(1f)
-                .height(18));
+            action(
+                150,
+                () -> projector("library.source_version"),
+                () -> true,
+                () -> projector("library.source_version_help")).widthRel(1f)
+                    .height(18));
         list.child(
             HologramEditorNativeTheme.label(ui.library::nativeStatus)
                 .widthRel(1f)
@@ -515,12 +533,8 @@ final class HologramEditorLibraryPane {
             .sizeRel(1f)
             .tooltipBuilder(t -> t.addLine(rowTooltip(slot)))
             .tooltipAutoUpdate(true);
-        IDrawable count = IKey
-            .dynamic(
-                () -> projector(
-                    "library.row_counts",
-                    row(slot).getInteger("cells"),
-                    row(slot).getInteger("structures")))
+        IDrawable count = IKey.dynamic(
+            () -> projector("library.row_counts", row(slot).getInteger("cells"), row(slot).getInteger("structures")))
             .color(HologramEditorNativeTheme.MUTED)
             .shadow(false)
             .alignment(Alignment.CenterLeft);
@@ -562,13 +576,15 @@ final class HologramEditorLibraryPane {
 
     private ButtonWidget<?> source(boolean server) {
         BooleanSupplier available = () -> idle() && (ui.library.nativeDedicated() || !server);
-        ButtonWidget<?> button = HologramEditorNativeTheme.button(() -> server ? projector("library.server") : projector("library.client"), null, () -> {
-            if (ui.library.publicLibrary() != server) defer(
-                () -> {
-                    if (available.getAsBoolean() && ui.library.publicLibrary() != server) ui.router.activate(201);
-                });
-        }, available, () -> ui.library.publicLibrary() == server, false);
-        button.tooltipBuilder(t -> t.addLine(server ? projector("library.server_help") : projector("library.client_help")));
+        ButtonWidget<?> button = HologramEditorNativeTheme
+            .button(() -> server ? projector("library.server") : projector("library.client"), null, () -> {
+                if (ui.library.publicLibrary() != server) defer(
+                    () -> {
+                        if (available.getAsBoolean() && ui.library.publicLibrary() != server) ui.router.activate(201);
+                    });
+            }, available, () -> ui.library.publicLibrary() == server, false);
+        button.tooltipBuilder(
+            t -> t.addLine(server ? projector("library.server_help") : projector("library.client_help")));
         ui.shell.registerControl(
             201,
             button,
@@ -580,13 +596,19 @@ final class HologramEditorLibraryPane {
 
     private ButtonWidget<?> saveMode(boolean overwrite) {
         BooleanSupplier available = () -> !ui.session.isTutorial() && !ui.library.browsePreviewActive();
-        ButtonWidget<?> button = HologramEditorNativeTheme.button(() -> overwrite ? projector("library.choose_overwrite") : projector("library.save_current"), null, () -> {
-            if (ui.library.overwriteMode() != overwrite) defer(() -> {
-                if (!available.getAsBoolean() || ui.library.overwriteMode() == overwrite) return;
-                ui.router.activate(222);
-                if (overwrite) ui.shell.selectDockPage(2);
-            });
-        }, available, () -> ui.library.overwriteMode() == overwrite, false);
+        ButtonWidget<?> button = HologramEditorNativeTheme.button(
+            () -> overwrite ? projector("library.choose_overwrite") : projector("library.save_current"),
+            null,
+            () -> {
+                if (ui.library.overwriteMode() != overwrite) defer(() -> {
+                    if (!available.getAsBoolean() || ui.library.overwriteMode() == overwrite) return;
+                    ui.router.activate(222);
+                    if (overwrite) ui.shell.selectDockPage(2);
+                });
+            },
+            available,
+            () -> ui.library.overwriteMode() == overwrite,
+            false);
         ui.shell.registerControl(
             222,
             button,

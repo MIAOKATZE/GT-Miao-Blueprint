@@ -28,8 +28,23 @@ final class HologramGiantFirstWrite {
     private static final long SECOND = 1_000_000_000L;
 
     private enum Phase {
-        DOCK, PROMPT, FOCUS, PROMPT_FRAME, APPLY, ACK, UNDO, UNDO_ACK, REDO, REDO_ACK, SAVE_DOCK, SAVE, SAVE_ACK,
-        VERIFY, SAVE_GUIDANCE, CELL_HISTORY, DONE
+        DOCK,
+        PROMPT,
+        FOCUS,
+        PROMPT_FRAME,
+        APPLY,
+        ACK,
+        UNDO,
+        UNDO_ACK,
+        REDO,
+        REDO_ACK,
+        SAVE_DOCK,
+        SAVE,
+        SAVE_ACK,
+        VERIFY,
+        SAVE_GUIDANCE,
+        CELL_HISTORY,
+        DONE
     }
 
     private final HologramScreen screen;
@@ -60,8 +75,8 @@ final class HologramGiantFirstWrite {
         if (saveLedger != null) saveLedger.finish(false);
     }
 
-    HologramGiantFirstWrite(HologramScreen screen, HologramGiantWriteArtifact artifact, Path output,
-        String fileId, int expectedCells, boolean packedArm, boolean crossHistory, HologramGiantHistoryTiming historyTiming) {
+    HologramGiantFirstWrite(HologramScreen screen, HologramGiantWriteArtifact artifact, Path output, String fileId,
+        int expectedCells, boolean packedArm, boolean crossHistory, HologramGiantHistoryTiming historyTiming) {
         this.screen = screen;
         this.artifact = artifact;
         this.output = output;
@@ -75,10 +90,15 @@ final class HologramGiantFirstWrite {
         session = initial.session;
         revision0 = initial.data.getLong("planRevision");
         sequence0 = screen.ui.session.sequence();
-        require(document != null && fileId.equals(document.fileId()) && !document.dirty()
-            && document.packedAuthoring() == packedArm && initial.cells.size() == expectedCells
-            && initial.data.getString("blueprintPrompt").isEmpty()
-            && !initial.data.getBoolean("editCanUndo") && !initial.data.getBoolean("editCanRedo"),
+        require(
+            document != null && fileId.equals(document.fileId())
+                && !document.dirty()
+                && document.packedAuthoring() == packedArm
+                && initial.cells.size() == expectedCells
+                && initial.data.getString("blueprintPrompt")
+                    .isEmpty()
+                && !initial.data.getBoolean("editCanUndo")
+                && !initial.data.getBoolean("editCanRedo"),
             "PRECONDITION: initial exact clean document/empty global prompt/stored arm");
         evidence.put("schema", "gtmb.nativeFirstWrite.v2");
         evidence.put("operation", "editBlueprintPrompt");
@@ -97,23 +117,30 @@ final class HologramGiantFirstWrite {
     }
 
     boolean isReopen(HologramState next) {
-        return saved() && !session.equals(next.session) && PROMPT.equals(next.data.getString("blueprintPrompt"))
+        return saved() && !session.equals(next.session)
+            && PROMPT.equals(next.data.getString("blueprintPrompt"))
             && (!crossHistory || HologramGiantCellHistory.matchesCells(next, cellDelta, true));
     }
 
     void tick() throws Exception {
         if (saved()) return;
-        require(document != null && screen.ui.session.document() == document && fileId.equals(document.fileId())
-            && session.equals(state().session), "OWNER_CHANGED: first-write document or session replaced");
+        require(
+            document != null && screen.ui.session.document() == document
+                && fileId.equals(document.fileId())
+                && session.equals(state().session),
+            "OWNER_CHANGED: first-write document or session replaced");
         if (phase == Phase.CELL_HISTORY) {
             cellHistory.tick();
             return;
         }
         long limit = phase == Phase.SAVE_ACK ? 150 : 30;
-        require(System.nanoTime() - since < limit * SECOND,
+        require(
+            System.nanoTime() - since < limit * SECOND,
             (phase == Phase.ACK ? admissionSeen ? "ACK_OR_FULL_FRAME" : "ADMISSION_UNWITNESSED"
                 : phase == Phase.SAVE_ACK ? "SAVE_PENDING"
-                    : phase == Phase.FOCUS ? "NATIVE_PROMPT_MOUNT_TIMEOUT" : "LIFECYCLE_TIMEOUT") + ": " + phase);
+                    : phase == Phase.FOCUS ? "NATIVE_PROMPT_MOUNT_TIMEOUT" : "LIFECYCLE_TIMEOUT")
+                + ": "
+                + phase);
         // A MUI tick can run between GUI draws. Observe the exact admitted task before waiting for another frame.
         if (phase == Phase.ACK) observeAdmission(System.nanoTime(), "owned-client-tick-end");
         if (phase == Phase.SAVE_ACK) saveLedger.tick();
@@ -132,8 +159,12 @@ final class HologramGiantFirstWrite {
             }
             case APPLY -> {
                 if (!timing.hasBaseline()) return;
-                require(screen.ui.annotations.promptDrawer() && screen.ui.annotations.promptField().isFocused()
-                    && PROMPT.equals(screen.ui.annotations.promptField().getText()),
+                require(
+                    screen.ui.annotations.promptDrawer() && screen.ui.annotations.promptField()
+                        .isFocused()
+                        && PROMPT.equals(
+                            screen.ui.annotations.promptField()
+                                .getText()),
                     "NATIVE_HIT_OR_TEXT: actual focused field lost its typed prompt");
                 apply();
                 step(Phase.ACK);
@@ -156,7 +187,8 @@ final class HologramGiantFirstWrite {
                 if (screen.ui.shell.hasModalPanel()) return;
                 require(!screen.ui.library.overwriteMode(), "SAVE_PENDING: switched to arbitrary overwrite mode");
                 if (screen.ui.shell.targetBounds("control.140") == null) return;
-                require(document.packedAuthoring() == (packedArm && !crossHistory),
+                require(
+                    document.packedAuthoring() == (packedArm && !crossHistory),
                     "PACKED_HEADER: unexpected storage before Save");
                 evidence.put("packedAtSavePress", document.packedAuthoring());
                 saveLedger = new HologramGiantSaveLedger(screen, artifact, evidence);
@@ -170,14 +202,22 @@ final class HologramGiantFirstWrite {
             case VERIFY -> {
                 var pair = new LinkedHashMap<String, Object>();
                 evidence.put("managedPair", pair);
-                artifact.verifyAfterSave(fileId, PROMPT, priorCapture, HologramBlueprintPreview.lastCaptureWitness(), pair, cellDelta);
+                artifact.verifyAfterSave(
+                    fileId,
+                    PROMPT,
+                    priorCapture,
+                    HologramBlueprintPreview.lastCaptureWitness(),
+                    pair,
+                    cellDelta);
                 step(Phase.SAVE_GUIDANCE);
             }
             case SAVE_GUIDANCE -> {
                 if (screen.ui.shell.hasModalPanel()) {
                     if (screen.ui.library.saveGuidanceOpen() && !saveGuidanceDismissSent) {
-                        // Dismiss the known advisory only via its normal Escape action. Never suppress it or select a link.
-                        require("gtmb_save_structure_guidance".equals(topModalName()),
+                        // Dismiss the known advisory only via its normal Escape action. Never suppress it or select a
+                        // link.
+                        require(
+                            "gtmb_save_structure_guidance".equals(topModalName()),
                             "SAVE_GUIDANCE: unrelated modal owns input after verified disk commit");
                         HologramMuiProbeInput.key(screen, (char) 0, Keyboard.KEY_ESCAPE);
                         saveGuidanceDismissSent = true;
@@ -227,8 +267,10 @@ final class HologramGiantFirstWrite {
                 evidence.put("firstBusyObservedAtEndNanos", end - press);
             }
             if (isReceipt(revision0 + 1, sequence0 + 1)) {
-                require(PROMPT.equals(state.data.getString("blueprintPrompt")) && document.dirty()
-                    && state.data.getBoolean("editCanUndo") && !state.data.getBoolean("editCanRedo"),
+                require(
+                    PROMPT.equals(state.data.getString("blueprintPrompt")) && document.dirty()
+                        && state.data.getBoolean("editCanUndo")
+                        && !state.data.getBoolean("editCanRedo"),
                     "ACK_OR_REVISION: edited prompt/history state");
                 if (ack == 0) {
                     ack = end;
@@ -247,14 +289,24 @@ final class HologramGiantFirstWrite {
                 if (crossHistory) {
                     var details = new LinkedHashMap<String, Object>();
                     evidence.put("crossMaterializationHistory", details);
-                    cellHistory = new HologramGiantCellHistory(screen, artifact, PROMPT, revision0, sequence0,
-                        expectedCells, details, historyTiming);
+                    cellHistory = new HologramGiantCellHistory(
+                        screen,
+                        artifact,
+                        PROMPT,
+                        revision0,
+                        sequence0,
+                        expectedCells,
+                        details,
+                        historyTiming);
                     step(Phase.CELL_HISTORY);
                 } else step(Phase.UNDO);
             }
         } else if (phase == Phase.UNDO_ACK && isReceipt(revision0 + 2, sequence0 + 2)) {
-            require(state.data.getString("blueprintPrompt").isEmpty() && !document.dirty()
-                && !state.data.getBoolean("editCanUndo") && state.data.getBoolean("editCanRedo"),
+            require(
+                state.data.getString("blueprintPrompt")
+                    .isEmpty() && !document.dirty()
+                    && !state.data.getBoolean("editCanUndo")
+                    && state.data.getBoolean("editCanRedo"),
                 "HISTORY_STATE: Undo did not restore exact clean prompt");
             if (freshMaterial(state) >= 0) {
                 require(document.packedAuthoring() == packedArm, "PACKED_HEADER: Undo changed the storage arm");
@@ -264,8 +316,10 @@ final class HologramGiantFirstWrite {
                 step(Phase.REDO);
             }
         } else if (phase == Phase.REDO_ACK && isReceipt(revision0 + 3, sequence0 + 3)) {
-            require(PROMPT.equals(state.data.getString("blueprintPrompt")) && document.dirty()
-                && state.data.getBoolean("editCanUndo") && !state.data.getBoolean("editCanRedo"),
+            require(
+                PROMPT.equals(state.data.getString("blueprintPrompt")) && document.dirty()
+                    && state.data.getBoolean("editCanUndo")
+                    && !state.data.getBoolean("editCanRedo"),
                 "HISTORY_STATE: Redo did not restore exact edited prompt");
             if (freshMaterial(state) >= 0) {
                 require(document.packedAuthoring() == packedArm, "PACKED_HEADER: Redo changed the storage arm");
@@ -276,18 +330,24 @@ final class HologramGiantFirstWrite {
             }
         } else if (phase == Phase.SAVE_ACK && !screen.ui.library.localBusy()
             && state.data.getLong("planRevision") == revision0 + (crossHistory ? 7 : 4)) {
-            long revision = revision0 + (crossHistory ? 7 : 4), sequence = sequence0 + (crossHistory ? 6 : 3);
-            require(screen.ui.session.document() == document && session.equals(state.session) && fileId.equals(document.fileId())
-                && screen.ui.session.sequence() == sequence && state.data.getLong("uiSequence") == sequence
-                && !document.packedAuthoring() && !document.dirty() && document.revision() == revision
-                && PROMPT.equals(state.data.getString("blueprintPrompt")) && state.cells.size() == expectedCells
-                && (!crossHistory || HologramGiantCellHistory.matchesCells(state, cellDelta, true)),
-                "SAVE_PENDING: missing current-document clean commit acknowledgment");
-            saveLedger.finish(true);
-            saveLedger = null; // do not hold the old document or its state across the real reopen
-            evidence.put("saveRevision", revision);
-            step(Phase.VERIFY);
-        }
+                long revision = revision0 + (crossHistory ? 7 : 4), sequence = sequence0 + (crossHistory ? 6 : 3);
+                require(
+                    screen.ui.session.document() == document && session.equals(state.session)
+                        && fileId.equals(document.fileId())
+                        && screen.ui.session.sequence() == sequence
+                        && state.data.getLong("uiSequence") == sequence
+                        && !document.packedAuthoring()
+                        && !document.dirty()
+                        && document.revision() == revision
+                        && PROMPT.equals(state.data.getString("blueprintPrompt"))
+                        && state.cells.size() == expectedCells
+                        && (!crossHistory || HologramGiantCellHistory.matchesCells(state, cellDelta, true)),
+                    "SAVE_PENDING: missing current-document clean commit acknowledgment");
+                saveLedger.finish(true);
+                saveLedger = null; // do not hold the old document or its state across the real reopen
+                evidence.put("saveRevision", revision);
+                step(Phase.VERIFY);
+            }
     }
 
     /** The domain flag/open panel can precede LegacyPaint, which actually mounts the field and action. */
@@ -299,16 +359,22 @@ final class HologramGiantFirstWrite {
         facts.put("ownedRenderEndFrame", naturalFrames);
         facts.put("nativeOpenPressFrame", clickedAtFrame);
         var state = state();
-        require(screen == Minecraft.getMinecraft().currentScreen && screen.ui.session.document() == document
-            && session.equals(state.session) && state.data.getLong("planRevision") == revision0
-            && screen.ui.session.sequence() == sequence0, "OWNER_CHANGED: natural prompt mount");
+        require(
+            screen == Minecraft.getMinecraft().currentScreen && screen.ui.session.document() == document
+                && session.equals(state.session)
+                && state.data.getLong("planRevision") == revision0
+                && screen.ui.session.sequence() == sequence0,
+            "OWNER_CHANGED: natural prompt mount");
         boolean drawer = screen.ui.annotations.promptDrawer();
-        boolean global = Integer.valueOf(0).equals(observe(screen.ui.annotations, "promptScope"))
-            && screen.ui.preview.selection().size() == 0;
+        boolean global = Integer.valueOf(0)
+            .equals(observe(screen.ui.annotations, "promptScope"))
+            && screen.ui.preview.selection()
+                .size() == 0;
         facts.put("drawerRequested", drawer);
         facts.put("unselectedGlobal", global);
         var modal = topModal();
-        boolean ownPanel = modal != null && screen.ui.panelName("gtmb_editor_advanced_prompt").equals(modal.getName());
+        boolean ownPanel = modal != null && screen.ui.panelName("gtmb_editor_advanced_prompt")
+            .equals(modal.getName());
         facts.put("topPanel", modal == null ? "" : modal.getName());
         facts.put("ownedPromptPanel", ownPanel);
         var field = screen.ui.annotations.promptField();
@@ -318,8 +384,10 @@ final class HologramGiantFirstWrite {
         boolean ancestorsEnabled = valid && widget.areAncestorsEnabled();
         boolean fieldOwned = valid && ownPanel && widget.getPanel() == modal;
         int[] fieldBounds = fieldOwned ? screen.ui.shell.nativeWidgetBounds(widget) : null;
-        boolean stateEmpty = state.data.getString("blueprintPrompt").isEmpty();
-        boolean fieldEmpty = field != null && field.getText().isEmpty();
+        boolean stateEmpty = state.data.getString("blueprintPrompt")
+            .isEmpty();
+        boolean fieldEmpty = field != null && field.getText()
+            .isEmpty();
         facts.put("fieldAdapter", field != null);
         facts.put("fieldWidget", widget != null);
         facts.put("fieldValid", valid);
@@ -333,17 +401,26 @@ final class HologramGiantFirstWrite {
         var registered = (Map<?, ?>) observe(screen.ui.shell, "targets");
         var values = registered.get("control.158");
         boolean actionOwned = false;
-        if (actionBounds != null && values instanceof List<?> widgets) for (Object value : widgets) {
+        if (actionBounds != null && values instanceof List<?>widgets) for (Object value : widgets) {
             IWidget action = (IWidget) value;
             if (action.isValid() && action.getPanel() == modal
                 && Arrays.equals(actionBounds, screen.ui.shell.nativeWidgetBounds(action))) actionOwned = true;
         }
         facts.put("applyClippedBounds", actionBounds);
         facts.put("applyInOwnedTopPanel", actionOwned);
-        require(stateEmpty && (!drawer || global && (field == null || fieldEmpty)),
+        require(
+            stateEmpty && (!drawer || global && (field == null || fieldEmpty)),
             "NATIVE_HIT_OR_TEXT: global prompt was not empty before any typing");
-        if (!drawer || !global || !ownPanel || !fieldOwned || !enabled || !ancestorsEnabled || !fieldEmpty
-            || fieldBounds == null || fieldBounds[2] <= 0 || fieldBounds[3] <= 0 || !actionOwned) return;
+        if (!drawer || !global
+            || !ownPanel
+            || !fieldOwned
+            || !enabled
+            || !ancestorsEnabled
+            || !fieldEmpty
+            || fieldBounds == null
+            || fieldBounds[2] <= 0
+            || fieldBounds[3] <= 0
+            || !actionOwned) return;
         readyPromptPanel = modal;
         readyPromptWidget = widget;
         readyPromptFrame = naturalFrames;
@@ -360,19 +437,27 @@ final class HologramGiantFirstWrite {
         facts.put("fieldValid", widget != null && widget.isValid());
         facts.put("fieldEnabled", widget != null && widget.isEnabled());
         facts.put("fieldAncestorsEnabled", widget != null && widget.isValid() && widget.areAncestorsEnabled());
-        facts.put("fieldTextEmpty", field != null && field.getText().isEmpty());
-        require(!facts.containsValue(Boolean.FALSE) && screen.ui.annotations.promptDrawer()
-            && screen.ui.preview.selection().size() == 0
-            && Integer.valueOf(0).equals(observe(screen.ui.annotations, "promptScope")),
+        facts.put(
+            "fieldTextEmpty",
+            field != null && field.getText()
+                .isEmpty());
+        require(
+            !facts.containsValue(Boolean.FALSE) && screen.ui.annotations.promptDrawer()
+                && screen.ui.preview.selection()
+                    .size() == 0
+                && Integer.valueOf(0)
+                    .equals(observe(screen.ui.annotations, "promptScope")),
             "NATIVE_PROMPT_MOUNT_LOST: owned empty global prompt changed before native focus");
         int[] bounds = screen.ui.shell.nativeWidgetBounds(widget);
         require(bounds != null && bounds[2] > 0 && bounds[3] > 0, "NATIVE_HIT_OR_TEXT: clipped prompt field");
         int x = bounds[0] + bounds[2] / 2, y = bounds[1] + bounds[3] / 2;
         var nativeScreen = screen.getScreen();
-        nativeScreen.getContext().updateState(x, y, 0);
+        nativeScreen.getContext()
+            .updateState(x, y, 0);
         nativeScreen.onFrameUpdate();
         boolean hit = false;
-        for (var located : widget.getPanel().getHovering()) {
+        for (var located : widget.getPanel()
+            .getHovering()) {
             IWidget target = located.getElement();
             if (target == widget) hit = true;
         }
@@ -381,11 +466,15 @@ final class HologramGiantFirstWrite {
         require(field.isFocused(), "NATIVE_HIT_OR_TEXT: native prompt click did not acquire focus");
         for (char ch : PROMPT.toCharArray()) {
             int key = ch == ' ' ? Keyboard.KEY_SPACE
-                : Keyboard.getKeyIndex(Character.toString(ch).toUpperCase(java.util.Locale.ROOT));
+                : Keyboard.getKeyIndex(
+                    Character.toString(ch)
+                        .toUpperCase(java.util.Locale.ROOT));
             require(key != Keyboard.KEY_NONE, "NATIVE_HIT_OR_TEXT: missing printable key");
             HologramMuiProbeInput.key(screen, ch, key);
         }
-        require(PROMPT.equals(field.getText()), "NATIVE_HIT_OR_TEXT: real key/text dispatch did not type the probe value");
+        require(
+            PROMPT.equals(field.getText()),
+            "NATIVE_HIT_OR_TEXT: real key/text dispatch did not type the probe value");
         Map<String, Object> prompt = new LinkedHashMap<>();
         prompt.put("bounds", bounds);
         prompt.put("hit", true);
@@ -398,14 +487,20 @@ final class HologramGiantFirstWrite {
 
     private void captureTypedPromptFrame() throws Exception {
         var field = screen.ui.annotations.promptField();
-        require(screen.ui.annotations.promptDrawer() && field.isFocused() && PROMPT.equals(field.getText()),
+        require(
+            screen.ui.annotations.promptDrawer() && field.isFocused() && PROMPT.equals(field.getText()),
             "NATIVE_HIT_OR_TEXT: actual focused field lost before natural capture");
         if (screen.ui.shell.targetBounds("control.158") == null) return;
-        require(field.widget().getPanel().getName().equals(topModalName()),
+        require(
+            field.widget()
+                .getPanel()
+                .getName()
+                .equals(topModalName()),
             "NATIVE_HIT_OR_TEXT: typed prompt not in actual top modal");
         String name = "giant-edit-typed-prompt.png";
         Files.createDirectories(output.resolve("screenshots"));
-        Path png = output.resolve("screenshots").resolve(name);
+        Path png = output.resolve("screenshots")
+            .resolve(name);
         require(!Files.exists(png), "NATIVE_HIT_OR_TEXT: refusing to replace modal evidence");
         Minecraft mc = Minecraft.getMinecraft();
         ScreenShotHelper.saveScreenshot(output.toFile(), name, mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
@@ -429,36 +524,51 @@ final class HologramGiantFirstWrite {
     }
 
     private void apply() throws Exception {
-        require(screen.ui.annotations.promptDrawer() && screen.ui.session.editable()
-            && !screen.ui.library.localBusy() && !HologramBackgroundTasks.busy()
-            && state().data.getLong("planRevision") == revision0 && screen.ui.session.sequence() == sequence0
-            && document.packedAuthoring() == packedArm && !document.dirty(),
+        require(
+            screen.ui.annotations.promptDrawer() && screen.ui.session.editable()
+                && !screen.ui.library.localBusy()
+                && !HologramBackgroundTasks.busy()
+                && state().data.getLong("planRevision") == revision0
+                && screen.ui.session.sequence() == sequence0
+                && document.packedAuthoring() == packedArm
+                && !document.dirty(),
             "PRECONDITION: native edit no longer idle/initial");
         initialSerial = materialSerial();
         workspace = observe(screen.ui.library, "localWorkspace");
         var queue = HologramMuiScreen.class.getDeclaredField("deferredAction");
-        queue.setAccessible(true); // read the declaring class; the usual diagnostic helper does not traverse inheritance
+        queue.setAccessible(true); // read the declaring class; the usual diagnostic helper does not traverse
+                                   // inheritance
         deferredQueue = queue.get(screen);
-        require(observe(workspace, "task") == null && observe(deferredQueue, "pending") == null,
+        require(
+            observe(workspace, "task") == null && observe(deferredQueue, "pending") == null,
             "PRECONDITION: a different task already owns the screen's native input");
-        String promptPanel = screen.ui.annotations.promptField().widget().getPanel().getName();
+        String promptPanel = screen.ui.annotations.promptField()
+            .widget()
+            .getPanel()
+            .getName();
         Map<String, Object> hit = new LinkedHashMap<>();
         evidence.put("applyNativeHit", hit);
         evidence.put("heapGcBeforeApply", HologramGiantNativeEditProbe.heapGc());
         HologramMuiProbeInput.nativeTarget(screen, "control.158", hit, () -> {
-            require(Boolean.TRUE.equals(hit.get("modalPresent")) && Boolean.FALSE.equals(hit.get("modalBlocked"))
-                && Boolean.TRUE.equals(hit.get("widgetEnabled")) && Boolean.TRUE.equals(hit.get("targetInActualHovering"))
-                && promptPanel.equals(hit.get("panelName")),
+            require(
+                Boolean.TRUE.equals(hit.get("modalPresent")) && Boolean.FALSE.equals(hit.get("modalBlocked"))
+                    && Boolean.TRUE.equals(hit.get("widgetEnabled"))
+                    && Boolean.TRUE.equals(hit.get("targetInActualHovering"))
+                    && promptPanel.equals(hit.get("panelName")),
                 "NATIVE_HIT_OR_TEXT: Apply not enabled in the actual prompt field's top panel");
             applyWitness = new HologramGiantApplyWitness(state(), document, revision0, sequence0 + 1, packedArm);
             timing.begin();
             press = System.nanoTime();
         });
         evidence.put("nativeApplyDispatchNanos", System.nanoTime() - press);
-        require(observe(deferredQueue, "pending") != null && observe(workspace, "task") == null
-            && screen.ui.annotations.promptDrawer() && screen.ui.session.sequence() == sequence0
-            && state().data.getLong("planRevision") == revision0 && document.packedAuthoring() == packedArm
-            && !document.dirty(), "ADMISSION_UNWITNESSED: native Apply did not queue exactly one deferred intent");
+        require(
+            observe(deferredQueue, "pending") != null && observe(workspace, "task") == null
+                && screen.ui.annotations.promptDrawer()
+                && screen.ui.session.sequence() == sequence0
+                && state().data.getLong("planRevision") == revision0
+                && document.packedAuthoring() == packedArm
+                && !document.dirty(),
+            "ADMISSION_UNWITNESSED: native Apply did not queue exactly one deferred intent");
         evidence.put("deferredIntentAtApplyReturn", true);
         evidence.put("packedAtApplyReturn", document.packedAuthoring());
     }
@@ -472,7 +582,8 @@ final class HologramGiantFirstWrite {
         var owner = (HologramLocalBlueprintWorkspace.PresentationOwner) observe(task, "owner");
         boolean owned = owner != null && mc.thePlayer != null
             && owner.sameSource(mc.theWorld, mc.getNetHandler(), mc.thePlayer.getUniqueID(), session, revision0)
-            && observe(deferredQueue, "pending") == null && screen.ui.library.localBusy()
+            && observe(deferredQueue, "pending") == null
+            && screen.ui.library.localBusy()
             && !screen.ui.annotations.promptDrawer();
         // Only the direct header route retains the empty admission message, not conversion or structure work.
         boolean directRoute = "".equals(observe(task, "message"));
@@ -480,8 +591,15 @@ final class HologramGiantFirstWrite {
         long taskRevision = (Long) observe(task, "revision");
         long draftRevision = document.revision();
         var progress = applyWitness.observe(
-            observe(task, "source"), observe(task, "draft"), (String) observe(task, "operation"),
-            (Long) observe(task, "sequence"), owned, directRoute, observedPacked, taskRevision, draftRevision);
+            observe(task, "source"),
+            observe(task, "draft"),
+            (String) observe(task, "operation"),
+            (Long) observe(task, "sequence"),
+            owned,
+            directRoute,
+            observedPacked,
+            taskRevision,
+            draftRevision);
         var observation = new LinkedHashMap<String, Object>();
         observation.put("ownedDeferredDispatch", owned);
         observation.put("directRoute", directRoute);
@@ -505,18 +623,26 @@ final class HologramGiantFirstWrite {
         HologramState current = state();
         long actual = current.data.getLong("planRevision"), actualSequence = current.data.getLong("uiSequence");
         require(actual <= revision && actualSequence <= seq, "ACK_OR_REVISION: unexpected/duplicate sequence");
-        return !screen.ui.library.localBusy() && !HologramBackgroundTasks.busy() && screen.ui.session.editable()
-            && actual == revision && actualSequence == seq && document.revision() == revision;
+        return !screen.ui.library.localBusy() && !HologramBackgroundTasks.busy()
+            && screen.ui.session.editable()
+            && actual == revision
+            && actualSequence == seq
+            && document.revision() == revision;
     }
 
     private long freshMaterial(HologramState state) {
         var material = HologramRenderer.editorMaterialPresentation();
-        return material != null && material.state() == state && material.serial() > initialSerial
-            && material.bodyMaterial() && material.complete() && material.submittedCells() == expectedCells
-            && !state.data.getBoolean("displayPartial") && state.data.getBoolean("target")
-            && state.cells.size() == expectedCells && HologramRenderer.previewMeshReady(state)
-            && screen.ui.shell.scene() instanceof HologramEditorSceneWidget scene && scene.editFrameReady()
-                ? material.serial() : -1;
+        return material != null && material.state() == state
+            && material.serial() > initialSerial
+            && material.bodyMaterial()
+            && material.complete()
+            && material.submittedCells() == expectedCells
+            && !state.data.getBoolean("displayPartial")
+            && state.data.getBoolean("target")
+            && state.cells.size() == expectedCells
+            && HologramRenderer.previewMeshReady(state)
+            && screen.ui.shell.scene() instanceof HologramEditorSceneWidget scene
+            && scene.editFrameReady() ? material.serial() : -1;
     }
 
     private long materialSerial() {

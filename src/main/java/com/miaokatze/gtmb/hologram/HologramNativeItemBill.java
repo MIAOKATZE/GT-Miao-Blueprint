@@ -53,17 +53,26 @@ final class HologramNativeItemBill {
     }
 
     private static boolean knownNativeItems(HologramSession s) {
-        return !s.virtual && s.mode == 0 && s.job == 0 && !s.cancelled
+        return !s.virtual && s.mode == 0
+            && s.job == 0
+            && !s.cancelled
             && HologramEditorWorkspaceRegistry.physicalProjection(s)
-            && s.capture != null && !s.capture.projectionOnly && !s.capture.pending && !s.capture.incomplete
-            && s.player.capabilities.allowEdit && !s.player.capabilities.isCreativeMode && !s.jobVoucherRequested
+            && s.capture != null
+            && !s.capture.projectionOnly
+            && !s.capture.pending
+            && !s.capture.incomplete
+            && s.player.capabilities.allowEdit
+            && !s.player.capabilities.isCreativeMode
+            && !s.jobVoucherRequested
             && !s.materialSettings.me;
     }
 
     private static int options(HologramSession s) {
         HologramMaterials.Settings settings = s.materialSettings;
-        return (settings.main ? 1 : 0) | (settings.containers ? 2 : 0) | (settings.me ? 4 : 0)
-            | settings.priority << 3 | settings.recoveryDestination << 5;
+        return (settings.main ? 1 : 0) | (settings.containers ? 2 : 0)
+            | (settings.me ? 4 : 0)
+            | settings.priority << 3
+            | settings.recoveryDestination << 5;
     }
 
     void rejectUnsupported() {
@@ -85,7 +94,8 @@ final class HologramNativeItemBill {
     }
 
     private static boolean registeredExactItem(ItemStack sample) {
-        if (sample == null || sample.getItem() == null || HologramRecovery.hasSeal(sample)
+        if (sample == null || sample.getItem() == null
+            || HologramRecovery.hasSeal(sample)
             || HologramMaterialReservations.priority(sample) > 0) return false;
         String name = net.minecraft.item.Item.itemRegistry.getNameForObject(sample.getItem());
         return name != null && net.minecraft.item.Item.itemRegistry.getObject(name) == sample.getItem();
@@ -96,12 +106,21 @@ final class HologramNativeItemBill {
     }
 
     boolean current(HologramSession s) {
-        return finished && !unsupported && s == owner && s.capture == capture && s.planRevision == revision
-            && s.editorWorkspaceEpoch == workspaceEpoch && s.uiSequence == uiSequence
+        return finished && !unsupported
+            && s == owner
+            && s.capture == capture
+            && s.planRevision == revision
+            && s.editorWorkspaceEpoch == workspaceEpoch
+            && s.uiSequence == uiSequence
             && declarationCurrent()
-            && s.scope == scope && s.layer == layer && s.selected == selected
-            && materialOptions == options(s) && knownNativeItems(s) && s.planRecoveryFits
-            && HologramWorkspace.find(s.player.getUniqueID()) == s && HologramSessionPolicy.valid(s);
+            && s.scope == scope
+            && s.layer == layer
+            && s.selected == selected
+            && materialOptions == options(s)
+            && knownNativeItems(s)
+            && s.planRecoveryFits
+            && HologramWorkspace.find(s.player.getUniqueID()) == s
+            && HologramSessionPolicy.valid(s);
     }
 
     boolean declarationCurrent() {

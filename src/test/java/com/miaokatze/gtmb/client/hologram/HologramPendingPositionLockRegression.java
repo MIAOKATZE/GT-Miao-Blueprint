@@ -77,11 +77,13 @@ final class HologramPendingPositionLockRegression {
             SimpleAssert.that(HologramClient.positionLockPending(state), "real client exposes pending intent");
             SimpleAssert.that(HologramClient.positionLocked(state), "render input becomes locked immediately");
             SimpleAssert.eq(100, HologramClient.movingAnchor(state)[0], "renderer consumes the frozen target");
-            SimpleAssert.eq(0x66d9ef, MiaoVisonLiteRenderer.placementOutlineColor(state), "pending outline is lock cyan");
+            SimpleAssert
+                .eq(0x66d9ef, MiaoVisonLiteRenderer.placementOutlineColor(state), "pending outline is lock cyan");
             SimpleAssert.eq(0, state.data.getInteger("job"), "visual lock cannot start construction");
             SimpleAssert.that(!state.data.getBoolean("placementReviewIssued"), "visual lock cannot issue a review");
             lock.clear();
-            SimpleAssert.eq(0x70e69a, MiaoVisonLiteRenderer.placementOutlineColor(state), "failure restores moving green");
+            SimpleAssert
+                .eq(0x70e69a, MiaoVisonLiteRenderer.placementOutlineColor(state), "failure restores moving green");
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError(failure);
         }

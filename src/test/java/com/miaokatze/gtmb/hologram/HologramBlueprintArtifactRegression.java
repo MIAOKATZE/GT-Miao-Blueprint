@@ -299,9 +299,9 @@ public final class HologramBlueprintArtifactRegression {
             for (String invalid : new String[] { head + " " + member + tail, head + "\"x\":0," + member + tail,
                 head + member.replace("\"version\":1", "\"version\":2") + tail,
                 head + member.replace("\"},", "\"} ,") + tail,
-                head + member.replace(linkedHash, "G" + linkedHash.substring(1)) + tail,
-                head + member + member + tail, head + member + "\"x\":{\"a\":1,\"\\u0061\":2}}",
-                head + member + "\"x\":" + nested + "}", head + member + tail + "{}", head + "\"x\":}" }) {
+                head + member.replace(linkedHash, "G" + linkedHash.substring(1)) + tail, head + member + member + tail,
+                head + member + "\"x\":{\"a\":1,\"\\u0061\":2}}", head + member + "\"x\":" + nested + "}",
+                head + member + tail + "{}", head + "\"x\":}" }) {
                 invalidLocalJson(file, invalid.getBytes(StandardCharsets.UTF_8));
             }
             byte[] badUtf8 = bound.clone();

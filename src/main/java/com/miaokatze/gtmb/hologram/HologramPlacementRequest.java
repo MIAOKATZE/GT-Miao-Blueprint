@@ -58,8 +58,14 @@ public final class HologramPlacementRequest {
         int offset = 0;
         for (HologramProjectedPlacement.Cell cell : plan.cells()) {
             Variant key = new Variant(
-                cell.block(), cell.metadata(), cell.item(), cell.damage(), cell.facing(), cell.controller(),
-                cell.tile(), cell.itemState());
+                cell.block(),
+                cell.metadata(),
+                cell.item(),
+                cell.damage(),
+                cell.facing(),
+                cell.controller(),
+                cell.tile(),
+                cell.itemState());
             Integer entry = index.get(key);
             if (entry == null) {
                 if (index.size() >= MAX_VARIANTS) throw malformed();
@@ -100,7 +106,9 @@ public final class HologramPlacementRequest {
         NBTTagList cells = displayedState.getTagList("cells", 10);
         if (!HologramBlueprintLimits.accepts(cells.tagCount())) throw malformed();
         Map<Material, Integer> amounts = new LinkedHashMap<>();
-        HologramProjectedPlacement.DisplayScope scope = new HologramProjectedPlacement.DisplayScope(displayedState, cells);
+        HologramProjectedPlacement.DisplayScope scope = new HologramProjectedPlacement.DisplayScope(
+            displayedState,
+            cells);
         for (int i = 0; i < cells.tagCount(); i++) {
             NBTTagCompound cell = cells.getCompoundTagAt(i);
             if (cell.getBoolean("anchor") || !scope.includes(cell, i)) continue;
@@ -130,7 +138,8 @@ public final class HologramPlacementRequest {
     static Map<Material, Integer> materialCheck(NBTTagCompound request) throws IOException {
         requestId(request, VERSION);
         if (!request.hasKey("placementMaterials", 9) || request.hasKey("placementAnchor")
-            || request.hasKey("placementVariants") || request.hasKey("placementOperations")) throw malformed();
+            || request.hasKey("placementVariants")
+            || request.hasKey("placementOperations")) throw malformed();
         NBTTagList rows = request.getTagList("placementMaterials", 10);
         if (rows.tagCount() > MAX_QUOTE_ITEMS) throw malformed();
         Map<Material, Integer> result = new LinkedHashMap<>();
@@ -147,15 +156,15 @@ public final class HologramPlacementRequest {
     }
 
     static Header header(NBTTagCompound tag) throws IOException {
-        if (!tag.hasKey("placementAnchor", 11)
-            || !tag.hasKey("placementOperations", 11)
+        if (!tag.hasKey("placementAnchor", 11) || !tag.hasKey("placementOperations", 11)
             || !tag.hasKey("placementVariants", 9)
             || !tag.hasKey("placementMaterials", 9)) throw malformed();
         boolean direct = tag.getInteger("placementWireVersion") == DIRECT_VERSION;
         String id = requestId(tag, direct ? DIRECT_VERSION : VERSION);
         int[] anchor = tag.getIntArray("placementAnchor");
-        if (anchor.length != 3 || direct && (!"projectedPlacement".equals(tag.getString("action"))
-            || tag.hasKey("materialSources"))) throw malformed();
+        if (anchor.length != 3
+            || direct && (!"projectedPlacement".equals(tag.getString("action")) || tag.hasKey("materialSources")))
+            throw malformed();
         return new Header(id, anchor[0], anchor[1], anchor[2], sourceOptions(tag), direct);
     }
 
@@ -306,8 +315,17 @@ public final class HologramPlacementRequest {
             int at = i * FIELDS;
             Variant variant = variants.get(operations[at + 3]);
             return new HologramProjectedPlacement.Cell(
-                operations[at], operations[at + 1], operations[at + 2], variant.block, variant.metadata, variant.item,
-                variant.damage, variant.facing, variant.controller, variant.tile, variant.itemState);
+                operations[at],
+                operations[at + 1],
+                operations[at + 2],
+                variant.block,
+                variant.metadata,
+                variant.item,
+                variant.damage,
+                variant.facing,
+                variant.controller,
+                variant.tile,
+                variant.itemState);
         }
 
         int variantIndex(int i) {
@@ -341,14 +359,17 @@ public final class HologramPlacementRequest {
                 number(row, "metadata", 0, 15),
                 name(row, "item"),
                 number(row, "damage", 0, Short.MAX_VALUE),
-                number(row, "facing", -1, 5), row.getBoolean("controller"),
-                readPayload(row, "device"), readPayload(row, "itemState"));
+                number(row, "facing", -1, 5),
+                row.getBoolean("controller"),
+                readPayload(row, "device"),
+                readPayload(row, "itemState"));
         }
 
         private static void writePayload(NBTTagCompound row, String key, String payload) throws IOException {
             if (payload == null || payload.isEmpty()) return;
             try {
-                byte[] bytes = Base64.getDecoder().decode(payload);
+                byte[] bytes = Base64.getDecoder()
+                    .decode(payload);
                 if (bytes.length > MAX_PAYLOAD) throw malformed();
                 row.setByteArray(key, bytes);
             } catch (IllegalArgumentException invalid) {
@@ -361,7 +382,8 @@ public final class HologramPlacementRequest {
             if (!row.hasKey(key, 7)) throw malformed();
             byte[] bytes = row.getByteArray(key);
             if (bytes.length == 0 || bytes.length > MAX_PAYLOAD) throw malformed();
-            return Base64.getEncoder().encodeToString(bytes);
+            return Base64.getEncoder()
+                .encodeToString(bytes);
         }
     }
 }

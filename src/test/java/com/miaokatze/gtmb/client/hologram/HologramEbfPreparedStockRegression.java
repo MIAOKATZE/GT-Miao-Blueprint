@@ -12,7 +12,6 @@ import java.util.Comparator;
 import java.util.UUID;
 
 import net.minecraft.nbt.NBTTagCompound;
-import net.minecraft.nbt.NBTTagList;
 
 import com.google.gson.JsonObject;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
@@ -50,31 +49,50 @@ public final class HologramEbfPreparedStockRegression {
         stack(badItem).setShort("Count", (short) 1);
         rejectShape(badItem, "wrong count type");
         var secondItem = copy(canonical);
-        secondItem.getTagList("Inventory", 10).appendTag(stack(canonical).copy());
+        secondItem.getTagList("Inventory", 10)
+            .appendTag(stack(canonical).copy());
         rejectShape(secondItem, "only one item row");
         for (String unwanted : new String[] { "gtitHologramDraft", "gtitHologramPreset", "display", "testlabBook" }) {
             var changed = copy(canonical);
-            stack(changed).getCompoundTag("tag").setTag(unwanted, new NBTTagCompound());
+            stack(changed).getCompoundTag("tag")
+                .setTag(unwanted, new NBTTagCompound());
             rejectShape(changed, "no extra stack state: " + unwanted);
         }
         var nondefault = copy(canonical);
-        stack(nondefault).getCompoundTag("tag").getCompoundTag("gtitHologramMaterials").setInteger("priority", 2);
+        stack(nondefault).getCompoundTag("tag")
+            .getCompoundTag("gtitHologramMaterials")
+            .setInteger("priority", 2);
         rejectShape(nondefault, "not the actual default tool");
         var invalidTool = copy(canonical);
-        stack(invalidTool).getCompoundTag("tag").setString("gtitHologramToolId", "malformed");
+        stack(invalidTool).getCompoundTag("tag")
+            .setString("gtitHologramToolId", "malformed");
         rejectShape(invalidTool, "invalid tool identity");
-        check(ACTOR.equals(HologramEbfPreparedStock.loginActor(ACTOR.toString().replace("-", ""))), "compact launcher UUID");
+        check(
+            ACTOR.equals(
+                HologramEbfPreparedStock.loginActor(
+                    ACTOR.toString()
+                        .replace("-", ""))),
+            "compact launcher UUID");
         reject(() -> HologramEbfPreparedStock.loginActor("not-a-profile"), "no name-derived actor");
         reject(() -> HologramEbfPreparedStock.loginActor("1-2-3-4-5"), "no lenient truncated UUID");
 
-        Path base = Files.createTempDirectory("gtmb-ebf-prepared-stock-").toRealPath();
+        Path base = Files.createTempDirectory("gtmb-ebf-prepared-stock-")
+            .toRealPath();
         try {
-            Path receipt = Files.createDirectories(base.resolve("receipts").resolve(INSTANCE));
-            Path game = Files.createDirectories(base.resolve("launcher-data").resolve("instances").resolve(INSTANCE)
-                .resolve(".minecraft"));
+            Path receipt = Files.createDirectories(
+                base.resolve("receipts")
+                    .resolve(INSTANCE));
+            Path game = Files.createDirectories(
+                base.resolve("launcher-data")
+                    .resolve("instances")
+                    .resolve(INSTANCE)
+                    .resolve(".minecraft"));
             Path saves = Files.createDirectory(game.resolve("saves"));
             Path world = Files.createDirectory(saves.resolve("MiaoHost-" + RUN));
-            check(HologramEbfPreparedStock.ownedGame(game, receipt).equals(game), "receipt bound to exact instance");
+            check(
+                HologramEbfPreparedStock.ownedGame(game, receipt)
+                    .equals(game),
+                "receipt bound to exact instance");
             reject(() -> HologramEbfPreparedStock.ownedGame(saves, receipt), "receipt cannot cross game instances");
             reject(() -> HologramEbfPreparedStock.destination(world, saves, RUN, ACTOR), "marker is required");
             Path mark = world.resolve(".miaotest-host-owner.json");
@@ -85,43 +103,60 @@ public final class HologramEbfPreparedStockRegression {
             reject(() -> HologramEbfPreparedStock.destination(world, saves, RUN, ACTOR), "wrong marker parent");
             Files.delete(mark);
             marker(mark, RUN, saves);
-            Path expected = world.resolve("playerdata").resolve(ACTOR + ".dat");
-            check(HologramEbfPreparedStock.destination(world, saves, RUN, ACTOR).equals(expected),
+            Path expected = world.resolve("playerdata")
+                .resolve(ACTOR + ".dat");
+            check(
+                HologramEbfPreparedStock.destination(world, saves, RUN, ACTOR)
+                    .equals(expected),
                 "only this freshly marked actor path");
             Files.createDirectory(expected.getParent());
             Files.write(expected, new byte[] { 19 }, StandardOpenOption.CREATE_NEW);
             reject(() -> HologramEbfPreparedStock.destination(world, saves, RUN, ACTOR), "no existing playerdata");
             check(Files.readAllBytes(expected)[0] == 19, "failed gate does not overwrite old data");
-            if (base.getFileSystem().supportedFileAttributeViews().contains("posix")) {
+            if (base.getFileSystem()
+                .supportedFileAttributeViews()
+                .contains("posix")) {
                 Path alias = Files.createSymbolicLink(base.resolve("alias"), world);
                 reject(() -> HologramEbfPreparedStock.destination(alias, saves, RUN, ACTOR), "no symlink world");
             }
 
             var lease = lease(receipt, digest);
             HologramEbfPreparedStock.verifyLease(lease, RUN, ACTOR, ACTOR, digest, receipt);
-            reject(() -> HologramEbfPreparedStock.verifyLease(lease, RUN, ACTOR, UUID.fromString(TOOL), digest, receipt),
+            reject(
+                () -> HologramEbfPreparedStock.verifyLease(lease, RUN, ACTOR, UUID.fromString(TOOL), digest, receipt),
                 "same authenticated actor required");
-            reject(() -> HologramEbfPreparedStock.verifyLease(lease, RUN, ACTOR, ACTOR, BAD_PIN, receipt),
+            reject(
+                () -> HologramEbfPreparedStock.verifyLease(lease, RUN, ACTOR, ACTOR, BAD_PIN, receipt),
                 "lease hash does not match pinned recipe");
-            reject(() -> HologramEbfPreparedStock.verifyLease(lease, RUN, ACTOR, ACTOR, digest, game), "lease receipt root");
+            reject(
+                () -> HologramEbfPreparedStock.verifyLease(lease, RUN, ACTOR, ACTOR, digest, game),
+                "lease receipt root");
             var foreign = lease(receipt, digest);
-            foreign.getAsJsonObject("ebfPreparedStock").addProperty("nativeDonorActorSha256", BAD_PIN);
-            reject(() -> HologramEbfPreparedStock.verifyLease(foreign, RUN, ACTOR, ACTOR, digest, receipt),
+            foreign.getAsJsonObject("ebfPreparedStock")
+                .addProperty("nativeDonorActorSha256", BAD_PIN);
+            reject(
+                () -> HologramEbfPreparedStock.verifyLease(foreign, RUN, ACTOR, ACTOR, digest, receipt),
                 "authenticated actor must also match native tool's donor actor");
-            lease.getAsJsonObject("ebfPreparedStock").addProperty("borrowedWorld", "must not exist");
-            reject(() -> HologramEbfPreparedStock.verifyLease(lease, RUN, ACTOR, ACTOR, digest, receipt), "foreign lease field");
+            lease.getAsJsonObject("ebfPreparedStock")
+                .addProperty("borrowedWorld", "must not exist");
+            reject(
+                () -> HologramEbfPreparedStock.verifyLease(lease, RUN, ACTOR, ACTOR, digest, receipt),
+                "foreign lease field");
         } finally {
             try (var entries = Files.walk(base)) {
-                for (Path path : (Iterable<Path>) entries.sorted(Comparator.reverseOrder())::iterator) Files.delete(path);
+                for (Path path : (Iterable<Path>) entries.sorted(Comparator.reverseOrder())::iterator)
+                    Files.delete(path);
             }
         }
-        System.out.println("GTMB EBF prepared stock PASS: exact vanilla seed, actor/hash lease and fresh owned destination");
+        System.out
+            .println("GTMB EBF prepared stock PASS: exact vanilla seed, actor/hash lease and fresh owned destination");
         String input = System.getProperty("gtmb.testlab.headlessEbfSeed", "");
         if (!input.isEmpty()) {
-            Path exact = java.nio.file.Paths.get(input).toRealPath();
+            Path exact = java.nio.file.Paths.get(input)
+                .toRealPath();
             check(Files.size(exact) <= 4096, "bounded authentic seed");
-            HologramEbfPreparedStock.validate(Files.readAllBytes(exact),
-                System.getProperty("gtmb.testlab.headlessEbfSeedSha"), 10363);
+            HologramEbfPreparedStock
+                .validate(Files.readAllBytes(exact), System.getProperty("gtmb.testlab.headlessEbfSeedSha"), 10363);
             System.out.println("GTMB EBF prepared stock authentic seed bytes PASS");
         }
     }
@@ -132,7 +167,11 @@ public final class HologramEbfPreparedStockRegression {
         lease.addProperty("runId", RUN);
         fixture.addProperty("schema", HologramEbfPreparedStock.SCHEMA);
         fixture.addProperty("actorUuid", ACTOR.toString());
-        fixture.addProperty("nativeDonorActorSha256", HologramBlueprintArtifact.hash(ACTOR.toString().getBytes(StandardCharsets.US_ASCII)));
+        fixture.addProperty(
+            "nativeDonorActorSha256",
+            HologramBlueprintArtifact.hash(
+                ACTOR.toString()
+                    .getBytes(StandardCharsets.US_ASCII)));
         fixture.addProperty("sha256", digest);
         fixture.addProperty("receiptRoot", root.toString());
         lease.add("ebfPreparedStock", fixture);
@@ -143,7 +182,11 @@ public final class HologramEbfPreparedStockRegression {
         var marker = new JsonObject();
         marker.addProperty("runId", run);
         marker.addProperty("parent", parent.toString());
-        Files.write(target, marker.toString().getBytes(StandardCharsets.UTF_8), StandardOpenOption.CREATE_NEW);
+        Files.write(
+            target,
+            marker.toString()
+                .getBytes(StandardCharsets.UTF_8),
+            StandardOpenOption.CREATE_NEW);
     }
 
     private static NBTTagCompound copy(NBTTagCompound value) {
@@ -151,7 +194,8 @@ public final class HologramEbfPreparedStockRegression {
     }
 
     private static NBTTagCompound stack(NBTTagCompound data) {
-        return data.getTagList("Inventory", 10).getCompoundTagAt(0);
+        return data.getTagList("Inventory", 10)
+            .getCompoundTagAt(0);
     }
 
     private static byte[] encoded(NBTTagCompound data) throws IOException {
@@ -164,8 +208,11 @@ public final class HologramEbfPreparedStockRegression {
     }
 
     private static void reject(Check action, String label) throws Exception {
-        try { action.run(); }
-        catch (IOException denied) { return; }
+        try {
+            action.run();
+        } catch (IOException denied) {
+            return;
+        }
         throw new AssertionError("Accepted " + label);
     }
 
@@ -175,6 +222,7 @@ public final class HologramEbfPreparedStockRegression {
 
     @FunctionalInterface
     private interface Check {
+
         void run() throws Exception;
     }
 }

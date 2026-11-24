@@ -387,7 +387,8 @@ final class HologramActionDispatcher {
             return;
         }
         boolean lockedScope = construction && HologramStructureProjection.requiresLockedScope(s);
-        if (lockedScope && s.job != 1 && s.job != 2
+        if (lockedScope && s.job != 1
+            && s.job != 2
             && !HologramStructureProjection.allowLockedConfirmation(s, action, op)) {
             HologramSnapshots.send(s);
             return;
@@ -819,17 +820,28 @@ final class HologramActionDispatcher {
 
     private static boolean validNativeOperationOptions(HologramSession s, NBTTagCompound action) {
         if (!action.getBoolean("operationPreflight") || !action.hasKey("nativeOperationOpenId", 4)
-            || s.controllerOpenId <= 0 || action.getLong("nativeOperationOpenId") != s.controllerOpenId
-            || !action.hasKey("mode", 3) || action.getInteger("mode") < 0 || action.getInteger("mode") > 2
+            || s.controllerOpenId <= 0
+            || action.getLong("nativeOperationOpenId") != s.controllerOpenId
+            || !action.hasKey("mode", 3)
+            || action.getInteger("mode") < 0
+            || action.getInteger("mode") > 2
             || action.getInteger("mode") == 0 && !action.hasKey(HologramNativeOperationChoices.KEY, 9)
-            || !action.hasKey("main", 3) || !action.hasKey("channels", 10) || !action.hasKey("noHatches", 1)
-            || !action.hasKey("facing", 3) || !action.hasKey("scope", 3) || !action.hasKey("layer", 3)
-            || !action.hasKey("selected", 3) || !action.hasKey("selectedIndices", 11)
-            || action.hasKey("hatchProfile") || action.hasKey("applyHatchPreset")
-            || !HologramEditorWorkspaceRegistry.physicalProjection(s) || s.capture == null) return false;
+            || !action.hasKey("main", 3)
+            || !action.hasKey("channels", 10)
+            || !action.hasKey("noHatches", 1)
+            || !action.hasKey("facing", 3)
+            || !action.hasKey("scope", 3)
+            || !action.hasKey("layer", 3)
+            || !action.hasKey("selected", 3)
+            || !action.hasKey("selectedIndices", 11)
+            || action.hasKey("hatchProfile")
+            || action.hasKey("applyHatchPreset")
+            || !HologramEditorWorkspaceRegistry.physicalProjection(s)
+            || s.capture == null) return false;
         int max = s.capture.cells.size(), selected = action.getInteger("selected");
         int[] indices = action.getIntArray("selectedIndices");
-        if (selected < -1 || selected >= max || indices.length > max
+        if (selected < -1 || selected >= max
+            || indices.length > max
             || action.getInteger("scope") >= 2 && selected < 0 && indices.length == 0
             || action.getInteger("scope") == 3 && selected < 0) return false;
         for (int index : indices) if (index < 0 || index >= max) return false;
