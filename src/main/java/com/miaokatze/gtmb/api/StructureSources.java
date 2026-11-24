@@ -18,15 +18,87 @@ import net.minecraft.nbt.NBTTagList;
 
 import com.gtnewhorizon.structurelib.structure.IStructureDefinition;
 import com.gtnewhorizon.structurelib.structure.IStructureElement;
+import com.gtnewhorizon.structurelib.structure.StructureDefinition;
 
 /** Alternative declaration sources for standard GT controllers. This API never initiates a world operation. */
 public final class StructureSources {
 
     private static final Map<Class<?>, Entry<?>> SOURCES = new ConcurrentHashMap<>();
+    private static final Map<Class<?>, CompactNative> COMPACT_NATIVE = new ConcurrentHashMap<>();
     private static final List<BoundaryEntry> BOUNDARIES = new CopyOnWriteArrayList<>();
     private static final AtomicLong REVISION = new AtomicLong();
 
     private StructureSources() {}
+
+    /** One installed server-owned, immutable native piece. No callback may run during request admission. */
+    public static final class CompactNative {
+
+        private final String id, piece;
+        private final StructureDefinition<?> definition;
+        private final int a, b, c, maximumMain;
+        private final Map<String, int[]> channelRanges;
+
+        private CompactNative(String id, StructureDefinition<?> definition, String piece, int a, int b, int c,
+            int maximumMain) {
+            this.id = id;
+            this.definition = definition;
+            this.piece = piece;
+            this.a = a;
+            this.b = b;
+            this.c = c;
+            this.maximumMain = maximumMain;
+            Map<String, int[]> ranges = new java.util.HashMap<>();
+            for (var channel : definition.getChannelDefinitions())
+                ranges.put(channel.getChannel(), new int[] { channel.getMinimumValue(), channel.getMaximumValue() });
+            this.channelRanges = Collections.unmodifiableMap(ranges);
+        }
+
+        public boolean accepts(int main, NBTTagCompound channels) {
+            if (main < 1 || main > maximumMain || channels.func_150296_c().size() > 64) return false;
+            for (Object key : channels.func_150296_c()) {
+                String name = (String) key;
+                if (!channels.hasKey(name, 3) || !name.matches("[a-z0-9_.-]{1,48}") || "gt_hatch".equals(name))
+                    return false;
+                int[] declared = channelRanges.get(name);
+                int value = channels.getInteger(name);
+                if (declared == null || value < declared[0] || value > declared[1]) return false;
+            }
+            return true;
+        }
+    }
+
+    /**
+     * Opt in an audited, native, single fixed piece for an exact controller class. The registered definition and
+     * anchor must be the actual native buildPiece contract for the complete admitted trigger domain, not a second
+     * description of the machine. Pass the already-built definition; never register a mutable/custom iterator.
+     * Existing custom sources and unknown boundaries take precedence over this optional shortcut.
+     */
+    public static <C> GTMBExtensions.Registration registerCompactNative(String id, Class<C> type,
+        IStructureDefinition<C> definition, String piece, int a, int b, int c, int maximumMain) {
+        if (type == null || definition == null || definition.getClass() != StructureDefinition.class
+            || piece == null || piece.isEmpty() || piece.length() > 64 || maximumMain < 1
+            || definition.getStructureFor(piece) == null) throw new IllegalArgumentException("compact native declaration");
+        CompactNative source = new CompactNative(id, (StructureDefinition<?>) definition, piece, a, b, c, maximumMain);
+        return GTMBExtensions.install(id, "compact-native-structure", () -> {
+            if (COMPACT_NATIVE.putIfAbsent(type, source) != null)
+                throw new IllegalArgumentException("Compact native source already registered");
+            REVISION.incrementAndGet();
+            return () -> { if (COMPACT_NATIVE.remove(type, source)) REVISION.incrementAndGet(); };
+        });
+    }
+
+    public static CompactNative compactNative(Class<?> type) {
+        if (type == null || SOURCES.containsKey(type) || !BOUNDARIES.isEmpty()) return null;
+        return COMPACT_NATIVE.get(type);
+    }
+
+    /** Never invokes describe or boundary callbacks. Null is an explicit unsupported source for this operation. */
+    public static Resolution resolveCompactNative(Class<?> type, CompactNative pin, ItemStack trigger) {
+        long revision = REVISION.get();
+        if (pin == null || compactNative(type) != pin) return null;
+        var plan = new Plan(pin.definition, Collections.singletonList(new Piece(pin.piece, pin.a, pin.b, pin.c, trigger)));
+        return REVISION.get() == revision ? Resolution.ready(plan, null).bind(pin.id, revision, null) : null;
+    }
 
     public interface Source<C> {
 
