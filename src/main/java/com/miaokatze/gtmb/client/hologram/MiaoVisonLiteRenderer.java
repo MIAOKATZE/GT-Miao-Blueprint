@@ -89,6 +89,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     static int lastWorldPlacementOutlineColor;
     private static WorldRenderWitness worldRenderWitness;
     private static boolean worldSubmissionTiming;
+    private static long worldTimingEntry, worldTimingIndexed;
     private static long worldRenderGeneration;
     int lastPreviewRoleMarkers, lastPreviewAnchorMarkers;
     private static HologramState worldState;
@@ -2674,7 +2675,10 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         // Indexing and list compilation share a small frame budget. No structure coordinates
         // are discarded; distant groups remain cached and are built when the player approaches.
         long deadline = System.nanoTime() + WORLD_BUILD_NANOS;
+        if (timing && worldTimingEntry == 0) worldTimingEntry = started;
         indexWorld(state, deadline);
+        if (timing && worldTimingIndexed == 0 && worldIndex == state.cells.size())
+            worldTimingIndexed = System.nanoTime();
         int[] anchor = state.data.getBoolean("virtual") && state.data.getBoolean("moving")
             ? HologramClient.movingAnchor(state)
             : null;
@@ -2762,26 +2766,30 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         }
         if (witness && drawnLists > 0) worldRenderWitness = new WorldRenderWitness(
             state, anchor, offsetX, offsetY, offsetZ, ++worldRenderGeneration, drawnLists,
-            timing ? new WorldSubmissionTiming(firstSubmit, System.nanoTime(), started,
-                visibleGroups, completedGroups, worldIndex == state.cells.size(), pose) : null);
+            timing ? new WorldSubmissionTiming(firstSubmit, System.nanoTime(), started, worldTimingEntry,
+                worldTimingIndexed, visibleGroups, completedGroups, worldIndex == state.cells.size(), pose) : null);
     }
 
     /** TestLab owns activation on the render thread; normal world draws do not time or allocate samples. */
     static void worldSubmissionTiming(boolean enabled) {
         worldSubmissionTiming = enabled;
+        worldTimingEntry = worldTimingIndexed = 0;
     }
 
     static final class WorldSubmissionTiming {
 
-        final long firstSubmit, ended, renderNanos;
+        final long firstSubmit, ended, renderNanos, firstWorldEntry, occupancyComplete;
         final int visibleGroups, submittedCompleteGroups;
         final boolean complete;
         final HologramPreviewPose pose;
 
-        WorldSubmissionTiming(long firstSubmit, long ended, long started, int visibleGroups,
-            int submittedCompleteGroups, boolean indexComplete, HologramPreviewPose pose) {
+        WorldSubmissionTiming(long firstSubmit, long ended, long started, long firstWorldEntry,
+            long occupancyComplete, int visibleGroups, int submittedCompleteGroups, boolean indexComplete,
+            HologramPreviewPose pose) {
             this.firstSubmit = firstSubmit;
             this.ended = ended;
+            this.firstWorldEntry = firstWorldEntry;
+            this.occupancyComplete = occupancyComplete;
             renderNanos = ended - started;
             this.visibleGroups = visibleGroups;
             this.submittedCompleteGroups = submittedCompleteGroups;
@@ -2843,6 +2851,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         worldOccluders.clear();
         worldOutlineCells.clear();
         worldIndex = 0;
+        worldTimingEntry = worldTimingIndexed = 0;
     }
 
     /** Cached geometry calls this tiny list, so a local lock changes color without rebuilding the blueprint. */
