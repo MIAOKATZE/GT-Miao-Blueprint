@@ -4,6 +4,7 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import java.io.IOException;
+import java.lang.reflect.Proxy;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.Collections;
@@ -24,7 +25,6 @@ import gregtech.api.GregTechAPI;
 import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
 import gregtech.api.metatileentity.implementations.MTEHatchOutput;
 import gregtech.common.blocks.ItemMachines;
-import gregtech.common.tileentities.machines.multi.MTEElectricBlastFurnace;
 
 public final class HologramControllerDetailsRegression {
 
@@ -220,7 +220,12 @@ public final class HologramControllerDetailsRegression {
         while (id > 1 && (prototypes[id] != null || prototypes[id - 1] != null)) id--;
         SimpleAssert.that(id > 1, "two free registered GT prototype slots for native review regression");
         final int machineId = id, hatchId = id - 1;
-        prototypes[machineId] = new MTEElectricBlastFurnace("gtmb_test_legacy_backpack_ebf");
+        // A real registry entry on an ItemMachines backpack stack, but not a production controller class:
+        // loading the live EBF here would bind its static StructureLib casing definition before GT5U is bootstrapped.
+        prototypes[machineId] = (IMetaTileEntity) Proxy.newProxyInstance(IMetaTileEntity.class.getClassLoader(),
+            new Class<?>[] { IMetaTileEntity.class }, (fixture, method, args) -> {
+                throw new AssertionError("Legacy handpicked material only needs prototype identity: " + method.getName());
+            });
         try {
             prototypes[hatchId] = new MTEHatchOutput("gtmb_test_legacy_backpack_hatch", 1, new String[0], null);
             ItemStack existingMachine = new ItemStack(machines, 2, machineId);
