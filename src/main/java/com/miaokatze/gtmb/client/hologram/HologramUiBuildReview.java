@@ -87,6 +87,7 @@ final class HologramUiBuildReview implements LocalView {
         String blocker = HologramPlacementConfirmation.localStructureReviewBlocker(state);
         if (!blocker.isEmpty()) ui.session.notice(blocker);
         else {
+            closeLocalMaterials();
             localMaterials = new HologramLocalMaterialReview(state, ui.config.configuration());
             localMaterialSelectionVersion = ui.preview.selection()
                 .version();
@@ -108,6 +109,7 @@ final class HologramUiBuildReview implements LocalView {
     }
 
     void closeLocalMaterials() {
+        if (localMaterials != null) localMaterials.close();
         localMaterials = null;
         if (localMaterialDialog != null) localMaterialDialog.close();
     }
