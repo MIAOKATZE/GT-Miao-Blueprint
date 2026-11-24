@@ -369,7 +369,7 @@ final class HologramMaterialConfirmationDialog {
             panel.child(HologramMuiTheme.label(this::status, 14, 299, 604, 16, HologramMuiTheme.TEXT));
             panel.child(
                 HologramMuiTheme.label(
-                    () -> descriptive() ? "蓝图记录与背包观察仅供查看；明确提交后才核验施工。" : "非施工报价。AE 下单、抵扣和最终施工确认仍在服务端核验页。",
+                    () -> descriptive() ? "蓝图记录与背包观察仅供查看；明确提交后才核验施工。" : "本地估算，不是施工报价。普通补建核验通过后开始，自选仓室在服务端复核。",
                     14,
                     316,
                     604,

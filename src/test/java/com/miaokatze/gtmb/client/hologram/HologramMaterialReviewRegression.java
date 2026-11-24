@@ -268,6 +268,28 @@ public final class HologramMaterialReviewRegression {
             SimpleAssert.that(
                 ui.preview.activateControl(26) && view.localFrame() != null && ui.session.sequence() == 0,
                 "material view 26 opens the matching mode 0 local estimate without a session command");
+            HologramLocalMaterialReview frozen = ui.review.localMaterials();
+            int[] attempts = { 0 };
+            ui.review.submitLocalMaterials(settings -> {
+                attempts[0]++;
+                ui.session.notice("fixture pre-dispatch refusal");
+                return false;
+            });
+            SimpleAssert.that(
+                attempts[0] == 1 && ui.review.localMaterials() == frozen
+                    && "fixture pre-dispatch refusal".equals(view.localFrame().status()),
+                "a locally refused submit keeps the only current pane open and shows its reason");
+            ui.review.submitLocalMaterials(settings -> {
+                attempts[0]++;
+                return true;
+            });
+            ui.review.submitLocalMaterials(settings -> {
+                throw new AssertionError("a closed pane must not re-dispatch");
+            });
+            SimpleAssert.that(
+                attempts[0] == 2 && view.localFrame() == null && ui.session.sequence() == 0,
+                "successful local dispatch closes once without claiming a server acknowledgement");
+            ui.review.openNativeLocalMaterials();
             view.localAction(LocalAction.BACK);
             SimpleAssert.that(
                 view.localFrame() == null && ui.session.sequence() == 0,
@@ -284,9 +306,14 @@ public final class HologramMaterialReviewRegression {
             field(HologramUiSession.class, "state").set(ui.session, new HologramState(metadata));
             ui.review.openNativeLocalMaterials();
             player.inventory.currentItem = 1;
+            LocalFrame stale = view.localFrame();
             SimpleAssert.that(
-                view.localFrame() == null && !view.localSubmitAvailable(),
-                "the port does not publish stale rows or offer submission");
+                stale != null && stale.rows().hasNoTags() && !stale.ready() && !view.localSubmitAvailable()
+                    && stale.status().contains("已变化"),
+                "the visible pane explains stale ownership without exposing old rows or enabling submission");
+            ui.review.submitLocalMaterials(settings -> {
+                throw new AssertionError("a stale scope must not dispatch");
+            });
             view.localAction(LocalAction.REFRESH);
             SimpleAssert.that(
                 ui.review.localMaterials() == null && ui.review.openNativeLocalMaterials()
