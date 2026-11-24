@@ -696,11 +696,30 @@ public final class HologramLibrarySaveLifecycleRegression {
         unsafeField.setAccessible(true);
         sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
         HologramLibraryClient client = client();
-        set(client, "store", new HologramClientLibrary(Paths.get("build", "unused-public-download-lifecycle")));
+        java.nio.file.Path root = java.nio.file.Files.createTempDirectory("gtmb-public-copy-lifecycle");
+        boolean[] cancelStagedCopy = { false };
+        HologramClientLibrary library = new HologramClientLibrary(root, new HologramClientLibrary.PairIo() {
+
+            @Override
+            public HologramBlueprintArtifact.PairWrite write(java.nio.file.Path path, byte[] json, byte[] png,
+                java.util.function.BooleanSupplier current) throws IOException {
+                return HologramBlueprintArtifact.writePairPending(path, json, png, current);
+            }
+
+            @Override
+            public HologramBlueprintArtifact.Artifact read(java.nio.file.Path path) throws IOException {
+                if (cancelStagedCopy[0]) client.cancel();
+                return HologramBlueprintArtifact.readPair(path);
+            }
+        });
+        set(client, "store", library);
+        java.util.Queue<Runnable> clientQueue = new java.util.ArrayDeque<>();
         ThreadPoolExecutor worker = (ThreadPoolExecutor) get(client, "worker");
         worker.setThreadFactory(task -> null);
         try {
-            singleton.set(null, unsafe.allocateInstance(net.minecraft.client.Minecraft.class));
+            Object mc = unsafe.allocateInstance(net.minecraft.client.Minecraft.class);
+            set(mc, "field_152351_aB", clientQueue);
+            singleton.set(null, mc);
             PublicDownloadWire wire = (PublicDownloadWire) unsafe.allocateInstance(PublicDownloadWire.class);
             wire.requests = new java.util.ArrayList<>();
             channel.set(null, wire);
@@ -708,14 +727,18 @@ public final class HologramLibrarySaveLifecycleRegression {
             receive.setAccessible(true);
             String id = "public_" + java.util.UUID.randomUUID();
             byte[] json = ("{\"schema\":2,\"blueprint\":{\"schema\":2,\"id\":\"" + id
-                + "\",\"name\":\"Lifecycle\",\"cells\":[{\"x\":0,\"y\":0,\"z\":0,\"block\":\"minecraft:stone\"}]}}")
+                + "\",\"name\":\"Lifecycle\",\"authorName\":\"Fixture\",\"authorUuid\":\"" + java.util.UUID.randomUUID()
+                + "\",\"cells\":[{\"x\":0,\"y\":0,\"z\":0,\"block\":\"minecraft:stone\"}]}}")
                     .getBytes(StandardCharsets.UTF_8);
+            json = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.recompress(json,
+                HologramBlueprintArtifact.MAX_JSON_BYTES);
             java.awt.image.BufferedImage cover = new java.awt.image.BufferedImage(
                 HologramBlueprintArtifact.WIDTH, HologramBlueprintArtifact.HEIGHT, java.awt.image.BufferedImage.TYPE_INT_RGB);
             java.io.ByteArrayOutputStream png = new java.io.ByteArrayOutputStream();
             javax.imageio.ImageIO.write(cover, "png", png);
             byte[] artifact = HologramBlueprintArtifact.encode(json, png.toByteArray());
-            for (boolean done : new boolean[] { false, true }) {
+            for (int phase = 0; phase < 5; phase++) {
+                boolean done = phase != 0;
                 set(client, "selectedServer", id);
                 client.downloadSelected();
                 long task = client.backgroundTaskToken();
@@ -747,7 +770,52 @@ public final class HologramLibrarySaveLifecycleRegression {
                     SimpleAssert.that((Boolean) get(client, "downloadDoneAccepted") && worker.getQueue().size() == 1,
                         "completed download is queued for local verification, but worker has not started");
                 }
-                client.cancel();
+                if (phase >= 2) {
+                    cancelStagedCopy[0] = phase == 2;
+                    worker.getQueue().remove().run();
+                    cancelStagedCopy[0] = false;
+                    if (phase == 4) {
+                        SimpleAssert.eq(2, library.list().size(), "a second intentional download commits its own pair");
+                        Method invalidate = HologramLibraryClient.class.getDeclaredMethod("cancel", String.class, boolean.class);
+                        invalidate.setAccessible(true);
+                        invalidate.invoke(client, "fixture connection replaced", false);
+                        set(client, "selectedLocal", "");
+                        client.downloadSelected();
+                        long replacement = client.backgroundTaskToken();
+                        SimpleAssert.that(replacement > 0 && replacement != task, "the replacement has its own task");
+                        wire.requests.clear();
+                        drainPublicCopyCallbacks(clientQueue);
+                        SimpleAssert.that(client.backgroundTaskToken() == replacement && client.selected(false).isEmpty(),
+                            "a retired completion cannot select a copy or finish a newer task");
+                        client.cancel();
+                        continue;
+                    }
+                    if (phase == 3) {
+                        SimpleAssert.eq(1, library.list().size(), "one real indexed pair has committed before UI receipt");
+                        String saved = library.list().get(0).id;
+                        client.cancel();
+                        SimpleAssert.eq(task, client.backgroundTaskToken(), "cancel cannot retire a claimed pair");
+                        SimpleAssert.eq(0, wire.requests.size(), "completion waits on local disk only");
+                        drainPublicCopyCallbacks(clientQueue);
+                        SimpleAssert.eq(saved, client.selected(false), "the successful receipt selects the exact saved slot");
+                        SimpleAssert.that(client.status().contains(saved) && client.backgroundTaskToken() == 0,
+                            "the result reports the exact local artifact ID as saved, not cancelled");
+                        var actual = HologramBlueprintArtifact.readPair(library.savedPath(saved));
+                        var expected = HologramBlueprintArtifact.decode(artifact);
+                        SimpleAssert.that(java.util.Arrays.equals(expected.json, actual.json)
+                            && java.util.Arrays.equals(expected.png, actual.png), "committed copy preserves exact members");
+                        // Complete the ordinary local refresh before the next test action.
+                        worker.getQueue().remove().run();
+                        drainPublicCopyCallbacks(clientQueue);
+                        SimpleAssert.eq(0, wire.requests.size(), "refreshing the verified local copy sends no request");
+                        continue;
+                    }
+                    drainPublicCopyCallbacks(clientQueue);
+                    SimpleAssert.eq(0, library.list().size(), "cancellation during a staged write rolls the pair/index back");
+                } else {
+                    client.cancel();
+                    SimpleAssert.eq(0, library.list().size(), "cancellation before local commit leaves no copy");
+                }
                 SimpleAssert.eq(done ? 0 : 1, wire.requests.size(), "only an unfinished public download sends cancel");
                 if (!done) {
                     NBTTagCompound cancel = wire.requests.remove(0);
@@ -761,6 +829,24 @@ public final class HologramLibrarySaveLifecycleRegression {
             worker.shutdownNow();
             channel.set(null, previousChannel);
             singleton.set(null, previousClient);
+            try (java.util.stream.Stream<java.nio.file.Path> paths = java.nio.file.Files.walk(root)) {
+                for (java.nio.file.Path path : paths.sorted(java.util.Comparator.reverseOrder())
+                    .toArray(java.nio.file.Path[]::new)) java.nio.file.Files.deleteIfExists(path);
+            }
+        }
+    }
+
+    private static void drainPublicCopyCallbacks(java.util.Queue<Runnable> queue) {
+        for (Runnable callback; (callback = queue.poll()) != null;) {
+            callback.run();
+            try {
+                ((java.util.concurrent.Future<?>) callback).get();
+            } catch (InterruptedException interrupted) {
+                Thread.currentThread().interrupt();
+                throw new AssertionError("Public copy callback interrupted", interrupted);
+            } catch (java.util.concurrent.ExecutionException failed) {
+                throw new AssertionError("Public copy callback failed", failed.getCause());
+            }
         }
     }
 

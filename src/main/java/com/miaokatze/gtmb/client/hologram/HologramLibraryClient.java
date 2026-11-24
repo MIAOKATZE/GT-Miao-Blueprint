@@ -101,6 +101,7 @@ final class HologramLibraryClient {
     private boolean directPlacement;
     private boolean placementRequestSent;
     private PublicRead publicRead;
+    private volatile PublicCopySave publicCopySave;
     private PublicIdentity incomingPublic;
     private final java.util.LinkedHashMap<PublicIdentity, HologramBlueprintArtifact.Artifact> publicArtifacts = new java.util.LinkedHashMap<>(
         16,
@@ -223,6 +224,36 @@ final class HologramLibraryClient {
     @com.github.bsideup.jabel.Desugar
     private record PublicRead(PublicIdentity identity, PublicUse use, long browseEpoch,
         java.util.function.Consumer<byte[]> open, java.util.function.Consumer<String> failure) {}
+
+    /** The worker claims an already verified pair; cancellation and that claim cannot both win. */
+    private static final class PublicCopySave {
+
+        private enum Phase { OPEN, RETIRED, COMMITTING }
+
+        final long generation, task;
+        final String id = "local_" + UUID.randomUUID();
+        final HologramClientLibrary store;
+        private final java.util.concurrent.atomic.AtomicReference<Phase> phase =
+            new java.util.concurrent.atomic.AtomicReference<>(Phase.OPEN);
+
+        PublicCopySave(long generation, long task, HologramClientLibrary store) {
+            this.generation = generation;
+            this.task = task;
+            this.store = store;
+        }
+
+        boolean open() {
+            return phase.get() == Phase.OPEN;
+        }
+
+        boolean retire() {
+            return phase.compareAndSet(Phase.OPEN, Phase.RETIRED) || phase.get() == Phase.RETIRED;
+        }
+
+        boolean claim() {
+            return phase.compareAndSet(Phase.OPEN, Phase.COMMITTING);
+        }
+    }
 
     /** A frozen display source. File stamps are reuse hints, never server admission receipts. */
     static final class DisplaySource {
@@ -970,6 +1001,11 @@ final class HologramLibraryClient {
     }
 
     private void advanceGeneration() {
+        PublicCopySave copy = publicCopySave;
+        if (copy != null) {
+            copy.retire();
+            publicCopySave = null;
+        }
         generation++;
         worker.getQueue()
             .removeIf(task -> task instanceof QueuedWork && !((QueuedWork) task).durable);
@@ -1772,6 +1808,7 @@ final class HologramLibraryClient {
             : browseEpoch;
         PublicRead read = new PublicRead(identity, use, epoch, open, failure);
         publicRead = read;
+        if (use == PublicUse.COPY) publicCopySave = new PublicCopySave(generation, backgroundTaskToken, store);
         preparing = true;
         HologramBlueprintArtifact.Artifact cached = publicArtifacts.get(identity);
         if (cached != null) {
@@ -1798,7 +1835,8 @@ final class HologramLibraryClient {
         if (read.use() == PublicUse.COPY) {
             HologramCompactRequiredException.require(artifact.json);
             main(() -> retainPublicArtifact(identity, artifact, token));
-            persistArtifact(artifact.json, artifact.png, "", "", "", 0, token, serverKey);
+            PublicCopySave copy = publicCopySave;
+            if (copy != null && copy.generation == token) persistPublicCopy(copy, artifact, serverKey);
             return;
         }
         if (read.use() == PublicUse.EDIT) {
@@ -2380,10 +2418,10 @@ final class HologramLibraryClient {
         status = "等待服务器确认设置";
     }
 
-    /** A staged pair stays owned until the matching server receipt resolves commit versus rollback. */
+    /** A staged pair stays owned until its matching receipt resolves commit versus rollback. */
     boolean cancelBackgroundTask() {
         cancel();
-        return pendingDiskSave == null;
+        return pendingDiskSave == null && publicCopySave == null;
     }
 
     void cancel() {
@@ -2391,6 +2429,11 @@ final class HologramLibraryClient {
     }
 
     private void cancel(String reason, boolean cancelled) {
+        PublicCopySave copy = publicCopySave;
+        if (cancelled && copy != null && !copy.retire()) {
+            status = "本地蓝图已进入保存提交，正在确认文件";
+            return;
+        }
         savePreviewPose = null;
         boolean localDisplay = localDisplayTask || placementRequest != null;
         UUID placement = placementRequest;
@@ -3061,6 +3104,44 @@ final class HologramLibraryClient {
     }
 
     /** Native saves are staged until the server validates their source-bound PNG; downloads retain supplied pixels. */
+    private void persistPublicCopy(PublicCopySave copy, HologramBlueprintArtifact.Artifact artifact, String serverKey)
+        throws java.io.IOException {
+        if (copy.generation != generation || !copy.open()) return;
+        HologramClientLibrary.LocalSave local = copy.store.preparePrivateDocumentSave(artifact.json, artifact.png, copy.id,
+            () -> copy.generation == generation && copy.open());
+        if (!copy.claim()) {
+            local.write.rollback();
+            return;
+        }
+        local.write.commit();
+        // The staged receipt already verified the exact JSON, PNG, and logical index. A preference write is not
+        // part of the copy transaction and cannot turn an accepted pair into a failed download.
+        boolean remembered = false;
+        if (copy.generation == generation) try {
+            copy.store.rememberLocal(serverKey, copy.id);
+            remembered = true;
+        } catch (java.io.IOException | RuntimeException ignored) {
+            // The saved artifact remains available from the indexed local library.
+        }
+        boolean quickSourceAvailable = remembered;
+        main(() -> finishPublicCopy(copy, local, quickSourceAvailable));
+    }
+
+    private void finishPublicCopy(PublicCopySave copy, HologramClientLibrary.LocalSave local, boolean remembered) {
+        if (copy != publicCopySave || copy.generation != generation || copy.task != backgroundTaskToken) return;
+        publicCopySave = null;
+        publicRead = null;
+        progressCompleted();
+        selectedLocal = copy.id;
+        if (remembered) knownQuickSource = 1;
+        announceSaved(local.name, local.path);
+        String detail = "蓝图已下载并保存 · " + copy.id;
+        finishBackgroundTask(copy.task, true, detail);
+        preparing = false;
+        status = detail;
+        refreshLocal();
+    }
+
     private void persistArtifact(byte[] json, byte[] preview, String replace, String receipt, String session,
         long revision, long token, String serverKey) throws Exception {
         long originalBackgroundToken = backgroundTaskToken;
