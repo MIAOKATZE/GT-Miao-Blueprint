@@ -57,6 +57,7 @@ public final class HologramControllerCaptureRegression {
             Field field = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
             field.setAccessible(true);
             sun.misc.Unsafe unsafe = (sun.misc.Unsafe) field.get(null);
+            orderedAdmissionSlices();
             retryCadence(unsafe);
             nativePrefix(unsafe);
             finishSlices(unsafe);
@@ -72,6 +73,47 @@ public final class HologramControllerCaptureRegression {
             Thread.currentThread()
                 .setName(threadName);
         }
+    }
+
+    static void orderedAdmissionSlices() throws java.io.IOException {
+        var sweep = new HologramPlacementAdmissionSweep(4);
+        var time = new java.util.concurrent.atomic.AtomicLong(0);
+        int[][] positions = { {2, 50, 4}, {1, 49, 6}, {5, 50, 3}, {-1, 50, 4} };
+        var observed = new java.util.ArrayList<Integer>();
+        var admitted = new java.util.ArrayList<Integer>();
+        HologramPlacementAdmissionSweep.CellCheck inspect = index -> {
+            observed.add(index);
+            int[] p = positions[index];
+            sweep.stage(index, p[0], p[1], p[2]);
+            time.incrementAndGet();
+            return true;
+        };
+        var deadline = new HologramPlacementAdmissionSweep.Slice(7, 2, time::get);
+        SimpleAssert.eq(HologramPlacementAdmissionSweep.Progress.PENDING, sweep.inspect(deadline, inspect),
+            "deadline slices exact prefix without publishing partial admission");
+        SimpleAssert.eq(java.util.Arrays.asList(0, 1), observed, "no extra cell is read after the deadline");
+        SimpleAssert.that(!sweep.drain(deadline, admitted::add) && admitted.isEmpty(),
+            "cannot drain incomplete expected-world checks");
+
+        var cap = new HologramPlacementAdmissionSweep.Slice(3, 20, time::get);
+        SimpleAssert.eq(HologramPlacementAdmissionSweep.Progress.COMPLETE, sweep.inspect(cap, inspect),
+            "bounded input continues from the existing cursor");
+        SimpleAssert.that(!sweep.drain(cap, admitted::add) && admitted.equals(java.util.Arrays.asList(1)),
+            "inspection and ordered work drain share the same row allowance");
+        SimpleAssert.that(sweep.drain(new HologramPlacementAdmissionSweep.Slice(3, 20, time::get), admitted::add)
+            && admitted.equals(java.util.Arrays.asList(1, 2, 3, 0)), "stable canonical Y/Z/X sequence; no re-reads");
+        SimpleAssert.eq(java.util.Arrays.asList(0, 1, 2, 3), observed, "each input is inspected once");
+
+        var stale = new HologramPlacementAdmissionSweep(2);
+        var allowance = new HologramPlacementAdmissionSweep.Slice(5, 20, time::get);
+        SimpleAssert.eq(HologramPlacementAdmissionSweep.Progress.RETIRED, stale.inspect(allowance, index -> {
+            if (index == 1) return false;
+            stale.stage(index, 0, 0, 0);
+            return true;
+        }), "failed authoritative observation retires earlier staged work");
+        SimpleAssert.that(stale.isEmpty() && !stale.drain(allowance, index -> {
+            throw new AssertionError("retired work cannot reach the execution list");
+        }), "no staged work escapes a retired pass");
     }
 
     private static EntityPlayerMP player(sun.misc.Unsafe unsafe) throws ReflectiveOperationException {
@@ -985,6 +1027,41 @@ public final class HologramControllerCaptureRegression {
         }
     }
 
+    private static void retainedPhysicalAnchor(HologramSession s) {
+        HologramCapture.Cell anchor = s.capture.cells.stream().filter(cell -> cell.anchor).findFirst().orElseThrow();
+        SimpleAssert.that(HologramExecutionReview.retainedPhysicalAnchor(s, anchor),
+            "only the exact existing physical controller can be retained without adding work");
+        for (HologramCapture.Cell cell : s.capture.cells)
+            if (cell != anchor) SimpleAssert.that(!HologramExecutionReview.retainedPhysicalAnchor(s, cell),
+                "no other protected or ordinary cell obtains the anchor exception");
+        HologramCapture.Cell impostor = new HologramCapture.Cell(null, anchor.x, anchor.y, anchor.z);
+        impostor.anchor = true;
+        impostor.stableIndex = anchor.stableIndex;
+        SimpleAssert.that(!HologramExecutionReview.retainedPhysicalAnchor(s, impostor),
+            "matching coordinate and flag are not an authoritative anchor");
+        int mode = s.mode, facing = s.facing;
+        boolean virtual = s.virtual;
+        try {
+            for (int destructive = 1; destructive <= 2; destructive++) {
+                s.mode = destructive;
+                SimpleAssert.that(!HologramExecutionReview.retainedPhysicalAnchor(s, anchor),
+                    "replace/remove never receive ordinary native PLACE admission");
+            }
+            s.mode = mode;
+            s.virtual = true;
+            SimpleAssert.that(!HologramExecutionReview.retainedPhysicalAnchor(s, anchor),
+                "virtual locked authority never substitutes for physical controller");
+            s.virtual = virtual;
+            s.facing = (facing + 1) % 6;
+            SimpleAssert.that(!HologramExecutionReview.retainedPhysicalAnchor(s, anchor),
+                "a changed controller pose invalidates the anchor");
+        } finally {
+            s.mode = mode;
+            s.facing = facing;
+            s.virtual = virtual;
+        }
+    }
+
     private static void operationReviews(HologramSession s, ItemStack energy, ItemStack muffler)
         throws ReflectiveOperationException, java.io.IOException {
         s.actionTick = Long.MIN_VALUE;
@@ -1016,6 +1093,7 @@ public final class HologramControllerCaptureRegression {
         SimpleAssert.that(
             ready.getBoolean("operationPrepared") && ready.getBoolean("operationReviewRequired"),
             "the completed native operation publishes its exact command's new-review receipt");
+        retainedPhysicalAnchor(s);
         HologramActionDispatcher.handle(s.player, presetAction(s, "scan"));
         complete(s);
         SimpleAssert.that(
