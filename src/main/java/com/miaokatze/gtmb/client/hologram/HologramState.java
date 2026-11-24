@@ -18,6 +18,7 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
 import com.miaokatze.gtmb.hologram.HologramBlueprintLimits;
+import com.miaokatze.gtmb.hologram.HologramControllerMaterialCounts;
 import com.miaokatze.gtmb.hologram.HologramControllerTarget;
 import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 import com.miaokatze.gtmb.hologram.HologramSnapshotPalette;
@@ -31,6 +32,7 @@ final class HologramState {
     final String session;
     final List<Cell> cells;
     final List<Material> materials;
+    final HologramControllerMaterialCounts controllerMaterialCounts;
     final HologramRegionCache regions;
     final Object identity = new Object();
     final Object parentIdentity;
@@ -46,6 +48,7 @@ final class HologramState {
     private int minWorldX, maxWorldX, minWorldY, maxWorldY, minWorldZ, maxWorldZ;
 
     HologramState(NBTTagCompound source) {
+        controllerMaterialCounts = null;
         fullBaseline = fullBaseline(source);
         controllerTargetIdentity = null;
         plainDisplayExamples = Collections.emptyList();
@@ -99,6 +102,7 @@ final class HologramState {
     }
 
     private HologramState(Preparation ready) {
+        controllerMaterialCounts = ready.controllerMaterialCounts;
         fullBaseline = ready.fullBaseline;
         controllerTargetIdentity = null;
         plainDisplayExamples = Collections.unmodifiableList(ready.plainDisplayExamples);
@@ -168,6 +172,7 @@ final class HologramState {
 
     /** A new local presentation, retaining only sealed CPU geometry and no old publication lineage. */
     private HologramState(NBTTagCompound fresh, LocalGeometry geometry) {
+        controllerMaterialCounts = null;
         data = metadata(fresh);
         session = data.getString("session");
         cells = geometry.cells;
@@ -191,6 +196,7 @@ final class HologramState {
 
     private HologramState(ControllerDetails ready) {
         HologramState geometry = ready.geometry;
+        controllerMaterialCounts = geometry.controllerMaterialCounts;
         data = ready.data;
         session = geometry.session;
         cells = ready.enriched;
@@ -268,6 +274,11 @@ final class HologramState {
             }
         }
 
+        NBTTagCompound interactionRow(int index) {
+            if (Thread.currentThread() != owner || index < 0 || index >= rows.tagCount()) return null;
+            return (NBTTagCompound) rows.getCompoundTagAt(index).copy();
+        }
+
         boolean step(int maxRows, long maxNanos) {
             if (Thread.currentThread() != owner || maxRows < 1 || maxNanos < 1)
                 throw new IllegalArgumentException("Invalid controller detail budget");
@@ -300,6 +311,7 @@ final class HologramState {
 
     /** Metadata decorators share geometry; preserve the incoming publication's renderer and selection obligations. */
     private HologramState(HologramState decorated, HologramState publication) {
+        controllerMaterialCounts = decorated.controllerMaterialCounts;
         data = decorated.data;
         session = decorated.session;
         cells = decorated.cells;
@@ -326,6 +338,7 @@ final class HologramState {
 
     /** One bounded early view shares completed cells and owns its small spatial index. */
     private HologramState(Preparation ready, int count) {
+        controllerMaterialCounts = null;
         fullBaseline = false;
         controllerTargetIdentity = null;
         plainDisplayExamples = Collections.emptyList();
@@ -401,6 +414,7 @@ final class HologramState {
         private final boolean anonymousCompact;
         private final HologramBlueprintPreview.CompactCells compactCells;
         private final List<HologramControllerTarget.Cell> controllerCells;
+        private final HologramControllerMaterialCounts controllerMaterialCounts;
         private final DescriptorTemplate[] compactMaterials;
         private final boolean[] seenCompactMaterials;
         private int compactDescriptorCursor;
@@ -425,15 +439,16 @@ final class HologramState {
         }
 
         Preparation(NBTTagCompound source, boolean displayRows, HologramBlueprintPreview.CompactCells compactCells) {
-            this(source, displayRows, compactCells, null);
+            this(source, displayRows, compactCells, null, null);
         }
 
         Preparation(HologramControllerTarget.Projection target) {
-            this(target.metadata(), false, null, target.cells());
+            this(target.metadata(), false, null, target.cells(), target.materialCounts());
         }
 
         private Preparation(NBTTagCompound source, boolean displayRows,
-            HologramBlueprintPreview.CompactCells compactCells, List<HologramControllerTarget.Cell> controllerCells) {
+            HologramBlueprintPreview.CompactCells compactCells, List<HologramControllerTarget.Cell> controllerCells,
+            HologramControllerMaterialCounts controllerMaterialCounts) {
             this.source = source;
             packed = HologramSnapshotPalette.isPacked(source);
             projection = source.getBoolean("structureProjection");
@@ -444,6 +459,7 @@ final class HologramState {
             this.compactCells = compactCells;
             anonymousCompact = compactCells != null && !compactCells.editorRows();
             this.controllerCells = controllerCells;
+            this.controllerMaterialCounts = controllerMaterialCounts;
             regions = new HologramRegionCache.Builder(compactCells != null || controllerCells != null);
             compactMaterials = compactCells == null ? null : new DescriptorTemplate[compactCells.materialCount()];
             seenCompactMaterials = compactCells == null ? null : new boolean[compactCells.materialCount()];
@@ -823,6 +839,7 @@ final class HologramState {
             if (!indices.contains(index)) throw new IllegalArgumentException("Missing appended topology cell");
         changedPreviousCells = Collections.unmodifiableList(before);
         cells = pages == null ? base.cells : pages;
+        controllerMaterialCounts = updateControllerMaterialCounts(base, patch);
         regions = before.isEmpty() && changedIndices.length == 0 ? base.regions
             : new HologramRegionCache(base.regions, cells, changedIndices, before, topologyChanged);
         if (topologyChanged) for (int index : changedIndices) {
@@ -854,6 +871,24 @@ final class HologramState {
     }
 
     /** A delta never copies or reparses the complete cells NBT tree. */
+    private HologramControllerMaterialCounts updateControllerMaterialCounts(HologramState base, NBTTagCompound patch) {
+        HologramControllerMaterialCounts counts = base.controllerMaterialCounts;
+        if (counts == null || topologyChanged || patch.getBoolean("capturePending") || changedIndices.length > 1
+            || !base.data.getString("generation").equals(data.getString("generation"))) return null;
+        if (changedIndices.length == 0) return counts;
+        int index = changedIndices[0];
+        Cell before = base.cells.get(index), after = cells.get(index);
+        if (HologramControllerMaterialCounts.sourceWater(before.capturedNativeTarget(),
+            data.getInteger("x"), data.getInteger("y"), data.getInteger("z"))) return null;
+        try {
+            return counts.replace(
+                HologramLocalMaterialReview.contribution(base, before),
+                HologramLocalMaterialReview.contribution(this, after));
+        } catch (IllegalStateException inconsistent) {
+            return null; // Never show the previous whole shape as the edited plan's materials.
+        }
+    }
+
     static HologramState apply(HologramState base, NBTTagCompound source) {
         if (source.getBoolean("areaSelectionOnly")) return applyAreaSelection(base, source);
         if (!source.getBoolean("partial")) return new HologramState(source).retainAreaSelection(base);
@@ -1370,7 +1405,7 @@ final class HologramState {
             if (!compactPlain) for (ItemStack candidate : value.candidates) candidates.add(candidate.copy());
         }
 
-        private Cell(Cell target, NBTTagCompound details) {
+        Cell(Cell target, NBTTagCompound details) {
             raw = target.raw;
             controllerCell = target.controllerCell;
             plainMaterialItem = target.plainMaterialItem;

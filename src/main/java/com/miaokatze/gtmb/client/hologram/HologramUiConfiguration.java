@@ -991,12 +991,13 @@ final class HologramUiConfiguration {
     }
 
     void chooseOption(NBTTagCompound cap, int index) {
-        if (cap == null || !cap.getBoolean("editable") || !ui.session.editable()) return;
+        if (cap == null || !cap.getBoolean("editable")) return;
+        boolean selectedCandidate = "hatchCandidate".equals(cap.getString("kind"));
+        if (selectedCandidate ? !ui.session.selectedNativeEditable() : !ui.session.configurationEditable()) return;
         NBTTagList options = cap.getTagList("options", 10);
         if (index < 0 || index >= options.tagCount()) return;
         NBTTagCompound option = options.getCompoundTagAt(index), config = ui.config.configuration();
-        if (cap.getString("kind")
-            .equals("hatchCandidate")) {
+        if (selectedCandidate) {
             config = new NBTTagCompound();
             config.setInteger("selected", ui.preview.selected());
             config.setInteger("choiceindex", option.getInteger("value"));
@@ -1086,7 +1087,7 @@ final class HologramUiConfiguration {
     }
 
     void applyRawChannel(String name, String raw) {
-        if (!ui.session.editable()) return;
+        if (!ui.session.configurationEditable()) return;
         if (!name.matches("[a-z0-9_.-]{1,48}") || "_hatch_candidate".equals(name)) {
             ui.session.notice("name须为1–48位小写字母、数字、_、.或-");
             return;
@@ -1135,7 +1136,7 @@ final class HologramUiConfiguration {
     }
 
     void configure(String key, int value) {
-        if (!ui.session.editable()) return;
+        if (!ui.session.configurationEditable()) return;
         NBTTagCompound n = ui.config.configuration();
         n.setInteger(key, value);
         ui.session.send("configure", n, true);
@@ -1196,6 +1197,7 @@ final class HologramUiConfiguration {
 
     boolean selectModeControl(int id) {
         if (id >= 70 && id <= 72) {
+            if (!ui.session.configurationEditable()) return true;
             NBTTagCompound modeConfig = ui.config.configuration();
             modeConfig.setInteger("mode", id - 70);
             if (id == 72) {
@@ -1286,7 +1288,7 @@ final class HologramUiConfiguration {
                 this.presetOffset = customPresets ? 0 : Math.max(0, this.presetTier - 2);
                 return true;
             case 95:
-                if (ui.session.selectedCell() == null) return true;
+                if (!ui.session.selectedNativeEditable()) return true;
                 ui.config.requestSelectedDetails();
                 ui.preview.inventory(false);
                 ui.preview.inventorySlot(ui.preview.sourceChoice(-1));
@@ -1320,7 +1322,7 @@ final class HologramUiConfiguration {
                 return true;
             case 99:
             case 102:
-                if (!ui.session.editable()) return true;
+                if (!ui.session.selectedNativeEditable()) return true;
                 int[] facings = ui.session.cellTag()
                     .getIntArray("hatchFacings");
                 int nextFacing = -1;
@@ -1370,7 +1372,7 @@ final class HologramUiConfiguration {
                 if (previous != null) applyHatchProfile(previous, previous.getBoolean("basic"));
                 return true;
             case 1716:
-                if (ui.session.editable()) {
+                if (ui.session.configurationEditable()) {
                     NBTTagCompound previousSources = lastPreset(false);
                     if (previousSources != null) {
                         NBTTagCompound sources = configuration();
@@ -1410,7 +1412,7 @@ final class HologramUiConfiguration {
                 ui.config.applyRawChannel(this.optionChannel, this.optionValueField.getText());
                 return true;
             case 30:
-                if (!ui.session.editable()) return true;
+                if (!ui.session.configurationEditable()) return true;
                 try {
                     int value = Integer.parseInt(
                         this.mainField.getText()
@@ -1422,7 +1424,7 @@ final class HologramUiConfiguration {
                 }
                 return true;
             case 33:
-                if (ui.session.editable()) {
+                if (ui.session.configurationEditable()) {
                     NBTTagCompound n = ui.config.configuration();
                     n.setBoolean("noHatches", !ui.session.state().data.getBoolean("noHatches"));
                     ui.session.send("configure", n, true);
@@ -1448,7 +1450,7 @@ final class HologramUiConfiguration {
             case 84:
             case 85:
             case 86:
-                if (ui.session.editable()) {
+                if (ui.session.configurationEditable()) {
                     String key = new String[] { "materialMain", "materialContainers", "materialMe" }[id - 84];
                     NBTTagCompound sourceConfig = ui.config.configuration();
                     sourceConfig.setBoolean(key, !ui.config.sourceEnabled(key));

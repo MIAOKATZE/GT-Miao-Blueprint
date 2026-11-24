@@ -46,7 +46,8 @@ final class HologramMaterialConfirmationDialog {
         BACK,
         REFRESH,
         SUBMIT,
-        ADVANCED
+        ADVANCED,
+        DETAILS
     }
 
     /** The port lends its current detached rows for read-only rendering. */
@@ -66,8 +67,24 @@ final class HologramMaterialConfirmationDialog {
 
         boolean localSubmitAvailable();
 
+        default boolean describesNativeTargets() {
+            return false;
+        }
+
         default boolean supportsAdvancedPlacement() {
             return false;
+        }
+
+        default boolean supportsDetailedMaterials() {
+            return false;
+        }
+
+        default boolean localDetailsAvailable() {
+            return false;
+        }
+
+        default String localDetailsLabel() {
+            return "";
         }
 
         default String localSubmitLabel() {
@@ -176,7 +193,10 @@ final class HologramMaterialConfirmationDialog {
             case 245 -> new int[] { 400, 340, 218 };
             case 246 -> new int[] { 476, 369, 142 };
             case 247 -> new int[] { 338, 369, 132 };
-            case 248 -> local && localView.supportsAdvancedPlacement() ? new int[] { 14, 369, 314 } : null;
+            case 248 -> local && localView.supportsAdvancedPlacement()
+                ? new int[] { localView.supportsDetailedMaterials() ? 174 : 14, 369,
+                    localView.supportsDetailedMaterials() ? 154 : 314 } : null;
+            case 249 -> local && localView.supportsDetailedMaterials() ? new int[] { 14, 369, 150 } : null;
             default -> null;
         };
         if (bounds == null) return null;
@@ -292,7 +312,8 @@ final class HologramMaterialConfirmationDialog {
             HologramMuiTheme.label(this::reviewHint, 14, 55, 604, 15, HologramMuiTheme.MUTED)
                 .tooltipBuilder(t -> {
                     if (descriptive()) {
-                        t.addLine("原图记录格数不是施工需求；背包同物品数量不代表可扣料。");
+                        t.addLine(localView.describesNativeTargets() ? "原生目标基材不含附属资源和设备 NBT；背包观察不代表可扣料。"
+                            : "原图记录格数不是施工需求；背包同物品数量不代表可扣料。");
                         return;
                     }
                     if (local) {
@@ -307,7 +328,8 @@ final class HologramMaterialConfirmationDialog {
                 .tooltipAutoUpdate(true));
         panel.child(
             HologramMuiTheme.label(
-                () -> descriptive() ? "原图物品身份" : "材料 / 精确 NBT 条目",
+                () -> descriptive() ? localView.describesNativeTargets() ? "目标基材身份" : "原图物品身份"
+                    : "材料 / 精确 NBT 条目",
                 42 + ROW_INSET,
                 77,
                 220,
@@ -315,7 +337,8 @@ final class HologramMaterialConfirmationDialog {
                 HologramMuiTheme.TITLE));
         panel.child(
             HologramMuiTheme
-                .label(() -> descriptive() ? "蓝图记录格数" : "需求", 270 + ROW_INSET, 77, 110, 15, HologramMuiTheme.TITLE));
+                .label(() -> descriptive() ? localView.describesNativeTargets() ? "原生目标格数" : "蓝图记录格数" : "需求",
+                    270 + ROW_INSET, 77, 110, 15, HologramMuiTheme.TITLE));
         panel.child(
             HologramMuiTheme.label(
                 () -> descriptive() ? "本机背包同物品" : local ? "背包已知" : "已有",
@@ -375,13 +398,23 @@ final class HologramMaterialConfirmationDialog {
                     604,
                     16,
                     HologramMuiTheme.MUTED));
+            boolean details = localView.supportsDetailedMaterials();
+            if (details) panel.child(button(
+                249,
+                localView::localDetailsLabel,
+                14,
+                369,
+                150,
+                () -> localView.localAction(LocalAction.DETAILS),
+                localView::localDetailsAvailable,
+                () -> 0).tooltipBuilder(t -> t.addLine("仅本地统计指定结构，不请求或开始施工。")));
             if (localView.supportsAdvancedPlacement()) panel.child(
                 button(
                     248,
-                    () -> "高级施工选项（旧流程）…",
-                    14,
+                    () -> details ? "高级施工选项…" : "高级施工选项（旧流程）…",
+                    details ? 174 : 14,
                     369,
-                    314,
+                    details ? 154 : 314,
                     () -> localView.localAction(LocalAction.ADVANCED),
                     localView::localSubmitAvailable,
                     () -> 0).tooltipBuilder(t -> {
@@ -606,7 +639,9 @@ final class HologramMaterialConfirmationDialog {
     }
 
     private String reviewHint() {
-        if (descriptive()) return "查看原图记录和本机背包；施工用量、容器及 AE 均未核验。";
+        if (descriptive()) return localView.describesNativeTargets()
+            ? "原生预览目标基材；背包独立观察，施工用量、容器及 AE 均未核验。"
+            : "查看原图记录和本机背包；施工用量、容器及 AE 均未核验。";
         if (local) return "理论需求与本机背包；AE / 容器库存未知，不查询服务器。";
         if (lessonClose != null) return "同一规划的精确材料需求 · 教学库存为 0 · 此处不查询玩家库存或执行施工";
         boolean creative = state().getCompoundTag("materialQuote")

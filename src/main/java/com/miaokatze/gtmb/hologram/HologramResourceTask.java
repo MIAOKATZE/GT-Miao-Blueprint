@@ -4,10 +4,13 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.io.IOException;
+import java.math.BigInteger;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -23,6 +26,7 @@ final class HologramResourceTask {
     private final HologramSession s;
     private final HologramPlanClassifier classifier;
     private final HologramNativeItemBill nativeItems;
+    private final DirectDemand direct;
     private final Map<ExactKey, ItemStack> stacks = new LinkedHashMap<>();
     private final Map<ExactKey, Integer> counts = new LinkedHashMap<>();
     private final Map<ExactKey, Long> decorReserved = new HashMap<>();
@@ -45,9 +49,15 @@ final class HologramResourceTask {
     }
 
     HologramResourceTask(HologramSession s, HologramPlanClassifier classifier, boolean observeNativeItems) {
+        this(s, classifier, observeNativeItems, null);
+    }
+
+    HologramResourceTask(HologramSession s, HologramPlanClassifier classifier, boolean observeNativeItems,
+        DirectDemand direct) {
         this.s = s;
         this.classifier = classifier;
         nativeItems = observeNativeItems ? new HologramNativeItemBill(s) : null;
+        this.direct = direct;
     }
 
     HologramNativeItemBill nativeItemBill() {
@@ -55,7 +65,7 @@ final class HologramResourceTask {
     }
 
     boolean done() {
-        return stage == 13;
+        return stage == 14;
     }
 
     String phase() {
@@ -84,6 +94,8 @@ final class HologramResourceTask {
                 return "resources.shell-index";
             case 11:
                 return "resources.shared-shells";
+            case 13:
+                return "resources.direct-demand";
             default:
                 return "resources.blockers";
         }
@@ -105,6 +117,7 @@ final class HologramResourceTask {
         if (stage == 3) return s.decorPlanItems.size();
         if (stage == 5 || stage == 7 || stage == 10 || stage == 11) return stacks.size();
         if (stage == 9) return s.blueprintResources.items.size();
+        if (stage == 13) return s.blueprintResources.items.size();
         return s.capture.cells.size();
     }
 
@@ -288,7 +301,11 @@ final class HologramResourceTask {
         } else if (stage == 12) {
             if (cursor == s.capture.cells.size()) {
                 if (nativeItems != null) nativeItems.finish();
-                stage = 13;
+                if (direct == null) stage = 14;
+                else {
+                    cursor = 0;
+                    stage = 13;
+                }
                 return;
             }
             int i = cursor++;
@@ -299,6 +316,16 @@ final class HologramResourceTask {
             if (s.blueprintResourceMissing.isEmpty()) s.blueprintResourceMissing = cell.resourceError;
             else if (!s.blueprintResourceMissing.contains(cell.resourceError))
                 s.blueprintResourceMissing += "；" + cell.resourceError;
+        } else if (stage == 13) {
+            // Already aggregated by exact payload identity; this list also contains each chosen decoration cost once.
+            List<ItemStack> items = s.blueprintResources.items;
+            if (!direct.creative && cursor < items.size()) {
+                ItemStack item = items.get(cursor++);
+                direct.add(item, item.stackSize, false);
+            } else {
+                direct.finish(s.blueprintResources.energy);
+                stage = 14;
+            }
         }
     }
 
@@ -374,12 +401,12 @@ final class HologramResourceTask {
         }
         if (s.mode != 2 && HologramCellPolicy.orientationOnly(s, c, i)) return;
         if (s.mode != 2 && !s.player.capabilities.isCreativeMode)
-            for (ItemStack cover : HologramCellPolicy.coverCosts(s, c)) addShell(cover);
+            for (ItemStack cover : HologramCellPolicy.coverCosts(s, c)) addShell(cover, false);
         if (s.mode != 2 && (!s.player.capabilities.isCreativeMode || HologramRecovery.hasSeal(target))) {
             try {
                 HologramDecorMaterials.Descriptor descriptor = HologramCellPolicy.decoration(s, c);
                 if (descriptor == null && !HologramMaterialAccess.freeShell(s, c, target))
-                    addShell(HologramEssentia.shellMaterial(target));
+                    addShell(HologramEssentia.shellMaterial(target), true);
                 else if (descriptor != null) {
                     if (nativeItems != null) nativeItems.rejectUnsupported();
                     HologramDecorMaterials.Quote quote = decorReport.quote(
@@ -415,7 +442,8 @@ final class HologramResourceTask {
         }
     }
 
-    private void addShell(ItemStack stack) {
+    private void addShell(ItemStack stack, boolean mainShell) {
+        if (direct != null) direct.add(stack, 1, mainShell);
         ExactKey key = HologramValues.lookupKey(stack);
         Integer previous = counts.get(key);
         if (previous == null) {
@@ -423,6 +451,122 @@ final class HologramResourceTask {
             stacks.put(key, stack);
             counts.put(key, 1);
         } else counts.replace(key, previous + 1);
+    }
+
+    /** Server-owned payable demand, not a UI quote or permission. No cell or world traversal during the recheck. */
+    static final class DirectDemand {
+
+        private final HologramSession owner;
+        private final HologramCapture capture;
+        private final HologramPresets.Preset preset;
+        private final World world;
+        private final String request;
+        private final long revision, nonce, workspace, declaration, variants, containers, adapters, voucherRules;
+        private final int scope, layer, selected, x, y, z, sources;
+        private final boolean creative, retainNbt, retainCovers;
+        private final Map<ExactKey, NBTTagCompound> index = new HashMap<>();
+        private final List<NBTTagCompound> rows = new ArrayList<>();
+        private BigInteger energy;
+
+        DirectDemand(HologramSession s) {
+            owner = s;
+            capture = s.capture;
+            preset = s.virtualPreset;
+            world = s.player.worldObj;
+            request = s.executionRequestId;
+            revision = s.planRevision;
+            nonce = s.placementReviewNonce;
+            workspace = s.editorWorkspaceEpoch;
+            scope = s.scope;
+            layer = s.layer;
+            selected = s.selected;
+            x = s.x;
+            y = s.y;
+            z = s.z;
+            sources = sources(s.materialSettings);
+            creative = s.player.capabilities.isCreativeMode;
+            retainNbt = preset.retainNbt;
+            retainCovers = HologramSessionPolicy.placementRetainCovers(s);
+            declaration = HologramDeclarationAdapters.admissionGeneration();
+            variants = com.miaokatze.gtmb.api.MaterialVariants.generation();
+            containers = com.miaokatze.gtmb.api.ResourceContainers.generation();
+            adapters = HologramNativePlacement.generation();
+            voucherRules = DecorationVoucherConfig.revision();
+        }
+
+        private static int sources(HologramMaterials.Settings settings) {
+            return (settings.main ? 1 : 0) | (settings.containers ? 2 : 0) | (settings.me ? 4 : 0)
+                | settings.priority << 3 | settings.recoveryDestination << 5;
+        }
+
+        boolean current(HologramSession s) {
+            return s == owner && capture == s.capture && preset == s.virtualPreset && world == s.player.worldObj
+                && request.equals(s.executionRequestId)
+                && !request.isEmpty()
+                && revision == s.planRevision && nonce == s.placementReviewNonce && workspace == s.editorWorkspaceEpoch
+                && creative == s.player.capabilities.isCreativeMode
+                && scope == s.scope && layer == s.layer && selected == s.selected
+                && x == s.x && y == s.y && z == s.z
+                && s.mode == 0 && s.virtualPlacement && s.virtualLocked && !s.jobVoucherRequested
+                && retainNbt == preset.retainNbt && retainCovers == HologramSessionPolicy.placementRetainCovers(s)
+                && sources == sources(s.materialSettings)
+                && declaration == HologramDeclarationAdapters.admissionGeneration()
+                && variants == com.miaokatze.gtmb.api.MaterialVariants.generation()
+                && containers == com.miaokatze.gtmb.api.ResourceContainers.generation()
+                && adapters == HologramNativePlacement.generation()
+                && voucherRules == DecorationVoucherConfig.revision();
+        }
+
+        void add(ItemStack item, long quantity, boolean mainShell) {
+            if (finished()) throw new IllegalStateException("Direct material demand already frozen");
+            if (item == null || item.getItem() == null || quantity <= 0) return;
+            NBTTagCompound row = index.get(HologramValues.lookupKey(item));
+            if (row == null) {
+                ItemStack identity = item.copy();
+                identity.stackSize = 1;
+                row = identity.writeToNBT(new NBTTagCompound());
+                index.put(HologramValues.stackKey(identity), row);
+                rows.add(row);
+            }
+            row.setLong("required", Math.addExact(row.getLong("required"), quantity));
+            if (mainShell) row.setLong("shellRequired", Math.addExact(row.getLong("shellRequired"), quantity));
+        }
+
+        private void finish(BigInteger energy) {
+            this.energy = creative ? BigInteger.ZERO : energy;
+        }
+
+        boolean finished() {
+            return energy != null;
+        }
+
+        /** New observations and carried-container discovery, not the Context used during early planning. */
+        boolean stocked(HologramSession s) throws IOException {
+            if (!finished() || !current(s) || !liveSources(s)) throw new IOException("施工材料规划已变化，请重新确认");
+            if (rows.isEmpty() && energy.signum() == 0) return true;
+            var stock = new HologramMaterials.Context(s.player, s.materialSettings, s.slot);
+            var counter = new HologramMaterialQuote.QuoteCounter(rows, new HologramMaterialQuote.ItemStock() {
+
+                public long exact(ItemStack item, long limit) {
+                    return stock.countLong(item, limit);
+                }
+
+                public long fuzzy(ItemStack item, long limit) {
+                    return stock.countFuzzyLong(item, limit);
+                }
+            }, item -> HologramMaterialAccess.fuzzyBlueprintShells(s, item));
+            for (NBTTagCompound row : rows) if (counter.count(row) < row.getLong("required")) return false;
+            boolean enoughEnergy = energy.signum() == 0 || stock.energyAvailable().compareTo(energy) >= 0;
+            return enoughEnergy && liveSources(s);
+        }
+
+        private static boolean liveSources(HologramSession s) {
+            HologramMaterials.Settings live = HologramMaterials.read(s.player.getHeldItem());
+            // ME remains off for direct jobs; the preference on the tool does not enable it here.
+            return !s.materialSettings.me && live.main == s.materialSettings.main
+                && live.containers == s.materialSettings.containers && live.priority == s.materialSettings.priority
+                && live.recoveryDestination == s.materialSettings.recoveryDestination;
+        }
     }
 
     /** Fuzzy shells ignore unsealed NBT, but sealed resources require exact payload equality. */

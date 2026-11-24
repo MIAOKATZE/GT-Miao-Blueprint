@@ -122,6 +122,7 @@ public final class HologramClientP0Regression {
         source.zCoord = -8;
         HologramLocalControllerCapture task = new HologramLocalControllerCapture(source, 4, 2);
         NBTTagCompound opening = task.opening();
+        SimpleAssert.that(task.readyCapabilities() == null, "an unopened native declaration cannot claim resolved channels");
         SimpleAssert.that(opening.getBoolean("localStandardController"), "native workbench recognizes local source");
         SimpleAssert.that(opening.getBoolean("capturePending"), "local geometry generation temporarily gates edits");
         SimpleAssert.eq("projection", opening.getString("editorWorkspace"), "preserve original structure workspace");

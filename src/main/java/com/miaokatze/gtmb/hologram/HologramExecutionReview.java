@@ -183,14 +183,16 @@ final class HologramExecutionReview {
         private final HologramPlacementAdmissionSweep work;
         private final long started = System.nanoTime();
         private final boolean creative, direct;
+        private final HologramResourceTask.DirectDemand directDemand;
         private int blocked, protectedCells, unsupported, satisfied;
 
         Start(HologramSession s, NBTTagCompound request) {
-            this(s, request, false);
+            this(s, request, null);
         }
 
-        Start(HologramSession s, NBTTagCompound request, boolean direct) {
-            this.direct = direct;
+        Start(HologramSession s, NBTTagCompound request, HologramResourceTask.DirectDemand directDemand) {
+            this.directDemand = directDemand;
+            direct = directDemand != null;
             classifier = new HologramPlanClassifier(s);
             capture = s.capture;
             work = new HologramPlacementAdmissionSweep(capture.cells.size());
@@ -207,7 +209,7 @@ final class HologramExecutionReview {
             return (long) work.visited() + s.work.size();
         }
 
-        boolean step(HologramSession s, long deadline) throws IOException {
+        private void requireCurrent(HologramSession s) throws IOException {
             if (System.nanoTime() - started > 90_000_000_000L || !HologramSessionPolicy.valid(s)
                 || !s.player.capabilities.allowEdit
                 || s.player.capabilities.isCreativeMode != creative
@@ -218,25 +220,33 @@ final class HologramExecutionReview {
                 || s.planRevision != approval.getLong("planRevision")
                 || s.placementReviewNonce != approval.getLong("placementReviewNonce"))
                 throw new IOException("施工复核已变化，请重新核对后确认");
+        }
+
+        boolean step(HologramSession s, long deadline) throws IOException {
+            requireCurrent(s);
             var slice = new HologramPlacementAdmissionSweep.Slice(Integer.MAX_VALUE, deadline, System::nanoTime);
             HologramPlacementAdmissionSweep.Progress progress = work.inspect(slice, index -> {
                 HologramCapture.Cell cell = capture.cells.get(index);
+                if (direct && !HologramSessionPolicy.inScope(s, cell, index)) return true;
                 if (!HologramPlanPolicy.expectedCurrent(s, index)) {
                     if (direct) throw new IOException("现场已变化，未开始施工");
                     refresh(s, "现场或区块加载状态已变化，正在重新核对施工范围");
                     return false;
                 }
-                if (!creative && "blocked".equals(
-                    classifier.classify(
+                String status = s.planStatus.get(index);
+                if (!creative || direct && "pending".equals(status)) {
+                    String current = classifier.classify(
                         s,
                         cell,
                         index,
                         true,
                         s.expectedBlocks.get(index),
                         s.expectedMeta.get(index),
-                        s.expectedTiles.get(index))))
-                    blocked++;
-                String status = s.planStatus.get(index);
+                        s.expectedTiles.get(index));
+                    if ("blocked".equals(current)) blocked++;
+                    else if (direct && "pending".equals(status) && !"pending".equals(current))
+                        throw new IOException("现场或施工权限已变化，未开始施工");
+                }
                 if ("unsupported".equals(status) && !cell.resourceError.isEmpty())
                     throw new IOException("施工设备状态无法安全解析：" + cell.resourceError);
                 switch (status) {
@@ -267,8 +277,13 @@ final class HologramExecutionReview {
             if (!work.drain(slice, s.work::add)) return false;
             if (!HologramBuildPreparation.aeReady(s)) return true;
             HologramMaterialWorkflow.validateStart(s, approval, direct);
-            if (HologramPlacementJobs.approvedMaterials(s, approval)) {
-                if (direct && s.planMissing != 0) throw new IOException("施工材料不足，未开始施工");
+            boolean stocked = direct ? HologramMaterialWorkflow.recheckDirect(s, directDemand)
+                : HologramPlacementJobs.approvedMaterials(s, approval);
+            if (stocked) {
+                if (direct) {
+                    requireCurrent(s); // Native inventory SIMULATE is a callback, not a durable authority grant.
+                    HologramMaterialWorkflow.validateStart(s, approval, true);
+                }
                 HologramPlacementJobs.begin(s, approval);
                 s.blueprintAwaitingConfirmation = false;
             }

@@ -5,6 +5,7 @@ package com.miaokatze.gtmb.client.hologram;
 
 import java.io.IOException;
 import java.math.BigInteger;
+import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
@@ -28,6 +29,7 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
 import com.github.bsideup.jabel.Desugar;
+import com.miaokatze.gtmb.hologram.HologramControllerMaterialCounts;
 import com.miaokatze.gtmb.hologram.HologramControllerTarget;
 import com.miaokatze.gtmb.hologram.HologramMaterialQuote;
 import com.miaokatze.gtmb.hologram.HologramStaticMaterials;
@@ -43,6 +45,8 @@ final class HologramLocalMaterialReview {
     private final int selected, scope, layer, x, y, z;
     private final int[] selection;
     private final Block sourceWater;
+    private final HologramControllerMaterialCounts captured;
+    private List<HologramLibraryMaterialDescription.Row> description;
     private FutureTask<Plan> planning;
     private final PriorityQueue<Unbatched> pending = new PriorityQueue<>(Comparator.comparingInt(Unbatched::index));
     private volatile int scanned;
@@ -61,6 +65,14 @@ final class HologramLocalMaterialReview {
     }
 
     HologramLocalMaterialReview(HologramState source, NBTTagCompound settings, Executor executor) {
+        this(source, settings, false, executor);
+    }
+
+    HologramLocalMaterialReview(HologramState source, NBTTagCompound settings, boolean detailed) {
+        this(source, settings, detailed, ForkJoinPool.commonPool());
+    }
+
+    HologramLocalMaterialReview(HologramState source, NBTTagCompound settings, boolean detailed, Executor executor) {
         this.source = source;
         this.settings = (NBTTagCompound) settings.copy();
         selected = settings.hasKey("selected", 3) ? settings.getInteger("selected") : -1;
@@ -72,8 +84,12 @@ final class HologramLocalMaterialReview {
         selection = this.settings.getIntArray("selectedIndices");
         sourceWater = Blocks.water;
         family = selected >= 0 && selected < source.cells.size() ? source.cells.get(selected).family : "";
-        planning = new FutureTask<>(this::prepare);
-        executor.execute(planning);
+        captured = detailed && !source.data.getBoolean("capturePending") ? null : capturedCounts();
+        if (captured != null) description = description(captured, null);
+        else {
+            planning = new FutureTask<>(this::prepare);
+            executor.execute(planning);
+        }
     }
 
     private boolean closed;
@@ -85,9 +101,9 @@ final class HologramLocalMaterialReview {
     }
 
     boolean current(HologramState state, int layer) {
-        return !closed && source.cells == state.cells && source.session.equals(state.session)
+        return !closed && (captured == null ? source.cells == state.cells && !state.data.getBoolean("capturePending")
+            : source.controllerMaterialCounts == state.controllerMaterialCounts) && source.session.equals(state.session)
             && source.data.getString("generation").equals(state.data.getString("generation"))
-            && !state.data.getBoolean("capturePending")
             && source.data.getLong("planRevision") == state.data.getLong("planRevision")
             && source.data.getInteger("mode") == state.data.getInteger("mode")
             && source.data.getString("activeStructure")
@@ -102,7 +118,11 @@ final class HologramLocalMaterialReview {
     }
 
     boolean ready() {
-        return theory != null;
+        return !closed && (captured != null || theory != null);
+    }
+
+    List<HologramLibraryMaterialDescription.Row> description() {
+        return description;
     }
 
     NBTTagCompound visible() {
@@ -110,10 +130,14 @@ final class HologramLocalMaterialReview {
     }
 
     String scopeLabel() {
+        if (captured != null) return scope == 2 ? "已选范围 · 原生目标基材" : "当前结构 · 原生目标基材";
         return scope == 2 ? "已选范围的目标材料" : "当前范围的目标材料";
     }
 
     String status() {
+        if (captured != null) return captured.total() + " 个目标格"
+            + (captured.unlisted() == 0 ? "" : " · " + captured.unlisted() + " 格基材未列明")
+            + " · 施工用量未核算";
         if (failed) return "本地材料统计未完成，请重新打开材料窗口";
         if (!ready()) return plan == null ? "正在整理本地材料范围 " + scanned + " / " + source.cells.size()
             : "正在核对本地目标材料 " + settled + " / " + plan.cells;
@@ -124,11 +148,15 @@ final class HologramLocalMaterialReview {
     }
 
     boolean empty() {
-        return ready() && targetCount == 0;
+        return ready() && (captured == null ? targetCount : captured.total()) == 0;
     }
 
     void tick(ItemStack[] inventory, int protectedSlot) {
         if (closed) return;
+        if (captured != null) {
+            refresh(inventory, protectedSlot);
+            return;
+        }
         if (theory == null) {
             if (plan == null) {
                 if (failed || planning == null || planning.isCancelled() || !planning.isDone()) return;
@@ -178,13 +206,79 @@ final class HologramLocalMaterialReview {
 
     void refresh(ItemStack[] inventory, int protectedSlot) {
         if (closed) return;
-        if (theory == null) return;
+        if (captured == null && theory == null) return;
         if (!settings.getBoolean("materialMain")) inventory = null;
-        if (visible.hasKey("rows", 9) && observedSlot == protectedSlot
+        if ((captured != null || visible.hasKey("rows", 9)) && observedSlot == protectedSlot
             && sameInventory(observed, inventory, protectedSlot)) return;
         observedSlot = protectedSlot;
         observed = copyInventory(inventory, protectedSlot);
-        visible = stockRows(theory, observed, protectedSlot);
+        if (captured != null) description = description(captured, stockItems(observed, protectedSlot));
+        else visible = stockRows(theory, observed, protectedSlot);
+    }
+
+    private HologramControllerMaterialCounts capturedCounts() {
+        if (source.controllerMaterialCounts == null) return null;
+        if (scope == 0) return source.controllerMaterialCounts;
+        // Single-cell inspection stays immediate. Wider scoped reviews use the existing exact path, never whole counts.
+        if (scope != 2 || selection.length > 1) return null;
+        int index = selection.length == 0 ? selected : selection[0];
+        if (index < 0 || index >= source.cells.size()) return null;
+        HologramControllerMaterialCounts.Builder one = new HologramControllerMaterialCounts.Builder();
+        one.add(contribution(source, source.cells.get(index)));
+        return one.seal();
+    }
+
+    static HologramControllerMaterialCounts.Contribution contribution(HologramState state, HologramState.Cell cell) {
+        int x = state.data.getInteger("x"), y = state.data.getInteger("y"), z = state.data.getInteger("z");
+        if (cell.excluded || !cell.inScope || cell.anchor || "minecraft:air".equals(cell.wantId)
+            || cell.x == x && cell.y == y && cell.z == z
+            || HologramControllerMaterialCounts.sourceWater(cell.capturedNativeTarget(), x, y, z))
+            return HologramControllerMaterialCounts.EXCLUDED;
+        return HologramControllerMaterialCounts.material(
+            cell.targetStack,
+            cell.missingBlock || cell.iconOnly || cell.block(false) == null);
+    }
+
+    @Desugar
+    private record BackpackKey(Item item, int damage) {}
+
+    private static Map<BackpackKey, Long> stockItems(ItemStack[] inventory, int protectedSlot) {
+        if (inventory == null || protectedSlot < 0 || protectedSlot >= inventory.length) return null;
+        Map<BackpackKey, Long> stock = new HashMap<>();
+        try {
+            for (int i = 0; i < inventory.length; i++) {
+                ItemStack stack = inventory[i];
+                if (i != protectedSlot && stack != null && stack.getItem() != null && stack.stackSize > 0
+                    && !stack.hasTagCompound())
+                    stock.merge(new BackpackKey(stack.getItem(), stack.getItemDamage()), (long) stack.stackSize, Long::sum);
+            }
+        } catch (RuntimeException | LinkageError unavailable) {
+            return null; // A failed stock observation is never an observed zero.
+        }
+        return stock;
+    }
+
+    private static List<HologramLibraryMaterialDescription.Row> description(HologramControllerMaterialCounts counts,
+        Map<BackpackKey, Long> stock) {
+        List<HologramControllerMaterialCounts.Row> rows = counts.rows();
+        return new AbstractList<>() {
+
+            @Override
+            public HologramLibraryMaterialDescription.Row get(int index) {
+                var row = rows.get(index);
+                var identity = row.identity();
+                Long available = stock == null ? null
+                    : stock.getOrDefault(new BackpackKey(identity.item(), identity.damage()), 0L);
+                return new HologramLibraryMaterialDescription.Row(
+                    new HologramLibraryMaterialForecast.Identity(identity.registry(), identity.damage()),
+                    row.cells(), available);
+            }
+
+            @Override
+            public int size() {
+                return rows.size();
+            }
+        };
     }
 
     private Plan prepare() {

@@ -212,6 +212,15 @@ final class HologramEditorConfigurationDialogs {
             .setEnabledIf(w -> ui.session.editable());
     }
 
+    private TextFieldWidget configurationField(HologramMuiTextField adapter) {
+        return ui.shell.adoptField(adapter).height(20).setEnabledIf(w -> ui.session.configurationEditable());
+    }
+
+    private boolean optionEditable() {
+        return "_hatch_candidate".equals(ui.config.optionChannel()) ? ui.session.selectedNativeEditable()
+            : ui.session.configurationEditable();
+    }
+
     private boolean editable() {
         return ui.session.editable();
     }
@@ -297,7 +306,7 @@ final class HologramEditorConfigurationDialogs {
                                 : "presence".equals(cap.getString("kind")) ? "默认" : "继承";
                         return cap.getString("label") + "：" + ui.config.optionLabel(cap) + "（" + source + "）";
                     },
-                        () -> editable() && capabilityRow(slot) != null && capabilityRow(slot).getBoolean("editable"),
+                        () -> ui.session.configurationEditable() && capabilityRow(slot) != null && capabilityRow(slot).getBoolean("editable"),
                         () -> {
                             NBTTagCompound cap = capabilityRow(slot);
                             return cap == null ? "本页无此项"
@@ -316,13 +325,13 @@ final class HologramEditorConfigurationDialogs {
                 value -> ui.config.drawerOffset(value)));
         content.child(note(() -> "手填具名信道：小写 name / 正整数 value"));
         Flow raw = row();
-        raw.child(field(ui.config.channelNameField()).expanded());
-        raw.child(field(ui.config.channelValueField()).width(76));
+        raw.child(configurationField(ui.config.channelNameField()).expanded());
+        raw.child(configurationField(ui.config.channelValueField()).width(76));
         content.child(raw);
-        content.child(action(67, () -> "添加 / 更新具名信道", this::editable, this::reason));
+        content.child(action(67, () -> "添加 / 更新具名信道", ui.session::configurationEditable, this::reason));
         Flow main = row();
-        main.child(field(ui.config.mainField()).expanded());
-        main.child(action(30, () -> "应用主值", this::editable, () -> "未独立指定的子信道按原结构规则继承主值。").width(100));
+        main.child(configurationField(ui.config.mainField()).expanded());
+        main.child(action(30, () -> "应用主值", ui.session::configurationEditable, () -> "未独立指定的子信道按原结构规则继承主值。").width(100));
         content.child(main);
         Flow toggles = row();
         toggles.child(action(23, () -> "重新采集", this::editable, this::reason).expanded());
@@ -330,7 +339,7 @@ final class HologramEditorConfigurationDialogs {
             action(
                 33,
                 () -> ui.session.state().data.getBoolean("noHatches") ? "只放外壳 ✓" : "允许仓室",
-                () -> editable() && ui.session.state().data.getInteger("mode") != 2,
+                () -> ui.session.configurationEditable() && ui.session.state().data.getInteger("mode") != 2,
                 this::reason).expanded());
         toggles.child(action(83, () -> {
             NBTTagCompound hatch = ui.config.capability("gt_hatch");
@@ -401,7 +410,7 @@ final class HologramEditorConfigurationDialogs {
                             ? cap.getBoolean("explicit") && option.getInteger("value") == cap.getInteger("current")
                             : !cap.getBoolean("explicit");
                         return (selected ? "✓ " : "") + option.getString("label");
-                    }, () -> editable() && optionRow(slot) != null, () -> {
+                    }, () -> optionRow(slot) != null && optionEditable(), () -> {
                         NBTTagCompound option = optionRow(slot);
                         return option == null ? "本页无此项"
                             : (option.getBoolean("present") ? "显式目标；原始值 " + option.getInteger("value") : "恢复默认 / 继承")
@@ -427,10 +436,10 @@ final class HologramEditorConfigurationDialogs {
         raw.setEnabledIf(w -> !"_hatch_candidate".equals(ui.config.optionChannel()));
         raw.child(note(() -> "原始正整数（允许列表之外的值）"));
         Flow input = row();
-        TextFieldWidget value = field(ui.config.optionValueField()).expanded();
+        TextFieldWidget value = configurationField(ui.config.optionValueField()).expanded();
         ui.shell.registerTarget("config.option.value", value);
         input.child(value);
-        input.child(action(68, () -> "应用原始值", this::editable, this::reason).width(100));
+        input.child(action(68, () -> "应用原始值", ui.session::configurationEditable, this::reason).width(100));
         raw.child(input);
         content.child(raw);
         return dialog(
@@ -521,7 +530,7 @@ final class HologramEditorConfigurationDialogs {
                         + " ×"
                         + candidateCount(candidateIndex(slot));
             },
-                () -> editable() && ui.preview.canInventoryPin() && candidate(slot) != null,
+                () -> ui.session.selectedNativeEditable() && ui.preview.canInventoryPin() && candidate(slot) != null,
                 () -> candidate(slot) == null ? "本页无候选"
                     : candidate(slot).getDisplayName() + " · 已启用来源可用 "
                         + candidateCount(candidateIndex(slot))
@@ -549,14 +558,14 @@ final class HologramEditorConfigurationDialogs {
                 () -> "仓室朝向：" + ui.config.directionName(
                     ui.session.cellTag()
                         .getInteger("hatchFacing")),
-                () -> editable() && ui.session.cellTag()
+                () -> ui.session.selectedNativeEditable() && ui.session.cellTag()
                     .getIntArray("hatchFacings").length > 0,
                 () -> "只轮换当前格的合法设备朝向。").expanded());
         facing.child(
             action(
                 102,
                 () -> "恢复朝向",
-                () -> editable() && ui.session.cellTag()
+                () -> ui.session.selectedNativeEditable() && ui.session.cellTag()
                     .getBoolean("hasFacingPin"),
                 () -> "清除本格显式朝向。").width(100));
         content.child(facing);
@@ -713,20 +722,20 @@ final class HologramEditorConfigurationDialogs {
                 action(
                     84 + i,
                     () -> names[index] + (ui.config.sourceEnabled(keys[index]) ? " ✓" : " ×"),
-                    this::editable,
+                    ui.session::configurationEditable,
                     this::reason).height(28));
         }
         rows.child(
             action(
                 87,
                 () -> "优先：" + names[Math.floorMod(ui.session.state().data.getInteger("materialPriority"), 3)],
-                this::editable,
+                ui.session::configurationEditable,
                 () -> "轮换主背包 → 容器 → ME 的优先次序。"));
         rows.child(
             action(
                 1716,
                 () -> "使用上次材料来源配置",
-                () -> editable() && ui.config.nativeLastPreset(false),
+                () -> ui.session.configurationEditable() && ui.config.nativeLastPreset(false),
                 this::presetFileReason));
         rows.child(note(() -> "ME 终端仍需已绑定、有电、范围内并符合网络权限。"));
         content.child(rows);

@@ -117,6 +117,48 @@ final class HologramLocalControllerEdits {
         return result;
     }
 
+    static boolean selectedOnly(String operation) {
+        return "pin".equals(operation) || "hatchFacing".equals(operation);
+    }
+
+    /** One already validated local candidate row; never accepts a file/inventory sample or broad scope. */
+    static NBTTagCompound selectedRow(HologramState.Cell current, HologramState.Cell initial, String operation,
+        NBTTagCompound request) throws IOException {
+        if (!selectedOnly(operation) || current.anchor || initial.index != current.index
+            || !request.hasKey("selected", 3) || request.getInteger("selected") != current.index)
+            throw new IOException("所选结构格已变化");
+        NBTTagCompound row = current.tag(), original = initial.tag();
+        if ("pin".equals(operation)) {
+            if (!request.hasKey("choiceindex", 3) && !request.hasKey("choice", 3))
+                throw new IOException("方块候选已变化");
+            int choice = request.hasKey("choiceindex", 3) ? request.getInteger("choiceindex")
+                : request.getInteger("choice");
+            if (choice < 0 || choice >= current.candidates.size()) throw new IOException("方块候选已变化");
+            pin(row, original, current.candidates.get(choice), choice, "manual");
+        } else {
+            int facing = request.getInteger("facing");
+            if (!request.hasKey("facing", 3) || facing < -1 || facing > 5 || current.targetStack == null
+                || !(current.targetStack.getItem() instanceof ItemMachines)
+                || facing >= 0 && !allowsFacing(row, facing)) throw new IOException("该结构格不支持所选方向");
+            setFacing(row, original, current.targetStack, facing);
+        }
+        row.setInteger("index", current.index);
+        return row;
+    }
+
+    static HologramState applySelectedRows(HologramState base, NBTTagList rows, long revision) {
+        if (rows.tagCount() == 0) return base;
+        NBTTagCompound patch = new NBTTagCompound();
+        patch.setBoolean("partial", true);
+        patch.setString("session", base.session);
+        patch.setString("generation", base.data.getString("generation"));
+        patch.setInteger("cellCount", base.cells.size());
+        patch.setLong("baseRevision", base.data.getLong("planRevision"));
+        patch.setLong("planRevision", revision);
+        patch.setTag("cells", rows);
+        return HologramState.apply(base, patch);
+    }
+
     private static int nativeCandidateCount(NBTTagCompound row, int size) {
         if (!row.hasKey("nativeCandidateCount")) return size;
         if (!row.hasKey("nativeCandidateCount", 3) || row.getTagList("candidates", 10)

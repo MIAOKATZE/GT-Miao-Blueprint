@@ -203,7 +203,7 @@ final class HologramNativeCompactStart {
             long before = ready.completed();
             HologramNativeReadyPlacement.tick(
                 s,
-                256,
+                ordinary ? 4096 : 256,
                 HologramWorkBudget.deadline(HologramWorkBudget.SLICE_NANOS),
                 System::nanoTime,
                 (p, id, accepted, reason) -> finish(accepted, reason));

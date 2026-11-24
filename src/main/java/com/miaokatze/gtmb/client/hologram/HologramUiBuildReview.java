@@ -72,9 +72,22 @@ final class HologramUiBuildReview implements LocalView {
     private HologramMaterialConfirmationDialog materialDialog, localMaterialDialog;
     private String localMaterialNotice = "";
     private HologramLocalMaterialReview localMaterials;
+    private boolean localMaterialsDetailed;
     private int localMaterialSelectionVersion;
     private NBTTagCompound presentedMaterialState;
     private long presentedMaterialRevision = -1;
+
+    boolean nativeMaterialInspectionReady() {
+        HologramState state = ui.session.state();
+        int job = state.data.getInteger("job");
+        // While details are pending this opens an informational pane, not an editing or construction capability.
+        return state.controllerMaterialCounts != null && state.data.getBoolean("localStandardController")
+            && state.data.getInteger("mode") == 0 && state.data.getBoolean("target") && state.data.getBoolean("supported")
+            && !state.data.getBoolean("localPlanPending") && !state.data.getBoolean("targetClosed")
+            && !state.data.getBoolean("currentPlacementPending") && ui.session.pendingSequence() < 0
+            && !HologramBackgroundTasks.busy() && job != 1 && job != 2
+            && (!state.data.getBoolean("capturePending") || ui.preview.selection().size() <= 1);
+    }
 
     boolean openNativeLocalMaterials() {
         HologramScreen root = ui.host == null ? null : ui.host.parent();
@@ -86,7 +99,7 @@ final class HologramUiBuildReview implements LocalView {
             return true; // A stale local control must not fall through to the legacy query.
         }
         String blocker = HologramPlacementConfirmation.localStructureReviewBlocker(state);
-        if (!blocker.isEmpty()) ui.session.notice(blocker);
+        if (!blocker.isEmpty() && !nativeMaterialInspectionReady()) ui.session.notice(blocker);
         else {
             closeLocalMaterials();
             localMaterials = new HologramLocalMaterialReview(state, ui.config.configuration());
@@ -113,6 +126,7 @@ final class HologramUiBuildReview implements LocalView {
     void closeLocalMaterials() {
         if (localMaterials != null) localMaterials.close();
         localMaterials = null;
+        localMaterialsDetailed = false;
         localMaterialNotice = "";
         if (localMaterialDialog != null) localMaterialDialog.close();
     }
@@ -152,14 +166,21 @@ final class HologramUiBuildReview implements LocalView {
         retireStaleLocalMaterials();
         if (localMaterials == null) return localMaterialNotice.isEmpty() || !localMaterialPaneCurrent() ? null
             : new LocalFrame(new NBTTagCompound(), "材料清单已失效", localMaterialNotice, "返回后重新打开材料窗口", false);
-        String status = !ui.session.editable() ? localMaterialEditingReason()
-            : !localMaterialNotice.isEmpty() ? localMaterialNotice : localMaterials.status();
+        String status = !localMaterialNotice.isEmpty() ? localMaterialNotice : localMaterials.status();
+        if (!ui.session.editable()) status = localMaterials.description() == null ? localMaterialEditingReason()
+            : status + " · " + localMaterialEditingReason();
         return new LocalFrame(
             localMaterials.visible(),
             localMaterials.scopeLabel(),
             status,
             localMaterials.empty() ? "所选范围没有目标材料" : "本机没有可列出的材料",
-            localMaterials.ready());
+            localMaterials.ready(),
+            localMaterials.description());
+    }
+
+    @Override
+    public boolean describesNativeTargets() {
+        return localMaterials != null && localMaterials.description() != null;
     }
 
     private String localMaterialEditingReason() {
@@ -171,7 +192,8 @@ final class HologramUiBuildReview implements LocalView {
     @Override
     public boolean localSubmitAvailable() {
         // A current but unfinished estimate never grants or denies permission; the server checks materials.
-        return localMaterialsCurrent() && ui.session.editable();
+        return localMaterialsCurrent() && ui.session.editable()
+            && HologramPlacementConfirmation.localStructureReviewBlocker(ui.session.state()).isEmpty();
     }
 
     @Override
@@ -180,11 +202,39 @@ final class HologramUiBuildReview implements LocalView {
     }
 
     @Override
+    public boolean supportsDetailedMaterials() {
+        return localMaterialPaneCurrent() && ui.session.state().controllerMaterialCounts != null;
+    }
+
+    @Override
+    public boolean localDetailsAvailable() {
+        return supportsDetailedMaterials() && localSubmitAvailable();
+    }
+
+    @Override
+    public String localDetailsLabel() {
+        return localMaterialsDetailed ? "返回基材清单" : "详细清单（逐格核对）";
+    }
+
+    private void toggleDetailedLocalMaterials() {
+        // Live owner, exact scope and complete candidate rows; never sends a packet or touches execution readiness.
+        if (!localDetailsAvailable()) return;
+        NBTTagCompound settings = localMaterials.settings();
+        boolean detailed = !localMaterialsDetailed;
+        HologramLocalMaterialReview next = new HologramLocalMaterialReview(ui.session.state(), settings, detailed);
+        localMaterials.close();
+        localMaterials = next;
+        localMaterialsDetailed = detailed;
+        localMaterialNotice = "";
+    }
+
+    @Override
     public void localAction(LocalAction action) {
         switch (action) {
             case BACK -> closeLocalMaterials();
             case REFRESH -> refreshLocalMaterials();
             case SUBMIT -> submitLocalMaterials();
+            case DETAILS -> toggleDetailedLocalMaterials();
             case ADVANCED -> {
                 HologramScreen root = ui.host == null ? null : ui.host.parent();
                 if (root != null && supportsAdvancedPlacement())
@@ -401,7 +451,7 @@ final class HologramUiBuildReview implements LocalView {
                     && !ui.session.state().data.getBoolean("virtualLocked")) ui.session.send("lockVirtual", null, true);
                 return true;
             case 50:
-                if (ui.session.editable() && openNativeLocalMaterials()) return true;
+                if ((nativeMaterialInspectionReady() || ui.session.editable()) && openNativeLocalMaterials()) return true;
                 if (ui.session.editable() && (!ui.session.state().data.getBoolean("virtual")
                     || ui.session.state().data.getBoolean("virtualPlacement")
                         && ui.session.state().data.getBoolean("virtualLocked"))) {

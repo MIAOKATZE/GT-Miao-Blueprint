@@ -252,7 +252,7 @@ public final class HologramMaterialQuote {
             throw new IllegalStateException("Direct plan requires a private unreviewed placement");
         NBTTagCompound witness = new NBTTagCompound();
         stamp(s, witness);
-        // Keep live recheckBuild on its full resource-refresh path; no quote rows are being asserted here.
+        // Direct admission rechecks a separate server-owned payable demand; no quote rows are asserted here.
         witness.setBoolean("complete", false);
         s.materialQuote = witness;
     }

@@ -174,6 +174,12 @@ final class HologramResourcePlanner {
         return new PlanTask(staging, false);
     }
 
+    static PlanTask beginDirectPlan(HologramSession staging) {
+        if (!staging.virtual || !staging.virtualPlacement || staging.executionRequestId.isEmpty())
+            throw new IllegalArgumentException("Direct planning requires a detached placement request");
+        return new PlanTask(staging, false, true);
+    }
+
     /** Native capture finalization reuses the same bounded planner on the owning server thread. */
     static PlanTask beginCapturePlan(HologramSession staging) {
         return beginCapturePlan(staging, false);
@@ -188,11 +194,14 @@ final class HologramResourcePlanner {
         private final HologramSession s;
         private final HologramCapture capture;
         private final boolean observeNativeItems;
+        private final boolean direct;
+        private final boolean creative;
         private final Thread owner = Thread.currentThread();
         private final List<int[]> geometry = new ArrayList<>();
         private HologramVirtualAllocationTask allocation;
         private HologramExteriorTask exterior;
         private HologramResourceTask resources;
+        private HologramResourceTask.DirectDemand directDemand;
         private HologramPlanClassifier classifier;
         private PresetTask preset;
         private int stage, cursor, lastWork;
@@ -200,9 +209,21 @@ final class HologramResourcePlanner {
         private HologramHatchGeometry.Exterior outside = HologramHatchGeometry.Exterior.EMPTY;
 
         private PlanTask(HologramSession s, boolean observeNativeItems) {
+            this(s, observeNativeItems, false);
+        }
+
+        private PlanTask(HologramSession s, boolean observeNativeItems, boolean direct) {
             this.s = s;
             this.observeNativeItems = observeNativeItems;
+            this.direct = direct;
+            creative = s.player.capabilities.isCreativeMode;
             capture = s.capture;
+        }
+
+        HologramResourceTask.DirectDemand directDemand() {
+            if (!direct || !done() || directDemand == null || !directDemand.finished())
+                throw new IllegalStateException("Direct material demand is incomplete");
+            return directDemand;
         }
 
         HologramNativeItemBill nativeItemBill() {
@@ -212,6 +233,9 @@ final class HologramResourcePlanner {
         boolean step(int maxWork, long maxNanos) {
             if (Thread.currentThread() != owner)
                 throw new IllegalStateException("Planning must stay on its main thread");
+            if (direct && (creative != s.player.capabilities.isCreativeMode
+                || directDemand != null && !directDemand.current(s)))
+                throw new IllegalStateException("施工材料规划上下文已变化");
             if (s.capture != capture || stage == 12 && !capture.sourceCurrent(HologramSessionPolicy.trigger(s))) {
                 s.replacementReady = false;
                 throw new IllegalStateException("Planning capture source changed");
@@ -271,6 +295,7 @@ final class HologramResourcePlanner {
         private void advance() {
             if (stage == 0) {
                 resetPlan(s, false);
+                if (direct) directDemand = new HologramResourceTask.DirectDemand(s);
                 if (s.capture == null) {
                     stage = 9;
                     return;
@@ -282,7 +307,8 @@ final class HologramResourcePlanner {
                 }
                 if (!HologramSessionPolicy.authoring(s)) classifier = new HologramPlanClassifier(s);
                 s.cellIndices.clear();
-                stage = (!capture.projectionOnly || s.mode == 1) && !s.virtual
+                // The ordinary native lane cannot replace blocks; its admission independently checks exact empty cells.
+                stage = !HologramNativeCompactStart.ordinary(s) && (!capture.projectionOnly || s.mode == 1) && !s.virtual
                     && s.machine != null
                     && s.target != null
                     && !capture.pending
@@ -396,7 +422,7 @@ final class HologramResourcePlanner {
             } else if (stage == 7) {
                 if (cursor < s.capture.cells.size()) classify(cursor++);
                 else {
-                    resources = new HologramResourceTask(s, classifier, observeNativeItems);
+                    resources = new HologramResourceTask(s, classifier, observeNativeItems, directDemand);
                     stage = 8;
                 }
             } else if (stage == 8) {
