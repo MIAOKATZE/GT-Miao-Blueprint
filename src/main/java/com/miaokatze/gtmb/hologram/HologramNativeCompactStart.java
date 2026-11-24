@@ -20,16 +20,19 @@ final class HologramNativeCompactStart {
     private final String id;
     private final long started = System.nanoTime(), sourceRevision = StructureSources.revision();
     private final int facing;
+    private final boolean ordinary, creative;
     private final HologramNativeReadyPlacement.Receipt receipt;
     private boolean collecting, admitting;
 
     private HologramNativeCompactStart(HologramSession s, HologramSession previous, String id,
-        HologramNativeReadyPlacement.Receipt receipt) {
+        HologramNativeReadyPlacement.Receipt receipt, boolean ordinary) {
         session = s;
         this.previous = previous;
         this.id = id;
         this.receipt = receipt;
         facing = s.facing;
+        this.ordinary = ordinary;
+        creative = s.player.capabilities.isCreativeMode;
     }
 
     static void receive(EntityPlayerMP p, NBTTagCompound request) {
@@ -54,7 +57,21 @@ final class HologramNativeCompactStart {
         String id = r.getString("placementRequestId");
         if (!canonical(id) || HologramProjectedPlacementService.consumed(p, id)) return;
         HologramProjectedPlacementService.retire(p, id);
-        if (!HologramCompactNativeRequest.enabled() || !HologramCompactNativeRequest.valid(r)) {
+        try {
+            prepare(p, r, id, receipt);
+        } catch (RuntimeException | LinkageError failed) {
+            HologramSession current = HologramWorkspace.find(p.getUniqueID());
+            String detail = "原生补建准备失败：" + HologramAePolicy.fallback(failed.getMessage());
+            if (current != null && current.nativeCompactStart != null && current.nativeCompactStart.id.equals(id))
+                current.nativeCompactStart.finish(false, detail);
+            else receipt.send(p, id, false, detail);
+        }
+    }
+
+    private static void prepare(EntityPlayerMP p, NBTTagCompound r, String id,
+        HologramNativeReadyPlacement.Receipt receipt) {
+        boolean ordinary = HologramCompactNativeRequest.ordinary(r);
+        if ((!ordinary && !HologramCompactNativeRequest.enabled()) || !HologramCompactNativeRequest.valid(r)) {
             receipt.send(p, id, false, "紧凑原生放置未启用或选项不受支持。");
             return;
         }
@@ -72,7 +89,7 @@ final class HologramNativeCompactStart {
             || p.isDead
             || p.inventory.currentItem != r.getInteger("slot")
             || !p.capabilities.allowEdit
-            || p.capabilities.isCreativeMode
+            || (!ordinary && p.capabilities.isCreativeMode)
             || !isHeldProjector(p)) {
             receipt.send(p, id, false, "当前投影仪或工作台正在处理其他操作。");
             return;
@@ -89,9 +106,9 @@ final class HologramNativeCompactStart {
             receipt.send(p, id, false, "现场原生控制器或朝向已变化。");
             return;
         }
-        var source = StructureSources.compactNative(unit.getClass());
+        var source = ordinary ? null : StructureSources.compactNative(unit.getClass());
         var channels = r.getCompoundTag("channels");
-        if (source == null || !source.accepts(r.getInteger("main"), channels)
+        if ((!ordinary && (source == null || !source.accepts(r.getInteger("main"), channels)))
             || HologramConstructionJournal.pending(p)) {
             receipt.send(p, id, false, "未认证此原生定义、信道或当前施工恢复状态。");
             return;
@@ -101,14 +118,14 @@ final class HologramNativeCompactStart {
         s.mainExplicit = r.getBoolean("mainExplicit");
         s.channels = (NBTTagCompound) channels.copy();
         s.noHatches = r.getBoolean("noHatches");
-        s.materialSettings.main = true;
-        s.materialSettings.containers = false;
-        s.materialSettings.me = false;
+        s.materialSettings.main = r.getBoolean("materialMain");
+        s.materialSettings.containers = r.getBoolean("materialContainers");
+        s.materialSettings.me = r.getBoolean("materialMe");
         s.materialSettings.priority = r.getInteger("materialPriority");
         // The attempt only observes current stock; only the admitted job may flush pending recovery into inventory.
         s.materialContext = new HologramMaterials.Context(p, s.materialSettings, s.slot);
         s.nativeCompactSource = source;
-        s.nativeCompactStart = new HologramNativeCompactStart(s, previous, id, receipt);
+        s.nativeCompactStart = new HologramNativeCompactStart(s, previous, id, receipt, ordinary);
         if (!HologramWorkspace.reserveCompactNative(previous, s)) {
             s.nativeCompactStart = null;
             receipt.send(p, id, false, "原生放置工作台已变化。");
@@ -117,6 +134,10 @@ final class HologramNativeCompactStart {
 
     private static boolean isHeldProjector(EntityPlayerMP p) {
         return com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector.isProjector(p.getHeldItem());
+    }
+
+    static boolean ordinary(HologramSession s) {
+        return s.nativeCompactStart != null && s.nativeCompactStart.ordinary;
     }
 
     static boolean canonical(String id) {
@@ -148,7 +169,14 @@ final class HologramNativeCompactStart {
         HologramControllerCapture.collect(s, !task.collecting);
         task.collecting = true;
         if (!s.capturePending) {
-            if (!HologramNativeReadyPlacement.admitPrepared(s, task.id)) {
+            if (task.ordinary && (s.capture == null || s.capture.incomplete || !s.captureError.isEmpty())) {
+                task.finish(false, !s.captureError.isEmpty() ? s.captureError
+                    : s.capture == null || s.capture.failure.isEmpty() ? "原生结构采集未完成" : s.capture.failure);
+            } else if (task.ordinary && !s.capture.readyPlacementSource(s)) {
+                task.finish(false, "当前原生结构使用了需要独立审核的提供器或现场规则，未开始补建");
+            } else if (task.ordinary && s.planMissing > 0) {
+                task.finish(false, "所选来源缺少 " + s.planMissing + " 件材料，未开始补建");
+            } else if (!HologramNativeReadyPlacement.admitPrepared(s, task.id)) {
                 task.finish(false, "服务端未能准备支持的现场或背包材料计划。");
             } else task.admitting = true;
         }
@@ -162,11 +190,13 @@ final class HologramNativeCompactStart {
             && s.machine != null
             && HologramWorkspace.find(s.player.getUniqueID()) == s
             && HologramSessionPolicy.valid(s)
+            && s.player.capabilities.allowEdit
+            && s.player.capabilities.isCreativeMode == creative
             && s.machine.getExtendedFacing()
                 .ordinal() == facing
             && s.captureError.isEmpty()
             && StructureSources.revision() == sourceRevision
-            && StructureSources.compactNative(s.machine.getClass()) == s.nativeCompactSource
+            && (ordinary || StructureSources.compactNative(s.machine.getClass()) == s.nativeCompactSource)
             && s.player.getDistanceSq(s.x + .5, s.y + .5, s.z + .5) <= 64;
     }
 

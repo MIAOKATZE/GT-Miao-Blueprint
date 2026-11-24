@@ -1484,8 +1484,8 @@ public final class HologramNetwork {
                 || "snapshotConsumed".equals(msg.tag.getString("op"));
             HologramRequestGate gate = snapshotControl ? snapshotControlGate : receipt ? receiptGate : actionGate;
             HologramRequestGate.Lease lease = gate.acquire(player);
-            boolean compactNative = "useBlock".equals(msg.tag.getString("action"))
-                && msg.tag.hasKey(HologramCompactNativeRequest.FLAG);
+            boolean compactNative = HologramCompactNativeRequest.ordinary(msg.tag)
+                || "useBlock".equals(msg.tag.getString("action")) && msg.tag.hasKey(HologramCompactNativeRequest.FLAG);
             String compactId = compactNative ? msg.tag.getString("placementRequestId") : "";
             if (lease == null) {
                 if (compactNative && HologramNativeCompactStart.canonical(compactId))
@@ -1549,7 +1549,8 @@ public final class HologramNetwork {
                 HologramProjectedPlacementService.cancel(player, requestId);
             return;
         }
-        if ("useBlock".equals(action) && tag.hasKey(HologramCompactNativeRequest.FLAG)) {
+        if (HologramCompactNativeRequest.ordinary(tag)
+            || "useBlock".equals(action) && tag.hasKey(HologramCompactNativeRequest.FLAG)) {
             HologramNativeCompactStart.receive(player, tag);
             return;
         }

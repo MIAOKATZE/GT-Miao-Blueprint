@@ -62,9 +62,9 @@ final class HologramNativeItemBill {
             && !s.capture.pending
             && !s.capture.incomplete
             && s.player.capabilities.allowEdit
-            && !s.player.capabilities.isCreativeMode
             && !s.jobVoucherRequested
-            && !s.materialSettings.me;
+            && (HologramNativeCompactStart.ordinary(s)
+                || !s.player.capabilities.isCreativeMode && !s.materialSettings.me);
     }
 
     private static int options(HologramSession s) {
