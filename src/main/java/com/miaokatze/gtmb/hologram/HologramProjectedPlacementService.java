@@ -261,7 +261,7 @@ final class HologramProjectedPlacementService {
         private final EntityPlayerMP player;
         private final World world;
         private final int toolSlot;
-        private final ItemStack tool;
+        private final HologramSessionPolicy.PreparationTool tool;
         private final HologramSession previous;
         private final long previousRevision, previousWorkspace;
         private final HologramPlacementRequest.Header header;
@@ -277,7 +277,7 @@ final class HologramProjectedPlacementService {
             this.header = header;
             world = player.worldObj;
             toolSlot = player.inventory.currentItem;
-            tool = player.getHeldItem();
+            tool = new HologramSessionPolicy.PreparationTool(player.getHeldItem());
             previous = HologramWorkspace.find(player.getUniqueID());
             previousRevision = previous == null ? -1 : previous.planRevision;
             previousWorkspace = previous == null ? -1 : previous.editorWorkspaceEpoch;
@@ -298,8 +298,9 @@ final class HologramProjectedPlacementService {
             if (!HologramNetwork.progressConnected(player)) return Reason.CONNECTION_CLOSED;
             if (player.worldObj != world) return Reason.WORLD_CHANGED;
             if (player.inventory.currentItem != toolSlot) return Reason.SLOT_CHANGED;
-            if (player.getHeldItem() != tool) return Reason.STACK_REPLACED;
-            if (!ItemNekoHologramProjector.isProjector(tool)) return Reason.NOT_PROJECTOR;
+            ItemStack held = player.getHeldItem();
+            if (!tool.matches(held)) return Reason.STACK_REPLACED;
+            if (!ItemNekoHologramProjector.isProjector(held)) return Reason.NOT_PROJECTOR;
             if (!player.capabilities.allowEdit) return Reason.EDIT_DISABLED;
             if (HologramWorkspace.find(player.getUniqueID()) != previous) return Reason.WORKSPACE_CHANGED;
             if (!HologramWorldFlow.worldPosition(header.x(), header.y(), header.z(), world.getHeight()))

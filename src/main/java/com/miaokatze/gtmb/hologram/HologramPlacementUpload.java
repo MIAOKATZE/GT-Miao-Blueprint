@@ -351,7 +351,7 @@ public final class HologramPlacementUpload {
         final World world;
         final NetHandlerPlayServer connection;
         final int slot;
-        final ItemStack tool;
+        final HologramSessionPolicy.PreparationTool tool;
         final HologramSession workspace;
         final long revision, epoch;
         final UUID id;
@@ -366,7 +366,7 @@ public final class HologramPlacementUpload {
             this.world = world;
             this.connection = connection;
             slot = player.inventory.currentItem;
-            tool = player.getHeldItem();
+            tool = new HologramSessionPolicy.PreparationTool(player.getHeldItem());
             workspace = HologramWorkspace.find(player.getUniqueID());
             if (workspace != null && (workspace.job == 1 || workspace.job == 2 || workspace.capturePending
                 || HologramAuthoringWorkflow.blueprintHasUnsavedChanges(workspace)))
@@ -382,9 +382,10 @@ public final class HologramPlacementUpload {
         }
 
         boolean current() {
+            ItemStack held = player.getHeldItem();
             return ownedBy(player) && HologramNetwork.progressConnected(player) && player.worldObj == world
                 && !player.isDead && player.capabilities.allowEdit && player.inventory.currentItem == slot
-                && player.getHeldItem() == tool && ItemNekoHologramProjector.isProjector(tool)
+                && tool.matches(held) && ItemNekoHologramProjector.isProjector(held)
                 && HologramWorkspace.find(player.getUniqueID()) == workspace
                 && (workspace == null || workspace.planRevision == revision && workspace.editorWorkspaceEpoch == epoch);
         }
