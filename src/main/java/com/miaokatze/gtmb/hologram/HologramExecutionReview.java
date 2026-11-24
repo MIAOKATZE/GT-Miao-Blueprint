@@ -4,8 +4,6 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.io.IOException;
-import java.util.Iterator;
-import java.util.TreeMap;
 
 import net.minecraft.nbt.NBTTagCompound;
 
@@ -139,15 +137,32 @@ final class HologramExecutionReview {
         return true;
     }
 
+    /** Only the admitted, unchanged physical controller is exempt from ordinary native PLACE work. */
+    static boolean retainedPhysicalAnchor(HologramSession s, HologramCapture.Cell cell) {
+        if (s.virtual || s.mode != 0 || s.target == null || s.machine == null
+            || s.capture == null || s.capture.projectionOnly || s.capture.pending || s.capture.incomplete
+            || !HologramEditorWorkspaceRegistry.physicalProjection(s)
+            || HologramWorkspace.find(s.player.getUniqueID()) != s
+            || !cell.anchor || cell.x != s.x || cell.y != s.y || cell.z != s.z
+            || s.machine.getExtendedFacing().ordinal() != s.facing
+            || !HologramSessionPolicy.valid(s)) return false;
+        int index = cell.stableIndex;
+        return index >= 0 && index < s.capture.cells.size() && s.capture.cells.get(index) == cell
+            && index < s.expectedTiles.size() && s.expectedTiles.get(index) == s.target
+            && index < s.expectedBlocks.size() && index < s.expectedMeta.size() && index < s.expectedFacings.size()
+            && HologramPlanPolicy.expectedCurrent(s, index)
+            && s.capture.sourceCurrent(HologramSessionPolicy.trigger(s));
+    }
+
     static final class Start {
 
         private final NBTTagCompound approval = new NBTTagCompound();
         private final HologramPlanClassifier classifier;
-        private final TreeMap<Long, Integer> ordered = new TreeMap<>();
+        private final HologramCapture capture;
+        private final HologramPlacementAdmissionSweep work;
         private final long started = System.nanoTime();
         private final boolean creative, direct;
-        private Iterator<Integer> work;
-        private int cursor, blocked, protectedCells, unsupported, satisfied;
+        private int blocked, protectedCells, unsupported, satisfied;
 
         Start(HologramSession s, NBTTagCompound request) {
             this(s, request, false);
@@ -156,6 +171,8 @@ final class HologramExecutionReview {
         Start(HologramSession s, NBTTagCompound request, boolean direct) {
             this.direct = direct;
             classifier = new HologramPlanClassifier(s);
+            capture = s.capture;
+            work = new HologramPlacementAdmissionSweep(capture.cells.size());
             creative = s.player.capabilities.isCreativeMode;
             approval.setString("session", s.id);
             approval.setLong("planRevision", s.planRevision);
@@ -168,16 +185,16 @@ final class HologramExecutionReview {
         boolean step(HologramSession s, long deadline) throws IOException {
             if (System.nanoTime() - started > 90_000_000_000L || !HologramSessionPolicy.valid(s)
                 || !s.player.capabilities.allowEdit || s.player.capabilities.isCreativeMode != creative
-                || s.cancelled || s.job != 0 || s.localPlanPending || s.planRevision != approval.getLong("planRevision")
+                || s.cancelled || s.job != 0 || s.capture != capture || s.localPlanPending || s.planRevision != approval.getLong("planRevision")
                 || s.placementReviewNonce != approval.getLong("placementReviewNonce"))
                 throw new IOException("施工复核已变化，请重新核对后确认");
-            while (cursor < s.capture.cells.size() && System.nanoTime() < deadline) {
-                int index = cursor++;
-                HologramCapture.Cell cell = s.capture.cells.get(index);
+            var slice = new HologramPlacementAdmissionSweep.Slice(Integer.MAX_VALUE, deadline, System::nanoTime);
+            HologramPlacementAdmissionSweep.Progress progress = work.inspect(slice, index -> {
+                HologramCapture.Cell cell = capture.cells.get(index);
                 if (!HologramPlanPolicy.expectedCurrent(s, index)) {
                     if (direct) throw new IOException("现场已变化，未开始施工");
                     refresh(s, "现场或区块加载状态已变化，正在重新核对施工范围");
-                    return true;
+                    return false;
                 }
                 if (!creative && "blocked".equals(classifier.classify(s, cell, index, true,
                     s.expectedBlocks.get(index), s.expectedMeta.get(index), s.expectedTiles.get(index)))) blocked++;
@@ -188,27 +205,25 @@ final class HologramExecutionReview {
                     case "pending" -> {
                         if (direct && creative && s.expectedBlocks.get(index) != net.minecraft.init.Blocks.air)
                             throw new IOException("目标位置不为空，直接施工不会清理原方块");
-                        long order = ((long) cell.y << 52) | ((long) (cell.z + 30_000_000) << 26)
-                            | (cell.x + 30_000_000L);
-                        ordered.put(order, index);
+                        work.stage(index, cell.x, cell.y, cell.z);
                     }
                     case "satisfied" -> satisfied++;
                     case "unsupported" -> unsupported++;
                     default -> protectedCells++;
                 }
-            }
-            if (cursor < s.capture.cells.size()) return false;
+                return true;
+            });
+            if (progress == HologramPlacementAdmissionSweep.Progress.RETIRED) return true;
+            if (progress == HologramPlacementAdmissionSweep.Progress.PENDING) return false;
             if (blocked > 0) throw new IOException("选定范围有 " + blocked + " 格被占用，请清空后重试");
             if (direct && (protectedCells != 0 || unsupported != 0))
                 throw new IOException("范围内有保护或不支持的位置，未开始施工");
-            if (ordered.isEmpty()) {
+            if (work.isEmpty()) {
                 s.status = "没有需要且可安全施工的位置。已满足 " + satisfied + " 格，保护或占位 " + protectedCells
                     + " 格，不支持 " + unsupported + " 格";
                 return true;
             }
-            if (work == null) work = ordered.values().iterator();
-            while (work.hasNext() && System.nanoTime() < deadline) s.work.add(work.next());
-            if (work.hasNext()) return false;
+            if (!work.drain(slice, s.work::add)) return false;
             if (!HologramBuildPreparation.aeReady(s)) return true;
             HologramMaterialWorkflow.validateStart(s, approval, direct);
             if (HologramPlacementJobs.approvedMaterials(s, approval)) {
