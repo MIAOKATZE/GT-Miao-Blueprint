@@ -633,6 +633,43 @@ public final class HologramControllerCaptureRegression {
         }
     }
 
+    /** The same reviewed plan may legitimately submit a new order after its first order finishes. */
+    @SuppressWarnings("unchecked")
+    private static void cancellationOwnsOneOrder(HologramSession s) throws ReflectiveOperationException {
+        NBTTagCompound request = presetAction(s, "cancelMaterialOrder");
+        request.setLong("placementReviewNonce", s.placementReviewNonce);
+        var first = new HologramAeCraftingOrders.Order(s.player, null, null, request, java.util.Collections.emptyList());
+        var next = new HologramAeCraftingOrders.Order(s.player, null, null, request, java.util.Collections.emptyList());
+        Field field = HologramAeCraftingOrders.class.getDeclaredField("ORDERS");
+        field.setAccessible(true);
+        Map<UUID, HologramAeCraftingOrders.Order> orders = (Map<UUID, HologramAeCraftingOrders.Order>) field.get(null);
+        UUID owner = s.player.getUniqueID();
+        SimpleAssert.that(!orders.containsKey(owner), "cancellation fixture starts without an active order");
+        orders.put(owner, first);
+        try {
+            request.setString("orderId", first.id);
+            HologramMaterialWorkflow.action(s, request, "cancelMaterialOrder");
+            SimpleAssert.that(!first.active && !orders.containsKey(owner), "exact first order accepts cancellation");
+            orders.put(owner, next);
+            HologramMaterialWorkflow.action(s, request, "cancelMaterialOrder");
+            SimpleAssert.that(next.active && orders.get(owner) == next, "late first cancellation leaves the replacement active");
+            request.removeTag("orderId");
+            HologramMaterialWorkflow.action(s, request, "cancelMaterialOrder");
+            SimpleAssert.that(next.active && orders.get(owner) == next, "legacy unscoped cancellation cannot consume an order");
+            request.setString("orderId", next.id);
+            request.setLong("placementReviewNonce", s.placementReviewNonce - 1);
+            HologramMaterialWorkflow.action(s, request, "cancelMaterialOrder");
+            SimpleAssert.that(next.active && orders.get(owner) == next, "correct id under stale review cannot cancel");
+            request.setLong("placementReviewNonce", s.placementReviewNonce);
+            HologramMaterialWorkflow.action(s, request, "cancelMaterialOrder");
+            SimpleAssert.that(!next.active && !orders.containsKey(owner), "exact replacement cancellation succeeds");
+            HologramMaterialWorkflow.action(s, request, "cancelMaterialOrder");
+            SimpleAssert.that(!orders.containsKey(owner), "terminal duplicate cannot restore an order");
+        } finally {
+            orders.remove(owner);
+        }
+    }
+
     private static void rejectedProjectionRefresh(HologramSession s, NBTTagCompound action, String message) {
         try {
             HologramMaterialWorkflow.requireProjectionRefresh(s, action);
@@ -1693,6 +1730,7 @@ public final class HologramControllerCaptureRegression {
         SimpleAssert.eq(2L, quotedDemand(quote, energy), "prepared operation retains both real energy demands");
         SimpleAssert.eq(1L, quotedDemand(quote, muffler), "prepared operation retains the real muffler demand");
         projectionOrdering(s, energy);
+        cancellationOwnsOneOrder(s);
         NBTTagCompound stale = presetAction(s, "build");
         stale.setLong("planRevision", revision);
         HologramActionDispatcher.handle(s.player, stale);

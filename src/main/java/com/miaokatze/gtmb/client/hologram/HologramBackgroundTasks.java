@@ -631,7 +631,8 @@ public final class HologramBackgroundTasks {
     }
 
     static boolean canCancel() {
-        return busy() && !cancelling && (!"server".equals(OWNER.kind()) || !controlPending());
+        return busy() && !cancelling && (!materialTask() || materialOrders.active() && context != null)
+            && (!"server".equals(OWNER.kind()) || !controlPending());
     }
 
     static String pauseLabel() {
@@ -655,9 +656,11 @@ public final class HologramBackgroundTasks {
         request.setString("session", session);
         request.setString("op", op);
         request.setLong("uiSequence", sequence);
-        if ("cancelMaterialOrder".equals(op) && context != null) {
-            request.setLong("planRevision", context.data.getLong("planRevision"));
-            request.setLong("placementReviewNonce", context.data.getLong("placementReviewNonce"));
+        if ("cancelMaterialOrder".equals(op) && (context == null || !materialOrders.owns(context)
+            || !HologramMaterialOrderLifecycle.writeCancel(request, materialOrders.order(),
+                context.data.getLong("planRevision"), context.data.getLong("placementReviewNonce")))) {
+            cancelling = false;
+            return;
         }
         command(session, sequence, op);
         HologramClient.stampSemanticRevision(request);
