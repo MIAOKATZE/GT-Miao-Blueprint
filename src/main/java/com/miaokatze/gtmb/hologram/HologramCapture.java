@@ -92,6 +92,7 @@ public final class HologramCapture {
     HologramChannelTrace.Report channelReport;
     /** Counts actual GTMB invocation sites, not unrelated calls elsewhere in the server. */
     int nativeConstructCalls, nativeDefinitionCalls, nativeHintCalls;
+    private StructureSources.CompactNative compactNative;
 
     HologramCapture(Object context, ItemStack trigger) {
         this(context, trigger, StructureSources.CaptureIntent.NEW_TEMPLATE);
@@ -253,7 +254,12 @@ public final class HologramCapture {
 
     private static HologramCapture collect(MTEEnhancedMultiBlockBase<?> machine, ItemStack trigger,
         ExtendedFacing facing, StructureSources.CaptureIntent intent, HologramCapture resumed, boolean projectionOnly) {
-        return collect(machine, trigger, facing, intent, resumed, projectionOnly, 0);
+        return collect(machine, trigger, facing, intent, resumed, projectionOnly, 0, null);
+    }
+
+    static HologramCapture collectCompact(HologramSession session, ItemStack trigger, HologramCapture resumed) {
+        return collect(session.machine, trigger, session.machine.getExtendedFacing(),
+            session.captureIntent, resumed, false, 0, session.nativeCompactSource);
     }
 
     /** Client-local templates walk a registered, fresh controller with an independent client budget. */
@@ -269,15 +275,17 @@ public final class HologramCapture {
             StructureSources.CaptureIntent.NEW_TEMPLATE,
             resumed,
             true,
-            sliceNanos);
+            sliceNanos,
+            null);
     }
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
     private static HologramCapture collect(MTEEnhancedMultiBlockBase<?> machine, ItemStack trigger,
         ExtendedFacing facing, StructureSources.CaptureIntent intent, HologramCapture resumed, boolean projectionOnly,
-        long localSliceNanos) {
+        long localSliceNanos, StructureSources.CompactNative compact) {
         HologramCapture capture = resumed == null ? new HologramCapture(machine, trigger, intent, projectionOnly)
             : resumed;
+        if (resumed == null) capture.compactNative = compact;
         if (capture.projectionOnly != projectionOnly) {
             capture.invalidateSource("SOURCE_CAPTURE_MODE_CHANGED");
             return capture;
@@ -299,10 +307,15 @@ public final class HologramCapture {
             .observe(capture.declarationBindings)) {
             if (resumed == null) {
                 try {
-                    capture.sourceResolution = StructureSources.resolve(machine, trigger, intent);
+                    capture.sourceResolution = compact == null ? StructureSources.resolve(machine, trigger, intent)
+                        : StructureSources.resolveCompactNative(machine.getClass(), compact, trigger);
                 } catch (RuntimeException | LinkageError failure) {
                     capture.noteFailure(failure);
                     capture.invalidateSource("SOURCE_DESCRIPTION_FAILED");
+                    return capture;
+                }
+                if (capture.sourceResolution == null) {
+                    capture.invalidateSource("SOURCE_COMPACT_DECLARATION_CHANGED");
                     return capture;
                 }
                 if (capture.sourceResolution.status == StructureSources.Status.UNSUPPORTED) {
@@ -490,8 +503,10 @@ public final class HologramCapture {
     /** A ready native job may not run custom callbacks or inherited world reads in the new intake path. */
     boolean readyPlacementSource(HologramSession s) {
         return sourceBinding != null && sourceResolution != null
-            && sourceResolution.status == StructureSources.Status.ABSENT && sourceResolution.sourceId.isEmpty()
-            && buildPieceCalls && nativeConstructCalls == 1
+            && (compactNative == null ? sourceResolution.status == StructureSources.Status.ABSENT
+                && sourceResolution.sourceId.isEmpty() && buildPieceCalls && nativeConstructCalls == 1
+                : compactNative == s.nativeCompactSource
+                    && StructureSources.compactNative(s.machine.getClass()) == compactNative)
             && sourceBinding.machine == s.machine && sourceBinding.world == s.libraryWorld
             && sourceBinding.worldTile == s.target && sourceBinding.x == s.x && sourceBinding.y == s.y
             && sourceBinding.z == s.z && sourceBinding.facing.ordinal() == s.facing
@@ -552,6 +567,7 @@ public final class HologramCapture {
 
     private String sourceValidityFailure(boolean reject) {
         if (!ownSources.rejection.isEmpty()) return ownSources.rejection;
+        if (compactNative != null && sourceBinding != null) return sourceBinding.validityFailure(false);
         if (sourceResolution != null && sourceBinding == null) {
             String reason = sourceResolution.validityFailure();
             if (reason == null) reason = incomplete && !failure.isEmpty() ? failure : "SOURCE_NOT_CAPTURED";
@@ -689,6 +705,11 @@ public final class HologramCapture {
 
     private void finishExtensions() {
         if (projectionOnly) return;
+        if (compactNative != null && com.miaokatze.gtmb.api.BlueprintSnapshots
+            .hasProcessors(com.miaokatze.gtmb.api.BlueprintSnapshots.Stage.CAPTURE_COMPLETE)) {
+            invalidateSource("SOURCE_COMPACT_CAPTURE_PROCESSOR_UNSUPPORTED");
+            return;
+        }
         if (incomplete || !com.miaokatze.gtmb.api.BlueprintSnapshots
             .hasProcessors(com.miaokatze.gtmb.api.BlueprintSnapshots.Stage.CAPTURE_COMPLETE)) {
             cancelPending();

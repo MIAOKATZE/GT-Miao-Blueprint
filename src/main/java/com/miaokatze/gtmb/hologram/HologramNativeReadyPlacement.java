@@ -61,6 +61,12 @@ final class HologramNativeReadyPlacement {
         return Boolean.getBoolean("gtmb.experimental.nativeReadyPlace");
     }
 
+    static boolean admitPrepared(HologramSession s, String id) {
+        if (s.nativeCompactStart == null || s.nativeReadyPlacement != null || !ready(s)) return false;
+        s.nativeReadyPlacement = new HologramNativeReadyPlacement(s, id, System.nanoTime());
+        return true;
+    }
+
     static void receive(EntityPlayerMP player, NBTTagCompound request) {
         receive(player, request, HologramProjectedPlacementService::reply);
     }
@@ -103,7 +109,7 @@ final class HologramNativeReadyPlacement {
     }
 
     private static boolean matches(HologramSession s, EntityPlayerMP player, NBTTagCompound r) {
-        if (s == null || s.player != player || !FIELDS.equals(r.func_150296_c()) || !r.hasKey(FLAG, 1)
+        if (s == null || s.player != player || !HologramCompactNativeRequest.hasFields(r, FIELDS) || !r.hasKey(FLAG, 1)
             || !r.getBoolean(FLAG) || !"useBlock".equals(r.getString("action"))
             || !s.id.equals(r.getString("session"))) return false;
         for (String key : new String[] { "x", "y", "z", "side" })

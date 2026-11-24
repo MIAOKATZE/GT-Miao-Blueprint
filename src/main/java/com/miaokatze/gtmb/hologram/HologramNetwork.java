@@ -1472,8 +1472,13 @@ public final class HologramNetwork {
                 || "snapshotConsumed".equals(msg.tag.getString("op"));
             HologramRequestGate gate = snapshotControl ? snapshotControlGate : receipt ? receiptGate : actionGate;
             HologramRequestGate.Lease lease = gate.acquire(player);
+            boolean compactNative = "useBlock".equals(msg.tag.getString("action"))
+                && msg.tag.hasKey(HologramCompactNativeRequest.FLAG);
+            String compactId = compactNative ? msg.tag.getString("placementRequestId") : "";
             if (lease == null) {
-                if (!snapshotControl) HologramBusyReplies.reject(player, msg.tag, HologramBusyReplies.Kind.ACTION);
+                if (compactNative && HologramNativeCompactStart.canonical(compactId))
+                    HologramProjectedPlacementService.reply(player, compactId, false, "服务器正忙，原生放置未开始。");
+                else if (!snapshotControl) HologramBusyReplies.reject(player, msg.tag, HologramBusyReplies.Kind.ACTION);
                 return null;
             }
             HologramRuntimeMetrics.gauge(HologramRuntimeMetrics.Counter.ACTION_DEPTH, actionGate.size());
@@ -1481,12 +1486,24 @@ public final class HologramNetwork {
             // Packet decompression is already bounded. Large index selections must not be rejected
             // because their textual representation exceeds an unrelated string budget.
             net.minecraft.world.World world = player.worldObj;
+            HologramSessionPolicy.PreparationTool submittedTool = compactNative
+                ? new HologramSessionPolicy.PreparationTool(player.getHeldItem()) : null;
             ServerTaskScheduler.scheduleServerTask(
                 () -> runQueuedAction(
                     player,
                     world,
                     lease,
-                    () -> HologramControllerOpen.dispatch(player, msg.tag, () -> dispatch(player, msg.tag))));
+                    () -> {
+                        if (compactNative && !submittedTool.matches(player.getHeldItem())) {
+                            if (HologramNativeCompactStart.canonical(compactId)
+                                && !HologramProjectedPlacementService.consumed(player, compactId)) {
+                                HologramProjectedPlacementService.retire(player, compactId);
+                                HologramProjectedPlacementService.reply(player, compactId, false, "手持投影仪已变化。");
+                            }
+                            return;
+                        }
+                        HologramControllerOpen.dispatch(player, msg.tag, () -> dispatch(player, msg.tag));
+                    }));
             return null;
         }
     }
@@ -1519,8 +1536,13 @@ public final class HologramNetwork {
         }
         if ("cancelProjectedPlacement".equals(action)) {
             String requestId = tag.getString("placementRequestId");
-            if (!HologramNativeReadyPlacement.cancel(player, requestId))
+            if (!HologramNativeCompactStart.cancel(player, requestId)
+                && !HologramNativeReadyPlacement.cancel(player, requestId))
                 HologramProjectedPlacementService.cancel(player, requestId);
+            return;
+        }
+        if ("useBlock".equals(action) && tag.hasKey(HologramCompactNativeRequest.FLAG)) {
+            HologramNativeCompactStart.receive(player, tag);
             return;
         }
         if ("useBlock".equals(action) && tag.hasKey(HologramNativeReadyPlacement.FLAG)) {

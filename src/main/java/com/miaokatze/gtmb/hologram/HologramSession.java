@@ -37,6 +37,9 @@ final class HologramSession {
     HologramExecutionReview.Start executionStart;
     HologramNativeReadyPlacement nativeReadyPlacement;
     HologramNativeItemBill nativeReadyBill;
+    HologramNativeCompactStart nativeCompactStart;
+    com.miaokatze.gtmb.api.StructureSources.CompactNative nativeCompactSource;
+    String nativeCompactRequestId = "";
 
     final EntityPlayerMP player;
     final World libraryWorld;

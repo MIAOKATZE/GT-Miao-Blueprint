@@ -53,6 +53,9 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     private NBTTagCompound explicitControllerOperation;
     private volatile java.util.UUID localExecutionRequest;
     private boolean localExecutionSent;
+    private boolean localCompactNative;
+    private long nativeCompactReceiptDeadline;
+    private String nativeCompactAssignedTool = "";
 
     @com.github.bsideup.jabel.Desugar
     private record LocalMaterialScope(HologramState state, int selected, int[] selection) {}
@@ -388,6 +391,21 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         }
         java.util.UUID id = java.util.UUID.randomUUID();
         localExecutionRequest = id;
+        if (com.miaokatze.gtmb.hologram.HologramCompactNativeRequest.enabled()) {
+            try {
+                NBTTagCompound request = com.miaokatze.gtmb.hologram.HologramCompactNativeRequest.encode(
+                    id, openingController, localControllerSide, client.thePlayer.inventory.currentItem, displayed.data,
+                    settings, localControllerBaseline != null && displayed.cells == localControllerBaseline.cells);
+                localCompactNative = true;
+                localExecutionSent = true;
+                nativeCompactReceiptDeadline = System.nanoTime() + 35_000_000_000L;
+                com.miaokatze.gtmb.hologram.HologramNetwork.sendAction(request);
+                ui.session.notice("正在核对现场原生结构。");
+            } catch (java.io.IOException | RuntimeException failure) {
+                localExecutionFailed(id, failure.getMessage());
+            }
+            return;
+        }
         int[] anchor = { displayed.data.getInteger("x"), displayed.data.getInteger("y"), displayed.data.getInteger("z") };
         int height = client.theWorld.getHeight();
         NBTTagCompound intent = (NBTTagCompound) displayed.data.copy();
@@ -442,6 +460,8 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         if (!id.equals(localExecutionRequest)) return;
         localExecutionRequest = null;
         localExecutionSent = false;
+        localCompactNative = false;
+        nativeCompactReceiptDeadline = 0;
         ui.session.notice(reason == null || reason.isEmpty() ? "施工清单准备失败" : reason);
     }
 
@@ -464,8 +484,26 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     boolean receiveLocalMaterialCheck(NBTTagCompound receipt) {
         java.util.UUID execution = localExecutionRequest;
         if (execution != null && execution.toString().equals(receipt.getString("placementRequestId"))) {
-            if (!receipt.getBoolean("placementRequestAccepted"))
+            if (!receipt.getBoolean("placementRequestAccepted")) {
                 localExecutionFailed(execution, receipt.getString("errorMessage"));
+            } else if (localCompactNative) {
+                nativeCompactReceiptDeadline = 0;
+                if (receipt.getBoolean("nativeCompactJob")) {
+                    ui.session.notice(receipt.getString("status"));
+                    if (receipt.getInteger("job") >= 3) {
+                        localExecutionRequest = null;
+                        localExecutionSent = localCompactNative = false;
+                        rescanDisplayedStructure();
+                    }
+                } else if (receipt.getBoolean("nativeCompactStarted") && receipt.getInteger("slot") == openingSlot
+                    && minecraft().thePlayer != null) {
+                    String assigned = receipt.getString("toolId");
+                    ItemStack held = minecraft().thePlayer.getHeldItem();
+                    if (openingToolId.isEmpty() && !assigned.isEmpty()
+                        && (held == openingTool || assigned.equals(toolId(held)))) nativeCompactAssignedTool = assigned;
+                    ui.session.notice("原生施工已开始。");
+                }
+            }
             return true;
         }
         if (localMaterialRequest == null || !localMaterialRequest.toString().equals(receipt.getString("placementRequestId")))
@@ -573,6 +611,9 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     }
 
     void advanceLocalController() {
+        if (localCompactNative && localExecutionRequest != null && nativeCompactReceiptDeadline != 0
+            && System.nanoTime() >= nativeCompactReceiptDeadline)
+            localExecutionFailed(localExecutionRequest, "未收到原生放置确认，请核对现场后重试。");
         if (!localControllerStandard() || localController == null) return;
         boolean retire = false;
         try {
@@ -711,7 +752,9 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         if (!ItemNekoHologramProjector.isProjector(held)) return false;
         String heldId = toolId(held);
         // Opening an unlinked projector assigns its ID server-side and can replace the local stack on sync.
-        if (openingToolId.isEmpty()) return held == openingTool || assignedToolAllowed && !heldId.isEmpty();
+        if (openingToolId.isEmpty()) return held == openingTool
+            || !nativeCompactAssignedTool.isEmpty() && nativeCompactAssignedTool.equals(heldId)
+            || assignedToolAllowed && !heldId.isEmpty();
         return openingToolId.equals(heldId);
     }
 

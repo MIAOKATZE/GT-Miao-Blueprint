@@ -37,6 +37,7 @@ final class HologramWorkspace {
             HologramNetwork.sendControllerProjectionRetired(projection, "");
         }
         if (previous != null && previous != session) {
+            HologramNativeCompactStart.cancel(previous);
             HologramNativeReadyPlacement.cancel(previous);
             if (previous.currentPlacementTask != null) previous.currentPlacementTask.cancel();
             previous.presentationTransition = null;
@@ -59,6 +60,7 @@ final class HologramWorkspace {
     }
 
     static void retireFieldProjection(HologramSession projection, String reason) {
+        HologramNativeCompactStart.cancel(projection);
         HologramNativeReadyPlacement.cancel(projection);
         HologramAeCraftingOrders.cancelForSession(projection, "现场已失效，AE 缺料订单已取消");
         if (projection.job == 1 || projection.job == 2) {
@@ -131,6 +133,28 @@ final class HologramWorkspace {
             && session.blueprintSaveReceipt.isEmpty()
             && !HologramAeCraftingOrders.active(session.player)
             && !HologramDemolition.active(session.player);
+    }
+
+    static boolean reserveCompactNative(HologramSession previous, HologramSession target) {
+        var owner = target.player.getUniqueID();
+        if (find(owner) != previous || HologramSessionPolicy.currentTool(target) == null) return false;
+        // Capabilities remain private until the new task actually admits a job.
+        SESSIONS.put(owner, target);
+        return true;
+    }
+
+    static void rollbackCompactNative(HologramSession previous, HologramSession target) {
+        var owner = target.player.getUniqueID();
+        if (find(owner) != target) return;
+        if (previous != null && previous.player == target.player && previous.libraryWorld == target.player.worldObj
+            && !target.player.isDead) SESSIONS.put(owner, previous);
+        else SESSIONS.remove(owner, target);
+    }
+
+    static void commitCompactNative(HologramSession previous, HologramSession target) {
+        if (find(target.player.getUniqueID()) != target) return;
+        if (previous != null) HologramEditorWorkspaceRegistry.remember(previous);
+        HologramEditorWorkspaceRegistry.activated(target);
     }
 
     static PresentationTransition preparePresentation(HologramSession origin, HologramSession target) {

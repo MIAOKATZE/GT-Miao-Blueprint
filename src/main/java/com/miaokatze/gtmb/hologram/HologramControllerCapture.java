@@ -250,7 +250,7 @@ final class HologramControllerCapture {
         s.job = 4;
         s.phase = "STOPPED";
         s.status = reason;
-        if (HologramWorkspace.find(s.player.getUniqueID()) == s) HologramNetwork.transportFailure(
+        if (s.nativeCompactStart == null && HologramWorkspace.find(s.player.getUniqueID()) == s) HologramNetwork.transportFailure(
             s.player,
             s.id,
             s.uiSequence,
@@ -269,7 +269,7 @@ final class HologramControllerCapture {
             && s.capture != null
             && s.capture.pending ? s.capture : null;
         if (work == null) {
-            HologramMaterialAccess.refreshMaterialChoices(s);
+            if (s.nativeCompactSource == null) HologramMaterialAccess.refreshMaterialChoices(s);
             boolean calibrate = s.calibratePending, build = !resetAttempts && s.buildAfterCapture;
             HologramSession.cancelCaptureRetry(s);
             s.calibratePending = calibrate;
@@ -325,7 +325,8 @@ final class HologramControllerCapture {
         if (!work.finalizing()) {
             if (resumed == null) s.captureAttempts++;
             ItemStack initialTrigger = HologramSessionPolicy.trigger(s);
-            s.capture = projection ? HologramCapture
+            s.capture = s.nativeCompactSource != null ? HologramCapture.collectCompact(s, initialTrigger, resumed)
+                : projection ? HologramCapture
                 .collectProjection(s.machine, initialTrigger, s.machine.getExtendedFacing(), s.captureIntent, resumed)
                 : HologramCapture
                     .collect(s.machine, initialTrigger, s.machine.getExtendedFacing(), s.captureIntent, resumed);
@@ -337,7 +338,8 @@ final class HologramControllerCapture {
                 .withSavedChannels(s.channels);
             ItemStack observedTrigger = HologramSessionPolicy.trigger(s);
             if (!s.capture.incomplete && !ItemStack.areItemStackTagsEqual(initialTrigger, observedTrigger)) {
-                s.capture = projection ? HologramCapture
+                s.capture = s.nativeCompactSource != null ? HologramCapture.collectCompact(s, observedTrigger, null)
+                    : projection ? HologramCapture
                     .collectProjection(s.machine, observedTrigger, s.machine.getExtendedFacing(), s.captureIntent, null)
                     : HologramCapture
                         .collect(s.machine, observedTrigger, s.machine.getExtendedFacing(), s.captureIntent);
