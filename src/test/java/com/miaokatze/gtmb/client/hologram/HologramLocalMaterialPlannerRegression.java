@@ -19,7 +19,7 @@ public final class HologramLocalMaterialPlannerRegression {
 
     private HologramLocalMaterialPlannerRegression() {}
 
-    static void run() {
+    public static void run() {
         HologramState repeated = state(123_369, 0);
         NBTTagCompound config = configuration();
         AtomicReference<Runnable> queued = new AtomicReference<>();
@@ -36,10 +36,38 @@ public final class HologramLocalMaterialPlannerRegression {
             && "123362".equals(row.getString("missingExact")), "repeated exact stack totals and protected slot");
 
         HologramLocalMaterialReview cancelled = new HologramLocalMaterialReview(repeated, config, queued::set);
+        NBTTagCompound pending = new NBTTagCompound();
+        pending.setBoolean("capturePending", true);
+        HologramState recapturing = repeated.withMetadata(pending);
+        SimpleAssert.that(recapturing.cells == repeated.cells && !cancelled.current(recapturing, 0),
+            "a recapture shell with the same geometry immediately retires the old material scope");
+        pending.setBoolean("capturePending", false);
+        pending.setString("generation", "another-local-capture");
+        SimpleAssert.that(!cancelled.current(repeated.withMetadata(pending), 0),
+            "identical visible rows do not authorize a different local capture generation");
         cancelled.close();
         queued.get().run();
         cancelled.tick(stock, 0);
         SimpleAssert.that(!cancelled.ready() && !cancelled.visible().hasKey("rows"), "retired worker cannot publish");
+
+        for (int style = 1; style <= 2; style++) {
+            HologramLocalMaterialReview mixed = new HologramLocalMaterialReview(state(129, style), config, queued::set);
+            queued.get().run();
+            reviews(mixed, stock, 0, 20);
+            var rows = mixed.visible().getTagList("rows", 10);
+            SimpleAssert.that(mixed.ready() && rows.tagCount() >= 2 && !mixed.visible().getBoolean("complete"),
+                "mixed material/metadata and tagged-device paths remain descriptive, never authoritative");
+            for (int i = 0; i < rows.tagCount(); i++) {
+                NBTTagCompound candidate = rows.getCompoundTagAt(i);
+                if (candidate.getCompoundTag("stack").hasKey("tag", 10))
+                    SimpleAssert.that(!candidate.getBoolean("availableKnown") || candidate.getLong("available") == 0,
+                        "an untagged backpack stack cannot be counted as exact tagged stock");
+            }
+            mixed.close();
+            mixed.refresh(stock, 0);
+            mixed.tick(stock, 0);
+            SimpleAssert.that(!mixed.current(repeated, 0), "a closed pane cannot regain ownership");
+        }
     }
 
     static int reviews(HologramLocalMaterialReview review, ItemStack[] stock, int slot, int limit) {

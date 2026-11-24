@@ -69,6 +69,10 @@ final class HologramPlacementAdmissionSweep {
         return cursor == cellCount ? Progress.COMPLETE : Progress.PENDING;
     }
 
+    int visited() {
+        return cursor;
+    }
+
     private void retire() {
         retired = true;
         ordered.clear();

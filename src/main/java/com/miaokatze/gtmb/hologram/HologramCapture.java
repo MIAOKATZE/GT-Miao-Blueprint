@@ -93,6 +93,8 @@ public final class HologramCapture {
     /** Counts actual GTMB invocation sites, not unrelated calls elsewhere in the server. */
     int nativeConstructCalls, nativeDefinitionCalls, nativeHintCalls;
     private StructureSources.CompactNative compactNative;
+    private boolean ordinaryNative;
+    long nativeWalkUnits;
 
     HologramCapture(Object context, ItemStack trigger) {
         this(context, trigger, StructureSources.CaptureIntent.NEW_TEMPLATE);
@@ -286,14 +288,32 @@ public final class HologramCapture {
             null);
     }
 
-    @SuppressWarnings({ "rawtypes", "unchecked" })
+    static HologramCapture collectOrdinary(HologramSession session, ItemStack trigger, HologramCapture resumed) {
+        return collect(session.machine, trigger, session.machine.getExtendedFacing(), session.captureIntent,
+            resumed, false, 0, null, true);
+    }
+
     private static HologramCapture collect(MTEEnhancedMultiBlockBase<?> machine, ItemStack trigger,
         ExtendedFacing facing, StructureSources.CaptureIntent intent, HologramCapture resumed, boolean projectionOnly,
         long localSliceNanos, StructureSources.CompactNative compact) {
+        return collect(machine, trigger, facing, intent, resumed, projectionOnly, localSliceNanos, compact, false);
+    }
+
+    @SuppressWarnings({ "rawtypes", "unchecked" })
+    private static HologramCapture collect(MTEEnhancedMultiBlockBase<?> machine, ItemStack trigger,
+        ExtendedFacing facing, StructureSources.CaptureIntent intent, HologramCapture resumed, boolean projectionOnly,
+        long localSliceNanos, StructureSources.CompactNative compact, boolean ordinaryNative) {
         HologramCapture capture = resumed == null ? new HologramCapture(machine, trigger, intent, projectionOnly)
             : resumed;
-        if (resumed == null) capture.compactNative = compact;
-        if (capture.projectionOnly != projectionOnly) {
+        if (resumed == null) {
+            capture.compactNative = compact;
+            capture.ordinaryNative = ordinaryNative;
+        }
+        if (ordinaryNative && StructureSources.hasSource(machine.getClass())) {
+            capture.invalidateSource("SOURCE_ORDINARY_REGISTERED_PROVIDER_UNSUPPORTED");
+            return capture;
+        }
+        if (capture.projectionOnly != projectionOnly || capture.ordinaryNative != ordinaryNative) {
             capture.invalidateSource("SOURCE_CAPTURE_MODE_CHANGED");
             return capture;
         }
@@ -349,6 +369,10 @@ public final class HologramCapture {
             if (resumed == null) capture.bindSource(machine, facing);
             if (!capture.sourceCurrent()) return capture;
             IStructureDefinition definition = capture.definition;
+            if (ordinaryNative && (definition == null || !HologramStructureCursor.supports(definition))) {
+                capture.invalidateSource("SOURCE_ORDINARY_CUSTOM_ITERATOR_UNSUPPORTED");
+                return capture;
+            }
             capture.refreshInterpretationGeneration();
             if (localSliceNanos > 0 && (definition == null || !HologramStructureCursor.supports(definition))) {
                 capture.invalidateSource("LOCAL_STRUCTURE_WALK_UNAVAILABLE");
@@ -722,7 +746,7 @@ public final class HologramCapture {
 
     private void finishExtensions() {
         if (projectionOnly) return;
-        if (compactNative != null && com.miaokatze.gtmb.api.BlueprintSnapshots
+        if ((ordinaryNative || compactNative != null) && com.miaokatze.gtmb.api.BlueprintSnapshots
             .hasProcessors(com.miaokatze.gtmb.api.BlueprintSnapshots.Stage.CAPTURE_COMPLETE)) {
             invalidateSource("SOURCE_COMPACT_CAPTURE_PROCESSOR_UNSUPPORTED");
             return;
@@ -884,7 +908,9 @@ public final class HologramCapture {
                 int cursorStart = capture.structureCursor.done();
                 boolean finished = capture.structureCursor
                     .advance(world, facing, x, y, z, walker, remaining, capture.deadline);
-                remaining -= capture.structureCursor.done() - cursorStart;
+                int visited = capture.structureCursor.done() - cursorStart;
+                capture.nativeWalkUnits += visited;
+                remaining -= visited;
                 if (!finished) {
                     capture.pending = true;
                     return;

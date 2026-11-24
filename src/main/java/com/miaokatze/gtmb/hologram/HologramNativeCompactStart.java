@@ -14,11 +14,15 @@ import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 /** One explicit native intent owns capture then ready admission, never a second player queue or a quote. */
 final class HologramNativeCompactStart {
 
-    private static final long LIFETIME = 30_000_000_000L;
+    private static final long IDLE_NANOS = 30_000_000_000L;
+    // Large native drafts share per-player ticks; this bounds continuous progress without the old 30s hard stop.
+    private static final long ORDINARY_LIMIT_NANOS = 600_000_000_000L;
+    private static final long PROGRESS_INTERVAL_NANOS = 500_000_000L;
 
     private final HologramSession session, previous;
     private final String id;
     private final long started = System.nanoTime(), sourceRevision = StructureSources.revision();
+    private long lastProgress = started, lastPublication, workDone;
     private final int facing;
     private final boolean ordinary, creative;
     private final HologramNativeReadyPlacement.Receipt receipt;
@@ -106,8 +110,18 @@ final class HologramNativeCompactStart {
             receipt.send(p, id, false, "现场原生控制器或朝向已变化。");
             return;
         }
+        if (ordinary && (StructureSources.hasSource(unit.getClass())
+            || com.miaokatze.gtmb.api.BlueprintSnapshots
+                .hasProcessors(com.miaokatze.gtmb.api.BlueprintSnapshots.Stage.CAPTURE_COMPLETE))) {
+            receipt.send(p, id, false, "当前原生结构使用了需要独立审核的提供器，请使用高级施工。");
+            return;
+        }
         var source = ordinary ? null : StructureSources.compactNative(unit.getClass());
         var channels = r.getCompoundTag("channels");
+        if (ordinary && HologramCompactNativeRequest.needsHatchPresetReview(r)) {
+            receipt.send(p, id, false, HologramCompactNativeRequest.HATCH_PRESET_REVIEW_REQUIRED);
+            return;
+        }
         if ((!ordinary && (source == null || !source.accepts(r.getInteger("main"), channels)))
             || HologramConstructionJournal.pending(p)) {
             receipt.send(p, id, false, "未认证此原生定义、信道或当前施工恢复状态。");
@@ -153,39 +167,98 @@ final class HologramNativeCompactStart {
     static boolean tick(HologramSession s) {
         HologramNativeCompactStart task = s.nativeCompactStart;
         if (task == null) return false;
-        if (!task.current()) {
-            task.finish(false, "原生控制器、投影仪或声明已变化。");
+        String timeout = preparationTimeout(task.ordinary, task.started, task.lastProgress, System.nanoTime());
+        if (timeout != null) {
+            task.finish(false, timeout);
             return true;
         }
-        if (task.admitting) {
+        try {
+            return task.advance(s);
+        } catch (RuntimeException | LinkageError failed) {
+            // A late publication error cannot revoke a job that has already passed admission.
+            if (s.job == 1) task.finish(true, null);
+            else task.finish(false, "原生补建准备失败：" + HologramAePolicy.fallback(failed.getMessage()));
+            return true;
+        }
+    }
+
+    static String preparationTimeout(boolean ordinary, long start, long lastProgress, long now) {
+        if (ordinary && now - start >= ORDINARY_LIMIT_NANOS) return "原生补建达到准备时间上限，未开始施工。";
+        if (now - (ordinary ? lastProgress : start) >= IDLE_NANOS)
+            return "原生补建准备超时，未开始施工。";
+        return null;
+    }
+
+    private boolean advance(HologramSession s) {
+        if (!current()) {
+            finish(false, "原生控制器、投影仪或声明已变化。");
+            return true;
+        }
+        if (admitting) {
+            HologramNativeReadyPlacement ready = s.nativeReadyPlacement;
+            if (ready == null) {
+                finish(false, "原生补建准备已失效，未开始施工。");
+                return true;
+            }
+            long before = ready.completed();
             HologramNativeReadyPlacement.tick(
                 s,
                 256,
                 HologramWorkBudget.deadline(HologramWorkBudget.SLICE_NANOS),
                 System::nanoTime,
-                (p, id, accepted, reason) -> task.finish(accepted, reason));
+                (p, id, accepted, reason) -> finish(accepted, reason));
+            if (s.nativeCompactStart == this) progress(ready.completed() - before, "placement.admission");
             return true;
         }
-        HologramControllerCapture.collect(s, !task.collecting);
-        task.collecting = true;
+        HologramCapture before = s.capture;
+        long visited = before == null ? 0 : before.nativeWalkUnits;
+        HologramControllerCapture.collect(s, !collecting);
+        collecting = true;
+        if (s.nativeCompactStart != this) return true;
+        long discovered = s.capture == null ? 0
+            : s.capture.nativeWalkUnits - (s.capture == before ? visited : 0);
+        HologramControllerCapture.FinishWork finishWork = s.captureWork;
+        progress(discovered + (finishWork == null ? 0 : finishWork.lastWork()),
+            finishWork == null || !finishWork.finalizing() ? "placement.capture" : "placement.plan");
         if (!s.capturePending) {
-            if (task.ordinary && (s.capture == null || s.capture.incomplete || !s.captureError.isEmpty())) {
-                task.finish(false, !s.captureError.isEmpty() ? s.captureError
+            if (ordinary && (s.capture == null || s.capture.incomplete || !s.captureError.isEmpty())) {
+                finish(false, !s.captureError.isEmpty() ? s.captureError
                     : s.capture == null || s.capture.failure.isEmpty() ? "原生结构采集未完成" : s.capture.failure);
-            } else if (task.ordinary && !s.capture.readyPlacementSource(s)) {
-                task.finish(false, "当前原生结构使用了需要独立审核的提供器或现场规则，未开始补建");
-            } else if (task.ordinary && s.planMissing > 0) {
-                task.finish(false, "所选来源缺少 " + s.planMissing + " 件材料，未开始补建");
-            } else if (!HologramNativeReadyPlacement.admitPrepared(s, task.id)) {
-                task.finish(false, "服务端未能准备支持的现场或背包材料计划。");
-            } else task.admitting = true;
+            } else if (ordinary && !s.capture.readyPlacementSource(s)) {
+                finish(false, "当前原生结构使用了需要独立审核的提供器或现场规则，未开始补建");
+            } else if (ordinary && s.planMissing > 0) {
+                finish(false, "所选来源缺少 " + s.planMissing + " 件材料，未开始补建");
+            } else if (!HologramNativeReadyPlacement.admitPrepared(s, id)) {
+                finish(false, "服务端未能准备支持的现场或背包材料计划。");
+            } else admitting = true;
         }
         return true;
     }
 
+    private void progress(long units, String phase) {
+        if (!ordinary || units <= 0) return;
+        long now = System.nanoTime();
+        lastProgress = now;
+        workDone += units;
+        if (lastPublication != 0 && now - lastPublication < PROGRESS_INTERVAL_NANOS) return;
+        lastPublication = now;
+        NBTTagCompound progress = new NBTTagCompound(), envelope = new NBTTagCompound();
+        progress.setString("scope", "nativePlacement");
+        progress.setString("placementRequestId", id);
+        progress.setString("phase", phase);
+        progress.setLong("done", workDone);
+        envelope.setBoolean("progressOnly", true);
+        envelope.setTag("progress", progress);
+        try {
+            HologramNetwork.sendState(session.player, envelope);
+        } catch (RuntimeException disconnected) {
+            // Progress is best effort; the next owner/context check still fences construction.
+        }
+    }
+
     private boolean current() {
         HologramSession s = session;
-        return System.nanoTime() - started < LIFETIME && s.job == 0
+        return s.job == 0
             && !s.cancelled
             && s.machine != null
             && HologramWorkspace.find(s.player.getUniqueID()) == s

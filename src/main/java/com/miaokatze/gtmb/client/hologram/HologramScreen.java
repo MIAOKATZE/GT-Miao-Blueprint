@@ -57,6 +57,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     private boolean localExecutionSent;
     private boolean localCompactNative;
     private long nativeCompactReceiptDeadline;
+    private long nativePreparationUnits;
     private String nativeCompactAssignedTool = "";
 
     @com.github.bsideup.jabel.Desugar
@@ -416,6 +417,10 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     }
 
     boolean reviewLocalConstruction(NBTTagCompound settings) {
+        return reviewLocalConstruction(settings, false);
+    }
+
+    boolean reviewLocalConstruction(NBTTagCompound settings, boolean compatibilitySelected) {
         if (!localControllerStandard()) return false;
         if (localExecutionRequest != null) {
             ui.session.notice("上一次施工核对尚未结束，请稍候。");
@@ -433,7 +438,8 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             return false;
         }
         int mode = displayed.data.getInteger("mode");
-        boolean compact = com.miaokatze.gtmb.hologram.HologramCompactNativeRequest.enabled();
+        boolean compact = !compatibilitySelected
+            && com.miaokatze.gtmb.hologram.HologramCompactNativeRequest.enabled();
         net.minecraft.nbt.NBTTagList choices;
         try {
             choices = nativeReviewChoices(displayed, localNativeChoices, mode, settings.getInteger("scope"), compact);
@@ -447,7 +453,13 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             return HologramClient
                 .prepareExplicitControllerOperation(openingController, localControllerSide, settings, displayed);
         }
-        boolean ordinary = ordinaryNativeSubmit(displayed.data, settings, !localNativeChoices.isEmpty());
+        if (compatibilitySelected && !settings.getBoolean("noHatches")
+            && settings.getCompoundTag("channels").hasKey("gt_hatch", 3)) {
+            ui.session.notice("当前投影仪有仓室等级信道。请先在仓室预设明确应用目标等级，再核对施工。");
+            return false;
+        }
+        boolean ordinary = ordinaryNativeSubmit(displayed.data, settings, !localNativeChoices.isEmpty(),
+            compatibilitySelected);
         java.util.UUID id = java.util.UUID.randomUUID();
         localExecutionRequest = id;
         if (compact || ordinary) {
@@ -460,6 +472,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
                         localControllerSide, client.thePlayer.inventory.currentItem, displayed.data, settings, unedited);
                 localCompactNative = true;
                 localExecutionSent = true;
+                nativePreparationUnits = 0;
                 nativeCompactReceiptDeadline = System.nanoTime() + 35_000_000_000L;
                 com.miaokatze.gtmb.hologram.HologramNetwork.sendAction(request);
                 ui.session.notice("正在核对现场原生结构。");
@@ -530,9 +543,10 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         }
     }
 
-    /** Only an intentional scope, preset, or hand edit can enter the advanced review path. */
-    static boolean ordinaryNativeSubmit(NBTTagCompound state, NBTTagCompound settings, boolean localEdits) {
-        return state.getInteger("mode") == 0 && settings.getInteger("scope") == 0
+    /** Only an intentional compatibility selection, scope, preset, or hand edit enters advanced review. */
+    static boolean ordinaryNativeSubmit(NBTTagCompound state, NBTTagCompound settings, boolean localEdits,
+        boolean compatibilitySelected) {
+        return !compatibilitySelected && state.getInteger("mode") == 0 && settings.getInteger("scope") == 0
             && settings.getIntArray("selectedIndices").length == 0 && !state.getBoolean("presetActive")
             && settings.getString("structureId").isEmpty() && !localEdits;
     }
@@ -610,6 +624,20 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             locallyReplacingView = false;
         }
         return true;
+    }
+
+    void receiveNativePlacementProgress(NBTTagCompound progress) {
+        java.util.UUID request = localExecutionRequest;
+        if (!localCompactNative || nativeCompactReceiptDeadline == 0 || request == null
+            || !request.toString().equals(progress.getString("placementRequestId")) || !progress.hasKey("done", 4))
+            return;
+        long units = progress.getLong("done");
+        if (units <= nativePreparationUnits) return;
+        nativePreparationUnits = units;
+        nativeCompactReceiptDeadline = System.nanoTime() + 35_000_000_000L;
+        String phase = progress.getString("phase");
+        ui.session.notice("placement.admission".equals(phase) ? "正在复核施工范围和库存…"
+            : "placement.plan".equals(phase) ? "正在计算原生结构材料…" : "正在采集服务器原生结构…");
     }
 
     boolean receiveLocalMaterialCheck(NBTTagCompound receipt) {
@@ -761,8 +789,12 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     void advanceLocalController() {
         if (localCompactNative && localExecutionRequest != null
             && nativeCompactReceiptDeadline != 0
-            && System.nanoTime() >= nativeCompactReceiptDeadline)
-            localExecutionFailed(localExecutionRequest, "未收到原生放置确认，请核对现场后重试。");
+            && System.nanoTime() >= nativeCompactReceiptDeadline) {
+            java.util.UUID expired = localExecutionRequest;
+            boolean sent = cancelPendingLocalExecution(expired);
+            localExecutionFailed(expired, sent ? "未收到原生补建确认，已请求取消尚未开工的请求；请先核对现场再重试。"
+                : "未收到原生补建确认，请先核对现场再重试。");
+        }
         if (!localControllerStandard() || localController == null) return;
         boolean retire = false;
         try {
@@ -1087,6 +1119,27 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         websiteConfirmationResumePending = true;
     }
 
+    private boolean cancelPendingLocalExecution(java.util.UUID execution) {
+        com.miaokatze.gtmb.hologram.HologramNetwork.discardPreparedPlacement(execution);
+        if (!localExecutionSent || minecraft().getNetHandler() != openingConnection
+            || openingController == null || minecraft().theWorld != openingController.getWorldObj()) return false;
+        NBTTagCompound cancel = new NBTTagCompound();
+        cancel.setString("action", "cancelProjectedPlacement");
+        cancel.setString("placementRequestId", execution.toString());
+        try {
+            com.miaokatze.gtmb.hologram.HologramNetwork.sendAction(cancel);
+            return true;
+        } catch (RuntimeException disconnected) {
+            return false; // The server still owns a bounded lease.
+        }
+    }
+
+    boolean occludesWorldProjection(HologramState snapshot) {
+        return snapshot != null && workspaceMount != null && workspaceMount.isValid() && ui.session.state() == snapshot
+            && snapshot.data.getBoolean("target") && !snapshot.data.getBoolean("virtual")
+            && HologramEditorWorkspaces.domain(snapshot) == HologramEditorWorkspaces.Mode.PROJECTION;
+    }
+
     public boolean doesGuiPauseGame() {
         return ui.router.doesGuiPauseGame();
     }
@@ -1104,21 +1157,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             requestedLocalMaterialScope = null;
             java.util.UUID execution = localExecutionRequest;
             localExecutionRequest = null;
-            if (execution != null) {
-                com.miaokatze.gtmb.hologram.HologramNetwork.discardPreparedPlacement(execution);
-                if (localExecutionSent && minecraft().getNetHandler() == openingConnection
-                    && openingController != null
-                    && minecraft().theWorld == openingController.getWorldObj()) {
-                    NBTTagCompound cancel = new NBTTagCompound();
-                    cancel.setString("action", "cancelProjectedPlacement");
-                    cancel.setString("placementRequestId", execution.toString());
-                    try {
-                        com.miaokatze.gtmb.hologram.HologramNetwork.sendAction(cancel);
-                    } catch (RuntimeException disconnected) {
-                        // Cleanup still proceeds; the original server upload has a bounded lease.
-                    }
-                }
-            }
+            if (execution != null) cancelPendingLocalExecution(execution);
             localExecutionSent = false;
             retireLocalController();
             localControllerBaseline = null;

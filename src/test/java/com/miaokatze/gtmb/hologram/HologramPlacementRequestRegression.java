@@ -37,6 +37,7 @@ final class HologramPlacementRequestRegression {
 
     public static void main(String[] args) {
         testDirectIntent();
+        testDirectMaterializationOrder();
         System.out.println("Standard direct placement wire regression passed.");
     }
 
@@ -82,8 +83,49 @@ final class HologramPlacementRequestRegression {
         }
     }
 
+    private static void testDirectMaterializationOrder() {
+        int count = 123_369;
+        int[] operations = new int[count * 4];
+        int[] controllers = { 0, 2048, count - 1 };
+        for (int index : controllers) operations[index * 4 + 3] = 1;
+        var ordinary = new HologramPlacementRequest.Variant(
+            "minecraft:stone", 0, "minecraft:stone", 0, -1, false, "", "");
+        var controller = new HologramPlacementRequest.Variant(
+            "gregtech:gt.blockmachines", 0, "gregtech:gt.blockmachines", 1, -1, true, "", "");
+        try {
+            var rows = new HologramPlacementRequest.Decoded(Arrays.asList(ordinary, controller), operations);
+            int[] order = HologramProjectedPlacementService.materializationOrder(rows);
+            int previous = -1;
+            for (int i = 0; i < count - controllers.length; i++) {
+                if (order[i] <= previous || rows.cell(order[i]).controller())
+                    throw new AssertionError("Decoded ordinary placement order is not stable");
+                previous = order[i];
+            }
+            if (!Arrays.equals(controllers, Arrays.copyOfRange(order, count - controllers.length, count)))
+                throw new AssertionError("Controller-last placement order is not stable");
+            var plain = new HologramPlacementRequest.Decoded(Collections.singletonList(ordinary), new int[4]);
+            if (HologramProjectedPlacementService.materializationOrder(plain) != null)
+                throw new AssertionError("All-ordinary plan must materialize directly in source order");
+            String id = "55d42698-9957-42b2-9c98-2a51db13d505";
+            NBTTagCompound update = HologramProjectedPlacementService
+                .preparationProgress(id, "placement.materialize", "", 53, count);
+            NBTTagCompound progress = update.getCompoundTag("progress");
+            if (!update.getBoolean("progressOnly") || update.hasKey("placementRequestId")
+                || update.hasKey("placementRequestAccepted")
+                || !id.equals(progress.getString("placementRequestId"))
+                || !"projectedPlacement".equals(progress.getString("scope"))
+                || progress.getLong("done") != 53
+                || progress.getLong("total") != count)
+                throw new AssertionError("Scoped preparation progress must never become an acceptance/refusal");
+        } catch (InterruptedException failure) {
+            Thread.currentThread().interrupt();
+            throw new AssertionError("Direct placement materialization regression interrupted", failure);
+        }
+    }
+
     static void run() {
         testDirectIntent();
+        testDirectMaterializationOrder();
         HologramProjectedPlacement.Cell first = new HologramProjectedPlacement.Cell(
             -2,
             0,

@@ -135,7 +135,8 @@ final class HologramUiBuildReview implements LocalView {
         localMaterialNotice = !root.localMaterialOwnerCurrent(ui) ? "控制器或手持投影仪已变化，请重新打开结构。"
             : !blocker.isEmpty() ? blocker + "返回后请重新打开材料窗口。"
             : "施工范围或计划已变化，返回后请重新打开材料窗口。";
-        // Keep only the explanation, never the original rows or a submission after ownership changes.
+        // Retire the exact asynchronous ticket before dropping the pane's last reference.
+        localMaterials.close();
         localMaterials = null;
     }
 
@@ -174,11 +175,21 @@ final class HologramUiBuildReview implements LocalView {
     }
 
     @Override
+    public boolean supportsAdvancedPlacement() {
+        return localMaterialPaneCurrent() && ui.session.state().data.getInteger("mode") == 0;
+    }
+
+    @Override
     public void localAction(LocalAction action) {
         switch (action) {
             case BACK -> closeLocalMaterials();
             case REFRESH -> refreshLocalMaterials();
             case SUBMIT -> submitLocalMaterials();
+            case ADVANCED -> {
+                HologramScreen root = ui.host == null ? null : ui.host.parent();
+                if (root != null && supportsAdvancedPlacement())
+                    submitLocalMaterials(settings -> root.reviewLocalConstruction(settings, true));
+            }
         }
     }
 

@@ -203,6 +203,10 @@ final class HologramExecutionReview {
             s.work.clear();
         }
 
+        long completed(HologramSession s) {
+            return (long) work.visited() + s.work.size();
+        }
+
         boolean step(HologramSession s, long deadline) throws IOException {
             if (System.nanoTime() - started > 90_000_000_000L || !HologramSessionPolicy.valid(s)
                 || !s.player.capabilities.allowEdit

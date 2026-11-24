@@ -220,6 +220,22 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         assets.clear();
     }
 
+    static boolean ownsWorldProjection(HologramState state) {
+        return sameWorldProjection(state, worldState);
+    }
+
+    static boolean sameWorldProjection(HologramState state, HologramState owner) {
+        if (state == null || owner == null) return false;
+        if (state == owner) return true;
+        if (state.data.getBoolean("localPreview") || owner.data.getBoolean("localPreview")
+            || !state.session.equals(owner.session)
+            || !state.data.getString("generation").equals(owner.data.getString("generation"))) return false;
+        for (String key : new String[] { "planRevision", "placementReviewNonce", "editorWorkspaceEpoch", "dimension",
+            "x", "y", "z" })
+            if (state.data.getLong(key) != owner.data.getLong(key)) return false;
+        return true;
+    }
+
     static void releaseWorld() {
         worldRenderWitness = null;
         clearWorldGroups();

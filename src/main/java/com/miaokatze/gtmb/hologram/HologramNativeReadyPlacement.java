@@ -230,9 +230,13 @@ final class HologramNativeReadyPlacement {
         return true;
     }
 
+    long completed() {
+        return (long) sweep.visited() + stockCursor;
+    }
+
     private boolean step(int rows, long deadline, LongSupplier clock) throws IOException {
         HologramSession s = session;
-        if ((!ordinary && !enabled()) || clock.getAsLong() - started >= LIFETIME_NANOS
+        if (!ordinary && (!enabled() || clock.getAsLong() - started >= LIFETIME_NANOS)
             || s.capture != capture
             || s.nativeReadyBill != bill
             || x != s.x

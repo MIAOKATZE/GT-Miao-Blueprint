@@ -91,6 +91,10 @@ final class HologramRenderer {
         }
     }
 
+    static void releaseWorldFor(HologramState state) {
+        if (MiaoVisonLiteRenderer.ownsWorldProjection(state)) nativeSnapshotChanged();
+    }
+
     static void nativeSnapshotChanged() {
         MiaoVisonLiteRenderer.releaseWorld();
         WORLD.clear();
