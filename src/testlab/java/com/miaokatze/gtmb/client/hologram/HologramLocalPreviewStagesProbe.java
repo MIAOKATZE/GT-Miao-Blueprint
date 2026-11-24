@@ -94,7 +94,8 @@ final class HologramLocalPreviewStagesProbe {
     private final Map<String, Integer> outbound = new LinkedHashMap<>();
     private final long started = System.nanoTime();
     private final Path output;
-    private final boolean construction = Boolean.getBoolean(FLAG + "Construction");
+    private final boolean directConstruction = directConstructionEnabled();
+    private final boolean construction = directConstruction || Boolean.getBoolean(FLAG + "Construction");
     private final boolean postFocus = construction || Boolean.getBoolean(FLAG + "PostFocus");
     private final NativeParity parity = NativeParity.configured();
     private final boolean fixedNativeEbf = fixedNativeEbfEnabled();
@@ -157,9 +158,17 @@ final class HologramLocalPreviewStagesProbe {
     private volatile Map<String, Object> beforeConfirm, afterConstruction;
     private HologramScreen constructionReview;
     private String constructionSession;
+    private volatile UUID directRequest;
+    private volatile String directCompleted = "", directBlocked = "";
+    private int directTransportControls;
+    private HologramLibraryMaterialReviewScreen directModal;
 
     static boolean enabled() {
         return Boolean.getBoolean(FLAG);
+    }
+
+    static boolean directConstructionEnabled() {
+        return Boolean.getBoolean(FLAG + "DirectConstruction");
     }
 
     static boolean fixedNativeEbfEnabled() {
@@ -197,6 +206,10 @@ final class HologramLocalPreviewStagesProbe {
                 : "native PlayerControllerMP right click, synthetic game input, no OS input");
         evidence.put("nativeWorldInputExercised", !postFocus);
         evidence.put("constructionRequested", construction);
+        if (directConstruction) require(!Boolean.getBoolean(FLAG + "Construction") && parity == null
+            && !workbenchStages && timingMode.isEmpty() && System.getProperty(SOURCE, "").isEmpty(),
+            "Use only the isolated direct cobblestone profile, without another constructor or external source");
+        evidence.put("directConstructionRequested", directConstruction);
         evidence.put("observer", "actual FML client outbound IMessage pipeline, GTMB mod channel only");
         if (!timingMode.isEmpty()) {
             require(("nei".equals(timingMode) || "gtmb".equals(timingMode)) && !construction,
@@ -272,7 +285,7 @@ final class HologramLocalPreviewStagesProbe {
                 serverToolBefore = actor.inventory.getStackInSlot(toolSlot);
                 serverStoneBefore = actor.inventory.getStackInSlot(stoneSlot);
                 actor.inventory.setInventorySlotContents(toolSlot, new ItemStack(ProjectorRegistry.projector));
-                actor.inventory.setInventorySlotContents(stoneSlot, new ItemStack(Blocks.stone));
+                actor.inventory.setInventorySlotContents(stoneSlot, new ItemStack(constructionBlock()));
                 actor.inventoryContainer.detectAndSendChanges();
             }
             controllerItem = item;
@@ -490,6 +503,15 @@ final class HologramLocalPreviewStagesProbe {
             evidence.put("lockedDrawnLists", witness.lists);
             evidence.put("lockedWorldTicks", mc.theWorld.getTotalWorldTime() - lockedTick);
             zero("privateLockedPresented");
+            if (directConstruction) {
+                placementUse(mc);
+                require(mc.currentScreen instanceof HologramLibraryMaterialReviewScreen,
+                    "Expected the owned local materials pane, before any construction intent");
+                directModal = (HologramLibraryMaterialReviewScreen) mc.currentScreen;
+                serverObservationRequest = 1;
+                stage = 40;
+                return false;
+            }
             submitInput = true;
             placementUse(mc);
             require(HologramLocalPlacement.INSTANCE.submitting(), "Explicit second right-click did not submit");
@@ -512,6 +534,8 @@ final class HologramLocalPreviewStagesProbe {
             if (!finish(mc)) return false;
             evidence.put("passed", true);
             return true;
+        } else if (stage == 40) {
+            if (directConstruction) return directStep(mc);
         }
         return false;
     }
@@ -1226,6 +1250,92 @@ final class HologramLocalPreviewStagesProbe {
         return true;
     }
 
+    private boolean directStep(Minecraft mc) throws Exception {
+        require(directBlocked.isEmpty(), "Direct placement fence rejected " + directBlocked);
+        if (!submitInput) {
+            zero("direct-local-browse");
+            if (beforeConfirm == null) return false;
+            require(mc.currentScreen == directModal && directModal.localSubmitAvailable()
+                && directModal.localSubmitLabel().startsWith("开始施工")
+                && Boolean.TRUE.equals(beforeConfirm.get("air"))
+                && Integer.valueOf(1).equals(beforeConfirm.get("playerStone")),
+                "Direct proof needs one owned cobblestone, empty target, and the exact local place button");
+            var dialog = (HologramMaterialConfirmationDialog) field(HologramLibraryMaterialReviewScreen.class, "dialog")
+                .get(directModal);
+            int[] point = dialog.controlPoint(55);
+            if (point == null) return false;
+            var mui = directModal.getScreen();
+            mui.getContext().updateState(point[0], point[1], 0);
+            mui.onFrameUpdate();
+            var panel = mui.getPanelManager().getOpenPanels().stream()
+                .filter(p -> "gtmb_local_material_review".equals(p.getName())).findFirst().orElseThrow();
+            var buttons = panel.getChildren().stream()
+                .filter(com.cleanroommc.modularui.widgets.ButtonWidget.class::isInstance)
+                .collect(java.util.stream.Collectors.toList());
+            require(buttons.size() == 4 && panel.getHovering().stream().anyMatch(h -> h.getElement() == buttons.get(3)),
+                "Native primary click must own the exact local place widget");
+            evidence.put("directBefore", beforeConfirm);
+            submitInput = true;
+            HologramMuiProbeInput.click(directModal, point[0], point[1], 0);
+            return false;
+        }
+        HologramState state = HologramClient.state;
+        if (directRequest == null || state == null
+            || !directRequest.toString().equals(state.data.getString("executionRequestId"))) return false;
+        require(!state.data.getBoolean("blueprintAwaitingConfirmation")
+            && !"placementReview".equals(state.data.getString("openPurpose")), "There must be no standalone quote");
+        if (state.data.getInteger("job") != 3) return false;
+        serverObservationRequest = 3;
+        if (afterConstruction == null || directCompleted.isEmpty() || stones(mc.thePlayer) != 0) return false;
+        require(state.session.equals(directCompleted) && "minecraft:cobblestone".equals(afterConstruction.get("block"))
+            && Integer.valueOf(0).equals(afterConstruction.get("metadata"))
+            && Integer.valueOf(0).equals(afterConstruction.get("playerStone"))
+            && mc.theWorld.getBlock(lockedAnchor[0], lockedAnchor[1], lockedAnchor[2]) == Blocks.cobblestone,
+            "The same job must sync one actual cobblestone and debit the only item");
+        evidence.put("directAfter", afterConstruction);
+        evidence.put("directUuid", directRequest.toString());
+        evidence.put("directResultSynced", true);
+        if (!finish(mc)) return false;
+        require(directBlocked.isEmpty() && packets().getOrDefault("Fragment", 0) == 1,
+            "The direct fixture must send exactly one construction frame and no extra business command");
+        evidence.put("passed", true);
+        return true;
+    }
+
+    private synchronized boolean forwardDirect(Object message, NBTTagCompound action) {
+        if (!submitInput || !directBlocked.isEmpty()) return false;
+        try {
+            if (message instanceof com.miaokatze.gtmb.hologram.HologramPlacementUpload.Fragment fragment) {
+                UUID expected = (UUID) field(HologramLibraryClient.class, "placementRequest")
+                    .get(HologramLibraryClient.INSTANCE);
+                if (directRequest == null && com.miaokatze.gtmb.hologram.HologramDirectPlacementAuthority
+                    .matches(fragment, expected, lockedAnchor)) {
+                    directRequest = expected;
+                    return true;
+                }
+            } else if (action != null && directRequest != null && !action.hasKey("action")
+                && directTransportControls < 16) {
+                String op = action.getString("op");
+                long generation = field(HologramClient.class, "snapshotFlowGeneration").getLong(null);
+                if (action.hasKey("snapshotFlowGeneration", 4) && generation >= 0
+                    && action.getLong("snapshotFlowGeneration") == generation
+                    && ("snapshotFlow".equals(op) && action.hasKey("ready", 1)
+                        || "snapshotConsumed".equals(op) && action.hasKey("success", 1)
+                            && action.hasKey("transportSequence", 4) && action.getLong("transportSequence") >= 0
+                            && action.getLong("transportSequence")
+                                == field(HologramClient.class, "snapshotFlowConsumed").getLong(null))) {
+                    directTransportControls++;
+                    return true;
+                }
+            }
+        } catch (Exception malformed) {
+            directBlocked = "unreadable envelope";
+            return false;
+        }
+        directBlocked = message.getClass().getSimpleName();
+        return false;
+    }
+
     private void observeWorld(WorldServer world) {
         int request = serverObservationRequest;
         if (request == 1 && beforeConfirm != null || request == 3 && afterConstruction != null
@@ -1240,14 +1350,22 @@ final class HologramLocalPreviewStagesProbe {
         snapshot.put("metadata", world.getBlockMetadata(at[0], at[1], at[2]));
         snapshot.put("playerStone", stones(serverActor));
         snapshot.put("worldTick", world.getTotalWorldTime());
+        if (directConstruction && request == 3)
+            directCompleted = com.miaokatze.gtmb.hologram.HologramDirectPlacementAuthority.completed(
+                serverActor, directRequest);
         if (request == 1) beforeConfirm = snapshot;
         else afterConstruction = snapshot;
     }
 
-    private static int stones(EntityPlayer actor) {
+    private Block constructionBlock() {
+        return directConstruction ? Blocks.cobblestone : Blocks.stone;
+    }
+
+    private int stones(EntityPlayer actor) {
         int total = 0;
         for (ItemStack stack : actor.inventory.mainInventory)
-            if (stack != null && stack.getItem() == Item.getItemFromBlock(Blocks.stone) && stack.getItemDamage() == 0)
+            if (stack != null && stack.getItem() == Item.getItemFromBlock(constructionBlock())
+                && stack.getItemDamage() == 0)
                 total += stack.stackSize;
         return total;
     }
@@ -1367,8 +1485,11 @@ final class HologramLocalPreviewStagesProbe {
                 HologramBlueprintArtifact.HEIGHT,
                 BufferedImage.TYPE_INT_RGB);
             require(ImageIO.write(thumbnail, "png", buffer), "PNG required");
+            byte[] source = stoneBlueprint();
+            if (directConstruction) source = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.recompress(
+                source, HologramBlueprintArtifact.MAX_JSON_BYTES);
             HologramBlueprintArtifact.Artifact pair = HologramBlueprintArtifact
-                .prepareSave(stoneBlueprint(), buffer.toByteArray());
+                .prepareSave(source, buffer.toByteArray());
             json = pair.json;
             png = pair.png;
         }
@@ -1400,8 +1521,9 @@ final class HologramLocalPreviewStagesProbe {
         int size = construction ? 1 : 3;
         for (int x = 0; x < size; x++) {
             JsonObject cell = new JsonObject();
-            cell.addProperty("item", "minecraft:stone");
-            cell.addProperty("block", "minecraft:stone");
+            String id = directConstruction ? "minecraft:cobblestone" : "minecraft:stone";
+            cell.addProperty("item", id);
+            cell.addProperty("block", id);
             cell.addProperty("count", 1);
             cell.addProperty("facing", -1);
             cell.addProperty("x", x);
@@ -1449,7 +1571,9 @@ final class HologramLocalPreviewStagesProbe {
                         outbound.merge(name, 1, Integer::sum);
                         if (placement != null) projectedPlacement = placement;
                     }
-                    if (construction && submitInput) context.write(message, promise);
+                    if (directConstruction ? forwardDirect(message, message instanceof HologramNetwork.Action
+                        ? (NBTTagCompound) action.get(message) : null) : construction && submitInput)
+                        context.write(message, promise);
                     else {
                         io.netty.util.ReferenceCountUtil.release(message);
                         promise.setSuccess();
@@ -1483,7 +1607,9 @@ final class HologramLocalPreviewStagesProbe {
         if (construction) {
             restoreServerInventory = true;
             if (mc.thePlayer != null && (!serverInventoryRestored
-                || !ItemStack.areItemStacksEqual(originalTool, mc.thePlayer.inventory.getStackInSlot(toolSlot))))
+                || !ItemStack.areItemStacksEqual(originalTool, mc.thePlayer.inventory.getStackInSlot(toolSlot))
+                || directConstruction && !ItemStack.areItemStacksEqual(serverStoneBefore,
+                    mc.thePlayer.inventory.getStackInSlot(stoneSlot))))
                 return false;
         }
         if (fixtureStore != null) {
@@ -1513,6 +1639,7 @@ final class HologramLocalPreviewStagesProbe {
         if (controller != null && mc.currentScreen == controller
             || constructionReview != null && mc.currentScreen == constructionReview
             || timingScreen != null && mc.currentScreen == timingScreen
+            || directModal != null && mc.currentScreen == directModal
             || mc.currentScreen instanceof HologramPlacementLoadingScreen) mc.displayGuiScreen(null);
         if (construction) HologramClient.clearProjection();
         if (channel != null && channel.pipeline()

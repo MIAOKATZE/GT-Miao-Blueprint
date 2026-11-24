@@ -202,9 +202,10 @@ public final class HologramTutorialIssue100Probe {
                         localPreviewStages = new HologramLocalPreviewStagesProbe(mc, output, receipt);
                     }
                     if (!localPreviewStages.step(mc)) return;
-                    if (HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled()) {
+                    if (HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled()
+                        || HologramLocalPreviewStagesProbe.directConstructionEnabled()) {
                         transition(6);
-                        return; // separate preview-only EBF terminal; no Issue100 playback runs afterward
+                        return; // terminal owned-world profile; no unrelated Issue100 playback
                     }
                 }
                 inventoryBefore = inventory(mc);
@@ -491,7 +492,10 @@ public final class HologramTutorialIssue100Probe {
         receipt.put("preferencesBefore", preferencesBefore);
         receipt.put("preferencesAfter", preferences(mc));
         receipt.put("osInput", false);
-        receipt.put("businessTransport", "NOT_RUN; incoming local preview fixture, native rendering and MUI events");
+        receipt.put("businessTransport", HologramLocalPreviewStagesProbe.directConstructionEnabled()
+            ? failure == null ? "PASS; one fenced v4 placement, server state, actual block and debit"
+                : "FAIL; direct v4 placement evidence incomplete"
+            : "NOT_RUN; incoming local preview fixture, native rendering and MUI events");
         receipt.put(
             "artifact",
             ArtifactIdentity.capture(HologramTutorialIssue100Probe.class)
