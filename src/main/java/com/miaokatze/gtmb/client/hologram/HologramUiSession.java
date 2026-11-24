@@ -413,8 +413,13 @@ final class HologramUiSession {
             }
         }
         if (state.data.getBoolean("localStandardController")) {
-            if (localRoot != null && "configure".equals(op) && request != null)
-                localRoot.refreshLocalController(request);
+            if (localRoot != null && "configure".equals(op) && request != null) {
+                if (request.getBoolean("applyHatchPreset")) {
+                    if (localRoot.localMaterialOwnerCurrent(ui)) HologramClient.prepareControllerHatchPreset(state,
+                        request);
+                    else notice("控制器或手持投影仪已变化，请重新打开结构。");
+                } else localRoot.refreshLocalController(request);
+            }
             return;
         }
         if (state.data.getBoolean("localWorkspace")) {

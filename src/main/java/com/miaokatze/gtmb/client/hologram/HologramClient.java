@@ -559,9 +559,70 @@ public final class HologramClient {
         }
     }
 
-    /** Only the explicit replacement/demolition review may request the legacy native authority. */
+    /** Only explicit controls may request planning through the native server workspace. */
     static void prepareExplicitControllerOperation(TileEntity tile, int side, NBTTagCompound settings,
         HologramState displayed) {
+        openControllerAuthority(tile, side, (opening, id) -> opening.explicitControllerOperation(settings, displayed));
+    }
+
+    private static final class ControllerHatchPreset {
+
+        private final long id;
+        private final NBTTagCompound settings;
+
+        private ControllerHatchPreset(long id, NBTTagCompound settings) {
+            this.id = id;
+            this.settings = (NBTTagCompound) settings.copy();
+        }
+    }
+
+    private static ControllerHatchPreset pendingControllerHatchPreset;
+
+    static void prepareControllerHatchPreset(HologramState displayed, NBTTagCompound settings) {
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.thePlayer == null || mc.theWorld == null || !displayed.data.getBoolean("supported")
+            || displayed.data.getBoolean("capturePending") || displayed.data.getInteger("mode") == 2) return;
+        int tier = settings.getInteger("hatchTier");
+        if (!settings.hasKey("hatchTier", 3) || tier < 0 || tier >= gregtech.api.enums.GTValues.VN.length) {
+            selectionNotice("仓室预设等级无效，未修改规划。");
+            return;
+        }
+        for (HologramState.Cell cell : displayed.cells) {
+            if ("manual".equals(cell.pinScope) || cell.hatchFacing >= 0) {
+                selectionNotice("当前本地规划含手选仓室或朝向，未替换这些目标。请先保留本地修改，再在服务器结构规划中应用预设。");
+                return;
+            }
+        }
+        TileEntity tile = mc.theWorld.getTileEntity(
+            displayed.data.getInteger("x"), displayed.data.getInteger("y"), displayed.data.getInteger("z"));
+        openControllerAuthority(tile, displayed.data.getInteger("side"), (opening, id) -> {
+            pendingControllerHatchPreset = new ControllerHatchPreset(id, settings);
+        });
+    }
+
+    /** Controller identity and tool are already checked by the opening receipt before an apply is forwarded. */
+    static NBTTagCompound controllerHatchPresetOptions(NBTTagCompound displayed, NBTTagCompound live) {
+        if (!live.getBoolean("target") || live.getBoolean("virtual") || !live.getBoolean("supported")
+            || live.getBoolean("capturePending") || live.getInteger("mode") == 2
+            || live.getInteger("job") == 1 || live.getInteger("job") == 2) return null;
+        for (String field : new String[] { "main", "mode", "facing", "channels", "noHatches" })
+            if (!java.util.Objects.equals(displayed.getTag(field), live.getTag(field))) return null;
+        NBTTagCompound config = (NBTTagCompound) displayed.copy();
+        config.setInteger("scope", 0);
+        config.setInteger("selected", -1);
+        config.setIntArray("selectedIndices", new int[0]);
+        config.setString("structureId", live.getString("activeStructure"));
+        return config;
+    }
+
+    private static void clearControllerHatchPreset(long id) {
+        if (pendingControllerHatchPreset != null && pendingControllerHatchPreset.id == id)
+            pendingControllerHatchPreset = null;
+    }
+
+    private static void openControllerAuthority(TileEntity tile, int side,
+        java.util.function.BiConsumer<HologramScreen, Long> prepare) {
+        pendingControllerHatchPreset = null;
         Minecraft mc = Minecraft.getMinecraft();
         if (side < 0 || side > 5
             || tile == null
@@ -584,9 +645,10 @@ public final class HologramClient {
         request.setLong("controllerOpenId", id);
         try {
             HologramScreen opening = new HologramScreen(tile, mc.thePlayer.dimension, id);
-            opening.explicitControllerOperation(settings, displayed);
+            prepare.accept(opening, id);
             opening.openFrom(mc.currentScreen);
             if (mc.currentScreen != opening) {
+                clearControllerHatchPreset(id);
                 controllerOpen.dismiss(id);
                 return;
             }
@@ -2285,6 +2347,16 @@ public final class HologramClient {
                 opening.controllerOpened(true);
             }
             controllerOpen.installed();
+            ControllerHatchPreset preset = pendingControllerHatchPreset;
+            clearControllerHatchPreset(controllerRequest);
+            if (!sourceSwitch && preset != null && preset.id == controllerRequest) {
+                opening.updateState(next);
+                NBTTagCompound configuration = controllerHatchPresetOptions(preset.settings, next.data);
+                if (configuration == null || !opening.ui.session.editable())
+                    opening.ui.session.notice("服务器结构参数与本地规划不同；未应用仓室预设，请核对后再应用。");
+                else opening.ui.session.send("configure", configuration, true);
+                return;
+            }
         }
         if (openingCutWorkspace) {
             clearCutWorkspaceOpening();
@@ -2435,6 +2507,7 @@ public final class HologramClient {
     }
 
     private static void dismissControllerOpening(long request) {
+        clearControllerHatchPreset(request);
         HologramScreen opening = openingControllerScreen();
         if (opening != null && request == opening.controllerRequest()) opening.closeControllerOpening();
     }
