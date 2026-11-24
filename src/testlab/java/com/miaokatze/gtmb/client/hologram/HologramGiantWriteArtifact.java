@@ -33,11 +33,13 @@ final class HologramGiantWriteArtifact {
     private final int cellCount;
     private String savedJson, savedPng;
 
-    HologramGiantWriteArtifact(Path ownedGame, Path source, String originalJson, String originalPng, int cells, String managedId)
-        throws IOException {
+    HologramGiantWriteArtifact(Path ownedGame, Path source, String originalJson, String originalPng, int cells,
+        String managedId) throws IOException {
         String external = System.getProperty(FIXTURE, "");
         require(!external.isEmpty(), "PRECONDITION: missing separately staged pristine pair path");
-        pristine = Paths.get(external).toAbsolutePath().normalize();
+        pristine = Paths.get(external)
+            .toAbsolutePath()
+            .normalize();
         this.source = source;
         this.managedId = managedId;
         libraryRoot = ownedGame.resolve("MiaoBlueprints");
@@ -45,11 +47,14 @@ final class HologramGiantWriteArtifact {
         this.originalJson = originalJson;
         this.originalPng = originalPng;
         cellCount = cells;
-        require(!pristine.startsWith(ownedGame) && source.getParent().equals(libraryRoot)
-            && source.equals(HologramBlueprintFiles.resolve(libraryRoot, managedId)),
+        require(
+            !pristine.startsWith(ownedGame) && source.getParent()
+                .equals(libraryRoot) && source.equals(HologramBlueprintFiles.resolve(libraryRoot, managedId)),
             "PRECONDITION: pristine and leased managed paths must have different owners");
-        require(!Files.isSameFile(source, pristine)
-            && !Files.isSameFile(HologramBlueprintArtifact.previewPath(source), HologramBlueprintArtifact.previewPath(pristine)),
+        require(
+            !Files.isSameFile(source, pristine) && !Files.isSameFile(
+                HologramBlueprintArtifact.previewPath(source),
+                HologramBlueprintArtifact.previewPath(pristine)),
             "PRECONDITION: managed pair aliases the pristine control (including hardlinks)");
         requireHashes(read(pristine), originalJson, originalPng, "PRECONDITION: pristine control hashes");
         requireHashes(read(source), originalJson, originalPng, "PRECONDITION: owned pair hashes");
@@ -63,8 +68,11 @@ final class HologramGiantWriteArtifact {
             result.put("viaManagedIndexAfterAck", committed);
             result.put("physicalFilenameChanged", !target.equals(source));
             result.put("managedJson", memberWitness(target, HologramBlueprintArtifact.MAX_JSON_BYTES));
-            result.put("managedPng", memberWitness(committed ? HologramBlueprintArtifact.previewPath(target) : managedPng,
-                HologramBlueprintArtifact.MAX_PNG_BYTES));
+            result.put(
+                "managedPng",
+                memberWitness(
+                    committed ? HologramBlueprintArtifact.previewPath(target) : managedPng,
+                    HologramBlueprintArtifact.MAX_PNG_BYTES));
         } catch (IOException failed) {
             result.put("managedIndexError", failed.getMessage());
         }
@@ -74,11 +82,14 @@ final class HologramGiantWriteArtifact {
     /** Exact logical mapping only: production resolve's unindexed legacy filename fallback is not commit evidence. */
     static Path resolveIndexedPair(Path root, String id) throws IOException {
         require(root.equals(root.toRealPath()), "PAIR_OWNER: noncanonical managed directory");
-        require(id.matches("local_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}"),
+        require(
+            id.matches("local_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}"),
             "PAIR_OWNER: invalid logical ID");
         Path index = root.resolve(MANAGED_INDEX);
-        require(Files.isRegularFile(index, LinkOption.NOFOLLOW_LINKS) && index.equals(index.toRealPath())
-            && Files.size(index) <= 1024L * 1024L, "PAIR_OWNER: missing or invalid managed index");
+        require(
+            Files.isRegularFile(index, LinkOption.NOFOLLOW_LINKS) && index.equals(index.toRealPath())
+                && Files.size(index) <= 1024L * 1024L,
+            "PAIR_OWNER: missing or invalid managed index");
         Properties mappings = new Properties();
         try (var stream = Files.newInputStream(index, LinkOption.NOFOLLOW_LINKS)) {
             mappings.load(stream);
@@ -86,14 +97,18 @@ final class HologramGiantWriteArtifact {
             throw new IOException("PAIR_OWNER: invalid managed index", malformed);
         }
         String leaf = mappings.getProperty(id);
-        require(leaf != null && leaf.endsWith(".json") && !leaf.contains("/") && !leaf.contains("\\"),
+        require(
+            leaf != null && leaf.endsWith(".json") && !leaf.contains("/") && !leaf.contains("\\"),
             "PAIR_OWNER: index has no direct member for this logical ID");
         Path target = HologramBlueprintFiles.resolve(root, id);
-        require(root.equals(target.getParent()) && target.equals(root.resolve(leaf)),
+        require(
+            root.equals(target.getParent()) && target.equals(root.resolve(leaf)),
             "PAIR_OWNER: managed index mapping changed during read");
         Path png = HologramBlueprintArtifact.previewPath(target);
-        require(Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS) && target.equals(target.toRealPath())
-            && Files.isRegularFile(png, LinkOption.NOFOLLOW_LINKS) && png.equals(png.toRealPath()),
+        require(
+            Files.isRegularFile(target, LinkOption.NOFOLLOW_LINKS) && target.equals(target.toRealPath())
+                && Files.isRegularFile(png, LinkOption.NOFOLLOW_LINKS)
+                && png.equals(png.toRealPath()),
             "PAIR_OWNER: indexed pair is missing or not a direct owned file");
         return target;
     }
@@ -118,7 +133,8 @@ final class HologramGiantWriteArtifact {
             }
             if (read != size) throw new IOException("size changed during observation");
             StringBuilder hex = new StringBuilder(64);
-            for (byte b : hash.digest()) hex.append(Character.forDigit((b & 255) >>> 4, 16)).append(Character.forDigit(b & 15, 16));
+            for (byte b : hash.digest()) hex.append(Character.forDigit((b & 255) >>> 4, 16))
+                .append(Character.forDigit(b & 15, 16));
             result.put("sha256", hex.toString());
         } catch (IOException | java.security.NoSuchAlgorithmException failed) {
             result.put("error", failed.getMessage());
@@ -150,28 +166,35 @@ final class HologramGiantWriteArtifact {
         Path target = resolveIndexedPair(libraryRoot, fileId);
         Path targetPng = HologramBlueprintArtifact.previewPath(target);
         var saved = read(target);
-        require(!Files.isSameFile(target, pristine)
-            && !Files.isSameFile(targetPng, HologramBlueprintArtifact.previewPath(pristine)),
+        require(
+            !Files.isSameFile(target, pristine)
+                && !Files.isSameFile(targetPng, HologramBlueprintArtifact.previewPath(pristine)),
             "PAIR_OWNER: saved pair aliases the pristine control");
         String boundPng = HologramBlueprintPreviewBinding.pngSha256(saved.json);
         byte[] reviewed = HologramBlueprintPreviewBinding.sourceJson(saved.json);
         String sourceHash = HologramBlueprintArtifact.hash(reviewed);
-        require(!saved.jsonSha256.equals(originalJson) && saved.pngSha256.equals(boundPng),
+        require(
+            !saved.jsonSha256.equals(originalJson) && saved.pngSha256.equals(boundPng),
             "PAIR_BINDING: managed Save Current did not produce a new mutually bound pair");
-        require(capture.getLong("captureGeneration") > priorCapture && capture.getBoolean("nativeRendering")
-            && capture.getBoolean("renderTickEnd") && capture.getBoolean("readbackSucceeded")
-            && sourceHash.equals(capture.getString("sourceJsonSha256")),
+        require(
+            capture.getLong("captureGeneration") > priorCapture && capture.getBoolean("nativeRendering")
+                && capture.getBoolean("renderTickEnd")
+                && capture.getBoolean("readbackSucceeded")
+                && sourceHash.equals(capture.getString("sourceJsonSha256")),
             "PAIR_BINDING: no fresh RenderTick.END native save readback for reviewed source bytes");
         var before = HologramBlueprintCompactCodec.displayGeometry(original.json);
         var after = HologramBlueprintCompactCodec.displayGeometry(saved.json);
-        require(before.compact() && after.compact() && before.cells() == cellCount && after.cells() == cellCount,
+        require(
+            before.compact() && after.compact() && before.cells() == cellCount && after.cells() == cellCount,
             "PAIR_PAYLOAD: exact giant dictionary/order format or rows changed");
-        require(fileId.equals(value(after.blueprint, "id")) && prompt.equals(value(after.blueprint, "prompt")),
+        require(
+            fileId.equals(value(after.blueprint, "id")) && prompt.equals(value(after.blueprint, "prompt")),
             "PAIR_PAYLOAD: expected managed UUID normalization and edited prompt");
         for (String field : new String[] { "authorName", "authorUuid", "createdAt", "nativeBlueprint",
-            "deidentificationLevel", "deidentificationVersion", "deidentificationChosen", "retainNbt",
-            "retainCovers", "retainedNbtKeys", "processingNbt" })
-            require(java.util.Objects.equals(before.blueprint.get(field), after.blueprint.get(field)),
+            "deidentificationLevel", "deidentificationVersion", "deidentificationChosen", "retainNbt", "retainCovers",
+            "retainedNbtKeys", "processingNbt" })
+            require(
+                java.util.Objects.equals(before.blueprint.get(field), after.blueprint.get(field)),
                 "PAIR_PAYLOAD: retained header changed: " + field);
 
         if (delta != null) delta.verify(before, after);
@@ -182,9 +205,8 @@ final class HologramGiantWriteArtifact {
         java.util.Arrays.fill(mapping, -1);
         int tileRows = 0, itemRows = 0;
         for (int row = 0; row < cellCount; row++) {
-            for (int axis = 0; axis < 3; axis++)
-                if (before.coordinate(row, axis) != after.coordinate(row, axis))
-                    throw new IOException("PAIR_PAYLOAD: coordinate/ordinal changed at " + row);
+            for (int axis = 0; axis < 3; axis++) if (before.coordinate(row, axis) != after.coordinate(row, axis))
+                throw new IOException("PAIR_PAYLOAD: coordinate/ordinal changed at " + row);
             int from = before.materialIndex(row), to = after.materialIndex(row);
             if (delta == null || row != delta.target) {
                 if (mapping[from] < 0) {
@@ -223,7 +245,8 @@ final class HologramGiantWriteArtifact {
 
     void verifyFinal() throws IOException {
         require(savedJson != null, "PAIR_BINDING: Save Current never produced a verified pair");
-        require(savedPath.equals(resolveIndexedPair(libraryRoot, managedId)),
+        require(
+            savedPath.equals(resolveIndexedPair(libraryRoot, managedId)),
             "PAIR_OWNER: logical mapping changed after verified Save Current");
         requireHashes(read(savedPath), savedJson, savedPng, "PAIR_BINDING: managed pair changed after Save Current");
         requireHashes(read(pristine), originalJson, originalPng, "PAIR_BINDING: pristine control changed");
@@ -231,9 +254,10 @@ final class HologramGiantWriteArtifact {
 
     private static HologramBlueprintArtifact.Artifact read(Path file) throws IOException {
         Path png = HologramBlueprintArtifact.previewPath(file);
-        require(file.equals(file.toRealPath()) && png.equals(png.toRealPath())
-            && Files.isRegularFile(file, java.nio.file.LinkOption.NOFOLLOW_LINKS)
-            && Files.isRegularFile(png, java.nio.file.LinkOption.NOFOLLOW_LINKS),
+        require(
+            file.equals(file.toRealPath()) && png.equals(png.toRealPath())
+                && Files.isRegularFile(file, java.nio.file.LinkOption.NOFOLLOW_LINKS)
+                && Files.isRegularFile(png, java.nio.file.LinkOption.NOFOLLOW_LINKS),
             "PAIR_BINDING: noncanonical local asset path");
         return HologramBlueprintArtifact.readPair(file);
     }

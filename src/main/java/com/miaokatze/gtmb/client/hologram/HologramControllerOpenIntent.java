@@ -67,25 +67,31 @@ final class HologramControllerOpenIntent {
     /** A different controller can require consent on the old workspace without having opened the target. */
     boolean sourceSwitchRequired(NBTTagCompound snapshot, long id) {
         if (!accepts(id) || snapshot.getLong("controllerOpenId") != id
-            || !snapshot.getBoolean("workspaceUiOnly") || !snapshot.getBoolean("open")
+            || !snapshot.getBoolean("workspaceUiOnly")
+            || !snapshot.getBoolean("open")
             || !snapshot.getBoolean("discardConfirmationRequired")) return false;
         NBTTagCompound proposal = snapshot.getCompoundTag("discardTargetAction");
-        return "openController".equals(proposal.getString("op"))
-            && snapshot.getString("session").equals(proposal.getString("session"))
-            && !proposal.getString("sourceSwitchNonce").isEmpty()
+        return "openController".equals(proposal.getString("op")) && snapshot.getString("session")
+            .equals(proposal.getString("session"))
+            && !proposal.getString("sourceSwitchNonce")
+                .isEmpty()
             && targetOf(snapshot, proposal);
     }
 
     boolean completedAnswer(NBTTagCompound snapshot, long id) {
-        return answers(snapshot, id) && (snapshot.getLong("controllerOpenId") <= 0
-            || HologramState.fullBaseline(snapshot));
+        return answers(snapshot, id)
+            && (snapshot.getLong("controllerOpenId") <= 0 || HologramState.fullBaseline(snapshot));
     }
 
     private boolean targetOf(NBTTagCompound snapshot, NBTTagCompound position) {
-        return tracksTarget && snapshot.hasKey("dimension", 3) && position.hasKey("x", 3)
+        return tracksTarget && snapshot.hasKey("dimension", 3)
+            && position.hasKey("x", 3)
             && position.hasKey("y", 3)
             && position.hasKey("z", 3)
-            && matchesTarget(snapshot.getInteger("dimension"), position.getInteger("x"), position.getInteger("y"),
+            && matchesTarget(
+                snapshot.getInteger("dimension"),
+                position.getInteger("x"),
+                position.getInteger("y"),
                 position.getInteger("z"));
     }
 

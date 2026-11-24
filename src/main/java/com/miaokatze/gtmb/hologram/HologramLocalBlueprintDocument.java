@@ -43,12 +43,14 @@ public final class HologramLocalBlueprintDocument {
     public record HistoryDelta(long fromRevision, long revision, int cellCount, int index, int x, int y, int z,
         String expectedPrompt, String prompt, String block, int metadata, int facing, boolean excluded) {
 
-        public boolean header() { return index == -1; }
+        public boolean header() {
+            return index == -1;
+        }
     }
 
     @Desugar
-    private record PromptCellEdge(int index, List<Cell> beforeRows, List<Cell> afterRows,
-        List<Cell> beforePalette, List<Cell> afterPalette, Cell before, Cell after) {
+    private record PromptCellEdge(int index, List<Cell> beforeRows, List<Cell> afterRows, List<Cell> beforePalette,
+        List<Cell> afterPalette, Cell before, Cell after) {
 
         boolean matches(Preset from, Preset to, boolean undoing) {
             var fromRows = undoing ? afterRows : beforeRows;
@@ -56,8 +58,11 @@ public final class HologramLocalBlueprintDocument {
             return from.cells == fromRows && to.cells == toRows
                 && from.palette == (undoing ? afterPalette : beforePalette)
                 && to.palette == (undoing ? beforePalette : afterPalette)
-                && fromRows.size() == toRows.size() && index >= 0 && index < fromRows.size()
-                && fromRows.get(index) == (undoing ? after : before) && toRows.get(index) == (undoing ? before : after);
+                && fromRows.size() == toRows.size()
+                && index >= 0
+                && index < fromRows.size()
+                && fromRows.get(index) == (undoing ? after : before)
+                && toRows.get(index) == (undoing ? before : after);
         }
     }
 
@@ -217,22 +222,28 @@ public final class HologramLocalBlueprintDocument {
 
     /** The client workspace sets this only after its own named read or persistently indexed private read. */
     public enum LocalEditorOrigin {
-        STRICT, NAMED_IMPORT, TRACKED_PRIVATE
+        STRICT,
+        NAMED_IMPORT,
+        TRACKED_PRIVATE
     }
 
     /** Internal native control, never derived from JSON or request payload. */
     public enum LocalSaveIntent {
-        STRICT, SAVE_AS_NEW, SAVE_CURRENT
+        STRICT,
+        SAVE_AS_NEW,
+        SAVE_CURRENT
     }
 
     public static Opened openForEditor(byte[] exactJson, String fileId, java.util.function.BooleanSupplier current,
-        java.util.function.Consumer<EditorRows> display, boolean retainPacked, LocalEditorOrigin origin) throws IOException {
+        java.util.function.Consumer<EditorRows> display, boolean retainPacked, LocalEditorOrigin origin)
+        throws IOException {
         return openForEditor(exactJson, fileId, current, display, retainPacked, origin, false);
     }
 
     /** Game library admission precedes any editor publication, including the early packed view. */
-    public static Opened openStoredForEditor(byte[] exactJson, String fileId, java.util.function.BooleanSupplier current,
-        java.util.function.Consumer<EditorRows> display, boolean retainPacked, LocalEditorOrigin origin) throws IOException {
+    public static Opened openStoredForEditor(byte[] exactJson, String fileId,
+        java.util.function.BooleanSupplier current, java.util.function.Consumer<EditorRows> display,
+        boolean retainPacked, LocalEditorOrigin origin) throws IOException {
         return openForEditor(exactJson, fileId, current, display, retainPacked, origin, true);
     }
 
@@ -247,8 +258,8 @@ public final class HologramLocalBlueprintDocument {
             document.editorOrigin = origin;
         EditorRows editor = document.editorRows(loaded.layout(), current);
         if (editor != null) display.accept(editor);
-        document.packed = HologramPackedAuthoring.retain(
-            loaded.layout(), retainPacked, editor != null, document.fileId, current);
+        document.packed = HologramPackedAuthoring
+            .retain(loaded.layout(), retainPacked, editor != null, document.fileId, current);
         if (document.packed == null) codec.materialize(loaded, current);
         return new Opened(document, editor);
     }
@@ -260,7 +271,8 @@ public final class HologramLocalBlueprintDocument {
     /** Only global prompt writes (not cell/hint prompts or NBT policy edits) add history while packed. */
     public boolean supportsPackedCommand(String operation) {
         return "selectCell".equals(operation) || "editBlueprintPrompt".equals(operation)
-            || "editUndo".equals(operation) || "editRedo".equals(operation)
+            || "editUndo".equals(operation)
+            || "editRedo".equals(operation)
             || "configure".equals(operation) && activeStructure.isEmpty();
     }
 
@@ -274,7 +286,9 @@ public final class HologramLocalBlueprintDocument {
         var root = packed;
         if (root == null) throw HologramPackedAuthoring.stale();
         return root.prepare(
-            codec, expectedRevision, () -> packed == root && revision == expectedRevision && current.getAsBoolean());
+            codec,
+            expectedRevision,
+            () -> packed == root && revision == expectedRevision && current.getAsBoolean());
     }
 
     public synchronized void acceptPackedMaterialization(HologramPackedAuthoring.Materialization prepared,
@@ -286,7 +300,9 @@ public final class HologramLocalBlueprintDocument {
         checkPackedHistory(undo, unexpanded);
         checkPackedHistory(redo, unexpanded);
         List<Cell> cells = root.accept(
-            prepared, expectedRevision, () -> packed == root && revision == expectedRevision && current.getAsBoolean());
+            prepared,
+            expectedRevision,
+            () -> packed == root && revision == expectedRevision && current.getAsBoolean());
         for (Version v : undo) v.document().cells = cells;
         for (Version v : redo) v.document().cells = cells;
         document.cells = cells;
@@ -311,13 +327,14 @@ public final class HologramLocalBlueprintDocument {
         return root == null ? document.cells.get(ordinal) : root.read(ordinal);
     }
 
-    private static HologramLocalBlueprintDocument open(byte[] exactJson, String fileId, HologramLocalBlueprintCodec codec,
-        Preset source) throws IOException {
+    private static HologramLocalBlueprintDocument open(byte[] exactJson, String fileId,
+        HologramLocalBlueprintCodec codec, Preset source) throws IOException {
         HologramLocalBlueprintDocument opened = new HologramLocalBlueprintDocument(source, exactJson.clone(), codec);
         if (fileId != null) {
             opened.fileId = HologramLibraryService.localId(fileId, true);
             if (fileId.isEmpty()) opened.savedContent = null;
-        } else if (text(source.id).startsWith("local_")) opened.fileId = HologramLibraryService.localId(source.id, false);
+        } else
+            if (text(source.id).startsWith("local_")) opened.fileId = HologramLibraryService.localId(source.id, false);
         return opened;
     }
 
@@ -341,7 +358,13 @@ public final class HologramLocalBlueprintDocument {
 
     public FrozenDraft freeze() {
         requireMaterialized();
-        return new FrozenDraft(document, codec, encoded, encoded == null || explicitRetention, false, LocalSaveIntent.STRICT);
+        return new FrozenDraft(
+            document,
+            codec,
+            encoded,
+            encoded == null || explicitRetention,
+            false,
+            LocalSaveIntent.STRICT);
     }
 
     @FunctionalInterface
@@ -396,12 +419,21 @@ public final class HologramLocalBlueprintDocument {
             return document.cells.size();
         }
 
-        public void visitDisplayCells(DisplayCell visitor, java.util.function.BooleanSupplier current) throws IOException {
+        public void visitDisplayCells(DisplayCell visitor, java.util.function.BooleanSupplier current)
+            throws IOException {
             for (Cell cell : document.cells) {
                 if (!current.getAsBoolean()) throw new IOException("蓝图预览已取消");
                 if (!cell.excluded) visitor.accept(
-                    cell.x, cell.y, cell.z, text(cell.block), cell.metadata, text(cell.item), cell.damage, cell.facing,
-                    text(cell.tileNbt), text(cell.itemNbt));
+                    cell.x,
+                    cell.y,
+                    cell.z,
+                    text(cell.block),
+                    cell.metadata,
+                    text(cell.item),
+                    cell.damage,
+                    cell.facing,
+                    text(cell.tileNbt),
+                    text(cell.itemNbt));
             }
         }
 
@@ -477,8 +509,8 @@ public final class HologramLocalBlueprintDocument {
             throw new IOException("蓝图缺少完整作者信息");
         if (prepared.createdAt <= 0 && incompleteAuthorIntent == LocalSaveIntent.STRICT)
             prepared.createdAt = System.currentTimeMillis();
-        if (prepared.cells.isEmpty() || text(prepared.name).trim().isEmpty() || prepared.name.length() > 48)
-            throw new IOException("请填写蓝图名称并保留至少一个方块");
+        if (prepared.cells.isEmpty() || text(prepared.name).trim()
+            .isEmpty() || prepared.name.length() > 48) throw new IOException("请填写蓝图名称并保留至少一个方块");
         if (!codec.hasOriginalVersion(prepared)) HologramBlueprintVersions.stampSaved(prepared);
         return new FrozenDraft(prepared, codec, null, true, true, incompleteAuthorIntent);
     }
@@ -502,8 +534,7 @@ public final class HologramLocalBlueprintDocument {
     /** The exact bytes come from a committed, verified pair produced from this save version. */
     public void saved(long expectedRevision, FrozenDraft prepared, byte[] exactJson) throws IOException {
         requireMaterialized();
-        if (expectedRevision != revision || prepared.codec != codec)
-            throw new IOException("蓝图已修改，请重新保存");
+        if (expectedRevision != revision || prepared.codec != codec) throw new IOException("蓝图已修改，请重新保存");
         explicitRetention = prepared.explicitRetention;
         acceptSave(prepared.document, exactJson);
         if (prepared.incompleteAuthorIntent == LocalSaveIntent.SAVE_AS_NEW) committedNamedImport = true;
@@ -541,7 +572,8 @@ public final class HologramLocalBlueprintDocument {
     private Preset copyHeaderForEdit(Preset source) {
         Preset next = HologramSnapshotMetadataSource.copyMetadata(source);
         codec.copied(source, next);
-        for (int i = 0; i < source.structures.size(); i++) codec.copied(source.structures.get(i), next.structures.get(i));
+        for (int i = 0; i < source.structures.size(); i++)
+            codec.copied(source.structures.get(i), next.structures.get(i));
         for (int i = 0; i < source.hintAreas.size(); i++) codec.copied(source.hintAreas.get(i), next.hintAreas.get(i));
         return next;
     }
@@ -661,8 +693,8 @@ public final class HologramLocalBlueprintDocument {
         Structure source = configuredStructure(request);
         if (source == null) return null;
         NBTTagCompound requested = HologramLocalBlueprintStructure.requested(source, request);
-        return HologramLocalBlueprintStructure.settings(source).equals(requested) ? null
-            : new StructureTask(source, request, requested);
+        return HologramLocalBlueprintStructure.settings(source)
+            .equals(requested) ? null : new StructureTask(source, request, requested);
     }
 
     public final class StructureTask implements AutoCloseable {
@@ -695,8 +727,11 @@ public final class HologramLocalBlueprintDocument {
                 if (!checkedEvidence) {
                     checkedEvidence = true;
                     StructureEvidence evidence = structureEvidence;
-                    if (evidence != null && evidence.document() == original && evidence.source() == source
-                        && evidence.settings().equals(previous) && proofCurrent(evidence.proof())) {
+                    if (evidence != null && evidence.document() == original
+                        && evidence.source() == source
+                        && evidence.settings()
+                            .equals(previous)
+                        && proofCurrent(evidence.proof())) {
                         reused = evidence;
                         if (requested == null) {
                             done = true;
@@ -716,16 +751,14 @@ public final class HologramLocalBlueprintDocument {
                     beforeProof = proof;
                 } else {
                     StructureSources.ReadSet proofOfBefore = reused == null ? beforeProof : reused.proof();
-                    if (proofOfBefore != null && !proofCurrent(proofOfBefore))
-                        throw new IOException("原生结构来源已变化，请重试");
+                    if (proofOfBefore != null && !proofCurrent(proofOfBefore)) throw new IOException("原生结构来源已变化，请重试");
                     after = result;
                     afterProof = proof;
                 }
                 done = requested == null || after != null;
             } catch (IOException | RuntimeException | LinkageError failure) {
                 close();
-                if (requested != null) throw new IOException(
-                    "结构设置未应用，原蓝图已保留：" + failure.getMessage(), failure);
+                if (requested != null) throw new IOException("结构设置未应用，原蓝图已保留：" + failure.getMessage(), failure);
                 unavailable = "原生结构无法读取，仍可编辑蓝图格：" + failure.getMessage();
                 done = true;
             }
@@ -743,7 +776,11 @@ public final class HologramLocalBlueprintDocument {
                     structureEvidence = null;
                     if (beforeProof != null) try {
                         structureEvidence = new StructureEvidence(
-                            original, source, previous, HologramLocalBlueprintStructure.declared(source, before), beforeProof);
+                            original,
+                            source,
+                            previous,
+                            HologramLocalBlueprintStructure.declared(source, before),
+                            beforeProof);
                     } catch (IOException invalidFootprint) {
                         // Options remain visible; changing geometry still requires a valid original footprint.
                     }
@@ -752,15 +789,23 @@ public final class HologramLocalBlueprintDocument {
                 return;
             }
             Preset next = copyForEdit(original);
-            boolean singleSource = original.structures.stream().filter(group -> text(group.textBoxNbt).isEmpty())
-                .limit(2).count() == 1;
+            boolean singleSource = original.structures.stream()
+                .filter(group -> text(group.textBoxNbt).isEmpty())
+                .limit(2)
+                .count() == 1;
             Map<HologramLocalBlueprintStructure.Position, Cell> previousRows = reused == null
-                ? HologramLocalBlueprintStructure.declared(source, before) : reused.rows();
-            Map<HologramLocalBlueprintStructure.Position, Cell> requestedRows =
-                HologramLocalBlueprintStructure.declared(source, after);
+                ? HologramLocalBlueprintStructure.declared(source, before)
+                : reused.rows();
+            Map<HologramLocalBlueprintStructure.Position, Cell> requestedRows = HologramLocalBlueprintStructure
+                .declared(source, after);
             List<Cell> cells = HologramLocalBlueprintStructure.merge(
-                original.cells, source.id, previousRows, requestedRows, singleSource,
-                HologramLocalBlueprintDocument.this::copyCell, codec::replacedNativeTargets);
+                original.cells,
+                source.id,
+                previousRows,
+                requestedRows,
+                singleSource,
+                HologramLocalBlueprintDocument.this::copyCell,
+                codec::replacedNativeTargets);
             next.cells.clear();
             next.cells.addAll(cells);
             Structure changed = HologramBlueprintData.blueprintSource(next, source.id);
@@ -790,8 +835,7 @@ public final class HologramLocalBlueprintDocument {
             if (document != original || revision != expectedRevision
                 || sourceRevision != StructureSources.revision()
                 || declarationGeneration != HologramDeclarationAdapters.generation()
-                || requested != null && !source.id.equals(activeStructure))
-                throw new IOException("蓝图或结构选择已变化，请重试");
+                || requested != null && !source.id.equals(activeStructure)) throw new IOException("蓝图或结构选择已变化，请重试");
         }
 
         private boolean proofCurrent(StructureSources.ReadSet proof) {
@@ -816,14 +860,23 @@ public final class HologramLocalBlueprintDocument {
             return;
         }
         NBTTagCompound options = new NBTTagCompound();
-        options.setTag("capabilities", source.getTagList("capabilities", 10).copy());
-        options.setTag("structureDescription", source.getTagList("structureDescription", 8).copy());
+        options.setTag(
+            "capabilities",
+            source.getTagList("capabilities", 10)
+                .copy());
+        options.setTag(
+            "structureDescription",
+            source.getTagList("structureDescription", 8)
+                .copy());
         structureOptions.put(key, options);
-        if (structureOptions.size() > HISTORY_LIMIT * 2)
-            structureOptions.remove(structureOptions.keySet().iterator().next());
+        if (structureOptions.size() > HISTORY_LIMIT * 2) structureOptions.remove(
+            structureOptions.keySet()
+                .iterator()
+                .next());
     }
 
-    private void edit(String op, NBTTagCompound request, java.util.function.BooleanSupplier current) throws IOException {
+    private void edit(String op, NBTTagCompound request, java.util.function.BooleanSupplier current)
+        throws IOException {
         Preset next = metadataOnlyEdit(op) ? shareHeaderRows(document) : copyForEdit(document);
         Clipboard copied = null;
         int[] affected = new int[0];
@@ -979,7 +1032,8 @@ public final class HologramLocalBlueprintDocument {
         Preset before = document;
         Preset source = copyForEdit(before);
         codec.processingMetadata(before, source);
-        HologramBlueprintProcessing.Policy policy = processingPolicy == null ? HologramBlueprintProcessing.policy(source)
+        HologramBlueprintProcessing.Policy policy = processingPolicy == null
+            ? HologramBlueprintProcessing.policy(source)
             : HologramBlueprintProcessing.Policy.read(processingPolicy.write());
         Preset replacement = null;
         boolean reviewed = false;
@@ -994,9 +1048,13 @@ public final class HologramLocalBlueprintDocument {
             }
             case "processBlueprint" -> {
                 policy = HologramBlueprintProcessing.Policy.read(request.getCompoundTag("policy"));
-                replacement = HologramBlueprintProcessing.process(source, policy, sourceDimension, originX, originY, originZ);
+                replacement = HologramBlueprintProcessing
+                    .process(source, policy, sourceDimension, originX, originY, originZ);
                 HologramAePolicy.Draft review = HologramAePolicy.sanitizeOwned(
-                    replacement, java.util.Collections.emptyMap(), java.util.Collections.emptyMap(), HologramAePolicy.PreparationProgress.NONE);
+                    replacement,
+                    java.util.Collections.emptyMap(),
+                    java.util.Collections.emptyMap(),
+                    HologramAePolicy.PreparationProgress.NONE);
                 if (review.blocking) throw new IOException("蓝图包含待处理的设备数据");
                 replacement = HologramBlueprintProcessing.enforcePolicy(review.preset);
                 reviewed = true;
@@ -1021,7 +1079,11 @@ public final class HologramLocalBlueprintDocument {
                 for (int i = 0; i < changes.tagCount(); i++) {
                     NBTTagCompound change = changes.getCompoundTagAt(i);
                     HologramBlueprintProcessing.editNbtValue(
-                        source, indices, change.getString("path"), change.getString("type"), change.getString("value"));
+                        source,
+                        indices,
+                        change.getString("path"),
+                        change.getString("type"),
+                        change.getString("value"));
                 }
                 HologramBlueprintProcessing.invalidate(source, "nbt");
                 trimStages(policy, 4);
@@ -1036,13 +1098,15 @@ public final class HologramLocalBlueprintDocument {
                 message = "处理预设已选定";
             }
             default -> {
-                if ("deleteProcessingPreset".equals(op)) HologramProcessingPresets.delete(request.getString("presetId"));
+                if ("deleteProcessingPreset".equals(op))
+                    HologramProcessingPresets.delete(request.getString("presetId"));
                 else {
-                    NBTTagCompound reusable = (NBTTagCompound) request.getCompoundTag("policy").copy();
+                    NBTTagCompound reusable = (NBTTagCompound) request.getCompoundTag("policy")
+                        .copy();
                     reusable.removeTag("resourceDecisions");
                     HologramBlueprintProcessing.Policy saved = HologramBlueprintProcessing.Policy.read(reusable);
-                    if ("updateProcessingPreset".equals(op))
-                        HologramProcessingPresets.update(request.getString("presetId"), request.getString("name"), saved);
+                    if ("updateProcessingPreset".equals(op)) HologramProcessingPresets
+                        .update(request.getString("presetId"), request.getString("name"), saved);
                     else HologramProcessingPresets.save(request.getString("name"), saved);
                 }
                 processingPresets = HologramProcessingPresets.labels();
@@ -1050,8 +1114,8 @@ public final class HologramLocalBlueprintDocument {
                 return;
             }
         }
-        NBTTagCompound view = HologramBlueprintProcessing.state(
-            replacement == null ? source : replacement, policy, sourceDimension, originX, originY, originZ);
+        NBTTagCompound view = HologramBlueprintProcessing
+            .state(replacement == null ? source : replacement, policy, sourceDimension, originX, originY, originZ);
         NBTTagList presets = HologramProcessingPresets.labels();
         if (!current.getAsBoolean()) throw new IOException("本地蓝图处理已取消");
         if (replacement != null) {
@@ -1071,8 +1135,8 @@ public final class HologramLocalBlueprintDocument {
         status = message;
     }
 
-    private HologramBlueprintProcessing.Policy configureCellNbt(Preset source, HologramBlueprintProcessing.Policy policy,
-        NBTTagCompound request) throws IOException {
+    private HologramBlueprintProcessing.Policy configureCellNbt(Preset source,
+        HologramBlueprintProcessing.Policy policy, NBTTagCompound request) throws IOException {
         if (request.hasKey("structureId", 8) && !activeStructure.equals(request.getString("structureId")))
             throw new IOException("结构选择已变化，请重新选择 NBT 编辑格");
         NBTTagCompound tag = policy.write();
@@ -1089,8 +1153,13 @@ public final class HologramLocalBlueprintDocument {
             row.setInteger("y", cell.y);
             row.setInteger("z", cell.z);
             row.setBoolean("all", request.getBoolean("all"));
-            row.setTag("keys", HologramSessionPolicy.nbtKeys(HologramAuthoringQueries.selectedNbtKeys(request.getTagList("keys", 8))));
-            row.setTag("ignoredPaths", request.getTagList("ignoredPaths", 8).copy());
+            row.setTag(
+                "keys",
+                HologramSessionPolicy.nbtKeys(HologramAuthoringQueries.selectedNbtKeys(request.getTagList("keys", 8))));
+            row.setTag(
+                "ignoredPaths",
+                request.getTagList("ignoredPaths", 8)
+                    .copy());
             byPosition.put(Position.of(cell), row);
         }
         NBTTagList rows = new NBTTagList();
@@ -1168,27 +1237,42 @@ public final class HologramLocalBlueprintDocument {
         if (!"editCellFlags".equals(operation) || affected.length != 1 || packedAuthoring()) return null;
         int index = affected[0];
         Cell before = document.cells.get(index), after = next.cells.get(index);
-        if (!plainPromptCell(before) || before.excluded != after.excluded || text(before.prompt).equals(text(after.prompt))
-            || before.x != after.x || before.y != after.y || before.z != after.z) return null;
+        if (!plainPromptCell(before) || before.excluded != after.excluded
+            || text(before.prompt).equals(text(after.prompt))
+            || before.x != after.x
+            || before.y != after.y
+            || before.z != after.z) return null;
         // This sole production command writes only prompt/excluded to a copy of exactly this cell.
-        return new HistoryEdge(historySaveEpoch, content, nextContent,
+        return new HistoryEdge(
+            historySaveEpoch,
+            content,
+            nextContent,
             new PromptCellEdge(index, document.cells, next.cells, document.palette, next.palette, before, after));
     }
 
     private static boolean plainPromptCell(Cell cell) {
-        return !cell.controller && !text(cell.block).isEmpty() && !"minecraft:air".equals(cell.block)
-            && text(cell.tileNbt).isEmpty() && text(cell.itemNbt).isEmpty()
-            && text(cell.structureId).isEmpty() && (cell.structureIds == null || cell.structureIds.isEmpty())
+        return !cell.controller && !text(cell.block).isEmpty()
+            && !"minecraft:air".equals(cell.block)
+            && text(cell.tileNbt).isEmpty()
+            && text(cell.itemNbt).isEmpty()
+            && text(cell.structureId).isEmpty()
+            && (cell.structureIds == null || cell.structureIds.isEmpty())
             && (cell.allowedTargets == null || cell.allowedTargets.isEmpty())
             && (cell.structureHatchFacings == null || cell.structureHatchFacings.length == 0);
     }
 
     private boolean boundedHistoryHeader(Preset preset) {
         // Header copies below must not traverse a processing report, attachment, placement ack or a long source list.
-        return activeStructure.isEmpty() && processingPolicy == null && processingView == null && processingPresets == null
-            && textPlacementAck == null && preset.structures.isEmpty() && preset.hintAreas.isEmpty()
-            && preset.aeIssues.isEmpty() && (preset.sourceItemFrames == null || preset.sourceItemFrames.isEmpty())
-            && preset.modVersions.size() <= 64 && (preset.retainedNbtKeys == null || preset.retainedNbtKeys.size() <= 64);
+        return activeStructure.isEmpty() && processingPolicy == null
+            && processingView == null
+            && processingPresets == null
+            && textPlacementAck == null
+            && preset.structures.isEmpty()
+            && preset.hintAreas.isEmpty()
+            && preset.aeIssues.isEmpty()
+            && (preset.sourceItemFrames == null || preset.sourceItemFrames.isEmpty())
+            && preset.modVersions.size() <= 64
+            && (preset.retainedNbtKeys == null || preset.retainedNbtKeys.size() <= 64);
     }
 
     private void remember(Deque<Version> history) {
@@ -1207,9 +1291,12 @@ public final class HologramLocalBlueprintDocument {
         Version previous = from.peekLast();
         Preset source = document;
         HistoryEdge edge = previous.edge();
-        boolean certified = !headerOnly && edge != null && edge.matches(historySaveEpoch, content, previous, source, undoing)
-            && boundedHistoryHeader(source) && boundedHistoryHeader(previous.document());
-        Preset replacement = headerOnly || certified ? shareHeaderRows(previous.document()) : copyForEdit(previous.document());
+        boolean certified = !headerOnly && edge != null
+            && edge.matches(historySaveEpoch, content, previous, source, undoing)
+            && boundedHistoryHeader(source)
+            && boundedHistoryHeader(previous.document());
+        Preset replacement = headerOnly || certified ? shareHeaderRows(previous.document())
+            : copyForEdit(previous.document());
         if ((headerOnly || certified) && !current.getAsBoolean()) throw new IOException("本地蓝图编辑已取消");
         // Carry exactly this edge across the inverse; any unknown adjacency stays unclassified.
         remember(to, edge);
@@ -1225,10 +1312,21 @@ public final class HologramLocalBlueprintDocument {
         content = previous.content();
         encoded = null;
         long oldRevision = revision++;
-        historyDelta = !certified ? null : edge.cell() == null
-            ? new HistoryDelta(oldRevision, revision, source.cells.size(), -1, 0, 0, 0,
-                text(source.prompt), text(replacement.prompt), "", 0, 0, false)
-            : promptHistoryDelta(edge.cell(), undoing, oldRevision, source.cells.size());
+        historyDelta = !certified ? null
+            : edge.cell() == null ? new HistoryDelta(
+                oldRevision,
+                revision,
+                source.cells.size(),
+                -1,
+                0,
+                0,
+                0,
+                text(source.prompt),
+                text(replacement.prompt),
+                "",
+                0,
+                0,
+                false) : promptHistoryDelta(edge.cell(), undoing, oldRevision, source.cells.size());
         status = message;
         if (!activeStructure.isEmpty() && HologramBlueprintData.blueprintSource(document, activeStructure) == null)
             activeStructure = "";
@@ -1238,8 +1336,20 @@ public final class HologramLocalBlueprintDocument {
     private HistoryDelta promptHistoryDelta(PromptCellEdge pair, boolean undoing, long previous, int size) {
         Cell from = undoing ? pair.after() : pair.before();
         Cell target = undoing ? pair.before() : pair.after();
-        return new HistoryDelta(previous, revision, size, pair.index(), from.x, from.y, from.z,
-            text(from.prompt), text(target.prompt), text(from.block), from.metadata, from.facing, from.excluded);
+        return new HistoryDelta(
+            previous,
+            revision,
+            size,
+            pair.index(),
+            from.x,
+            from.y,
+            from.z,
+            text(from.prompt),
+            text(target.prompt),
+            text(from.block),
+            from.metadata,
+            from.facing,
+            from.excluded);
     }
 
     private int[] indices(NBTTagCompound request) throws IOException {
@@ -1523,10 +1633,11 @@ public final class HologramLocalBlueprintDocument {
             hint.z2 = Math.max(hint.z2, cell.z);
         }
         hint.prompt = prompt;
-        for (HintArea previous : draft.hintAreas)
-            if (previous.x1 == hint.x1 && previous.y1 == hint.y1 && previous.z1 == hint.z1
-                && previous.x2 == hint.x2 && previous.y2 == hint.y2 && previous.z2 == hint.z2)
-                codec.copied(previous, hint);
+        for (HintArea previous : draft.hintAreas) if (previous.x1 == hint.x1 && previous.y1 == hint.y1
+            && previous.z1 == hint.z1
+            && previous.x2 == hint.x2
+            && previous.y2 == hint.y2
+            && previous.z2 == hint.z2) codec.copied(previous, hint);
         HologramBlueprintData.updateHintArea(draft.hintAreas, hint);
     }
 
@@ -1574,8 +1685,9 @@ public final class HologramLocalBlueprintDocument {
         state.setString("blueprintPrompt", text(document.prompt));
         // Preserve the legacy projection for opaque policies; do not interpret them or expand Save eligibility.
         var identity = codec.saveIdentity(document);
-        state.setInteger("deidentificationLevel", identity == null
-            ? HologramValues.clamp(document.deidentificationLevel, 0, 6) : identity.level());
+        state.setInteger(
+            "deidentificationLevel",
+            identity == null ? HologramValues.clamp(document.deidentificationLevel, 0, 6) : identity.level());
         if (identity != null) {
             state.setInteger("blueprintDeidentificationLevel", identity.level());
             state.setInteger("deidentificationMinimumLevel", identity.level());
@@ -1593,16 +1705,26 @@ public final class HologramLocalBlueprintDocument {
 
     private void writeStructureSettings(NBTTagCompound state) {
         Structure source = HologramBlueprintData.blueprintSource(document, activeStructure);
-        NBTTagCompound settings = source == null ? new NBTTagCompound() : HologramLocalBlueprintStructure.settings(source);
+        NBTTagCompound settings = source == null ? new NBTTagCompound()
+            : HologramLocalBlueprintStructure.settings(source);
         state.setInteger("main", Math.max(1, settings.getInteger("main")));
         state.setBoolean("mainExplicit", settings.getBoolean("mainExplicit"));
         state.setBoolean("noHatches", settings.getBoolean("noHatches"));
-        state.setTag("channels", settings.getCompoundTag("channels").copy());
+        state.setTag(
+            "channels",
+            settings.getCompoundTag("channels")
+                .copy());
         NBTTagCompound options = structureOptions.get(new StructureSettings(activeStructure, settings));
-        state.setTag("capabilities", options == null ? new NBTTagList() : options.getTagList("capabilities", 10).copy());
+        state.setTag(
+            "capabilities",
+            options == null ? new NBTTagList()
+                : options.getTagList("capabilities", 10)
+                    .copy());
         state.setTag(
             "structureDescription",
-            options == null ? new NBTTagList() : options.getTagList("structureDescription", 8).copy());
+            options == null ? new NBTTagList()
+                : options.getTagList("structureDescription", 8)
+                    .copy());
     }
 
     private void writeSelectedNbt(NBTTagCompound state) {
@@ -1611,8 +1733,9 @@ public final class HologramLocalBlueprintDocument {
             Cell cell = viewCell(selected);
             entries = HologramBlueprintProcessing.nbtEntries(cell);
             HologramBlueprintProcessing.CellNbtOverride selectedPolicy = null;
-            if (processingPolicy != null) for (HologramBlueprintProcessing.CellNbtOverride override : processingPolicy.cellNbtOverrides)
-                if (cell.x == override.x && cell.y == override.y && cell.z == override.z) selectedPolicy = override;
+            if (processingPolicy != null)
+                for (HologramBlueprintProcessing.CellNbtOverride override : processingPolicy.cellNbtOverrides)
+                    if (cell.x == override.x && cell.y == override.y && cell.z == override.z) selectedPolicy = override;
             boolean all = selectedPolicy == null || selectedPolicy.all;
             for (int i = 0; i < entries.tagCount(); i++) {
                 NBTTagCompound entry = entries.getCompoundTagAt(i);
@@ -1625,8 +1748,10 @@ public final class HologramLocalBlueprintDocument {
             row.setInteger("index", selected);
             row.setBoolean("all", all);
             row.setTag("entries", entries);
-            row.setTag("ignoredPaths", selectedPolicy == null ? new NBTTagList()
-                : HologramBlueprintProcessing.strings(selectedPolicy.ignoredPaths));
+            row.setTag(
+                "ignoredPaths",
+                selectedPolicy == null ? new NBTTagList()
+                    : HologramBlueprintProcessing.strings(selectedPolicy.ignoredPaths));
             rows.appendTag(row);
         } catch (IOException | RuntimeException unavailable) {
             entries = new NBTTagList();
@@ -1657,7 +1782,8 @@ public final class HologramLocalBlueprintDocument {
             NBTTagCompound scalar = new NBTTagCompound();
             for (Object name : descriptor.func_150296_c()) {
                 String key = (String) name;
-                if (!"previewTile".equals(key) && !"previewItemTag".equals(key)) scalar.setTag(key, descriptor.getTag(key));
+                if (!"previewTile".equals(key) && !"previewItemTag".equals(key))
+                    scalar.setTag(key, descriptor.getTag(key));
             }
             // Opaque native tags use exact original encoded equality, not NBT's Float/Double comparison.
             // Distinct input payloads remain distinct even if their display bytes happen to be equivalent.
@@ -1673,8 +1799,8 @@ public final class HologramLocalBlueprintDocument {
         List<Cell> source = document.cells;
         HologramBlueprintLimits.require(source.size());
         int[] coordinates = new int[Math.multiplyExact(source.size(), 4)];
-        int[] bounds = { Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE,
-            Integer.MIN_VALUE, Integer.MIN_VALUE };
+        int[] bounds = { Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE,
+            Integer.MIN_VALUE };
         Map<EditorDescriptor, Integer> ids = new HashMap<>();
         List<NBTTagCompound> materials = new ArrayList<>();
         VisualPayloads payloads = new VisualPayloads();
@@ -1720,7 +1846,8 @@ public final class HologramLocalBlueprintDocument {
 
     private EditorRows editorRows(HologramLocalBlueprintCodec.CompactLayout layout,
         java.util.function.BooleanSupplier current) throws IOException {
-        if (layout == null || layout.rows().cells() == 0) return null;
+        if (layout == null || layout.rows()
+            .cells() == 0) return null;
         NBTTagCompound[] descriptors = new NBTTagCompound[layout.materials().length];
         VisualPayloads payloads = new VisualPayloads();
         long projectedBytes = 0;
@@ -1790,15 +1917,22 @@ public final class HologramLocalBlueprintDocument {
             : cell.block();
         boolean missing = cell.missing() || block == null || block == Blocks.air && !"minecraft:air".equals(cell.block);
         row.setBoolean("missingBlock", missing);
-        row.setString("wantId", missing ? "minecraft:air" : String.valueOf(Block.blockRegistry.getNameForObject(block)));
-        boolean legacyItem = text(cell.block).isEmpty() && stack != null && !missing
+        row.setString(
+            "wantId",
+            missing ? "minecraft:air" : String.valueOf(Block.blockRegistry.getNameForObject(block)));
+        boolean legacyItem = text(cell.block).isEmpty() && stack != null
+            && !missing
             && !(stack.getItem() instanceof gregtech.common.blocks.ItemMachines);
-        row.setInteger("wantMeta", legacyItem ? stack.getItem().getMetadata(cell.damage) : cell.metadata);
+        row.setInteger(
+            "wantMeta",
+            legacyItem ? stack.getItem()
+                .getMetadata(cell.damage) : cell.metadata);
         row.setInteger("targetFacing", cell.facing);
         row.setString("previewItem", missing ? "" : text(cell.item));
         row.setInteger("previewDamage", cell.damage);
         if (!missing) {
-            NBTTagCompound tile = payloads.value(cell.tileNbt, coordinates), item = payloads.value(cell.itemNbt, coordinates);
+            NBTTagCompound tile = payloads.value(cell.tileNbt, coordinates),
+                item = payloads.value(cell.itemNbt, coordinates);
             if (tile != null) row.setTag("previewTile", tile);
             if (item != null) row.setTag("previewItemTag", item);
         }
@@ -1809,8 +1943,9 @@ public final class HologramLocalBlueprintDocument {
         row.setString("role", text(cell.structureRole));
         row.setString("family", text(cell.structureFamily));
         row.setString("candidateBoundary", text(cell.structureHint));
-        row.setBoolean("candidateComplete", cell.structureCandidatesComplete != null
-            ? cell.structureCandidatesComplete : cell.allowedTargets != null);
+        row.setBoolean(
+            "candidateComplete",
+            cell.structureCandidatesComplete != null ? cell.structureCandidatesComplete : cell.allowedTargets != null);
         if (cell.structureHatchFacings != null) row.setIntArray("hatchFacings", cell.structureHatchFacings);
         if (cell.allowedTargets != null) {
             NBTTagList candidates = new NBTTagList(), roles = new NBTTagList();

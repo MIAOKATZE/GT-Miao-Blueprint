@@ -73,7 +73,8 @@ final class HologramBlockRender {
     static void begin(HologramState state) {
         Cache cache = cache();
         if (cache.snapshot == state) return;
-        if (HologramPreviewAssets.active() == HologramPreviewAssets.EDITOR) HologramRenderer.editorNativeSnapshotChanged();
+        if (HologramPreviewAssets.active() == HologramPreviewAssets.EDITOR)
+            HologramRenderer.editorNativeSnapshotChanged();
         beginViewport(state);
     }
 
@@ -347,7 +348,9 @@ final class HologramBlockRender {
                 count += emitted;
                 if (emitted > 0) {
                     int[] raw = scratch.raw = HologramVertexData.read(tess, emitted, scratch.raw);
-                    IIcon absent = Minecraft.getMinecraft().getTextureMapBlocks().getAtlasSprite("missingno");
+                    IIcon absent = Minecraft.getMinecraft()
+                        .getTextureMapBlocks()
+                        .getAtlasSprite("missingno");
                     for (int first = 0; first < emitted; first += 4) {
                         int corners = Math.min(4, emitted - first);
                         if (corners == 4 && !usableQuad(raw, 8, first)) continue;
@@ -355,27 +358,25 @@ final class HologramBlockRender {
                         for (int vertex = first; vertex < first + corners; vertex++) {
                             int start = vertex * 8;
                             boolean added = scratch.add(raw[start], raw[start + 1], raw[start + 2]);
-                            if (added && captureGeometry)
-                                points.add(new double[] {
-                                    Float.intBitsToFloat(raw[start]),
-                                    Float.intBitsToFloat(raw[start + 1]),
+                            if (added && captureGeometry) points.add(
+                                new double[] { Float.intBitsToFloat(raw[start]), Float.intBitsToFloat(raw[start + 1]),
                                     Float.intBitsToFloat(raw[start + 2]) });
                             if (corners == 4) {
                                 float textureU = Float.intBitsToFloat(raw[start + 3]);
                                 float textureV = Float.intBitsToFloat(raw[start + 4]);
                                 u += textureU / 4.0;
                                 w += textureV / 4.0;
-                                if (captureAttributes) attributes.add(new double[] {
-                                    Float.intBitsToFloat(raw[start]),
-                                    Float.intBitsToFloat(raw[start + 1]),
-                                    Float.intBitsToFloat(raw[start + 2]),
-                                    textureU, textureV, raw[start + 5] });
+                                if (captureAttributes) attributes.add(
+                                    new double[] { Float.intBitsToFloat(raw[start]),
+                                        Float.intBitsToFloat(raw[start + 1]), Float.intBitsToFloat(raw[start + 2]),
+                                        textureU, textureV, raw[start + 5] });
                             }
                         }
                         if (corners == 4) {
                             if (captureGeometry) textureCenters.add(new double[] { u, w });
                             if (u > absent.getMinU() + 1e-6 && u < absent.getMaxU() - 1e-6
-                                && w > absent.getMinV() + 1e-6 && w < absent.getMaxV() - 1e-6) missing = true;
+                                && w > absent.getMinV() + 1e-6
+                                && w < absent.getMaxV() - 1e-6) missing = true;
                         }
                     }
 

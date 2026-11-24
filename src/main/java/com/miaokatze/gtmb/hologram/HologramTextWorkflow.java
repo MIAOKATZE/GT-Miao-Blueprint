@@ -332,7 +332,9 @@ final class HologramTextWorkflow {
         int metadata = cell.metadata[paint];
         validateMaterial(materialName, metadata);
         Block material = Block.getBlockFromName(materialName);
-        boolean ordinary = cell.fullBlock && metadata <= 15 && material.isOpaqueCube() && material.renderAsNormalBlock();
+        boolean ordinary = cell.fullBlock && metadata <= 15
+            && material.isOpaqueCube()
+            && material.renderAsNormalBlock();
         HologramCapture.Cell added = new HologramCapture.Cell(null, x, y, z);
         added.userPosition = true;
         added.block = ordinary ? material : host;

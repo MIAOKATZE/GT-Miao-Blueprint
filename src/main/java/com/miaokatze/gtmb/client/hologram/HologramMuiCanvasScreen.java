@@ -217,8 +217,7 @@ abstract class HologramMuiCanvasScreen extends HologramMuiScreen {
     }
 
     final void resetNativeFields() {
-        if (fallbackControls != null)
-            for (HologramMuiTextField field : fields) fallbackControls.remove(field.widget());
+        if (fallbackControls != null) for (HologramMuiTextField field : fields) fallbackControls.remove(field.widget());
         fields.clear();
     }
 

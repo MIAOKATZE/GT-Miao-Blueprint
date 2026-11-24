@@ -37,7 +37,8 @@ final class HologramMaterialWorkflow {
                 requireProjectionRefresh(s, action);
             else if ("orderMissingMaterials".equals(op) || "setDecorativeVoucher".equals(op))
                 requireMaterialReview(s, action);
-            else if (!(cancellingOrder && HologramEditorWorkspaceRegistry.physicalProjection(s))) requireReview(s, action);
+            else if (!(cancellingOrder && HologramEditorWorkspaceRegistry.physicalProjection(s)))
+                requireReview(s, action);
             if ("cancelMaterialOrder".equals(op)) {
                 // Sequential orders can share a review. Only its acknowledged order may be cancelled.
                 if (!HologramAeCraftingOrders.matchesActiveOrder(s, action))

@@ -54,7 +54,10 @@ public final class StructureSources {
         }
 
         public boolean accepts(int main, NBTTagCompound channels) {
-            if (main < 1 || main > maximumMain || channels.func_150296_c().size() > 64) return false;
+            if (main < 1 || main > maximumMain
+                || channels.func_150296_c()
+                    .size() > 64)
+                return false;
             for (Object key : channels.func_150296_c()) {
                 String name = (String) key;
                 if (!channels.hasKey(name, 3) || !name.matches("[a-z0-9_.-]{1,48}") || "gt_hatch".equals(name))
@@ -75,9 +78,14 @@ public final class StructureSources {
      */
     public static <C> GTMBExtensions.Registration registerCompactNative(String id, Class<C> type,
         IStructureDefinition<C> definition, String piece, int a, int b, int c, int maximumMain) {
-        if (type == null || definition == null || definition.getClass() != StructureDefinition.class
-            || piece == null || piece.isEmpty() || piece.length() > 64 || maximumMain < 1
-            || definition.getStructureFor(piece) == null) throw new IllegalArgumentException("compact native declaration");
+        if (type == null || definition == null
+            || definition.getClass() != StructureDefinition.class
+            || piece == null
+            || piece.isEmpty()
+            || piece.length() > 64
+            || maximumMain < 1
+            || definition.getStructureFor(piece) == null)
+            throw new IllegalArgumentException("compact native declaration");
         CompactNative source = new CompactNative(id, (StructureDefinition<?>) definition, piece, a, b, c, maximumMain);
         return GTMBExtensions.install(id, "compact-native-structure", () -> {
             if (COMPACT_NATIVE.putIfAbsent(type, source) != null)
@@ -96,8 +104,11 @@ public final class StructureSources {
     public static Resolution resolveCompactNative(Class<?> type, CompactNative pin, ItemStack trigger) {
         long revision = REVISION.get();
         if (pin == null || compactNative(type) != pin) return null;
-        var plan = new Plan(pin.definition, Collections.singletonList(new Piece(pin.piece, pin.a, pin.b, pin.c, trigger)));
-        return REVISION.get() == revision ? Resolution.ready(plan, null).bind(pin.id, revision, null) : null;
+        var plan = new Plan(
+            pin.definition,
+            Collections.singletonList(new Piece(pin.piece, pin.a, pin.b, pin.c, trigger)));
+        return REVISION.get() == revision ? Resolution.ready(plan, null)
+            .bind(pin.id, revision, null) : null;
     }
 
     public interface Source<C> {

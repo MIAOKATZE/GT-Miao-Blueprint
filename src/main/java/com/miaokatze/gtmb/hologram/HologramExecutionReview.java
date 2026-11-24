@@ -13,6 +13,7 @@ final class HologramExecutionReview {
     private HologramExecutionReview() {}
 
     private enum Decision {
+
         CHECK_MATERIALS,
         ORDER_MATERIALS,
         CANCEL_ORDER,
@@ -60,24 +61,26 @@ final class HologramExecutionReview {
             return true;
         }
         if (decision == Decision.CHECK_MATERIALS || decision == Decision.ORDER_MATERIALS
-            || decision == Decision.CANCEL_ORDER || decision == Decision.VOUCHER) {
+            || decision == Decision.CANCEL_ORDER
+            || decision == Decision.VOUCHER) {
             HologramMaterialWorkflow.action(s, request, op);
             return true;
         }
         try {
             boolean revisionRequired = decision != Decision.OPEN_NETWORKS && decision != Decision.CLOSE_NETWORKS;
-            if (!HologramSessionPolicy.valid(s) || s.job != 0 || !s.blueprintAwaitingConfirmation
-                || revisionRequired && (!request.hasKey("planRevision", 4)
-                    || request.getLong("planRevision") != s.planRevision))
+            if (!HologramSessionPolicy.valid(s) || s.job != 0
+                || !s.blueprintAwaitingConfirmation
+                || revisionRequired
+                    && (!request.hasKey("planRevision", 4) || request.getLong("planRevision") != s.planRevision))
                 throw new IOException("施工审核已变化，请重新核对后确认");
             if (HologramAeCraftingOrders.active(s.player)) throw new IOException("请等待 AE 缺料订单处理完成");
             switch (decision) {
                 case CONFIGURE_DEVICE_STATE -> {
-                    s.placementNbtKeys = request.hasKey("all", 1) ? request.getBoolean("all") ? null
-                        : HologramAuthoringQueries.selectedNbtKeys(request.getTagList("keys", 8))
+                    s.placementNbtKeys = request.hasKey("all", 1)
+                        ? request.getBoolean("all") ? null
+                            : HologramAuthoringQueries.selectedNbtKeys(request.getTagList("keys", 8))
                         : HologramSessionPolicy.placementKeys(s);
-                    if (request.hasKey("retainCovers", 1))
-                        s.placementRetainCovers = request.getBoolean("retainCovers");
+                    if (request.hasKey("retainCovers", 1)) s.placementRetainCovers = request.getBoolean("retainCovers");
                     s.placementNbtCustomized = true;
                     refresh(s, "NBT 条目已更新，正在重新核对施工材料");
                 }
@@ -96,7 +99,8 @@ final class HologramExecutionReview {
                         if (request.hasKey(key) && !request.hasKey(key, 1)) throw new IOException("施工确认选项格式无效");
                     HologramMaterialWorkflow.validateConfirmation(s, request);
                     if (s.executionStart != null || HologramDeferredPlanRefresh.blocked(s)
-                        || HologramSessionPolicy.blockedByAreaImport(s) || !HologramBuildPreparation.aeReady(s)) break;
+                        || HologramSessionPolicy.blockedByAreaImport(s)
+                        || !HologramBuildPreparation.aeReady(s)) break;
                     s.executionStart = new Start(s, request);
                     s.status = "正在重新核对现场和施工范围";
                 }
@@ -126,8 +130,7 @@ final class HologramExecutionReview {
         Start start = s.executionStart;
         if (start == null) return false;
         try {
-            if (!start.step(s, HologramWorkBudget.deadline(HologramWorkBudget.remainingNanos(2_000_000L))))
-                return true;
+            if (!start.step(s, HologramWorkBudget.deadline(HologramWorkBudget.remainingNanos(2_000_000L)))) return true;
         } catch (IOException | RuntimeException | LinkageError invalid) {
             s.status = HologramAePolicy.fallback(invalid.getMessage());
         }
@@ -143,19 +146,33 @@ final class HologramExecutionReview {
     }
 
     static boolean retainedPhysicalAnchor(HologramSession s, HologramCapture.Cell cell, boolean readyOnly) {
-        if (s.virtual || s.mode != 0 || s.target == null || s.machine == null
-            || s.capture == null || s.capture.projectionOnly || s.capture.pending || s.capture.incomplete
+        if (s.virtual || s.mode != 0
+            || s.target == null
+            || s.machine == null
+            || s.capture == null
+            || s.capture.projectionOnly
+            || s.capture.pending
+            || s.capture.incomplete
             || !HologramEditorWorkspaceRegistry.physicalProjection(s)
             || HologramWorkspace.find(s.player.getUniqueID()) != s
-            || !cell.anchor || cell.x != s.x || cell.y != s.y || cell.z != s.z
-            || s.machine.getExtendedFacing().ordinal() != s.facing
+            || !cell.anchor
+            || cell.x != s.x
+            || cell.y != s.y
+            || cell.z != s.z
+            || s.machine.getExtendedFacing()
+                .ordinal() != s.facing
             || !HologramSessionPolicy.valid(s)) return false;
         int index = cell.stableIndex;
-        return index >= 0 && index < s.capture.cells.size() && s.capture.cells.get(index) == cell
-            && index < s.expectedTiles.size() && s.expectedTiles.get(index) == s.target
-            && index < s.expectedBlocks.size() && index < s.expectedMeta.size() && index < s.expectedFacings.size()
+        return index >= 0 && index < s.capture.cells.size()
+            && s.capture.cells.get(index) == cell
+            && index < s.expectedTiles.size()
+            && s.expectedTiles.get(index) == s.target
+            && index < s.expectedBlocks.size()
+            && index < s.expectedMeta.size()
+            && index < s.expectedFacings.size()
             && HologramPlanPolicy.expectedCurrent(s, index)
-            && (readyOnly ? s.capture.readyPlacementCurrent(s) : s.capture.sourceCurrent(HologramSessionPolicy.trigger(s)));
+            && (readyOnly ? s.capture.readyPlacementCurrent(s)
+                : s.capture.sourceCurrent(HologramSessionPolicy.trigger(s)));
     }
 
     static final class Start {
@@ -188,8 +205,13 @@ final class HologramExecutionReview {
 
         boolean step(HologramSession s, long deadline) throws IOException {
             if (System.nanoTime() - started > 90_000_000_000L || !HologramSessionPolicy.valid(s)
-                || !s.player.capabilities.allowEdit || s.player.capabilities.isCreativeMode != creative
-                || s.cancelled || s.job != 0 || s.capture != capture || s.localPlanPending || s.planRevision != approval.getLong("planRevision")
+                || !s.player.capabilities.allowEdit
+                || s.player.capabilities.isCreativeMode != creative
+                || s.cancelled
+                || s.job != 0
+                || s.capture != capture
+                || s.localPlanPending
+                || s.planRevision != approval.getLong("planRevision")
                 || s.placementReviewNonce != approval.getLong("placementReviewNonce"))
                 throw new IOException("施工复核已变化，请重新核对后确认");
             var slice = new HologramPlacementAdmissionSweep.Slice(Integer.MAX_VALUE, deadline, System::nanoTime);
@@ -200,8 +222,16 @@ final class HologramExecutionReview {
                     refresh(s, "现场或区块加载状态已变化，正在重新核对施工范围");
                     return false;
                 }
-                if (!creative && "blocked".equals(classifier.classify(s, cell, index, true,
-                    s.expectedBlocks.get(index), s.expectedMeta.get(index), s.expectedTiles.get(index)))) blocked++;
+                if (!creative && "blocked".equals(
+                    classifier.classify(
+                        s,
+                        cell,
+                        index,
+                        true,
+                        s.expectedBlocks.get(index),
+                        s.expectedMeta.get(index),
+                        s.expectedTiles.get(index))))
+                    blocked++;
                 String status = s.planStatus.get(index);
                 if ("unsupported".equals(status) && !cell.resourceError.isEmpty())
                     throw new IOException("施工设备状态无法安全解析：" + cell.resourceError);
@@ -220,11 +250,14 @@ final class HologramExecutionReview {
             if (progress == HologramPlacementAdmissionSweep.Progress.RETIRED) return true;
             if (progress == HologramPlacementAdmissionSweep.Progress.PENDING) return false;
             if (blocked > 0) throw new IOException("选定范围有 " + blocked + " 格被占用，请清空后重试");
-            if (direct && (protectedCells != 0 || unsupported != 0))
-                throw new IOException("范围内有保护或不支持的位置，未开始施工");
+            if (direct && (protectedCells != 0 || unsupported != 0)) throw new IOException("范围内有保护或不支持的位置，未开始施工");
             if (work.isEmpty()) {
-                s.status = "没有需要且可安全施工的位置。已满足 " + satisfied + " 格，保护或占位 " + protectedCells
-                    + " 格，不支持 " + unsupported + " 格";
+                s.status = "没有需要且可安全施工的位置。已满足 " + satisfied
+                    + " 格，保护或占位 "
+                    + protectedCells
+                    + " 格，不支持 "
+                    + unsupported
+                    + " 格";
                 return true;
             }
             if (!work.drain(slice, s.work::add)) return false;
@@ -242,7 +275,9 @@ final class HologramExecutionReview {
     static void writeNetworks(HologramSession s, NBTTagCompound state) {
         if (s.executionNetworks.isEmpty()) return;
         try {
-            HologramNetworkBindings.SnapshotTask task = new HologramNetworkBindings.SnapshotTask(s.player, s.networkBindings);
+            HologramNetworkBindings.SnapshotTask task = new HologramNetworkBindings.SnapshotTask(
+                s.player,
+                s.networkBindings);
             for (NBTTagCompound descriptor : s.executionNetworks.values()) task.add(descriptor);
             while (!task.step(128, Long.MAX_VALUE)) {}
             state.setTag("networkBindings", task.result);

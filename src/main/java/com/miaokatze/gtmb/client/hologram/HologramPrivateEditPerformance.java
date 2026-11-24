@@ -26,6 +26,7 @@ final class HologramPrivateEditPerformance {
     private static final Pattern MANAGED_ID = Pattern.compile("local_[a-fA-F0-9-]{36}");
 
     enum Preset {
+
         REGULAR(5120, 5_000_000L),
         FAST(51_200, 10_000_000L);
 
@@ -58,7 +59,9 @@ final class HologramPrivateEditPerformance {
             if (count > MAX_BYTES) return Preset.REGULAR;
             Properties values = new Properties();
             values.load(new ByteArrayInputStream(bytes, 0, count));
-            return "fast".equals(values.getProperty(KEY, "").trim()) ? Preset.FAST : Preset.REGULAR;
+            return "fast".equals(
+                values.getProperty(KEY, "")
+                    .trim()) ? Preset.FAST : Preset.REGULAR;
         } catch (IOException | IllegalArgumentException | SecurityException unavailable) {
             // Missing or malformed config does not close the editor or write a replacement.
             return Preset.REGULAR;
@@ -66,8 +69,11 @@ final class HologramPrivateEditPerformance {
     }
 
     static Request capture(String explicitPrivateEditId, Preset preset, boolean exactRoot) {
-        if (!exactRoot || explicitPrivateEditId == null || preset == null
-            || !MANAGED_ID.matcher(explicitPrivateEditId).matches()) return null;
+        if (!exactRoot || explicitPrivateEditId == null
+            || preset == null
+            || !MANAGED_ID.matcher(explicitPrivateEditId)
+                .matches())
+            return null;
         return new Request(explicitPrivateEditId, preset);
     }
 
@@ -83,14 +89,26 @@ final class HologramPrivateEditPerformance {
 
         Bound bind(HologramLocalBlueprintDocument document, boolean materializedProjection, NBTTagCompound snapshot,
             HologramState.Preparation preparation, boolean exactOwner) {
-            if (!exactOwner || !materializedProjection || document == null || snapshot == null || preparation == null
+            if (!exactOwner || !materializedProjection
+                || document == null
+                || snapshot == null
+                || preparation == null
                 || !preparation.usesEditorCells()
-                || !fileId.equals(document.fileId()) || document.packedAuthoring() || document.dirty() || document.revision() != 0
-                || !snapshot.getBoolean("localBlueprintDocument") || !snapshot.getBoolean("blueprintEditing")
-                || !fileId.equals(snapshot.getString("libraryLocalId")) || snapshot.getLong("planRevision") != 0
-                || snapshot.getBoolean("structureProjection") || snapshot.getBoolean("displayPartial")
-                || snapshot.getBoolean("partial") || HologramSnapshotPalette.isPacked(snapshot) || preparation.canPrepareCompactIndex()
-                || preparation.cellsPrepared() != 0 || preparation.total() == 0) return null;
+                || !fileId.equals(document.fileId())
+                || document.packedAuthoring()
+                || document.dirty()
+                || document.revision() != 0
+                || !snapshot.getBoolean("localBlueprintDocument")
+                || !snapshot.getBoolean("blueprintEditing")
+                || !fileId.equals(snapshot.getString("libraryLocalId"))
+                || snapshot.getLong("planRevision") != 0
+                || snapshot.getBoolean("structureProjection")
+                || snapshot.getBoolean("displayPartial")
+                || snapshot.getBoolean("partial")
+                || HologramSnapshotPalette.isPacked(snapshot)
+                || preparation.canPrepareCompactIndex()
+                || preparation.cellsPrepared() != 0
+                || preparation.total() == 0) return null;
             return new Bound(preparation, preset);
         }
     }

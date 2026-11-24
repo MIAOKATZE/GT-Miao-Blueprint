@@ -23,10 +23,29 @@ final class HologramSavedMaterialSource {
     static final int MAX_TRACKED_DESCRIPTORS = 4096;
     private static final int MAX_ID_CHARS = 192;
     private static final Pattern ID = Pattern.compile("[A-Za-z0-9_.-]+:[A-Za-z0-9_./-]+");
-    private static final Set<String> KNOWN_FIELDS = new HashSet<>(Arrays.asList(
-        "block", "metadata", "item", "damage", "count", "facing", "controller", "excluded", "itemNbt", "tileNbt",
-        "defaultItem", "defaultDamage", "prompt", "allowedTargets", "structureId", "structureIds", "structureRole",
-        "structureFamily", "structureHint", "structureCandidatesComplete", "structureHatchFacings"));
+    private static final Set<String> KNOWN_FIELDS = new HashSet<>(
+        Arrays.asList(
+            "block",
+            "metadata",
+            "item",
+            "damage",
+            "count",
+            "facing",
+            "controller",
+            "excluded",
+            "itemNbt",
+            "tileNbt",
+            "defaultItem",
+            "defaultDamage",
+            "prompt",
+            "allowedTargets",
+            "structureId",
+            "structureIds",
+            "structureRole",
+            "structureFamily",
+            "structureHint",
+            "structureCandidatesComplete",
+            "structureHatchFacings"));
 
     @Desugar
     record Variant(String block, int metadata, String item, int damage, int facing, boolean controller) {}
@@ -48,7 +67,12 @@ final class HologramSavedMaterialSource {
         this.limitCells = limitCells;
         this.retentionNeedsReview = retentionNeedsReview;
         long bytes = 128L;
-        for (Count row : variants) bytes += 160L + 2L * (row.variant().block().length() + row.variant().item().length());
+        for (Count row : variants) bytes += 160L + 2L * (row.variant()
+            .block()
+            .length()
+            + row.variant()
+                .item()
+                .length());
         estimatedBytes = bytes;
     }
 
@@ -95,8 +119,10 @@ final class HologramSavedMaterialSource {
             counts = new int[capacity];
             knownSchema = integer(blueprint.get("schema"), 1, 1, 2) == 2;
             retentionNeedsReview = nonemptyPolicy(blueprint, "retainedNbtKeys")
-                || nonemptyPolicy(blueprint, "processingNbt") || nonemptyPolicy(blueprint, "semanticNbt")
-                || nonemptyPolicy(blueprint, "quantumGroupingNbt") || !optionalBoolean(blueprint.get("retainNbt"))
+                || nonemptyPolicy(blueprint, "processingNbt")
+                || nonemptyPolicy(blueprint, "semanticNbt")
+                || nonemptyPolicy(blueprint, "quantumGroupingNbt")
+                || !optionalBoolean(blueprint.get("retainNbt"))
                 || !optionalBoolean(blueprint.get("retainCovers"));
         }
 
@@ -118,7 +144,12 @@ final class HologramSavedMaterialSource {
             List<Count> result = new ArrayList<>(indices.size());
             for (Map.Entry<Variant, Integer> row : indices.entrySet())
                 result.add(new Count(row.getKey(), counts[row.getValue() - 1]));
-            return new HologramSavedMaterialSource(result, airCells, payloadCells, unsupportedCells, limitCells,
+            return new HologramSavedMaterialSource(
+                result,
+                airCells,
+                payloadCells,
+                unsupportedCells,
+                limitCells,
                 retentionNeedsReview);
         }
 
@@ -153,12 +184,15 @@ final class HologramSavedMaterialSource {
     }
 
     private static boolean optionalBoolean(JsonElement value) {
-        return !present(value) || value.isJsonPrimitive() && value.getAsJsonPrimitive().isBoolean();
+        return !present(value) || value.isJsonPrimitive() && value.getAsJsonPrimitive()
+            .isBoolean();
     }
 
     private static boolean emptyString(JsonElement value) {
-        return !present(value)
-            || value.isJsonPrimitive() && value.getAsJsonPrimitive().isString() && value.getAsString().isEmpty();
+        return !present(value) || value.isJsonPrimitive() && value.getAsJsonPrimitive()
+            .isString()
+            && value.getAsString()
+                .isEmpty();
     }
 
     private static boolean nonemptyPolicy(JsonObject blueprint, String key) {
@@ -168,18 +202,22 @@ final class HologramSavedMaterialSource {
     }
 
     private static String registry(JsonElement value) {
-        if (!present(value) || !value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) return null;
+        if (!present(value) || !value.isJsonPrimitive()
+            || !value.getAsJsonPrimitive()
+                .isString())
+            return null;
         String id = value.getAsString();
-        return id.length() <= MAX_ID_CHARS && ID.matcher(id).matches() ? id : null;
+        return id.length() <= MAX_ID_CHARS && ID.matcher(id)
+            .matches() ? id : null;
     }
 
     private static int integer(JsonElement value, int absent, int min, int max) {
         if (!present(value)) return absent;
-        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) return Integer.MIN_VALUE;
+        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive()
+            .isNumber()) return Integer.MIN_VALUE;
         String raw = value.getAsString();
         if ("-1".equals(raw) && min == -1) return -1;
-        if (raw.isEmpty() || raw.length() > 5 || raw.length() > 1 && raw.charAt(0) == '0')
-            return Integer.MIN_VALUE;
+        if (raw.isEmpty() || raw.length() > 5 || raw.length() > 1 && raw.charAt(0) == '0') return Integer.MIN_VALUE;
         int result = 0;
         for (int i = 0; i < raw.length(); i++) {
             char digit = raw.charAt(i);

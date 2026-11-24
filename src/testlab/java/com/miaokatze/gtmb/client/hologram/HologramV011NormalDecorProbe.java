@@ -57,9 +57,10 @@ final class HologramV011NormalDecorProbe {
         boolean productionPreview = Boolean.getBoolean("gtmb.hologram.productionPreviewSmoke");
         Path library = Minecraft.getMinecraft().mcDataDir.toPath()
             .resolve("MiaoBlueprints");
-        Path jsonPath = productionPreview
-            ? HologramGiantWriteArtifact.resolveIndexedPair(library.toAbsolutePath().normalize(), localId)
-            : library.resolve(localId + ".json");
+        Path jsonPath = productionPreview ? HologramGiantWriteArtifact.resolveIndexedPair(
+            library.toAbsolutePath()
+                .normalize(),
+            localId) : library.resolve(localId + ".json");
         Path pngPath = HologramBlueprintArtifact.previewPath(jsonPath);
         HologramBlueprintArtifact.Artifact artifact = HologramBlueprintArtifact.readPair(jsonPath);
         HologramLibraryFacade.validateNativeJson(artifact.json);

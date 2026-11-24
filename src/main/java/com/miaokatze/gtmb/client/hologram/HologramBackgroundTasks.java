@@ -631,7 +631,8 @@ public final class HologramBackgroundTasks {
     }
 
     static boolean canCancel() {
-        return busy() && !cancelling && (!materialTask() || materialOrders.active() && context != null)
+        return busy() && !cancelling
+            && (!materialTask() || materialOrders.active() && context != null)
             && (!"server".equals(OWNER.kind()) || !controlPending());
     }
 
@@ -657,8 +658,11 @@ public final class HologramBackgroundTasks {
         request.setString("op", op);
         request.setLong("uiSequence", sequence);
         if ("cancelMaterialOrder".equals(op) && (context == null || !materialOrders.owns(context)
-            || !HologramMaterialOrderLifecycle.writeCancel(request, materialOrders.order(),
-                context.data.getLong("planRevision"), context.data.getLong("placementReviewNonce")))) {
+            || !HologramMaterialOrderLifecycle.writeCancel(
+                request,
+                materialOrders.order(),
+                context.data.getLong("planRevision"),
+                context.data.getLong("placementReviewNonce")))) {
             cancelling = false;
             return;
         }

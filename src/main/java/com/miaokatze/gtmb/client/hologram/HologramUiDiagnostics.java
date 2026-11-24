@@ -27,11 +27,13 @@ class HologramUiDiagnostics {
         private static Constructor<? extends HologramUiDiagnostics> findConstructor() {
             try {
                 Class<? extends HologramUiDiagnostics> type = Class
-                    .forName("com.miaokatze.gtmb.client.hologram.HologramTestLabUiDiagnostics", false,
+                    .forName(
+                        "com.miaokatze.gtmb.client.hologram.HologramTestLabUiDiagnostics",
+                        false,
                         HologramUiDiagnostics.class.getClassLoader())
                     .asSubclass(HologramUiDiagnostics.class);
-                Constructor<? extends HologramUiDiagnostics> constructor =
-                    type.getDeclaredConstructor(HologramUiModules.class);
+                Constructor<? extends HologramUiDiagnostics> constructor = type
+                    .getDeclaredConstructor(HologramUiModules.class);
                 constructor.setAccessible(true);
                 return constructor;
             } catch (ClassNotFoundException absent) {

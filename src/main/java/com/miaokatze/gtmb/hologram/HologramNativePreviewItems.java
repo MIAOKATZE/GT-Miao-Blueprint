@@ -86,9 +86,11 @@ final class HologramNativePreviewItems implements IItemSource {
     private static List<ItemStack> readNeiCatalog() {
         try {
             Class<?> itemList = Class.forName("codechicken.nei.ItemList");
-            if (!itemList.getField("loadFinished").getBoolean(null)) return null;
-            Object items = itemList.getField("items").get(null);
-            if (items instanceof List<?> source && !source.isEmpty()) {
+            if (!itemList.getField("loadFinished")
+                .getBoolean(null)) return null;
+            Object items = itemList.getField("items")
+                .get(null);
+            if (items instanceof List<?>source && !source.isEmpty()) {
                 // NEI publishes a new ordered list when it loads or reorders items. Freeze the order for this
                 // capture, and copy individual item/NBT payloads only when evaluating their predicates.
                 List<ItemStack> result = new ArrayList<>(source.size());

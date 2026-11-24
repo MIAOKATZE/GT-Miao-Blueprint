@@ -69,13 +69,15 @@ public final class HologramSnapshotInboxRegression {
         reply.setBoolean("target", true);
         reply.setBoolean("workspaceUiOnly", true);
         reply.setBoolean("areaSelectionOnly", true);
-        SimpleAssert.that(opening.answers(reply, second) && !opening.completedAnswer(reply, second),
+        SimpleAssert.that(
+            opening.answers(reply, second) && !opening.completedAnswer(reply, second),
             "the matching modern workspace shell requests its full reply but cannot release a local operation");
         NBTTagCompound full = (NBTTagCompound) reply.copy();
         full.removeTag("areaSelectionOnly");
         full.removeTag("workspaceUiOnly");
         full.setTag("cells", new NBTTagList());
-        SimpleAssert.that(opening.completedAnswer(full, second), "the same ID and live controller can install a full reply");
+        SimpleAssert
+            .that(opening.completedAnswer(full, second), "the same ID and live controller can install a full reply");
         full.setInteger("x", 1);
         SimpleAssert.that(!opening.answers(full, second), "the new ID cannot open the previous controller's geometry");
         full.setInteger("x", 2);
@@ -83,7 +85,8 @@ public final class HologramSnapshotInboxRegression {
         SimpleAssert.that(!opening.answers(full, second), "the new ID cannot open a controller in another dimension");
         full.setInteger("dimension", 0);
         full.setBoolean("virtual", true);
-        SimpleAssert.that(!opening.answers(full, second), "a virtual position cannot satisfy a live controller opening");
+        SimpleAssert
+            .that(!opening.answers(full, second), "a virtual position cannot satisfy a live controller opening");
 
         reply.setInteger("x", 1);
         reply.setString("openPurpose", "");
@@ -96,10 +99,12 @@ public final class HologramSnapshotInboxRegression {
         proposal.setInteger("y", 64);
         proposal.setInteger("z", 2);
         reply.setTag("discardTargetAction", proposal);
-        SimpleAssert.that(opening.sourceSwitchRequired(reply, second) && !opening.answers(reply, second),
+        SimpleAssert.that(
+            opening.sourceSwitchRequired(reply, second) && !opening.answers(reply, second),
             "an old-source discard proposal is presentable but cannot complete the new opening");
         proposal.setInteger("z", 3);
-        SimpleAssert.that(!opening.sourceSwitchRequired(reply, second), "another pending switch cannot interrupt this opening");
+        SimpleAssert
+            .that(!opening.sourceSwitchRequired(reply, second), "another pending switch cannot interrupt this opening");
 
         reply.removeTag("controllerOpenId");
         reply.setInteger("x", 2);

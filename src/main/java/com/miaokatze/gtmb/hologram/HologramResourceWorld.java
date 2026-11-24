@@ -162,8 +162,10 @@ class HologramResourceWorld extends World {
             new Class<?>[] { IChunkProvider.class },
             (proxy, method, args) -> {
                 Class<?> result = method.getReturnType();
-                if (result == boolean.class && args != null && args.length == 2
-                    && args[0] instanceof Integer x && args[1] instanceof Integer z) return previewChunkExists(x, z);
+                if (result == boolean.class && args != null
+                    && args.length == 2
+                    && args[0] instanceof Integer x
+                    && args[1] instanceof Integer z) return previewChunkExists(x, z);
                 if (result == boolean.class) return false;
                 if (result == int.class) return 0;
                 if (result == String.class) return "GTMB detached materials";

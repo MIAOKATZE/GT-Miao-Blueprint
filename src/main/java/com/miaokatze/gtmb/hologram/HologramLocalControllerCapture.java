@@ -57,8 +57,7 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
     private NBTTagList rows;
     private List<HologramControllerTarget.Cell> targetCells;
     private NBTTagList detailRows;
-    private final Map<IStructureElement<?>, Map<HologramBlueprintResources.ExactKey, Integer>> facingMasks =
-        new IdentityHashMap<>();
+    private final Map<IStructureElement<?>, Map<HologramBlueprintResources.ExactKey, Integer>> facingMasks = new IdentityHashMap<>();
     private final NBTTagCompound settings;
     private final ItemStack trigger;
     private final boolean alreadyDetached;
@@ -106,7 +105,7 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         controllerMeta = controllerBlock == Blocks.air ? 0 : world.getBlockMetadata(x, y, z);
         controllerId = tile instanceof IGregTechTileEntity gt ? gt.getMetaTileID() : -1;
         facing = alreadyDetached ? detachedFacing : facing(tile, liveContext, side);
-        title = liveContext instanceof MTEEnhancedMultiBlockBase<?> machine ? machine.getLocalName()
+        title = liveContext instanceof MTEEnhancedMultiBlockBase<?>machine ? machine.getLocalName()
             : controllerBlock.getLocalizedName();
     }
 
@@ -135,19 +134,25 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         owned.setInteger("z", 0);
         if (id >= 0) {
             if (!(copy instanceof BaseMetaTileEntity base)) throw new IOException("来源控制器身份不匹配");
-            if (!sourceClass.isEmpty() && !sourceClass.equals(prototype.getClass().getName()))
+            if (!sourceClass.isEmpty() && !sourceClass.equals(
+                prototype.getClass()
+                    .getName()))
                 throw new IOException("来源控制器身份不匹配");
             String failure = StructureSources.sourceFailure(prototype.getClass());
             if (failure != null) throw new IOException(failure);
             StructureSources.PolicyBinding policy = StructureSources.policy(prototype.getClass());
-            base.setInitialValuesAsNBT(controllerState == null || policy != null && policy.freshControllerOnly()
-                ? null : owned, (short) id);
+            base.setInitialValuesAsNBT(
+                controllerState == null || policy != null && policy.freshControllerOnly() ? null : owned,
+                (short) id);
             Object context = HologramStructureDiscovery.context(copy);
             if (context == prototype || context == null || context.getClass() != prototype.getClass())
                 throw new IOException("来源控制器无法创建独立实例");
             if (base.getFrontFacing() != orientation.getDirection()) base.setFrontFacing(orientation.getDirection());
         } else {
-            if (copy instanceof IGregTechTileEntity || sourceClass.isEmpty() || !sourceClass.equals(copy.getClass().getName()))
+            if (copy instanceof IGregTechTileEntity || sourceClass.isEmpty()
+                || !sourceClass.equals(
+                    copy.getClass()
+                        .getName()))
                 throw new IOException("来源控制器身份不匹配");
             String failure = StructureSources.sourceFailure(copy.getClass());
             if (failure != null) throw new IOException(failure);
@@ -157,24 +162,27 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
             throw new IOException("来源控制器的独立坐标已变化");
         IAlignment alignment = alignment(copy, HologramStructureDiscovery.context(copy));
         if (alignment != null && alignment.getExtendedFacing() != orientation
-            && !alignment.checkedSetExtendedFacing(orientation))
-            throw new IOException("无法恢复来源控制器的朝向");
+            && !alignment.checkedSetExtendedFacing(orientation)) throw new IOException("无法恢复来源控制器的朝向");
         return new HologramLocalControllerCapture(
-            copy, 0, orientation.getDirection().ordinal(), null, settings, "", orientation);
+            copy,
+            0,
+            orientation.getDirection()
+                .ordinal(),
+            null,
+            settings,
+            "",
+            orientation);
     }
 
     /** The GTMB master value is stored separately because the projector itself is unstackable. */
     public static NBTTagCompound toolSettings(ItemStack tool) {
         NBTTagCompound settings = new NBTTagCompound();
         NBTTagCompound tags = tool == null ? null : tool.getTagCompound();
-        int main = tags != null && tags.hasKey("gtitHologramMain", 3)
-            ? Math.max(1, tags.getInteger("gtitHologramMain"))
+        int main = tags != null && tags.hasKey("gtitHologramMain", 3) ? Math.max(1, tags.getInteger("gtitHologramMain"))
             : tool == null ? 1 : Math.max(1, tool.stackSize);
         NBTTagCompound channels = new NBTTagCompound();
         if (tool != null) ChannelDataAccessor.iterateChannelData(tool)
-            .forEach(entry -> {
-                if (entry.getValue() > 0) channels.setInteger(entry.getKey(), entry.getValue());
-            });
+            .forEach(entry -> { if (entry.getValue() > 0) channels.setInteger(entry.getKey(), entry.getValue()); });
         settings.setInteger("main", main);
         settings.setBoolean("mainExplicit", main != 1 || tags != null && tags.getBoolean("gtitHologramMainExplicit"));
         settings.setTag("channels", channels);
@@ -194,7 +202,10 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
             NBTTagCompound held = tool.getTagCompound();
             for (Object key : held.func_150296_c()) {
                 String name = (String) key;
-                if (!HologramSessionKeys.DRAFT.equals(name)) copied.setTag(name, held.getTag(name).copy());
+                if (!HologramSessionKeys.DRAFT.equals(name)) copied.setTag(
+                    name,
+                    held.getTag(name)
+                        .copy());
             }
         }
         trigger.setTagCompound(copied);
@@ -206,8 +217,10 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
             ChannelDataAccessor.setChannelData(trigger, name, channels.getInteger(name));
         }
         if (!trigger.hasTagCompound()) trigger.setTagCompound(new NBTTagCompound());
-        trigger.getTagCompound().setInteger("gtitHologramMain", trigger.stackSize);
-        trigger.getTagCompound().setBoolean("gtitHologramMainExplicit", settings.getBoolean("mainExplicit"));
+        trigger.getTagCompound()
+            .setInteger("gtitHologramMain", trigger.stackSize);
+        trigger.getTagCompound()
+            .setBoolean("gtitHologramMainExplicit", settings.getBoolean("mainExplicit"));
         return trigger;
     }
 
@@ -351,9 +364,11 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         try {
             state.setTag("capabilities", capabilities(report));
         } finally {
-            HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_CAPABILITIES, capabilityStart);
+            HologramRuntimeMetrics
+                .finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_CAPABILITIES, capabilityStart);
         }
-        if (alreadyDetached && capture != null && capture.sourceResolution.status == StructureSources.Status.READY
+        if (alreadyDetached && capture != null
+            && capture.sourceResolution.status == StructureSources.Status.READY
             && capture.sourceResolution.hasObservedReadSet()) {
             StructureSources.ReadSet source = capture.sourceResolution.validityProof();
             HologramDeclarationAdapters.Bindings declarations = capture.declarationBindings;
@@ -399,8 +414,8 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
                 : HologramDetachedController.create(controllerId, facing);
             detachedTile = (TileEntity) detached.getBaseMetaTileEntity();
             detachedContext = detached;
-            capture = HologramCapture.collectLocalProjection(
-                detached, trigger, facing, capture, Math.max(1, deadline - System.nanoTime()));
+            capture = HologramCapture
+                .collectLocalProjection(detached, trigger, facing, capture, Math.max(1, deadline - System.nanoTime()));
             if (capture.pending) return false;
             if (!capture.incomplete && capture.cells.size() > 1) {
                 declared = capture.cells.iterator();
@@ -412,11 +427,16 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         if (nativePreview == null) {
             detachedTile = alreadyDetached ? tile : createNativeController();
             detachedContext = HologramStructureDiscovery.context(detachedTile);
-            IConstructable constructable = HologramStructureDiscovery.localConstructable(detachedTile, detachedContext, facing);
+            IConstructable constructable = HologramStructureDiscovery
+                .localConstructable(detachedTile, detachedContext, facing);
             if (constructable == null) throw new IOException("LOCAL_DECLARATION_UNAVAILABLE");
             boolean structureCompat = controllerId < 0 && IMultiblockInfoContainer.contains(detachedTile.getClass());
             nativePreview = new HologramNativeStructurePreview(
-                detachedTile, detachedContext, constructable, structureCompat, previewTrigger(null, settings),
+                detachedTile,
+                detachedContext,
+                constructable,
+                structureCompat,
+                previewTrigger(null, settings),
                 controllerId >= 0 ? this::createNativeController : null);
         }
         if (!nativePreview.advance(deadline)) return false;
@@ -428,7 +448,9 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         HologramResourceWorld memory = HologramResourceWorld.declarations(controllerBlock, controllerMeta);
         TileEntity copy = controllerBlock.createTileEntity(memory, controllerMeta);
         if (copy == null) try {
-            copy = tile.getClass().getDeclaredConstructor().newInstance();
+            copy = tile.getClass()
+                .getDeclaredConstructor()
+                .newInstance();
         } catch (ReflectiveOperationException failure) {
             throw new IOException("LOCAL_NATIVE_CONTROLLER_UNAVAILABLE", failure);
         }
@@ -445,7 +467,8 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
             if (!(copy instanceof BaseMetaTileEntity gt)) throw new IOException("LOCAL_NATIVE_CONTROLLER_UNAVAILABLE");
             gt.setInitialValuesAsNBT(null, (short) controllerId);
             Object context = HologramStructureDiscovery.context(copy);
-            if (context == null || context == liveContext || context.getClass() != liveContext.getClass()
+            if (context == null || context == liveContext
+                || context.getClass() != liveContext.getClass()
                 || controllerId >= GregTechAPI.METATILEENTITIES.length
                 || context == GregTechAPI.METATILEENTITIES[controllerId])
                 throw new IOException("LOCAL_NATIVE_CONTROLLER_UNAVAILABLE");
@@ -482,12 +505,18 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
 
     private HologramCapture.Cell anchor() {
         HologramCapture.Cell cell = new HologramCapture.Cell(
-            null, detachedTile.xCoord, detachedTile.yCoord, detachedTile.zCoord, null, true);
+            null,
+            detachedTile.xCoord,
+            detachedTile.yCoord,
+            detachedTile.zCoord,
+            null,
+            true);
         cell.anchor = true;
         cell.block = controllerBlock;
         cell.meta = controllerMeta;
         cell.role = "controller";
-        cell.actualFacing = facing.getDirection().ordinal();
+        cell.actualFacing = facing.getDirection()
+            .ordinal();
         cell.actualStack = controllerId >= 0 ? new ItemStack(GregTechAPI.sBlockMachines, 1, controllerId)
             : HologramBlockIdentity.materialStack(controllerBlock, controllerMeta);
         cell.actualDisplay = HologramDisplaySnapshot.projection(detachedTile);
@@ -496,17 +525,21 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
 
     private NBTTagList capabilities(HologramChannelTrace.Report report) {
         HologramCapabilities.Result capabilities = HologramCapabilities.describe(detachedContext, trigger, report)
-            .withNativeDefinition(nativePreview != null ? nativePreview.definition() : capture == null ? null : capture.definition)
+            .withNativeDefinition(
+                nativePreview != null ? nativePreview.definition() : capture == null ? null : capture.definition)
             .withSavedChannels(settings.getCompoundTag("channels"));
         if (nativePreview != null && controllerId >= 0) capabilities.withFixedSignal("gt_hatch", 1);
-        if (detachedContext != null && "com.miaokatze.gtsr.common.machine.orecenter.MTEMineralIntegrationCenter"
-            .equals(detachedContext.getClass().getName())) capabilities.withDefaultSignal("ore_center_sectors", 1);
+        if (detachedContext != null && "com.miaokatze.gtsr.common.machine.orecenter.MTEMineralIntegrationCenter".equals(
+            detachedContext.getClass()
+                .getName()))
+            capabilities.withDefaultSignal("ore_center_sectors", 1);
         return capabilities.toNBT();
     }
 
     private NBTTagList shellCapabilities() {
         return HologramCapabilities.describe(null, trigger, null)
-            .withSavedChannels(settings.getCompoundTag("channels")).toNBT();
+            .withSavedChannels(settings.getCompoundTag("channels"))
+            .toNBT();
     }
 
     private NBTTagCompound header() {
@@ -530,9 +563,12 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         state.setInteger("selected", -1);
         for (String key : new String[] { "main", "mode", "scope", "layer", "materialPriority" })
             state.setInteger(key, settings.getInteger(key));
-        for (String key : new String[] { "mainExplicit", "noHatches", "materialMain", "materialContainers", "materialMe" })
-            if (settings.hasKey(key)) state.setBoolean(key, settings.getBoolean(key));
-        state.setTag("channels", settings.getCompoundTag("channels").copy());
+        for (String key : new String[] { "mainExplicit", "noHatches", "materialMain", "materialContainers",
+            "materialMe" }) if (settings.hasKey(key)) state.setBoolean(key, settings.getBoolean(key));
+        state.setTag(
+            "channels",
+            settings.getCompoundTag("channels")
+                .copy());
         state.setString("title", title);
         if (liveContext != null) {
             Class<?> source = liveContext.getClass();
@@ -565,9 +601,10 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         String registeredTarget = block == null ? null : Block.blockRegistry.getNameForObject(block);
         String wantId = block == null ? "" : String.valueOf(registeredTarget);
         Block hint = StructureLibAPI.getBlockHint();
-        ItemStack target = cell.anchor ? cell.actualStack : cell.previewStack != null ? cell.previewStack
-            : cell.nativeSourceWater || block == null || block == hint || block == Blocks.air ? null
-                : HologramBlockIdentity.materialStack(block, wantMeta);
+        ItemStack target = cell.anchor ? cell.actualStack
+            : cell.previewStack != null ? cell.previewStack
+                : cell.nativeSourceWater || block == null || block == hint || block == Blocks.air ? null
+                    : HologramBlockIdentity.materialStack(block, wantMeta);
         Block actualBlock = cell.anchor ? block : Blocks.air;
         String id = cell.anchor ? wantId : "minecraft:air";
         int meta = cell.anchor ? wantMeta : 0;
@@ -588,7 +625,8 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
                     TileEntity current = actualBlock.hasTileEntity(meta) ? world.getTileEntity(bx, by, bz) : null;
                     if (current instanceof IGregTechTileEntity gt && gt.getMetaTileEntity() != null) {
                         actual = new ItemStack(actualBlock, 1, gt.getMetaTileID());
-                        actualFacing = gt.getFrontFacing().ordinal();
+                        actualFacing = gt.getFrontFacing()
+                            .ordinal();
                         actualDisplay = HologramDisplaySnapshot.projection(current);
                     } else {
                         actual = actualBlock == GregTechAPI.sBlockMachines ? null
@@ -605,13 +643,36 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
             for (int i = 0; i < hintTint.length; i++) hintTint[i] = cell.hintTint[i];
         }
         return new HologramControllerTarget.Cell(
-            bx, by, bz, dx, dy, dz, id, wantId, meta, wantMeta,
-            id == null || id.isEmpty() || "null".equals(id) ? null : actualBlock, registeredTarget == null ? null : block,
-            actual, target, actualDisplay, targetDisplay, cell.anchor, cell.iconOnly, cell.unknown || block == hint,
-            cell.anchor ? "protected" : cell.unknown ? "unsupported" : "missing", cell.role, cell.family,
+            bx,
+            by,
+            bz,
+            dx,
+            dy,
+            dz,
+            id,
+            wantId,
+            meta,
+            wantMeta,
+            id == null || id.isEmpty() || "null".equals(id) ? null : actualBlock,
+            registeredTarget == null ? null : block,
+            actual,
+            target,
+            actualDisplay,
+            targetDisplay,
+            cell.anchor,
+            cell.iconOnly,
+            cell.unknown || block == hint,
+            cell.anchor ? "protected" : cell.unknown ? "unsupported" : "missing",
+            cell.role,
+            cell.family,
             target != null && target.getItem() instanceof ItemMachines ? "item" : cell.renderKind,
-            cell.anchor ? "" : cell.prompt, actualFacing, cell.anchor ? cell.actualFacing : cell.previewFacing,
-            cell.hintIcons == null ? null : cell.hintIcons.clone(), hintTint, cell.hintIndex, observationMissing,
+            cell.anchor ? "" : cell.prompt,
+            actualFacing,
+            cell.anchor ? cell.actualFacing : cell.previewFacing,
+            cell.hintIcons == null ? null : cell.hintIcons.clone(),
+            hintTint,
+            cell.hintIndex,
+            observationMissing,
             cell.nativeSourceWater ? HologramControllerTarget.TargetKind.MACHINE_SOURCE_WATER
                 : HologramControllerTarget.TargetKind.MATERIAL);
     }
@@ -658,19 +719,22 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
 
     private int facingMask(HologramCapture.Cell cell, ItemStack sample) {
         if (cell.element == null) return 0;
-        Map<HologramBlueprintResources.ExactKey, Integer> masks = facingMasks.computeIfAbsent(
-            cell.element, ignored -> new HashMap<>());
+        Map<HologramBlueprintResources.ExactKey, Integer> masks = facingMasks
+            .computeIfAbsent(cell.element, ignored -> new HashMap<>());
         Integer present = masks.get(HologramBlueprintResources.ExactKey.borrowed(sample));
         if (present != null) return present;
-        int mask = HologramPreviewHatchFacings.mask(
-            HologramCellPolicy.previewHatchFacings(cell, sample, detachedContext, facing));
+        int mask = HologramPreviewHatchFacings
+            .mask(HologramCellPolicy.previewHatchFacings(cell, sample, detachedContext, facing));
         masks.put(new HologramBlueprintResources.ExactKey(sample, null), mask);
         return mask;
     }
 
     private boolean isCellLoaded(int bx, int by, int bz) {
         int cx = bx >> 4, cz = bz >> 4;
-        if (by < 0 || by >= world.getHeight() || !world.getChunkProvider().chunkExists(cx, cz)) return false;
+        if (by < 0 || by >= world.getHeight()
+            || !world.getChunkProvider()
+                .chunkExists(cx, cz))
+            return false;
         Chunk chunk = world.getChunkFromChunkCoords(cx, cz);
         return chunk != null && !(chunk instanceof EmptyChunk);
     }

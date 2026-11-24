@@ -18,7 +18,8 @@ public final class HologramGiantIndexedPairRegression {
     private HologramGiantIndexedPairRegression() {}
 
     public static void run() throws IOException {
-        Path root = Files.createTempDirectory("gtmb-giant-indexed-pair").toRealPath();
+        Path root = Files.createTempDirectory("gtmb-giant-indexed-pair")
+            .toRealPath();
         try {
             Path library = Files.createDirectory(root.resolve("MiaoBlueprints"));
             Path index = library.resolve(".gtmb-blueprint-files.properties");

@@ -518,8 +518,8 @@ public final class HologramClient {
                 input.setInteger("y", anchor[1]);
                 input.setInteger("z", anchor[2]);
                 if (air) input.setInteger("side", ForgeDirection.UP.ordinal());
-                if (!HologramLibraryClient.INSTANCE.quickPlaceLast(input))
-                    selectionNotice(text("worldGuideChooseFirst", "Choose a blueprint in the workspace to prepare quick placement"));
+                if (!HologramLibraryClient.INSTANCE.quickPlaceLast(input)) selectionNotice(
+                    text("worldGuideChooseFirst", "Choose a blueprint in the workspace to prepare quick placement"));
                 return;
             } else if (intent == HologramWorldFlow.Intent.CONFIRM_POSITION) {
                 int[] anchor = movingAnchor(state);
@@ -563,7 +563,10 @@ public final class HologramClient {
     static void prepareExplicitControllerOperation(TileEntity tile, int side, NBTTagCompound settings,
         HologramState displayed) {
         Minecraft mc = Minecraft.getMinecraft();
-        if (side < 0 || side > 5 || tile == null || mc.thePlayer == null || tile.getWorldObj() != mc.theWorld
+        if (side < 0 || side > 5
+            || tile == null
+            || mc.thePlayer == null
+            || tile.getWorldObj() != mc.theWorld
             || !HologramService.supportsController(tile)) {
             selectionNotice(text("controllerLocalChanged", "控制器或手持投影仪已变化"));
             return;
@@ -934,7 +937,8 @@ public final class HologramClient {
         NBTTagCompound areaSelection = localAreaRenderSelection();
         if (areaSelection != null) {
             if (localAreaCapture != null) {
-                lines.add(text("worldGuideAreaImport", "Importing selected area") + " " + localAreaCapture.progress() + "%");
+                lines.add(
+                    text("worldGuideAreaImport", "Importing selected area") + " " + localAreaCapture.progress() + "%");
                 HologramWorldGuide.draw(lines, event.resolution);
                 return;
             }
@@ -1389,7 +1393,10 @@ public final class HologramClient {
             Minecraft mc = Minecraft.getMinecraft();
             try {
                 localAreaCapture = new com.miaokatze.gtmb.hologram.HologramLocalAreaCapture(
-                    mc.theWorld, mc.thePlayer.dimension, mc.thePlayer.getHeldItem(), localArea);
+                    mc.theWorld,
+                    mc.thePlayer.dimension,
+                    mc.thePlayer.getHeldItem(),
+                    localArea);
                 localAreaFinishing = true;
             } catch (java.io.IOException invalid) {
                 selectionNotice(invalid.getMessage());
@@ -1522,8 +1529,12 @@ public final class HologramClient {
         if (mc.thePlayer == null || mc.theWorld == null) return;
         ItemStack held = mc.thePlayer.getHeldItem();
         if (state != null && snapshotWorld == mc.theWorld
-            && held != null && held.hasTagCompound()
-            && state.data.getString("toolId").equals(held.getTagCompound().getString("gtitHologramToolId"))
+            && held != null
+            && held.hasTagCompound()
+            && state.data.getString("toolId")
+                .equals(
+                    held.getTagCompound()
+                        .getString("gtitHologramToolId"))
             && mc.thePlayer.dimension == state.data.getInteger("dimension")
             && !state.data.getBoolean("areaSelectionShell")
             && (state.data.getInteger("job") == 1 || state.data.getInteger("job") == 2)) {
@@ -1532,8 +1543,10 @@ public final class HologramClient {
         }
         HologramScreen screen = HologramScreen.localWorkspace(held, mc.thePlayer.dimension);
         screen.openFrom(mc.currentScreen);
-        if (mc.currentScreen == screen && localWorkspaceDraft != null && localDraftWorld == mc.theWorld
-            && localDraftConnection == mc.getNetHandler() && localDraftPlayer == mc.thePlayer
+        if (mc.currentScreen == screen && localWorkspaceDraft != null
+            && localDraftWorld == mc.theWorld
+            && localDraftConnection == mc.getNetHandler()
+            && localDraftPlayer == mc.thePlayer
             && localDraftDimension == mc.thePlayer.dimension) {
             HologramLocalPresentation remembered = localDraftPresentation;
             localDraftPresentation = null;
@@ -1553,9 +1566,16 @@ public final class HologramClient {
         localDraftConnection = document == null ? null : mc.getNetHandler();
         localDraftPlayer = document == null ? null : mc.thePlayer;
         localDraftDimension = localDraftPlayer == null ? Integer.MIN_VALUE : mc.thePlayer.dimension;
-        localDraftPresentation = mc.thePlayer == null ? null : HologramLocalPresentation.capture(
-            document, accepted, localDraftWorld, localDraftConnection, localDraftPlayer, mc.thePlayer.dimension,
-            HologramTextures.resourceGeneration(), idle);
+        localDraftPresentation = mc.thePlayer == null ? null
+            : HologramLocalPresentation.capture(
+                document,
+                accepted,
+                localDraftWorld,
+                localDraftConnection,
+                localDraftPlayer,
+                mc.thePlayer.dimension,
+                HologramTextures.resourceGeneration(),
+                idle);
     }
 
     public static void openSettings() {
@@ -2144,7 +2164,8 @@ public final class HologramClient {
         if (hideControllerSnapshot(nbt)) return;
         HologramScreen opening = openingControllerScreen();
         boolean controllerAnswer = opening != null && controllerOpen.answers(nbt, opening.controllerRequest());
-        boolean controllerComplete = controllerAnswer && controllerOpen.completedAnswer(nbt, opening.controllerRequest());
+        boolean controllerComplete = controllerAnswer
+            && controllerOpen.completedAnswer(nbt, opening.controllerRequest());
         boolean sourceSwitch = opening != null && controllerOpen.sourceSwitchRequired(nbt, opening.controllerRequest());
         if (opening != null && controllerRequest == opening.controllerRequest() && !controllerAnswer && !sourceSwitch)
             return;
@@ -2241,8 +2262,7 @@ public final class HologramClient {
         Minecraft mc = Minecraft.getMinecraft();
         snapshotWorld = mc.theWorld;
         if (HologramBackgroundTasks.detached()) return;
-        if (mc.currentScreen instanceof HologramScreen screen
-            && screen.localWorkspaceView()) {
+        if (mc.currentScreen instanceof HologramScreen screen && screen.localWorkspaceView()) {
             screen.acceptsLocalExecution(next);
             return;
         }
@@ -2256,7 +2276,8 @@ public final class HologramClient {
                 controllerOpen.dismiss(controllerRequest);
             } else {
                 if (!controllerAnswer || nbt.getBoolean("partial")) return;
-                if (next.data.getBoolean("snapshotPending") && "controllerStructure".equals(nbt.getString("openPurpose"))) {
+                if (next.data.getBoolean("snapshotPending")
+                    && "controllerStructure".equals(nbt.getString("openPurpose"))) {
                     controllerOpen.expectLegacyBaseline(nbt);
                     return;
                 }

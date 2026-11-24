@@ -21,7 +21,6 @@ import net.minecraft.block.BlockHay;
 import net.minecraft.block.BlockLog;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.Item;
-import net.minecraft.item.ItemBlock;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
@@ -69,6 +68,7 @@ public final class HologramProjectedPlacement {
             "minecraft:stone",
             "minecraft:stonebrick",
             "minecraft:wool"));
+
     private HologramProjectedPlacement() {}
 
     @Desugar
@@ -124,8 +124,8 @@ public final class HologramProjectedPlacement {
         preset.cells = included;
         // The saved grid supplies placement operations independently of the original declaration provider.
         HologramBlueprintValidationCache payloads = new HologramBlueprintValidationCache(preset);
-        HologramNetworkBindings.sanitize(
-            preset, Collections.emptyMap(), (phase, completed, total) -> ensureCurrent(current), payloads);
+        HologramNetworkBindings
+            .sanitize(preset, Collections.emptyMap(), (phase, completed, total) -> ensureCurrent(current), payloads);
         List<Cell> placements = new ArrayList<>();
         Map<Material, Integer> counts = new LinkedHashMap<>();
         for (HologramPresets.Cell source : preset.cells) {
@@ -171,8 +171,7 @@ public final class HologramProjectedPlacement {
             || !HologramWorldFlow.worldPosition(anchor[0], anchor[1], anchor[2], worldHeight))
             throw new IOException("放置锚点超出当前世界范围");
         if (state.getInteger("mode") != 0) throw new IOException("替换或拆除必须通过原机施工确认核验结构成员");
-        if (state.getBoolean("capturePending") || !state.getBoolean("supported"))
-            throw new IOException("请等待完整的本地结构目标");
+        if (state.getBoolean("capturePending") || !state.getBoolean("supported")) throw new IOException("请等待完整的本地结构目标");
         NBTTagList rows = state.getTagList("cells", 10);
         HologramBlueprintLimits.require(rows.tagCount());
         List<Cell> cells = new ArrayList<>();
@@ -181,17 +180,16 @@ public final class HologramProjectedPlacement {
         for (int index = 0; index < rows.tagCount(); index++) {
             ensureCurrent(current);
             NBTTagCompound row = rows.getCompoundTagAt(index);
-            if (!scope.includes(row, index) || row.getBoolean("anchor") || "minecraft:air".equals(row.getString("wantId")))
-                continue;
+            if (!scope.includes(row, index) || row.getBoolean("anchor")
+                || "minecraft:air".equals(row.getString("wantId"))) continue;
             int x = row.getInteger("x"), y = row.getInteger("y"), z = row.getInteger("z");
             if (!HologramWorldFlow.worldPosition(x, y, z, worldHeight)) throw new IOException("结构格超出当前世界范围");
-            if (HologramNativeSourceWater.previewRow(row)
-                && x - anchor[0] == row.getInteger("dx") && y - anchor[1] == row.getInteger("dy")
+            if (HologramNativeSourceWater.previewRow(row) && x - anchor[0] == row.getInteger("dx")
+                && y - anchor[1] == row.getInteger("dy")
                 && z - anchor[2] == row.getInteger("dz")
                 && HologramNativeSourceWater.matches(nativeTarget.apply(index), row)) continue;
             ItemStack sample = ItemStack.loadItemStackFromNBT(row.getCompoundTag("targetStack"));
-            if (sample == null || row.getBoolean("missingBlock"))
-                throw new IOException("所选范围包含未确定材料的结构格，请先明确目标方块");
+            if (sample == null || row.getBoolean("missingBlock")) throw new IOException("所选范围包含未确定材料的结构格，请先明确目标方块");
             if (x == anchor[0] && y == anchor[1] && z == anchor[2]) continue;
             String blockName = row.getString("wantId");
             Block block = Block.getBlockFromName(blockName);
@@ -207,8 +205,19 @@ public final class HologramProjectedPlacement {
             }
             HologramExecutionEligibility.validate(block, metadata, sample, facing, false, null, item);
             String itemName = Item.itemRegistry.getNameForObject(sample.getItem());
-            cells.add(new Cell(x - anchor[0], y - anchor[1], z - anchor[2], Block.blockRegistry.getNameForObject(block),
-                metadata, itemName, sample.getItemDamage(), facing, false, "", transport(item)));
+            cells.add(
+                new Cell(
+                    x - anchor[0],
+                    y - anchor[1],
+                    z - anchor[2],
+                    Block.blockRegistry.getNameForObject(block),
+                    metadata,
+                    itemName,
+                    sample.getItemDamage(),
+                    facing,
+                    false,
+                    "",
+                    transport(item)));
             counts.merge(new Material(itemName, sample.getItemDamage()), 1, Integer::sum);
         }
         if (cells.isEmpty()) throw new IOException("所选范围没有可施工的方块");
@@ -229,8 +238,9 @@ public final class HologramProjectedPlacement {
             layer = state.getInteger("layer");
             selected = state.hasKey("selected", 3) ? state.getInteger("selected") : -1;
             for (int index : state.getIntArray("selectedIndices")) selection.add(index);
-            family = selected < 0 || selected >= cells.tagCount() ? "" : cells.getCompoundTagAt(selected)
-                .getString("family");
+            family = selected < 0 || selected >= cells.tagCount() ? ""
+                : cells.getCompoundTagAt(selected)
+                    .getString("family");
         }
 
         boolean includes(NBTTagCompound row, int index) {
@@ -285,8 +295,12 @@ public final class HologramProjectedPlacement {
         if (nativeState) {
             for (int axis : pose) {
                 HologramBlockTransforms.Result result = HologramBlockTransforms.turnForExecution(
-                    block, sample.getItem() instanceof ItemMachines ? "gregtech." : "", metadata,
-                    tileState, itemState, axis == 1);
+                    block,
+                    sample.getItem() instanceof ItemMachines ? "gregtech." : "",
+                    metadata,
+                    tileState,
+                    itemState,
+                    axis == 1);
                 metadata = result.metadata;
                 tileState = HologramCoordinatePolicies.rotatePayload(result.tileNbt, axis == 1);
                 itemState = HologramCoordinatePolicies.rotatePayload(result.itemNbt, axis == 1);

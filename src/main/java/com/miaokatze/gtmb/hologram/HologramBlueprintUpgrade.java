@@ -38,7 +38,8 @@ public final class HologramBlueprintUpgrade {
         if (document.has("encoding")) {
             boolean refresh = false;
             if (document.has("presets")) {
-                for (JsonElement row : document.getAsJsonArray("presets")) refresh |= refreshCatalogMember(row.getAsJsonObject());
+                for (JsonElement row : document.getAsJsonArray("presets"))
+                    refresh |= refreshCatalogMember(row.getAsJsonObject());
             } else refresh = status(document.getAsJsonObject("blueprint")) > 0;
             requireCurrent(current);
             if (!refresh) return original; // preserve bytes, including whitespace and dictionary order

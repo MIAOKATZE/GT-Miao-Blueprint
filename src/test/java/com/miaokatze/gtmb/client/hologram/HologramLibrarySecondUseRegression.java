@@ -42,9 +42,17 @@ final class HologramLibrarySecondUseRegression {
         var pending = new AtomicReference<>(frozen);
         UUID id = UUID.randomUUID();
         int[] anchor = { 1, 64, 1 };
-        var cell = new HologramProjectedPlacement.Cell(0, 0, 0, "minecraft:cobblestone", 0,
-            "minecraft:cobblestone", 0, -1);
-        var plan = new HologramProjectedPlacement.Plan(Collections.singletonList(cell),
+        var cell = new HologramProjectedPlacement.Cell(
+            0,
+            0,
+            0,
+            "minecraft:cobblestone",
+            0,
+            "minecraft:cobblestone",
+            0,
+            -1);
+        var plan = new HologramProjectedPlacement.Plan(
+            Collections.singletonList(cell),
             Collections.singletonList(new HologramProjectedPlacement.Need("minecraft:cobblestone", 0, 1)));
         var calls = new ArrayList<Integer>();
         java.util.function.BiPredicate<Submission, Boolean> refuse = (actual, direct) -> {
@@ -58,22 +66,29 @@ final class HologramLibrarySecondUseRegression {
             }
             return false;
         };
-        for (var action : new LocalAction[] { LocalAction.REFRESH, LocalAction.BACK })
-            SimpleAssert.that(!HologramLibraryMaterialReviewScreen.dispatchRefused(
-                action, () -> { throw new AssertionError("Browse and Back must not consume a placement ticket"); }, refuse),
-                "browse/Back has no placement request");
+        for (var action : new LocalAction[] { LocalAction.REFRESH, LocalAction.BACK }) SimpleAssert.that(
+            !HologramLibraryMaterialReviewScreen.dispatchRefused(
+                action,
+                () -> { throw new AssertionError("Browse and Back must not consume a placement ticket"); },
+                refuse),
+            "browse/Back has no placement request");
         SimpleAssert.that(calls.isEmpty(), "no preliminary request on browse/Back");
-        SimpleAssert.that(HologramLibraryMaterialReviewScreen.dispatchRefused(
-            LocalAction.SUBMIT, () -> pending.getAndSet(null), refuse), "the direct refusal stays visible");
+        SimpleAssert.that(
+            HologramLibraryMaterialReviewScreen
+                .dispatchRefused(LocalAction.SUBMIT, () -> pending.getAndSet(null), refuse),
+            "the direct refusal stays visible");
         SimpleAssert.eq(Collections.singletonList(4), calls, "normal click routes only to v4, no v2 retry");
-        SimpleAssert.that(!HologramLibraryMaterialReviewScreen.dispatchRefused(
-            LocalAction.ADVANCED, () -> pending.getAndSet(null), refuse),
+        SimpleAssert.that(
+            !HologramLibraryMaterialReviewScreen
+                .dispatchRefused(LocalAction.ADVANCED, () -> pending.getAndSet(null), refuse),
             "a second action cannot revive a consumed ticket");
         SimpleAssert.eq(Collections.singletonList(4), calls, "no fallback after a refused direct click");
         pending.set(frozen);
         calls.clear();
-        SimpleAssert.that(HologramLibraryMaterialReviewScreen.dispatchRefused(
-            LocalAction.ADVANCED, () -> pending.getAndSet(null), refuse), "the explicit advanced refusal stays visible");
+        SimpleAssert.that(
+            HologramLibraryMaterialReviewScreen
+                .dispatchRefused(LocalAction.ADVANCED, () -> pending.getAndSet(null), refuse),
+            "the explicit advanced refusal stays visible");
         SimpleAssert.eq(Collections.singletonList(2), calls, "only the explicit advanced click chooses v2");
     }
 
@@ -88,7 +103,8 @@ final class HologramLibrarySecondUseRegression {
         player.inventory = new InventoryPlayer(player);
         ItemStack projector = new ItemStack(new ItemNekoHologramProjector());
         projector.setTagCompound(new NBTTagCompound());
-        projector.getTagCompound().setString("gtitHologramToolId", "fixture");
+        projector.getTagCompound()
+            .setString("gtitHologramToolId", "fixture");
         player.inventory.mainInventory[0] = projector;
         client.theWorld = world;
         client.thePlayer = player;
@@ -115,18 +131,22 @@ final class HologramLibrarySecondUseRegression {
         player.inventory.currentItem = 1;
         SimpleAssert.that(ticket.consume(client) == null, "same projector in a changed slot cannot submit");
         player.inventory.currentItem = 0;
-        SimpleAssert.that(ticket.consume(client) == null, "an observed stale click cannot revive when the slot returns");
+        SimpleAssert
+            .that(ticket.consume(client) == null, "an observed stale click cannot revive when the slot returns");
         ticket = new Ticket(placement, frozen, client, newer);
         player.inventory.mainInventory[0] = projector.copy();
         SimpleAssert.that(ticket.consume(client) == null, "same-ID replacement stack cannot submit");
         player.inventory.mainInventory[0] = projector;
         ticket = new Ticket(placement, frozen, client, newer);
-        projector.getTagCompound().setString("gtitHologramToolId", "other");
+        projector.getTagCompound()
+            .setString("gtitHologramToolId", "other");
         SimpleAssert.that(ticket.consume(client) == null, "changed ID on the same object cannot submit");
-        projector.getTagCompound().setString("gtitHologramToolId", "fixture");
+        projector.getTagCompound()
+            .setString("gtitHologramToolId", "fixture");
         ticket = new Ticket(placement, frozen, client, newer);
         player.dimension = 1;
-        SimpleAssert.that(ticket.consume(client) == null, "same player and world with a changed dimension cannot submit");
+        SimpleAssert
+            .that(ticket.consume(client) == null, "same player and world with a changed dimension cannot submit");
         player.dimension = 0;
         ticket = new Ticket(placement, frozen, client, newer);
         client.theWorld = null;
@@ -134,16 +154,20 @@ final class HologramLibrarySecondUseRegression {
         client.theWorld = world;
         ticket = new Ticket(placement, frozen, client, newer);
         client.thePlayer = null;
-        SimpleAssert.that(ticket.consume(client) == null, "player loss invalidates the old view before inventory access");
+        SimpleAssert
+            .that(ticket.consume(client) == null, "player loss invalidates the old view before inventory access");
         client.thePlayer = player;
         ticket = new Ticket(placement, frozen, client, newer);
         player.isDead = true;
-        SimpleAssert.that(!ticket.current(client) && ticket.consume(client) == null,
+        SimpleAssert.that(
+            !ticket.current(client) && ticket.consume(client) == null,
             "death invalidates the local owner before sampling or submitting");
         player.isDead = false;
         ticket = new Ticket(placement, frozen, client, newer);
         field(EntityClientPlayerMP.class, "sendQueue").set(player, null);
-        SimpleAssert.that(ticket.consume(client) == null, "unchanged world and inventory cannot substitute for connection ownership");
+        SimpleAssert.that(
+            ticket.consume(client) == null,
+            "unchanged world and inventory cannot substitute for connection ownership");
         field(EntityClientPlayerMP.class, "sendQueue").set(player, network);
         ticket = new Ticket(placement, frozen, client, newer);
         field(HologramLocalPlacement.class, "lockGeneration").setLong(placement, 1);
@@ -152,20 +176,29 @@ final class HologramLibrarySecondUseRegression {
         var relocked = new Submission(captured, display, 1, HologramLocalPlacement.reviewOptions());
         var back = new Ticket(placement, relocked, client, newer);
         back.retire();
-        SimpleAssert.that(back.consume(client) == null && relocked.current(placement, client),
+        SimpleAssert.that(
+            back.consume(client) == null && relocked.current(placement, client),
             "local Back retires only its window; world lock and frozen selection stay valid");
         var explicit = new Ticket(placement, relocked, client, newer);
-        SimpleAssert.that(explicit.consume(client) == relocked && explicit.consume(client) == null,
+        SimpleAssert.that(
+            explicit.consume(client) == relocked && explicit.consume(client) == null,
             "one explicit click receives the exact frozen object, not a new freeze or duplicate submission");
         client.currentScreen = original;
-        SimpleAssert.that(relocked.current(placement, client),
+        SimpleAssert.that(
+            relocked.current(placement, client),
             "the existing async preparation may still use the same source after its loading screen replaces the pane");
 
         var observation = new HologramLibraryMaterialReviewScreen.CapturedDescription(
             HologramLibraryMaterialForecast.fromCapture(captured));
-        var frame = observation.frame(() -> { throw new AssertionError("unindexed source has no stock to refresh"); }, 0);
-        SimpleAssert.that(frame.status().contains("未核算") && !frame.ready() && !frame.rows().hasKey("complete")
-            && frame.description().isEmpty(),
+        var frame = observation
+            .frame(() -> { throw new AssertionError("unindexed source has no stock to refresh"); }, 0);
+        SimpleAssert.that(
+            frame.status()
+                .contains("未核算") && !frame.ready()
+                && !frame.rows()
+                    .hasKey("complete")
+                && frame.description()
+                    .isEmpty(),
             "already-present unproved source uses an explicit local unknown frame, not an authoritative quote");
     }
 

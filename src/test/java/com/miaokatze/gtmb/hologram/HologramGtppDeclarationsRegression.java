@@ -126,7 +126,8 @@ final class HologramGtppDeclarationsRegression {
             "private casing leaves are not guessed from their surrounding machine");
         // Only the exact complete native eight-tier alternative is registered by the Chemical getDefinition hook.
         HologramGtppChemicalDeclarations.solidCasings(union, registry);
-        SimpleAssert.that(channels(union).materials.isEmpty(), "the casing preview choices grant no server calibration");
+        SimpleAssert
+            .that(channels(union).materials.isEmpty(), "the casing preview choices grant no server calibration");
         HologramChannelTrace.Scope preview = HologramChannelTrace.begin(new Object());
         HologramChannelTrace.Report previewReport;
         try {
@@ -136,7 +137,11 @@ final class HologramGtppDeclarationsRegression {
         }
         List<ItemStack> casingTiers = previewReport.materials.get("casing");
         SimpleAssert.eq(8, casingTiers.size(), "the native Chemical Plant advertises eight preview tiers");
-        SimpleAssert.eq(7, casingTiers.get(7).getItemDamage(), "raw tier 8 uses the eighth registered casing");
+        SimpleAssert.eq(
+            7,
+            casingTiers.get(7)
+                .getItemDamage(),
+            "raw tier 8 uses the eighth registered casing");
         for (int count : new int[] { 1, 4, 8, 64 }) {
             signal.stackSize = count;
             HologramCasingFallback.Target target = HologramCasingFallback.resolve(union, signal);

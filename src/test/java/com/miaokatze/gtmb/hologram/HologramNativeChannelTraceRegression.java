@@ -98,10 +98,12 @@ final class HologramNativeChannelTraceRegression {
     private static void checkNativeOptions(Object context, ItemStack signal, IStructureElement<Object> tier,
         IStructureElement<Object> hatch, int expected) {
         ItemStack candidate = tier.getBlocksToPlace(context, null, 12, 64, -6, signal, null)
-            .getStacks().iterator().next();
+            .getStacks()
+            .iterator()
+            .next();
         SimpleAssert.eq(expected, candidate.getItemDamage(), "native tier selects the subchannel or master fallback");
-        Predicate<ItemStack> allowed = hatch
-            .getBlocksToPlace(context, null, 11, 64, -6, signal, null).getPredicate();
+        Predicate<ItemStack> allowed = hatch.getBlocksToPlace(context, null, 11, 64, -6, signal, null)
+            .getPredicate();
         SimpleAssert.that(allowed.test(candidate), "native GT hatch filter sees the effective tier");
         SimpleAssert.that(!allowed.test(new ItemStack(Blocks.wool, 1, 8)), "different hatch metadata is rejected");
     }
@@ -119,8 +121,8 @@ final class HologramNativeChannelTraceRegression {
             // The headless suite does not load the production mixin; feed it the real native accessor's result.
             HologramChannelTrace.record(signal, GRADE, ChannelDataAccessor.withChannel(signal, GRADE).stackSize, 1);
             HologramChannelTrace.record(signal, "fixture_hatch", signal.stackSize, 4);
-            if (i % 3 == 0) HologramChannelTrace
-                .record(signal, GRADE, ChannelDataAccessor.getChannelData(signal, GRADE), 2);
+            if (i % 3 == 0)
+                HologramChannelTrace.record(signal, GRADE, ChannelDataAccessor.getChannelData(signal, GRADE), 2);
             if (i % 8 == 0) {
                 ItemStack material = new ItemStack(Blocks.wool, 1, signal.stackSize);
                 HologramChannelTrace.declareMaterials(GRADE, Collections.singletonList(material));
@@ -137,15 +139,21 @@ final class HologramNativeChannelTraceRegression {
         List<String> keys = new ArrayList<>(expected.observations.keySet());
         SimpleAssert.eq(keys, new ArrayList<>(actual.observations.keySet()), "same observation order");
         for (String key : keys) {
-            HologramChannelTrace.Observation before = expected.observations.get(key), after = actual.observations
-                .get(key);
+            HologramChannelTrace.Observation before = expected.observations.get(key),
+                after = actual.observations.get(key);
             SimpleAssert.eq(before.effective, after.effective, "same effective tier");
             SimpleAssert.eq(before.operations, after.operations, "same accumulated native operations");
             SimpleAssert.eq(before.explicit, after.explicit, "same named channel presence");
         }
         SimpleAssert.eq(expected.materials.keySet(), actual.materials.keySet(), "same material declaration groups");
-        ItemStack material = actual.materials.get(GRADE).get(0);
-        SimpleAssert.eq(expected.materials.get(GRADE).get(0).getItemDamage(), material.getItemDamage(), "same material");
+        ItemStack material = actual.materials.get(GRADE)
+            .get(0);
+        SimpleAssert.eq(
+            expected.materials.get(GRADE)
+                .get(0)
+                .getItemDamage(),
+            material.getItemDamage(),
+            "same material");
         SimpleAssert.eq(1, material.stackSize, "capture keeps an independent defensive material copy");
     }
 }

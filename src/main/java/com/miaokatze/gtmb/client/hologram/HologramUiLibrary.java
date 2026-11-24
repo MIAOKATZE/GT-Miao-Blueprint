@@ -142,7 +142,8 @@ final class HologramUiLibrary {
     private String selectedServerPresetId() {
         HologramLibraryClient library = HologramLibraryClient.INSTANCE;
         String localId = library.selected(false);
-        return catalogContains(library.rows(false), localId) ? localId : ui.session.state().data.getString("selectedPresetId");
+        return catalogContains(library.rows(false), localId) ? localId
+            : ui.session.state().data.getString("selectedPresetId");
     }
 
     private void browsePreset(String id, boolean server) {
@@ -531,13 +532,17 @@ final class HologramUiLibrary {
     }
 
     boolean nativeCanUpgradeNamed() {
-        return nativeCanUpgrade() && !publicLibrary && presetNameField != null
-            && !presetNameField.getText().trim().isEmpty();
+        return nativeCanUpgrade() && !publicLibrary
+            && presetNameField != null
+            && !presetNameField.getText()
+                .trim()
+                .isEmpty();
     }
 
     void nativeUpgradeNamed() {
         if (!nativeCanUpgradeNamed()) return;
-        String alias = presetNameField.getText().trim();
+        String alias = presetNameField.getText()
+            .trim();
         HologramLibraryClient.INSTANCE.upgradeLocal(alias, this::upgradedLibrary);
     }
 
@@ -556,20 +561,20 @@ final class HologramUiLibrary {
         String status = HologramLibraryClient.INSTANCE.status();
         if (!status.isEmpty()) return status;
         NBTTagCompound config = HologramLibraryClient.INSTANCE.config();
-        if (dedicatedLibrary() && config.hasKey("permissionGroup", 8))
-            return projector(
-                "library.permissions",
-                config.getString("permissionGroup"),
-                config.getBoolean("canPublish") ? projector("library.allowed") : projector("library.denied"),
-                config.getBoolean("canDownload") ? projector("library.allowed") : projector("library.denied"),
-                config.getInteger("memberQuota"));
+        if (dedicatedLibrary() && config.hasKey("permissionGroup", 8)) return projector(
+            "library.permissions",
+            config.getString("permissionGroup"),
+            config.getBoolean("canPublish") ? projector("library.allowed") : projector("library.denied"),
+            config.getBoolean("canDownload") ? projector("library.allowed") : projector("library.denied"),
+            config.getInteger("memberQuota"));
         return blueprintSaveState();
     }
 
     String nativeReviewTitle() {
         if (clearWorkspaceReview()) return projector("dialog.clear_title");
         if (projectionDiscardReview()) return projector("dialog.projection_title");
-        return ui.processing.processingPresetSaveReview() ? projector("dialog.preset_title") : overwriteReview ? projector("dialog.overwrite_title") : projector("dialog.discard_title");
+        return ui.processing.processingPresetSaveReview() ? projector("dialog.preset_title")
+            : overwriteReview ? projector("dialog.overwrite_title") : projector("dialog.discard_title");
     }
 
     String nativeReviewBody() {
@@ -970,16 +975,7 @@ final class HologramUiLibrary {
         if (server && !HologramLibraryClient.INSTANCE.config()
             .getBoolean("admin")) return;
         int width = server ? 30 : 66;
-        ui.canvas.button(
-            226,
-            x,
-            301,
-            width,
-            13,
-            server ? "紧凑化" : "升级／紧凑化",
-            nativeCanUpgrade(),
-            mx,
-            my);
+        ui.canvas.button(226, x, 301, width, 13, server ? "紧凑化" : "升级／紧凑化", nativeCanUpgrade(), mx, my);
         if (mx >= x && mx < x + width && my >= 301 && my < 314) {
             ui.canvas.tooltip(new ArrayList<>());
             ui.canvas.tooltip()
@@ -1310,7 +1306,8 @@ final class HologramUiLibrary {
                 ui.identity.deidentificationSaveOptions(options);
                 if (ui.session.localDocument()) localWorkspace.save(
                     options,
-                    id == 140 ? ui.session.document().fileId() : "",
+                    id == 140 ? ui.session.document()
+                        .fileId() : "",
                     id == 140 ? LocalSaveIntent.SAVE_CURRENT : LocalSaveIntent.SAVE_AS_NEW);
                 else library.saveDraft(ui.session.state(), options, false, ui.preview.yaw(), ui.preview.pitch());
                 return true;
@@ -1325,7 +1322,8 @@ final class HologramUiLibrary {
             .equals(ui.session.state().data.getString("selectedPresetId")))
             source = ui.session.state().data.getString("sourceMod");
         if (!source.isEmpty()) return source;
-        return row.getInteger("schema") >= 2 ? projector("library.source_custom") : projector("library.source_template");
+        return row.getInteger("schema") >= 2 ? projector("library.source_custom")
+            : projector("library.source_template");
     }
 
     NBTTagCompound blueprintSaveOptions() {
@@ -1364,7 +1362,8 @@ final class HologramUiLibrary {
         if (ui.session.localDocument()) {
             localWorkspace.save(
                 options,
-                current ? ui.session.document().fileId() : "",
+                current ? ui.session.document()
+                    .fileId() : "",
                 current ? LocalSaveIntent.SAVE_CURRENT : LocalSaveIntent.SAVE_AS_NEW);
             return;
         }
@@ -1405,7 +1404,10 @@ final class HologramUiLibrary {
     /** Observe the currently published list without borrowing its mutable row payload or allocating a result row. */
     private static boolean catalogContains(NBTTagList rows, String id) {
         if (id == null || id.isEmpty()) return false;
-        for (int i = 0; i < rows.tagCount(); i++) if (id.equals(rows.getCompoundTagAt(i).getString("id"))) return true;
+        for (int i = 0; i < rows.tagCount(); i++) if (id.equals(
+            rows.getCompoundTagAt(i)
+                .getString("id")))
+            return true;
         return false;
     }
 

@@ -36,8 +36,9 @@ final class HologramMaterialReview {
 
     boolean update(NBTTagCompound state) {
         NBTTagCompound next = state.getCompoundTag("materialQuote");
-        current = next.getBoolean("complete") && !next.getBoolean("localEstimate") && (!next.hasKey("session", 8) || next.getString("session")
-            .equals(state.getString("session")))
+        current = next.getBoolean("complete") && !next.getBoolean("localEstimate")
+            && (!next.hasKey("session", 8) || next.getString("session")
+                .equals(state.getString("session")))
             && (!next.hasKey("planRevision", 4) || next.getLong("planRevision") == state.getLong("planRevision"))
             && (!next.hasKey("placementReviewNonce", 4)
                 || next.getLong("placementReviewNonce") == state.getLong("placementReviewNonce"));

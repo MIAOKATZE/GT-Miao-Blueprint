@@ -36,10 +36,11 @@ public final class HologramControllerTarget {
     /** Stack, display and hint payloads are capture-owned and read-only after publication. */
     @Desugar
     public record Cell(int x, int y, int z, int dx, int dy, int dz, String id, String wantId, int meta, int wantMeta,
-        Block actualBlock, Block targetBlock, ItemStack actualStack, ItemStack targetStack, NBTTagCompound actualDisplay,
-        NBTTagCompound targetDisplay, boolean anchor, boolean iconOnly, boolean missingBlock, String status, String role,
-        String family, String renderKind, String prompt, int actualFacing, int targetFacing, String[] hintIcons,
-        int[] hintTint, int hintIndex, boolean localObservationMissing, TargetKind kind) {
+        Block actualBlock, Block targetBlock, ItemStack actualStack, ItemStack targetStack,
+        NBTTagCompound actualDisplay, NBTTagCompound targetDisplay, boolean anchor, boolean iconOnly,
+        boolean missingBlock, String status, String role, String family, String renderKind, String prompt,
+        int actualFacing, int targetFacing, String[] hintIcons, int[] hintTint, int hintIndex,
+        boolean localObservationMissing, TargetKind kind) {
 
         /** Only serialization and edit/export operations need a materialized row. */
         public NBTTagCompound tag() {
@@ -86,7 +87,10 @@ public final class HologramControllerTarget {
 
         private static NBTTagCompound stackTag(ItemStack stack) {
             NBTTagCompound tag = stack.writeToNBT(new NBTTagCompound());
-            if (tag.hasKey("tag", 10)) tag.setTag("tag", tag.getTag("tag").copy());
+            if (tag.hasKey("tag", 10)) tag.setTag(
+                "tag",
+                tag.getTag("tag")
+                    .copy());
             return tag;
         }
     }

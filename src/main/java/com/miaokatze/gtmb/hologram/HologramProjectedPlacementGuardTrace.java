@@ -24,6 +24,7 @@ final class HologramProjectedPlacementGuardTrace {
     }
 
     enum Reason {
+
         TIMEOUT("施工准备超时，请缩小施工选区后重试"),
         CONNECTION_CLOSED(CONTEXT),
         WORLD_CHANGED(CONTEXT),

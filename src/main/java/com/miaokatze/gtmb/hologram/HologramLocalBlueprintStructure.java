@@ -26,7 +26,6 @@ import com.gtnewhorizon.structurelib.alignment.enumerable.Rotation;
 import com.miaokatze.gtmb.hologram.HologramPresets.Cell;
 import com.miaokatze.gtmb.hologram.HologramPresets.Preset;
 import com.miaokatze.gtmb.hologram.HologramPresets.Structure;
-import com.miaokatze.gtmb.hologram.HologramPresets.Target;
 
 import gregtech.api.GregTechAPI;
 import gregtech.common.blocks.ItemMachines;
@@ -49,9 +48,8 @@ final class HologramLocalBlueprintStructure {
         result.setInteger("main", Math.max(1, source.main));
         result.setBoolean("mainExplicit", source.mainExplicit);
         result.setBoolean("noHatches", source.noHatches);
-        if (source.channels != null) source.channels.forEach((id, value) -> {
-            if (id != null && value != null) channels.setInteger(id, value);
-        });
+        if (source.channels != null) source.channels
+            .forEach((id, value) -> { if (id != null && value != null) channels.setInteger(id, value); });
         result.setTag("channels", channels);
         return result;
     }
@@ -59,17 +57,20 @@ final class HologramLocalBlueprintStructure {
     static NBTTagCompound requested(Structure source, NBTTagCompound request) throws IOException {
         NBTTagCompound result = settings(source);
         if (request.hasKey("main")) {
-            if (!request.hasKey("main", 3) || request.getInteger("main") < 1)
-                throw new IOException("主信号必须为正整数");
+            if (!request.hasKey("main", 3) || request.getInteger("main") < 1) throw new IOException("主信号必须为正整数");
             if (result.getInteger("main") != request.getInteger("main")) {
                 result.setInteger("main", request.getInteger("main"));
                 result.setBoolean("mainExplicit", true);
             }
         }
         if (request.hasKey("channels")) {
-            if (!request.hasKey("channels", 10) || !HologramSessionPolicy.validChannels(request.getCompoundTag("channels")))
+            if (!request.hasKey("channels", 10)
+                || !HologramSessionPolicy.validChannels(request.getCompoundTag("channels")))
                 throw new IOException("结构信道无效");
-            result.setTag("channels", request.getCompoundTag("channels").copy());
+            result.setTag(
+                "channels",
+                request.getCompoundTag("channels")
+                    .copy());
         }
         if (request.hasKey("noHatches", 1)) result.setBoolean("noHatches", request.getBoolean("noHatches"));
         return result;
@@ -81,21 +82,23 @@ final class HologramLocalBlueprintStructure {
         source.noHatches = settings.getBoolean("noHatches");
         source.channels.clear();
         NBTTagCompound channels = settings.getCompoundTag("channels");
-        for (Object key : channels.func_150296_c()) source.channels.put((String) key, channels.getInteger((String) key));
+        for (Object key : channels.func_150296_c())
+            source.channels.put((String) key, channels.getInteger((String) key));
     }
 
     static HologramLocalControllerCapture capture(Preset document, Structure source, NBTTagCompound settings)
         throws IOException {
         if (!HologramLocalControllerCapture.validSettings(settings)) throw new IOException("保存的结构信道无效");
-        if (source.textBoxNbt != null && !source.textBoxNbt.isEmpty())
-            throw new IOException("所选对象没有原生结构信道");
+        if (source.textBoxNbt != null && !source.textBoxNbt.isEmpty()) throw new IOException("所选对象没有原生结构信道");
         Cell anchor = null;
-        for (Cell cell : document.cells)
-            if (cell.controller && cell.x == source.x && cell.y == source.y && cell.z == source.z
-                && (cell.belongsTo(source.id) || cell.memberships().isEmpty())) {
-                if (anchor != null) throw new IOException("蓝图结构的控制器位置不唯一");
-                anchor = cell;
-            }
+        for (Cell cell : document.cells) if (cell.controller && cell.x == source.x
+            && cell.y == source.y
+            && cell.z == source.z
+            && (cell.belongsTo(source.id) || cell.memberships()
+                .isEmpty())) {
+                    if (anchor != null) throw new IOException("蓝图结构的控制器位置不唯一");
+                    anchor = cell;
+                }
         if (anchor == null) throw new IOException("蓝图缺少该结构的控制器");
         ItemStack item = anchor.stack();
         int id = source.controllerId;
@@ -109,7 +112,8 @@ final class HologramLocalBlueprintStructure {
             block = Block.getBlockFromItem(item.getItem());
             if (id >= 0 && id < GregTechAPI.METATILEENTITIES.length && GregTechAPI.METATILEENTITIES[id] != null)
                 metadata = GregTechAPI.METATILEENTITIES[id].getTileEntityBaseType();
-            else metadata = item.getItem().getMetadata(item.getItemDamage());
+            else metadata = item.getItem()
+                .getMetadata(item.getItemDamage());
         }
         if (id >= 0 && block != GregTechAPI.sBlockMachines) throw new IOException("蓝图来源的控制器方块身份不匹配");
         NBTTagCompound state = HologramBlueprintNbt.decode(anchor.tileNbt);
@@ -123,8 +127,9 @@ final class HologramLocalBlueprintStructure {
             }
         }
         state = HologramBlueprintNbt.nativePayload(state);
-        if (id >= 0 && state != null && state.hasKey("mID") && (!state.hasKey("mID", 99) || state.getInteger("mID") != id))
-            throw new IOException("蓝图控制器 NBT 身份不匹配");
+        if (id >= 0 && state != null
+            && state.hasKey("mID")
+            && (!state.hasKey("mID", 99) || state.getInteger("mID") != id)) throw new IOException("蓝图控制器 NBT 身份不匹配");
         ExtendedFacing facing = document.controllerFacing == null ? ExtendedFacing.DEFAULT
             : HologramVirtualTransform.controller(document);
         int front = anchor.facing;
@@ -137,7 +142,13 @@ final class HologramLocalBlueprintStructure {
         }
         if (front >= 0 && front < 6) facing = facing.with(ForgeDirection.getOrientation(front));
         return HologramLocalControllerCapture.forBlueprint(
-            block, metadata, id, HologramBlueprintData.sourceClass(document, source), facing, state, settings);
+            block,
+            metadata,
+            id,
+            HologramBlueprintData.sourceClass(document, source),
+            facing,
+            state,
+            settings);
     }
 
     static Map<Position, Cell> declared(Structure source, NBTTagCompound snapshot) throws IOException {
@@ -146,7 +157,8 @@ final class HologramLocalBlueprintStructure {
         for (int index = 0; index < rows.tagCount(); index++) {
             NBTTagCompound row = rows.getCompoundTagAt(index);
             String target = row.getString("wantId");
-            if (row.getBoolean("anchor") || row.getBoolean("missingBlock") || row.getBoolean("iconOnly")
+            if (row.getBoolean("anchor") || row.getBoolean("missingBlock")
+                || row.getBoolean("iconOnly")
                 || target.isEmpty()) continue;
             int x = offset(source.x, row.getInteger("dx"), 60_000_000);
             int y = offset(source.y, row.getInteger("dy"), 256);
@@ -162,17 +174,20 @@ final class HologramLocalBlueprintStructure {
             if (snapshot.getBoolean("noHatches") && HologramCellPolicy.hatchTier(stack) != Integer.MAX_VALUE) {
                 for (ItemStack alternative : values) {
                     Block casing = Block.getBlockFromItem(alternative.getItem());
-                    if (alternative.getItem() instanceof ItemMachines || casing == null || casing == Blocks.air) continue;
+                    if (alternative.getItem() instanceof ItemMachines || casing == null || casing == Blocks.air)
+                        continue;
                     stack = alternative;
                     target = Block.blockRegistry.getNameForObject(casing);
-                    metadata = alternative.getItem().getMetadata(alternative.getItemDamage());
+                    metadata = alternative.getItem()
+                        .getMetadata(alternative.getItemDamage());
                     facing = -1;
                     break;
                 }
             }
             // This snapshot is produced by this editor's own detached controller capture, not read from the file.
             // Keep the editable, itemless geometry; the portable data does not convey construction authority.
-            if (stack == null && !"minecraft:air".equals(target) && !HologramNativeSourceWater.previewRow(row)) continue;
+            if (stack == null && !"minecraft:air".equals(target) && !HologramNativeSourceWater.previewRow(row))
+                continue;
             Cell cell = stack == null ? new Cell() : HologramPresets.cell(stack, x, y, z, facing, false);
             cell.x = x;
             cell.y = y;
@@ -208,7 +223,9 @@ final class HologramLocalBlueprintStructure {
         for (Cell original : saved) {
             Position position = Position.of(original);
             Cell replacement = additions.remove(position), previous = before.get(position);
-            boolean inferred = legacyScope && previous != null && original.memberships().isEmpty();
+            boolean inferred = legacyScope && previous != null
+                && original.memberships()
+                    .isEmpty();
             if (original.controller || !original.belongsTo(group) && !inferred) {
                 merged.add(original);
                 continue;
@@ -227,7 +244,8 @@ final class HologramLocalBlueprintStructure {
                 continue;
             }
             boolean userMaterial = previous == null || !samePhysical(original, previous)
-                || present(original.tileNbt) || present(original.itemNbt);
+                || present(original.tileNbt)
+                || present(original.itemNbt);
             if (replacement == null) {
                 if (userMaterial || original.excluded || present(original.prompt)) {
                     Cell retained = copy.apply(original);
@@ -277,8 +295,9 @@ final class HologramLocalBlueprintStructure {
             if (cell.belongsTo(group)) return false;
             Cell previous = before.get(Position.of(cell));
             if (previous != null) {
-                if (!cell.memberships().isEmpty() || !samePhysical(cell, previous)
-                    || present(cell.tileNbt) || present(cell.itemNbt)) return false;
+                if (!cell.memberships()
+                    .isEmpty() || !samePhysical(cell, previous) || present(cell.tileNbt) || present(cell.itemNbt))
+                    return false;
                 exact++;
             }
         }

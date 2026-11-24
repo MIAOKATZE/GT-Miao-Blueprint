@@ -55,8 +55,10 @@ final class HologramLocalMaterialReview {
         return source.cells == state.cells && source.session.equals(state.session)
             && source.data.getLong("planRevision") == state.data.getLong("planRevision")
             && source.data.getInteger("mode") == state.data.getInteger("mode")
-            && source.data.getString("activeStructure").equals(state.data.getString("activeStructure"))
-            && !state.data.getBoolean("localPlanPending") && !state.data.getBoolean("targetClosed")
+            && source.data.getString("activeStructure")
+                .equals(state.data.getString("activeStructure"))
+            && !state.data.getBoolean("localPlanPending")
+            && !state.data.getBoolean("targetClosed")
             && settings.getInteger("layer") == layer;
     }
 
@@ -80,8 +82,7 @@ final class HologramLocalMaterialReview {
         if (!ready()) return "正在本地统计目标材料 " + cursor + " / " + source.cells.size();
         String status = targetCount + " 个目标格";
         if (unaccounted > 0) status += " · " + unaccounted + " 格未核算";
-        if (theory.getBoolean("alternatives") || theory.getBoolean("cacheReviewRequired"))
-            status += " · 替代料或设备缓存待施工核验";
+        if (theory.getBoolean("alternatives") || theory.getBoolean("cacheReviewRequired")) status += " · 替代料或设备缓存待施工核验";
         return status;
     }
 
@@ -109,8 +110,8 @@ final class HologramLocalMaterialReview {
     void refresh(ItemStack[] inventory, int protectedSlot) {
         if (theory == null) return;
         if (!settings.getBoolean("materialMain")) inventory = null;
-        if (visible.hasKey("rows", 9) && observedSlot == protectedSlot && sameInventory(observed, inventory, protectedSlot))
-            return;
+        if (visible.hasKey("rows", 9) && observedSlot == protectedSlot
+            && sameInventory(observed, inventory, protectedSlot)) return;
         observedSlot = protectedSlot;
         observed = copyInventory(inventory, protectedSlot);
         visible = stockRows(theory, observed, protectedSlot);
@@ -132,9 +133,14 @@ final class HologramLocalMaterialReview {
         if (cell.x == x && cell.y == y && cell.z == z) return;
         HologramControllerTarget.Cell nativeTarget = cell.capturedNativeTarget();
         if (nativeTarget != null && nativeTarget.kind() == HologramControllerTarget.TargetKind.MACHINE_SOURCE_WATER
-            && nativeTarget.x() == cell.x && nativeTarget.y() == cell.y && nativeTarget.z() == cell.z
-            && cell.block(false) == Blocks.water && cell.wantMeta == 0
-            && cell.x - x == cell.dx && cell.y - y == cell.dy && cell.z - z == cell.dz) return;
+            && nativeTarget.x() == cell.x
+            && nativeTarget.y() == cell.y
+            && nativeTarget.z() == cell.z
+            && cell.block(false) == Blocks.water
+            && cell.wantMeta == 0
+            && cell.x - x == cell.dx
+            && cell.y - y == cell.dy
+            && cell.z - z == cell.dz) return;
         targetCount++;
         if (cell.targetStack == null || cell.missingBlock || cell.iconOnly) {
             unknown("部分格缺少可识别的目标材料");
@@ -206,8 +212,11 @@ final class HologramLocalMaterialReview {
             String required = HologramMaterialReview.amount(row, "required");
             row.setBoolean("availableKnown", true);
             row.setLong("available", available);
-            row.setString("missingExact", new BigInteger(required).subtract(BigInteger.valueOf(available))
-                .max(BigInteger.ZERO).toString());
+            row.setString(
+                "missingExact",
+                new BigInteger(required).subtract(BigInteger.valueOf(available))
+                    .max(BigInteger.ZERO)
+                    .toString());
         }
         return visible;
     }

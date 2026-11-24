@@ -16,12 +16,16 @@ public final class HologramLocalSaveTraceRegression {
     private HologramLocalSaveTraceRegression() {}
 
     public static void run() {
-        SimpleAssert.eq(null, HologramLocalSaveTrace.begin(false, true, () -> {
-            throw new AssertionError("Disabled trace read the clock");
-        }), "disabled path creates no trace");
-        SimpleAssert.eq(null, HologramLocalSaveTrace.begin(true, false, () -> {
-            throw new AssertionError("Unrelated save read the clock");
-        }), "no trace for Save As or unrelated private writes");
+        SimpleAssert.eq(
+            null,
+            HologramLocalSaveTrace
+                .begin(false, true, () -> { throw new AssertionError("Disabled trace read the clock"); }),
+            "disabled path creates no trace");
+        SimpleAssert.eq(
+            null,
+            HologramLocalSaveTrace
+                .begin(true, false, () -> { throw new AssertionError("Unrelated save read the clock"); }),
+            "no trace for Save As or unrelated private writes");
         HologramLocalSaveTrace.mark(null, Stage.JSON_READY);
         HologramLocalSaveTrace.end(null, Terminal.FAILED);
 
@@ -42,7 +46,8 @@ public final class HologramLocalSaveTraceRegression {
         var active = b.snapshot();
         SimpleAssert.eq("ACTIVE", active.get("terminal"), "partial trace does not report an outcome");
         SimpleAssert.eq(5L, stages(active).get("JSON_READY"), "monotonic time despite test clock");
-        SimpleAssert.that(!stages(active).containsKey("MATERIALIZE_IO_QUEUED"), "no false materialization for eager arm");
+        SimpleAssert
+            .that(!stages(active).containsKey("MATERIALIZE_IO_QUEUED"), "no false materialization for eager arm");
         HologramLocalSaveTrace.end(b, Terminal.CANCELLED_OWNER);
         at(b, clock, Stage.ACK_PUBLISHED, 700);
         HologramLocalSaveTrace.end(b, Terminal.PUBLISHED);

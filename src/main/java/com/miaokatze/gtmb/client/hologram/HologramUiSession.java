@@ -363,8 +363,9 @@ final class HologramUiSession {
         }
         if (controllerOpening()) return;
         HologramScreen localRoot = ui.host == null ? null : ui.host.parent();
-        if (localRoot != null && (state.data.getBoolean("localWorkspace")
-            || state.data.getBoolean("localStandardController") || localDocument())) {
+        if (localRoot != null
+            && (state.data.getBoolean("localWorkspace") || state.data.getBoolean("localStandardController")
+                || localDocument())) {
             if ("close".equals(op)) return;
             if ("switchEditorWorkspace".equals(op) && request != null) {
                 localRoot.switchLocalWorkspace(request);
@@ -380,7 +381,10 @@ final class HologramUiSession {
             }
             if ("scan".equals(op) && request != null && request.getBoolean("operationPreflight")) {
                 request.setInteger("selected", ui.preview.selected());
-                request.setIntArray("selectedIndices", ui.preview.selection().indices());
+                request.setIntArray(
+                    "selectedIndices",
+                    ui.preview.selection()
+                        .indices());
                 localRoot.reviewLocalConstruction(request);
                 awaitingScan(false);
                 return;
@@ -394,17 +398,23 @@ final class HologramUiSession {
                 ui.config.syncTargetSelectors();
                 return;
             }
-            if (!localDocument() && !ui.library.localBusy() && (HologramLocalControllerEdits.handles(op)
-                || "exportDraft".equals(op) || "addPosition".equals(op))) {
+            if (!localDocument() && !ui.library.localBusy()
+                && (HologramLocalControllerEdits.handles(op) || "exportDraft".equals(op) || "addPosition".equals(op))) {
                 NBTTagCompound prepared = request == null ? new NBTTagCompound() : (NBTTagCompound) request.copy();
                 buildOutgoingRequest(
-                    op, prepared, ui.preview.selected(), () -> ui.preview.selection().indices(),
-                    state.data.getString("activeStructure"), state.session);
+                    op,
+                    prepared,
+                    ui.preview.selected(),
+                    () -> ui.preview.selection()
+                        .indices(),
+                    state.data.getString("activeStructure"),
+                    state.session);
                 if (localRoot.startEditableBlueprint(op, prepared)) return;
             }
         }
         if (state.data.getBoolean("localStandardController")) {
-            if (localRoot != null && "configure".equals(op) && request != null) localRoot.refreshLocalController(request);
+            if (localRoot != null && "configure".equals(op) && request != null)
+                localRoot.refreshLocalController(request);
             return;
         }
         if (state.data.getBoolean("localWorkspace")) {

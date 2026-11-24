@@ -19,30 +19,83 @@ import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-
-import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import com.miaokatze.gtmb.hologram.HologramPresets.Cell;
 import com.miaokatze.gtmb.hologram.HologramPresets.HintArea;
 import com.miaokatze.gtmb.hologram.HologramPresets.Preset;
 import com.miaokatze.gtmb.hologram.HologramPresets.Structure;
 
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+
 /** Projects the editable grid from portable JSON. Source metadata travels as JSON without interpretation. */
 final class HologramLocalBlueprintCodec {
 
     private static final Gson MODEL = new Gson();
-    private static final Set<String> HEADER = fields("id", "name", "authorName", "authorUuid", "createdAt", "schema",
-        "retainNbt", "retainCovers", "retainedNbtKeys", "prompt", "controllerFacing", "deidentificationLevel");
-    private static final Set<String> CELL = fields("x", "y", "z", "block", "metadata", "item", "damage", "count",
-        "tileNbt", "itemNbt", "facing", "prompt", "excluded", "controller", "structureId", "structureIds",
-        "defaultItem", "defaultDamage", "allowedTargets", "structureRole", "structureFamily", "structureHint",
-        "structureCandidatesComplete", "structureHatchFacings");
-    private static final Set<String> STRUCTURE = fields("id", "name", "sourceClass", "sourceMod", "x", "y", "z",
-        "enabled", "textBoxNbt", "controllerId", "main", "mainExplicit", "noHatches", "channels");
+    private static final Set<String> HEADER = fields(
+        "id",
+        "name",
+        "authorName",
+        "authorUuid",
+        "createdAt",
+        "schema",
+        "retainNbt",
+        "retainCovers",
+        "retainedNbtKeys",
+        "prompt",
+        "controllerFacing",
+        "deidentificationLevel");
+    private static final Set<String> CELL = fields(
+        "x",
+        "y",
+        "z",
+        "block",
+        "metadata",
+        "item",
+        "damage",
+        "count",
+        "tileNbt",
+        "itemNbt",
+        "facing",
+        "prompt",
+        "excluded",
+        "controller",
+        "structureId",
+        "structureIds",
+        "defaultItem",
+        "defaultDamage",
+        "allowedTargets",
+        "structureRole",
+        "structureFamily",
+        "structureHint",
+        "structureCandidatesComplete",
+        "structureHatchFacings");
+    private static final Set<String> STRUCTURE = fields(
+        "id",
+        "name",
+        "sourceClass",
+        "sourceMod",
+        "x",
+        "y",
+        "z",
+        "enabled",
+        "textBoxNbt",
+        "controllerId",
+        "main",
+        "mainExplicit",
+        "noHatches",
+        "channels");
     private static final Set<String> HINT = fields("x1", "y1", "z1", "x2", "y2", "z2", "prompt");
     private static final Set<String> ROWS = fields("cells", "palette", "structures", "hintAreas");
-    private static final Set<String> PROCESSED = fields("processingNbt", "quantumGroupingNbt", "semanticNbt",
-        "deidentificationVersion", "deidentificationChosen", "aePolicyVersion", "aeIssues", "fullyVoucherCovered",
-        "sourceItemFrames", "sourceItemFramesTruncated");
+    private static final Set<String> PROCESSED = fields(
+        "processingNbt",
+        "quantumGroupingNbt",
+        "semanticNbt",
+        "deidentificationVersion",
+        "deidentificationChosen",
+        "aePolicyVersion",
+        "aeIssues",
+        "fullyVoucherCovered",
+        "sourceItemFrames",
+        "sourceItemFramesTruncated");
 
     private final Map<Object, JsonObject> opaque = java.util.Collections.synchronizedMap(new WeakHashMap<>());
     private volatile JsonObject envelope;
@@ -62,21 +115,24 @@ final class HologramLocalBlueprintCodec {
     Loaded read(byte[] bytes, BooleanSupplier current, boolean stored) throws IOException {
         if (bytes == null || bytes.length == 0 || bytes.length > HologramBlueprintArtifact.MAX_JSON_BYTES)
             throw new IOException("蓝图文件大小超出范围");
-        String text = StandardCharsets.UTF_8.newDecoder().decode(ByteBuffer.wrap(bytes)).toString();
-        HologramBlueprintCompactCodec.LocalDocument input = HologramBlueprintCompactCodec.localDocument(text, current, stored);
+        String text = StandardCharsets.UTF_8.newDecoder()
+            .decode(ByteBuffer.wrap(bytes))
+            .toString();
+        HologramBlueprintCompactCodec.LocalDocument input = HologramBlueprintCompactCodec
+            .localDocument(text, current, stored);
         HologramBlueprintCompactCodec.DisplayRows compact = input.packed();
         JsonObject root = input.root();
         try {
             JsonObject blueprint = HologramBlueprintCompactCodec.documentBlueprint(root);
             explicitRetention = blueprint.has("retainNbt");
             int envelopeSchema = number(root, "schema", 2);
-            if (envelopeSchema < 1 || envelopeSchema > 2 || root.has("presets"))
-                throw new IOException("蓝图分享文件格式无效");
+            if (envelopeSchema < 1 || envelopeSchema > 2 || root.has("presets")) throw new IOException("蓝图分享文件格式无效");
             Set<String> envelopeFields = compact == null ? fields("schema", "blueprint", "previewBinding")
                 : fields("schema", "blueprint", "previewBinding", "encoding", "materials", "nbt");
             envelope = blueprint == root ? new JsonObject()
                 : remaining(root, envelopeFields, java.util.Collections.emptySet());
-            Set<String> ignored = blueprint == root ? fields("cells", "palette", "structures", "hintAreas", "previewBinding")
+            Set<String> ignored = blueprint == root
+                ? fields("cells", "palette", "structures", "hintAreas", "previewBinding")
                 : ROWS;
             Preset result = readFields(blueprint, HEADER, ignored, Preset.class);
             int schema = number(blueprint, "schema", 1);
@@ -119,8 +175,8 @@ final class HologramLocalBlueprintCodec {
         LongOpenHashSet positions = new LongOpenHashSet(count);
         Cell[] materials = new Cell[compact.materials()];
         int[] occurrences = new int[materials.length];
-        int[] bounds = { Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE,
-            Integer.MIN_VALUE, Integer.MIN_VALUE };
+        int[] bounds = { Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MAX_VALUE, Integer.MIN_VALUE, Integer.MIN_VALUE,
+            Integer.MIN_VALUE };
         for (int row = 0; row < count; row++) {
             if ((row & 255) == 0 && !current.getAsBoolean()) throw new IOException("蓝图读取已取消");
             int material = compact.materialIndex(row);
@@ -166,7 +222,11 @@ final class HologramLocalBlueprintCodec {
 
     /** Only the selected ordinal needs a disposable cell for metadata inspection. */
     static Cell rowCopy(CompactLayout layout, int ordinal) {
-        return rowCopy(layout, ordinal, layout.rows().materialIndex(ordinal));
+        return rowCopy(
+            layout,
+            ordinal,
+            layout.rows()
+                .materialIndex(ordinal));
     }
 
     private static Cell rowCopy(CompactLayout layout, int ordinal, int material) {
@@ -202,10 +262,10 @@ final class HologramLocalBlueprintCodec {
                 case "x", "y", "z", "metadata", "damage", "count", "facing", "defaultDamage" -> {
                     // Already checked in the legacy error order, before any Gson coercions.
                 }
-                case "item", "block", "defaultItem", "tileNbt", "itemNbt", "prompt", "structureId",
-                    "structureRole", "structureFamily", "structureHint" -> {
+                case "item", "block", "defaultItem", "tileNbt", "itemNbt", "prompt", "structureId", "structureRole", "structureFamily", "structureHint" -> {
                     if (value.isJsonNull()) continue;
-                    if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isString()) return readGsonCell(row);
+                    if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive()
+                        .isString()) return readGsonCell(row);
                     String text = value.getAsString();
                     switch (key) {
                         case "item" -> cell.item = text;
@@ -225,7 +285,8 @@ final class HologramLocalBlueprintCodec {
                 }
                 case "excluded", "controller", "structureCandidatesComplete" -> {
                     if (value.isJsonNull()) continue;
-                    if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isBoolean()) return readGsonCell(row);
+                    if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive()
+                        .isBoolean()) return readGsonCell(row);
                     boolean flag = value.getAsBoolean();
                     switch (key) {
                         case "excluded" -> cell.excluded = flag;
@@ -238,7 +299,8 @@ final class HologramLocalBlueprintCodec {
                 }
                 case "structureIds" -> {
                     if (value.isJsonNull()) continue;
-                    if (!value.isJsonArray() || value.getAsJsonArray().size() != 0) return readGsonCell(row);
+                    if (!value.isJsonArray() || value.getAsJsonArray()
+                        .size() != 0) return readGsonCell(row);
                     // A serialized empty list is still an independently mutable list, not null.
                     cell.structureIds = new ArrayList<>();
                 }
@@ -281,7 +343,8 @@ final class HologramLocalBlueprintCodec {
         for (String key : keys) if (row.has(key)) projected.add(key, row.get(key));
         T result = MODEL.fromJson(projected, type);
         JsonObject retained = remaining(row, keys, ignored);
-        if (!retained.entrySet().isEmpty()) opaque.put(result, retained);
+        if (!retained.entrySet()
+            .isEmpty()) opaque.put(result, retained);
         return result;
     }
 
@@ -295,7 +358,8 @@ final class HologramLocalBlueprintCodec {
         JsonObject retained = opaque.get(cell);
         if (retained == null || !retained.has("allowedTargets")) return;
         JsonObject extensions = remaining(retained, fields("allowedTargets"), java.util.Collections.emptySet());
-        if (extensions.entrySet().isEmpty()) opaque.remove(cell);
+        if (extensions.entrySet()
+            .isEmpty()) opaque.remove(cell);
         else opaque.put(cell, extensions);
     }
 
@@ -311,24 +375,34 @@ final class HologramLocalBlueprintCodec {
     @com.github.bsideup.jabel.Desugar
     record SaveIdentity(int level, boolean chosen) {}
 
-    /** Read only the supported identity scalars. Processed fields remain opaque until genuine reprocessing.
-     * An unrecognized historical/future header stays on the unmodified legacy Save path, never a new policy. */
+    /**
+     * Read only the supported identity scalars. Processed fields remain opaque until genuine reprocessing.
+     * An unrecognized historical/future header stays on the unmodified legacy Save path, never a new policy.
+     */
     SaveIdentity saveIdentity(Preset source) {
         JsonObject retained = opaque.get(source);
-        int version = knownVersion(retained, "deidentificationVersion", source.deidentificationVersion, HologramDeidentification.VERSION);
+        int version = knownVersion(
+            retained,
+            "deidentificationVersion",
+            source.deidentificationVersion,
+            HologramDeidentification.VERSION);
         int ae = knownVersion(retained, "aePolicyVersion", source.aePolicyVersion, HologramAePolicy.VERSION);
         if (version < 0 || ae < 0 || source.deidentificationLevel < 0 || source.deidentificationLevel > 10) return null;
         JsonElement chosen = retained == null ? null : retained.get("deidentificationChosen");
-        if (chosen != null && (!chosen.isJsonPrimitive() || !chosen.getAsJsonPrimitive().isBoolean())) return null;
-        return new SaveIdentity(HologramDeidentification.level(source.deidentificationLevel, version, ae),
+        if (chosen != null && (!chosen.isJsonPrimitive() || !chosen.getAsJsonPrimitive()
+            .isBoolean())) return null;
+        return new SaveIdentity(
+            HologramDeidentification.level(source.deidentificationLevel, version, ae),
             chosen == null ? source.deidentificationChosen : chosen.getAsBoolean());
     }
 
     private static int knownVersion(JsonObject retained, String key, int fallback, int max) {
         JsonElement value = retained == null ? null : retained.get(key);
         if (value == null) return fallback >= 0 && fallback <= max ? fallback : -1;
-        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) return -1;
-        for (int i = 0; i <= max; i++) if (Integer.toString(i).equals(value.getAsString())) return i;
+        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive()
+            .isNumber()) return -1;
+        for (int i = 0; i <= max; i++) if (Integer.toString(i)
+            .equals(value.getAsString())) return i;
         return -1;
     }
 
@@ -347,26 +421,33 @@ final class HologramLocalBlueprintCodec {
         if (projected.has("aeIssues")) source.aeIssues = stored.aeIssues;
         if (projected.has("fullyVoucherCovered")) source.fullyVoucherCovered = stored.fullyVoucherCovered;
         if (projected.has("sourceItemFrames")) source.sourceItemFrames = stored.sourceItemFrames;
-        if (projected.has("sourceItemFramesTruncated")) source.sourceItemFramesTruncated = stored.sourceItemFramesTruncated;
+        if (projected.has("sourceItemFramesTruncated"))
+            source.sourceItemFramesTruncated = stored.sourceItemFramesTruncated;
     }
 
     void acceptProcessed(Preset before, Preset after) {
         JsonObject retained = opaque.get(before);
         if (retained != null) opaque.put(after, remaining(retained, PROCESSED, java.util.Collections.emptySet()));
-        for (int i = 0; i < before.cells.size() && i < after.cells.size(); i++) copied(before.cells.get(i), after.cells.get(i));
-        for (int i = 0; i < before.palette.size() && i < after.palette.size(); i++) copied(before.palette.get(i), after.palette.get(i));
+        for (int i = 0; i < before.cells.size() && i < after.cells.size(); i++)
+            copied(before.cells.get(i), after.cells.get(i));
+        for (int i = 0; i < before.palette.size() && i < after.palette.size(); i++)
+            copied(before.palette.get(i), after.palette.get(i));
         for (int i = 0; i < before.structures.size() && i < after.structures.size(); i++)
             copied(before.structures.get(i), after.structures.get(i));
         for (HintArea hint : after.hintAreas) for (HintArea original : before.hintAreas) {
-            if (hint.x1 == original.x1 && hint.y1 == original.y1 && hint.z1 == original.z1 && hint.x2 == original.x2
-                && hint.y2 == original.y2 && hint.z2 == original.z2) copied(original, hint);
+            if (hint.x1 == original.x1 && hint.y1 == original.y1
+                && hint.z1 == original.z1
+                && hint.x2 == original.x2
+                && hint.y2 == original.y2
+                && hint.z2 == original.z2) copied(original, hint);
         }
     }
 
     boolean hasOriginalVersion(Preset preset) {
         JsonObject retained = opaque.get(preset);
         return preset.nativeBlueprint != null || retained != null && retained.has("nativeBlueprint")
-            && !retained.get("nativeBlueprint").isJsonNull();
+            && !retained.get("nativeBlueprint")
+                .isJsonNull();
     }
 
     byte[] write(Preset preset) throws IOException {
@@ -378,9 +459,8 @@ final class HologramLocalBlueprintCodec {
         blueprint.add("hintAreas", rows(preset.hintAreas));
         JsonObject output = new JsonObject();
         JsonObject sourceEnvelope = envelope;
-        if (sourceEnvelope != null)
-            for (Map.Entry<String, JsonElement> field : sourceEnvelope.entrySet())
-                output.add(field.getKey(), field.getValue());
+        if (sourceEnvelope != null) for (Map.Entry<String, JsonElement> field : sourceEnvelope.entrySet())
+            output.add(field.getKey(), field.getValue());
         output.addProperty("schema", 2);
         output.add("blueprint", blueprint);
         return HologramBlueprintCompactCodec.encodeLocalDocument(output);
@@ -389,7 +469,8 @@ final class HologramLocalBlueprintCodec {
     private JsonArray rows(Iterable<?> entries) {
         JsonArray rows = new JsonArray();
         for (Object entry : entries) {
-            JsonObject row = MODEL.toJsonTree(entry).getAsJsonObject();
+            JsonObject row = MODEL.toJsonTree(entry)
+                .getAsJsonObject();
             merge(entry, row);
             rows.add(row);
         }
@@ -398,12 +479,11 @@ final class HologramLocalBlueprintCodec {
 
     private void merge(Object entry, JsonObject output) {
         JsonObject retained = opaque.get(entry);
-        if (retained != null)
-            for (Map.Entry<String, JsonElement> field : retained.entrySet()) {
-                if ("nativeBlueprint".equals(field.getKey()) && field.getValue().isJsonNull()
-                    && output.has(field.getKey())) continue;
-                output.add(field.getKey(), field.getValue());
-            }
+        if (retained != null) for (Map.Entry<String, JsonElement> field : retained.entrySet()) {
+            if ("nativeBlueprint".equals(field.getKey()) && field.getValue()
+                .isJsonNull() && output.has(field.getKey())) continue;
+            output.add(field.getKey(), field.getValue());
+        }
     }
 
     private static JsonObject remaining(JsonObject source, Set<String> known, Set<String> ignored) {
@@ -422,15 +502,16 @@ final class HologramLocalBlueprintCodec {
     private static JsonArray rows(JsonObject value, String name, int limit) throws IOException {
         JsonElement found = value.get(name);
         if (found == null || found.isJsonNull()) return new JsonArray();
-        if (!found.isJsonArray() || found.getAsJsonArray().size() > limit)
-            throw new IOException("蓝图列表超出上限");
+        if (!found.isJsonArray() || found.getAsJsonArray()
+            .size() > limit) throw new IOException("蓝图列表超出上限");
         return found.getAsJsonArray();
     }
 
     private static int number(JsonObject row, String key, int fallback) throws IOException {
         JsonElement value = row.get(key);
         if (value == null) return fallback;
-        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive().isNumber()) throw new IOException("蓝图整数无效");
+        if (!value.isJsonPrimitive() || !value.getAsJsonPrimitive()
+            .isNumber()) throw new IOException("蓝图整数无效");
         String text = value.getAsString();
         int first = text.startsWith("-") ? 1 : 0;
         int digits = text.length() - first;

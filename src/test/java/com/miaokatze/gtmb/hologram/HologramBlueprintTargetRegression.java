@@ -41,34 +41,53 @@ public final class HologramBlueprintTargetRegression {
         header.addProperty("opaque", "escapes: <>&=' \" \\ \n \u2028 😀");
         JsonObject nbt = new JsonObject();
         nbt.addProperty("value", HologramBlueprintNbt.encodeCanonical(nativeNbt));
-        String payload = nbt.get("value").toString();
-        String material = "{\"block\":\"minecraft:stone\",\"tileNbt\":" + payload + ",\"itemNbt\":" + payload
+        String payload = nbt.get("value")
+            .toString();
+        String material = "{\"block\":\"minecraft:stone\",\"tileNbt\":" + payload
+            + ",\"itemNbt\":"
+            + payload
             + ",\"other\":{\"name\":\"nested must count\",\"n\":1e+02}}";
         String expandedA = material.substring(0, material.length() - 1) + ",\"x\":-0,\"y\":1,\"z\":2}";
         String expandedB = material.substring(0, material.length() - 1) + ",\"x\":4,\"y\":1,\"z\":2}";
-        String base = header.toString().substring(0, header.toString().length() - 1);
+        String base = header.toString()
+            .substring(
+                0,
+                header.toString()
+                    .length() - 1);
         String bare = base + ",\"cells\":[" + expandedA + "," + expandedB + "],\"palette\":[" + expandedB + "]}";
         String compactMember = base + ",\"cells\":[[0,{\"x\":-0,\"y\":1,\"z\":2}],[0,{\"x\":4,\"y\":1,\"z\":2}]],"
             + "\"palette\":[[0,{\"x\":4,\"y\":1,\"z\":2}]]}";
         String compactMaterial = "{\"block\":\"minecraft:stone\",\"tileNbt\":0,\"itemNbt\":0,"
             + "\"other\":{\"name\":\"nested must count\",\"n\":1e+02}}";
         String compact = "{\"schema\":2,\"encoding\":\"gtmb-dictionary-1\",\"blueprint\":" + compactMember
-            + ",\"materials\":[" + compactMaterial + "],\"nbt\":[" + payload + "]}";
+            + ",\"materials\":["
+            + compactMaterial
+            + "],\"nbt\":["
+            + payload
+            + "]}";
         String hash = parity(bare);
         SimpleAssert.eq(hash, parity("{\"blueprint\":" + bare + ",\"opaqueEnvelope\":17}"), "wrapper is not content");
         SimpleAssert.eq(hash, parity(compact), "exact expanded compact descriptor, numeric token and native NBT");
-        SimpleAssert.that(!hash.equals(parity(base + ",\"cells\":[" + expandedB + "," + expandedA
-            + "],\"palette\":[" + expandedB + "]}")), "ordered rows must not alias");
-        SimpleAssert.that(!hash.equals(parity(bare.replace("nested must count", "changed"))),
+        SimpleAssert.that(
+            !hash.equals(
+                parity(base + ",\"cells\":[" + expandedB + "," + expandedA + "],\"palette\":[" + expandedB + "]}")),
+            "ordered rows must not alias");
+        SimpleAssert.that(
+            !hash.equals(parity(bare.replace("nested must count", "changed"))),
             "descriptive keys are ignored only at header");
         SimpleAssert.that(!hash.equals(parity(bare.replace("1e+02", "100"))), "numeric lexemes still count");
         parity("{name:legacy,cells:[],opaque:'accepted by the first lenient parser'}");
-        JsonObject unstable = selected(bytes("{\"name\":\"unicode fallback\",\"cells\":[],\"opaque\":{"
-            + "\"?\":\"first\",\"\\uD800\":\"second\",\"\\uDC00\":\"third\"}}"));
+        JsonObject unstable = selected(
+            bytes(
+                "{\"name\":\"unicode fallback\",\"cells\":[],\"opaque\":{"
+                    + "\"?\":\"first\",\"\\uD800\":\"second\",\"\\uDC00\":\"third\"}}"));
         String legacy = oldExpandedHash(unstable);
-        SimpleAssert.that(!legacy.equals(HologramBlueprintContentHash.ofBlueprint(unstable)),
+        SimpleAssert.that(
+            !legacy.equals(HologramBlueprintContentHash.ofBlueprint(unstable)),
             "malformed UTF-16 keys do collapse on the historical UTF-8 round trip");
-        SimpleAssert.eq(legacy, HologramBlueprintContentHash.ofExpandedTarget(unstable),
+        SimpleAssert.eq(
+            legacy,
+            HologramBlueprintContentHash.ofExpandedTarget(unstable),
             "unstable wrapper takes the old path instead of silently choosing another filename");
     }
 
@@ -79,11 +98,14 @@ public final class HologramBlueprintTargetRegression {
         denied("{\"encoding\":\"gtmb-dictionary-1\",\"blueprint\":{\"cells\":[[1,{}]]},\"materials\":[{}],\"nbt\":[]}");
         denied("{\"blueprint\":");
         String deep = "{\"name\":\"bare\",\"cells\":[],\"opaque\":" + repeat('[', 31) + "0" + repeat(']', 31) + "}";
-        parity(deep.replace(repeat('[', 31), repeat('[', 30)).replace(repeat(']', 31), repeat(']', 30)));
+        parity(
+            deep.replace(repeat('[', 31), repeat('[', 30))
+                .replace(repeat(']', 31), repeat(']', 30)));
         denied(deep); // bare parsed at depth 32; its synthetic wrapper increments depth to 33
         denied("{\"name\":\"palette\",\"cells\":[],\"palette\":[" + repeat("null,", 4096) + "null]}");
         String start = "{\"name\":\"byte limit\",\"cells\":[],\"opaque\":\"", end = "\"}";
-        String canonicallyOver = start + repeat('x', HologramBlueprintArtifact.MAX_JSON_BYTES - start.length() - end.length())
+        String canonicallyOver = start
+            + repeat('x', HologramBlueprintArtifact.MAX_JSON_BYTES - start.length() - end.length())
             + end;
         denied(canonicallyOver); // the original bare document fits exactly, but its target wrapper does not
     }
@@ -92,36 +114,53 @@ public final class HologramBlueprintTargetRegression {
         byte[] fixture = bytes("{\"schema\":2,\"blueprint\":{\"name\":\"Synthetic fixture\",\"cells\":[{\"x\":1}]}}");
         var pair = HologramBlueprintArtifact.prepareSave(fixture, BlueprintArtifactTestData.previewPng());
         String oldHash = oldExpandedHash(selected(pair.json));
-        SimpleAssert.eq(oldHash, HologramBlueprintContentHash.ofExpandedTarget(selected(pair.json)),
+        SimpleAssert.eq(
+            oldHash,
+            HologramBlueprintContentHash.ofExpandedTarget(selected(pair.json)),
             "exact same target digest");
-        Path dir = Files.createTempDirectory("gtmb-test-target-naming").toRealPath();
+        Path dir = Files.createTempDirectory("gtmb-test-target-naming")
+            .toRealPath();
         try {
             Path target = HologramBlueprintFiles.target(dir, SLOT, pair.json);
-            SimpleAssert.eq("Synthetic fixture_" + oldHash + ".json", target.getFileName().toString(),
+            SimpleAssert.eq(
+                "Synthetic fixture_" + oldHash + ".json",
+                target.getFileName()
+                    .toString(),
                 "unchanged full stored filename");
             var written = HologramBlueprintArtifact.writePairPending(target, pair.json, pair.png, () -> true);
             HologramBlueprintFiles.track(dir, SLOT, written);
             written.commit();
             SimpleAssert.eq(target, HologramBlueprintFiles.resolve(dir, SLOT), "exact logical owner");
-            SimpleAssert.eq(target, HologramBlueprintFiles.target(dir, SLOT, pair.json), "mapped overwrite stays in place");
+            SimpleAssert
+                .eq(target, HologramBlueprintFiles.target(dir, SLOT, pair.json), "mapped overwrite stays in place");
             Path alias = HologramBlueprintFiles.target(dir, OTHER, pair.json);
-            String base = target.getFileName().toString();
+            String base = target.getFileName()
+                .toString();
             String suffix = HologramBlueprintArtifact.hash(bytes(OTHER));
-            SimpleAssert.eq(base.substring(0, base.length() - 5) + "_" + suffix + ".json",
-                alias.getFileName().toString(), "same content does not alias another ID");
+            SimpleAssert.eq(
+                base.substring(0, base.length() - 5) + "_" + suffix + ".json",
+                alias.getFileName()
+                    .toString(),
+                "same content does not alias another ID");
             var pending = HologramBlueprintArtifact.writePairPending(alias, pair.json, pair.png, () -> true);
             HologramBlueprintFiles.track(dir, OTHER, pending);
             SimpleAssert.eq(alias, HologramBlueprintFiles.resolve(dir, OTHER), "pending alias has its own index entry");
             pending.rollback();
-            SimpleAssert.eq(dir.resolve(OTHER + ".json"), HologramBlueprintFiles.resolve(dir, OTHER), "rollback restores index");
-            SimpleAssert.that(!Files.exists(alias) && !Files.exists(HologramBlueprintArtifact.previewPath(alias)),
+            SimpleAssert.eq(
+                dir.resolve(OTHER + ".json"),
+                HologramBlueprintFiles.resolve(dir, OTHER),
+                "rollback restores index");
+            SimpleAssert.that(
+                !Files.exists(alias) && !Files.exists(HologramBlueprintArtifact.previewPath(alias)),
                 "rollback removes only its own staged pair");
             Files.createFile(alias);
             try {
                 HologramBlueprintFiles.target(dir, OTHER, pair.json);
                 throw new AssertionError("unindexed suffix collision was accepted");
             } catch (IOException deny) {
-                SimpleAssert.eq("Blueprint filename already exists outside this logical entry", deny.getMessage(),
+                SimpleAssert.eq(
+                    "Blueprint filename already exists outside this logical entry",
+                    deny.getMessage(),
                     "exact collision denial preserved");
             }
             var after = HologramBlueprintArtifact.readPair(target);

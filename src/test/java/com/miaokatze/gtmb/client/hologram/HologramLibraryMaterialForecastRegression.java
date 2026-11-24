@@ -70,19 +70,29 @@ final class HologramLibraryMaterialForecastRegression {
 
         var forecast = HologramLibraryMaterialForecast.project(tally.snapshot());
         SimpleAssert.that(
-            forecast.candidates().size() == 5 && forecast.candidates().get(0).cells() == 3
-                && forecast.unpriced().nonOrdinary() == 7 && forecast.unpriced().cells() == 10,
+            forecast.candidates()
+                .size() == 5
+                && forecast.candidates()
+                    .get(0)
+                    .cells() == 3
+                && forecast.unpriced()
+                    .nonOrdinary() == 7
+                && forecast.unpriced()
+                    .cells() == 10,
             "only equal canonical vanilla names with stable plain metadata are even resolution candidates");
         var skipped = forecast.stockRows(null, null, -1);
         SimpleAssert.that(
-            skipped.getTagList("rows", 10).tagCount() == 0 && skipped.getLong("unresolvedItems") == 7
-                && skipped.getLong("unaccounted") == 17 && skipped.getInteger("airCells") == 1,
+            skipped.getTagList("rows", 10)
+                .tagCount() == 0 && skipped.getLong("unresolvedItems") == 7
+                && skipped.getLong("unaccounted") == 17
+                && skipped.getInteger("airCells") == 1,
             "without explicit resolution, all candidate costs are still unknown");
 
         var stone = new ItemStack(Blocks.stone, 2, 0);
         var fakeStock = new ItemStack(Blocks.stone, 40, 0);
         fakeStock.setTagCompound(new NBTTagCompound());
-        fakeStock.getTagCompound().setBoolean("nonOrdinary", true);
+        fakeStock.getTagCompound()
+            .setBoolean("nonOrdinary", true);
         var taggedResult = new ItemStack(Blocks.planks, 1, 2);
         taggedResult.setTagCompound(new NBTTagCompound());
         var calls = new ArrayList<HologramLibraryMaterialForecast.Identity>();
@@ -96,20 +106,30 @@ final class HologramLibraryMaterialForecastRegression {
             if ("minecraft:planks".equals(name)) return proved(name, taggedResult);
             if ("minecraft:glass".equals(name)) return null; // No proof this runtime kept ordinary provider semantics.
             throw new AssertionError("nonordinary, tagged and extension source descriptors cannot reach the resolver");
-        }, new ItemStack[] {new ItemStack(Blocks.stone, 60, 0), stone, fakeStock,
-            new ItemStack(Blocks.stonebrick, 1, 1)}, 0);
-        SimpleAssert.eq(forecast.candidates().stream().map(HologramLibraryMaterialForecast.Need::identity)
-            .collect(java.util.stream.Collectors.toList()),
-            new ArrayList<>(calls), "client resolver sees each ordinary candidate once, never unknown source forms");
+        },
+            new ItemStack[] { new ItemStack(Blocks.stone, 60, 0), stone, fakeStock,
+                new ItemStack(Blocks.stonebrick, 1, 1) },
+            0);
+        SimpleAssert.eq(
+            forecast.candidates()
+                .stream()
+                .map(HologramLibraryMaterialForecast.Need::identity)
+                .collect(java.util.stream.Collectors.toList()),
+            new ArrayList<>(calls),
+            "client resolver sees each ordinary candidate once, never unknown source forms");
         var rows = new HologramMaterialReview();
         rows.updateLocal(stock);
         SimpleAssert.that(
-            rows.size() == 2 && "3".equals(rows.row(0).required) && "2".equals(rows.row(0).available)
-                && "1".equals(rows.row(0).missing) && "1".equals(rows.row(1).available),
+            rows.size() == 2 && "3".equals(rows.row(0).required)
+                && "2".equals(rows.row(0).available)
+                && "1".equals(rows.row(0).missing)
+                && "1".equals(rows.row(1).available),
             "reuse exact backpack arithmetic; tags and protected slot do not count");
         SimpleAssert.that(
             stock.getLong("unaccounted") == 13 && stock.getLong("unresolvedItems") == 3
-                && !stock.hasKey("complete") && !rows.ready() && !rows.hasItemShortage(),
+                && !stock.hasKey("complete")
+                && !rows.ready()
+                && !rows.hasItemShortage(),
             "a provider not proved ordinary, a resolver alias or a tagged mismatch remain unknown, with no quote authority");
     }
 
@@ -119,11 +139,15 @@ final class HologramLibraryMaterialForecastRegression {
         var tally = new HologramSavedMaterialSource.Tally(masked, 1);
         tally.include(0, row("stone", 0));
         var forecast = HologramLibraryMaterialForecast.project(tally.snapshot());
-        NBTTagCompound rows = forecast.stockRows(
-            identity -> { throw new AssertionError("masked policy admits no resolution"); }, null, -1);
+        NBTTagCompound rows = forecast
+            .stockRows(identity -> { throw new AssertionError("masked policy admits no resolution"); }, null, -1);
         SimpleAssert.that(
-            forecast.candidates().isEmpty() && forecast.unpriced().retention() == 1
-                && rows.getBoolean("retentionNeedsReview") && rows.getLong("unaccounted") == 1,
+            forecast.candidates()
+                .isEmpty()
+                && forecast.unpriced()
+                    .retention() == 1
+                && rows.getBoolean("retentionNeedsReview")
+                && rows.getLong("unaccounted") == 1,
             "an explicit retention mask is unknown, not a zero item budget");
     }
 
@@ -149,6 +173,7 @@ final class HologramLibraryMaterialForecastRegression {
         inventory[6] = new ItemStack(Blocks.stonebrick, 64, 2);
         AtomicInteger itemCalls = new AtomicInteger();
         inventory[7] = new ItemStack(new Item() {
+
             @Override
             public int getDamage(ItemStack ignored) {
                 itemCalls.incrementAndGet();
@@ -165,52 +190,80 @@ final class HologramLibraryMaterialForecastRegression {
 
         AtomicInteger providerCalls = new AtomicInteger();
         String providerId = "gtmb_test:description_throwing_provider";
-        try (var installed = NativePlacement.register(providerId,
-            new NativePlacement.Adapter() {
-                public boolean supports(Block block) {
-                    providerCalls.incrementAndGet();
-                    throw new AssertionError("a plain description must not probe native providers");
-                }
+        try (var installed = NativePlacement.register(providerId, new NativePlacement.Adapter() {
 
-                public TileEntity create(Block block, int meta, NBTTagCompound tag, World world) {
-                    providerCalls.incrementAndGet();
-                    throw new AssertionError("a plain description must not create a tile");
-                }
+            public boolean supports(Block block) {
+                providerCalls.incrementAndGet();
+                throw new AssertionError("a plain description must not probe native providers");
+            }
 
-                public List<ItemStack> materials(Block block, int meta, TileEntity tile) {
-                    providerCalls.incrementAndGet();
-                    throw new AssertionError("a plain description must not compute native costs");
-                }
-            })) {
+            public TileEntity create(Block block, int meta, NBTTagCompound tag, World world) {
+                providerCalls.incrementAndGet();
+                throw new AssertionError("a plain description must not create a tile");
+            }
+
+            public List<ItemStack> materials(Block block, int meta, TileEntity tile) {
+                providerCalls.incrementAndGet();
+                throw new AssertionError("a plain description must not compute native costs");
+            }
+        })) {
             SimpleAssert.that(installed.active(), "the throwing fixture must be registered while observing");
             var description = HologramLibraryMaterialDescription.describe(forecast, inventory, 0);
-            var stone = description.rows().get(0);
-            var stonebrick = description.rows().get(1);
-            SimpleAssert.that(description.rows().size() == 2 && description.unlistedCells() == 1
-                && description.airCells() == 1, "shape/alias mismatch is unlisted and plain air is separate");
-            SimpleAssert.that("minecraft:stone".equals(stone.identity().registry()) && stone.blueprintCells() == 32
-                && Long.valueOf(48).equals(stone.visibleBackpackCount()),
+            var stone = description.rows()
+                .get(0);
+            var stonebrick = description.rows()
+                .get(1);
+            SimpleAssert.that(
+                description.rows()
+                    .size() == 2 && description.unlistedCells() == 1
+                    && description.airCells() == 1,
+                "shape/alias mismatch is unlisted and plain air is separate");
+            SimpleAssert.that(
+                "minecraft:stone".equals(
+                    stone.identity()
+                        .registry())
+                    && stone.blueprintCells() == 32
+                    && Long.valueOf(48)
+                        .equals(stone.visibleBackpackCount()),
                 "the recorded 32 cells and the 48 observed exact items are independent facts");
-            SimpleAssert.that("minecraft:stonebrick".equals(stonebrick.identity().registry())
-                && stonebrick.blueprintCells() == 1 && stonebrick.visibleBackpackCount() == null,
+            SimpleAssert.that(
+                "minecraft:stonebrick".equals(
+                    stonebrick.identity()
+                        .registry())
+                    && stonebrick.blueprintCells() == 1
+                    && stonebrick.visibleBackpackCount() == null,
                 "an unresolved but recognized source row remains visible without a zero stock");
-            SimpleAssert.that(HologramLibraryMaterialDescription.describe(null, inventory, 0) == null
-                && HologramLibraryMaterialDescription.describe(forecast, null, 0).rows().get(0)
-                    .visibleBackpackCount() == null
-                && HologramLibraryMaterialDescription.describe(forecast, inventory, -1).rows().get(0)
-                    .visibleBackpackCount() == null
-                && HologramLibraryMaterialDescription.describe(forecast, inventory, 9).rows().get(0)
-                    .visibleBackpackCount() == null,
+            SimpleAssert.that(
+                HologramLibraryMaterialDescription.describe(null, inventory, 0) == null
+                    && HologramLibraryMaterialDescription.describe(forecast, null, 0)
+                        .rows()
+                        .get(0)
+                        .visibleBackpackCount() == null
+                    && HologramLibraryMaterialDescription.describe(forecast, inventory, -1)
+                        .rows()
+                        .get(0)
+                        .visibleBackpackCount() == null
+                    && HologramLibraryMaterialDescription.describe(forecast, inventory, 9)
+                        .rows()
+                        .get(0)
+                        .visibleBackpackCount() == null,
                 "an absent capture, unavailable inventory and unverified projector slot cannot imply zero");
             var empty = HologramLibraryMaterialDescription.describe(forecast, new ItemStack[36], 0);
-            SimpleAssert.eq(Long.valueOf(0), empty.rows().get(0).visibleBackpackCount(),
+            SimpleAssert.eq(
+                Long.valueOf(0),
+                empty.rows()
+                    .get(0)
+                    .visibleBackpackCount(),
                 "only a proved observable empty inventory has a zero");
             inventory[1].stackSize = 1;
             SimpleAssert.eq(Long.valueOf(48), stone.visibleBackpackCount(), "the publication retains no live stacks");
         }
         SimpleAssert.eq(0, providerCalls.get(), "no native provider callback ran");
         SimpleAssert.eq(0, itemCalls.get(), "no dynamic inventory item callback ran");
-        SimpleAssert.that(GTMBExtensions.descriptors().stream().noneMatch(row -> providerId.equals(row.id)),
+        SimpleAssert.that(
+            GTMBExtensions.descriptors()
+                .stream()
+                .noneMatch(row -> providerId.equals(row.id)),
             "the hostile fixture owns and retires only its one test registration");
     }
 

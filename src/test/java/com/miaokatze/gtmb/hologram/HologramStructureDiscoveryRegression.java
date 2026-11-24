@@ -101,7 +101,9 @@ final class HologramStructureDiscoveryRegression {
                 HologramBlockRendererPreview.requirePortableHeight(anchor + relative, anchor);
                 throw new AssertionError("accepted out-of-range relative Y " + relative);
             } catch (IOException expected) {
-                SimpleAssert.that(expected.getMessage().endsWith(Integer.toString(relative)),
+                SimpleAssert.that(
+                    expected.getMessage()
+                        .endsWith(Integer.toString(relative)),
                     "the relative out-of-bounds row is reported");
             }
         }
@@ -115,8 +117,12 @@ final class HologramStructureDiscoveryRegression {
         source.tile = tile;
         PreviewFixture fixture = new PreviewFixture(tile, structureCompatFallback);
         ItemStack trigger = new ItemStack(Items.stick, 2);
-        try (HologramNativeStructurePreview preview =
-            new HologramNativeStructurePreview(tile, fixture, fixture, structureCompatFallback, trigger)) {
+        try (HologramNativeStructurePreview preview = new HologramNativeStructurePreview(
+            tile,
+            fixture,
+            fixture,
+            structureCompatFallback,
+            trigger)) {
             boolean done = preview.advance(System.nanoTime() - 1);
             SimpleAssert.eq(structureCompatFallback, done, "a write requires another native survival pass");
             SimpleAssert.eq(source, tile.getWorldObj(), "tile is detached from the simulation between passes");
@@ -125,16 +131,26 @@ final class HologramStructureDiscoveryRegression {
                 SimpleAssert.that(preview.advance(System.nanoTime() - 1), "the unchanged pass completes the preview");
             }
             SimpleAssert.eq(structureCompatFallback ? 1 : 2, fixture.rounds, "survival call count follows writes");
-            SimpleAssert.eq(structureCompatFallback ? 1 : 0, fixture.constructs, "only the compat -2 status requests construct");
-            SimpleAssert.eq("native preview fixture", preview.description().getStringTagAt(0), "native description preserved");
+            SimpleAssert.eq(
+                structureCompatFallback ? 1 : 0,
+                fixture.constructs,
+                "only the compat -2 status requests construct");
+            SimpleAssert.eq(
+                "native preview fixture",
+                preview.description()
+                    .getStringTagAt(0),
+                "native description preserved");
             var placements = preview.placements();
             HologramCapture.Cell observed = preview.cell(placements.next());
             SimpleAssert.eq(Blocks.stone, observed.block, "actual placed block is preserved");
             SimpleAssert.that(!placements.hasNext(), "controller anchor is excluded from native placements");
-            SimpleAssert.eq(fixture.latest, observed.element, "latest instrumented XYZ element supersedes the previous visit");
+            SimpleAssert
+                .eq(fixture.latest, observed.element, "latest instrumented XYZ element supersedes the previous visit");
             SimpleAssert.eq("", observed.prompt, "native element descriptions do not become player annotations");
-            SimpleAssert.that(observed.candidateComplete && observed.candidates.size() == 1
-                && observed.candidates.get(0).getItem() == new ItemStack(Blocks.cobblestone).getItem(),
+            SimpleAssert.that(
+                observed.candidateComplete && observed.candidates.size() == 1
+                    && observed.candidates.get(0)
+                        .getItem() == new ItemStack(Blocks.cobblestone).getItem(),
                 "native getBlocksToPlace supplies the final declaration candidates");
             SimpleAssert.eq(Blocks.air, source.getBlock(1, 128, 0), "source world never receives a placed block");
         }
@@ -149,8 +165,12 @@ final class HologramStructureDiscoveryRegression {
         PreviewFixture fixture = new PreviewFixture(tile, false, true);
         ItemStack trigger = new ItemStack(Items.stick, 2);
         ChannelDataAccessor.setChannelData(trigger, "gt_hatch", 9);
-        try (HologramNativeStructurePreview preview =
-            new HologramNativeStructurePreview(tile, fixture, fixture, false, trigger)) {
+        try (HologramNativeStructurePreview preview = new HologramNativeStructurePreview(
+            tile,
+            fixture,
+            fixture,
+            false,
+            trigger)) {
             SimpleAssert.that(!preview.advance(System.nanoTime() - 1), "GT survival waits for a stable pass");
             SimpleAssert.eq(1, fixture.previewsStarted, "pre-hook precedes the first survival pass");
             SimpleAssert.eq(0, fixture.previewsCompleted, "completion waits until survival is stable");
@@ -158,9 +178,20 @@ final class HologramStructureDiscoveryRegression {
             SimpleAssert.eq(1, fixture.previewsStarted, "resuming a pass never reruns the pre-hook");
             SimpleAssert.eq(1, fixture.previewsCompleted, "post-hook contributes its geometry once");
             var placements = preview.placements();
-            SimpleAssert.eq(Blocks.stone, placements.next().block(), "GT survival's placement was retained");
-            SimpleAssert.eq(Blocks.glass, placements.next().block(), "GT completion hook's placement was retained");
-            SimpleAssert.eq(9, ChannelDataAccessor.getChannelData(trigger, "gt_hatch"), "forcing hatch 1 leaves saved settings alone");
+            SimpleAssert.eq(
+                Blocks.stone,
+                placements.next()
+                    .block(),
+                "GT survival's placement was retained");
+            SimpleAssert.eq(
+                Blocks.glass,
+                placements.next()
+                    .block(),
+                "GT completion hook's placement was retained");
+            SimpleAssert.eq(
+                9,
+                ChannelDataAccessor.getChannelData(trigger, "gt_hatch"),
+                "forcing hatch 1 leaves saved settings alone");
         }
     }
 
@@ -217,7 +248,8 @@ final class HologramStructureDiscoveryRegression {
             SimpleAssert.eq(Integer.MAX_VALUE, budget, "each native pass receives the browser's full placement budget");
             if (gregTech) {
                 SimpleAssert.eq(1, previewsStarted, "GT pre-hook runs before survival");
-                SimpleAssert.eq(1, ChannelDataAccessor.getChannelData(trigger, "gt_hatch"), "native GT preview forces hatch 1");
+                SimpleAssert
+                    .eq(1, ChannelDataAccessor.getChannelData(trigger, "gt_hatch"), "native GT preview forces hatch 1");
             }
             if (fallback) return -2;
             visit(world, rounds == 1 ? first : latest);
@@ -225,7 +257,14 @@ final class HologramStructureDiscoveryRegression {
                 SimpleAssert.eq(
                     IStructureElement.PlaceResult.ACCEPT,
                     StructureUtility.survivalPlaceBlock(
-                        Blocks.stone, 0, world, 1, 128, 0, environment.getSource(), environment.getActor()),
+                        Blocks.stone,
+                        0,
+                        world,
+                        1,
+                        128,
+                        0,
+                        environment.getSource(),
+                        environment.getActor()),
                     "detached creative source and actor can execute native survival placement");
                 // The Large Solar Overpressure Array queries sky visibility inside its first build pass.
                 SimpleAssert.that(world.canBlockSeeTheSky(1, 129, 0), "preview queries can see the empty sky");
@@ -255,7 +294,8 @@ final class HologramStructureDiscoveryRegression {
 
         @Override
         public void onPreviewStructureComplete(ItemStack trigger) {
-            tile.getWorldObj().setBlock(2, 128, 0, Blocks.glass, 0, 2);
+            tile.getWorldObj()
+                .setBlock(2, 128, 0, Blocks.glass, 0, 2);
             previewsCompleted++;
         }
 
@@ -264,7 +304,13 @@ final class HologramStructureDiscoveryRegression {
             try {
                 Constructor<StructureElementVisitedEvent> constructor = StructureElementVisitedEvent.class
                     .getDeclaredConstructor(
-                        World.class, int.class, int.class, int.class, int.class, int.class, int.class,
+                        World.class,
+                        int.class,
+                        int.class,
+                        int.class,
+                        int.class,
+                        int.class,
+                        int.class,
                         IStructureElement.class);
                 constructor.setAccessible(true);
                 new HologramNativeStructurePreview.VisitedListener()

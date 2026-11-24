@@ -61,8 +61,7 @@ public final class HologramPlacementUpload {
 
     static void send(Prepared prepared, BooleanSupplier valid) throws IOException {
         Outgoing active = OUTGOING.get();
-        if (active != null && active.context.current())
-            throw new IOException("另一个施工清单正在上传，请稍后重试");
+        if (active != null && active.context.current()) throw new IOException("另一个施工清单正在上传，请稍后重试");
         ClientContext context = new ClientContext();
         if (context.player == null || context.world == null || context.connection == null)
             throw new IOException("施工上传缺少当前客户端连接");
@@ -82,9 +81,7 @@ public final class HologramPlacementUpload {
             return;
         }
         if (current.window.expired(System.nanoTime())) {
-            failClient(current, current.window.acknowledged() == 0
-                ? "服务器未确认施工上传，确认两端 GTMB 版本一致后重试"
-                : "施工清单上传超时，请重试");
+            failClient(current, current.window.acknowledged() == 0 ? "服务器未确认施工上传，确认两端 GTMB 版本一致后重试" : "施工清单上传超时，请重试");
             return;
         }
         for (int sent = 0; sent < WINDOW && OUTGOING.get() == current; sent++) {
@@ -116,7 +113,8 @@ public final class HologramPlacementUpload {
 
     static void finishedClient(String id) {
         Outgoing current = OUTGOING.get();
-        if (current != null && current.prepared.id.toString().equals(id)) OUTGOING.compareAndSet(current, null);
+        if (current != null && current.prepared.id.toString()
+            .equals(id)) OUTGOING.compareAndSet(current, null);
     }
 
     static void clearClient() {
@@ -130,13 +128,17 @@ public final class HologramPlacementUpload {
 
     static void cancel(EntityPlayerMP player, String id) {
         Incoming incoming = INCOMING.get(player.getUniqueID());
-        if (incoming == null || !incoming.ownedBy(player) || !incoming.id.toString().equals(id)) return;
+        if (incoming == null || !incoming.ownedBy(player)
+            || !incoming.id.toString()
+                .equals(id))
+            return;
         incoming.cancelled = true;
         if (incoming.finished()) release(player.getUniqueID());
     }
 
     static void clearServer() {
-        Iterator<Incoming> uploads = INCOMING.values().iterator();
+        Iterator<Incoming> uploads = INCOMING.values()
+            .iterator();
         while (uploads.hasNext()) {
             Incoming incoming = uploads.next();
             incoming.cancelled = true;
@@ -163,9 +165,9 @@ public final class HologramPlacementUpload {
             if (incoming == null) {
                 if (frame.index != 0) throw new IOException("缺少施工清单的首个分片");
                 if (INCOMING.size() >= MAX_UPLOADS || frame.total > GLOBAL_BYTES - reserved
-                    || HologramProjectedPlacementService.preparing(player) || HologramDemolition.active(player)
-                    || HologramAeCraftingOrders.active(player))
-                    throw new IOException("施工上传队列繁忙，请稍后重试");
+                    || HologramProjectedPlacementService.preparing(player)
+                    || HologramDemolition.active(player)
+                    || HologramAeCraftingOrders.active(player)) throw new IOException("施工上传队列繁忙，请稍后重试");
                 if (player.isDead || !player.capabilities.allowEdit
                     || !ItemNekoHologramProjector.isProjector(player.getHeldItem()))
                     throw new IOException("施工上传需要当前世界中的投影仪");
@@ -199,7 +201,8 @@ public final class HologramPlacementUpload {
 
     static void tick() {
         long now = System.nanoTime();
-        Iterator<Incoming> uploads = INCOMING.values().iterator();
+        Iterator<Incoming> uploads = INCOMING.values()
+            .iterator();
         while (uploads.hasNext()) {
             Incoming incoming = uploads.next();
             if (!incoming.cancelled && (!incoming.current() || now - incoming.started > TOTAL_LIMIT
@@ -218,10 +221,16 @@ public final class HologramPlacementUpload {
                 } catch (ExecutionException invalid) {
                     String id = incoming.id.toString();
                     HologramProjectedPlacementService.retire(incoming.player, id);
-                    HologramProjectedPlacementService.reply(incoming.player, id, false,
-                        HologramAePolicy.fallback(invalid.getCause().getMessage()));
+                    HologramProjectedPlacementService.reply(
+                        incoming.player,
+                        id,
+                        false,
+                        HologramAePolicy.fallback(
+                            invalid.getCause()
+                                .getMessage()));
                 } catch (InterruptedException interrupted) {
-                    Thread.currentThread().interrupt();
+                    Thread.currentThread()
+                        .interrupt();
                     return;
                 }
             }
@@ -239,7 +248,8 @@ public final class HologramPlacementUpload {
 
     static byte[] digest(byte[] bytes) {
         try {
-            return MessageDigest.getInstance("SHA-256").digest(bytes);
+            return MessageDigest.getInstance("SHA-256")
+                .digest(bytes);
         } catch (NoSuchAlgorithmException impossible) {
             throw new IllegalStateException(impossible);
         }
@@ -267,7 +277,11 @@ public final class HologramPlacementUpload {
         Fragment frame(int index) {
             if (index < 0 || index >= frameCount()) throw new IllegalArgumentException("placement frame index");
             int start = index * CHUNK_BYTES;
-            return new Fragment(id, bytes.length, index, digest.clone(),
+            return new Fragment(
+                id,
+                bytes.length,
+                index,
+                digest.clone(),
                 Arrays.copyOfRange(bytes, start, Math.min(start + CHUNK_BYTES, bytes.length)));
         }
     }
@@ -285,7 +299,8 @@ public final class HologramPlacementUpload {
 
         boolean current() {
             Minecraft minecraft = Minecraft.getMinecraft();
-            return minecraft.thePlayer == player && minecraft.theWorld == world && minecraft.getNetHandler() == connection;
+            return minecraft.thePlayer == player && minecraft.theWorld == world
+                && minecraft.getNetHandler() == connection;
         }
     }
 
@@ -361,14 +376,16 @@ public final class HologramPlacementUpload {
         volatile boolean cancelled;
         FutureTask<NBTTagCompound> decoding;
 
-        Incoming(EntityPlayerMP player, World world, NetHandlerPlayServer connection, Fragment first) throws IOException {
+        Incoming(EntityPlayerMP player, World world, NetHandlerPlayServer connection, Fragment first)
+            throws IOException {
             this.player = player;
             this.world = world;
             this.connection = connection;
             slot = player.inventory.currentItem;
             tool = new HologramSessionPolicy.PreparationTool(player.getHeldItem());
             workspace = HologramWorkspace.find(player.getUniqueID());
-            if (workspace != null && (workspace.job == 1 || workspace.job == 2 || workspace.capturePending
+            if (workspace != null && (workspace.job == 1 || workspace.job == 2
+                || workspace.capturePending
                 || HologramAuthoringWorkflow.blueprintHasUnsavedChanges(workspace)))
                 throw new IOException("请先处理当前施工、采集或未保存的服务器草稿");
             revision = workspace == null ? -1 : workspace.planRevision;
@@ -383,9 +400,13 @@ public final class HologramPlacementUpload {
 
         boolean current() {
             ItemStack held = player.getHeldItem();
-            return ownedBy(player) && HologramNetwork.progressConnected(player) && player.worldObj == world
-                && !player.isDead && player.capabilities.allowEdit && player.inventory.currentItem == slot
-                && tool.matches(held) && ItemNekoHologramProjector.isProjector(held)
+            return ownedBy(player) && HologramNetwork.progressConnected(player)
+                && player.worldObj == world
+                && !player.isDead
+                && player.capabilities.allowEdit
+                && player.inventory.currentItem == slot
+                && tool.matches(held)
+                && ItemNekoHologramProjector.isProjector(held)
                 && HologramWorkspace.find(player.getUniqueID()) == workspace
                 && (workspace == null || workspace.planRevision == revision && workspace.editorWorkspaceEpoch == epoch);
         }
@@ -410,8 +431,10 @@ public final class HologramPlacementUpload {
         }
 
         byte[] accept(Fragment frame) throws IOException {
-            if (!frame.valid() || !id.equals(frame.id) || frame.total != bytes.length
-                || frame.index != next || !MessageDigest.isEqual(digest, frame.digest)) throw malformed();
+            if (!frame.valid() || !id.equals(frame.id)
+                || frame.total != bytes.length
+                || frame.index != next
+                || !MessageDigest.isEqual(digest, frame.digest)) throw malformed();
             System.arraycopy(frame.data, 0, bytes, next * CHUNK_BYTES, frame.data.length);
             return ++next == frames(bytes.length) ? bytes : null;
         }
@@ -420,8 +443,11 @@ public final class HologramPlacementUpload {
             if (next != frames(bytes.length) || !MessageDigest.isEqual(digest, digest(bytes))) throw malformed();
             if (bytes.length < 2 || bytes[0] != (byte) 0x1f || bytes[1] != (byte) 0x8b) throw malformed();
             NBTTagCompound tag = HologramSnapshotCodec.decode(bytes, MAX_EXPANDED, 4L * MAX_EXPANDED);
-            if (!"projectedPlacement".equals(tag.getString("action")) || !id.toString().equals(
-                HologramPlacementRequest.header(tag).id())) throw malformed();
+            if (!"projectedPlacement".equals(tag.getString("action")) || !id.toString()
+                .equals(
+                    HologramPlacementRequest.header(tag)
+                        .id()))
+                throw malformed();
             return tag;
         }
     }
@@ -451,8 +477,13 @@ public final class HologramPlacementUpload {
         }
 
         private boolean valid() {
-            return id != null && total > 0 && total <= MAX_COMPRESSED && index >= 0 && index < frames(total)
-                && digest != null && digest.length == 32 && data != null
+            return id != null && total > 0
+                && total <= MAX_COMPRESSED
+                && index >= 0
+                && index < frames(total)
+                && digest != null
+                && digest.length == 32
+                && data != null
                 && data.length == Math.min(CHUNK_BYTES, total - index * CHUNK_BYTES)
                 && HEADER + data.length + C17_DISCRIMINATOR_BYTES < C17_PAYLOAD_LIMIT;
         }
@@ -460,7 +491,8 @@ public final class HologramPlacementUpload {
         @Override
         public void fromBytes(ByteBuf buffer) {
             int size = buffer.readableBytes();
-            if (size <= HEADER || size > HEADER + CHUNK_BYTES) throw new IllegalArgumentException("placement fragment size");
+            if (size <= HEADER || size > HEADER + CHUNK_BYTES)
+                throw new IllegalArgumentException("placement fragment size");
             id = new UUID(buffer.readLong(), buffer.readLong());
             total = buffer.readInt();
             index = buffer.readInt();
@@ -481,7 +513,8 @@ public final class HologramPlacementUpload {
             buffer.writeInt(index);
             buffer.writeBytes(digest);
             buffer.writeBytes(data);
-            HologramRuntimeMetrics.packet(HologramRuntimeMetrics.Packet.PLACEMENT_FRAGMENT, true, true, HEADER + data.length);
+            HologramRuntimeMetrics
+                .packet(HologramRuntimeMetrics.Packet.PLACEMENT_FRAGMENT, true, true, HEADER + data.length);
         }
     }
 
@@ -493,8 +526,9 @@ public final class HologramPlacementUpload {
             EntityPlayerMP player = connection.playerEntity;
             World world = player.worldObj;
             HologramRequestGate.Lease lease = GATE.acquire(connection);
-            if (lease != null) ServerTaskScheduler.scheduleServerTask(() -> HologramNetwork.runQueuedAction(
-                player, world, lease, () -> receive(player, world, connection, frame)));
+            if (lease != null) ServerTaskScheduler.scheduleServerTask(
+                () -> HologramNetwork
+                    .runQueuedAction(player, world, lease, () -> receive(player, world, connection, frame)));
             return null;
         }
     }

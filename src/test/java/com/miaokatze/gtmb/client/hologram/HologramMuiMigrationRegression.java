@@ -90,12 +90,15 @@ public final class HologramMuiMigrationRegression {
     }
 
     private static void noEagerFallbackResources() throws IOException {
-        assertAllocationSite("HologramMuiCanvasScreen", BASE + "HologramMuiCanvasScreen$ControlLayer",
+        assertAllocationSite(
+            "HologramMuiCanvasScreen",
+            BASE + "HologramMuiCanvasScreen$ControlLayer",
             "fallbackControlLayer");
         assertAllocationSite("HologramUiCanvas", "net/minecraft/client/renderer/entity/RenderItem", "drawItem");
     }
 
-    private static void assertAllocationSite(String owner, String allocation, String expectedMethod) throws IOException {
+    private static void assertAllocationSite(String owner, String allocation, String expectedMethod)
+        throws IOException {
         Set<String> sites = new HashSet<>();
         // The Gradle compile classpath exposes Forge ASM 5; runHologramTest supplies ASM 9.8.
         reader(BASE + owner).accept(new ClassVisitor(9 << 16) {
@@ -112,7 +115,10 @@ public final class HologramMuiMigrationRegression {
                 };
             }
         }, ClassReader.SKIP_DEBUG | ClassReader.SKIP_FRAMES);
-        SimpleAssert.eq(Collections.singleton(expectedMethod), sites, owner + " allocates " + allocation + " only on first use");
+        SimpleAssert.eq(
+            Collections.singleton(expectedMethod),
+            sites,
+            owner + " allocates " + allocation + " only on first use");
     }
 
     private static void nativeButtonStates() {

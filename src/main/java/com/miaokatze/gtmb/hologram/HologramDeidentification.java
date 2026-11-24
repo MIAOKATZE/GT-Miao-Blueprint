@@ -56,7 +56,8 @@ final class HologramDeidentification {
     }
 
     static int level(HologramPresets.Preset preset) {
-        return preset == null ? 0 : level(preset.deidentificationLevel, preset.deidentificationVersion, preset.aePolicyVersion);
+        return preset == null ? 0
+            : level(preset.deidentificationLevel, preset.deidentificationVersion, preset.aePolicyVersion);
     }
 
     static int level(int authoredLevel, int version, int aeVersion) {

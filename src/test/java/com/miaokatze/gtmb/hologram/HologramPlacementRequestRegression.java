@@ -41,20 +41,31 @@ final class HologramPlacementRequestRegression {
     }
 
     private static void testDirectIntent() {
-        var cell = new HologramProjectedPlacement.Cell(0, 0, 0, "minecraft:cobblestone", 0,
-            "minecraft:cobblestone", 0, -1);
-        var plan = new HologramProjectedPlacement.Plan(Collections.singletonList(cell),
+        var cell = new HologramProjectedPlacement.Cell(
+            0,
+            0,
+            0,
+            "minecraft:cobblestone",
+            0,
+            "minecraft:cobblestone",
+            0,
+            -1);
+        var plan = new HologramProjectedPlacement.Plan(
+            Collections.singletonList(cell),
             Collections.singletonList(new HologramProjectedPlacement.Need("minecraft:cobblestone", 0, 1)));
         UUID id = UUID.randomUUID();
         int[] anchor = { 1, 64, 1 };
         try {
             NBTTagCompound legacy = HologramPlacementRequest.encode(id, anchor, plan);
-            if (HologramPlacementRequest.header(legacy).direct()) throw new AssertionError("Legacy is review-only");
+            if (HologramPlacementRequest.header(legacy)
+                .direct()) throw new AssertionError("Legacy is review-only");
             NBTTagCompound direct = HologramPlacementRequest.encodeDirect(id, anchor, plan);
             var restored = reassemble(HologramNetwork.prepareProjectedPlacement(direct, () -> true));
             var header = HologramPlacementRequest.header(restored);
-            if (!header.direct() || !header.id().equals(id.toString())
-                || HologramPlacementRequest.decode(header, restored, 256).size() != 1)
+            if (!header.direct() || !header.id()
+                .equals(id.toString())
+                || HologramPlacementRequest.decode(header, restored, 256)
+                    .size() != 1)
                 throw new AssertionError("Explicit direct intent must cross the same bounded placement upload");
             NBTTagCompound sources = (NBTTagCompound) direct.copy();
             sources.setTag("materialSources", new NBTTagCompound());
@@ -105,8 +116,9 @@ final class HologramPlacementRequestRegression {
                 throw new AssertionError("A small execution request did not use the same bounded upload");
             NBTTagCompound smallRestored = reassemble(small);
             if (smallRestored.getInteger("clientSnapshotFlow") != HologramSnapshotFlowControl.VERSION
-                || tag.hasKey("clientSnapshotFlow") || HologramPlacementRequest.decode(
-                    HologramPlacementRequest.header(smallRestored), smallRestored, 256).size() != 2)
+                || tag.hasKey("clientSnapshotFlow")
+                || HologramPlacementRequest.decode(HologramPlacementRequest.header(smallRestored), smallRestored, 256)
+                    .size() != 2)
                 throw new AssertionError("Streamed review lost the normal next-snapshot credit capability or plan");
             expectFailure(() -> HologramNetwork.prepareProjectedPlacement(tag, () -> false));
             try {
@@ -117,8 +129,10 @@ final class HologramPlacementRequestRegression {
             }
             if (!id.toString()
                 .equals(header.id()) || decoded.size() != 2
-                || decoded.cell(0).x() != -2
-                || decoded.cell(1).z() != -2
+                || decoded.cell(0)
+                    .x() != -2
+                || decoded.cell(1)
+                    .z() != -2
                 || !tag.getCompoundTag("blueprint")
                     .hasNoTags()
                 || tag.getTagList("placementVariants", 10)
@@ -150,11 +164,14 @@ final class HologramPlacementRequestRegression {
             byte[] detachedCells = ("{\"schema\":2,\"blueprint\":{\"schema\":2,\"id\":\"old\",\"name\":\"Old\","
                 + "\"structures\":[{\"id\":\"removed-provider\",\"sourceClass\":\"missing.Source\",\"main\":0}],"
                 + "\"cells\":[{\"x\":0,\"y\":0,\"z\":0,\"block\":\"minecraft:stone\",\"item\":\"minecraft:stone\","
-                + "\"metadata\":0,\"damage\":0,\"structureId\":\"removed-group\"}]}}")
-                    .getBytes(StandardCharsets.UTF_8);
+                + "\"metadata\":0,\"damage\":0,\"structureId\":\"removed-group\"}]}}").getBytes(StandardCharsets.UTF_8);
             HologramProjectedPlacement.Plan detached = HologramProjectedPlacement
                 .compile(detachedCells, new int[] { 100, 64, 200 }, new int[0], 256, () -> true);
-            if (detached.cells().size() != 1 || detached.needs().get(0).count() != 1)
+            if (detached.cells()
+                .size() != 1
+                || detached.needs()
+                    .get(0)
+                    .count() != 1)
                 throw new AssertionError("Stored grid operations must be independent of old declaration or group data");
         } catch (IOException | InterruptedException failure) {
             throw new AssertionError(failure);
@@ -198,7 +215,9 @@ final class HologramPlacementRequestRegression {
             operations[4 * i + 2] = random.nextInt(2 * spread) - spread;
         }
         plan.setIntArray("placementOperations", operations);
-        plan.getTagList("placementMaterials", 10).getCompoundTagAt(0).setInteger("count", cells);
+        plan.getTagList("placementMaterials", 10)
+            .getCompoundTagAt(0)
+            .setInteger("count", cells);
         return plan;
     }
 
@@ -210,10 +229,13 @@ final class HologramPlacementRequestRegression {
             throw new AssertionError("Synthetic placement no longer covers the release's unsafe selection gap");
         NBTTagCompound restored = reassemble(upload);
         if (!Arrays.equals(restored.getIntArray("placementOperations"), plan.getIntArray("placementOperations"))
-            || !restored.getTag("placementMaterials").equals(plan.getTag("placementMaterials"))
-            || !restored.getTag("placementVariants").equals(plan.getTag("placementVariants"))
+            || !restored.getTag("placementMaterials")
+                .equals(plan.getTag("placementMaterials"))
+            || !restored.getTag("placementVariants")
+                .equals(plan.getTag("placementVariants"))
             || restored.getInteger("clientSnapshotFlow") != HologramSnapshotFlowControl.VERSION
-            || HologramPlacementRequest.decode(HologramPlacementRequest.header(restored), restored, 256).size() != cells)
+            || HologramPlacementRequest.decode(HologramPlacementRequest.header(restored), restored, 256)
+                .size() != cells)
             throw new AssertionError("The medium streamed placement could not hand off an exact review request");
     }
 
@@ -230,8 +252,8 @@ final class HologramPlacementRequestRegression {
             Class<HologramServiceEditRegression.ReadOnlyWorld> worldType = HologramServiceEditRegression.ReadOnlyWorld.class;
             var world = (HologramServiceEditRegression.ReadOnlyWorld) unsafe.allocateInstance(worldType);
             var otherWorld = (HologramServiceEditRegression.ReadOnlyWorld) unsafe.allocateInstance(worldType);
-            Method factory = HologramLibraryServiceRegression.class.getDeclaredMethod(
-                "player", sun.misc.Unsafe.class, worldType, UUID.class, String.class);
+            Method factory = HologramLibraryServiceRegression.class
+                .getDeclaredMethod("player", sun.misc.Unsafe.class, worldType, UUID.class, String.class);
             factory.setAccessible(true);
             UUID actor = UUID.randomUUID();
             player = (EntityPlayerMP) factory.invoke(null, unsafe, world, actor, "PreparationToolFixture");
@@ -240,18 +262,22 @@ final class HologramPlacementRequestRegression {
             player.posY = 64;
             player.posZ = .5;
             ItemStack original = player.getHeldItem();
-            String id = UUID.randomUUID().toString();
+            String id = UUID.randomUUID()
+                .toString();
             NBTTagCompound identity = new NBTTagCompound();
             identity.setString(HologramSessionKeys.TOOL_ID, id);
             identity.setInteger("gtitHologramMain", 1);
             original.setTagCompound(identity);
 
-            NBTTagCompound tag = HologramPlacementRequest.encode(UUID.randomUUID(), new int[] {0, 64, 0}, plan);
+            NBTTagCompound tag = HologramPlacementRequest.encode(UUID.randomUUID(), new int[] { 0, 64, 0 }, plan);
             var header = HologramPlacementRequest.header(tag);
             var upload = HologramNetwork.prepareProjectedPlacement(tag, () -> true);
             Class<?> incomingType = Class.forName(HologramPlacementUpload.class.getName() + "$Incoming");
             var incomingCtor = incomingType.getDeclaredConstructor(
-                EntityPlayerMP.class, World.class, NetHandlerPlayServer.class, HologramPlacementUpload.Fragment.class);
+                EntityPlayerMP.class,
+                World.class,
+                NetHandlerPlayServer.class,
+                HologramPlacementUpload.Fragment.class);
             incomingCtor.setAccessible(true);
             var current = incomingType.getDeclaredMethod("current");
             current.setAccessible(true);
@@ -259,7 +285,9 @@ final class HologramPlacementRequestRegression {
             ownership.setAccessible(true);
             Class<?> jobType = Class.forName(HologramProjectedPlacementService.class.getName() + "$Job");
             var jobCtor = jobType.getDeclaredConstructor(
-                EntityPlayerMP.class, HologramPlacementRequest.Header.class, NBTTagCompound.class);
+                EntityPlayerMP.class,
+                HologramPlacementRequest.Header.class,
+                NBTTagCompound.class);
             jobCtor.setAccessible(true);
             var firstRejection = jobType.getDeclaredMethod("firstRejection");
             firstRejection.setAccessible(true);
@@ -271,7 +299,8 @@ final class HologramPlacementRequestRegression {
             SimpleAssert.that(detached != original, "the vanilla use copy changes Java reference");
             player.inventory.mainInventory[0] = detached;
             assertPreparation(current, incoming, firstRejection, job, true, null, "exact canonical held copy");
-            SimpleAssert.that(!Boolean.TRUE.equals(ownership.invoke(incoming, foreign)), "same UUID is not the same player");
+            SimpleAssert
+                .that(!Boolean.TRUE.equals(ownership.invoke(incoming, foreign)), "same UUID is not the same player");
 
             player.inventory.mainInventory[1] = detached;
             player.inventory.currentItem = 1;
@@ -292,7 +321,13 @@ final class HologramPlacementRequestRegression {
             var sessions = (java.util.Map<UUID, HologramSession>) sessionsField.get(null);
             sessions.put(actor, new HologramSession(player, 0, 64, 0, false, 1));
             try {
-                assertPreparation(current, incoming, firstRejection, job, false, Reason.WORKSPACE_CHANGED,
+                assertPreparation(
+                    current,
+                    incoming,
+                    firstRejection,
+                    job,
+                    false,
+                    Reason.WORKSPACE_CHANGED,
                     "changed workspace");
             } finally {
                 sessions.remove(actor);
@@ -307,9 +342,14 @@ final class HologramPlacementRequestRegression {
             player.capabilities.allowEdit = true;
 
             ItemStack wrongId = detached.copy();
-            wrongId.getTagCompound().setString(HologramSessionKeys.TOOL_ID, UUID.randomUUID().toString());
+            wrongId.getTagCompound()
+                .setString(
+                    HologramSessionKeys.TOOL_ID,
+                    UUID.randomUUID()
+                        .toString());
             ItemStack changedState = detached.copy();
-            changedState.getTagCompound().setInteger("gtitHologramMain", 2);
+            changedState.getTagCompound()
+                .setInteger("gtitHologramMain", 2);
             ItemStack changedCount = detached.copy();
             changedCount.stackSize++;
             ItemStack changedDamage = detached.copy();
@@ -318,40 +358,78 @@ final class HologramPlacementRequestRegression {
             wrongItem.setTagCompound((NBTTagCompound) identity.copy());
             for (ItemStack replaced : Arrays.asList(wrongId, changedState, changedCount, changedDamage, wrongItem)) {
                 player.inventory.mainInventory[0] = replaced;
-                assertPreparation(current, incoming, firstRejection, job, false, Reason.STACK_REPLACED,
+                assertPreparation(
+                    current,
+                    incoming,
+                    firstRejection,
+                    job,
+                    false,
+                    Reason.STACK_REPLACED,
                     "replacement differs in captured identity or tool state");
             }
-            original.getTagCompound().setInteger("gtitHologramMain", 2);
+            original.getTagCompound()
+                .setInteger("gtitHologramMain", 2);
             player.inventory.mainInventory[0] = original;
             assertPreparation(current, incoming, firstRejection, job, true, null, "original ref semantics unchanged");
             player.inventory.mainInventory[0] = original.copy();
-            assertPreparation(current, incoming, firstRejection, job, false, Reason.STACK_REPLACED,
+            assertPreparation(
+                current,
+                incoming,
+                firstRejection,
+                job,
+                false,
+                Reason.STACK_REPLACED,
                 "a detached replacement must match the immutable pre-copy capture");
 
             ItemStack virgin = new ItemStack(original.getItem());
             player.inventory.mainInventory[0] = virgin;
             Object unstampedIncoming = incomingCtor.newInstance(player, world, connection, upload.frame(0));
             Object unstampedJob = jobCtor.newInstance(player, header, tag);
-            assertPreparation(current, unstampedIncoming, firstRejection, unstampedJob, true, null, "untagged original");
+            assertPreparation(
+                current,
+                unstampedIncoming,
+                firstRejection,
+                unstampedJob,
+                true,
+                null,
+                "untagged original");
             player.inventory.mainInventory[0] = virgin.copy();
-            assertPreparation(current, unstampedIncoming, firstRejection, unstampedJob, false, Reason.STACK_REPLACED,
+            assertPreparation(
+                current,
+                unstampedIncoming,
+                firstRejection,
+                unstampedJob,
+                false,
+                Reason.STACK_REPLACED,
                 "untagged lookalikes receive no replacement authority");
             player.inventory.mainInventory[0] = original;
             detachedDirectAdmission(player, world, sessions, jobType, jobCtor);
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("real projected preparation guards", failure);
         } finally {
-            if (player != null && player.playerNetServerHandler != null) player.playerNetServerHandler.netManager.channel().close();
-            if (foreign != null && foreign.playerNetServerHandler != null) foreign.playerNetServerHandler.netManager.channel().close();
+            if (player != null && player.playerNetServerHandler != null)
+                player.playerNetServerHandler.netManager.channel()
+                    .close();
+            if (foreign != null && foreign.playerNetServerHandler != null)
+                foreign.playerNetServerHandler.netManager.channel()
+                    .close();
         }
     }
 
     private static void detachedDirectAdmission(EntityPlayerMP player, World world,
         java.util.Map<UUID, HologramSession> sessions, Class<?> jobType, java.lang.reflect.Constructor<?> constructor)
         throws IOException, ReflectiveOperationException {
-        var cell = new HologramProjectedPlacement.Cell(0, 0, 0, "minecraft:cobblestone", 0,
-            "minecraft:cobblestone", 0, -1);
-        var plan = new HologramProjectedPlacement.Plan(Collections.singletonList(cell),
+        var cell = new HologramProjectedPlacement.Cell(
+            0,
+            0,
+            0,
+            "minecraft:cobblestone",
+            0,
+            "minecraft:cobblestone",
+            0,
+            -1);
+        var plan = new HologramProjectedPlacement.Plan(
+            Collections.singletonList(cell),
             Collections.singletonList(new HologramProjectedPlacement.Need("minecraft:cobblestone", 0, 1)));
         UUID request = UUID.randomUUID(), actor = player.getUniqueID();
         int[] anchor = { 0, 64, 0 };
@@ -378,19 +456,26 @@ final class HologramPlacementRequestRegression {
             try {
                 SimpleAssert.eq(true, step.invoke(job, Long.MAX_VALUE), "real direct admission finishes its start");
             } catch (InvocationTargetException failure) {
-                throw new AssertionError("real detached direct admission must get past the voucher-rules gate",
+                throw new AssertionError(
+                    "real detached direct admission must get past the voucher-rules gate",
                     failure.getCause());
             }
             HologramSession s = HologramWorkspace.find(actor);
-            SimpleAssert.that(s != null && s.executionRequestId.equals(request.toString()) && s.job == 1
-                && s.work.equals(Collections.singletonList(0)), "only a real Start publishes one running owned cell");
-            SimpleAssert.that(HologramMaterialQuote.rulesCurrent(s.materialQuote)
-                && s.id.equals(s.materialQuote.getString("session"))
-                && s.materialQuote.getLong("planRevision") == s.planRevision
-                && !s.materialQuote.getBoolean("complete") && !s.materialQuote.getBoolean("useDecorationVoucher")
-                && !s.blueprintAwaitingConfirmation && s.materialQuoteCache == null,
+            SimpleAssert.that(
+                s != null && s.executionRequestId.equals(request.toString())
+                    && s.job == 1
+                    && s.work.equals(Collections.singletonList(0)),
+                "only a real Start publishes one running owned cell");
+            SimpleAssert.that(
+                HologramMaterialQuote.rulesCurrent(s.materialQuote) && s.id.equals(s.materialQuote.getString("session"))
+                    && s.materialQuote.getLong("planRevision") == s.planRevision
+                    && !s.materialQuote.getBoolean("complete")
+                    && !s.materialQuote.getBoolean("useDecorationVoucher")
+                    && !s.blueprintAwaitingConfirmation
+                    && s.materialQuoteCache == null,
                 "direct stamp is current and scoped, never a presented quote or voucher selection");
-            SimpleAssert.that(world.getBlock(0, 64, 0) == Blocks.air && material.stackSize == 1,
+            SimpleAssert.that(
+                world.getBlock(0, 64, 0) == Blocks.air && material.stackSize == 1,
                 "admitting a job is not placement or payment");
 
             // Exercise the actual Start again against the same priced plan, off the live workspace.
@@ -404,15 +489,20 @@ final class HologramPlacementRequestRegression {
                 stale.step(s, Long.MAX_VALUE);
                 throw new AssertionError("changed voucher rules must refuse before direct Start");
             } catch (IOException expected) {
-                SimpleAssert.that(expected.getMessage().contains("抵用券规则"), "expected changed voucher rules refusal");
+                SimpleAssert.that(
+                    expected.getMessage()
+                        .contains("抵用券规则"),
+                    "expected changed voucher rules refusal");
             }
             SimpleAssert.eq(0, s.job, "stale rules cannot start a job");
             revision.setLong(null, originalRevision);
 
             HologramMaterialQuote.stampDirectPlan(s);
             player.inventory.mainInventory[1] = null;
-            SimpleAssert.eq(true, new HologramExecutionReview.Start(s, new NBTTagCompound(), true)
-                .step(s, Long.MAX_VALUE), "missing stock ends authoritative startup check");
+            SimpleAssert.eq(
+                true,
+                new HologramExecutionReview.Start(s, new NBTTagCompound(), true).step(s, Long.MAX_VALUE),
+                "missing stock ends authoritative startup check");
             SimpleAssert.eq(0, s.job, "a valid stamp cannot authorize missing stock");
         } finally {
             HologramSession active = sessions.remove(actor);
@@ -439,7 +529,8 @@ final class HologramPlacementRequestRegression {
             for (int index = 0; index < prepared.frameCount(); index++) {
                 wire.clear();
                 wire.writeByte(10); // SimpleImpl discriminator included in Forge's complete custom payload length.
-                prepared.frame(index).toBytes(wire);
+                prepared.frame(index)
+                    .toBytes(wire);
                 if (wire.readableBytes() > 16_441 || wire.readableBytes() >= Short.MAX_VALUE)
                     throw new AssertionError("An emitted placement frame exceeds its C17 envelope");
                 wire.skipBytes(1);
@@ -478,7 +569,8 @@ final class HologramPlacementRequestRegression {
         ByteBuf wire = Unpooled.buffer();
         try {
             first.toBytes(wire);
-            if (wire.readableBytes() >= Short.MAX_VALUE) throw new AssertionError("Placement fragment exceeds C17 size");
+            if (wire.readableBytes() >= Short.MAX_VALUE)
+                throw new AssertionError("Placement fragment exceeds C17 size");
             HologramPlacementUpload.Fragment received = new HologramPlacementUpload.Fragment();
             received.fromBytes(wire);
             first = received;
@@ -489,39 +581,55 @@ final class HologramPlacementRequestRegression {
         HologramPlacementUpload.Assembly corrupt = new HologramPlacementUpload.Assembly(first);
         expectFailure(assembly::decode);
         expectFailure(() -> new HologramPlacementUpload.Assembly(fragment(id, compressed, checksum, 1)));
-        expectFailure(() -> new HologramPlacementUpload.Assembly(new HologramPlacementUpload.Fragment(
-            id, HologramPlacementUpload.MAX_COMPRESSED + 1, 0, checksum, firstData(compressed))));
+        expectFailure(
+            () -> new HologramPlacementUpload.Assembly(
+                new HologramPlacementUpload.Fragment(
+                    id,
+                    HologramPlacementUpload.MAX_COMPRESSED + 1,
+                    0,
+                    checksum,
+                    firstData(compressed))));
         if (assembly.accept(first) != null || corrupt.accept(first) != null)
             throw new AssertionError("A partial upload returned the operation payload");
         HologramPlacementUpload.Fragment duplicate = first;
         expectFailure(() -> assembly.accept(duplicate));
         expectFailure(() -> assembly.accept(fragment(id, compressed, checksum, 2)));
         expectFailure(() -> assembly.accept(fragment(UUID.randomUUID(), compressed, checksum, 1)));
-        int chunks = (compressed.length + HologramPlacementUpload.CHUNK_BYTES - 1) / HologramPlacementUpload.CHUNK_BYTES;
+        int chunks = (compressed.length + HologramPlacementUpload.CHUNK_BYTES - 1)
+            / HologramPlacementUpload.CHUNK_BYTES;
         for (int index = 1; index < chunks; index++) {
             HologramPlacementUpload.Fragment frame = fragment(id, compressed, checksum, index);
             byte[] result = assembly.accept(frame);
-            if ((result != null) != (index == chunks - 1)) throw new AssertionError("Placement finalized on the wrong fragment");
+            if ((result != null) != (index == chunks - 1))
+                throw new AssertionError("Placement finalized on the wrong fragment");
             if (index == chunks - 1) frame.data[0] ^= 1;
             corrupt.accept(frame);
         }
         expectFailure(corrupt::decode);
         NBTTagCompound restored = reassemble(prepared);
-        HologramPlacementRequest.Decoded decoded = HologramPlacementRequest.decode(
-            HologramPlacementRequest.header(restored), restored, 256);
-        if (decoded.size() != count || decoded.cell(count - 1).x() != count - 1
-            || decoded.cell(count - 1).z() != operations[4 * (count - 1) + 2])
+        HologramPlacementRequest.Decoded decoded = HologramPlacementRequest
+            .decode(HologramPlacementRequest.header(restored), restored, 256);
+        if (decoded.size() != count || decoded.cell(count - 1)
+            .x() != count - 1
+            || decoded.cell(count - 1)
+                .z() != operations[4 * (count - 1) + 2])
             throw new AssertionError("The segmented plan changed its operations");
 
         UUID falseOwner = UUID.randomUUID();
-        HologramPlacementUpload.Assembly mismatched = new HologramPlacementUpload.Assembly(fragment(falseOwner, compressed, checksum, 0));
-        for (int index = 0; index < chunks; index++) mismatched.accept(fragment(falseOwner, compressed, checksum, index));
+        HologramPlacementUpload.Assembly mismatched = new HologramPlacementUpload.Assembly(
+            fragment(falseOwner, compressed, checksum, 0));
+        for (int index = 0; index < chunks; index++)
+            mismatched.accept(fragment(falseOwner, compressed, checksum, index));
         expectFailure(mismatched::decode);
 
         NBTTagCompound unrelated = (NBTTagCompound) seed.copy();
         unrelated.setString("action", "checkPlacementMaterials");
         byte[] wrongAction = HologramSnapshotCodec.compress(unrelated);
-        HologramPlacementUpload.Fragment wrong = fragment(id, wrongAction, HologramPlacementUpload.digest(wrongAction), 0);
+        HologramPlacementUpload.Fragment wrong = fragment(
+            id,
+            wrongAction,
+            HologramPlacementUpload.digest(wrongAction),
+            0);
         HologramPlacementUpload.Assembly wrongKind = new HologramPlacementUpload.Assembly(wrong);
         wrongKind.accept(wrong);
         expectFailure(wrongKind::decode);
@@ -534,7 +642,12 @@ final class HologramPlacementRequestRegression {
     private static HologramPlacementUpload.Fragment fragment(UUID id, byte[] encoded, byte[] checksum, int index) {
         int start = index * HologramPlacementUpload.CHUNK_BYTES;
         int end = Math.min(encoded.length, start + HologramPlacementUpload.CHUNK_BYTES);
-        return new HologramPlacementUpload.Fragment(id, encoded.length, index, checksum, Arrays.copyOfRange(encoded, start, end));
+        return new HologramPlacementUpload.Fragment(
+            id,
+            encoded.length,
+            index,
+            checksum,
+            Arrays.copyOfRange(encoded, start, end));
     }
 
     private static void expectFailure(IoStep step) throws IOException {
@@ -558,16 +671,29 @@ final class HologramPlacementRequestRegression {
         payload.setString(HologramNetworkBindings.GROUP, "q1");
         String state = HologramBlueprintNbt.encodeCanonical(payload);
         HologramProjectedPlacement.Cell device = new HologramProjectedPlacement.Cell(
-            0, 0, 0, "gregtech:gt.blockmachines", 0, "gregtech:gt.blockmachines", 12, 3, true, state, "");
+            0,
+            0,
+            0,
+            "gregtech:gt.blockmachines",
+            0,
+            "gregtech:gt.blockmachines",
+            12,
+            3,
+            true,
+            state,
+            "");
         HologramProjectedPlacement.Plan devicePlan = new HologramProjectedPlacement.Plan(
             Collections.singletonList(device),
             Collections.singletonList(new HologramProjectedPlacement.Need(device.item(), device.damage(), 1)));
         NBTTagCompound request = HologramPlacementRequest.encode(id, new int[] { 10, 64, 20 }, devicePlan);
         HologramPlacementRequest.Header header = HologramPlacementRequest.header(request);
-        HologramProjectedPlacement.Cell decoded = HologramPlacementRequest.decode(header, request, 256).cell(0);
+        HologramProjectedPlacement.Cell decoded = HologramPlacementRequest.decode(header, request, 256)
+            .cell(0);
         if (!decoded.controller() || !payload.equals(HologramBlueprintNbt.decodeData(decoded.tile())))
             throw new AssertionError("Device operation state did not survive the compact payload palette");
-        request.getTagList("placementVariants", 10).getCompoundTagAt(0).setByteArray("device", new byte[] { 1 });
+        request.getTagList("placementVariants", 10)
+            .getCompoundTagAt(0)
+            .setByteArray("device", new byte[] { 1 });
         reject(header, request);
     }
 
@@ -590,20 +716,33 @@ final class HologramPlacementRequestRegression {
                 .equals(HologramPlacementRequest.materialCheck(check)))
             throw new AssertionError("Material inspection carried geometry or ignored the displayed scope");
         HologramMaterials.Settings settings = new HologramMaterials.Settings();
-        HologramPlacementRequest.sourceOptions(check).apply(settings);
-        if (settings.me || !settings.main || !settings.containers || settings.priority != 2)
-            throw new AssertionError("Explicit material sources did not preserve the held-tool defaults for absent fields");
-        HologramProjectedPlacement.Plan build = HologramProjectedPlacement.compileDisplayed(displayed, anchor, 256,
-            () -> true);
-        if (build.cells().size() != 1 || build.cells().get(0).y() != 1 || build.needs().get(0).count() != 1)
+        HologramPlacementRequest.sourceOptions(check)
+            .apply(settings);
+        if (settings.me || !settings.main || !settings.containers || settings.priority != 2) throw new AssertionError(
+            "Explicit material sources did not preserve the held-tool defaults for absent fields");
+        HologramProjectedPlacement.Plan build = HologramProjectedPlacement
+            .compileDisplayed(displayed, anchor, 256, () -> true);
+        if (build.cells()
+            .size() != 1
+            || build.cells()
+                .get(0)
+                .y() != 1
+            || build.needs()
+                .get(0)
+                .count() != 1)
             throw new AssertionError("Controller build ignored the selected layer");
         NBTTagCompound placement = HologramPlacementRequest.encode(id, anchor, build, displayed);
-        if (!HologramPlacementRequest.header(placement).sources().equals(HologramPlacementRequest.sourceOptions(check)))
+        if (!HologramPlacementRequest.header(placement)
+            .sources()
+            .equals(HologramPlacementRequest.sourceOptions(check)))
             throw new AssertionError("Placement and standalone check disagree about the selected material sources");
         displayed.setInteger("scope", 0);
-        HologramProjectedPlacement.Plan all = HologramProjectedPlacement.compileDisplayed(displayed, anchor, 256,
-            () -> true);
-        if (all.cells().size() != 2 || all.cells().stream().anyMatch(cell -> cell.x() == 0 && cell.y() == 0 && cell.z() == 0))
+        HologramProjectedPlacement.Plan all = HologramProjectedPlacement
+            .compileDisplayed(displayed, anchor, 256, () -> true);
+        if (all.cells()
+            .size() != 2 || all.cells()
+                .stream()
+                .anyMatch(cell -> cell.x() == 0 && cell.y() == 0 && cell.z() == 0))
             throw new AssertionError("Controller build included its protected anchor");
 
         NBTTagCompound hint = displayedRow(12, 64, 0, false);
@@ -618,10 +757,21 @@ final class HologramPlacementRequestRegression {
         displayed.setInteger("scope", 2);
         displayed.setInteger("selected", 1);
         displayed.setIntArray("selectedIndices", new int[] { 1 });
-        HologramProjectedPlacement.Plan concrete = HologramProjectedPlacement.compileDisplayed(
-            displayed, anchor, 256, () -> true);
-        if (concrete.cells().size() != 1 || concrete.cells().get(0).x() != 1 || concrete.cells().get(0).y() != 1
-            || concrete.needs().size() != 1 || concrete.needs().get(0).count() != 1)
+        HologramProjectedPlacement.Plan concrete = HologramProjectedPlacement
+            .compileDisplayed(displayed, anchor, 256, () -> true);
+        if (concrete.cells()
+            .size() != 1
+            || concrete.cells()
+                .get(0)
+                .x() != 1
+            || concrete.cells()
+                .get(0)
+                .y() != 1
+            || concrete.needs()
+                .size() != 1
+            || concrete.needs()
+                .get(0)
+                .count() != 1)
             throw new AssertionError("An out-of-scope hint blocked a known target or widened the requested scope");
 
         displayed.setInteger("selected", 3);

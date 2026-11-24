@@ -55,11 +55,24 @@ public final class HologramGiantNativeEditProbe {
     private static final String PACKED_FLAG = "gtmb.localBlueprint.packedAuthoring";
     private static final String WORLD_PATH = "miaotest.host.worldPath";
     private static final long SECOND = 1_000_000_000L;
-    private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
+    private static final Gson GSON = new GsonBuilder().setPrettyPrinting()
+        .create();
 
     private enum Stage {
-        TITLE, WORLD, OPEN, ROW, RENDER, WRITE, RESET_MENU, RESET_COMMAND, RESET_WAIT, EXIT, EXIT_WAIT,
-        RESTORE, SHUTDOWN, DONE
+        TITLE,
+        WORLD,
+        OPEN,
+        ROW,
+        RENDER,
+        WRITE,
+        RESET_MENU,
+        RESET_COMMAND,
+        RESET_WAIT,
+        EXIT,
+        EXIT_WAIT,
+        RESTORE,
+        SHUTDOWN,
+        DONE
     }
 
     /** Detached readback; never holds or changes live ItemStacks. */
@@ -72,7 +85,8 @@ public final class HologramGiantNativeEditProbe {
         InventorySample(EntityPlayer player, long serial) {
             this.serial = serial;
             selected = player.inventory.currentItem;
-            items = (NBTTagList) player.inventory.writeToNBT(new NBTTagList()).copy();
+            items = (NBTTagList) player.inventory.writeToNBT(new NBTTagList())
+                .copy();
         }
 
         boolean matches(InventorySample other) {
@@ -85,13 +99,15 @@ public final class HologramGiantNativeEditProbe {
     private final String fixtureJsonSha = fixture("jsonSha256", "[a-f0-9]{64}");
     private final String fixturePngSha = fixture("pngSha256", "[a-f0-9]{64}");
     private final int fixtureCells = Integer.parseInt(fixture("cells", "[1-9][0-9]{0,5}"));
-    private final String run = UUID.fromString(System.getProperty("miaotest.host.runId")).toString();
-    private final Path output = Paths.get(System.getProperty("gtmb.testlab.clientUiReceiptDir")).toAbsolutePath();
+    private final String run = UUID.fromString(System.getProperty("miaotest.host.runId"))
+        .toString();
+    private final Path output = Paths.get(System.getProperty("gtmb.testlab.clientUiReceiptDir"))
+        .toAbsolutePath();
     private final boolean expectedPackedAuthoring = Boolean.getBoolean(PACKED_FLAG);
     private final boolean firstWrite = Boolean.getBoolean(HologramGiantFirstWrite.FLAG);
     private final boolean crossHistory = Boolean.getBoolean(HologramGiantCellHistory.FLAG);
-    private final HologramGiantHistoryTiming historyTiming = HologramGiantHistoryTiming.optional(
-        Boolean.getBoolean(HologramGiantHistoryTiming.FLAG), crossHistory);
+    private final HologramGiantHistoryTiming historyTiming = HologramGiantHistoryTiming
+        .optional(Boolean.getBoolean(HologramGiantHistoryTiming.FLAG), crossHistory);
     private final List<Map<String, Object>> loads = new ArrayList<>();
     private final Map<String, Object> receipt = new LinkedHashMap<>();
     private final long start = System.nanoTime();
@@ -134,33 +150,47 @@ public final class HologramGiantNativeEditProbe {
         require(Boolean.getBoolean("miaotest.host.environment"), "Exact TestLab host lease required");
         String packed = System.getProperty(PACKED_FLAG, "");
         require("false".equals(packed) || "true".equals(packed), "Explicit compact false/true arm required");
-        require(!Boolean.getBoolean("gtmb.testlab.tutorialIssue100")
-            && !Boolean.getBoolean("gtmb.testlab.renderParity")
-            && !Boolean.getBoolean("gtmb.hologram.productionPreviewSmoke"),
+        require(
+            !Boolean.getBoolean("gtmb.testlab.tutorialIssue100") && !Boolean.getBoolean("gtmb.testlab.renderParity")
+                && !Boolean.getBoolean("gtmb.hologram.productionPreviewSmoke"),
             "Independent native Edit does not run another client probe");
-        require(!Boolean.getBoolean(HologramGiantFirstWrite.FLAG) || Boolean.getBoolean("gtmb.hologram.previewCaptureWitness"),
+        require(
+            !Boolean.getBoolean(HologramGiantFirstWrite.FLAG)
+                || Boolean.getBoolean("gtmb.hologram.previewCaptureWitness"),
             "First-write lifecycle requires the existing native Save capture witness");
-        require(!Boolean.getBoolean(HologramGiantCellHistory.FLAG)
-            || Boolean.getBoolean(HologramGiantFirstWrite.FLAG) && "true".equals(packed),
+        require(
+            !Boolean.getBoolean(HologramGiantCellHistory.FLAG)
+                || Boolean.getBoolean(HologramGiantFirstWrite.FLAG) && "true".equals(packed),
             "Cross-history requires explicit packed ON and the existing first-write host guards");
         HologramGiantNativeEditProbe probe = new HologramGiantNativeEditProbe();
-        FMLCommonHandler.instance().bus().register(probe);
+        FMLCommonHandler.instance()
+            .bus()
+            .register(probe);
         MinecraftForge.EVENT_BUS.register(probe);
         return true;
     }
 
     @SubscribeEvent
     public void serverTick(TickEvent.ServerTickEvent event) {
-        if (event.phase != TickEvent.Phase.END || save == null || stage == Stage.DONE || stage == Stage.SHUTDOWN) return;
+        if (event.phase != TickEvent.Phase.END || save == null || stage == Stage.DONE || stage == Stage.SHUTDOWN)
+            return;
         try {
-            MinecraftServer actual = FMLCommonHandler.instance().getMinecraftServerInstance();
+            MinecraftServer actual = FMLCommonHandler.instance()
+                .getMinecraftServerInstance();
             if (actual == null || actual.worldServerForDimension(0) == null) return;
             World world = actual.worldServerForDimension(0);
             if (server == null) {
-                Path path = world.getSaveHandler().getWorldDirectory().toPath().toRealPath();
-                require(path.equals(save) && actual.isSinglePlayer()
-                    && Boolean.TRUE.equals(Class.forName("com.miaokatze.miaokatzecore.testlab.LabWorldPolicy")
-                        .getMethod("owns", World.class).invoke(null, world)), "Server is not our marker-owned singleplayer");
+                Path path = world.getSaveHandler()
+                    .getWorldDirectory()
+                    .toPath()
+                    .toRealPath();
+                require(
+                    path.equals(save) && actual.isSinglePlayer()
+                        && Boolean.TRUE.equals(
+                            Class.forName("com.miaokatze.miaokatzecore.testlab.LabWorldPolicy")
+                                .getMethod("owns", World.class)
+                                .invoke(null, world)),
+                    "Server is not our marker-owned singleplayer");
                 serverThread = Thread.currentThread();
                 server = actual;
             }
@@ -170,7 +200,8 @@ public final class HologramGiantNativeEditProbe {
                 if (member instanceof EntityPlayerMP current && actor.equals(current.getUniqueID())) player = current;
             }
             if (player == null) return;
-            require(!(player instanceof FakePlayer) && !player.capabilities.isCreativeMode && player.dimension == 0,
+            require(
+                !(player instanceof FakePlayer) && !player.capabilities.isCreativeMode && player.dimension == 0,
                 "Expected actual survival actor in the owned world");
             // Inventory synchronization is untimed. Do not allocate snapshots while waiting for a timed frame.
             InventorySample sample = new InventorySample(player, ++inventorySerial);
@@ -220,44 +251,74 @@ public final class HologramGiantNativeEditProbe {
 
     private void startWorld(Minecraft mc) throws Exception {
         if (!HologramTestLabUiProfile.readyTitle(mc.currentScreen) || lastTitleDrawn != mc.currentScreen) return;
-        require(mc.theWorld == null && mc.thePlayer == null && mc.getIntegratedServer() == null
-            && !HologramLocalPlacement.INSTANCE.active() && System.getProperty(WORLD_PATH) == null,
+        require(
+            mc.theWorld == null && mc.thePlayer == null
+                && mc.getIntegratedServer() == null
+                && !HologramLocalPlacement.INSTANCE.active()
+                && System.getProperty(WORLD_PATH) == null,
             "Refusing a preexisting client session or TestLab world");
         title = mc.currentScreen;
-        game = mc.mcDataDir.toPath().toRealPath();
-        require(output.equals(output.toRealPath()) && !output.startsWith(game), "Use a separate owned receipt directory");
-        require(run.equals(read(game.resolve(".testlab-host/lease.json")).get("runId").getAsString()),
+        game = mc.mcDataDir.toPath()
+            .toRealPath();
+        require(
+            output.equals(output.toRealPath()) && !output.startsWith(game),
+            "Use a separate owned receipt directory");
+        require(
+            run.equals(
+                read(game.resolve(".testlab-host/lease.json")).get("runId")
+                    .getAsString()),
             "Exact host lease missing");
         Path library = game.resolve("MiaoBlueprints");
         require(library.equals(library.toRealPath()), "Managed source directory is not canonical");
         source = library.resolve(fixtureId + ".json");
         verifyPair();
         if (firstWrite) writeArtifact = new HologramGiantWriteArtifact(
-            game, source, fixtureJsonSha, fixturePngSha, fixtureCells, fixtureId);
-        Path parent = game.resolve("saves").toRealPath();
+            game,
+            source,
+            fixtureJsonSha,
+            fixturePngSha,
+            fixtureCells,
+            fixtureId);
+        Path parent = game.resolve("saves")
+            .toRealPath();
         save = parent.resolve("MiaoHost-" + run);
         Files.createDirectory(save);
         JsonObject marker = new JsonObject();
         marker.addProperty("runId", run);
         marker.addProperty("parent", parent.toString());
-        Files.write(save.resolve(".miaotest-host-owner.json"),
-            GSON.toJson(marker).getBytes(StandardCharsets.UTF_8), java.nio.file.StandardOpenOption.CREATE_NEW);
+        Files.write(
+            save.resolve(".miaotest-host-owner.json"),
+            GSON.toJson(marker)
+                .getBytes(StandardCharsets.UTF_8),
+            java.nio.file.StandardOpenOption.CREATE_NEW);
         System.setProperty(WORLD_PATH, save.toString());
         receipt.put("ownedSave", save.toString());
         transition(Stage.WORLD);
-        mc.launchIntegratedServer(save.getFileName().toString(), "GTMB native Edit lease",
+        mc.launchIntegratedServer(
+            save.getFileName()
+                .toString(),
+            "GTMB native Edit lease",
             new WorldSettings(61312138L, WorldSettings.GameType.SURVIVAL, false, false, WorldType.FLAT));
     }
 
     private void adoptWorld(Minecraft mc) throws Exception {
-        if (server == null || mc.theWorld == null || mc.thePlayer == null || mc.getNetHandler() == null
+        if (server == null || mc.theWorld == null
+            || mc.thePlayer == null
+            || mc.getNetHandler() == null
             || mc.thePlayer.ticksExisted < 60) return;
-        require(mc.getIntegratedServer() == server && !mc.thePlayer.capabilities.isCreativeMode
-            && mc.thePlayer.dimension == 0, "Unexpected real-world actor context");
+        require(
+            mc.getIntegratedServer() == server && !mc.thePlayer.capabilities.isCreativeMode
+                && mc.thePlayer.dimension == 0,
+            "Unexpected real-world actor context");
         Path environment = output.resolve("environment.json");
         if (!Files.isRegularFile(environment)) return;
         JsonObject env = read(environment);
-        require(run.equals(env.get("runId").getAsString()) && env.get("registered").getAsBoolean(),
+        require(
+            run.equals(
+                env.get("runId")
+                    .getAsString())
+                && env.get("registered")
+                    .getAsBoolean(),
             "Core runtime did not register the exact lease");
         if (actor == null) {
             clientWorld = mc.theWorld;
@@ -289,17 +350,26 @@ public final class HologramGiantNativeEditProbe {
 
     private void verifyStockInventory(Minecraft mc) {
         InventorySample baseline = admittedInventory;
-        require(baseline != null && baseline.matches(serverInventory)
-            && baseline.matches(new InventorySample(mc.thePlayer, 0)), "Stock actor inventory or selection changed");
+        require(
+            baseline != null && baseline.matches(serverInventory)
+                && baseline.matches(new InventorySample(mc.thePlayer, 0)),
+            "Stock actor inventory or selection changed");
     }
 
     private void live(Minecraft mc) {
-        require(clientWorld == mc.theWorld && clientPlayer == mc.thePlayer && connection == mc.getNetHandler()
-            && mc.getIntegratedServer() == server && mc.thePlayer != null && actor.equals(mc.thePlayer.getUniqueID())
-            && mc.thePlayer.dimension == 0 && !mc.thePlayer.capabilities.isCreativeMode
-            && !HologramLocalPlacement.INSTANCE.active(), "Owned player/world/connection changed");
+        require(
+            clientWorld == mc.theWorld && clientPlayer == mc.thePlayer
+                && connection == mc.getNetHandler()
+                && mc.getIntegratedServer() == server
+                && mc.thePlayer != null
+                && actor.equals(mc.thePlayer.getUniqueID())
+                && mc.thePlayer.dimension == 0
+                && !mc.thePlayer.capabilities.isCreativeMode
+                && !HologramLocalPlacement.INSTANCE.active(),
+            "Owned player/world/connection changed");
         InventorySample baseline = admittedInventory;
-        require(baseline == null || mc.thePlayer.inventory.currentItem == baseline.selected,
+        require(
+            baseline == null || mc.thePlayer.inventory.currentItem == baseline.selected,
             "Stock actor's selected slot changed");
     }
 
@@ -308,8 +378,7 @@ public final class HologramGiantNativeEditProbe {
         verifyStockInventory(mc);
         Field draft = HologramClient.class.getDeclaredField("localWorkspaceDraft");
         draft.setAccessible(true);
-        require(draft.get(null) == null,
-            "An automatic previous-document resume would invalidate this row benchmark");
+        require(draft.get(null) == null, "An automatic previous-document resume would invalidate this row benchmark");
         load = new LinkedHashMap<>();
         load.put("arm", loads.isEmpty() ? "cold" : firstWrite ? "saved-reopen" : "warm");
         loads.add(load);
@@ -320,14 +389,22 @@ public final class HologramGiantNativeEditProbe {
         observedOpeningSession = null;
         countersBeforeRow = null;
         HologramClient.openSettings();
-        require(mc.currentScreen instanceof HologramScreen, "Production openSettings did not open a native projector editor");
+        require(
+            mc.currentScreen instanceof HologramScreen,
+            "Production openSettings did not open a native projector editor");
         screen = (HologramScreen) mc.currentScreen;
-        load.put("editorAdmission", "guarded in-world production openSettings with unmodified held stack; setup not timed");
+        load.put(
+            "editorAdmission",
+            "guarded in-world production openSettings with unmodified held stack; setup not timed");
         transition(Stage.ROW);
     }
 
     private void openRow() throws Exception {
-        if (guiPosts <= openedPosts || !screen.ui.shell.built() || !screen.getScreen().getMainPanel().isValid()) return;
+        if (guiPosts <= openedPosts || !screen.ui.shell.built()
+            || !screen.getScreen()
+                .getMainPanel()
+                .isValid())
+            return;
         if (screen.ui.tutorial.active()) {
             if (!tutorialDismissed) {
                 HologramMuiProbeInput.key(screen, (char) 0, Keyboard.KEY_ESCAPE);
@@ -343,8 +420,10 @@ public final class HologramGiantNativeEditProbe {
             }
             return;
         }
-        require(!screen.ui.shell.hasModalPanel() && !screen.ui.library.publicLibrary()
-            && !screen.ui.session.localDocument() && screen.ui.session.state().cells.isEmpty(),
+        require(
+            !screen.ui.shell.hasModalPanel() && !screen.ui.library.publicLibrary()
+                && !screen.ui.session.localDocument()
+                && screen.ui.session.state().cells.isEmpty(),
             "Expected clean blank local workspace and no modal");
         if (screen.ui.library.localBusy() || HologramLibraryClient.INSTANCE.busy() || HologramBackgroundTasks.busy())
             return;
@@ -353,15 +432,18 @@ public final class HologramGiantNativeEditProbe {
         Method binding = HologramUiLibrary.class.getDeclaredMethod("visibleLibraryRow", int.class);
         binding.setAccessible(true);
         NBTTagCompound row = (NBTTagCompound) binding.invoke(screen.ui.library, 14_000);
-        require(fixtureId.equals(row.getString("id")) && row.getInteger("cells") == fixtureCells
-            && (firstWrite ? writeArtifact.expectedPath() : source)
-                .equals(HologramLibraryClient.INSTANCE.privateStore().savedPath(fixtureId)),
+        require(
+            fixtureId.equals(row.getString("id")) && row.getInteger("cells") == fixtureCells
+                && (firstWrite ? writeArtifact.expectedPath() : source).equals(
+                    HologramLibraryClient.INSTANCE.privateStore()
+                        .savedPath(fixtureId)),
             "Native row did not resolve to the exact managed file");
         verifyStockInventory(Minecraft.getMinecraft());
         load.put("row", fixtureId);
         load.put("sourceRows", fixtureCells);
         load.put("heapGcBeforeNativeRow", heapGc());
-        countersBeforeRow = HologramRuntimeMetrics.snapshot().getCompoundTag("queues");
+        countersBeforeRow = HologramRuntimeMetrics.snapshot()
+            .getCompoundTag("queues");
         Map<String, Object> hit = new LinkedHashMap<>();
         load.put("nativeEditRowClick", hit);
         HologramMuiProbeInput.nativeTarget(screen, "library.row.0", hit, () -> {
@@ -401,15 +483,22 @@ public final class HologramGiantNativeEditProbe {
             Minecraft mc = Minecraft.getMinecraft();
             live(mc);
             if (stage == Stage.WRITE) {
-                require(mc.currentScreen == screen && !screen.ui.library.browsePreviewActive() && !screen.ui.tutorial.active()
-                    && fixtureId.equals(HologramLibraryClient.INSTANCE.selected(false)), "OWNER_CHANGED: native write pane lost");
+                require(
+                    mc.currentScreen == screen && !screen.ui.library.browsePreviewActive()
+                        && !screen.ui.tutorial.active()
+                        && fixtureId.equals(HologramLibraryClient.INSTANCE.selected(false)),
+                    "OWNER_CHANGED: native write pane lost");
                 write.renderEnd(end);
                 return;
             }
-            require(mc.currentScreen == screen && !screen.ui.shell.hasModalPanel()
-                && !screen.ui.library.browsePreviewActive() && !screen.ui.tutorial.active(), "Edit lost native pane ownership");
+            require(
+                mc.currentScreen == screen && !screen.ui.shell.hasModalPanel()
+                    && !screen.ui.library.browsePreviewActive()
+                    && !screen.ui.tutorial.active(),
+                "Edit lost native pane ownership");
             if (!fixtureId.equals(HologramLibraryClient.INSTANCE.selected(false))) {
-                require(!Boolean.TRUE.equals(load.get("normalEditSelectionObserved")),
+                require(
+                    !Boolean.TRUE.equals(load.get("normalEditSelectionObserved")),
                     "Native selection changed after Edit admission");
                 return;
             }
@@ -430,37 +519,54 @@ public final class HologramGiantNativeEditProbe {
             if (witness.sawComplete()) load.putIfAbsent("completeEndNanos", end - inputAt);
             var document = screen.ui.session.document();
             // A clean editable native frame is a separate endpoint; do not hide it when material diagnostics fail.
-            if (document == null || screen.ui.session.state() != state || screen.ui.library.localBusy()
+            if (document == null || screen.ui.session.state() != state
+                || screen.ui.library.localBusy()
                 || HologramBackgroundTasks.busy()) return;
-            require(fixtureId.equals(document.fileId()) && !document.dirty() && state.data.getBoolean("target")
-                && state.cells.size() == fixtureCells && !state.data.getBoolean("displayPartial"),
+            require(
+                fixtureId.equals(document.fileId()) && !document.dirty()
+                    && state.data.getBoolean("target")
+                    && state.cells.size() == fixtureCells
+                    && !state.data.getBoolean("displayPartial"),
                 "Complete body was not the exact clean active target authoring document");
             boolean packed = document.packedAuthoring();
-            require(firstWrite && loads.size() == 2 || packed == expectedPackedAuthoring,
+            require(
+                firstWrite && loads.size() == 2 || packed == expectedPackedAuthoring,
                 "Clean document did not use the explicitly requested storage arm");
             if (load.putIfAbsent("packedAuthoringObservedOnCleanDocument", packed) == null)
                 load.put("cleanDocumentObservedAtEndNanos", end - inputAt);
             if (!screen.ui.session.editable() || !HologramRenderer.previewMeshReady(state)
-                || !(screen.ui.shell.scene() instanceof HologramEditorSceneWidget edit) || !edit.editFrameReady()) return;
+                || !(screen.ui.shell.scene() instanceof HologramEditorSceneWidget edit)
+                || !edit.editFrameReady()) return;
             load.putIfAbsent("cleanEditableObservedAtEndNanos", end - inputAt);
             if (!witness.sawComplete()) return;
             load.put("heapGcAfterCompleteBeforeProofCopies", heapGc());
             recordCompletedRenderTrace(state, end);
-            require((firstWrite ? writeArtifact.expectedJson() : fixtureJsonSha)
-                .equals(HologramBlueprintArtifact.hash(document.artifact())),
-                firstWrite ? "REOPEN_FROM_CACHE_OR_PAYLOAD: exact managed bytes" : "Authoring loaded other bytes or changed the original document");
+            require(
+                (firstWrite ? writeArtifact.expectedJson() : fixtureJsonSha)
+                    .equals(HologramBlueprintArtifact.hash(document.artifact())),
+                firstWrite ? "REOPEN_FROM_CACHE_OR_PAYLOAD: exact managed bytes"
+                    : "Authoring loaded other bytes or changed the original document");
             capture(mc, state);
             load.put("rendererMaterial", thresholds());
             load.put("editableCleanCells", state.cells.size());
             load.put("renderEndAndGuiPostOwned", true);
             if (firstWrite && loads.size() == 1) {
-                write = new HologramGiantFirstWrite(screen, writeArtifact, output, fixtureId, fixtureCells,
-                    expectedPackedAuthoring, crossHistory, historyTiming);
+                write = new HologramGiantFirstWrite(
+                    screen,
+                    writeArtifact,
+                    output,
+                    fixtureId,
+                    fixtureCells,
+                    expectedPackedAuthoring,
+                    crossHistory,
+                    historyTiming);
                 receipt.put("firstWrite", write.evidence());
                 transition(Stage.WRITE);
             } else {
                 if (firstWrite) {
-                    require(write.isReopen(state), "REOPEN_FROM_CACHE_OR_PAYLOAD: same session or missing actual saved prompt");
+                    require(
+                        write.isReopen(state),
+                        "REOPEN_FROM_CACHE_OR_PAYLOAD: same session or missing actual saved prompt");
                     actualSavedReopen = true;
                     load.put("actualSavedDiskReopen", true);
                 }
@@ -474,14 +580,17 @@ public final class HologramGiantNativeEditProbe {
     private void capture(Minecraft mc, HologramState state) throws Exception {
         MiaoVisonLiteRenderer pane = HologramRenderer.viewportFor(state);
         NBTTagCompound real = pane.lessonInspection(state);
-        require(real.getBoolean("snapshotPresented") && real.getInteger("renderedCellCount") > 0
-            && real.getInteger("nativeModelCellCount") > 0, "Missing natural material/native model witness");
+        require(
+            real.getBoolean("snapshotPresented") && real.getInteger("renderedCellCount") > 0
+                && real.getInteger("nativeModelCellCount") > 0,
+            "Missing natural material/native model witness");
         load.put("renderedCells", real.getInteger("renderedCellCount"));
         load.put("nativeModelCells", real.getInteger("nativeModelCellCount"));
         String file = "giant-edit-" + load.get("arm") + "-full.png";
         Files.createDirectories(output.resolve("screenshots"));
         ScreenShotHelper.saveScreenshot(output.toFile(), file, mc.displayWidth, mc.displayHeight, mc.getFramebuffer());
-        Path png = output.resolve("screenshots").resolve(file);
+        Path png = output.resolve("screenshots")
+            .resolve(file);
         require(Files.size(png) > 1024, "Real framebuffer capture missing");
         load.put("settledFrameSha256", HologramBlueprintArtifact.hash(Files.readAllBytes(png)));
         load.put("settledFrame", "screenshots/" + file);
@@ -495,11 +604,20 @@ public final class HologramGiantNativeEditProbe {
     }
 
     private void openReset() throws Exception {
-        require(!screen.ui.shell.hasModalPanel() && screen.ui.session.document() != null
-            && !screen.ui.session.document().dirty() && !HologramBackgroundTasks.busy(), "Reset requires clean, idle Edit");
-        if (!firstWrite) require(screen.ui.session.document().packedAuthoring() == expectedPackedAuthoring,
+        require(
+            !screen.ui.shell.hasModalPanel() && screen.ui.session.document() != null
+                && !screen.ui.session.document()
+                    .dirty()
+                && !HologramBackgroundTasks.busy(),
+            "Reset requires clean, idle Edit");
+        if (!firstWrite) require(
+            screen.ui.session.document()
+                .packedAuthoring() == expectedPackedAuthoring,
             "Read-only exposure changed the actual authoring storage arm before clear");
-        load.put("packedAuthoringBeforeCleanClear", screen.ui.session.document().packedAuthoring());
+        load.put(
+            "packedAuthoringBeforeCleanClear",
+            screen.ui.session.document()
+                .packedAuthoring());
         nativeTarget(toolControl(0, "viewWorkspace"), "openViewWorkspace");
         transition(Stage.RESET_COMMAND);
     }
@@ -513,7 +631,8 @@ public final class HologramGiantNativeEditProbe {
 
     private void observeReset() throws Exception {
         if (screen.ui.shell.hasModalPanel()) return;
-        require(!screen.ui.session.state().data.getBoolean("discardConfirmationRequired"),
+        require(
+            !screen.ui.session.state().data.getBoolean("discardConfirmationRequired"),
             "The probe cannot confirm a discard");
         if (screen.ui.session.localDocument() || !screen.ui.session.state().cells.isEmpty()) return;
         verifyStockInventory(Minecraft.getMinecraft());
@@ -528,7 +647,8 @@ public final class HologramGiantNativeEditProbe {
     }
 
     private void clickExit() throws Exception {
-        require(!screen.ui.library.localBusy() && !HologramBackgroundTasks.busy() && !screen.ui.shell.hasModalPanel(),
+        require(
+            !screen.ui.library.localBusy() && !HologramBackgroundTasks.busy() && !screen.ui.shell.hasModalPanel(),
             "Closing requires no local work or confirmation");
         nativeTarget("header.back", "closeEditor");
         transition(Stage.EXIT_WAIT);
@@ -549,7 +669,8 @@ public final class HologramGiantNativeEditProbe {
     }
 
     static Map<String, Object> heapGc() {
-        MemoryUsage heap = ManagementFactory.getMemoryMXBean().getHeapMemoryUsage();
+        MemoryUsage heap = ManagementFactory.getMemoryMXBean()
+            .getHeapMemoryUsage();
         Map<String, Object> sample = new LinkedHashMap<>();
         sample.put("heapInitBytes", heap.getInit());
         sample.put("heapUsedBytes", heap.getUsed());
@@ -604,7 +725,8 @@ public final class HologramGiantNativeEditProbe {
 
     private void liveGuardedUnload(Minecraft mc) throws Exception {
         if (mc.theWorld != null || mc.getIntegratedServer() != null) {
-            require(server != null && mc.getIntegratedServer() == server && save != null,
+            require(
+                server != null && mc.getIntegratedServer() == server && save != null,
                 "Refusing to unload an unowned server");
             if (mc.theWorld != null) mc.theWorld.sendQuittingDisconnectingPacket();
             mc.loadWorld(null);
@@ -635,12 +757,22 @@ public final class HologramGiantNativeEditProbe {
             return;
         }
         JsonObject env = Files.isRegularFile(output.resolve("environment.json"))
-            ? read(output.resolve("environment.json")) : null;
+            ? read(output.resolve("environment.json"))
+            : null;
         boolean stopped = server == null && mc.getIntegratedServer() == null
-            || serverThread != null && !serverThread.isAlive() && env != null
-                && run.equals(env.get("runId").getAsString()) && env.has("serverStopped")
-                && env.get("serverStopped").getAsBoolean() && !env.get("registered").getAsBoolean();
-        boolean clean = stopped && mc.theWorld == null && mc.thePlayer == null && mc.currentScreen == title
+            || serverThread != null && !serverThread.isAlive()
+                && env != null
+                && run.equals(
+                    env.get("runId")
+                        .getAsString())
+                && env.has("serverStopped")
+                && env.get("serverStopped")
+                    .getAsBoolean()
+                && !env.get("registered")
+                    .getAsBoolean();
+        boolean clean = stopped && mc.theWorld == null
+            && mc.thePlayer == null
+            && mc.currentScreen == title
             && lastTitleDrawn == title;
         if (!clean && System.nanoTime() - stageStart < 20 * SECOND) return;
         finish(clean);
@@ -650,9 +782,12 @@ public final class HologramGiantNativeEditProbe {
         stage = Stage.DONE;
         if (ownMaterialMetrics) HologramRuntimeMetrics.setEnabled(false);
         receipt.put("materialMetricsScopeRestored", !ownMaterialMetrics || !HologramRuntimeMetrics.isEnabled());
-        FMLCommonHandler.instance().bus().unregister(this);
+        FMLCommonHandler.instance()
+            .bus()
+            .unregister(this);
         MinecraftForge.EVENT_BUS.unregister(this);
-        if (save != null && save.toString().equals(System.getProperty(WORLD_PATH))) System.clearProperty(WORLD_PATH);
+        if (save != null && save.toString()
+            .equals(System.getProperty(WORLD_PATH))) System.clearProperty(WORLD_PATH);
         boolean pairPristine = false;
         if (source != null) try {
             if (firstWrite) writeArtifact.verifyFinal();
@@ -661,8 +796,12 @@ public final class HologramGiantNativeEditProbe {
         } catch (Exception proof) {
             receipt.put("fixtureReadbackError", proof.toString());
         }
-        boolean functional = failure == null && clean && inventoryFinalChecked && finalPairVerified && pairPristine
-            && loads.size() == 2 && (!firstWrite || actualSavedReopen && write != null && write.saved());
+        boolean functional = failure == null && clean
+            && inventoryFinalChecked
+            && finalPairVerified
+            && pairPristine
+            && loads.size() == 2
+            && (!firstWrite || actualSavedReopen && write != null && write.saved());
         boolean deadlines = functional;
         for (Map<String, Object> part : loads) {
             boolean first = within(part, "firstEndNanos", HologramPreviewThresholdWitness.BLUEPRINT_FIRST_NANOS);
@@ -674,11 +813,14 @@ public final class HologramGiantNativeEditProbe {
         receipt.put("runId", run);
         receipt.put("profile", "independent-in-world-native-library-Edit");
         receipt.put("explicitPackedAuthoring", expectedPackedAuthoring);
-        receipt.put("observationScope",
+        receipt.put(
+            "observationScope",
             "Task/preview/document markers are first observed on owned END; not file, parse, or worker duration.");
-        receipt.put("memoryScope", firstWrite
-            ? "Untimed JVM heap/GC before native Apply and after the first updated full body END; sampled, not peak or retained."
-            : "Untimed JVM heap and cumulative GC samples before row press and after full/ready before proof copies; no forced GC.");
+        receipt.put(
+            "memoryScope",
+            firstWrite
+                ? "Untimed JVM heap/GC before native Apply and after the first updated full body END; sampled, not peak or retained."
+                : "Untimed JVM heap and cumulative GC samples before row press and after full/ready before proof copies; no forced GC.");
         receipt.put("openingOnly", !firstWrite);
         if (firstWrite) receipt.put("functionalFirstWriteVerified", functional);
         receipt.put("fixtureJsonSha256", fixtureJsonSha);
@@ -694,24 +836,34 @@ public final class HologramGiantNativeEditProbe {
         receipt.put("screenRestored", clean);
         receipt.put("cleanupPending", !clean);
         receipt.put("timing", "exact native row press after widget hit-test to natural editor RenderTick.END");
-        receipt.put("coldMeaning", "first file Edit in a fresh JVM after title, world, and catalogue readiness; not cold disk");
-        receipt.put("warmMeaning", firstWrite ? "physical saved-copy read after clear, native exit, and normal library row reopen"
-            : "same native row after normal clean clear, exit, and reopening the same owned world");
+        receipt.put(
+            "coldMeaning",
+            "first file Edit in a fresh JVM after title, world, and catalogue readiness; not cold disk");
+        receipt.put(
+            "warmMeaning",
+            firstWrite ? "physical saved-copy read after clear, native exit, and normal library row reopen"
+                : "same native row after normal clean clear, exit, and reopening the same owned world");
         receipt.put("loads", loads);
-        receipt.put("artifact", ArtifactIdentity.capture(HologramGiantNativeEditProbe.class).asMap());
+        receipt.put(
+            "artifact",
+            ArtifactIdentity.capture(HologramGiantNativeEditProbe.class)
+                .asMap());
         receipt.put("osInput", false);
         if (crossHistory) receipt.put("crossMaterializationHistoryRequested", true);
         Path pending = Files.createTempFile(output, "gtmb-giant-native-edit-", ".json");
         Files.write(pending, (GSON.toJson(receipt) + "\n").getBytes(StandardCharsets.UTF_8));
-        Path terminal = output.resolve(crossHistory ? "gtmb-giant-native-cross-history.json"
-            : firstWrite ? "gtmb-giant-native-first-write.json" : "gtmb-giant-native-edit.json");
+        Path terminal = output.resolve(
+            crossHistory ? "gtmb-giant-native-cross-history.json"
+                : firstWrite ? "gtmb-giant-native-first-write.json" : "gtmb-giant-native-edit.json");
         require(!Files.exists(terminal), "Refusing to replace an existing receipt");
         Files.move(pending, terminal, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
         if (historyTiming != null) {
             Path timing = output.resolve(HologramGiantHistoryTiming.FILE);
             require(!Files.exists(timing), "Refusing to replace an existing history timing receipt");
             Path temporary = Files.createTempFile(output, "gtmb-giant-history-timing-", ".json");
-            Files.write(temporary, (GSON.toJson(historyTiming.receipt(functional)) + "\n").getBytes(StandardCharsets.UTF_8));
+            Files.write(
+                temporary,
+                (GSON.toJson(historyTiming.receipt(functional)) + "\n").getBytes(StandardCharsets.UTF_8));
             Files.move(temporary, timing, java.nio.file.StandardCopyOption.ATOMIC_MOVE);
         }
     }
@@ -747,7 +899,9 @@ public final class HologramGiantNativeEditProbe {
                     var latest = HologramRenderer.editorMaterialPresentation();
                     load.put("lastEditorMaterialRecordPresent", latest != null);
                     if (latest != null) {
-                        load.put("lastEditorMaterialMatchesSubject", latest.state() == (opening == null ? active : opening));
+                        load.put(
+                            "lastEditorMaterialMatchesSubject",
+                            latest.state() == (opening == null ? active : opening));
                         load.put("lastEditorMaterialBody", latest.bodyMaterial());
                         load.put("lastEditorMaterialSerial", latest.serial());
                         load.put("lastEditorMaterialRows", latest.submittedCells());
@@ -771,7 +925,8 @@ public final class HologramGiantNativeEditProbe {
     }
 
     private Map<String, Object> thresholds() {
-        return witness.receipt(HologramPreviewThresholdWitness.BLUEPRINT_FIRST_NANOS,
+        return witness.receipt(
+            HologramPreviewThresholdWitness.BLUEPRINT_FIRST_NANOS,
             HologramPreviewThresholdWitness.BLUEPRINT_COMPLETE_NANOS);
     }
 
@@ -781,17 +936,23 @@ public final class HologramGiantNativeEditProbe {
     }
 
     private void verifyPair() throws Exception {
-        require(source.equals(source.toRealPath())
-            && HologramBlueprintArtifact.previewPath(source).equals(HologramBlueprintArtifact.previewPath(source).toRealPath()),
+        require(
+            source.equals(source.toRealPath()) && HologramBlueprintArtifact.previewPath(source)
+                .equals(
+                    HologramBlueprintArtifact.previewPath(source)
+                        .toRealPath()),
             "Fixture is not the exact managed regular pair");
         var pair = HologramBlueprintArtifact.readPair(source);
-        require(fixtureJsonSha.equals(HologramBlueprintArtifact.hash(pair.json)) && fixturePngSha.equals(HologramBlueprintArtifact.hash(pair.png)),
+        require(
+            fixtureJsonSha.equals(HologramBlueprintArtifact.hash(pair.json))
+                && fixturePngSha.equals(HologramBlueprintArtifact.hash(pair.png)),
             "Fixture pair bytes changed");
     }
 
     private static JsonObject read(Path path) throws Exception {
         require(path.equals(path.toRealPath()) && Files.size(path) <= 4096, "Invalid scoped host receipt");
-        return new JsonParser().parse(new String(Files.readAllBytes(path), StandardCharsets.UTF_8)).getAsJsonObject();
+        return new JsonParser().parse(new String(Files.readAllBytes(path), StandardCharsets.UTF_8))
+            .getAsJsonObject();
     }
 
     private static void require(boolean ok, String message) {

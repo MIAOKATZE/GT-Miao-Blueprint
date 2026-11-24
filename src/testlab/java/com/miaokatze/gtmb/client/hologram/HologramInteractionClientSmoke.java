@@ -353,7 +353,9 @@ public final class HologramInteractionClientSmoke {
                             .tagCount() == 36,
                     "real_C08_state_opens_full_EBF_GUI");
                 awaitControl(screen, 81);
-                require(HologramRenderer.editor().lastPreviewAnchorMarkers > 0, "controller_marker_drawn_in_real_preview");
+                require(
+                    HologramRenderer.editor().lastPreviewAnchorMarkers > 0,
+                    "controller_marker_drawn_in_real_preview");
                 verifyAnimatedItemAtlas(mc);
                 String guidance = HologramGuidance.next(new HologramState(state), -1, libraryTab(screen), false);
                 require(
@@ -1804,7 +1806,8 @@ public final class HologramInteractionClientSmoke {
                 "server_owned_receipt_observes_air_target_cells_stage_" + stage);
             if (++waitTicks < 4 || renderedWorldFrames <= airPreparedFrame) return true;
             require(
-                MiaoVisonLiteRenderer.lastWorldGeometry > 0 && MiaoVisonLiteRenderer.lastWorldPlacementOutlineColor == 0x66d9ef,
+                MiaoVisonLiteRenderer.lastWorldGeometry > 0
+                    && MiaoVisonLiteRenderer.lastWorldPlacementOutlineColor == 0x66d9ef,
                 "actual_first_locked_world_ghost_outline_is_cyan_stage_" + stage);
             require(
                 authoritative.getInteger("blueprintPlaced") == (sufficientBlueprintPass ? 0 : 1),
@@ -1840,7 +1843,8 @@ public final class HologramInteractionClientSmoke {
                 "Shift_right_unlock_invalidates_old_review_nonce");
             if (++waitTicks < 4 || renderedWorldFrames <= airPreparedFrame) return true;
             require(
-                MiaoVisonLiteRenderer.lastWorldGeometry > 0 && MiaoVisonLiteRenderer.lastWorldPlacementOutlineColor == 0x70e69a,
+                MiaoVisonLiteRenderer.lastWorldGeometry > 0
+                    && MiaoVisonLiteRenderer.lastWorldPlacementOutlineColor == 0x70e69a,
                 "actual_Shift_right_unlocked_world_ghost_returns_to_green");
             screenshot(mc, "v007-shift-right-green-unlocked-review-" + reviewStage);
             mc.objectMouseOver = null;
@@ -1863,7 +1867,8 @@ public final class HologramInteractionClientSmoke {
                 "relock_uses_exact_rendered_air_anchor");
             if (++waitTicks < 4 || renderedWorldFrames <= airPreparedFrame) return true;
             require(
-                MiaoVisonLiteRenderer.lastWorldGeometry > 0 && MiaoVisonLiteRenderer.lastWorldPlacementOutlineColor == 0x66d9ef,
+                MiaoVisonLiteRenderer.lastWorldGeometry > 0
+                    && MiaoVisonLiteRenderer.lastWorldPlacementOutlineColor == 0x66d9ef,
                 "actual_relocked_world_ghost_returns_to_cyan");
             screenshot(mc, "v007-relocked-cyan-before-RIGHT2-review-" + reviewStage);
             if (sufficientBlueprintPass && !nudgeChecked) {

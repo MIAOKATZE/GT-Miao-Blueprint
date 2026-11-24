@@ -52,8 +52,8 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
     @Override
     public LocalFrame localFrame() {
         Minecraft client = Minecraft.getMinecraft();
-        return ticket.current(client)
-            ? description.frame(() -> client.thePlayer.inventory.mainInventory, ticket.slot) : null;
+        return ticket.current(client) ? description.frame(() -> client.thePlayer.inventory.mainInventory, ticket.slot)
+            : null;
     }
 
     @Override
@@ -77,12 +77,12 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
             Minecraft client = Minecraft.getMinecraft();
             if (action == LocalAction.BACK) returnToWorld(client);
             else if (action == LocalAction.REFRESH) {
-                if (ticket.current(client)) description.refresh(() -> client.thePlayer.inventory.mainInventory, ticket.slot);
+                if (ticket.current(client))
+                    description.refresh(() -> client.thePlayer.inventory.mainInventory, ticket.slot);
             } else if (dispatchRefused(action, () -> ticket.consume(client), placement::submitFrozen)) {
                 returnToWorld(client);
-                HologramClient.selectionNotice(action == LocalAction.ADVANCED
-                    ? "未打开高级施工选项；位置保留，请重新打开材料窗口。"
-                    : "未开始施工；位置保留，请重新打开材料窗口。");
+                HologramClient.selectionNotice(
+                    action == LocalAction.ADVANCED ? "未打开高级施工选项；位置保留，请重新打开材料窗口。" : "未开始施工；位置保留，请重新打开材料窗口。");
             }
         });
     }
@@ -132,18 +132,24 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
         }
 
         void refresh(Supplier<ItemStack[]> mainInventory, int toolSlot) {
-            boolean canObserve = forecast != null && !forecast.candidates().isEmpty();
+            boolean canObserve = forecast != null && !forecast.candidates()
+                .isEmpty();
             if (!canObserve && cached != null) return;
             ItemStack[] source = canObserve ? mainInventory.get() : null;
             ItemStack[] observed = source == null || source.length < MAIN_SLOTS ? null
                 : source.length == MAIN_SLOTS ? source : Arrays.copyOf(source, MAIN_SLOTS);
-            HologramLibraryMaterialDescription.Description result =
-                HologramLibraryMaterialDescription.describe(forecast, observed, toolSlot);
+            HologramLibraryMaterialDescription.Description result = HologramLibraryMaterialDescription
+                .describe(forecast, observed, toolSlot);
             String status = "施工用量未核算";
             if (result == null) status += " · 本机没有可核对的来源记录";
             else if (result.unlistedCells() > 0) status += " · " + result.unlistedCells() + " 格未列明";
-            cached = new LocalFrame(new NBTTagCompound(), "已锁定蓝图 · 整份范围", status,
-                "本机没有可列明的蓝图材料记录", canObserve, result == null ? Collections.emptyList() : result.rows());
+            cached = new LocalFrame(
+                new NBTTagCompound(),
+                "已锁定蓝图 · 整份范围",
+                status,
+                "本机没有可列明的蓝图材料记录",
+                canObserve,
+                result == null ? Collections.emptyList() : result.rows());
         }
     }
 
@@ -168,11 +174,16 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
         }
 
         boolean current(Minecraft client) {
-            return !retired && client != null && client.currentScreen == owner && !placement.submitting()
-                && frozen.current(placement, client) && !client.thePlayer.isDead
+            return !retired && client != null
+                && client.currentScreen == owner
+                && !placement.submitting()
+                && frozen.current(placement, client)
+                && !client.thePlayer.isDead
                 && ItemNekoHologramProjector.isProjector(tool)
-                && client.thePlayer.dimension == dimension && client.thePlayer.inventory.currentItem == slot
-                && client.thePlayer.getHeldItem() == tool && toolId.equals(id(tool));
+                && client.thePlayer.dimension == dimension
+                && client.thePlayer.inventory.currentItem == slot
+                && client.thePlayer.getHeldItem() == tool
+                && toolId.equals(id(tool));
         }
 
         Submission consume(Minecraft client) {
@@ -187,7 +198,8 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
         }
 
         private static String id(ItemStack stack) {
-            return stack != null && stack.hasTagCompound() ? stack.getTagCompound().getString("gtitHologramToolId") : "";
+            return stack != null && stack.hasTagCompound() ? stack.getTagCompound()
+                .getString("gtitHologramToolId") : "";
         }
     }
 }

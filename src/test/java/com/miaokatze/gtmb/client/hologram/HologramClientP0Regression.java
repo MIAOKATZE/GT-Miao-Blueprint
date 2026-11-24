@@ -24,11 +24,11 @@ import org.objectweb.asm.ClassWriter;
 import org.objectweb.asm.MethodVisitor;
 import org.objectweb.asm.Opcodes;
 
+import com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor;
 import com.miaokatze.gtmb.hologram.HologramLocalControllerCapture;
 import com.miaokatze.gtmb.hologram.HologramSnapshotAssembly;
 import com.miaokatze.gtmb.testutil.MinecraftTestBootstrap;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
-import com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor;
 
 /** Calls the production bind/snapshot/reopen and saturated receive paths with a detached Minecraft owner. */
 public final class HologramClientP0Regression {
@@ -74,19 +74,27 @@ public final class HologramClientP0Regression {
         ItemStack projector = new ItemStack(Items.stick, 1);
         ChannelDataAccessor.setChannelData(projector, "coil", 4);
         ChannelDataAccessor.setChannelData(projector, "width", 8);
-        projector.getTagCompound().setInteger("gtitHologramMain", 3);
-        projector.getTagCompound().setString("gtitHologramDraft", "server owned");
+        projector.getTagCompound()
+            .setInteger("gtitHologramMain", 3);
+        projector.getTagCompound()
+            .setString("gtitHologramDraft", "server owned");
         NBTTagCompound initial = HologramLocalControllerCapture.toolSettings(projector);
         SimpleAssert.eq(3, initial.getInteger("main"), "unstackable projector uses its saved master signal");
-        SimpleAssert.eq(4, initial.getCompoundTag("channels").getInteger("coil"), "native child signal is shown");
+        SimpleAssert.eq(
+            4,
+            initial.getCompoundTag("channels")
+                .getInteger("coil"),
+            "native child signal is shown");
         NBTTagCompound active = (NBTTagCompound) initial.copy();
-        active.getCompoundTag("channels").removeTag("coil");
+        active.getCompoundTag("channels")
+            .removeTag("coil");
         ChannelDataAccessor.setChannelData(projector, "coil", 5);
         ChannelDataAccessor.setChannelData(projector, "width", 9);
         ChannelDataAccessor.setChannelData(projector, "glass", 2);
-        HologramScreen.rebaseControllerChannels(active, initial, HologramLocalControllerCapture.toolSettings(projector));
-        Method make = HologramLocalControllerCapture.class.getDeclaredMethod("previewTrigger", ItemStack.class,
-            NBTTagCompound.class);
+        HologramScreen
+            .rebaseControllerChannels(active, initial, HologramLocalControllerCapture.toolSettings(projector));
+        Method make = HologramLocalControllerCapture.class
+            .getDeclaredMethod("previewTrigger", ItemStack.class, NBTTagCompound.class);
         make.setAccessible(true);
         ItemStack preview = (ItemStack) make.invoke(null, projector, active);
         SimpleAssert.that(preview.getItem() == projector.getItem(), "standard preview keeps actual trigger item");
@@ -95,7 +103,10 @@ public final class HologramClientP0Regression {
         SimpleAssert.eq(9, ChannelDataAccessor.getChannelData(preview, "width"), "rescan reads newer inherited values");
         SimpleAssert.eq(2, ChannelDataAccessor.getChannelData(preview, "glass"), "new live tool channel is included");
         SimpleAssert.eq(5, ChannelDataAccessor.getChannelData(projector, "coil"), "preview did not edit held item");
-        SimpleAssert.that(!preview.getTagCompound().hasKey("gtitHologramDraft"), "server draft data stays out of trigger");
+        SimpleAssert.that(
+            !preview.getTagCompound()
+                .hasKey("gtitHologramDraft"),
+            "server draft data stays out of trigger");
     }
 
     private static void localControllerHeader() {

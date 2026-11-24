@@ -1371,17 +1371,20 @@ final class HologramCellPolicy {
                 if (declaration != null) {
                     if (!declaration.accepts(target)) continue;
                     int[] facings = declaration.legalFacings(target);
-                    return facings == null ? new int[0] : java.util.Arrays.stream(facings)
-                        .filter(direction -> direction >= 0 && direction < 6
-                            && prototype.isFacingValid(ForgeDirection.getOrientation(direction)))
-                        .toArray();
+                    return facings == null ? new int[0]
+                        : java.util.Arrays.stream(facings)
+                            .filter(
+                                direction -> direction >= 0 && direction < 6
+                                    && prototype.isFacingValid(ForgeDirection.getOrientation(direction)))
+                            .toArray();
                 }
                 java.util.function.Predicate<ItemStack> declared = HologramHatchPolicy
                     .predicate(part, detachedContext, c.elementTrigger);
                 if (declared != null && declared.test(target)) {
                     return java.util.Arrays.stream(ForgeDirection.VALID_DIRECTIONS)
-                        .filter(direction -> prototype.isFacingValid(direction)
-                            && HologramHatchPolicy.allowed(part, facing, direction))
+                        .filter(
+                            direction -> prototype.isFacingValid(direction)
+                                && HologramHatchPolicy.allowed(part, facing, direction))
                         .mapToInt(ForgeDirection::ordinal)
                         .toArray();
                 }

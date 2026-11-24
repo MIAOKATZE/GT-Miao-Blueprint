@@ -546,7 +546,8 @@ final class HologramSnapshots {
         state.setString("status", s.status);
         state.setInteger("total", s.work.size());
         state.setInteger("completed", s.completed);
-        HologramWorkspace.snapshotSink().send(s.player, state);
+        HologramWorkspace.snapshotSink()
+            .send(s.player, state);
         s.jobPublication.published(s.player.worldObj.getTotalWorldTime(), s.planRevision, s.uiSequence);
         if (s.job >= 3) s.nativeCompactRequestId = "";
     }
@@ -903,7 +904,8 @@ final class HologramSnapshots {
 
     private static void sendComplete(HologramSession s) {
         if (s.cancelled) {
-            HologramWorkspace.snapshotSink().send(s.player, cancellation(s));
+            HologramWorkspace.snapshotSink()
+                .send(s.player, cancellation(s));
             return;
         }
         HologramSnapshotPreparation.start(s);

@@ -99,10 +99,12 @@ final class HologramStructureProjection {
         s.jobVoucherRequested = false;
         if (showing(s)) prepareOperation(s, configure == null ? () -> true : configure);
         else {
-            if (configure != null && (s.capture == null || s.capturePending || s.capture.incomplete
+            if (configure != null && (s.capture == null || s.capturePending
+                || s.capture.incomplete
                 || !HologramSessionPolicy.valid(s)
                 || HologramWorkspace.find(s.player.getUniqueID()) != s
-                || !s.capture.sourceCurrent(HologramSessionPolicy.trigger(s)) || !configure.getAsBoolean())) return;
+                || !s.capture.sourceCurrent(HologramSessionPolicy.trigger(s))
+                || !configure.getAsBoolean())) return;
             HologramSnapshotPreparation.cancel(s);
             s.forcePlacementReady = false;
             s.placementReviewIssued = false;
@@ -141,13 +143,12 @@ final class HologramStructureProjection {
     }
 
     private static boolean requiresDestructiveReview(HologramSession s) {
-        return !s.virtual && (s.mode == 1 || s.mode == 2)
-            && HologramEditorWorkspaceRegistry.physicalProjection(s);
+        return !s.virtual && (s.mode == 1 || s.mode == 2) && HologramEditorWorkspaceRegistry.physicalProjection(s);
     }
 
     static boolean requiresLockedScope(HologramSession s) {
-        return requiresDestructiveReview(s) || !s.virtual && s.operationScope != null
-            && HologramEditorWorkspaceRegistry.physicalProjection(s);
+        return requiresDestructiveReview(s)
+            || !s.virtual && s.operationScope != null && HologramEditorWorkspaceRegistry.physicalProjection(s);
     }
 
     static boolean operationScopeLocked(HologramSession s) {
@@ -193,14 +194,18 @@ final class HologramStructureProjection {
         void finish(HologramSession s) {
             pending = null;
             if (!operationPrepared(s) || openedSequence != s.operationReviewSequence
-                || openedSequence != s.uiSequence || epoch != s.editorWorkspaceEpoch) return;
+                || openedSequence != s.uiSequence
+                || epoch != s.editorWorkspaceEpoch) return;
             capture = s.capture;
             revision = s.planRevision;
             mode = s.mode;
             scope = s.scope;
             layer = s.layer;
             selected = s.selected;
-            indices = s.selectedIndices.stream().mapToInt(Integer::intValue).sorted().toArray();
+            indices = s.selectedIndices.stream()
+                .mapToInt(Integer::intValue)
+                .sorted()
+                .toArray();
         }
 
         void close() {
@@ -210,9 +215,15 @@ final class HologramStructureProjection {
         }
 
         boolean current(HologramSession s) {
-            return indices != null && s.operationReviewSequence >= 0 && epoch == s.editorWorkspaceEpoch
-                && controllerOpenId == s.controllerOpenId && capture == s.capture && revision == s.planRevision
-                && mode == s.mode && scope == s.scope && layer == s.layer && selected == s.selected
+            return indices != null && s.operationReviewSequence >= 0
+                && epoch == s.editorWorkspaceEpoch
+                && controllerOpenId == s.controllerOpenId
+                && capture == s.capture
+                && revision == s.planRevision
+                && mode == s.mode
+                && scope == s.scope
+                && layer == s.layer
+                && selected == s.selected
                 && operationPrepared(s);
         }
 

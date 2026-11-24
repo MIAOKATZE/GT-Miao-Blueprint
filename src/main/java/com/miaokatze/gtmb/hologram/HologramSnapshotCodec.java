@@ -53,7 +53,8 @@ public final class HologramSnapshotCodec {
     }
 
     private static byte[] compress(NBTTagCompound tag, java.util.function.BooleanSupplier current,
-        java.util.function.LongConsumer progress, boolean palette, int rawLimit, int compressedLimit) throws IOException {
+        java.util.function.LongConsumer progress, boolean palette, int rawLimit, int compressedLimit)
+        throws IOException {
         if (palette) tag = HologramSnapshotPalette.pack(tag, current);
         boolean packed = HologramSnapshotPalette.isPacked(tag);
         if (packed && !palette) throw new IOException("packed snapshot requires negotiated encoding");
@@ -66,8 +67,7 @@ public final class HologramSnapshotCodec {
         try (DataOutputStream output = new DataOutputStream(
             new LimitedOutput(
                 new BufferedOutputStream(
-                    new GZIPOutputStream(
-                        new LimitedOutput(bytes, compressedLimit - (packed ? 8 : 0)))),
+                    new GZIPOutputStream(new LimitedOutput(bytes, compressedLimit - (packed ? 8 : 0)))),
                 rawLimit,
                 current,
                 progress))) {

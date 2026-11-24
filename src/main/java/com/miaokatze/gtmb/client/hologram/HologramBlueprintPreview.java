@@ -40,12 +40,12 @@ import net.minecraft.nbt.NBTTagList;
 import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL11;
 
+import com.github.bsideup.jabel.Desugar;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.github.bsideup.jabel.Desugar;
-import com.miaokatze.gtmb.hologram.HologramAeNativePreview;
 import com.miaokatze.gtmb.client.hologram.HologramLocalSaveTrace.Stage;
+import com.miaokatze.gtmb.hologram.HologramAeNativePreview;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec;
 import com.miaokatze.gtmb.hologram.HologramGtMeOutputDisplay;
@@ -117,7 +117,8 @@ public final class HologramBlueprintPreview {
             boolean[] excluded = new boolean[view.materials()];
             long[] materialBytes = new long[view.materials()];
             HologramSavedMaterialSource.Tally tally = savedPrivateSource
-                ? new HologramSavedMaterialSource.Tally(view.blueprint, view.materials()) : null;
+                ? new HologramSavedMaterialSource.Tally(view.blueprint, view.materials())
+                : null;
             if (progress != null) progress.accept(0, view.cells());
             for (int index = 0; index < view.cells(); index++) {
                 if (progress != null && ((index + 1) & 255) == 0) progress.accept(index + 1, view.cells());
@@ -166,7 +167,10 @@ public final class HologramBlueprintPreview {
                 payloads.account(payloads.expanded.getOrDefault(tileNbt, 0));
                 payloads.account(payloads.expanded.getOrDefault(itemNbt, 0));
             }
-            cells.add(checkedCoordinate(x, 60000000L), checkedCoordinate(y, 256L), checkedCoordinate(z, 60000000L),
+            cells.add(
+                checkedCoordinate(x, 60000000L),
+                checkedCoordinate(y, 256L),
+                checkedCoordinate(z, 60000000L),
                 position);
             if (progress != null && (cells.size() & 255) == 0) progress.accept(cells.size(), total);
         }, current);
@@ -179,10 +183,16 @@ public final class HologramBlueprintPreview {
         NBTTagCompound data = displayMetadata(draft);
         NBTTagList cells = new NBTTagList();
         Payloads payloads = new Payloads();
-        draft.visitDisplayCells((x, y, z, block, metadata, item, damage, facing, tileNbt, itemNbt) ->
-            cells.appendTag(displayRow(
-                displayMaterial(new DisplayMaterial(block, metadata, item, damage, facing, tileNbt, itemNbt), payloads),
-                checkedCoordinate(x, 60000000L), checkedCoordinate(y, 256L), checkedCoordinate(z, 60000000L))), current);
+        draft.visitDisplayCells(
+            (x, y, z, block, metadata, item, damage, facing, tileNbt, itemNbt) -> cells.appendTag(
+                displayRow(
+                    displayMaterial(
+                        new DisplayMaterial(block, metadata, item, damage, facing, tileNbt, itemNbt),
+                        payloads),
+                    checkedCoordinate(x, 60000000L),
+                    checkedCoordinate(y, 256L),
+                    checkedCoordinate(z, 60000000L))),
+            current);
         if (cells.tagCount() == 0) throw new IOException("Blueprint preview has no buildable cells");
         data.setTag("cells", cells);
         return data;
@@ -230,7 +240,8 @@ public final class HologramBlueprintPreview {
             editable = true;
             bounds = editor.bounds();
             materials = editor.materials();
-            size = editor.rows().cells();
+            size = editor.rows()
+                .cells();
         }
 
         CompactCells(DetachedEditorRows editor) {
@@ -268,7 +279,10 @@ public final class HologramBlueprintPreview {
 
         int coordinate(int row, int dimension) {
             if (editor == null) return locations[row * 4 + dimension];
-            return dimension == 3 ? editor.rows().materialIndex(row) : editor.rows().coordinate(row, dimension);
+            return dimension == 3 ? editor.rows()
+                .materialIndex(row)
+                : editor.rows()
+                    .coordinate(row, dimension);
         }
 
         boolean editorRows() {
@@ -371,10 +385,16 @@ public final class HologramBlueprintPreview {
     }
 
     private static NBTTagCompound displayMaterial(JsonObject source, Payloads payloads) throws IOException {
-        return displayMaterial(new DisplayMaterial(
-            string(source, "block"), integer(source, "metadata", 0), string(source, "item"),
-            integer(source, "damage", 0), integer(source, "facing", -1),
-            string(source, "tileNbt"), string(source, "itemNbt")), payloads);
+        return displayMaterial(
+            new DisplayMaterial(
+                string(source, "block"),
+                integer(source, "metadata", 0),
+                string(source, "item"),
+                integer(source, "damage", 0),
+                integer(source, "facing", -1),
+                string(source, "tileNbt"),
+                string(source, "itemNbt")),
+            payloads);
     }
 
     @Desugar
@@ -436,9 +456,11 @@ public final class HologramBlueprintPreview {
 
     /** The local save worker owns the detached display rows and never mutates them after submission. */
     static Request captureOwned(NBTTagCompound exactSnapshot, byte[] exactJson, double yaw, double pitch,
-        HologramLocalSaveTrace trace, BooleanSupplier current, Consumer<BufferedImage> done, Consumer<Throwable> failure) {
+        HologramLocalSaveTrace trace, BooleanSupplier current, Consumer<BufferedImage> done,
+        Consumer<Throwable> failure) {
         String hash = Boolean.getBoolean("gtmb.hologram.previewCaptureWitness")
-            ? HologramBlueprintArtifact.hash(exactJson) : "";
+            ? HologramBlueprintArtifact.hash(exactJson)
+            : "";
         return queue(new Request(exactSnapshot, hash, yaw, pitch, current, done, failure, trace));
     }
 
@@ -620,7 +642,8 @@ public final class HologramBlueprintPreview {
         MiaoVisonLiteRenderScope.ClientTessState tess = new MiaoVisonLiteRenderScope.ClientTessState(
             Tessellator.instance);
         MiaoVisonLiteRenderScope saved = MiaoVisonLiteRenderScope.enter();
-        try (HologramPreviewAssets.Scope ignored = viewport.assets().enter()) {
+        try (HologramPreviewAssets.Scope ignored = viewport.assets()
+            .enter()) {
             OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit);
             MiaoVisonLiteTarget framebuffer = viewport.target(SIZE, SIZE);
             framebuffer.bind(true);
@@ -660,8 +683,8 @@ public final class HologramBlueprintPreview {
             GL11.glMatrixMode(GL11.GL_MODELVIEW);
             request.requireCurrent();
             mark(request.saveTrace, Stage.NATIVE_SUBMIT_BEGIN);
-            viewport.preview(
-                state, 0, 0, SIZE, SIZE, request.yaw, request.pitch, 1, Integer.MAX_VALUE, 0, -1, -1, -1, -1);
+            viewport
+                .preview(state, 0, 0, SIZE, SIZE, request.yaw, request.pitch, 1, Integer.MAX_VALUE, 0, -1, -1, -1, -1);
             // A native shape must never be silently replaced with the renderer's diagnostic cube fallback.
             for (HologramState.Cell cell : state.cells) {
                 Block block = cell.block(false);

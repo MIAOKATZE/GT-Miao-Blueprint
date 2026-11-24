@@ -156,15 +156,24 @@ public final class HologramBlueprintCompactRegression {
             + ",\"hintAreas\":[{\"x1\":1,\"prompt\":\"保留\"}],\"cells\":[";
         String footer = "],\"palette\":[[0,{}]]},\"materials\":[{\"item\":\"minecraft:stone\",\"itemNbt\":0,"
             + "\"external\":{\"keep\":true}},{\"item\":\"minecraft:dirt\"}],\"nbt\":[\""
-            + payload + "\"]}";
+            + payload
+            + "\"]}";
         int count = 125_000;
         StringBuilder json = new StringBuilder(envelope);
         for (int i = 0; i < count; i++) {
             if (i != 0) json.append(',');
-            json.append('[').append(i & 1).append(",{\"z\":").append(i % 31 - 15)
-                .append(",\"x\":").append(i - 61000).append(",\"y\":").append(i % 10).append("}]");
+            json.append('[')
+                .append(i & 1)
+                .append(",{\"z\":")
+                .append(i % 31 - 15)
+                .append(",\"x\":")
+                .append(i - 61000)
+                .append(",\"y\":")
+                .append(i % 10)
+                .append("}]");
         }
-        String direct = json.append(footer).toString();
+        String direct = json.append(footer)
+            .toString();
         // Escaped name is legal and forces the same original JsonReader geometry path, with identical coordinates.
         int escapeAt = direct.indexOf("\"x\":-61000");
         String compatibility = direct.substring(0, escapeAt + 1) + "\\u0078" + direct.substring(escapeAt + 2);
@@ -174,21 +183,36 @@ public final class HologramBlueprintCompactRegression {
         var baseline = HologramBlueprintCompactCodec.displayGeometry(fallback);
         SimpleAssert.eq(count, fast.cells(), "giant packed row count");
         SimpleAssert.eq(fast.root, baseline.root, "same envelope, Unicode, fallback fields and typed descriptors");
-        SimpleAssert.eq(payload, fast.material(0).get("itemNbt").getAsString(), "numeric dictionary retains NBT bytes");
+        SimpleAssert.eq(
+            payload,
+            fast.material(0)
+                .get("itemNbt")
+                .getAsString(),
+            "numeric dictionary retains NBT bytes");
         for (int i = 0; i < count; i++) {
             SimpleAssert.eq(baseline.materialIndex(i), fast.materialIndex(i), "packed material reference parity");
             for (int axis = 0; axis < 3; axis++)
                 SimpleAssert.eq(baseline.coordinate(i, axis), fast.coordinate(i, axis), "packed coordinate parity");
         }
         var opened = HologramLocalBlueprintDocument.openForEditor(bytes, "", () -> true);
-        SimpleAssert.that(opened.editor() != null && opened.editor().rows().cells() == count,
+        SimpleAssert.that(
+            opened.editor() != null && opened.editor()
+                .rows()
+                .cells() == count,
             "giant private document offers validated initial geometry without changing its editable source");
-        SimpleAssert.that(Arrays.equals(bytes, opened.document().artifact()), "opening preserves exact portable bytes");
+        SimpleAssert.that(
+            Arrays.equals(
+                bytes,
+                opened.document()
+                    .artifact()),
+            "opening preserves exact portable bytes");
         java.util.concurrent.atomic.AtomicInteger steps = new java.util.concurrent.atomic.AtomicInteger();
         try {
-            HologramLocalBlueprintDocument.openForEditor(bytes, "", () -> steps.incrementAndGet() < 4, editor -> {
-                throw new AssertionError("cancelled decode published a view");
-            });
+            HologramLocalBlueprintDocument.openForEditor(
+                bytes,
+                "",
+                () -> steps.incrementAndGet() < 4,
+                editor -> { throw new AssertionError("cancelled decode published a view"); });
             throw new AssertionError("large packed geometry cancelled too late");
         } catch (java.io.InterruptedIOException expected) {
             SimpleAssert.eq(4, steps.get(), "cancellation during packing does not try the compatibility reader again");
@@ -196,7 +220,8 @@ public final class HologramBlueprintCompactRegression {
 
         char[] padding = new char[16500];
         Arrays.fill(padding, 'a');
-        String prefix = envelope.replace("\"schema\":2,", "\"unrelated\":\"" + new String(padding) + "\",\"schema\":2,");
+        String prefix = envelope
+            .replace("\"schema\":2,", "\"unrelated\":\"" + new String(padding) + "\",\"schema\":2,");
         String fresh = prefix + "[1,{\"x\":-0,\"y\":-2,\"z\":5}]" + footer;
         byte[] small = fresh.getBytes(StandardCharsets.UTF_8);
         var changed = HologramBlueprintCompactCodec.displayGeometry(small);
@@ -207,7 +232,8 @@ public final class HologramBlueprintCompactRegression {
         SimpleAssert.eq(count, fast.cells(), "new input cannot mutate prior packed geometry");
         for (String rows : new String[] { "[0,{\"x\":0e0}]", "[0,{\"x\":2147483648}]", "[2,{}]", "[0,{\"q\":1}]" }) {
             try {
-                HologramBlueprintCompactCodec.displayGeometry((prefix + rows + footer).getBytes(StandardCharsets.UTF_8));
+                HologramBlueprintCompactCodec
+                    .displayGeometry((prefix + rows + footer).getBytes(StandardCharsets.UTF_8));
                 throw new AssertionError("Expected rejection: " + rows);
             } catch (IOException expected) {
                 // The packed preview platform and compatibility reader both enforce admissions.
@@ -220,7 +246,10 @@ public final class HologramBlueprintCompactRegression {
                 () -> true);
             throw new AssertionError("Duplicate canonical packed positions became editable");
         } catch (IOException expected) {
-            SimpleAssert.that(expected.getMessage().contains("重复"), "duplicate coordinates fail in the edit boundary");
+            SimpleAssert.that(
+                expected.getMessage()
+                    .contains("重复"),
+                "duplicate coordinates fail in the edit boundary");
         }
         if (Boolean.getBoolean("gtmb.profilePackedBlueprint")) profilePackedGeometry(bytes, fallback, count);
     }
@@ -267,26 +296,41 @@ public final class HologramBlueprintCompactRegression {
             row.add(position);
             rows.add(row);
         }
-        byte[] exact = GSON.toJson(root).getBytes(StandardCharsets.UTF_8);
+        byte[] exact = GSON.toJson(root)
+            .getBytes(StandardCharsets.UTF_8);
         var eager = HologramLocalBlueprintDocument.openForEditor(exact, id, () -> true);
         var staged = HologramLocalBlueprintDocument.openForEditor(exact, id, () -> true, view -> {}, true);
         var legacy = eager.document();
         var lazy = staged.document();
         SimpleAssert.that(!legacy.packedAuthoring() && lazy.packedAuthoring(), "experiment defaults to legacy");
         var unmanaged = HologramLocalBlueprintDocument.openForEditor(exact, "", () -> true, view -> {}, true);
-        SimpleAssert.that(!unmanaged.document().packedAuthoring(), "named or public imports stay on the legacy writer");
+        SimpleAssert.that(
+            !unmanaged.document()
+                .packedAuthoring(),
+            "named or public imports stay on the legacy writer");
         JsonObject expandedRoot = HologramBlueprintCompactCodec.parse(exact);
         NBTTagCompound packedSnapshot = stableSnapshot(legacy);
         for (JsonObject input : new JsonObject[] { expandedRoot, expandedRoot.getAsJsonObject("blueprint") }) {
             byte[] expanded = json(input);
-            var ordinary = HologramLocalBlueprintDocument.openForEditor(expanded, id, () -> true, view -> {
-                throw new AssertionError("expanded or bare legacy source staged a compact editor view");
-            }, true);
-            SimpleAssert.that(ordinary.editor() == null && !ordinary.document().packedAuthoring(),
+            var ordinary = HologramLocalBlueprintDocument.openForEditor(
+                expanded,
+                id,
+                () -> true,
+                view -> { throw new AssertionError("expanded or bare legacy source staged a compact editor view"); },
+                true);
+            SimpleAssert.that(
+                ordinary.editor() == null && !ordinary.document()
+                    .packedAuthoring(),
                 "expanded and bare legacy use the ordinary typed editor");
-            SimpleAssert.eq(packedSnapshot, stableSnapshot(ordinary.document()),
+            SimpleAssert.eq(
+                packedSnapshot,
+                stableSnapshot(ordinary.document()),
                 "materialized typed snapshot and ordinal order agree across all layouts");
-            SimpleAssert.that(Arrays.equals(expanded, ordinary.document().artifact()),
+            SimpleAssert.that(
+                Arrays.equals(
+                    expanded,
+                    ordinary.document()
+                        .artifact()),
                 "ordinary typed opening retains exact expanded or bare bytes");
         }
         byte[] expanded = json(expandedRoot);
@@ -294,19 +338,38 @@ public final class HologramBlueprintCompactRegression {
         var loaded = ordinaryCodec.read(expanded, () -> true);
         JsonObject reencoded = HologramBlueprintCompactCodec.parse(ordinaryCodec.write(loaded.document()));
         JsonObject reencodedBlueprint = reencoded.getAsJsonObject("blueprint");
-        JsonObject reencodedCell = reencodedBlueprint.getAsJsonArray("cells").get(0).getAsJsonObject();
+        JsonObject reencodedCell = reencodedBlueprint.getAsJsonArray("cells")
+            .get(0)
+            .getAsJsonObject();
         SimpleAssert.eq(expandedRoot.get("opaqueEnvelope"), reencoded.get("opaqueEnvelope"), "opaque envelope");
         SimpleAssert.eq(blueprint.get("opaqueHeader"), reencodedBlueprint.get("opaqueHeader"), "opaque header");
         SimpleAssert.eq(material.get("opaqueRow"), reencodedCell.get("opaqueRow"), "opaque numeric row extension");
         SimpleAssert.eq(material.get("allowedTargets"), reencodedCell.get("allowedTargets"), "opaque target metadata");
-        SimpleAssert.eq(nativePayload, reencodedCell.get("tileNbt").getAsString(), "typed NBT content");
-        SimpleAssert.that(staged.editor() != null && eager.editor() != null
-            && staged.editor().rows().cells() == 3 && Arrays.equals(staged.editor().bounds(), eager.editor().bounds())
-            && Arrays.equals(staged.editor().materials(), eager.editor().materials()),
+        SimpleAssert.eq(
+            nativePayload,
+            reencodedCell.get("tileNbt")
+                .getAsString(),
+            "typed NBT content");
+        SimpleAssert.that(
+            staged.editor() != null && eager.editor() != null
+                && staged.editor()
+                    .rows()
+                    .cells() == 3
+                && Arrays.equals(
+                    staged.editor()
+                        .bounds(),
+                    eager.editor()
+                        .bounds())
+                && Arrays.equals(
+                    staged.editor()
+                        .materials(),
+                    eager.editor()
+                        .materials()),
             "experimental initial view uses identical native material descriptors and order");
         var stored = HologramLocalBlueprintDocument.class.getDeclaredField("document");
         stored.setAccessible(true);
-        SimpleAssert.that(((HologramPresets.Preset) stored.get(lazy)).cells.isEmpty(),
+        SimpleAssert.that(
+            ((HologramPresets.Preset) stored.get(lazy)).cells.isEmpty(),
             "initial experimental document retains no eager authoring cells");
         SimpleAssert.that(Arrays.equals(exact, lazy.artifact()), "unmodified packed artifact preserves exact source");
         NBTTagCompound select = new NBTTagCompound();
@@ -319,21 +382,26 @@ public final class HologramBlueprintCompactRegression {
             expected.removeTag(key);
             actual.removeTag(key);
         }
-        SimpleAssert.eq(expected, actual, "selection and selected typed NBT metadata agree without DTO materialization");
-        SimpleAssert.that(actual.getTagList("nbtEntries", 10).tagCount() > 0
-            && ((HologramPresets.Preset) stored.get(lazy)).cells.isEmpty(), "selecting NBT leaves the packed root intact");
+        SimpleAssert
+            .eq(expected, actual, "selection and selected typed NBT metadata agree without DTO materialization");
+        SimpleAssert.that(
+            actual.getTagList("nbtEntries", 10)
+                .tagCount() > 0 && ((HologramPresets.Preset) stored.get(lazy)).cells.isEmpty(),
+            "selecting NBT leaves the packed root intact");
         try {
             lazy.apply("editCellFlags", new NBTTagCompound());
             throw new AssertionError("a selected-cell mutation bypassed the materialization owner");
         } catch (IllegalStateException expectedGuard) {
-            SimpleAssert.that(lazy.packedAuthoring() && !lazy.dirty(), "direct legacy writes cannot mutate packed state");
+            SimpleAssert
+                .that(lazy.packedAuthoring() && !lazy.dirty(), "direct legacy writes cannot mutate packed state");
         }
         java.util.concurrent.atomic.AtomicInteger checks = new java.util.concurrent.atomic.AtomicInteger();
         try {
             lazy.preparePackedMaterialization(lazy.revision(), () -> checks.incrementAndGet() < 2);
             throw new AssertionError("cancelled conversion produced an installable result");
         } catch (IOException cancelled) {
-            SimpleAssert.that(lazy.packedAuthoring() && lazy.revision() == 0, "cancelled worker leaves ownership unchanged");
+            SimpleAssert
+                .that(lazy.packedAuthoring() && lazy.revision() == 0, "cancelled worker leaves ownership unchanged");
         }
         var converted = lazy.preparePackedMaterialization(lazy.revision(), () -> true);
         try {
@@ -349,7 +417,8 @@ public final class HologramBlueprintCompactRegression {
             SimpleAssert.that(lazy.packedAuthoring(), "owner fence leaves the old version installed");
         }
         lazy.acceptPackedMaterialization(converted, lazy.revision(), () -> true);
-        SimpleAssert.that(!lazy.packedAuthoring() && !lazy.dirty() && lazy.revision() == legacy.revision(),
+        SimpleAssert.that(
+            !lazy.packedAuthoring() && !lazy.dirty() && lazy.revision() == legacy.revision(),
             "representation conversion is not an edit or history entry");
         try {
             lazy.acceptPackedMaterialization(converted, lazy.revision(), () -> true);
@@ -363,31 +432,63 @@ public final class HologramBlueprintCompactRegression {
         for (String op : new String[] { "editCellFlags", "editUndo", "editRedo" }) {
             legacy.apply(op, flags);
             lazy.apply(op, flags);
-            SimpleAssert.eq(HologramBlueprintCompactCodec.parse(legacy.artifact()),
-                HologramBlueprintCompactCodec.parse(lazy.artifact()), "converted operation preserves full source: " + op);
-            SimpleAssert.that(legacy.dirty() == lazy.dirty() && legacy.revision() == lazy.revision(),
+            SimpleAssert.eq(
+                HologramBlueprintCompactCodec.parse(legacy.artifact()),
+                HologramBlueprintCompactCodec.parse(lazy.artifact()),
+                "converted operation preserves full source: " + op);
+            SimpleAssert.that(
+                legacy.dirty() == lazy.dirty() && legacy.revision() == lazy.revision(),
                 "converted operation keeps dirty and revision semantics: " + op);
         }
         var author = new java.util.UUID(0L, 17L);
         byte[] legacySave = legacy.prepareSave(new NBTTagCompound(), "stage-one test", author, id);
         byte[] stagedSave = lazy.prepareSave(new NBTTagCompound(), "stage-one test", author, id);
-        SimpleAssert.eq(HologramBlueprintCompactCodec.parse(legacySave), HologramBlueprintCompactCodec.parse(stagedSave),
+        SimpleAssert.eq(
+            HologramBlueprintCompactCodec.parse(legacySave),
+            HologramBlueprintCompactCodec.parse(stagedSave),
             "save fallback retains native item/tile NBT and uninterpreted source extensions");
         JsonObject savedRoot = HologramBlueprintCompactCodec.parse(stagedSave);
         JsonObject savedBlueprint = savedRoot.getAsJsonObject("blueprint");
-        JsonObject savedCell = savedBlueprint.getAsJsonArray("cells").get(1).getAsJsonObject();
-        SimpleAssert.eq("preserve-me", savedRoot.get("opaqueEnvelope").getAsString(), "opaque envelope survives");
-        SimpleAssert.eq("header-payload", savedBlueprint.get("opaqueHeader").getAsString(), "opaque header survives");
-        SimpleAssert.eq(nativePayload, savedCell.get("tileNbt").getAsString(), "native tile payload stays byte-exact");
-        SimpleAssert.eq(nativePayload, savedCell.get("itemNbt").getAsString(), "native item payload stays byte-exact");
-        SimpleAssert.eq(769, savedCell.get("opaqueRow").getAsInt(), "opaque cell extension survives");
-        SimpleAssert.that(savedCell.getAsJsonArray("allowedTargets").get(0).getAsJsonObject()
-            .get("opaqueChoice").getAsBoolean(), "opaque nested candidate survives");
+        JsonObject savedCell = savedBlueprint.getAsJsonArray("cells")
+            .get(1)
+            .getAsJsonObject();
+        SimpleAssert.eq(
+            "preserve-me",
+            savedRoot.get("opaqueEnvelope")
+                .getAsString(),
+            "opaque envelope survives");
+        SimpleAssert.eq(
+            "header-payload",
+            savedBlueprint.get("opaqueHeader")
+                .getAsString(),
+            "opaque header survives");
+        SimpleAssert.eq(
+            nativePayload,
+            savedCell.get("tileNbt")
+                .getAsString(),
+            "native tile payload stays byte-exact");
+        SimpleAssert.eq(
+            nativePayload,
+            savedCell.get("itemNbt")
+                .getAsString(),
+            "native item payload stays byte-exact");
+        SimpleAssert.eq(
+            769,
+            savedCell.get("opaqueRow")
+                .getAsInt(),
+            "opaque cell extension survives");
+        SimpleAssert.that(
+            savedCell.getAsJsonArray("allowedTargets")
+                .get(0)
+                .getAsJsonObject()
+                .get("opaqueChoice")
+                .getAsBoolean(),
+            "opaque nested candidate survives");
         packedHeaderHistory(exact, id, 3);
         var stillCurrent = new java.util.concurrent.atomic.AtomicBoolean(true);
         try {
-            HologramLocalBlueprintDocument.openForEditor(exact, id, stillCurrent::get,
-                view -> stillCurrent.set(false), true);
+            HologramLocalBlueprintDocument
+                .openForEditor(exact, id, stillCurrent::get, view -> stillCurrent.set(false), true);
             throw new AssertionError("stale owner admitted packed authoring");
         } catch (IOException cancelled) {
             SimpleAssert.that(!stillCurrent.get(), "packed owner is checked again after staging the render input");
@@ -415,21 +516,27 @@ public final class HologramBlueprintCompactRegression {
             }
             packed.apply(op, edit);
             eager.apply(op, edit);
-            SimpleAssert.that(packed.packedAuthoring() && ((HologramPresets.Preset) field.get(packed)).cells == emptyRows
-                && emptyRows.isEmpty(), "no DTO materialization through " + op);
+            SimpleAssert.that(
+                packed.packedAuthoring() && ((HologramPresets.Preset) field.get(packed)).cells == emptyRows
+                    && emptyRows.isEmpty(),
+                "no DTO materialization through " + op);
             SimpleAssert.eq(eager.revision(), packed.revision(), "same revision through " + op);
             SimpleAssert.that(eager.dirty() == packed.dirty(), "same dirty/saved content through " + op);
             NBTTagCompound wanted = eager.snapshotMetadata(), got = packed.snapshotMetadata();
-            wanted.removeTag("session"); wanted.removeTag("generation");
-            got.removeTag("session"); got.removeTag("generation");
+            wanted.removeTag("session");
+            wanted.removeTag("generation");
+            got.removeTag("session");
+            got.removeTag("generation");
             SimpleAssert.eq(wanted, got, "same authored metadata and history through " + op);
             try {
                 packed.artifact();
                 throw new AssertionError("unencoded packed revision emitted stale or empty rows");
             } catch (IOException expected) {}
         }
-        SimpleAssert.that(!packed.supportsPackedCommand("editCellFlags") && !packed.supportsPackedCommand("editHintArea")
-            && !packed.supportsPackedCommand("configureBlueprintNbt"), "non-header mutations retain worker fallback");
+        SimpleAssert.that(
+            !packed.supportsPackedCommand("editCellFlags") && !packed.supportsPackedCommand("editHintArea")
+                && !packed.supportsPackedCommand("configureBlueprintNbt"),
+            "non-header mutations retain worker fallback");
         if (stale != null) try {
             packed.acceptPackedMaterialization(stale, 0, () -> true);
             throw new AssertionError("old packed conversion accepted against a newer header revision");
@@ -441,10 +548,14 @@ public final class HologramBlueprintCompactRegression {
         eager.apply("editUndo", new NBTTagCompound());
         var prepared = packed.preparePackedMaterialization(packed.revision(), () -> true);
         packed.acceptPackedMaterialization(prepared, packed.revision(), () -> true);
-        SimpleAssert.that(!packed.packedAuthoring()
-            && ((HologramPresets.Preset) field.get(packed)).cells.size() == count, "single Save-boundary conversion");
+        SimpleAssert.that(
+            !packed.packedAuthoring() && ((HologramPresets.Preset) field.get(packed)).cells.size() == count,
+            "single Save-boundary conversion");
         NBTTagCompound options = new NBTTagCompound();
-        options.setInteger("deidentificationLevel", packed.snapshotMetadata().getInteger("blueprintDeidentificationLevel"));
+        options.setInteger(
+            "deidentificationLevel",
+            packed.snapshotMetadata()
+                .getInteger("blueprintDeidentificationLevel"));
         java.util.UUID author = new java.util.UUID(0, 12);
         byte[] packedSave = packed.prepareSave(options, "test", author, id);
         byte[] eagerSave = eager.prepareSave(options, "test", author, id);
@@ -465,10 +576,13 @@ public final class HologramBlueprintCompactRegression {
     private static void profilePackedGeometry(byte[] fast, byte[] fallback, int count) throws Exception {
         java.lang.management.ThreadMXBean management = java.lang.management.ManagementFactory.getThreadMXBean();
         com.sun.management.ThreadMXBean allocation = management instanceof com.sun.management.ThreadMXBean
-            ? (com.sun.management.ThreadMXBean) management : null;
-        if (allocation != null && allocation.isThreadAllocatedMemorySupported()) allocation.setThreadAllocatedMemoryEnabled(true);
+            ? (com.sun.management.ThreadMXBean) management
+            : null;
+        if (allocation != null && allocation.isThreadAllocatedMemorySupported())
+            allocation.setThreadAllocatedMemoryEnabled(true);
         else allocation = null;
-        long id = Thread.currentThread().getId();
+        long id = Thread.currentThread()
+            .getId();
         int samples = 9;
         long[][] nanos = { new long[samples], new long[samples] };
         long[][] allocated = { new long[samples], new long[samples] };
@@ -487,11 +601,18 @@ public final class HologramBlueprintCompactRegression {
         }
         for (long[] values : nanos) Arrays.sort(values);
         for (long[] values : allocated) Arrays.sort(values);
-        System.out.println("GTMB_PACKED_GEOMETRY cells=" + count + " sameJvmSamples=" + samples
-            + " fastMedianMs=" + nanos[0][samples / 2] / 1000000.0
-            + " compatibilityMedianMs=" + nanos[1][samples / 2] / 1000000.0
-            + " fastMedianAllocated=" + allocated[0][samples / 2]
-            + " compatibilityMedianAllocated=" + allocated[1][samples / 2]);
+        System.out.println(
+            "GTMB_PACKED_GEOMETRY cells=" + count
+                + " sameJvmSamples="
+                + samples
+                + " fastMedianMs="
+                + nanos[0][samples / 2] / 1000000.0
+                + " compatibilityMedianMs="
+                + nanos[1][samples / 2] / 1000000.0
+                + " fastMedianAllocated="
+                + allocated[0][samples / 2]
+                + " compatibilityMedianAllocated="
+                + allocated[1][samples / 2]);
     }
 
     private static NBTTagCompound stableSnapshot(HologramLocalBlueprintDocument document) throws IOException {
@@ -507,18 +628,24 @@ public final class HologramBlueprintCompactRegression {
         byte[] bytes = expanded.getBytes(StandardCharsets.UTF_8);
         var input = HologramBlueprintCompactCodec.localDocument(expanded, () -> true);
         SimpleAssert.that(input.packed() == null, "expanded cells are not interpreted as compact references");
-        SimpleAssert.eq(HologramBlueprintCompactCodec.parse(bytes), input.root(),
+        SimpleAssert.eq(
+            HologramBlueprintCompactCodec.parse(bytes),
+            input.root(),
             "same complete general tree, including escaped punctuation and opaque typed values");
         AtomicInteger checks = new AtomicInteger();
         IOException cancelled = localRejected(bytes, () -> checks.incrementAndGet() < 1);
-        SimpleAssert.that(cancelled instanceof InterruptedIOException && checks.get() == 1,
+        SimpleAssert.that(
+            cancelled instanceof InterruptedIOException && checks.get() == 1,
             "first packed-attempt checkpoint still cancels instead of falling back");
 
         String nested = "0";
         for (int i = 0; i < 31; i++) nested = "[" + nested + "]";
         String deepest = "{\"opaque\":" + nested + ",\"cells\":[{\"x\":2}]}";
-        SimpleAssert.eq(HologramBlueprintCompactCodec.parse(deepest.getBytes(StandardCharsets.UTF_8)),
-            HologramBlueprintCompactCodec.localDocument(deepest, () -> true).root(), "accept depth 32");
+        SimpleAssert.eq(
+            HologramBlueprintCompactCodec.parse(deepest.getBytes(StandardCharsets.UTF_8)),
+            HologramBlueprintCompactCodec.localDocument(deepest, () -> true)
+                .root(),
+            "accept depth 32");
         for (String invalid : new String[] { expanded + "{}", "{\"blueprint\":{\"cells\":[}}",
             "{\"opaque\":[" + nested + "],\"cells\":[]}",
             "{\"encoding\":\"unknown\",\"blueprint\":{\"cells\":[{\"x\":-3}]}}" }) {
@@ -534,9 +661,13 @@ public final class HologramBlueprintCompactRegression {
             SimpleAssert.eq(expected.getClass(), observed.getClass(), "general fallback exception type");
             SimpleAssert.eq(expected.getMessage(), observed.getMessage(), "general fallback exception order");
         }
-        SimpleAssert.that(localRejected(new byte[] { '{', (byte) 0xff, '}' }, () -> true)
-            instanceof java.nio.charset.CharacterCodingException, "UTF-8 still fails before either structural reader");
-        SimpleAssert.eq("蓝图文件大小超出范围",
+        SimpleAssert.that(
+            localRejected(
+                new byte[] { '{', (byte) 0xff, '}' },
+                () -> true) instanceof java.nio.charset.CharacterCodingException,
+            "UTF-8 still fails before either structural reader");
+        SimpleAssert.eq(
+            "蓝图文件大小超出范围",
             localRejected(new byte[HologramBlueprintArtifact.MAX_JSON_BYTES + 1], () -> true).getMessage(),
             "local raw-byte limit precedes decode and packing");
     }
@@ -562,11 +693,12 @@ public final class HologramBlueprintCompactRegression {
         SimpleAssert.eq(-256, cells.get(1).y, "minimum Y boundary");
         var defaults = cells.get(2);
         SimpleAssert.that(defaults.x == 0 && defaults.y == 0 && defaults.z == 0, "absent coordinates default to zero");
-        SimpleAssert.that(defaults.count == 1 && defaults.facing == -1 && defaults.damage == 0,
+        SimpleAssert.that(
+            defaults.count == 1 && defaults.facing == -1 && defaults.damage == 0,
             "absent material integers retain DTO defaults");
 
-        for (String token : new String[] { "1e0", "1E+2", "-0.0", "1.25", "+1", "\"12\"", "\"not numeric\"",
-            "\"+1\"", "\"\u0661\"", "\"\uff11\"", "true", "null", "{}", "[]", "10000000000", "-10000000000" }) {
+        for (String token : new String[] { "1e0", "1E+2", "-0.0", "1.25", "+1", "\"12\"", "\"not numeric\"", "\"+1\"",
+            "\"\u0661\"", "\"\uff11\"", "true", "null", "{}", "[]", "10000000000", "-10000000000" }) {
             IOException invalid = localRejected(expandedIntegerFixture("{\"damage\":" + token + "}"), () -> true);
             SimpleAssert.eq("蓝图整数无效", invalid.getMessage(), "wrong integer lexeme or shape: " + token);
             SimpleAssert.that(invalid.getCause() == null, "invalid lexeme does not reach integer overflow: " + token);
@@ -588,10 +720,32 @@ public final class HologramBlueprintCompactRegression {
 
     private static void expandedScalarCellsMatchGson() throws Exception {
         // Freeze the old projected field set as an independent test oracle and force review on DTO shape changes.
-        Set<String> known = new HashSet<>(Arrays.asList("x", "y", "z", "block", "metadata", "item", "damage", "count",
-            "tileNbt", "itemNbt", "facing", "prompt", "excluded", "controller", "structureId", "structureIds",
-            "defaultItem", "defaultDamage", "allowedTargets", "structureRole", "structureFamily", "structureHint",
-            "structureCandidatesComplete", "structureHatchFacings"));
+        Set<String> known = new HashSet<>(
+            Arrays.asList(
+                "x",
+                "y",
+                "z",
+                "block",
+                "metadata",
+                "item",
+                "damage",
+                "count",
+                "tileNbt",
+                "itemNbt",
+                "facing",
+                "prompt",
+                "excluded",
+                "controller",
+                "structureId",
+                "structureIds",
+                "defaultItem",
+                "defaultDamage",
+                "allowedTargets",
+                "structureRole",
+                "structureFamily",
+                "structureHint",
+                "structureCandidatesComplete",
+                "structureHatchFacings"));
         Set<String> dto = new HashSet<>();
         for (var field : HologramPresets.Cell.class.getDeclaredFields()) {
             int modifiers = field.getModifiers();
@@ -605,12 +759,13 @@ public final class HologramBlueprintCompactRegression {
         String tileNbt = HologramBlueprintNbt.encodeData(nbt);
         nbt.setInteger("sameMode", 8);
         String itemNbt = HologramBlueprintNbt.encodeData(nbt);
-        JsonObject full = scalarFixture("{\"x\":-12,\"y\":-3,\"z\":8,\"metadata\":31,\"damage\":32,"
-            + "\"count\":2,\"facing\":5,\"defaultDamage\":34,\"block\":\"block\",\"item\":\"item\","
-            + "\"defaultItem\":\"default\",\"prompt\":\"tip\",\"structureId\":\"main\","
-            + "\"structureIds\":[],\"structureRole\":\"role\",\"structureFamily\":\"family\","
-            + "\"structureHint\":\"hint\",\"excluded\":true,\"controller\":true,"
-            + "\"structureCandidatesComplete\":true,\"structureHatchFacings\":null}");
+        JsonObject full = scalarFixture(
+            "{\"x\":-12,\"y\":-3,\"z\":8,\"metadata\":31,\"damage\":32,"
+                + "\"count\":2,\"facing\":5,\"defaultDamage\":34,\"block\":\"block\",\"item\":\"item\","
+                + "\"defaultItem\":\"default\",\"prompt\":\"tip\",\"structureId\":\"main\","
+                + "\"structureIds\":[],\"structureRole\":\"role\",\"structureFamily\":\"family\","
+                + "\"structureHint\":\"hint\",\"excluded\":true,\"controller\":true,"
+                + "\"structureCandidatesComplete\":true,\"structureHatchFacings\":null}");
         full.addProperty("tileNbt", tileNbt);
         full.addProperty("itemNbt", itemNbt);
         JsonObject future = scalarFixture("{\"desc\":\"opaque\",\"types\":[null,true,8,\"8\",{\"deep\":[]}]}");
@@ -618,21 +773,25 @@ public final class HologramBlueprintCompactRegression {
         full.add("frozenBlockResolved", scalarFixture("{\"notADtoField\":true}"));
         full.add("nullableUnknown", JsonNull.INSTANCE);
         String pristineFuture = future.toString();
-        JsonObject emptyLists = scalarFixture("{\"x\":2,\"structureIds\":[],\"item\":null,"
-            + "\"controller\":null,\"excluded\":false,\"structureCandidatesComplete\":null}");
+        JsonObject emptyLists = scalarFixture(
+            "{\"x\":2,\"structureIds\":[],\"item\":null,"
+                + "\"controller\":null,\"excluded\":false,\"structureCandidatesComplete\":null}");
         JsonObject defaults = scalarFixture("{\"x\":3,\"structureIds\":null,\"prompt\":null}");
-        JsonObject coercions = scalarFixture("{\"x\":4,\"block\":16,\"item\":true,\"prompt\":1e+2,"
-            + "\"excluded\":\"TrUe\",\"controller\":\"yes\",\"structureCandidatesComplete\":\"FALSE\"}");
-        JsonObject lists = scalarFixture("{\"x\":5,\"structureIds\":[\"known\",5,false,null],"
-            + "\"structureHatchFacings\":[1,\"2\",3.75],\"allowedTargets\":[{\"item\":\"legacy\","
-            + "\"damage\":\"5\",\"futureTarget\":{\"nested\":[false,null]}}]}");
+        JsonObject coercions = scalarFixture(
+            "{\"x\":4,\"block\":16,\"item\":true,\"prompt\":1e+2,"
+                + "\"excluded\":\"TrUe\",\"controller\":\"yes\",\"structureCandidatesComplete\":\"FALSE\"}");
+        JsonObject lists = scalarFixture(
+            "{\"x\":5,\"structureIds\":[\"known\",5,false,null],"
+                + "\"structureHatchFacings\":[1,\"2\",3.75],\"allowedTargets\":[{\"item\":\"legacy\","
+                + "\"damage\":\"5\",\"futureTarget\":{\"nested\":[false,null]}}]}");
         JsonObject nullTargets = scalarFixture("{\"x\":6,\"allowedTargets\":null}");
         JsonObject source = scalarFixture("{\"schema\":2,\"blueprint\":{\"schema\":2,\"cells\":[],\"palette\":[]}}");
         JsonObject blueprint = source.getAsJsonObject("blueprint");
         JsonArray expanded = blueprint.getAsJsonArray("cells");
         for (JsonObject row : new JsonObject[] { full, emptyLists, defaults, coercions, lists, nullTargets })
             expanded.add(row);
-        blueprint.getAsJsonArray("palette").add(full);
+        blueprint.getAsJsonArray("palette")
+            .add(full);
         byte[] exact = json(source);
         byte[] untouched = exact.clone();
         byte[] compact = HologramBlueprintCompactCodec.recompress(exact, HologramBlueprintArtifact.MAX_JSON_BYTES);
@@ -642,28 +801,49 @@ public final class HologramBlueprintCompactRegression {
             SimpleAssert.that((loaded.layout() != null) == (bytes == compact), "actual expanded/compact lane");
             codec.materialize(loaded, () -> true);
             var document = loaded.document();
-            JsonObject reencoded = HologramBlueprintCompactCodec.documentBlueprint(
-                HologramBlueprintCompactCodec.parse(codec.write(document)));
+            JsonObject reencoded = HologramBlueprintCompactCodec
+                .documentBlueprint(HologramBlueprintCompactCodec.parse(codec.write(document)));
             JsonArray reencodedRows = reencoded.getAsJsonArray("cells");
             SimpleAssert.eq(expanded.size(), document.cells.size(), "all expanded ordinals are retained");
             for (int i = 0; i < expanded.size(); i++) {
-                JsonObject original = expanded.get(i).getAsJsonObject();
+                JsonObject original = expanded.get(i)
+                    .getAsJsonObject();
                 var legacy = gsonProjectedCell(original, known);
-                assertCellMap(original, legacy, document.cells.get(i), reencodedRows.get(i).getAsJsonObject(),
-                    known, "cell ordinal " + i);
+                assertCellMap(
+                    original,
+                    legacy,
+                    document.cells.get(i),
+                    reencodedRows.get(i)
+                        .getAsJsonObject(),
+                    known,
+                    "cell ordinal " + i);
             }
-            assertCellMap(full, gsonProjectedCell(full, known), document.palette.get(0),
-                reencoded.getAsJsonArray("palette").get(0).getAsJsonObject(), known, "palette unchanged");
-            SimpleAssert.eq(pristineFuture, reencodedRows.get(0).getAsJsonObject().get("futureField").toString(),
+            assertCellMap(
+                full,
+                gsonProjectedCell(full, known),
+                document.palette.get(0),
+                reencoded.getAsJsonArray("palette")
+                    .get(0)
+                    .getAsJsonObject(),
+                known,
+                "palette unchanged");
+            SimpleAssert.eq(
+                pristineFuture,
+                reencodedRows.get(0)
+                    .getAsJsonObject()
+                    .get("futureField")
+                    .toString(),
                 "write retains the serialized structure and ordering of the opaque sentinel");
             SimpleAssert.eq(tileNbt, document.cells.get(0).tileNbt, "typed tile NBT exact bytes");
             SimpleAssert.eq(itemNbt, document.cells.get(0).itemNbt, "typed item NBT exact bytes");
             List<String> first = document.cells.get(0).structureIds;
             List<String> second = document.cells.get(1).structureIds;
-            SimpleAssert.that(first.isEmpty() && second.isEmpty() && first != second,
+            SimpleAssert.that(
+                first.isEmpty() && second.isEmpty() && first != second,
                 "empty structure ID lists stay independent");
             first.add("local edit");
-            SimpleAssert.that(second.isEmpty() && document.cells.get(2).structureIds == null,
+            SimpleAssert.that(
+                second.isEmpty() && document.cells.get(2).structureIds == null,
                 "lists remain mutable and empty vs null distinct");
         }
         SimpleAssert.that(Arrays.equals(exact, untouched), "expanded input bytes remain untouched");
@@ -682,16 +862,26 @@ public final class HologramBlueprintCompactRegression {
             }
             IOException actual = localRejected(expandedIntegerFixture(malformed), () -> true);
             SimpleAssert.eq("蓝图编辑数据格式无效", actual.getMessage(), "existing rejection wrapper");
-            SimpleAssert.eq(legacyFailure.getClass(), actual.getCause().getClass(), "Gson rejection kind");
-            SimpleAssert.eq(legacyFailure.getMessage(), actual.getCause().getMessage(), "Gson rejection details/order");
+            SimpleAssert.eq(
+                legacyFailure.getClass(),
+                actual.getCause()
+                    .getClass(),
+                "Gson rejection kind");
+            SimpleAssert.eq(
+                legacyFailure.getMessage(),
+                actual.getCause()
+                    .getMessage(),
+                "Gson rejection details/order");
         }
         IOException invalidInteger = localRejected(
-            expandedIntegerFixture("{\"prompt\":[],\"metadata\":\"1\"}"), () -> true);
+            expandedIntegerFixture("{\"prompt\":[],\"metadata\":\"1\"}"),
+            () -> true);
         SimpleAssert.eq("蓝图整数无效", invalidInteger.getMessage(), "numeric admission still precedes Gson");
     }
 
     private static JsonObject scalarFixture(String text) {
-        return new JsonParser().parse(text).getAsJsonObject();
+        return new JsonParser().parse(text)
+            .getAsJsonObject();
     }
 
     private static HologramPresets.Cell gsonProjectedCell(JsonObject row, Set<String> known) {
@@ -702,7 +892,8 @@ public final class HologramBlueprintCompactRegression {
 
     private static void assertCellMap(JsonObject source, HologramPresets.Cell legacy, HologramPresets.Cell actual,
         JsonObject stored, Set<String> known, String lane) {
-        JsonObject expected = GSON.toJsonTree(legacy).getAsJsonObject();
+        JsonObject expected = GSON.toJsonTree(legacy)
+            .getAsJsonObject();
         SimpleAssert.eq(expected, GSON.toJsonTree(actual), lane + ": old Gson field values and coercions");
         for (Map.Entry<String, JsonElement> field : source.entrySet())
             if (!known.contains(field.getKey()) || "allowedTargets".equals(field.getKey()))
@@ -710,7 +901,8 @@ public final class HologramBlueprintCompactRegression {
         SimpleAssert.eq(expected, stored, lane + ": actual reserialization retains unknown and raw target fields");
     }
 
-    private static IOException localRejected(byte[] bytes, java.util.function.BooleanSupplier current) throws Exception {
+    private static IOException localRejected(byte[] bytes, java.util.function.BooleanSupplier current)
+        throws Exception {
         try {
             new HologramLocalBlueprintCodec().read(bytes, current);
         } catch (IOException expected) {

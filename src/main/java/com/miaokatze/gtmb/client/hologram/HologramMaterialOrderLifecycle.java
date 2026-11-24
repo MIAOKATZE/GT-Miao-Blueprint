@@ -132,9 +132,12 @@ final class HologramMaterialOrderLifecycle {
     }
 
     static boolean cancellable(NBTTagCompound order, long revision, long nonce) {
-        return order.getBoolean("active") && !order.getString("orderId").isEmpty()
-            && order.hasKey("planRevision", 4) && order.getLong("planRevision") == revision
-            && order.hasKey("placementReviewNonce", 4) && order.getLong("placementReviewNonce") == nonce;
+        return order.getBoolean("active") && !order.getString("orderId")
+            .isEmpty()
+            && order.hasKey("planRevision", 4)
+            && order.getLong("planRevision") == revision
+            && order.hasKey("placementReviewNonce", 4)
+            && order.getLong("placementReviewNonce") == nonce;
     }
 
     static boolean writeCancel(NBTTagCompound request, NBTTagCompound order, long revision, long nonce) {

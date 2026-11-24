@@ -36,22 +36,30 @@ final class HologramNeiFirstFrame {
     private HologramNeiFirstFrame() {}
 
     static GuiRecipe<?> open(Minecraft mc, ItemStack controller) {
-        if (!GuiUsageRecipe.openRecipeGui("item", controller.copy()) || !(mc.currentScreen instanceof GuiUsageRecipe gui))
+        if (!GuiUsageRecipe.openRecipeGui("item", controller.copy())
+            || !(mc.currentScreen instanceof GuiUsageRecipe gui))
             throw new IllegalStateException("NEI did not open the controller's usage recipes");
         IRecipeHandler structure = gui.currenthandlers.stream()
-            .filter(handler -> STRUCTURE_HANDLER.equals(handler.getClass().getName()))
+            .filter(
+                handler -> STRUCTURE_HANDLER.equals(
+                    handler.getClass()
+                        .getName()))
             .findFirst()
             .orElseThrow(() -> new IllegalStateException("NEI has no registered structure recipe for the controller"));
-        String name = GuiRecipeTab.getHandlerInfo(structure).getHandlerName();
+        String name = GuiRecipeTab.getHandlerInfo(structure)
+            .getHandlerName();
         gui.openTargetRecipe(Recipe.RecipeId.of((Object) controller, name, Collections.emptyList()));
         if (gui.getHandler() != structure || structure.numRecipes() != 1)
             throw new IllegalStateException("NEI did not select the exact controller structure recipe");
         return gui;
     }
 
-    static Map<String, Object> frame(Minecraft mc, GuiRecipe<?> gui, ItemStack expected) throws ReflectiveOperationException {
+    static Map<String, Object> frame(Minecraft mc, GuiRecipe<?> gui, ItemStack expected)
+        throws ReflectiveOperationException {
         IRecipeHandler recipe = gui.getHandler();
-        if (!STRUCTURE_HANDLER.equals(recipe.getClass().getName()))
+        if (!STRUCTURE_HANDLER.equals(
+            recipe.getClass()
+                .getName()))
             throw new IllegalStateException("NEI changed its selected structure recipe");
         Object view = read(recipe, "guiHandler");
         Object renderer = read(view, "renderer");
@@ -64,24 +72,33 @@ final class HologramNeiFirstFrame {
         Object anchor = field(view.getClass(), "MB_PLACE_POS").get(null);
         int x = coordinate(anchor, "x"), y = coordinate(anchor, "y"), z = coordinate(anchor, "z");
         if (!(world.getTileEntity(x, y, z) instanceof IGregTechTileEntity tile)
-            || tile.getMetaTileID() != expected.getItemDamage() || tile.getFrontFacing() != ForgeDirection.SOUTH)
+            || tile.getMetaTileID() != expected.getItemDamage()
+            || tile.getFrontFacing() != ForgeDirection.SOUTH)
             throw new IllegalStateException("NEI world controller identity or facing differs from the fixture");
         ItemStack trigger = (ItemStack) read(view, "trigger");
         Map<String, Integer> channels = new TreeMap<>();
-        ChannelDataAccessor.iterateChannelData(trigger).forEach(entry -> channels.put(entry.getKey(), entry.getValue()));
-        if (trigger.stackSize != 1 || !channels.isEmpty())
-            throw new IllegalStateException("NEI timing requires the default trigger after construction, got "
-                + trigger.stackSize + " " + channels);
+        ChannelDataAccessor.iterateChannelData(trigger)
+            .forEach(entry -> channels.put(entry.getKey(), entry.getValue()));
+        if (trigger.stackSize != 1 || !channels.isEmpty()) throw new IllegalStateException(
+            "NEI timing requires the default trigger after construction, got " + trigger.stackSize + " " + channels);
         Object rect = read(renderer, "rect");
-        int[] viewport = { coordinate(rect, "x"), coordinate(rect, "y"),
-            coordinate(rect, "z"), coordinate(rect, "w") };
+        int[] viewport = { coordinate(rect, "x"), coordinate(rect, "y"), coordinate(rect, "z"), coordinate(rect, "w") };
         int pixels = drawnDepthPixels(mc, viewport);
         if (pixels == 0) return Collections.emptyMap();
         Map<String, Object> result = new LinkedHashMap<>();
-        result.put("recipeHandler", recipe.getClass().getName());
-        result.put("screen", gui.getClass().getName());
+        result.put(
+            "recipeHandler",
+            recipe.getClass()
+                .getName());
+        result.put(
+            "screen",
+            gui.getClass()
+                .getName());
         result.put("controllerMeta", (int) tile.getMetaTileID());
-        result.put("facing", tile.getFrontFacing().name());
+        result.put(
+            "facing",
+            tile.getFrontFacing()
+                .name());
         result.put("main", trigger.stackSize);
         result.put("channelsAfterConstruction", channels);
         result.put("channels", Collections.singletonMap("gt_hatch", 1));
@@ -96,8 +113,11 @@ final class HologramNeiFirstFrame {
         int marginX = Math.max(1, rect[2] / 8), marginY = Math.max(1, rect[3] / 8);
         int width = rect[2] - 2 * marginX, height = rect[3] - 2 * marginY;
         int left = rect[0] + marginX, bottom = rect[1] + marginY;
-        if (width <= 0 || height <= 0 || left < 0 || bottom < 0
-            || left + width > mc.displayWidth || bottom + height > mc.displayHeight) return 0;
+        if (width <= 0 || height <= 0
+            || left < 0
+            || bottom < 0
+            || left + width > mc.displayWidth
+            || bottom + height > mc.displayHeight) return 0;
         FloatBuffer depth = BufferUtils.createFloatBuffer(Math.multiplyExact(width, height));
         GL11.glReadPixels(left, bottom, width, height, GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT, depth);
         int count = 0;

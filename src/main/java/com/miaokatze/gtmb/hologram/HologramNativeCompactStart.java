@@ -59,13 +59,21 @@ final class HologramNativeCompactStart {
             return;
         }
         HologramSession previous = HologramWorkspace.find(p.getUniqueID());
-        if (previous != null && (previous.player != p || !HologramSessionPolicy.valid(previous)
-            || !HologramEditorWorkspaceRegistry.idle(previous) || previous.nativeReadyPlacement != null
-            || previous.nativeCompactStart != null || previous.presentationTransition != null)
-            || HologramProjectedPlacementService.preparing(p) || HologramPlacementUpload.active(p)
-            || HologramDemolition.active(p) || HologramAeCraftingOrders.active(p)
-            || p.isDead || p.inventory.currentItem != r.getInteger("slot") || !p.capabilities.allowEdit
-            || p.capabilities.isCreativeMode || !isHeldProjector(p)) {
+        if (previous != null
+            && (previous.player != p || !HologramSessionPolicy.valid(previous)
+                || !HologramEditorWorkspaceRegistry.idle(previous)
+                || previous.nativeReadyPlacement != null
+                || previous.nativeCompactStart != null
+                || previous.presentationTransition != null)
+            || HologramProjectedPlacementService.preparing(p)
+            || HologramPlacementUpload.active(p)
+            || HologramDemolition.active(p)
+            || HologramAeCraftingOrders.active(p)
+            || p.isDead
+            || p.inventory.currentItem != r.getInteger("slot")
+            || !p.capabilities.allowEdit
+            || p.capabilities.isCreativeMode
+            || !isHeldProjector(p)) {
             receipt.send(p, id, false, "当前投影仪或工作台正在处理其他操作。");
             return;
         }
@@ -74,15 +82,17 @@ final class HologramNativeCompactStart {
             || p.getDistanceSq(x + .5, y + .5, z + .5) > 64
             || !(p.worldObj.getTileEntity(x, y, z) instanceof IGregTechTileEntity nativeTile)
             || nativeTile.getMetaTileID() != r.getInteger("controller")
-            || !(nativeTile.getMetaTileEntity() instanceof gregtech.api.metatileentity.implementations
-                .MTEEnhancedMultiBlockBase<?> unit)
-            || unit.getExtendedFacing().ordinal() != r.getInteger("facing")) {
+            || !(nativeTile
+                .getMetaTileEntity() instanceof gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase<?>unit)
+            || unit.getExtendedFacing()
+                .ordinal() != r.getInteger("facing")) {
             receipt.send(p, id, false, "现场原生控制器或朝向已变化。");
             return;
         }
         var source = StructureSources.compactNative(unit.getClass());
         var channels = r.getCompoundTag("channels");
-        if (source == null || !source.accepts(r.getInteger("main"), channels) || HologramConstructionJournal.pending(p)) {
+        if (source == null || !source.accepts(r.getInteger("main"), channels)
+            || HologramConstructionJournal.pending(p)) {
             receipt.send(p, id, false, "未认证此原生定义、信道或当前施工恢复状态。");
             return;
         }
@@ -111,7 +121,9 @@ final class HologramNativeCompactStart {
 
     static boolean canonical(String id) {
         try {
-            return id.length() == 36 && UUID.fromString(id).toString().equals(id);
+            return id.length() == 36 && UUID.fromString(id)
+                .toString()
+                .equals(id);
         } catch (IllegalArgumentException invalid) {
             return false;
         }
@@ -125,8 +137,12 @@ final class HologramNativeCompactStart {
             return true;
         }
         if (task.admitting) {
-            HologramNativeReadyPlacement.tick(s, 256, HologramWorkBudget.deadline(HologramWorkBudget.SLICE_NANOS),
-                System::nanoTime, (p, id, accepted, reason) -> task.finish(accepted, reason));
+            HologramNativeReadyPlacement.tick(
+                s,
+                256,
+                HologramWorkBudget.deadline(HologramWorkBudget.SLICE_NANOS),
+                System::nanoTime,
+                (p, id, accepted, reason) -> task.finish(accepted, reason));
             return true;
         }
         HologramControllerCapture.collect(s, !task.collecting);
@@ -141,9 +157,14 @@ final class HologramNativeCompactStart {
 
     private boolean current() {
         HologramSession s = session;
-        return System.nanoTime() - started < LIFETIME && s.job == 0 && !s.cancelled && s.machine != null
-            && HologramWorkspace.find(s.player.getUniqueID()) == s && HologramSessionPolicy.valid(s)
-            && s.machine.getExtendedFacing().ordinal() == facing && s.captureError.isEmpty()
+        return System.nanoTime() - started < LIFETIME && s.job == 0
+            && !s.cancelled
+            && s.machine != null
+            && HologramWorkspace.find(s.player.getUniqueID()) == s
+            && HologramSessionPolicy.valid(s)
+            && s.machine.getExtendedFacing()
+                .ordinal() == facing
+            && s.captureError.isEmpty()
             && StructureSources.revision() == sourceRevision
             && StructureSources.compactNative(s.machine.getClass()) == s.nativeCompactSource
             && s.player.getDistanceSq(s.x + .5, s.y + .5, s.z + .5) <= 64;
@@ -166,7 +187,8 @@ final class HologramNativeCompactStart {
 
     static boolean cancel(EntityPlayerMP p, String id) {
         HologramSession s = HologramWorkspace.find(p.getUniqueID());
-        if (s == null || s.player != p || s.nativeCompactStart == null || !s.nativeCompactStart.id.equals(id)) return false;
+        if (s == null || s.player != p || s.nativeCompactStart == null || !s.nativeCompactStart.id.equals(id))
+            return false;
         s.nativeCompactStart.finish(false, "原生放置已取消。");
         return true;
     }

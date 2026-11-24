@@ -146,7 +146,8 @@ final class HologramWorkspace {
     static void rollbackCompactNative(HologramSession previous, HologramSession target) {
         var owner = target.player.getUniqueID();
         if (find(owner) != target) return;
-        if (previous != null && previous.player == target.player && previous.libraryWorld == target.player.worldObj
+        if (previous != null && previous.player == target.player
+            && previous.libraryWorld == target.player.worldObj
             && !target.player.isDead) SESSIONS.put(owner, previous);
         else SESSIONS.remove(owner, target);
     }

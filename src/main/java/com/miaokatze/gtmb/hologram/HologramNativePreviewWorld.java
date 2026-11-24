@@ -43,7 +43,8 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
     }
 
     static HologramNativePreviewWorld open(TileEntity detached) {
-        if (!(detached.getWorldObj() instanceof HologramResourceWorld source) || source instanceof HologramNativePreviewWorld
+        if (!(detached.getWorldObj() instanceof HologramResourceWorld source)
+            || source instanceof HologramNativePreviewWorld
             || source.getTileEntity(detached.xCoord, detached.yCoord, detached.zCoord) != detached
             || !packable(detached.xCoord, detached.yCoord, detached.zCoord))
             throw new IllegalArgumentException("LOCAL_NATIVE_PREVIEW_REQUIRES_DETACHED_CONTROLLER");
@@ -54,11 +55,11 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
     }
 
     Iterator<Placement> placements() {
-        if (Thread.currentThread() != owner)
-            throw new IllegalStateException("LOCAL_NATIVE_PREVIEW_SCOPE");
+        if (Thread.currentThread() != owner) throw new IllegalStateException("LOCAL_NATIVE_PREVIEW_SCOPE");
         // Iterate the finished footprint even when candidate queries call back into the world.
         recording = false;
-        return placements.values().iterator();
+        return placements.values()
+            .iterator();
     }
 
     int recordedPlacementCount() {
@@ -165,7 +166,8 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
     }
 
     private long writable(int x, int y, int z) {
-        if (!recording || Thread.currentThread() != owner) throw new IllegalStateException("LOCAL_NATIVE_PREVIEW_SCOPE");
+        if (!recording || Thread.currentThread() != owner)
+            throw new IllegalStateException("LOCAL_NATIVE_PREVIEW_SCOPE");
         if (!blockExists(x, y, z)) throw new IllegalStateException("LOCAL_NATIVE_PREVIEW_OUT_OF_BOUNDS");
         return CoordinatePacker.pack(x, y, z);
     }
@@ -173,7 +175,8 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
     private void put(long position, int x, int y, int z, Block block, int metadata, TileEntity next) {
         if (next != null) {
             World current = next.getWorldObj();
-            if (current != null && current != this) throw new IllegalStateException("LOCAL_NATIVE_PREVIEW_FOREIGN_TILE");
+            if (current != null && current != this)
+                throw new IllegalStateException("LOCAL_NATIVE_PREVIEW_FOREIGN_TILE");
             next.setWorldObj(this);
             next.xCoord = x;
             next.yCoord = y;

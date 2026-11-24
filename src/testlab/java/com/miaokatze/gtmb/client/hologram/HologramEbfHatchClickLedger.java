@@ -53,10 +53,14 @@ final class HologramEbfHatchClickLedger {
             int x = ctx.getAbsMouseX(), y = ctx.getAbsMouseY();
             List<Map<String, Object>> panels = new ArrayList<>();
             row.put("panelsBeforePress", panels);
-            for (var panel : mui.getPanelManager().getOpenPanels()) {
+            for (var panel : mui.getPanelManager()
+                .getOpenPanels()) {
                 var p = new LinkedHashMap<String, Object>();
                 panels.add(p);
-                p.put("class", panel.getClass().getName());
+                p.put(
+                    "class",
+                    panel.getClass()
+                        .getName());
                 p.put("scenePanel", panel == scene.getPanel());
                 p.put("enabled", panel.isEnabled());
                 p.put("blocksBelow", panel.disablePanelsBelow());
@@ -85,24 +89,41 @@ final class HologramEbfHatchClickLedger {
                 }
             }
         } catch (RuntimeException e) {
-            row.put("hoverObservationErrorClass", e.getClass().getName());
+            row.put(
+                "hoverObservationErrorClass",
+                e.getClass()
+                    .getName());
         }
         sample("beforePress");
     }
 
     static boolean inside(int[] r, int x, int y) {
-        return r != null && r.length == 4 && r[2] > 0 && r[3] > 0 && x >= r[0] && y >= r[1]
-            && x < (long) r[0] + r[2] && y < (long) r[1] + r[3];
+        return r != null && r.length == 4
+            && r[2] > 0
+            && r[3] > 0
+            && x >= r[0]
+            && y >= r[1]
+            && x < (long) r[0] + r[2]
+            && y < (long) r[1] + r[3];
     }
 
     static boolean separate(int[] a, int[] b) {
-        return a != null && b != null && a.length == 4 && b.length == 4 && a[2] > 0 && a[3] > 0
-            && b[2] > 0 && b[3] > 0 && ((long) a[0] + a[2] <= b[0] || (long) b[0] + b[2] <= a[0]
-                || (long) a[1] + a[3] <= b[1] || (long) b[1] + b[3] <= a[1]);
+        return a != null && b != null
+            && a.length == 4
+            && b.length == 4
+            && a[2] > 0
+            && a[3] > 0
+            && b[2] > 0
+            && b[3] > 0
+            && ((long) a[0] + a[2] <= b[0] || (long) b[0] + b[2] <= a[0]
+                || (long) a[1] + a[3] <= b[1]
+                || (long) b[1] + b[3] <= a[1]);
     }
 
     private static String type(IWidget w) {
-        return w == null ? null : w.getClass().getName();
+        return w == null ? null
+            : w.getClass()
+                .getName();
     }
 
     // Between press and release keep this bounded: no layout scan, hover refresh, picker, delays, IO or callbacks.
@@ -111,9 +132,11 @@ final class HologramEbfHatchClickLedger {
         phases.put(phase, s);
         try {
             var ui = screen.ui;
-            var ctx = screen.getScreen().getContext();
+            var ctx = screen.getScreen()
+                .getContext();
             var state = ui.session.state();
-            IWidget focus = ctx.getFocusedWidget().getElement();
+            IWidget focus = ctx.getFocusedWidget()
+                .getElement();
             s.put("sameActorWorldConnectionAndSlot", fixtureOwner.getAsBoolean());
             s.put("uiGraphIsOriginal", ui == graph);
             s.put("stateIsBaseline", state == baseline);
@@ -125,8 +148,9 @@ final class HologramEbfHatchClickLedger {
             s.put("pointer", new int[] { ctx.getAbsMouseX(), ctx.getAbsMouseY() });
             s.put("focusedClass", type(focus));
             s.put("focusedHoverId", hoverIds.get(focus));
-            s.put("focusInScenePanel", focus != null && focus.isValid() && scene.isValid()
-                && focus.getPanel() == scene.getPanel());
+            s.put(
+                "focusInScenePanel",
+                focus != null && focus.isValid() && scene.isValid() && focus.getPanel() == scene.getPanel());
             s.put("muiHasDraggable", ctx.hasDraggable());
             s.put("toolsPointerCaptured", ui.tools.pointerCaptured());
             s.put("controllerOpeningPressGate", screen.controllerRequest() > 0);
@@ -140,20 +164,32 @@ final class HologramEbfHatchClickLedger {
             s.put("physicalCameraGesture", !ui.preview.blueprintCameraControls() && ui.preview.cameraGestureActive());
             s.put("inventoryDragging", ui.preview.inventoryDragging());
             s.put("boxSelecting", ui.preview.boxSelecting());
-            s.put("gizmoAxis", ui.preview.gizmo().axis());
+            s.put(
+                "gizmoAxis",
+                ui.preview.gizmo()
+                    .axis());
             s.put("textBoxActive", ui.textBoxes.active());
             // Only report the comparison, never the identifier, annotation text or player data.
             s.put("annotationPinChanged", !oldPin.equals(ui.annotations.pinnedAnnotation()));
-            s.put("selectionVersion", ui.preview.selection().version());
+            s.put(
+                "selectionVersion",
+                ui.preview.selection()
+                    .version());
             s.put("selected", ui.preview.selected());
-            s.put("selectionIndices", ui.preview.selection().indices());
+            s.put(
+                "selectionIndices",
+                ui.preview.selection()
+                    .indices());
         } catch (RuntimeException e) {
-            s.put("observationErrorClass", e.getClass().getName());
+            s.put(
+                "observationErrorClass",
+                e.getClass()
+                    .getName());
         }
     }
 
-    private static final String[] EDIT_GATES =
-        { "areaImporting", "targetClosed", "areaSelectionShell", "attachmentPending", "currentPlacementPending", "capturePending" };
+    private static final String[] EDIT_GATES = { "areaImporting", "targetClosed", "areaSelectionShell",
+        "attachmentPending", "currentPlacementPending", "capturePending" };
 
     // A skipped dispatch leaves no handled value, rather than publishing a fake native false.
     void result(String edge, boolean pre, Boolean handled) {

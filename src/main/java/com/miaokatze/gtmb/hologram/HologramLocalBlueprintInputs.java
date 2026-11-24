@@ -59,9 +59,11 @@ public final class HologramLocalBlueprintInputs {
         for (int i = 0; i < rows.tagCount(); i++) {
             NBTTagCompound row = rows.getCompoundTagAt(i);
             ItemStack material = ItemStack.loadItemStackFromNBT(row.getCompoundTag("targetStack"));
-            if (material == null && row.getString("wantId").isEmpty()) continue;
+            if (material == null && row.getString("wantId")
+                .isEmpty()) continue;
             HologramPresets.Cell cell = material == null ? new HologramPresets.Cell()
-                : HologramPresets.cell(material, row.getInteger("dx"), row.getInteger("dy"), row.getInteger("dz"), -1, false);
+                : HologramPresets
+                    .cell(material, row.getInteger("dx"), row.getInteger("dy"), row.getInteger("dz"), -1, false);
             cell.x = row.getInteger("dx");
             cell.y = row.getInteger("dy");
             cell.z = row.getInteger("dz");
@@ -81,8 +83,8 @@ public final class HologramLocalBlueprintInputs {
                 structure.controllerId = material.getItemDamage();
             NBTTagCompound display = row.getCompoundTag("targetDisplay");
             Block block = cell.block();
-            if (block != null && display.hasKey("nativeTile", 10))
-                cell.tileNbt = HologramBlueprintNbt.encodeCapturedWithSize(block, display.getCompoundTag("nativeTile")).value;
+            if (block != null && display.hasKey("nativeTile", 10)) cell.tileNbt = HologramBlueprintNbt
+                .encodeCapturedWithSize(block, display.getCompoundTag("nativeTile")).value;
             if (block != null && material != null && material.hasTagCompound())
                 cell.itemNbt = HologramBlueprintNbt.encodeCapturedWithSize(block, material.getTagCompound()).value;
             NBTTagList candidates = row.getTagList("candidates", 10);

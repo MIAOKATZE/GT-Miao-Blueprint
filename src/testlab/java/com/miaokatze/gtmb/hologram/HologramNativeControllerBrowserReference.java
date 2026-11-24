@@ -43,7 +43,8 @@ public final class HologramNativeControllerBrowserReference {
         Class<?> tracked = Class.forName("blockrenderer6343.client.world.TrackedDummyWorld");
         World world = HologramResourceWorld.create(() -> {
             try {
-                return (World) tracked.getConstructor().newInstance();
+                return (World) tracked.getConstructor()
+                    .newInstance();
             } catch (ReflectiveOperationException unavailable) {
                 throw new IllegalStateException("BlockRenderer test world", unavailable);
             }
@@ -52,7 +53,8 @@ public final class HologramNativeControllerBrowserReference {
         EntityPlayer actor = (EntityPlayer) fakePlayer.getConstructor(World.class, GameProfile.class)
             .newInstance(world, new GameProfile(UUID.randomUUID(), "[GTMB NEI test oracle]"));
         Class<?> creative = Class.forName("blockrenderer6343.api.utils.CreativeItemSource");
-        IItemSource source = (IItemSource) creative.getField("instance").get(null);
+        IItemSource source = (IItemSource) creative.getField("instance")
+            .get(null);
         ItemStack trigger = new ItemStack(StructureLibAPI.getDefaultHologramItem(), main);
         for (Object entry : channels.func_150296_c()) {
             String id = (String) entry;
@@ -64,7 +66,8 @@ public final class HologramNativeControllerBrowserReference {
         RunnableMachineUpdate.setCurrentThreadEnabled(false);
         try {
             ItemStack stack = item.copy();
-            stack.getItem().onItemUse(stack, actor, world, 0, Y, 0, 0, 0, Y, 0);
+            stack.getItem()
+                .onItemUse(stack, actor, world, 0, Y, 0, 0, 0, Y, 0);
             if (!(world.getTileEntity(0, Y, 0) instanceof IGregTechTileEntity base))
                 throw new IllegalStateException("BlockRenderer reference controller could not be placed");
             base.setFrontFacing(facing);
@@ -74,7 +77,7 @@ public final class HologramNativeControllerBrowserReference {
             if (machine instanceof ISurvivalConstructable survival) {
                 var changed = tracked.getMethod("hasChanged");
                 ISurvivalBuildEnvironment environment = ISurvivalBuildEnvironment.create(source, actor);
-                for (int round = 1; ; round++) {
+                for (int round = 1;; round++) {
                     survival.survivalConstruct(trigger, Integer.MAX_VALUE, environment);
                     if (!(Boolean) changed.invoke(world)) break;
                     if (round == 2000) throw new IllegalStateException("BlockRenderer reference did not converge");
@@ -82,7 +85,8 @@ public final class HologramNativeControllerBrowserReference {
             } else {
                 TileEntity tile = world.getTileEntity(0, Y, 0);
                 IConstructable constructable = tile instanceof IConstructableProvider provider
-                    ? provider.getConstructable() : tile instanceof IConstructable nativeSource ? nativeSource : null;
+                    ? provider.getConstructable()
+                    : tile instanceof IConstructable nativeSource ? nativeSource : null;
                 if (constructable != null) constructable.construct(trigger, false);
             }
             if (modifier != null) modifier.onPreviewStructureComplete(trigger);
@@ -90,7 +94,8 @@ public final class HologramNativeControllerBrowserReference {
             RunnableMachineUpdate.setCurrentThreadEnabled(update);
         }
 
-        Map<?, ?> blocks = (Map<?, ?>) tracked.getField("blockMap").get(world);
+        Map<?, ?> blocks = (Map<?, ?>) tracked.getField("blockMap")
+            .get(world);
         Map<String, String> rows = new TreeMap<>();
         for (Object entry : blocks.keySet()) {
             long position = (Long) entry;
@@ -102,8 +107,14 @@ public final class HologramNativeControllerBrowserReference {
             String id = Block.blockRegistry.getNameForObject(block);
             int meta = world.getBlockMetadata(x, y, z);
             TileEntity tile = world.getTileEntity(x, y, z);
-            if (block == GregTechAPI.sBlockMachines && tile instanceof IGregTechTileEntity gt)
-                rows.put(position(x, y - Y, z), block(id, meta, gt.getMetaTileID(), gt.getFrontFacing().ordinal()));
+            if (block == GregTechAPI.sBlockMachines && tile instanceof IGregTechTileEntity gt) rows.put(
+                position(x, y - Y, z),
+                block(
+                    id,
+                    meta,
+                    gt.getMetaTileID(),
+                    gt.getFrontFacing()
+                        .ordinal()));
             else rows.put(position(x, y - Y, z), block(id, meta, -1, -1));
         }
         return rows;

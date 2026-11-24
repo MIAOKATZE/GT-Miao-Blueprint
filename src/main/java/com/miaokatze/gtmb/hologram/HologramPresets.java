@@ -83,6 +83,7 @@ final class HologramPresets {
     }
 
     private static final class CatalogOrigin {
+
         byte[] bytes;
         boolean compact;
     }
@@ -442,7 +443,8 @@ final class HologramPresets {
         if (!compactCatalog) throw new HologramCompactRequiredException();
         // The compact mirror cannot wash an existing expanded pair into use.
         if (source.stored.nativeBlueprint != null && id.matches("(?:local_)?[a-fA-F0-9-]{36}")) {
-            Path path = HologramBlueprintFiles.resolve(libraryPath().getParent(), id.startsWith("local_") ? id : "local_" + id);
+            Path path = HologramBlueprintFiles
+                .resolve(libraryPath().getParent(), id.startsWith("local_") ? id : "local_" + id);
             FileStamp stamp = FileStamp.read(path);
             // Collection-only entries remain sourced from the compact catalog. Refresh still owns removal of
             // incomplete native pairs. A present file, however, must qualify on its own stored representation.
@@ -557,8 +559,8 @@ final class HologramPresets {
         FileStamp stamp = FileStamp.read(path);
         if (stamp == null) return;
         boolean compact = path.equals(cachedPath) && stamp.equals(cachedStamp) && catalogJson != null ? compactCatalog
-            : HologramBlueprintCompactCodec.isCompact(HologramBlueprintSharing.readBytes(path, MAX_LIBRARY_BYTES),
-                MAX_LIBRARY_BYTES);
+            : HologramBlueprintCompactCodec
+                .isCompact(HologramBlueprintSharing.readBytes(path, MAX_LIBRARY_BYTES), MAX_LIBRARY_BYTES);
         if (!compact) throw new HologramCompactRequiredException();
     }
 

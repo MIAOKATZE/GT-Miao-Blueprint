@@ -14,8 +14,7 @@ public final class HologramPreviewHatchFacings {
 
     static int mask(int[] facings) {
         int mask = 0;
-        if (facings != null) for (int facing : facings)
-            if (facing >= 0 && facing < 6) mask |= 1 << facing;
+        if (facings != null) for (int facing : facings) if (facing >= 0 && facing < 6) mask |= 1 << facing;
         return mask;
     }
 
@@ -33,8 +32,8 @@ public final class HologramPreviewHatchFacings {
         NBTTagList candidates = row.getTagList("candidates", 10);
         if (target == null || masks.length != candidates.tagCount()) return new int[0];
         for (int index = 0; index < masks.length; index++) {
-            if (masks[index] != 0 && HologramValues.same(
-                target, ItemStack.loadItemStackFromNBT(candidates.getCompoundTagAt(index))))
+            if (masks[index] != 0
+                && HologramValues.same(target, ItemStack.loadItemStackFromNBT(candidates.getCompoundTagAt(index))))
                 return directions(masks[index]);
         }
         return new int[0];

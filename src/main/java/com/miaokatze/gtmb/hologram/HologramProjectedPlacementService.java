@@ -78,7 +78,10 @@ final class HologramProjectedPlacementService {
             if (pending != null && pending.id.equals(id)) return;
             if (pending != null || PENDING.size() + QUOTES.size() >= MAX_PENDING)
                 throw new IOException("已有材料核对任务，请稍后重试");
-            QuoteJob job = new QuoteJob(player, id, HologramPlacementRequest.materialCheck(tag),
+            QuoteJob job = new QuoteJob(
+                player,
+                id,
+                HologramPlacementRequest.materialCheck(tag),
                 HologramPlacementRequest.sourceOptions(tag));
             job.requireCurrent();
             QUOTES.put(owner, job);
@@ -89,7 +92,9 @@ final class HologramProjectedPlacementService {
 
     static void cancel(EntityPlayerMP player, String id) {
         try {
-            if (id.length() != 36 || !UUID.fromString(id).toString().equals(id)) return;
+            if (id.length() != 36 || !UUID.fromString(id)
+                .toString()
+                .equals(id)) return;
         } catch (IllegalArgumentException invalid) {
             return;
         }
@@ -111,7 +116,8 @@ final class HologramProjectedPlacementService {
         HologramSession published = HologramWorkspace.find(player.getUniqueID());
         if (published != null && published.player == player
             && published.job == 0
-            && published.executionRequestId.equals(id) && !id.isEmpty()) {
+            && published.executionRequestId.equals(id)
+            && !id.isEmpty()) {
             NBTTagCompound cancel = new NBTTagCompound();
             cancel.setString("session", published.id);
             cancel.setLong("planRevision", published.planRevision);
@@ -165,7 +171,8 @@ final class HologramProjectedPlacementService {
     }
 
     private static void tickQuotes(long deadline) {
-        Iterator<QuoteJob> jobs = QUOTES.values().iterator();
+        Iterator<QuoteJob> jobs = QUOTES.values()
+            .iterator();
         while (jobs.hasNext() && System.nanoTime() < deadline) {
             QuoteJob job = jobs.next();
             try {
@@ -224,14 +231,17 @@ final class HologramProjectedPlacementService {
             tool = player.getHeldItem();
             settings = HologramMaterials.read(tool);
             sources.apply(settings);
-            this.materials = materials.entrySet().iterator();
+            this.materials = materials.entrySet()
+                .iterator();
         }
 
         private void requireCurrent() throws IOException {
             if (System.nanoTime() - started > 30_000_000_000L || !HologramNetwork.progressConnected(player)
-                || player.isDead || player.worldObj != world || player.inventory.currentItem != toolSlot
-                || player.getHeldItem() != tool || !ItemNekoHologramProjector.isProjector(tool))
-                throw new IOException("材料核对上下文已经变化，请重试");
+                || player.isDead
+                || player.worldObj != world
+                || player.inventory.currentItem != toolSlot
+                || player.getHeldItem() != tool
+                || !ItemNekoHologramProjector.isProjector(tool)) throw new IOException("材料核对上下文已经变化，请重试");
         }
 
         private boolean step(long deadline) throws IOException {
@@ -289,9 +299,8 @@ final class HologramProjectedPlacementService {
 
         private void requireCurrent(Phase phase) throws IOException {
             Reason rejection = firstRejection();
-            if (rejection != null)
-                throw HologramProjectedPlacementGuardTrace
-                    .failure(phase, rejection, line -> GTMiaoBlueprint.LOG.info(line));
+            if (rejection != null) throw HologramProjectedPlacementGuardTrace
+                .failure(phase, rejection, line -> GTMiaoBlueprint.LOG.info(line));
         }
 
         /** Preserve the former short-circuit order; diagnosing an early failure does not probe later conditions. */
@@ -348,9 +357,11 @@ final class HologramProjectedPlacementService {
                 session.virtual = true;
                 session.virtualPlacement = true;
                 session.virtualLocked = true;
-                header.sources().apply(session.materialSettings);
+                header.sources()
+                    .apply(session.materialSettings);
                 session.executionRequestId = header.id();
-                session.virtualPreset = new HologramPresets.Preset(); // Metadata expected by the existing transaction UI.
+                session.virtualPreset = new HologramPresets.Preset(); // Metadata expected by the existing transaction
+                                                                      // UI.
                 session.virtualPreset.schema = 2;
                 session.virtualPreset.id = "operation_" + header.id();
                 session.virtualPreset.name = "当前施工";
@@ -360,8 +371,11 @@ final class HologramProjectedPlacementService {
                 session.placementDeidentificationChosen = true;
                 session.capture = new HologramCapture(null, HologramSessionPolicy.trigger(session));
             }
-            while (variants.size() < decoded.variants().size() && System.nanoTime() < deadline) {
-                Resolved resolved = new Resolved(decoded.variants().get(variants.size()));
+            while (variants.size() < decoded.variants()
+                .size() && System.nanoTime() < deadline) {
+                Resolved resolved = new Resolved(
+                    decoded.variants()
+                        .get(variants.size()));
                 if (resolved.network != null) {
                     String group = HologramNetworkBindings.group(resolved.network);
                     session.executionNetworks.putIfAbsent(group, resolved.network);
@@ -369,7 +383,8 @@ final class HologramProjectedPlacementService {
                 }
                 variants.add(resolved);
             }
-            if (variants.size() < decoded.variants().size()) return false;
+            if (variants.size() < decoded.variants()
+                .size()) return false;
             while (pass < 2 && System.nanoTime() < deadline) {
                 if (operation == decoded.size()) {
                     operation = 0;
@@ -383,8 +398,7 @@ final class HologramProjectedPlacementService {
             if (pass < 2) return false;
             requireCurrent(Phase.PUBLISH);
             if (header.direct()) {
-                if (!session.executionNetworks.isEmpty())
-                    throw new IOException("需明确配置蓝图网络，未开始施工");
+                if (!session.executionNetworks.isEmpty()) throw new IOException("需明确配置蓝图网络，未开始施工");
                 session.materialSettings.me = false;
                 directPlan = HologramResourcePlanner.beginPlan(session);
                 return startDirect(deadline);
@@ -400,14 +414,13 @@ final class HologramProjectedPlacementService {
             requireCurrent(Phase.PUBLISH);
             if (HologramConstructionJournal.pending(player)) throw new IOException("存在待核定施工凭据");
             var sources = HologramMaterials.read(player.getHeldItem());
-            if (sources.main != session.materialSettings.main || sources.containers != session.materialSettings.containers
-                || sources.priority != session.materialSettings.priority)
-                throw new IOException("材料来源设置已变化，未开始施工");
+            if (sources.main != session.materialSettings.main
+                || sources.containers != session.materialSettings.containers
+                || sources.priority != session.materialSettings.priority) throw new IOException("材料来源设置已变化，未开始施工");
             if (directStart == null) {
                 long remaining = Math.max(0L, deadline - System.nanoTime());
                 if (remaining == 0 || !directPlan.step(Integer.MAX_VALUE, remaining)) return false;
-                if (session.planMissing != 0 || !session.planRecoveryFits)
-                    throw new IOException("施工材料不足或无法安全施工，未开始施工");
+                if (session.planMissing != 0 || !session.planRecoveryFits) throw new IOException("施工材料不足或无法安全施工，未开始施工");
                 if (!session.blueprintEnergy.empty() || session.blueprintResources != null
                     && (!session.blueprintResources.fluids.isEmpty() || !session.blueprintResources.essentia.isEmpty()))
                     throw new IOException("此蓝图有需另行明确的设备资源，未开始施工");
@@ -426,7 +439,10 @@ final class HologramProjectedPlacementService {
 
         private void add(HologramProjectedPlacement.Cell target, Resolved resolved) {
             HologramCapture.Cell cell = new HologramCapture.Cell(
-                null, header.x() + target.x(), header.y() + target.y(), header.z() + target.z());
+                null,
+                header.x() + target.x(),
+                header.y() + target.y(),
+                header.z() + target.z());
             cell.block = resolved.block;
             cell.meta = target.metadata();
             cell.blueprintBlock = target.block();
@@ -462,14 +478,19 @@ final class HologramProjectedPlacementService {
             NBTTagCompound itemState = HologramExecutionEligibility.payload(variant.itemState());
             material = HologramEssentia.shellMaterial(new ItemStack(item, 1, variant.damage()));
             HologramExecutionEligibility.validate(
-                block, variant.metadata(), material, variant.facing(), variant.controller(), state, itemState);
+                block,
+                variant.metadata(),
+                material,
+                variant.facing(),
+                variant.controller(),
+                state,
+                itemState);
             if (HologramNativePlacement.supported(block, state))
                 material.setTagCompound(HologramBlueprintNbt.nativePayload(itemState));
             if (state != null && state.hasKey(HologramNetworkBindings.GROUP)) {
                 network = new NBTTagCompound();
                 for (String key : new String[] { HologramNetworkBindings.GROUP, HologramNetworkBindings.ROLE,
-                    HologramNetworkBindings.HINT })
-                    if (state.hasKey(key)) network.setString(key, state.getString(key));
+                    HologramNetworkBindings.HINT }) if (state.hasKey(key)) network.setString(key, state.getString(key));
             } else network = null;
         }
     }

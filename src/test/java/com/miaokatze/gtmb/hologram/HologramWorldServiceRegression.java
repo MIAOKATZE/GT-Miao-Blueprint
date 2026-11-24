@@ -377,7 +377,8 @@ public final class HologramWorldServiceRegression {
         s.virtual = s.virtualPlacement = s.virtualLocked = true;
         s.blueprintAwaitingConfirmation = s.placementReviewIssued = true;
         s.placementReviewNonce = 17;
-        s.executionRequestId = UUID.randomUUID().toString();
+        s.executionRequestId = UUID.randomUUID()
+            .toString();
         Field field = HologramWorkspace.class.getDeclaredField("SESSIONS");
         field.setAccessible(true);
         @SuppressWarnings("unchecked")
@@ -394,8 +395,12 @@ public final class HologramWorldServiceRegression {
             back.setLong("uiSequence", s.uiSequence + 1);
             ItemStack held = player.getHeldItem();
             HologramService.handle(player, back);
-            SimpleAssert.that(s.cancelled && !s.blueprintAwaitingConfirmation && !s.placementReviewIssued
-                && s.placementReviewNonce == 18 && s.job == 0 && player.getHeldItem() == held,
+            SimpleAssert.that(
+                s.cancelled && !s.blueprintAwaitingConfirmation
+                    && !s.placementReviewIssued
+                    && s.placementReviewNonce == 18
+                    && s.job == 0
+                    && player.getHeldItem() == held,
                 "authoritative Back revokes precisely this review without starting a job");
             NBTTagCompound terminal = HologramSnapshots.cancellation(s);
             com.miaokatze.gtmb.client.hologram.HologramPlacementReviewContextRegression

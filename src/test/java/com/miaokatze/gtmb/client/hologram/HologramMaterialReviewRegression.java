@@ -5,7 +5,6 @@ package com.miaokatze.gtmb.client.hologram;
 
 import java.lang.reflect.Field;
 import java.util.ArrayList;
-import java.util.List;
 import java.util.Map;
 
 import net.minecraft.client.Minecraft;
@@ -130,9 +129,11 @@ public final class HologramMaterialReviewRegression {
         ItemStack first = new ItemStack(Items.diamond, 3, 7);
         ItemStack second = new ItemStack(Items.diamond, 9, 7);
         first.setTagCompound(new NBTTagCompound());
-        first.getTagCompound().setString("variant", "first");
+        first.getTagCompound()
+            .setString("variant", "first");
         second.setTagCompound(new NBTTagCompound());
-        second.getTagCompound().setString("variant", "second");
+        second.getTagCompound()
+            .setString("variant", "second");
         ItemStack protectedStack = first.copy();
         protectedStack.stackSize = 30;
         NBTTagList demand = new NBTTagList();
@@ -147,22 +148,26 @@ public final class HologramMaterialReviewRegression {
         theory.setTag("rows", demand);
 
         HologramMaterialReview model = new HologramMaterialReview();
-        NBTTagCompound visible =
-            HologramLocalMaterialReview.stockRows(theory, new ItemStack[] {first, second, protectedStack}, 2);
+        NBTTagCompound visible = HologramLocalMaterialReview
+            .stockRows(theory, new ItemStack[] { first, second, protectedStack }, 2);
         model.updateLocal(visible);
         SimpleAssert.that(
             "3".equals(model.row(0).available) && "5".equals(model.row(0).missing)
-                && "9".equals(model.row(1).available) && "0".equals(model.row(1).missing),
+                && "9".equals(model.row(1).available)
+                && "0".equals(model.row(1).missing),
             "detached backpack uses exact NBT, excludes protected slot, and reports only a backpack delta");
         SimpleAssert.that(
-            "987654321123456789123456789".equals(model.row(2).required)
-                && "未知".equals(model.row(2).available) && "未知".equals(model.row(2).missing)
+            "987654321123456789123456789".equals(model.row(2).required) && "未知".equals(model.row(2).available)
+                && "未知".equals(model.row(2).missing)
                 && !model.row(2).shortage,
             "an unobserved resource is neither zero nor a definite shortage");
         SimpleAssert.that(
             theory.getBoolean("complete") && !visible.hasKey("complete")
-                && !demand.getCompoundTagAt(0).hasKey("availableKnown")
-                && !model.ready() && !model.hasItemShortage() && !model.hasVoucherDemand(),
+                && !demand.getCompoundTagAt(0)
+                    .hasKey("availableKnown")
+                && !model.ready()
+                && !model.hasItemShortage()
+                && !model.hasVoucherDemand(),
             "local display does not mutate theory or grant any server quote capability");
         model.updateLocal(HologramLocalMaterialReview.stockRows(theory, null, 2));
         SimpleAssert.that(
@@ -185,24 +190,30 @@ public final class HologramMaterialReviewRegression {
         config.setInteger("scope", 2);
         config.setInteger("layer", 7);
         config.setInteger("selected", 2);
-        config.setIntArray("selectedIndices", new int[] {0, 2, 3, 4});
+        config.setIntArray("selectedIndices", new int[] { 0, 2, 3, 4 });
         config.setBoolean("materialMain", true);
         HologramLocalMaterialReview review = new HologramLocalMaterialReview(displayed, config);
-        ItemStack[] backpack = {new ItemStack(net.minecraft.init.Blocks.stone, 2, 0)};
+        ItemStack[] backpack = { new ItemStack(net.minecraft.init.Blocks.stone, 2, 0) };
         for (int i = 0; i < 6 && !review.ready(); i++) review.tick(backpack, -1);
 
         HologramMaterialReview model = new HologramMaterialReview();
         model.updateLocal(review.visible());
         SimpleAssert.that(
-            review.ready() && review.status().contains("1 格未核算") && model.size() == 1
-                && "1".equals(model.row(0).required) && "2".equals(model.row(0).available),
+            review.ready() && review.status()
+                .contains("1 格未核算")
+                && model.size() == 1
+                && "1".equals(model.row(0).required)
+                && "2".equals(model.row(0).available),
             "native estimate includes only the selected scope, reports missing identity, and excludes the anchor");
         SimpleAssert.that(review.current(displayed, 7) && !review.current(displayed, 8), "local review is layer-bound");
         NBTTagCompound newer = new NBTTagCompound();
         newer.setLong("planRevision", 5);
         SimpleAssert.that(!review.current(displayed.withMetadata(newer), 7), "local review is revision-bound");
-        config.setIntArray("selectedIndices", new int[] {1});
-        SimpleAssert.that(review.settings().getIntArray("selectedIndices").length == 4, "scope is frozen for submission");
+        config.setIntArray("selectedIndices", new int[] { 1 });
+        SimpleAssert.that(
+            review.settings()
+                .getIntArray("selectedIndices").length == 4,
+            "scope is frozen for submission");
     }
 
     private static NBTTagCompound estimateCell(int x, boolean excluded, boolean known) {
@@ -212,7 +223,8 @@ public final class HologramMaterialReviewRegression {
         cell.setString("wantId", "minecraft:stone");
         cell.setBoolean("inScope", true);
         cell.setBoolean("excluded", excluded);
-        if (known) cell.setTag("targetStack", new ItemStack(net.minecraft.init.Blocks.stone).writeToNBT(new NBTTagCompound()));
+        if (known)
+            cell.setTag("targetStack", new ItemStack(net.minecraft.init.Blocks.stone).writeToNBT(new NBTTagCompound()));
         return cell;
     }
 
@@ -222,7 +234,8 @@ public final class HologramMaterialReviewRegression {
             Minecraft client = (Minecraft) unsafe.allocateInstance(Minecraft.class);
             OwnerWorld world = (OwnerWorld) unsafe.allocateInstance(OwnerWorld.class);
             EntityClientPlayerMP player = (EntityClientPlayerMP) unsafe.allocateInstance(EntityClientPlayerMP.class);
-            NetHandlerPlayClient connection = (NetHandlerPlayClient) unsafe.allocateInstance(NetHandlerPlayClient.class);
+            NetHandlerPlayClient connection = (NetHandlerPlayClient) unsafe
+                .allocateInstance(NetHandlerPlayClient.class);
             field(EntityClientPlayerMP.class, "sendQueue").set(player, connection);
             player.inventory = new InventoryPlayer(player);
             ItemStack tool = new ItemStack(new ItemNekoHologramProjector());
@@ -257,8 +270,9 @@ public final class HologramMaterialReviewRegression {
                 "material view 26 opens the matching mode 0 local estimate without a session command");
             view.localAction(LocalAction.BACK);
             SimpleAssert.that(
-                view.localFrame() == null && ui.session.sequence() == 0, "the native port's Back is purely local");
-            for (int mode : new int[] {1, 2}) {
+                view.localFrame() == null && ui.session.sequence() == 0,
+                "the native port's Back is purely local");
+            for (int mode : new int[] { 1, 2 }) {
                 NBTTagCompound otherMode = (NBTTagCompound) metadata.copy();
                 otherMode.setInteger("mode", mode);
                 assertLocalMaterialViewUnknown(ui, screen, otherMode);
@@ -270,7 +284,8 @@ public final class HologramMaterialReviewRegression {
             field(HologramUiSession.class, "state").set(ui.session, new HologramState(metadata));
             ui.review.openNativeLocalMaterials();
             player.inventory.currentItem = 1;
-            SimpleAssert.that(view.localFrame() == null && !view.localSubmitAvailable(),
+            SimpleAssert.that(
+                view.localFrame() == null && !view.localSubmitAvailable(),
                 "the port does not publish stale rows or offer submission");
             view.localAction(LocalAction.REFRESH);
             SimpleAssert.that(
@@ -291,7 +306,8 @@ public final class HologramMaterialReviewRegression {
             SimpleAssert.that(ui.review.localMaterials() != null, "original owner can open a fresh pane");
             client.thePlayer = (EntityClientPlayerMP) unsafe.allocateInstance(EntityClientPlayerMP.class);
             view.localAction(LocalAction.REFRESH); // Replacement player has no inventory; the fence must run first.
-            SimpleAssert.that(ui.review.localMaterials() == null, "stale review never reads another player's inventory");
+            SimpleAssert
+                .that(ui.review.localMaterials() == null, "stale review never reads another player's inventory");
 
             client.thePlayer = player;
             ui.review.openNativeLocalMaterials();
@@ -315,9 +331,13 @@ public final class HologramMaterialReviewRegression {
         field(HologramUiSession.class, "state").set(ui.session, state);
         ui.session.notice("");
         SimpleAssert.that(
-            ui.preview.activateControl(26) && ui.session.notice().contains("未核验服务器库存或回收结果")
-                && ui.review.localFrame() == null && ui.session.state() == state && !ui.session.awaitingScan()
-                && ui.session.sequence() == 0 && field(HologramScreen.class, "localMaterialRequest").get(screen) == null,
+            ui.preview.activateControl(26) && ui.session.notice()
+                .contains("未核验服务器库存或回收结果")
+                && ui.review.localFrame() == null
+                && ui.session.state() == state
+                && !ui.session.awaitingScan()
+                && ui.session.sequence() == 0
+                && field(HologramScreen.class, "localMaterialRequest").get(screen) == null,
             "local material view without a supported estimate reports unknown and starts no scan or stock request");
     }
 
@@ -328,7 +348,7 @@ public final class HologramMaterialReviewRegression {
             rows.appendTag(HologramMaterialQuote.itemRow(new ItemStack(Items.diamond), 2, 0));
             NBTTagCompound data = new NBTTagCompound();
             data.setTag("rows", rows);
-            LocalFrame[] frame = {new LocalFrame(data, "fixture scope", "fixture summary", "fixture empty", true)};
+            LocalFrame[] frame = { new LocalFrame(data, "fixture scope", "fixture summary", "fixture empty", true) };
             LocalView view = new LocalView() {
 
                 @Override
@@ -346,12 +366,15 @@ public final class HologramMaterialReviewRegression {
                     actions.add(action);
                 }
             };
-            HologramMaterialConfirmationDialog dialog =
-                new HologramMaterialConfirmationDialog(new ModularPanel("fixture_root"), view);
+            HologramMaterialConfirmationDialog dialog = new HologramMaterialConfirmationDialog(
+                new ModularPanel("fixture_root"),
+                view);
             // Replace only panel attachment bookkeeping; the material panel, model and buttons are real.
-            boolean[] attached = {true};
+            boolean[] attached = { true };
             IPanelHandler attachment = (IPanelHandler) java.lang.reflect.Proxy.newProxyInstance(
-                IPanelHandler.class.getClassLoader(), new Class<?>[] {IPanelHandler.class}, (proxy, method, arguments) -> {
+                IPanelHandler.class.getClassLoader(),
+                new Class<?>[] { IPanelHandler.class },
+                (proxy, method, arguments) -> {
                     if ("isPanelOpen".equals(method.getName())) return attached[0];
                     if ("closePanel".equals(method.getName())) attached[0] = false;
                     return null;
@@ -362,13 +385,18 @@ public final class HologramMaterialReviewRegression {
             build.setAccessible(true);
             ModularPanel panel = (ModularPanel) build.invoke(dialog);
             SimpleAssert.that(
-                "gtmb_local_material_review".equals(panel.getName()) && dialog.probeState(null).getInteger("rows") == 1,
+                "gtmb_local_material_review".equals(panel.getName()) && dialog.probeState(null)
+                    .getInteger("rows") == 1,
                 "local widgets consume the detached row model without an authority graph");
             var controls = (Map<?, ?>) field(HologramMaterialConfirmationDialog.class, "enabledControls").get(dialog);
-            var buttons = panel.getChildren().stream().filter(child -> child instanceof ButtonWidget<?>)
-                .map(child -> (ButtonWidget<?>) child).collect(java.util.stream.Collectors.toList());
+            var buttons = panel.getChildren()
+                .stream()
+                .filter(child -> child instanceof ButtonWidget<?>)
+                .map(child -> (ButtonWidget<?>) child)
+                .collect(java.util.stream.Collectors.toList());
             SimpleAssert.that(
-                controls.keySet().equals(new java.util.HashSet<>(java.util.Arrays.asList(247, 54, 55))) && buttons.size() == 3,
+                controls.keySet()
+                    .equals(new java.util.HashSet<>(java.util.Arrays.asList(247, 54, 55))) && buttons.size() == 3,
                 "local review retains only Refresh/Back/Submit with their existing ids, no AE/quote controls");
             SimpleAssert.that(
                 dialog.consumeKey(org.lwjgl.input.Keyboard.KEY_RETURN) && actions.isEmpty(),
@@ -377,12 +405,15 @@ public final class HologramMaterialReviewRegression {
                 button.playClickSound(false); // No Minecraft audio manager in this fixture.
                 button.onMousePressed(0);
             }
-            SimpleAssert.eq(java.util.Arrays.asList(LocalAction.REFRESH, LocalAction.BACK, LocalAction.SUBMIT), actions,
+            SimpleAssert.eq(
+                java.util.Arrays.asList(LocalAction.REFRESH, LocalAction.BACK, LocalAction.SUBMIT),
+                actions,
                 "actual existing widgets dispatch the corresponding local verbs");
             frame[0] = null;
             dialog.tick(true);
             SimpleAssert.that(
-                !dialog.isOpen() && actions.size() == 3, "a stale owner frame closes the local modal without dispatch");
+                !dialog.isOpen() && actions.size() == 3,
+                "a stale owner frame closes the local modal without dispatch");
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("cannot construct the detached material view widgets", failure);
         }

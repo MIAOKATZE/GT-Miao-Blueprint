@@ -126,12 +126,14 @@ public final class HologramHatchPolicy {
         Map<? extends IHatchElement<?>, ? extends Number> entries) {
         // Reproduce the pinned atLeast item filter on a cold context, where reviewed stock counts are zero.
         // The blacklist is shared across ALL declared roles, not just those with a positive minimum.
-        if (declared == null || !entries.keySet().equals(new HashSet<>(declared))) return null;
+        if (declared == null || !entries.keySet()
+            .equals(new HashSet<>(declared))) return null;
         List<IHatchElement<?>> needed = new ArrayList<>();
         Set<Class<? extends IMetaTileEntity>> blacklist = new HashSet<>();
         for (IHatchElement<?> type : declared) {
             Number minimum = entries.get(type);
-            if (!(minimum instanceof Byte || minimum instanceof Short || minimum instanceof Integer
+            if (!(minimum instanceof Byte || minimum instanceof Short
+                || minimum instanceof Integer
                 || minimum instanceof Long) || !stockColdCount(type)) return null;
             if (minimum.longValue() > 0) needed.add(type);
             blacklist.addAll(type.mteBlacklist());

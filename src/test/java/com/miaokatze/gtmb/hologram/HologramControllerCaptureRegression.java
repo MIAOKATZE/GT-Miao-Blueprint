@@ -80,7 +80,7 @@ public final class HologramControllerCaptureRegression {
     static void orderedAdmissionSlices() throws java.io.IOException {
         var sweep = new HologramPlacementAdmissionSweep(4);
         var time = new java.util.concurrent.atomic.AtomicLong(0);
-        int[][] positions = { {2, 50, 4}, {1, 49, 6}, {5, 50, 3}, {-1, 50, 4} };
+        int[][] positions = { { 2, 50, 4 }, { 1, 49, 6 }, { 5, 50, 3 }, { -1, 50, 4 } };
         var observed = new java.util.ArrayList<Integer>();
         var admitted = new java.util.ArrayList<Integer>();
         HologramPlacementAdmissionSweep.CellCheck inspect = index -> {
@@ -91,19 +91,27 @@ public final class HologramControllerCaptureRegression {
             return true;
         };
         var deadline = new HologramPlacementAdmissionSweep.Slice(7, 2, time::get);
-        SimpleAssert.eq(HologramPlacementAdmissionSweep.Progress.PENDING, sweep.inspect(deadline, inspect),
+        SimpleAssert.eq(
+            HologramPlacementAdmissionSweep.Progress.PENDING,
+            sweep.inspect(deadline, inspect),
             "deadline slices exact prefix without publishing partial admission");
         SimpleAssert.eq(java.util.Arrays.asList(0, 1), observed, "no extra cell is read after the deadline");
-        SimpleAssert.that(!sweep.drain(deadline, admitted::add) && admitted.isEmpty(),
+        SimpleAssert.that(
+            !sweep.drain(deadline, admitted::add) && admitted.isEmpty(),
             "cannot drain incomplete expected-world checks");
 
         var cap = new HologramPlacementAdmissionSweep.Slice(3, 20, time::get);
-        SimpleAssert.eq(HologramPlacementAdmissionSweep.Progress.COMPLETE, sweep.inspect(cap, inspect),
+        SimpleAssert.eq(
+            HologramPlacementAdmissionSweep.Progress.COMPLETE,
+            sweep.inspect(cap, inspect),
             "bounded input continues from the existing cursor");
-        SimpleAssert.that(!sweep.drain(cap, admitted::add) && admitted.equals(java.util.Arrays.asList(1)),
+        SimpleAssert.that(
+            !sweep.drain(cap, admitted::add) && admitted.equals(java.util.Arrays.asList(1)),
             "inspection and ordered work drain share the same row allowance");
-        SimpleAssert.that(sweep.drain(new HologramPlacementAdmissionSweep.Slice(3, 20, time::get), admitted::add)
-            && admitted.equals(java.util.Arrays.asList(1, 2, 3, 0)), "stable canonical Y/Z/X sequence; no re-reads");
+        SimpleAssert.that(
+            sweep.drain(new HologramPlacementAdmissionSweep.Slice(3, 20, time::get), admitted::add)
+                && admitted.equals(java.util.Arrays.asList(1, 2, 3, 0)),
+            "stable canonical Y/Z/X sequence; no re-reads");
         SimpleAssert.eq(java.util.Arrays.asList(0, 1, 2, 3), observed, "each input is inspected once");
 
         var stale = new HologramPlacementAdmissionSweep(2);
@@ -113,9 +121,11 @@ public final class HologramControllerCaptureRegression {
             stale.stage(index, 0, 0, 0);
             return true;
         }), "failed authoritative observation retires earlier staged work");
-        SimpleAssert.that(stale.isEmpty() && !stale.drain(allowance, index -> {
-            throw new AssertionError("retired work cannot reach the execution list");
-        }), "no staged work escapes a retired pass");
+        SimpleAssert.that(
+            stale.isEmpty() && !stale.drain(
+                allowance,
+                index -> { throw new AssertionError("retired work cannot reach the execution list"); }),
+            "no staged work escapes a retired pass");
     }
 
     private static EntityPlayerMP player(sun.misc.Unsafe unsafe) throws ReflectiveOperationException {
@@ -608,7 +618,8 @@ public final class HologramControllerCaptureRegression {
 
             s.operationReviewSequence = s.uiSequence;
             HologramMaterialWorkflow.writeState(s, state);
-            SimpleAssert.that(state.getBoolean("materialOrderingAvailable"), "the reviewed controller enables AE ordering");
+            SimpleAssert
+                .that(state.getBoolean("materialOrderingAvailable"), "the reviewed controller enables AE ordering");
             NBTTagCompound stale = (NBTTagCompound) action.copy();
             stale.setLong("placementReviewNonce", s.placementReviewNonce - 1);
             HologramMaterialWorkflow.action(s, stale, "orderMissingMaterials");
@@ -621,10 +632,12 @@ public final class HologramControllerCaptureRegression {
             long missing = 0;
             for (int i = 0; i < rows.tagCount(); i++) {
                 NBTTagCompound row = rows.getCompoundTagAt(i);
-                if (HologramValues.same(missingItem, HologramMaterialQuote.readItem(row))) missing += row.getLong("missing");
+                if (HologramValues.same(missingItem, HologramMaterialQuote.readItem(row)))
+                    missing += row.getLong("missing");
             }
             SimpleAssert.that(
-                request.getString("presetId").isEmpty() && s.id.equals(request.getString("session"))
+                request.getString("presetId")
+                    .isEmpty() && s.id.equals(request.getString("session"))
                     && missing == 1,
                 "the controller orders the precise missing item without requiring a saved blueprint");
         } finally {
@@ -638,7 +651,12 @@ public final class HologramControllerCaptureRegression {
     private static void cancellationOwnsOneOrder(HologramSession s) throws ReflectiveOperationException {
         NBTTagCompound request = presetAction(s, "cancelMaterialOrder");
         request.setLong("placementReviewNonce", s.placementReviewNonce);
-        var first = new HologramAeCraftingOrders.Order(s.player, null, null, request, java.util.Collections.emptyList());
+        var first = new HologramAeCraftingOrders.Order(
+            s.player,
+            null,
+            null,
+            request,
+            java.util.Collections.emptyList());
         var next = new HologramAeCraftingOrders.Order(s.player, null, null, request, java.util.Collections.emptyList());
         Field field = HologramAeCraftingOrders.class.getDeclaredField("ORDERS");
         field.setAccessible(true);
@@ -652,10 +670,13 @@ public final class HologramControllerCaptureRegression {
             SimpleAssert.that(!first.active && !orders.containsKey(owner), "exact first order accepts cancellation");
             orders.put(owner, next);
             HologramMaterialWorkflow.action(s, request, "cancelMaterialOrder");
-            SimpleAssert.that(next.active && orders.get(owner) == next, "late first cancellation leaves the replacement active");
+            SimpleAssert.that(
+                next.active && orders.get(owner) == next,
+                "late first cancellation leaves the replacement active");
             request.removeTag("orderId");
             HologramMaterialWorkflow.action(s, request, "cancelMaterialOrder");
-            SimpleAssert.that(next.active && orders.get(owner) == next, "legacy unscoped cancellation cannot consume an order");
+            SimpleAssert
+                .that(next.active && orders.get(owner) == next, "legacy unscoped cancellation cannot consume an order");
             request.setString("orderId", next.id);
             request.setLong("placementReviewNonce", s.placementReviewNonce - 1);
             HologramMaterialWorkflow.action(s, request, "cancelMaterialOrder");
@@ -723,7 +744,9 @@ public final class HologramControllerCaptureRegression {
     private static void rejectsNativeFamilyChoices() throws java.io.IOException {
         NBTTagCompound family = new NBTTagCompound();
         family.setInteger("scope", 3);
-        SimpleAssert.that(!HologramNativeOperationChoices.read(null, family).hasHatches(),
+        SimpleAssert.that(
+            !HologramNativeOperationChoices.read(null, family)
+                .hasHatches(),
             "legacy family scope without explicit coordinate choices stays available");
         NBTTagCompound choice = new NBTTagCompound();
         choice.setIntArray("xyz", new int[] { 16, 64, 0 });
@@ -738,7 +761,9 @@ public final class HologramControllerCaptureRegression {
                 HologramNativeOperationChoices.read(null, family);
                 throw new AssertionError("Family scope reached native coordinate inspection or mutation");
             } catch (java.io.IOException expected) {
-                SimpleAssert.that(expected.getMessage().contains("同族范围"),
+                SimpleAssert.that(
+                    expected.getMessage()
+                        .contains("同族范围"),
                     "reject before resolving the manually selected exact XYZ against the live controller");
             }
         }
@@ -830,7 +855,9 @@ public final class HologramControllerCaptureRegression {
                         StructureUtility.isAir()))
                 .build();
             var narrowed = com.gtnewhorizon.structurelib.structure.StructureDefinition.<Object>builder()
-                .addShape("preset", new String[][] { { "X" } }).addElement('X', element).build();
+                .addShape("preset", new String[][] { { "X" } })
+                .addElement('X', element)
+                .build();
             var omitSelectedCell = new java.util.concurrent.atomic.AtomicBoolean();
             source = com.miaokatze.gtmb.api.StructureSources.register(
                 "gtmb_test:preset_actions",
@@ -946,7 +973,8 @@ public final class HologramControllerCaptureRegression {
     }
 
     private static void manualNativeOperationChoices(HologramSession s, ItemStack energy,
-        java.util.concurrent.atomic.AtomicBoolean omitSelectedCell) throws java.io.IOException, ReflectiveOperationException {
+        java.util.concurrent.atomic.AtomicBoolean omitSelectedCell)
+        throws java.io.IOException, ReflectiveOperationException {
         long oldOpening = s.controllerOpenId;
         s.controllerOpenId = 141;
         s.job = s.mode = 0;
@@ -956,13 +984,16 @@ public final class HologramControllerCaptureRegression {
             HologramCapture before = s.capture;
             NBTTagCompound ordinary = nativeReview(s, 0, 0);
             HologramActionDispatcher.handle(s.player, ordinary);
-            SimpleAssert.that(s.capture == before && s.job == 0,
+            SimpleAssert.that(
+                s.capture == before && s.job == 0,
                 "ordinary mode zero does not enter a new advanced review without explicit hatch choices");
 
             NBTTagCompound removePins = nativeReview(s, 2, 0);
-            removePins.setTag(HologramNativeOperationChoices.KEY, nativeHatchChoice(s.capture.cells.get(0), energy, -1));
+            removePins
+                .setTag(HologramNativeOperationChoices.KEY, nativeHatchChoice(s.capture.cells.get(0), energy, -1));
             HologramActionDispatcher.handle(s.player, removePins);
-            SimpleAssert.that(s.capture == before && s.mode == 0 && s.job == 0,
+            SimpleAssert.that(
+                s.capture == before && s.mode == 0 && s.job == 0,
                 "destructive removal never accepts a hatch target field");
 
             for (int mode = 1; mode <= 2; mode++) {
@@ -971,22 +1002,29 @@ public final class HologramControllerCaptureRegression {
                 HologramActionDispatcher.handle(s.player, selected);
                 awaitNativeReviewRefusal(s);
                 omitSelectedCell.set(false);
-                SimpleAssert.that(s.capture.incomplete && s.job == 4 && s.work.isEmpty()
-                    && !HologramStructureProjection.operationReviewActive(s) && s.status.contains("完整范围"),
+                SimpleAssert.that(
+                    s.capture.incomplete && s.job == 4
+                        && s.work.isEmpty()
+                        && !HologramStructureProjection.operationReviewActive(s)
+                        && s.status.contains("完整范围"),
                     "the whole mode " + mode + " selection is refused when one selected live cell disappears");
                 s.mode = 0;
                 HologramControllerCapture.collectProjection(s, true);
                 complete(s);
             }
 
-            var wrongCell = s.capture.cells.stream().filter(cell -> HologramElementCatalog.nativeAir(cell.element))
-                .findFirst().orElseThrow(() -> new java.util.NoSuchElementException("No value present"));
+            var wrongCell = s.capture.cells.stream()
+                .filter(cell -> HologramElementCatalog.nativeAir(cell.element))
+                .findFirst()
+                .orElseThrow(() -> new java.util.NoSuchElementException("No value present"));
             NBTTagCompound wrongHatch = nativeReview(s, 0, 0);
             wrongHatch.setTag(HologramNativeOperationChoices.KEY, nativeHatchChoice(wrongCell, energy, -1));
             HologramActionDispatcher.handle(s.player, wrongHatch);
             awaitNativeReviewRefusal(s);
-            SimpleAssert.that(s.job == 4 && s.work.isEmpty() && !HologramStructureProjection.operationReviewActive(s)
-                && s.status.contains("原生结构位置"),
+            SimpleAssert.that(
+                s.job == 4 && s.work.isEmpty()
+                    && !HologramStructureProjection.operationReviewActive(s)
+                    && s.status.contains("原生结构位置"),
                 "a registered hatch ID is not permission to place it in a different element's coordinate");
             HologramControllerCapture.collectProjection(s, true);
             complete(s);
@@ -999,33 +1037,44 @@ public final class HologramControllerCaptureRegression {
                 manual.setTag(HologramNativeOperationChoices.KEY, nativeHatchChoice(cell, energy, facing));
                 HologramActionDispatcher.handle(s.player, manual);
                 complete(s);
-                SimpleAssert.that(s.selected >= 0 && s.mode == mode && s.scope == 2 && s.job == 0
-                    && HologramStructureProjection.operationReviewActive(s)
-                    && HologramValues.same(energy, s.pins.get(s.selected))
-                    && s.facingPins.getOrDefault(position, -1) == facing
-                    && position.equals(HologramValues.position(s.capture.cells.get(s.selected))),
-                    "mode " + mode + " carries exact declared hatch type/coordinate/facing to its separate manual review: "
+                SimpleAssert.that(
+                    s.selected >= 0 && s.mode == mode
+                        && s.scope == 2
+                        && s.job == 0
+                        && HologramStructureProjection.operationReviewActive(s)
+                        && HologramValues.same(energy, s.pins.get(s.selected))
+                        && s.facingPins.getOrDefault(position, -1) == facing
+                        && position.equals(HologramValues.position(s.capture.cells.get(s.selected))),
+                    "mode " + mode
+                        + " carries exact declared hatch type/coordinate/facing to its separate manual review: "
                         + operationState(s));
                 if (mode == 0) {
                     checkLockedScopeRefusals(s);
-                    SimpleAssert.eq(1L, quotedDemand(nativeDemand(s), energy),
+                    SimpleAssert.eq(
+                        1L,
+                        quotedDemand(nativeDemand(s), energy),
                         "only the explicitly selected native hatch is payable");
                     HologramMaterialQuote.recheck(s);
                     int selected = s.selected, stock = s.player.inventory.mainInventory[1].stackSize;
                     NBTTagCompound approve = presetAction(s, "build");
                     approve.setLong("placementReviewNonce", s.placementReviewNonce);
                     HologramActionDispatcher.handle(s.player, approve);
-                    SimpleAssert.that(s.job == 1 && s.work.equals(java.util.Collections.singletonList(selected))
-                        && HologramValues.same(energy, HologramCellPolicy.targetFor(s, s.capture.cells.get(selected), selected))
-                        && s.planFacings.getOrDefault(selected, -1) == facing
-                        && s.player.inventory.mainInventory[1].stackSize == stock
-                        && !s.replacementAuthorized,
+                    SimpleAssert.that(
+                        s.job == 1 && s.work.equals(java.util.Collections.singletonList(selected))
+                            && HologramValues
+                                .same(energy, HologramCellPolicy.targetFor(s, s.capture.cells.get(selected), selected))
+                            && s.planFacings.getOrDefault(selected, -1) == facing
+                            && s.player.inventory.mainInventory[1].stackSize == stock
+                            && !s.replacementAuthorized,
                         "the confirmed ordinary native placement admits only the chosen exact hatch, without prepayment: "
                             + operationState(s));
                     // No native world operation runs in the read-only fixture.
                     s.job = 0;
                     HologramSession.clearPending(s);
-                    rejectLockedScopeAction(s, lockedScopeAction(s, "build"), "重新打开",
+                    rejectLockedScopeAction(
+                        s,
+                        lockedScopeAction(s, "build"),
+                        "重新打开",
                         "a finished confirmation cannot be reused even with the newest nonce");
                 }
             }
@@ -1081,25 +1130,37 @@ public final class HologramControllerCaptureRegression {
         ItemStack stock = s.player.inventory.mainInventory[1];
         stock.stackSize = 1;
         HologramNativeItemBill insufficient = finishNativeItemBill(s);
-        SimpleAssert.that(insufficient != null && insufficient.current(s) && !insufficient.observedStockSufficient(s) && insufficient.missing() == 1
-            && s.planMissing == 1 && insufficient.rows().size() == 2,
+        SimpleAssert.that(
+            insufficient != null && insufficient.current(s)
+                && !insufficient.observedStockSufficient(s)
+                && insufficient.missing() == 1
+                && s.planMissing == 1
+                && insufficient.rows()
+                    .size() == 2,
             "one-short native item result is retained as a refusal, never partial authority");
         for (HologramNativeItemBill.Row row : insufficient.rows()) {
             if (HologramValues.same(row.item(), energy)) {
                 SimpleAssert.that(row.required == 2 && row.available == 1, "two GT energy hatches use one exact row");
                 ItemStack copy = row.item();
                 copy.setItemDamage(0);
-                SimpleAssert.that(HologramValues.same(row.item(), energy),
+                SimpleAssert.that(
+                    HologramValues.same(row.item(), energy),
                     "plan-owned row identity cannot be mutated by the consumer");
-            } else SimpleAssert.that(HologramValues.same(row.item(), muffler)
-                && row.required == 1 && row.available == 1, "distinct GT muffler identity and demand");
+            } else SimpleAssert.that(
+                HologramValues.same(row.item(), muffler) && row.required == 1 && row.available == 1,
+                "distinct GT muffler identity and demand");
         }
-        SimpleAssert.that(s.job == 0 && stock.stackSize == 1 && s.materialQuote == visibleQuote,
+        SimpleAssert.that(
+            s.job == 0 && stock.stackSize == 1 && s.materialQuote == visibleQuote,
             "capturing item demand does not publish a quote, start a job, or debit inventory");
         stock.stackSize = 2;
         HologramNativeItemBill stocked = finishNativeItemBill(s);
-        SimpleAssert.that(stocked != null && stocked.observedStockSufficient(s) && stocked.missing() == 0
-            && s.planMissing == 0 && !insufficient.current(s) && stock.stackSize == 2,
+        SimpleAssert.that(
+            stocked != null && stocked.observedStockSufficient(s)
+                && stocked.missing() == 0
+                && s.planMissing == 0
+                && !insufficient.current(s)
+                && stock.stackSize == 2,
             "fresh exact stock clears shortage and retires previous plan receipt without debit");
         s.scope = 1;
         SimpleAssert.that(!stocked.current(s), "proof does not authorize a different cell scope");
@@ -1111,8 +1172,8 @@ public final class HologramControllerCaptureRegression {
         s.materialContext = null;
         var unsupported = new HologramNativeItemBill(s);
         unsupported.finish();
-        SimpleAssert.that(!unsupported.observedStockSufficient(s),
-            "ME-backed settings cannot borrow the ordinary proof");
+        SimpleAssert
+            .that(!unsupported.observedStockSufficient(s), "ME-backed settings cannot borrow the ordinary proof");
     }
 
     private static HologramNativeItemBill finishNativeItemBill(HologramSession s) {
@@ -1120,7 +1181,8 @@ public final class HologramControllerCaptureRegression {
         SimpleAssert.eq(null, task.nativeItemBill(), "no partially checked bill leaks from native plan");
         int ticks = 0;
         while (!task.step(1, Long.MAX_VALUE)) {
-            SimpleAssert.that(task.lastWork() <= 1 && task.nativeItemBill() == null,
+            SimpleAssert.that(
+                task.lastWork() <= 1 && task.nativeItemBill() == null,
                 "native bill follows one-unit plan slices and remains private until completion");
             if (++ticks > 1000) throw new AssertionError("bounded native planner did not finish");
         }
@@ -1144,13 +1206,16 @@ public final class HologramControllerCaptureRegression {
             System.clearProperty(flag);
             NBTTagCompound off = nativeReadyRequest(s);
             HologramNativeReadyPlacement.receive(s.player, off, receipt);
-            SimpleAssert.that(s.nativeReadyPlacement == null && receipts.equals(java.util.Collections.singletonList(
-                off.getString("placementRequestId") + ":false")), "default off never queues construction");
+            SimpleAssert.that(
+                s.nativeReadyPlacement == null && receipts
+                    .equals(java.util.Collections.singletonList(off.getString("placementRequestId") + ":false")),
+                "default off never queues construction");
 
             System.setProperty(flag, "true");
             NBTTagCompound unprepared = nativeReadyRequest(s);
             HologramNativeReadyPlacement.receive(s.player, unprepared, receipt);
-            SimpleAssert.that(s.nativeReadyPlacement == null && receipts.size() == 2,
+            SimpleAssert.that(
+                s.nativeReadyPlacement == null && receipts.size() == 2,
                 "opt-in cannot turn an unprepared capture into construction authority");
             s.materialSettings.me = false;
             s.materialContext = null;
@@ -1167,15 +1232,17 @@ public final class HologramControllerCaptureRegression {
             complete(s);
             NBTTagCompound legacy = nativeReadyRequest(s);
             HologramNativeReadyPlacement.receive(s.player, legacy, receipt);
-            SimpleAssert.that(s.nativeReadyBill == null && s.nativeReadyPlacement == null
-                && receipts.get(2).equals(legacy.getString("placementRequestId") + ":false"),
+            SimpleAssert.that(
+                s.nativeReadyBill == null && s.nativeReadyPlacement == null
+                    && receipts.get(2)
+                        .equals(legacy.getString("placementRequestId") + ":false"),
                 "legacy source registration with no read set grants no compact admission authority");
             legacySource.close();
-            machine.presetActionDefinition = (com.gtnewhorizon.structurelib.structure.IStructureDefinition<
-                HologramDynamicDefinitionRegression.DynamicController>) definition;
+            machine.presetActionDefinition = (com.gtnewhorizon.structurelib.structure.IStructureDefinition<HologramDynamicDefinitionRegression.DynamicController>) definition;
             HologramControllerCapture.collect(s);
             complete(s);
-            SimpleAssert.that(s.nativeReadyBill != null && s.nativeReadyBill.observedStockSufficient(s),
+            SimpleAssert.that(
+                s.nativeReadyBill != null && s.nativeReadyBill.observedStockSufficient(s),
                 "real native buildPiece capture retains exact ready item rows without opening a new quote");
 
             // The original interpretation cache generation is unchanged by a first registration.
@@ -1187,23 +1254,32 @@ public final class HologramControllerCaptureRegression {
             var observed = s.capture;
             var registration = new HologramPureElementsRegression.Leaf(true);
             HologramDeclarationAdapters.register(
-                registration, new HologramDeclarationAdapters.Declaration(StructureUtility.ofBlock(Blocks.stone, 0)));
-            SimpleAssert.eq(generation, HologramDeclarationAdapters.generation(),
+                registration,
+                new HologramDeclarationAdapters.Declaration(StructureUtility.ofBlock(Blocks.stone, 0)));
+            SimpleAssert.eq(
+                generation,
+                HologramDeclarationAdapters.generation(),
                 "first-time registration does not advance the old cache generation");
-            SimpleAssert.that(!observed.readyPlacementCurrent(s) && !observed.incomplete,
+            SimpleAssert.that(
+                !observed.readyPlacementCurrent(s) && !observed.incomplete,
                 "compact source proof refuses immediately without refreshing or invalidating the legacy capture");
             long readsBeforeDrift = world.permissionReads;
             finishNativeReady(s, receipt);
-            SimpleAssert.that(s.job == 0 && s.work.isEmpty() && s.capture == observed
-                && world.permissionReads == readsBeforeDrift
-                && receipts.get(3).equals(drift.getString("placementRequestId") + ":false"),
+            SimpleAssert.that(
+                s.job == 0 && s.work.isEmpty()
+                    && s.capture == observed
+                    && world.permissionReads == readsBeforeDrift
+                    && receipts.get(3)
+                        .equals(drift.getString("placementRequestId") + ":false"),
                 "a real declaration generation change denies queued work before examining more cells");
-            SimpleAssert.that(observed.sourceCurrent(HologramSessionPolicy.trigger(s)),
+            SimpleAssert.that(
+                observed.sourceCurrent(HologramSessionPolicy.trigger(s)),
                 "ordinary source validation can still refresh an unrelated declaration without a recapture");
             NBTTagCompound retired = nativeReadyRequest(s);
             HologramNativeReadyPlacement.receive(s.player, retired, receipt);
-            SimpleAssert.that(s.nativeReadyPlacement == null
-                && receipts.get(4).equals(retired.getString("placementRequestId") + ":false"),
+            SimpleAssert.that(
+                s.nativeReadyPlacement == null && receipts.get(4)
+                    .equals(retired.getString("placementRequestId") + ":false"),
                 "even a new UUID cannot admit the same stale ready plan after declaration drift");
             HologramControllerCapture.collect(s);
             complete(s);
@@ -1216,7 +1292,8 @@ public final class HologramControllerCaptureRegression {
             NBTTagCompound geometry = nativeReadyRequest(s);
             geometry.setTag("cells", new net.minecraft.nbt.NBTTagList());
             HologramNativeReadyPlacement.receive(s.player, geometry, receipt);
-            SimpleAssert.that(s.nativeReadyPlacement == null && receipts.size() == 7,
+            SimpleAssert.that(
+                s.nativeReadyPlacement == null && receipts.size() == 7,
                 "stale plan revisions and even empty client geometry are never admitted");
 
             var capture = s.capture;
@@ -1226,17 +1303,26 @@ public final class HologramControllerCaptureRegression {
             NBTTagCompound shortage = nativeReadyRequest(s);
             HologramNativeReadyPlacement.receive(s.player, shortage, receipt);
             HologramNativeReadyPlacement.receive(s.player, shortage, receipt);
-            SimpleAssert.that(s.nativeReadyPlacement != null && receipts.size() == 7
-                && s.job == 0 && s.work.isEmpty() && world.permissionReads == primaryReads,
+            SimpleAssert.that(
+                s.nativeReadyPlacement != null && receipts.size() == 7
+                    && s.job == 0
+                    && s.work.isEmpty()
+                    && world.permissionReads == primaryReads,
                 "packet intake queues one logical intent with no world-cell scan, quote or debit");
             HologramNativeReadyPlacement.tick(s, 1, Long.MAX_VALUE, System::nanoTime, receipt);
-            SimpleAssert.that(s.job == 0 && receipts.size() == 7 && world.permissionReads - primaryReads <= 1,
+            SimpleAssert.that(
+                s.job == 0 && receipts.size() == 7 && world.permissionReads - primaryReads <= 1,
                 "shared slice cannot admit or scan all native work in its first one-row allowance");
             s.player.inventory.mainInventory[1].stackSize = 1;
             finishNativeReady(s, receipt);
-            SimpleAssert.that(s.job == 0 && s.work.isEmpty() && s.capture == capture && s.planRevision == revision
-                && HologramWorkspace.find(s.player.getUniqueID()) == s && s.materialQuote == quote
-                && receipts.get(7).equals(shortage.getString("placementRequestId") + ":false"),
+            SimpleAssert.that(
+                s.job == 0 && s.work.isEmpty()
+                    && s.capture == capture
+                    && s.planRevision == revision
+                    && HologramWorkspace.find(s.player.getUniqueID()) == s
+                    && s.materialQuote == quote
+                    && receipts.get(7)
+                        .equals(shortage.getString("placementRequestId") + ":false"),
                 "new stock shortage emits one denial and leaves the previous workspace intact");
 
             s.player.inventory.mainInventory[1].stackSize = 2;
@@ -1245,7 +1331,9 @@ public final class HologramControllerCaptureRegression {
             world.denyMine = true;
             finishNativeReady(s, receipt);
             world.denyMine = false;
-            SimpleAssert.that(s.job == 0 && receipts.get(8).equals(guarded.getString("placementRequestId") + ":false"),
+            SimpleAssert.that(
+                s.job == 0 && receipts.get(8)
+                    .equals(guarded.getString("placementRequestId") + ":false"),
                 "live edit protection still prevents known-stock native construction");
 
             NBTTagCompound recovery = new NBTTagCompound();
@@ -1255,8 +1343,10 @@ public final class HologramControllerCaptureRegression {
             try {
                 NBTTagCompound overlap = nativeReadyRequest(s);
                 HologramNativeReadyPlacement.receive(s.player, overlap, receipt);
-                SimpleAssert.that(s.nativeReadyPlacement == null && s.job == 0
-                    && receipts.get(9).equals(overlap.getString("placementRequestId") + ":false"),
+                SimpleAssert.that(
+                    s.nativeReadyPlacement == null && s.job == 0
+                        && receipts.get(9)
+                            .equals(overlap.getString("placementRequestId") + ":false"),
                     "outstanding recovery rejects intake rather than accepting a job that immediately stops");
             } finally {
                 owner.removeTag(HologramConstructionJournal.KEY);
@@ -1268,28 +1358,40 @@ public final class HologramControllerCaptureRegression {
             owner.setTag(HologramConstructionJournal.KEY, recovery);
             try {
                 finishNativeReady(s, receipt);
-                SimpleAssert.that(s.job == 0 && s.work.isEmpty() && s.capture == capture
-                    && owner.getCompoundTag(HologramConstructionJournal.KEY) == recovery
-                    && receipts.get(10).equals(lateRecovery.getString("placementRequestId") + ":false"),
+                SimpleAssert.that(
+                    s.job == 0 && s.work.isEmpty()
+                        && s.capture == capture
+                        && owner.getCompoundTag(HologramConstructionJournal.KEY) == recovery
+                        && receipts.get(10)
+                            .equals(lateRecovery.getString("placementRequestId") + ":false"),
                     "new recovery before final admission is left intact and produces no accepted receipt");
             } finally {
                 owner.removeTag(HologramConstructionJournal.KEY);
             }
 
             NBTTagCompound start = nativeReadyRequest(s);
-            var dispatch = HologramNetwork.class.getDeclaredMethod("dispatch", EntityPlayerMP.class, NBTTagCompound.class);
+            var dispatch = HologramNetwork.class
+                .getDeclaredMethod("dispatch", EntityPlayerMP.class, NBTTagCompound.class);
             dispatch.setAccessible(true);
             dispatch.invoke(null, s.player, start);
             finishNativeReady(s, receipt);
-            SimpleAssert.that(s.job == 1 && s.work.size() == 3 && s.work.stream().noneMatch(i -> capture.cells.get(i).anchor)
-                && !s.replacementAuthorized && s.player.inventory.mainInventory[1].stackSize == 2
-                && s.capture == capture && s.materialQuote == quote && s.planRevision == revision
-                && receipts.get(11).equals(start.getString("placementRequestId") + ":true"),
+            SimpleAssert.that(
+                s.job == 1 && s.work.size() == 3
+                    && s.work.stream()
+                        .noneMatch(i -> capture.cells.get(i).anchor)
+                    && !s.replacementAuthorized
+                    && s.player.inventory.mainInventory[1].stackSize == 2
+                    && s.capture == capture
+                    && s.materialQuote == quote
+                    && s.planRevision == revision
+                    && receipts.get(11)
+                        .equals(start.getString("placementRequestId") + ":true"),
                 "real compact useBlock dispatch starts the canonical job exactly once without replacing the workspace or prepaying");
             HologramNativeReadyPlacement.receive(s.player, start, receipt);
             SimpleAssert.eq(12, receipts.size(), "a completed request has one correlated response under replay");
-            SimpleAssert.that(machine.constructions == constructionsBeforeRequest
-                && machine.definitionBuilds == definitionsBeforeRequest,
+            SimpleAssert.that(
+                machine.constructions == constructionsBeforeRequest
+                    && machine.definitionBuilds == definitionsBeforeRequest,
                 "neither intake nor the whole ready-placement continuation rediscovers the native source");
             compactNativeFromExplicitIntent(s, machine, dispatch);
         } finally {
@@ -1304,20 +1406,29 @@ public final class HologramControllerCaptureRegression {
         throws ReflectiveOperationException {
         HologramWorkspace.clear();
         EntityPlayerMP player = prior.player;
-        player.inventory.mainInventory[player.inventory.currentItem] =
-            new ItemStack(new com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector());
+        player.inventory.mainInventory[player.inventory.currentItem] = new ItemStack(
+            new com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector());
         player.inventory.mainInventory[1] = new ItemStack(Blocks.stone, 3);
-        var definition = com.gtnewhorizon.structurelib.structure.StructureDefinition
-            .<HologramDynamicDefinitionRegression.DynamicController>builder()
+        var definition = com.gtnewhorizon.structurelib.structure.StructureDefinition.<HologramDynamicDefinitionRegression.DynamicController>builder()
             .addShape("preset", new String[][] { { "XXX" } })
             .addElement('X', StructureUtility.ofBlock(Blocks.stone, 0))
-            .addChannel("native_fixture_tier", 1, 3).build();
+            .addChannel("native_fixture_tier", 1, 3)
+            .build();
         machine.presetActionDefinition = definition;
         try (var registration = com.miaokatze.gtmb.api.StructureSources.registerCompactNative(
-            "gtmb_test:compact_native", HologramDynamicDefinitionRegression.DynamicController.class,
-            definition, "preset", -1, 0, 0, 4)) {
+            "gtmb_test:compact_native",
+            HologramDynamicDefinitionRegression.DynamicController.class,
+            definition,
+            "preset",
+            -1,
+            0,
+            0,
+            4)) {
             NBTTagCompound screen = new NBTTagCompound(), confirmed = new NBTTagCompound();
-            screen.setInteger("facing", machine.getExtendedFacing().ordinal());
+            screen.setInteger(
+                "facing",
+                machine.getExtendedFacing()
+                    .ordinal());
             screen.setBoolean("mainExplicit", true);
             confirmed.setInteger("main", 2);
             confirmed.setInteger("scope", 0);
@@ -1332,18 +1443,18 @@ public final class HologramControllerCaptureRegression {
             java.util.UUID id = java.util.UUID.randomUUID();
             NBTTagCompound compact;
             try {
-                compact = HologramCompactNativeRequest.encode(
-                    id, prior.target, prior.side, player.inventory.currentItem, screen, confirmed, true);
+                compact = HologramCompactNativeRequest
+                    .encode(id, prior.target, prior.side, player.inventory.currentItem, screen, confirmed, true);
                 confirmed.setBoolean("materialContainers", true);
                 try {
-                    HologramCompactNativeRequest.encode(
-                        id, prior.target, prior.side, player.inventory.currentItem, screen, confirmed, true);
+                    HologramCompactNativeRequest
+                        .encode(id, prior.target, prior.side, player.inventory.currentItem, screen, confirmed, true);
                     throw new AssertionError("mixed stock cannot silently become main inventory");
                 } catch (java.io.IOException expected) {}
                 confirmed.setBoolean("materialContainers", false);
                 try {
-                    HologramCompactNativeRequest.encode(
-                        id, prior.target, prior.side, player.inventory.currentItem, screen, confirmed, false);
+                    HologramCompactNativeRequest
+                        .encode(id, prior.target, prior.side, player.inventory.currentItem, screen, confirmed, false);
                     throw new AssertionError("manual hatch position cannot silently become default");
                 } catch (java.io.IOException expected) {}
             } catch (java.io.IOException invalid) {
@@ -1359,51 +1470,73 @@ public final class HologramControllerCaptureRegression {
             } finally {
                 wire.release();
             }
-            SimpleAssert.that(bytes < 512 && HologramCompactNativeRequest.valid(decoded.tag)
-                && decoded.tag.hasKey("clientSnapshotFlow", 3) && !decoded.tag.hasKey("cells")
-                && !decoded.tag.hasKey("planRevision") && !decoded.tag.hasKey("session"),
+            SimpleAssert.that(
+                bytes < 512 && HologramCompactNativeRequest.valid(decoded.tag)
+                    && decoded.tag.hasKey("clientSnapshotFlow", 3)
+                    && !decoded.tag.hasKey("cells")
+                    && !decoded.tag.hasKey("planRevision")
+                    && !decoded.tag.hasKey("session"),
                 "ordinary compact intent survives actual Action encoding without geometry or a synthetic server revision");
             NBTTagCompound invalid = (NBTTagCompound) decoded.tag.copy();
-            invalid.setString("placementRequestId", java.util.UUID.randomUUID().toString());
-            invalid.getCompoundTag("channels").setInteger("native_fixture_tier", 4);
+            invalid.setString(
+                "placementRequestId",
+                java.util.UUID.randomUUID()
+                    .toString());
+            invalid.getCompoundTag("channels")
+                .setInteger("native_fixture_tier", 4);
             var refused = new java.util.ArrayList<Boolean>();
-            HologramNativeCompactStart.receive(player, invalid, (p, request, accepted, reason) -> refused.add(accepted));
-            SimpleAssert.that(refused.equals(java.util.Collections.singletonList(false))
-                && HologramWorkspace.find(player.getUniqueID()) == null,
+            HologramNativeCompactStart
+                .receive(player, invalid, (p, request, accepted, reason) -> refused.add(accepted));
+            SimpleAssert.that(
+                refused.equals(java.util.Collections.singletonList(false))
+                    && HologramWorkspace.find(player.getUniqueID()) == null,
                 "server refuses a typed channel outside the declaration domain without touching any workspace");
             HologramSession original = new HologramSession(player, prior.x, prior.y, prior.z, true, prior.side);
             HologramWorkspace.activate(player.getUniqueID(), original);
             long oldEpoch = original.editorWorkspaceEpoch;
             NBTTagCompound other = (NBTTagCompound) decoded.tag.copy();
-            String cancelId = java.util.UUID.randomUUID().toString();
+            String cancelId = java.util.UUID.randomUUID()
+                .toString();
             other.setString("placementRequestId", cancelId);
             original.job = 1;
             HologramNativeCompactStart.receive(player, other, (p, request, accepted, reason) -> refused.add(accepted));
-            SimpleAssert.that(refused.equals(java.util.Arrays.asList(false, false))
-                && HologramWorkspace.find(player.getUniqueID()) == original && original.job == 1,
+            SimpleAssert.that(
+                refused.equals(java.util.Arrays.asList(false, false))
+                    && HologramWorkspace.find(player.getUniqueID()) == original
+                    && original.job == 1,
                 "a compact request cannot replace a live busy workspace");
             original.job = 0;
-            cancelId = java.util.UUID.randomUUID().toString();
+            cancelId = java.util.UUID.randomUUID()
+                .toString();
             other.setString("placementRequestId", cancelId);
             HologramNativeCompactStart.receive(player, other, (p, request, accepted, reason) -> refused.add(accepted));
-            SimpleAssert.that(HologramNativeCompactStart.cancel(player, cancelId)
-                && refused.equals(java.util.Arrays.asList(false, false, false))
-                && HologramWorkspace.find(player.getUniqueID()) == original && original.editorWorkspaceEpoch == oldEpoch,
+            SimpleAssert.that(
+                HologramNativeCompactStart.cancel(player, cancelId)
+                    && refused.equals(java.util.Arrays.asList(false, false, false))
+                    && HologramWorkspace.find(player.getUniqueID()) == original
+                    && original.editorWorkspaceEpoch == oldEpoch,
                 "cancelling private preparation restores the exact previous workspace and epoch");
             HologramWorkspace.clear();
             int constructs = machine.constructions, definitions = machine.definitionBuilds;
             dispatch.invoke(null, player, decoded.tag);
             HologramSession active = HologramWorkspace.find(player.getUniqueID());
-            SimpleAssert.that(active != null && active.nativeCompactStart != null && active.capture == null && active.job == 0,
+            SimpleAssert.that(
+                active != null && active.nativeCompactStart != null && active.capture == null && active.job == 0,
                 "the real ordinary action owns an empty physical workspace before starting any capture");
             var scheduled = HologramWorkspaceScheduler.class.getDeclaredMethod("tickSession", HologramSession.class);
             scheduled.setAccessible(true);
             for (int tick = 0; active.nativeCompactStart != null && tick < 500; tick++) scheduled.invoke(null, active);
-            SimpleAssert.that(active.job == 1 && active.work.size() == 3 && active.nativeCompactStart == null
-                && id.toString().equals(active.nativeCompactRequestId) && active.main == 2
-                && active.channels.getInteger("native_fixture_tier") == 3 && machine.constructions == constructs
-                && machine.definitionBuilds == definitions && active.materialQuote.hasNoTags()
-                && player.inventory.mainInventory[1].stackSize == 3,
+            SimpleAssert.that(
+                active.job == 1 && active.work.size() == 3
+                    && active.nativeCompactStart == null
+                    && id.toString()
+                        .equals(active.nativeCompactRequestId)
+                    && active.main == 2
+                    && active.channels.getInteger("native_fixture_tier") == 3
+                    && machine.constructions == constructs
+                    && machine.definitionBuilds == definitions
+                    && active.materialQuote.hasNoTags()
+                    && player.inventory.mainInventory[1].stackSize == 3,
                 "a fresh server-owned native plan goes through canonical admission, without discovery, quote or predebit: "
                     + operationState(active));
         }
@@ -1413,7 +1546,10 @@ public final class HologramControllerCaptureRegression {
         NBTTagCompound intent = new NBTTagCompound();
         intent.setString("action", "useBlock");
         intent.setBoolean(HologramNativeReadyPlacement.FLAG, true);
-        intent.setString("placementRequestId", java.util.UUID.randomUUID().toString());
+        intent.setString(
+            "placementRequestId",
+            java.util.UUID.randomUUID()
+                .toString());
         intent.setString("session", s.id);
         intent.setInteger("x", s.x);
         intent.setInteger("y", s.y);
@@ -1525,8 +1661,7 @@ public final class HologramControllerCaptureRegression {
         SimpleAssert.eq(2, verified, "the real native source includes direct and transparently wrapped required air");
     }
 
-    private static void explicitNativeOperationOptions(HologramSession s)
-        throws java.io.IOException {
+    private static void explicitNativeOperationOptions(HologramSession s) throws java.io.IOException {
         long originalOpenId = s.controllerOpenId;
         int originalScope = s.scope, originalSelected = s.selected, originalLayer = s.layer;
         boolean originalNoHatches = s.noHatches;
@@ -1550,31 +1685,43 @@ public final class HologramControllerCaptureRegression {
                 action.setIntArray("selectedIndices", new int[] { 0 });
                 s.actionTick = Long.MIN_VALUE;
                 HologramActionDispatcher.handle(s.player, action);
-                SimpleAssert.that(s.capture == before && s.placementReviewNonce == previousNonce
-                    && s.job == 0, "a stale controller opening cannot alter native operation scope or review");
+                SimpleAssert.that(
+                    s.capture == before && s.placementReviewNonce == previousNonce && s.job == 0,
+                    "a stale controller opening cannot alter native operation scope or review");
                 action.setLong("nativeOperationOpenId", 101);
                 action.setLong("uiSequence", s.uiSequence + 1);
                 action.setIntArray("selectedIndices", new int[] { before.cells.size() });
                 HologramActionDispatcher.handle(s.player, action);
-                SimpleAssert.that(s.capture == before && s.placementReviewNonce == previousNonce
-                    && s.job == 0, "an invalid selected cell cannot widen native operation scope");
+                SimpleAssert.that(
+                    s.capture == before && s.placementReviewNonce == previousNonce && s.job == 0,
+                    "an invalid selected cell cannot widen native operation scope");
                 action.setLong("uiSequence", s.uiSequence + 1);
                 action.setIntArray("selectedIndices", new int[] { 0 });
                 HologramActionDispatcher.handle(s.player, action);
                 complete(s);
-                SimpleAssert.that(s.capture != before && s.mode == mode && s.scope == 2 && s.job == 0
-                    && s.placementReviewNonce > previousNonce && HologramStructureProjection.operationReviewActive(s)
-                    && s.selectedIndices.size() == 1 && s.selectedIndices.contains(s.selected),
-                    "explicit native mode " + mode + " keeps the selected cell and only requests a new review: "
+                SimpleAssert.that(
+                    s.capture != before && s.mode == mode
+                        && s.scope == 2
+                        && s.job == 0
+                        && s.placementReviewNonce > previousNonce
+                        && HologramStructureProjection.operationReviewActive(s)
+                        && s.selectedIndices.size() == 1
+                        && s.selectedIndices.contains(s.selected),
+                    "explicit native mode " + mode
+                        + " keeps the selected cell and only requests a new review: "
                         + operationState(s));
                 checkLockedScopeRefusals(s);
                 NBTTagCompound changed = lockedScopeAction(s, "build");
                 changed.setIntArray("selectedIndices", new int[] { s.capture.cells.size() });
                 long previousReview = s.placementReviewNonce;
                 rejectLockedScopeAction(s, changed, "施工范围已变化", "changed confirmation cannot overwrite exact scope");
-                SimpleAssert.that(s.operationReviewSequence < 0 && s.placementReviewNonce > previousReview,
+                SimpleAssert.that(
+                    s.operationReviewSequence < 0 && s.placementReviewNonce > previousReview,
                     "a changed final request retires the old review and nonce instead of broadening it");
-                rejectLockedScopeAction(s, lockedScopeAction(s, "build"), "重新打开",
+                rejectLockedScopeAction(
+                    s,
+                    lockedScopeAction(s, "build"),
+                    "重新打开",
                     "a new nonce is not a new review and cannot restart a dismissed native scope");
             }
         } finally {
@@ -1593,9 +1740,14 @@ public final class HologramControllerCaptureRegression {
     }
 
     private static void checkLockedScopeRefusals(HologramSession s) throws java.io.IOException {
-        SimpleAssert.that(HologramSnapshots.basicState(s).getBoolean("operationScopeLocked"),
+        SimpleAssert.that(
+            HologramSnapshots.basicState(s)
+                .getBoolean("operationScopeLocked"),
             "server only advertises owned scope with completed native capture");
-        rejectLockedScopeAction(s, lockedScopeAction(s, "start"), "重新打开",
+        rejectLockedScopeAction(
+            s,
+            lockedScopeAction(s, "start"),
+            "重新打开",
             "legacy start cannot run a frozen native operation, even with its current nonce");
         NBTTagCompound missing = lockedScopeAction(s, "build");
         missing.removeTag("placementReviewNonce");
@@ -1620,44 +1772,56 @@ public final class HologramControllerCaptureRegression {
         var inventory = new java.util.ArrayList<ItemStack>();
         for (ItemStack stack : s.player.inventory.mainInventory) inventory.add(stack == null ? null : stack.copy());
         HologramActionDispatcher.handle(s.player, action);
-        SimpleAssert.that(s.status.contains(reason) && s.job == 0 && !s.replacementAuthorized
-            && s.work.isEmpty() && s.recovered.isEmpty() && s.capture == capture
-            && s.selected == selected && s.selectedIndices.equals(selection),
+        SimpleAssert.that(
+            s.status.contains(reason) && s.job == 0
+                && !s.replacementAuthorized
+                && s.work.isEmpty()
+                && s.recovered.isEmpty()
+                && s.capture == capture
+                && s.selected == selected
+                && s.selectedIndices.equals(selection),
             expectation + ": " + operationState(s));
-        for (int slot = 0; slot < inventory.size(); slot++)
-            SimpleAssert.that(ItemStack.areItemStacksEqual(inventory.get(slot), s.player.inventory.mainInventory[slot]),
-                "a refused review neither debits stock nor writes recovery into inventory");
+        for (int slot = 0; slot < inventory.size(); slot++) SimpleAssert.that(
+            ItemStack.areItemStacksEqual(inventory.get(slot), s.player.inventory.mainInventory[slot]),
+            "a refused review neither debits stock nor writes recovery into inventory");
         // ReadOnlyWorld fails the fixture on any direct block or tile mutation.
     }
 
     private static void retainedPhysicalAnchor(HologramSession s) {
-        HologramCapture.Cell anchor = s.capture.cells.stream().filter(cell -> cell.anchor).findFirst()
+        HologramCapture.Cell anchor = s.capture.cells.stream()
+            .filter(cell -> cell.anchor)
+            .findFirst()
             .orElseThrow(() -> new java.util.NoSuchElementException("No value present"));
-        SimpleAssert.that(HologramExecutionReview.retainedPhysicalAnchor(s, anchor),
+        SimpleAssert.that(
+            HologramExecutionReview.retainedPhysicalAnchor(s, anchor),
             "only the exact existing physical controller can be retained without adding work");
-        for (HologramCapture.Cell cell : s.capture.cells)
-            if (cell != anchor) SimpleAssert.that(!HologramExecutionReview.retainedPhysicalAnchor(s, cell),
-                "no other protected or ordinary cell obtains the anchor exception");
+        for (HologramCapture.Cell cell : s.capture.cells) if (cell != anchor) SimpleAssert.that(
+            !HologramExecutionReview.retainedPhysicalAnchor(s, cell),
+            "no other protected or ordinary cell obtains the anchor exception");
         HologramCapture.Cell impostor = new HologramCapture.Cell(null, anchor.x, anchor.y, anchor.z);
         impostor.anchor = true;
         impostor.stableIndex = anchor.stableIndex;
-        SimpleAssert.that(!HologramExecutionReview.retainedPhysicalAnchor(s, impostor),
+        SimpleAssert.that(
+            !HologramExecutionReview.retainedPhysicalAnchor(s, impostor),
             "matching coordinate and flag are not an authoritative anchor");
         int mode = s.mode, facing = s.facing;
         boolean virtual = s.virtual;
         try {
             for (int destructive = 1; destructive <= 2; destructive++) {
                 s.mode = destructive;
-                SimpleAssert.that(!HologramExecutionReview.retainedPhysicalAnchor(s, anchor),
+                SimpleAssert.that(
+                    !HologramExecutionReview.retainedPhysicalAnchor(s, anchor),
                     "replace/remove never receive ordinary native PLACE admission");
             }
             s.mode = mode;
             s.virtual = true;
-            SimpleAssert.that(!HologramExecutionReview.retainedPhysicalAnchor(s, anchor),
+            SimpleAssert.that(
+                !HologramExecutionReview.retainedPhysicalAnchor(s, anchor),
                 "virtual locked authority never substitutes for physical controller");
             s.virtual = virtual;
             s.facing = (facing + 1) % 6;
-            SimpleAssert.that(!HologramExecutionReview.retainedPhysicalAnchor(s, anchor),
+            SimpleAssert.that(
+                !HologramExecutionReview.retainedPhysicalAnchor(s, anchor),
                 "a changed controller pose invalidates the anchor");
         } finally {
             s.mode = mode;
@@ -1813,7 +1977,8 @@ public final class HologramControllerCaptureRegression {
             s.job == 1 && s.work.size() == 3 && s.player.inventory.mainInventory[1].stackSize == 2,
             "a current confirmed native plan with sufficient stock reaches the existing bounded placement job without prepaying: "
                 + operationState(s));
-        SimpleAssert.that(s.operationReviewSequence == -1 && s.placementReviewNonce > build.getLong("placementReviewNonce"),
+        SimpleAssert.that(
+            s.operationReviewSequence == -1 && s.placementReviewNonce > build.getLong("placementReviewNonce"),
             "starting construction consumes the native material confirmation");
         // Supply committed transaction outcomes to the real job finalizer; physical placement is tested in-game.
         for (int index : s.work) s.capture.cells.get(index).status = "placed";
@@ -2294,8 +2459,9 @@ public final class HologramControllerCaptureRegression {
             HologramControllerOpen.dispatch(player, click, () -> HologramProjectorWorkflow.open(player, 0, 64, 0, 2));
             HologramSession old = HologramWorkspace.find(player.getUniqueID());
             complete(old);
-            SimpleAssert.that(old.controllerOpenId == 17
-                && HologramStructureProjection.header(old).getLong("controllerOpenId") == 17,
+            SimpleAssert.that(
+                old.controllerOpenId == 17 && HologramStructureProjection.header(old)
+                    .getLong("controllerOpenId") == 17,
                 "deferred projection carries the original right-click identity");
             SimpleAssert.that(
                 !old.projectionPersistPending && HologramSessionPolicy.controllerType(old)

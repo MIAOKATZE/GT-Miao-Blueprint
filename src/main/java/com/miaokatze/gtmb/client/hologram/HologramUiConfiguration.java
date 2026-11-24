@@ -706,16 +706,8 @@ final class HologramUiConfiguration {
                 ui.session.editable() && !ui.session.isTutorial(),
                 mx,
                 my);
-            ui.canvas.button(
-                1713,
-                244,
-                208,
-                74,
-                19,
-                "覆盖所选",
-                ui.session.editable() && selectedPresetAvailable(),
-                mx,
-                my);
+            ui.canvas
+                .button(1713, 244, 208, 74, 19, "覆盖所选", ui.session.editable() && selectedPresetAvailable(), mx, my);
             ui.canvas.button(1714, 322, 208, 74, 19, "删除所选", selectedPresetAvailable(), mx, my);
         } else {
             ui.canvas.button(105, 165, 186, 231, 19, presetDowngrade ? "缺料时允许降级 ✓" : "缺料时严格保持等级", true, mx, my);
@@ -730,8 +722,7 @@ final class HologramUiConfiguration {
             20,
             customPresets ? "应用所选搭配" : "生成预设目标",
             ui.session.editable() && ui.session.state().data.getBoolean("supported")
-                && (customPresets ? selectedPresetAvailable()
-                    : ui.session.state().data.getBoolean("presetAvailable")),
+                && (customPresets ? selectedPresetAvailable() : ui.session.state().data.getBoolean("presetAvailable")),
             mx,
             my);
         ui.canvas.button(
@@ -818,7 +809,8 @@ final class HologramUiConfiguration {
             203,
             230,
             0xb9d5d4);
-        ui.canvas.button(1716, 166, 220, 230, 19, "使用上次预设", ui.session.editable() && lastPresetAvailable(false), mx, my);
+        ui.canvas
+            .button(1716, 166, 220, 230, 19, "使用上次预设", ui.session.editable() && lastPresetAvailable(false), mx, my);
         ui.canvas.text("已绑定、有电、在范围内；遵守网络权限", 166, 245, 230, 0x94afb4);
     }
 

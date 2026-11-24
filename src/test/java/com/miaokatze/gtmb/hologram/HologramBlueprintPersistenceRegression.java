@@ -206,21 +206,26 @@ public final class HologramBlueprintPersistenceRegression {
                 HologramPresets.update(edit);
                 throw new AssertionError("ordinary edit rewrote the expanded collection without explicit migration");
             } catch (HologramCompactRequiredException expected) {
-                SimpleAssert.eq(HologramCompactRequiredException.MESSAGE, expected.getMessage(),
+                SimpleAssert.eq(
+                    HologramCompactRequiredException.MESSAGE,
+                    expected.getMessage(),
                     "expanded collection update requests explicit compact migration");
             }
-            SimpleAssert.that(java.util.Arrays.equals(legacyBytes, Files.readAllBytes(file)),
+            SimpleAssert.that(
+                java.util.Arrays.equals(legacyBytes, Files.readAllBytes(file)),
                 "blocked edit leaves the exact expanded collection unchanged");
             int limit = HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES;
             byte[] compact = HologramBlueprintUpgrade.migrate(legacyBytes, limit, () -> true);
             HologramPresets.replaceCompressedCatalog(file, legacyBytes, compact);
-            SimpleAssert.that(HologramBlueprintCompactCodec.isCompact(Files.readAllBytes(file), limit),
+            SimpleAssert.that(
+                HologramBlueprintCompactCodec.isCompact(Files.readAllBytes(file), limit),
                 "explicit migration publishes compact storage before enabling writes");
             HologramPresets.update(edit);
             SimpleAssert.that(
                 !java.util.Arrays.equals(compact, Files.readAllBytes(file)),
                 "explicit update after migration persists the edited document");
-            SimpleAssert.that(HologramBlueprintCompactCodec.isCompact(Files.readAllBytes(file), limit),
+            SimpleAssert.that(
+                HologramBlueprintCompactCodec.isCompact(Files.readAllBytes(file), limit),
                 "update retains compact storage");
             cacheField.set(null, null);
             HologramPresets.Preset sharedReloaded = HologramPresets.get(old.id);

@@ -125,7 +125,8 @@ public final class HologramGeometryDeltaRegression {
             java.util.Map<HologramRegionCache.Key, Object> cache = (java.util.Map<HologramRegionCache.Key, Object>) cacheField
                 .get(HologramRenderer.editor());
             java.util.Map<HologramRegionCache.Key, Object> saved = new java.util.LinkedHashMap<>(cache);
-            Object visible = visibleField.get(HologramRenderer.editor()), preparation = preparationField.get(HologramRenderer.editor());
+            Object visible = visibleField.get(HologramRenderer.editor()),
+                preparation = preparationField.get(HologramRenderer.editor());
             Class<?> regionType = Class.forName(MiaoVisonLiteRenderer.class.getName() + "$PreviewRegion");
             java.lang.reflect.Constructor<?> constructor = regionType.getDeclaredConstructor();
             constructor.setAccessible(true);

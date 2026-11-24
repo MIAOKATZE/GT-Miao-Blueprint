@@ -488,8 +488,7 @@ public final class HologramBlueprintArtifact {
     }
 
     private static void requireSourceDigest(String source, Png png) throws IOException {
-        if (!source.equals(png.source))
-            throw new IOException("Blueprint PNG is missing its matching JSON digest");
+        if (!source.equals(png.source)) throw new IOException("Blueprint PNG is missing its matching JSON digest");
     }
 
     private static void requirePngDigest(String expected, byte[] pngBytes) throws IOException {

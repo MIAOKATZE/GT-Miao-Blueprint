@@ -54,7 +54,8 @@ public final class HologramMeOutputDisplayRegression {
         register(Block.blockRegistry, host);
         ItemMachines shell = new ItemMachines(host);
         register(Item.itemRegistry, shell);
-        SimpleAssert.that(Block.getBlockFromName(HOST) == host && Item.itemRegistry.getObject(HOST) == shell,
+        SimpleAssert.that(
+            Block.getBlockFromName(HOST) == host && Item.itemRegistry.getObject(HOST) == shell,
             "headless fixture must resolve exact native block and item names");
         GregTechAPI.sBlockMachines = host;
         try {
@@ -108,15 +109,24 @@ public final class HologramMeOutputDisplayRegression {
         expect(result, 6, 32768L, false, "32,768 items");
         for (int i = 0; i < 6; i++) {
             ItemStack target = result.cells.get(i).targetStack;
-            SimpleAssert.that(target != null && Item.getItemFromBlock(host) == target.getItem(),
+            SimpleAssert.that(
+                target != null && Item.getItemFromBlock(host) == target.getItem(),
                 "physical item remains the same registered shell");
             SimpleAssert.that(!target.hasTagCompound(), "tile capacity never joins target or payment identity");
         }
-        SimpleAssert.eq(itemTag(32768L), result.cells.get(6).targetStack.getTagCompound(),
+        SimpleAssert.eq(
+            itemTag(32768L),
+            result.cells.get(6).targetStack.getTagCompound(),
             "original explicit item tag remains exactly as supplied");
         SimpleAssert.that(Arrays.equals(frozen, compact), "opening never rewrites the stored blueprint bytes");
-        SimpleAssert.that(!result.cells.get(0).display(false).hasKey("Inventory")
-            && !result.cells.get(0).display(false).hasKey("extraObservation"), "display marker is never cargo");
+        SimpleAssert.that(
+            !result.cells.get(0)
+                .display(false)
+                .hasKey("Inventory")
+                && !result.cells.get(0)
+                    .display(false)
+                    .hasKey("extraObservation"),
+            "display marker is never cargo");
         // The bytes are still physically present in the source; only author policy turns the extra visual line off.
         blueprint.addProperty("retainNbt", false);
         HologramState filteredAll = displayed(encode(root));
@@ -157,9 +167,11 @@ public final class HologramMeOutputDisplayRegression {
         selected.add(new com.google.gson.JsonPrimitive("baseCapacity"));
         expectEditableAuthorRetention(root, true);
 
-        NBTTagCompound malformed = HologramLocalBlueprintDocument.open(encode(root), "").snapshotMetadata();
+        NBTTagCompound malformed = HologramLocalBlueprintDocument.open(encode(root), "")
+            .snapshotMetadata();
         malformed.setInteger("blueprintRetainNbt", 1);
-        SimpleAssert.that(!HologramBlueprintPreview.editorAllowsMeOutputCapacity(malformed),
+        SimpleAssert.that(
+            !HologramBlueprintPreview.editorAllowsMeOutputCapacity(malformed),
             "malformed editor authoring policy cannot enable the display marker");
     }
 
@@ -168,29 +180,37 @@ public final class HologramMeOutputDisplayRegression {
         var opened = HologramLocalBlueprintDocument.openForEditor(exact, "", () -> true);
         var editor = opened.editor();
         SimpleAssert.that(editor != null, "expected real file-backed compact authoring rows");
-        assertEditableCapacity(new HologramState.Preparation(
-            editor.metadata(), true, new HologramBlueprintPreview.CompactCells(editor)), visible);
+        assertEditableCapacity(
+            new HologramState.Preparation(editor.metadata(), true, new HologramBlueprintPreview.CompactCells(editor)),
+            visible);
 
         var document = opened.document();
         NBTTagCompound ordinary = document.snapshot();
-        NBTTagCompound captured = ordinary.getTagList("cells", 10).getCompoundTagAt(0);
-        SimpleAssert.that(captured.getCompoundTag("previewTile").hasKey("baseCapacity", 4)
-            && !captured.hasKey("targetDisplay") && !captured.hasKey(HologramGtMeOutputDisplay.ITEMS)
-            && !captured.getCompoundTag("previewTile").hasKey(HologramGtMeOutputDisplay.ITEMS),
+        NBTTagCompound captured = ordinary.getTagList("cells", 10)
+            .getCompoundTagAt(0);
+        SimpleAssert.that(
+            captured.getCompoundTag("previewTile")
+                .hasKey("baseCapacity", 4) && !captured.hasKey("targetDisplay")
+                && !captured.hasKey(HologramGtMeOutputDisplay.ITEMS)
+                && !captured.getCompoundTag("previewTile")
+                    .hasKey(HologramGtMeOutputDisplay.ITEMS),
             "authoring snapshot keeps native NBT, not the derived display scalar");
         // Even contrary browse keys must not override a genuine editable document's authoring policy.
         ordinary.setBoolean("localMaterialPolicyPresent", true);
         ordinary.setBoolean("retainNbt", !visible);
         assertEditableCapacity(new HologramState.Preparation(ordinary, true, null), visible);
         var rows = document.detachedEditorRows(() -> true);
-        rows.metadata().setInteger("dimension", 7);
-        HologramState detached = assertEditableCapacity(new HologramState.Preparation(
-            rows.metadata(), true, new HologramBlueprintPreview.CompactCells(rows)), visible);
+        rows.metadata()
+            .setInteger("dimension", 7);
+        HologramState detached = assertEditableCapacity(
+            new HologramState.Preparation(rows.metadata(), true, new HologramBlueprintPreview.CompactCells(rows)),
+            visible);
         Object world = new Object(), connection = new Object(), player = new Object();
         var reuse = HologramLocalPresentation.capture(document, detached, world, connection, player, 7, 3, true);
         SimpleAssert.that(reuse != null, "exact same-owner authoring view is reusable");
         HologramState rebased = reuse.rebase(document.resumePresentationMetadata(() -> true));
-        SimpleAssert.that(rebased != null && rebased.cells == detached.cells,
+        SimpleAssert.that(
+            rebased != null && rebased.cells == detached.cells,
             "policy-correct detached geometry is reused under fresh authoring metadata");
         assertEditableCaptions(rebased, visible);
 
@@ -198,11 +218,13 @@ public final class HologramMeOutputDisplayRegression {
         changed.setBoolean("all", true);
         changed.setBoolean("retainNbt", !visible);
         document.apply("configureBlueprintNbt", changed);
-        SimpleAssert.that(!reuse.current(document, world, connection, player, 7, 3)
-            && reuse.rebase(document.resumePresentationMetadata(() -> true)) == null,
+        SimpleAssert.that(
+            !reuse.current(document, world, connection, player, 7, 3)
+                && reuse.rebase(document.resumePresentationMetadata(() -> true)) == null,
             "a policy revision cannot reuse the previous retained token");
         HologramState after = rebased.withMetadata(document.snapshotMetadata());
-        SimpleAssert.that(rebased.cells == after.cells && rebased.regions == after.regions,
+        SimpleAssert.that(
+            rebased.cells == after.cells && rebased.regions == after.regions,
             "policy toggles keep the original view geometry");
         assertEditableCaptions(after, !visible);
         document.apply("editUndo", new NBTTagCompound());
@@ -215,9 +237,12 @@ public final class HologramMeOutputDisplayRegression {
         while (!preparation.step(3, Long.MAX_VALUE)) {}
         HologramState view = preparation.result();
         assertEditableCaptions(view, visible);
-        SimpleAssert.that(!view.cells.get(0).targetStack.hasTagCompound(),
+        SimpleAssert.that(
+            !view.cells.get(0).targetStack.hasTagCompound(),
             "tile-derived display capacity remains outside the editable target stack");
-        SimpleAssert.eq(itemTag(2097152L), view.cells.get(1).targetStack.getTagCompound(),
+        SimpleAssert.eq(
+            itemTag(2097152L),
+            view.cells.get(1).targetStack.getTagCompound(),
             "authoring display policy does not rewrite the original item tag");
         return view;
     }
@@ -237,7 +262,9 @@ public final class HologramMeOutputDisplayRegression {
 
     private static byte[] encode(JsonObject root) throws Exception {
         return HologramBlueprintCompactCodec.recompress(
-            root.toString().getBytes(StandardCharsets.UTF_8), HologramBlueprintArtifact.MAX_JSON_BYTES);
+            root.toString()
+                .getBytes(StandardCharsets.UTF_8),
+            HologramBlueprintArtifact.MAX_JSON_BYTES);
     }
 
     private static void expect(HologramState view, int index, long value, boolean fluid, String suffix) {
@@ -255,17 +282,21 @@ public final class HologramMeOutputDisplayRegression {
         provider.setAccessible(true);
         Object value = unsafe().allocateInstance(Class.forName(type.getName() + "$1"));
         provider.set(machine, value);
-        Field environment = provider.getType().getDeclaredField("env");
+        Field environment = provider.getType()
+            .getDeclaredField("env");
         environment.setAccessible(true);
         environment.set(value, machine);
-        Field capacity = provider.getType().getDeclaredField("baseCapacity");
+        Field capacity = provider.getType()
+            .getDeclaredField("baseCapacity");
         capacity.setAccessible(true);
         IGregTechTileEntity observed = (IGregTechTileEntity) Proxy.newProxyInstance(
             IGregTechTileEntity.class.getClassLoader(),
             new Class<?>[] { IGregTechTileEntity.class },
             (instance, method, arguments) -> {
-                if (method.getName().equals("getMetaTileID")) return id;
-                if (method.getName().equals("getMetaTileEntity")) return machine;
+                if (method.getName()
+                    .equals("getMetaTileID")) return id;
+                if (method.getName()
+                    .equals("getMetaTileEntity")) return machine;
                 throw new AssertionError("display may not call another tile hook: " + method.getName());
             });
         Method writer = HologramGtMeOutputDisplay.class
@@ -280,8 +311,8 @@ public final class HologramMeOutputDisplayRegression {
         cell.setTag("actualDisplay", actual);
         SimpleAssert.eq(
             "Current base buffer: " + amount,
-            HologramEditorPropertiesPane.meOutputCapacityText(
-                new HologramState(new NBTTagCompound()), new HologramState.Cell(0, cell), true),
+            HologramEditorPropertiesPane
+                .meOutputCapacityText(new HologramState(new NBTTagCompound()), new HologramState.Cell(0, cell), true),
             "native installed output shows its base capacity separately");
         SimpleAssert.eq(upgraded, capacity.getLong(value), "observed provider stays unchanged");
         capacity.setLong(value, ordinary);
@@ -296,11 +327,15 @@ public final class HologramMeOutputDisplayRegression {
         gtState.setAccessible(true);
         for (boolean tile : new boolean[] { false, true }) {
             try {
-                gtState.invoke(null, tile ? saved(BUS, 8192L) : itemTag(8192L), new ItemStack(host, 1, BUS), tile, false);
+                gtState
+                    .invoke(null, tile ? saved(BUS, 8192L) : itemTag(8192L), new ItemStack(host, 1, BUS), tile, false);
                 throw new AssertionError("display data cannot make a base capacity eligible for execution");
             } catch (InvocationTargetException expected) {
-                SimpleAssert.that(expected.getCause() instanceof IOException
-                    && expected.getCause().getMessage().contains("baseCapacity"), "execution still rejects baseCapacity itself");
+                SimpleAssert.that(
+                    expected.getCause() instanceof IOException && expected.getCause()
+                        .getMessage()
+                        .contains("baseCapacity"),
+                    "execution still rejects baseCapacity itself");
             }
         }
     }
@@ -312,7 +347,11 @@ public final class HologramMeOutputDisplayRegression {
         NBTTagCompound display = new NBTTagCompound();
         HologramGtMeOutputDisplay.observeStored(host, input, good, display);
         SimpleAssert.eq(8192L, HologramGtMeOutputDisplay.read(display, false), "correct saved identity");
-        SimpleAssert.eq(1, display.func_150296_c().size(), "only the typed scalar is written");
+        SimpleAssert.eq(
+            1,
+            display.func_150296_c()
+                .size(),
+            "only the typed scalar is written");
         SimpleAssert.eq(untouched, good, "saved payload is unmodified");
         SimpleAssert.that(!input.hasTagCompound(), "stack unmodified");
         reject(host, input, saved(FLUID, 2097152L));
@@ -364,8 +403,14 @@ public final class HologramMeOutputDisplayRegression {
         row.addProperty("block", HOST);
         row.addProperty("item", HOST);
         row.addProperty("damage", machine);
-        if (tile != null) row.addProperty("tileNbt", Base64.getEncoder().encodeToString(HologramSnapshotCodec.compress(tile)));
-        if (item != null) row.addProperty("itemNbt", Base64.getEncoder().encodeToString(HologramSnapshotCodec.compress(item)));
+        if (tile != null) row.addProperty(
+            "tileNbt",
+            Base64.getEncoder()
+                .encodeToString(HologramSnapshotCodec.compress(tile)));
+        if (item != null) row.addProperty(
+            "itemNbt",
+            Base64.getEncoder()
+                .encodeToString(HologramSnapshotCodec.compress(item)));
         return row;
     }
 

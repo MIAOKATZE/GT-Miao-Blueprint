@@ -126,7 +126,8 @@ final class HologramWorkbenchStagesWitness {
         if (requireEarly && (target == 0 || installed < target))
             throw new IllegalStateException("Expected target publication followed by full controller data: " + result);
         if (preceding != null) {
-            boolean newGeneration = !preceding.data.getString("generation").equals(state.data.getString("generation"));
+            boolean newGeneration = !preceding.data.getString("generation")
+                .equals(state.data.getString("generation"));
             result.put("recaptureHasNewGeneration", newGeneration);
             if (requireEarly && !newGeneration)
                 throw new IllegalStateException("Controller recapture reused the preceding geometry generation");
@@ -151,32 +152,38 @@ final class HologramWorkbenchStagesWitness {
         var bounds = screen.ui.canvas.viewport();
         boolean nativeScene = screen.ui.canvas.nativeScene();
         double left = nativeScene ? 0 : bounds.x(), top = nativeScene ? 0 : bounds.y();
-        for (int vertical = 1; vertical < 8; vertical++)
-            for (int horizontal = 1; horizontal < 8; horizontal++) {
-                int picked = HologramRenderer.pick(
-                    (int) Math.round(left + bounds.width() * horizontal / 8),
-                    (int) Math.round(top + bounds.height() * vertical / 8));
-                if (picked >= 0 && picked < state.cells.size()) {
-                    HologramState.Cell cell = state.cells.get(picked);
-                    if (!cell.anchor && !cell.iconOnly && !cell.missingBlock && !"minecraft:air".equals(cell.wantId))
-                        return picked;
-                }
+        for (int vertical = 1; vertical < 8; vertical++) for (int horizontal = 1; horizontal < 8; horizontal++) {
+            int picked = HologramRenderer.pick(
+                (int) Math.round(left + bounds.width() * horizontal / 8),
+                (int) Math.round(top + bounds.height() * vertical / 8));
+            if (picked >= 0 && picked < state.cells.size()) {
+                HologramState.Cell cell = state.cells.get(picked);
+                if (!cell.anchor && !cell.iconOnly && !cell.missingBlock && !"minecraft:air".equals(cell.wantId))
+                    return picked;
             }
+        }
         return -1;
     }
 
     private static void sameGeometry(HologramState early, HologramState complete) {
-        if (!early.session.equals(complete.session)
-            || !early.data.getString("generation").equals(complete.data.getString("generation"))
-            || early.cells.size() != complete.cells.size())
+        if (!early.session.equals(complete.session) || !early.data.getString("generation")
+            .equals(complete.data.getString("generation")) || early.cells.size() != complete.cells.size())
             throw new IllegalStateException("Controller details changed the installed geometry identity");
         for (int index = 0; index < early.cells.size(); index++) {
             HologramState.Cell a = early.cells.get(index), b = complete.cells.get(index);
-            if (a.index != b.index || a.x != b.x || a.y != b.y || a.z != b.z
-                || a.dx != b.dx || a.dy != b.dy || a.dz != b.dz
-                || a.meta != b.meta || a.wantMeta != b.wantMeta || a.anchor != b.anchor
-                || a.targetFacing != b.targetFacing || a.actualFacing != b.actualFacing
-                || !a.id.equals(b.id) || !a.wantId.equals(b.wantId)
+            if (a.index != b.index || a.x != b.x
+                || a.y != b.y
+                || a.z != b.z
+                || a.dx != b.dx
+                || a.dy != b.dy
+                || a.dz != b.dz
+                || a.meta != b.meta
+                || a.wantMeta != b.wantMeta
+                || a.anchor != b.anchor
+                || a.targetFacing != b.targetFacing
+                || a.actualFacing != b.actualFacing
+                || !a.id.equals(b.id)
+                || !a.wantId.equals(b.wantId)
                 || !ItemStack.areItemStacksEqual(a.actualStack, b.actualStack)
                 || !ItemStack.areItemStacksEqual(a.targetStack, b.targetStack))
                 throw new IllegalStateException("Controller details changed target, observation or index " + index);
@@ -184,6 +191,6 @@ final class HologramWorkbenchStagesWitness {
     }
 
     private static int[] position(HologramState.Cell cell) {
-        return new int[] {cell.dx, cell.dy, cell.dz};
+        return new int[] { cell.dx, cell.dy, cell.dz };
     }
 }

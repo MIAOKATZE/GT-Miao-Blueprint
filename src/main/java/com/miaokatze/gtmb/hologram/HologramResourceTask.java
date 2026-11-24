@@ -350,8 +350,10 @@ final class HologramResourceTask {
         if (HologramSessionPolicy.ignoredPlacementAir(s, c, i)) return;
         if (!HologramSessionPolicy.inScope(s, c, i) || !"pending".equals(c.status)) return;
         ItemStack target = HologramCellPolicy.targetFor(s, c, i);
-        if (nativeItems != null && (target == null || !c.tileNbt.isEmpty() || !c.itemNbt.isEmpty()
-            || c.userPosition || c.attachmentPlacementProof != null)) nativeItems.rejectUnsupported();
+        if (nativeItems != null && (target == null || !c.tileNbt.isEmpty()
+            || !c.itemNbt.isEmpty()
+            || c.userPosition
+            || c.attachmentPlacementProof != null)) nativeItems.rejectUnsupported();
         if (s.mode != 2 && s.virtual && s.virtualPreset.schema >= 2 && !classifier.emptyOrdinary(s, c, i)) {
             try {
                 HologramEnergyPayload.Prepared[] prepared = new HologramEnergyPayload.Prepared[1];

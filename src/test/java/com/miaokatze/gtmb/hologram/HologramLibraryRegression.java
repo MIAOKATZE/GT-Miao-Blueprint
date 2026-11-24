@@ -137,7 +137,8 @@ public final class HologramLibraryRegression {
             for (String operation : new String[] { "uploadBegin", "uploadChunk", "configSet", "delete", "download",
                 "privateBegin", "privateChunk", "contentResolve", "publicPrepare", "quickBootstrap" }) {
                 HologramLibraryFacade.receive(actor, HologramLibraryProtocol.request(operation));
-                SimpleAssert.that(queue.isEmpty(), "integrated wire ignores public and retired operations: " + operation);
+                SimpleAssert
+                    .that(queue.isEmpty(), "integrated wire ignores public and retired operations: " + operation);
             }
             SimpleAssert.that(
                 !HologramLibraryService.saveCurrent(actor, HologramLibraryProtocol.request("previewBegin")),
@@ -183,7 +184,9 @@ public final class HologramLibraryRegression {
                 active.get(id);
                 throw new AssertionError("expanded public original entered gameplay before explicit admin migration");
             } catch (HologramCompactRequiredException expected) {
-                SimpleAssert.eq(HologramCompactRequiredException.MESSAGE, expected.getMessage(),
+                SimpleAssert.eq(
+                    HologramCompactRequiredException.MESSAGE,
+                    expected.getMessage(),
                     "public storage format is checked independently of the canonical DTO and content hash");
             }
             NBTTagCompound upgrade = HologramLibraryProtocol.request("upgradeLibrary");
@@ -191,7 +194,8 @@ public final class HologramLibraryRegression {
             Object ordinary = peer(player(UUID.randomUUID(), "OrdinaryReader"));
             NBTTagCompound blockedDownload = HologramLibraryProtocol.request("download");
             blockedDownload.setString("id", id);
-            denied(() -> runWorker(active, () -> handle(active, ordinary, blockedDownload)),
+            denied(
+                () -> runWorker(active, () -> handle(active, ordinary, blockedDownload)),
                 "full legacy payload is not released to older clients under a browse/download pretext");
             SimpleAssert.that(get(ordinary, "download") == null, "no transfer was allocated for expanded JSON");
             denied(
@@ -239,7 +243,9 @@ public final class HologramLibraryRegression {
             download.setLong("clientTaskToken", 812);
             download.setString("sourceHash", HologramBlueprintContentHash.of(actual.json));
             download.setLong("sourceRevision", -1);
-            denied(() -> runWorker(active, () -> handle(active, ordinary, download)), "a stale revision cannot fetch a public artifact");
+            denied(
+                () -> runWorker(active, () -> handle(active, ordinary, download)),
+                "a stale revision cannot fetch a public artifact");
             download.removeTag("sourceRevision");
             download.removeTag("sourceHash");
             runWorker(active, () -> handle(active, ordinary, download));
@@ -249,10 +255,23 @@ public final class HologramLibraryRegression {
             HologramBlueprintArtifact.Artifact portable = HologramBlueprintArtifact.decode(
                 HologramLibraryDownload.decode(payload.bytes, payload.encoding, payload.decodedTotal, payload.hash));
             com.google.gson.JsonObject share = HologramBlueprintCompactCodec.parse(portable.json);
-            SimpleAssert.eq(id, share.getAsJsonObject("blueprint").get("id").getAsString(), "portable artifact retains public identity");
-            SimpleAssert.eq(after.get("futureMetadata"), share.get("futureMetadata"), "portable artifact retains extension metadata");
-            SimpleAssert.that(!share.has("owner") && !share.has("uploadedBy"), "server catalog attribution is not embedded into the portable copy");
-            SimpleAssert.eq(HologramBlueprintContentHash.of(actual.json), HologramBlueprintContentHash.of(portable.json), "download uses the stored artifact content");
+            SimpleAssert.eq(
+                id,
+                share.getAsJsonObject("blueprint")
+                    .get("id")
+                    .getAsString(),
+                "portable artifact retains public identity");
+            SimpleAssert.eq(
+                after.get("futureMetadata"),
+                share.get("futureMetadata"),
+                "portable artifact retains extension metadata");
+            SimpleAssert.that(
+                !share.has("owner") && !share.has("uploadedBy"),
+                "server catalog attribution is not embedded into the portable copy");
+            SimpleAssert.eq(
+                HologramBlueprintContentHash.of(actual.json),
+                HologramBlueprintContentHash.of(portable.json),
+                "download uses the stored artifact content");
             runWorker(active, () -> invoke(active, "clearDownload", ordinary));
             active.stop();
             reloaded = null;
@@ -876,14 +895,18 @@ public final class HologramLibraryRegression {
             java.util.Random pixels = new java.util.Random(16265L);
             for (int y = 0; y < 96; y++) for (int x = 0; x < 96; x++) image.setRGB(x, y, pixels.nextInt());
             transfer(store, owner, HologramServerLibrary.encodeShare(source), "", false, image);
-            String id = HologramBlueprintFiles.managedPublic(entries).keySet().iterator().next();
+            String id = HologramBlueprintFiles.managedPublic(entries)
+                .keySet()
+                .iterator()
+                .next();
             Path json = HologramBlueprintFiles.resolve(entries, id);
             Path png = HologramBlueprintArtifact.previewPath(json);
             byte[] storedJson = Files.readAllBytes(json), storedPng = Files.readAllBytes(png);
             capture.replies.clear();
             NBTTagCompound list = HologramLibraryProtocol.request("list");
             runWorker(store, () -> handle(store, reader, list));
-            NBTTagCompound row = capture.onlyListReply(0, 1, 1, 1).getCompoundTagAt(0);
+            NBTTagCompound row = capture.onlyListReply(0, 1, 1, 1)
+                .getCompoundTagAt(0);
             SimpleAssert.eq(id, row.getString("id"), "reader catalog exposes the committed public ID");
             SimpleAssert.that(!row.getBoolean("mine"), "fixture uses an independent reader, not the publisher");
 
@@ -897,13 +920,18 @@ public final class HologramLibraryRegression {
             NBTTagCompound header = wireReply(capture.replies.remove(0));
             SimpleAssert.eq("downloadBegin", header.getString("op"), "header arrives before chunks");
             SimpleAssert.eq(id, header.getString("id"), "header binds the requested public entry");
-            SimpleAssert.eq(row.getString("sourceHash"), header.getString("sourceHash"), "header preserves content identity");
-            SimpleAssert.eq(row.getLong("sourceRevision"), header.getLong("sourceRevision"), "header preserves catalog revision");
+            SimpleAssert
+                .eq(row.getString("sourceHash"), header.getString("sourceHash"), "header preserves content identity");
+            SimpleAssert.eq(
+                row.getLong("sourceRevision"),
+                header.getLong("sourceRevision"),
+                "header preserves catalog revision");
             SimpleAssert.that(HologramLibraryDownload.taskMatches(7, header), "header belongs to the reader's task");
 
-            HologramLibraryDownload.Assembly assembly = new HologramLibraryDownload.Assembly(header.getInteger("total"));
-            Method sendDownload = HologramServerLibrary.class.getDeclaredMethod("sendDownload", reader.getClass(),
-                long.class);
+            HologramLibraryDownload.Assembly assembly = new HologramLibraryDownload.Assembly(
+                header.getInteger("total"));
+            Method sendDownload = HologramServerLibrary.class
+                .getDeclaredMethod("sendDownload", reader.getClass(), long.class);
             sendDownload.setAccessible(true);
             long now = System.nanoTime();
             for (int i = 0; i < 8 && get(reader, "download") != null; i++) {
@@ -914,7 +942,8 @@ public final class HologramLibraryRegression {
             for (int i = 0; i < capture.replies.size(); i++) {
                 NBTTagCompound reply = wireReply(capture.replies.get(i));
                 SimpleAssert.that(HologramLibraryDownload.taskMatches(7, reply), "packet belongs to the reader's task");
-                SimpleAssert.eq(header.getString("transfer"), reply.getString("transfer"), "packet belongs to the header");
+                SimpleAssert
+                    .eq(header.getString("transfer"), reply.getString("transfer"), "packet belongs to the header");
                 if (i == capture.replies.size() - 1)
                     SimpleAssert.eq("downloadDone", reply.getString("op"), "only the last packet completes");
                 else {
@@ -922,27 +951,41 @@ public final class HologramLibraryRegression {
                     assembly.append(reply.getInteger("index"), reply.getByteArray("data"));
                 }
             }
-            byte[] bytes = HologramLibraryDownload.decode(assembly.finish(), header.getString("encoding"),
-                header.getInteger("decodedTotal"), header.getString("hash"));
+            byte[] bytes = HologramLibraryDownload.decode(
+                assembly.finish(),
+                header.getString("encoding"),
+                header.getInteger("decodedTotal"),
+                header.getString("hash"));
             HologramBlueprintArtifact.Artifact received = HologramBlueprintArtifact.decode(bytes);
-            var portable = HologramBlueprintCompactCodec.parseStored(received.json, HologramBlueprintArtifact.MAX_JSON_BYTES);
-            SimpleAssert.that(portable.compact() && !portable.root().has("owner") && !portable.root().has("uploadedBy"),
+            var portable = HologramBlueprintCompactCodec
+                .parseStored(received.json, HologramBlueprintArtifact.MAX_JSON_BYTES);
+            SimpleAssert.that(
+                portable.compact() && !portable.root()
+                    .has("owner")
+                    && !portable.root()
+                        .has("uploadedBy"),
                 "download stays compact and does not carry server catalog ownership");
             HologramPresets.Preset decoded = HologramBlueprintSharing.decodeStored(received.json);
             SimpleAssert.eq(source.authorUuid, decoded.authorUuid, "portable author identity is preserved");
             SimpleAssert.eq(source.authorName, decoded.authorName, "portable author name is preserved");
             SimpleAssert.eq("minecraft:stone", decoded.cells.get(0).block, "portable document keeps the exact block");
-            java.awt.image.BufferedImage preview = javax.imageio.ImageIO.read(new java.io.ByteArrayInputStream(received.png));
+            java.awt.image.BufferedImage preview = javax.imageio.ImageIO
+                .read(new java.io.ByteArrayInputStream(received.png));
             int[] expected = image.getRGB(0, 0, image.getWidth(), image.getHeight(), null, 0, image.getWidth());
             int[] actual = preview.getRGB(0, 0, preview.getWidth(), preview.getHeight(), null, 0, preview.getWidth());
             SimpleAssert.that(Arrays.equals(expected, actual), "rebound portable PNG preserves all pixels");
-            SimpleAssert.that(Arrays.equals(storedJson, Files.readAllBytes(json))
-                && Arrays.equals(storedPng, Files.readAllBytes(png)), "public read never rewrites the server's pair");
+            SimpleAssert.that(
+                Arrays.equals(storedJson, Files.readAllBytes(json))
+                    && Arrays.equals(storedPng, Files.readAllBytes(png)),
+                "public read never rewrites the server's pair");
             SimpleAssert.eq(0, get(store, "activeDownloads"), "successful delivery releases the transfer");
             SimpleAssert.eq(0L, get(store, "downloadBytes"), "successful delivery releases the byte reservation");
             capture.replies.clear();
             runWorker(store, () -> handle(store, reader, list));
-            SimpleAssert.eq(row, capture.onlyListReply(0, 1, 1, 1).getCompoundTagAt(0),
+            SimpleAssert.eq(
+                row,
+                capture.onlyListReply(0, 1, 1, 1)
+                    .getCompoundTagAt(0),
                 "a public download does not change the reader's catalog identity");
         } finally {
             channel.set(null, previous);
@@ -1639,7 +1682,8 @@ public final class HologramLibraryRegression {
             NBTTagCompound list = HologramLibraryProtocol.request("list");
             list.setInteger("page", 1);
             runWorker(store, () -> handle(store, owner, list));
-            NBTTagCompound before = capture.onlyListReply(1, 2, entryCount, 1).getCompoundTagAt(0);
+            NBTTagCompound before = capture.onlyListReply(1, 2, entryCount, 1)
+                .getCompoundTagAt(0);
             SimpleAssert.eq(lastId, before.getString("id"), "last published entry is alone on page two");
 
             source.name = "Updated on page two";
@@ -1651,11 +1695,13 @@ public final class HologramLibraryRegression {
 
             // The uploader can refresh the open second page without requesting the first page again.
             runWorker(store, () -> handle(store, owner, list));
-            NBTTagCompound after = capture.onlyListReply(1, 2, entryCount, 1).getCompoundTagAt(0);
+            NBTTagCompound after = capture.onlyListReply(1, 2, entryCount, 1)
+                .getCompoundTagAt(0);
             SimpleAssert.eq(lastId, after.getString("id"), "same page still contains the replacement ID");
             SimpleAssert.eq(source.name, after.getString("name"), "explicit page refresh sees the replacement label");
             SimpleAssert.that(
-                !before.getString("sourceHash").equals(after.getString("sourceHash"))
+                !before.getString("sourceHash")
+                    .equals(after.getString("sourceHash"))
                     && after.getLong("sourceRevision") > before.getLong("sourceRevision"),
                 "explicit refresh sees new content and its newer revision");
 
@@ -1676,7 +1722,8 @@ public final class HologramLibraryRegression {
             for (int count = entryCount + 1; count > 0; count--) {
                 int requested = (count - 1) / HologramLibraryProtocol.PAGE_SIZE;
                 NBTTagList rows = (NBTTagList) get(client, "server");
-                String id = rows.getCompoundTagAt(rows.tagCount() - 1).getString("id");
+                String id = rows.getCompoundTagAt(rows.tagCount() - 1)
+                    .getString("id");
                 if (count == entryCount + 1) SimpleAssert.eq(extra, id, "last row of nonempty second page");
                 if (count == entryCount) SimpleAssert.eq(lastId, id, "updated row survives first delete");
                 set(client, "selectedServer", id);
@@ -1700,11 +1747,17 @@ public final class HologramLibraryRegression {
                 int expected = Math.max(0, (count - 2) / HologramLibraryProtocol.PAGE_SIZE);
                 SimpleAssert.eq(expected, (int) get(client, "page"), "client shows clamped open page");
                 rows = (NBTTagList) get(client, "server");
-                SimpleAssert.eq(count - 1 - expected * HologramLibraryProtocol.PAGE_SIZE, rows.tagCount(),
+                SimpleAssert.eq(
+                    count - 1 - expected * HologramLibraryProtocol.PAGE_SIZE,
+                    rows.tagCount(),
                     "new page row count");
-                for (int i = 0; i < rows.tagCount(); i++)
-                    SimpleAssert.that(!id.equals(rows.getCompoundTagAt(i).getString("id")), "removed row stays absent");
-                SimpleAssert.that(capture.requests.isEmpty() && !(boolean) get(client, "refreshingServer"),
+                for (int i = 0; i < rows.tagCount(); i++) SimpleAssert.that(
+                    !id.equals(
+                        rows.getCompoundTagAt(i)
+                            .getString("id")),
+                    "removed row stays absent");
+                SimpleAssert.that(
+                    capture.requests.isEmpty() && !(boolean) get(client, "refreshingServer"),
                     "catalog settled without another request");
             }
         } finally {
@@ -1749,10 +1802,14 @@ public final class HologramLibraryRegression {
             SimpleAssert.eq("uploadReady", ready.getString("op"), "upload is admitted");
             SimpleAssert.eq("uploaded", uploaded.getString("op"), "upload is committed");
             SimpleAssert.that(
-                !ready.getString("transfer").isEmpty()
-                    && ready.getString("transfer").equals(uploaded.getString("transfer")),
+                !ready.getString("transfer")
+                    .isEmpty() && ready.getString("transfer")
+                        .equals(uploaded.getString("transfer")),
                 "ready and committed belong to the same upload");
-            SimpleAssert.that(uploaded.getString("id").startsWith("public_"), "upload gets a public ID");
+            SimpleAssert.that(
+                uploaded.getString("id")
+                    .startsWith("public_"),
+                "upload gets a public ID");
             return uploaded.getString("id");
         }
 

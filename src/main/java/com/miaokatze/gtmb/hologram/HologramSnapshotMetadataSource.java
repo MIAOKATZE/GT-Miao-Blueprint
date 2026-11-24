@@ -334,7 +334,8 @@ final class HologramSnapshotMetadataSource {
         target.structureFamily = source.structureFamily;
         target.structureHint = source.structureHint;
         target.structureCandidatesComplete = source.structureCandidatesComplete;
-        target.structureHatchFacings = source.structureHatchFacings == null ? null : source.structureHatchFacings.clone();
+        target.structureHatchFacings = source.structureHatchFacings == null ? null
+            : source.structureHatchFacings.clone();
         target.metadata = source.metadata;
         target.excluded = source.excluded;
         target.defaultDamage = source.defaultDamage;

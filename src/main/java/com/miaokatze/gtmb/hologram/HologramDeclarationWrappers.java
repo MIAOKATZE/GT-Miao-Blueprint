@@ -120,7 +120,7 @@ final class HologramDeclarationWrappers {
     static boolean reusablePreviewOptions(IStructureElement<?> element, int depth) throws ReflectiveOperationException {
         if (element == null || depth == 0) return false;
         if (element == StructureUtility.isAir()) return true;
-        if (element instanceof IStructureElementChain<?> chain) {
+        if (element instanceof IStructureElementChain<?>chain) {
             IStructureElement<?>[] children = nativeChainChildren(chain);
             if (children == null || children.length == 0 || children.length > 64) return false;
             for (IStructureElement<?> child : children) if (!reusablePreviewOptions(child, depth - 1)) return false;
@@ -133,8 +133,9 @@ final class HologramDeclarationWrappers {
         if (method.getDeclaringClass() != StructureUtility.class) return false;
         return switch (method.getName()) {
             case "ofBlocksTiered" -> true;
-            case "onElementPass", "onElementFail", "withDescription" ->
-                reusablePreviewOptions(nativeBacking(element), depth - 1);
+            case "onElementPass", "onElementFail", "withDescription" -> reusablePreviewOptions(
+                nativeBacking(element),
+                depth - 1);
             default -> false;
         };
     }

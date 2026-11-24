@@ -818,7 +818,9 @@ final class HologramAeInteractionClientSmoke {
                     "AE first C08 locked a different rendered coordinate");
                 if (frame <= worldLockFrame || MiaoVisonLiteRenderer.lastWorldPlacementOutlineColor != 0x66d9ef)
                     return false;
-                require(MiaoVisonLiteRenderer.lastWorldGeometry > 0, "AE locked cyan world ghost has no actual geometry");
+                require(
+                    MiaoVisonLiteRenderer.lastWorldGeometry > 0,
+                    "AE locked cyan world ghost has no actual geometry");
                 require(receipt().getInteger("aePlaceEvents") == 0, "AE first RIGHT placed before material review");
                 screenshot("ae-v007-first-right-cyan-world-lock");
                 worldLockNonce = lockedWorld.getLong("placementReviewNonce");
@@ -932,8 +934,8 @@ final class HologramAeInteractionClientSmoke {
         java.lang.reflect.Field previewState = MiaoVisonLiteRenderer.class.getDeclaredField("previewState");
 
         previewState.setAccessible(true);
-        if (((Object) HologramTestLabUiDiagnostics.readDiagnosticField(parent, "state")) != previewState.get(HologramRenderer.editor()))
-            return false;
+        if (((Object) HologramTestLabUiDiagnostics.readDiagnosticField(parent, "state"))
+            != previewState.get(HologramRenderer.editor())) return false;
         HologramState state = new HologramState(parent.smokeSnapshot());
         int[] bounds = parent.smokeViewportBounds();
         NBTTagList skipped = new NBTTagList();
@@ -1171,7 +1173,9 @@ final class HologramAeInteractionClientSmoke {
             .readDiagnosticField(parent, "state"));
         java.lang.reflect.Field renderedState = MiaoVisonLiteRenderer.class.getDeclaredField("previewState");
         renderedState.setAccessible(true);
-        require(renderedState.get(HologramRenderer.editor()) == state, "AE preview verification must observe the actual rendered state");
+        require(
+            renderedState.get(HologramRenderer.editor()) == state,
+            "AE preview verification must observe the actual rendered state");
 
         require(
             ((Integer) HologramTestLabUiDiagnostics.readDiagnosticField(parent, "view")) == (current ? 1 : 0),

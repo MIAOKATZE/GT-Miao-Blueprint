@@ -7,7 +7,9 @@ package com.miaokatze.gtmb.client.hologram;
 final class HologramGiantApplyWitness {
 
     enum Progress {
-        ORIGINAL_REVISION, DRAFT_ADVANCED, TASK_ADVANCED
+        ORIGINAL_REVISION,
+        DRAFT_ADVANCED,
+        TASK_ADVANCED
     }
 
     private final Object source, draft;
@@ -25,9 +27,12 @@ final class HologramGiantApplyWitness {
     Progress observe(Object taskSource, Object taskDraft, String operation, long taskSequence,
         boolean ownedDeferredDispatch, boolean directRoute, boolean observedPacked, long taskRevision,
         long draftRevision) {
-        if (!ownedDeferredDispatch || !directRoute || source != taskSource || draft != taskDraft
-            || !"editBlueprintPrompt".equals(operation) || taskSequence != sequence || observedPacked != packed)
-            return null;
+        if (!ownedDeferredDispatch || !directRoute
+            || source != taskSource
+            || draft != taskDraft
+            || !"editBlueprintPrompt".equals(operation)
+            || taskSequence != sequence
+            || observedPacked != packed) return null;
         // Task.revision is read first. The worker publishes the draft's revision before updating the task.
         if (draftRevision == revision && taskRevision == revision) return Progress.ORIGINAL_REVISION;
         if (draftRevision == revision + 1) {
