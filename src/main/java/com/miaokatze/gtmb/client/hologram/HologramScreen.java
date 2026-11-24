@@ -45,6 +45,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     private int localControllerSide;
     private HologramState localControllerPrevious;
     private HologramState localControllerBaseline;
+    private final java.util.Set<Integer> localNativeChoices = new java.util.LinkedHashSet<>();
     private NBTTagCompound localControllerToolSettings, pendingControllerToolSettings;
     private boolean locallyReplacingView;
     private HologramState suspendedLocalBlueprint;
@@ -206,6 +207,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             }
             retireLocalController();
             localControllerBaseline = null;
+            localNativeChoices.clear();
         }
         if ("projection".equals(next)) suspendedLocalBlueprint = current;
         if ("blueprint".equals(next) && suspendedLocalBlueprint != null) {
@@ -242,6 +244,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         }
         retireLocalController();
         localControllerBaseline = null;
+        localNativeChoices.clear();
         suspendedLocalBlueprint = null;
         HologramClient.rememberLocalDocument(null);
         updateState(localWorkspaceState(current.data, current.data.getInteger("dimension"), current.data.getString("editorWorkspace")));
@@ -261,7 +264,11 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
                     if (actual == null || expected == null || !actual.isItemEqual(expected)
                         || !ItemStack.areItemStackTagsEqual(actual, expected)) throw new java.io.IOException("库存样本已变化，请重新选择");
                 }
-                updateState(HologramLocalControllerEdits.apply(current, localControllerBaseline, operation, request));
+                updateState(HologramLocalControllerEdits.apply(
+                    current, localControllerBaseline, operation, request, cell -> {
+                        if ("manual".equals(cell.pinScope) || cell.hatchFacing >= 0) localNativeChoices.add(cell.index);
+                        else localNativeChoices.remove(cell.index);
+                    }));
                 return true;
             }
             com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument document;
@@ -384,8 +391,19 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             ui.session.notice("控制器或手持投影仪已变化，请重新打开结构。");
             return;
         }
-        if (displayed.data.getInteger("mode") != 0) {
-            settings.setInteger("mode", displayed.data.getInteger("mode"));
+        int mode = displayed.data.getInteger("mode");
+        net.minecraft.nbt.NBTTagList choices;
+        try {
+            choices = mode == 2 ? new net.minecraft.nbt.NBTTagList()
+                : nativeReviewChoices(displayed, localNativeChoices, mode == 1);
+        } catch (java.io.IOException invalid) {
+            ui.session.notice(invalid.getMessage());
+            return;
+        }
+        if (mode != 0 || choices.tagCount() != 0) {
+            settings.setInteger("mode", mode);
+            if (choices.tagCount() != 0) settings.setTag(
+                com.miaokatze.gtmb.hologram.HologramNativeOperationChoices.KEY, choices);
             HologramClient.prepareExplicitControllerOperation(openingController, localControllerSide, settings, displayed);
             return;
         }
@@ -463,6 +481,35 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         localCompactNative = false;
         nativeCompactReceiptDeadline = 0;
         ui.session.notice(reason == null || reason.isEmpty() ? "施工清单准备失败" : reason);
+    }
+
+    /** Only edited row identities get examined; never serialize the captured structure for an advanced review. */
+    static net.minecraft.nbt.NBTTagList nativeReviewChoices(HologramState displayed, Iterable<Integer> edited,
+        boolean replacement) throws java.io.IOException {
+        net.minecraft.nbt.NBTTagList choices = new net.minecraft.nbt.NBTTagList();
+        boolean other = false;
+        for (int index : edited) {
+            if (index < 0 || index >= displayed.cells.size()) throw new java.io.IOException("原生结构选择已变化。");
+            HologramState.Cell cell = displayed.cells.get(index);
+            ItemStack target = cell.targetStack;
+            if (target == null || !(target.getItem() instanceof gregtech.common.blocks.ItemMachines)) {
+                other = true;
+                continue;
+            }
+            if (cell.anchor || target.hasTagCompound()
+                || !(gregtech.common.blocks.ItemMachines.getMetaTileEntity(target) instanceof gregtech.api.metatileentity
+                    .implementations.MTEHatch)) throw new java.io.IOException("手选仓室包含不支持的设备配置。");
+            if (choices.tagCount() >= com.miaokatze.gtmb.hologram.HologramNativeOperationChoices.LIMIT)
+                throw new java.io.IOException("手选仓室过多，请分次确认。");
+            NBTTagCompound choice = new NBTTagCompound();
+            choice.setIntArray("xyz", new int[] { cell.x, cell.y, cell.z });
+            choice.setInteger("hatch", target.getItemDamage());
+            choice.setInteger("facing", cell.hatchFacing);
+            choices.appendTag(choice);
+        }
+        if ((replacement || choices.tagCount() != 0) && (other || displayed.data.getBoolean("presetActive")))
+            throw new java.io.IOException("请在原生审阅工作台单独设置仓室预设或其他替换目标。");
+        return choices;
     }
 
     boolean acceptsLocalExecution(HologramState snapshot) {
@@ -631,6 +678,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             retire = true;
             publishLocalController(completed, HologramRuntimeMetrics.LoadStage.CLIENT_INSTALL);
             localControllerBaseline = completed;
+            localNativeChoices.clear();
             if (pendingControllerToolSettings != null) localControllerToolSettings = pendingControllerToolSettings;
         } catch (java.io.IOException | RuntimeException | LinkageError failure) {
             retire = true;
@@ -968,6 +1016,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             localExecutionSent = false;
             retireLocalController();
             localControllerBaseline = null;
+            localNativeChoices.clear();
             // This hook runs on final MUI panel disposal, unlike onGuiClosed's
             // temporary website/NEI suspensions. Dormant graph GPU resources end here.
             java.util.Set<HologramUiModules> graphs = java.util.Collections

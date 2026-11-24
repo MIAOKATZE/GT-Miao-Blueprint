@@ -20,6 +20,7 @@ import net.minecraft.entity.player.PlayerCapabilities;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagList;
 
 import com.gtnewhorizon.structurelib.structure.StructureUtility;
 import com.miaokatze.gtmb.api.Declarations;
@@ -766,11 +767,14 @@ public final class HologramControllerCaptureRegression {
                         controller -> { throw new AssertionError("air classification ran pass callback"); },
                         StructureUtility.isAir()))
                 .build();
+            var narrowed = com.gtnewhorizon.structurelib.structure.StructureDefinition.<Object>builder()
+                .addShape("preset", new String[][] { { "X" } }).addElement('X', element).build();
+            var omitSelectedCell = new java.util.concurrent.atomic.AtomicBoolean();
             source = com.miaokatze.gtmb.api.StructureSources.register(
                 "gtmb_test:preset_actions",
                 HologramDynamicDefinitionRegression.DynamicController.class,
                 (controller, signal) -> new com.miaokatze.gtmb.api.StructureSources.Plan(
-                    definition,
+                    omitSelectedCell.get() ? narrowed : definition,
                     java.util.Collections
                         .singletonList(new com.miaokatze.gtmb.api.StructureSources.Piece("preset", -1, 0, 0, signal))));
             s.capture = null;
@@ -865,6 +869,7 @@ public final class HologramControllerCaptureRegression {
             explicitNativeOperationOptions(s);
             operationReviews(s, energy, muffler);
             boundedNativeItemBill(s, energy, muffler);
+            manualNativeOperationChoices(s, energy, omitSelectedCell);
             readyNativePlacement(s, world, machine, definition, source);
         } finally {
             HologramWorkspace.clear();
@@ -876,6 +881,128 @@ public final class HologramControllerCaptureRegression {
             GregTechAPI.METATILEENTITIES[energyId] = previousEnergy;
             GregTechAPI.METATILEENTITIES[mufflerId] = previousMuffler;
         }
+    }
+
+    private static void manualNativeOperationChoices(HologramSession s, ItemStack energy,
+        java.util.concurrent.atomic.AtomicBoolean omitSelectedCell) throws java.io.IOException, ReflectiveOperationException {
+        long oldOpening = s.controllerOpenId;
+        s.controllerOpenId = 141;
+        s.job = s.mode = 0;
+        s.materialSettings.me = false;
+        s.materialContext = null;
+        try {
+            HologramCapture before = s.capture;
+            NBTTagCompound ordinary = nativeReview(s, 0, 0);
+            HologramActionDispatcher.handle(s.player, ordinary);
+            SimpleAssert.that(s.capture == before && s.job == 0,
+                "ordinary mode zero does not enter a new advanced review without explicit hatch choices");
+
+            NBTTagCompound removePins = nativeReview(s, 2, 0);
+            removePins.setTag(HologramNativeOperationChoices.KEY, nativeHatchChoice(s.capture.cells.get(0), energy, -1));
+            HologramActionDispatcher.handle(s.player, removePins);
+            SimpleAssert.that(s.capture == before && s.mode == 0 && s.job == 0,
+                "destructive removal never accepts a hatch target field");
+
+            for (int mode = 1; mode <= 2; mode++) {
+                NBTTagCompound selected = nativeReview(s, mode, 0, 2);
+                omitSelectedCell.set(true);
+                HologramActionDispatcher.handle(s.player, selected);
+                awaitNativeReviewRefusal(s);
+                omitSelectedCell.set(false);
+                SimpleAssert.that(s.capture.incomplete && s.job == 4 && s.work.isEmpty()
+                    && !HologramStructureProjection.operationReviewActive(s) && s.status.contains("完整范围"),
+                    "the whole mode " + mode + " selection is refused when one selected live cell disappears");
+                s.mode = 0;
+                HologramControllerCapture.collectProjection(s, true);
+                complete(s);
+            }
+
+            var wrongCell = s.capture.cells.stream().filter(cell -> HologramElementCatalog.nativeAir(cell.element))
+                .findFirst().orElseThrow();
+            NBTTagCompound wrongHatch = nativeReview(s, 0, 0);
+            wrongHatch.setTag(HologramNativeOperationChoices.KEY, nativeHatchChoice(wrongCell, energy, -1));
+            HologramActionDispatcher.handle(s.player, wrongHatch);
+            awaitNativeReviewRefusal(s);
+            SimpleAssert.that(s.job == 4 && s.work.isEmpty() && !HologramStructureProjection.operationReviewActive(s)
+                && s.status.contains("原生结构位置"),
+                "a registered hatch ID is not permission to place it in a different element's coordinate");
+            HologramControllerCapture.collectProjection(s, true);
+            complete(s);
+
+            for (int mode = 0; mode <= 1; mode++) {
+                var cell = s.capture.cells.get(0);
+                String position = HologramValues.position(cell);
+                int facing = HologramCellPolicy.legalFacings(s, cell, energy)[0];
+                NBTTagCompound manual = nativeReview(s, mode, 0);
+                manual.setTag(HologramNativeOperationChoices.KEY, nativeHatchChoice(cell, energy, facing));
+                HologramActionDispatcher.handle(s.player, manual);
+                complete(s);
+                SimpleAssert.that(s.selected >= 0 && s.mode == mode && s.scope == 2 && s.job == 0
+                    && HologramStructureProjection.operationReviewActive(s)
+                    && HologramValues.same(energy, s.pins.get(s.selected))
+                    && s.facingPins.getOrDefault(position, -1) == facing
+                    && position.equals(HologramValues.position(s.capture.cells.get(s.selected))),
+                    "mode " + mode + " carries exact declared hatch type/coordinate/facing to its separate manual review: "
+                        + operationState(s));
+                if (mode == 0) {
+                    SimpleAssert.eq(1L, quotedDemand(nativeDemand(s), energy),
+                        "only the explicitly selected native hatch is payable");
+                    HologramMaterialQuote.recheck(s);
+                    int selected = s.selected, stock = s.player.inventory.mainInventory[1].stackSize;
+                    NBTTagCompound approve = presetAction(s, "build");
+                    approve.setLong("placementReviewNonce", s.placementReviewNonce);
+                    HologramActionDispatcher.handle(s.player, approve);
+                    SimpleAssert.that(s.job == 1 && s.work.equals(java.util.Collections.singletonList(selected))
+                        && HologramValues.same(energy, HologramCellPolicy.targetFor(s, s.capture.cells.get(selected), selected))
+                        && s.planFacings.getOrDefault(selected, -1) == facing
+                        && s.player.inventory.mainInventory[1].stackSize == stock
+                        && !s.replacementAuthorized,
+                        "the confirmed ordinary native placement admits only the chosen exact hatch, without prepayment: "
+                            + operationState(s));
+                    // No native world operation runs in the read-only fixture.
+                    s.job = 0;
+                    HologramSession.clearPending(s);
+                }
+            }
+        } finally {
+            omitSelectedCell.set(false);
+            s.controllerOpenId = oldOpening;
+            s.mode = 0;
+            s.scope = 0;
+            s.selectedIndices.clear();
+        }
+    }
+
+    private static NBTTagCompound nativeReview(HologramSession s, int mode, int... selected) {
+        s.actionTick = Long.MIN_VALUE;
+        NBTTagCompound action = presetAction(s, "scan");
+        action.setBoolean("operationPreflight", true);
+        action.setLong("nativeOperationOpenId", s.controllerOpenId);
+        action.setInteger("main", s.main);
+        action.setTag("channels", s.channels.copy());
+        action.setBoolean("noHatches", false);
+        action.setInteger("facing", s.facing);
+        action.setInteger("mode", mode);
+        action.setInteger("scope", 2);
+        action.setInteger("layer", 0);
+        action.setInteger("selected", selected[0]);
+        action.setIntArray("selectedIndices", selected);
+        return action;
+    }
+
+    private static NBTTagList nativeHatchChoice(HologramCapture.Cell at, ItemStack hatch, int facing) {
+        NBTTagCompound choice = new NBTTagCompound();
+        choice.setIntArray("xyz", new int[] { at.x, at.y, at.z });
+        choice.setInteger("hatch", hatch.getItemDamage());
+        choice.setInteger("facing", facing);
+        NBTTagList choices = new NBTTagList();
+        choices.appendTag(choice);
+        return choices;
+    }
+
+    private static void awaitNativeReviewRefusal(HologramSession s) {
+        for (int step = 0; s.capturePending && step < 500; step++) HologramBuildPreparation.scan(s, false);
+        SimpleAssert.that(!s.capturePending, "manual native review returns a terminal refusal");
     }
 
     private static void boundedNativeItemBill(HologramSession s, ItemStack energy, ItemStack muffler) {
