@@ -5,6 +5,7 @@ package com.miaokatze.gtmb.client.hologram;
 
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.function.BiPredicate;
 import java.util.function.Supplier;
 
 import net.minecraft.client.Minecraft;
@@ -23,7 +24,6 @@ import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 /** Lightweight local modal over the already-present world ghost; no second workspace or source read. */
 final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implements LocalView {
 
-    private static final boolean LEGACY_REVIEW = Boolean.getBoolean("gtmb.legacyPlacementReview");
     private final HologramLocalPlacement placement;
     private final Ticket ticket;
     private final CapturedDescription description;
@@ -57,8 +57,13 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
     }
 
     @Override
+    public boolean supportsAdvancedPlacement() {
+        return true;
+    }
+
+    @Override
     public String localSubmitLabel() {
-        return LEGACY_REVIEW ? LocalView.super.localSubmitLabel() : "开始施工（使用已启用的背包或容器，不动 AE）";
+        return "开始施工（使用已启用的背包或容器，不动 AE）";
     }
 
     @Override
@@ -71,16 +76,22 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
         deferAction(() -> {
             Minecraft client = Minecraft.getMinecraft();
             if (action == LocalAction.BACK) returnToWorld(client);
-            else if (action == LocalAction.SUBMIT) {
-                Submission frozen = ticket.consume(client);
-                if (frozen != null && !placement.submitFrozen(frozen, !LEGACY_REVIEW)) {
-                    returnToWorld(client);
-                    HologramClient.selectionNotice("未开始施工核验；位置保留，请重新打开材料窗口。");
-                }
-            } else if (action == LocalAction.REFRESH && ticket.current(client)) {
-                description.refresh(() -> client.thePlayer.inventory.mainInventory, ticket.slot);
+            else if (action == LocalAction.REFRESH) {
+                if (ticket.current(client)) description.refresh(() -> client.thePlayer.inventory.mainInventory, ticket.slot);
+            } else if (dispatchRefused(action, () -> ticket.consume(client), placement::submitFrozen)) {
+                returnToWorld(client);
+                HologramClient.selectionNotice(action == LocalAction.ADVANCED
+                    ? "未打开高级施工选项；位置保留，请重新打开材料窗口。"
+                    : "未开始施工；位置保留，请重新打开材料窗口。");
             }
         });
+    }
+
+    static boolean dispatchRefused(LocalAction action, Supplier<Submission> consume,
+        BiPredicate<Submission, Boolean> submit) {
+        if (action != LocalAction.SUBMIT && action != LocalAction.ADVANCED) return false;
+        Submission frozen = consume.get();
+        return frozen != null && !submit.test(frozen, action == LocalAction.SUBMIT);
     }
 
     @Override
