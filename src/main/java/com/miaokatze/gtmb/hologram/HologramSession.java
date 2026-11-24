@@ -213,6 +213,7 @@ final class HologramSession {
     int deferAttempts, deferredIndex = -1;
     boolean open;
     long planRevision, uiSequence, batchSeq;
+    boolean directOpeningPending;
     long operationReviewSequence = -1;
     HologramStructureProjection.OperationScope operationScope;
     HologramWorkspace.PresentationTransition presentationTransition;

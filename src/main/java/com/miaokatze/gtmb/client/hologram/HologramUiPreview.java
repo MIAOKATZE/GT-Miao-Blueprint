@@ -1161,7 +1161,7 @@ final class HologramUiPreview {
 
     boolean pinCandidateControl(int id) {
         if (id >= 10000) {
-            if (!ui.session.editable() || !ui.preview.canInventoryPin()) return true;
+            if (!ui.session.selectedNativeEditable() || !ui.preview.canInventoryPin()) return true;
             NBTTagCompound n = new NBTTagCompound();
             n.setInteger("selected", this.selected);
             n.setInteger("choiceindex", id - 10000);
@@ -1244,8 +1244,9 @@ final class HologramUiPreview {
                     .rescanDisplayedStructure();
                 return true;
             case 26:
+                if ((ui.review.nativeMaterialInspectionReady() || ui.session.editable())
+                    && ui.review.openNativeLocalMaterials()) return true;
                 if (ui.session.editable()) {
-                    if (ui.review.openNativeLocalMaterials()) return true;
                     HologramScreen root = ui.host.parent();
                     if (root != null && root.localWorkspaceView()) {
                         ui.session.notice("当前视图没有可用的本地材料估算；本次未核验服务器库存或回收结果。");

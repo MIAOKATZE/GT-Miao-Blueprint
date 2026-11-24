@@ -84,6 +84,7 @@ public final class HologramNativePlacement {
     }
 
     private static final Map<String, Adapter> ADAPTERS = new LinkedHashMap<>();
+    private static long generation;
 
     static {
         register("gtmb:native", new Builtin());
@@ -97,6 +98,7 @@ public final class HologramNativePlacement {
         if (id == null || id.isEmpty() || adapter == null || ADAPTERS.containsKey(id))
             throw new IllegalArgumentException("native placement adapter");
         ADAPTERS.put(id, adapter);
+        generation++;
     }
 
     /** Internal built-ins precede every community registration, including registrations made before mod post-init. */
@@ -110,11 +112,18 @@ public final class HologramNativePlacement {
             if (entry.getKey()
                 .equals("gtmb:native")) ADAPTERS.put(id, adapter);
         }
+        generation++;
     }
 
     /** Remove only the expected registration; legacy replacement/other adapters remain untouched. */
     public static synchronized boolean unregister(String id, Adapter expected) {
-        return ADAPTERS.remove(id, expected);
+        if (!ADAPTERS.remove(id, expected)) return false;
+        generation++;
+        return true;
+    }
+
+    static synchronized long generation() {
+        return generation;
     }
 
     public static synchronized Adapter adapter(Block block) {

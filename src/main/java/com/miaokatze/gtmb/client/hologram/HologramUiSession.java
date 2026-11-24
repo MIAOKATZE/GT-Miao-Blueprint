@@ -310,6 +310,18 @@ final class HologramUiSession {
     }
 
     boolean editable() {
+        return editOwnerReady() && !this.state.data.getBoolean("capturePending");
+    }
+
+    /** Local preferences/declared parameters are not a full-geometry or server-admission operation. */
+    boolean configurationEditable() {
+        if (editable()) return true;
+        HologramScreen root = ui.host == null ? null : ui.host.parent();
+        return editOwnerReady() && !controllerOpening() && state.data.getBoolean("capturePending")
+            && root != null && root.localConfigurationCurrent(ui);
+    }
+
+    private boolean editOwnerReady() {
         if (localDocument() && ui.library.localBusy()) return false;
         if (HologramBackgroundTasks.busy()) return false;
         int job = this.state.data.getInteger("job");
@@ -319,18 +331,26 @@ final class HologramUiSession {
             && !this.state.data.getBoolean("currentPlacementPending")
             && job != 1
             && job != 2
-            && pendingTicket.sequence() < 0
-            && !this.state.data.getBoolean("capturePending");
+            && pendingTicket.sequence() < 0;
     }
 
     long revision() {
         return this.state.data.getLong("planRevision");
     }
 
+    boolean selectedNativeEditable() {
+        if (editable()) return selectedCell() != null;
+        HologramScreen root = ui.host == null ? null : ui.host.parent();
+        return editOwnerReady() && state.data.getBoolean("capturePending") && root != null
+            && root.earlyControllerRowReady(ui);
+    }
+
     HologramState.Cell selectedCell() {
-        return ui.preview.selected() >= 0 && ui.preview.selected() < this.state.cells.size()
-            ? this.state.cells.get(ui.preview.selected())
-            : null;
+        int index = ui.preview.selected();
+        if (index < 0 || index >= state.cells.size()) return null;
+        HologramScreen root = ui.host == null ? null : ui.host.parent();
+        HologramState.Cell known = root == null ? null : root.interactionCell(ui, state, index);
+        return known == null ? state.cells.get(index) : known;
     }
 
     NBTTagCompound cellTag() {
@@ -415,10 +435,10 @@ final class HologramUiSession {
         if (state.data.getBoolean("localStandardController")) {
             if (localRoot != null && "configure".equals(op) && request != null) {
                 if (request.getBoolean("applyHatchPreset")) {
-                    if (localRoot.localMaterialOwnerCurrent(ui)) HologramClient.prepareControllerHatchPreset(state,
-                        request);
+                    if (editable() && localRoot.localMaterialOwnerCurrent(ui))
+                        HologramClient.prepareControllerHatchPreset(state, request);
                     else notice("控制器或手持投影仪已变化，请重新打开结构。");
-                } else localRoot.refreshLocalController(request);
+                } else if (configurationEditable()) localRoot.refreshLocalController(request);
             }
             return;
         }

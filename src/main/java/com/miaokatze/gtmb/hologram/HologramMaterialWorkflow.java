@@ -121,6 +121,17 @@ final class HologramMaterialWorkflow {
             && HologramDecorationVoucher.available(s.player) < 1) throw new IOException("主背包中没有可用建筑材料抵扣券，请取消抵扣或补充后再确认");
     }
 
+    /** Direct placement has a fresh private demand, not a published material-review quote. */
+    static boolean recheckDirect(HologramSession s, HologramResourceTask.DirectDemand demand) throws IOException {
+        if (!demand.finished() || !demand.current(s) || s.planMissing != 0 || !s.planRecoveryFits
+            || !s.blueprintEnergy.empty() || s.blueprintResources == null
+            || !s.blueprintResources.fluids.isEmpty() || !s.blueprintResources.essentia.isEmpty())
+            throw new IOException("施工材料规划已变化，请重新确认");
+        if (demand.stocked(s) && demand.current(s)) return true;
+        s.status = "可用材料已变化，未开始施工，请重新核对材料";
+        return false;
+    }
+
     /** Replaces the startup inventory check with a recount of the already reviewed exact identities. */
     static boolean recheckBuild(HologramSession s, NBTTagCompound action) {
         int reviewedMissing = s.planMissing;

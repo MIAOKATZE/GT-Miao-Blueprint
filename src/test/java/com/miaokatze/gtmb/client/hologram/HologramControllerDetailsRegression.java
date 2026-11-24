@@ -93,6 +93,7 @@ public final class HologramControllerDetailsRegression {
         options.setInteger("chosenChoice", 0);
         details.setTag("cells", list(options));
         HologramState.ControllerDetails preparation = new HologramState.ControllerDetails(early, details);
+        independentSelectedRow(early, preparation);
         SimpleAssert.that(preparation.step(1, 1), "one detail completes without re-reading target data");
         HologramState enriched = preparation.result();
         SimpleAssert
@@ -124,6 +125,48 @@ public final class HologramControllerDetailsRegression {
         } catch (IllegalArgumentException expected) {
             // The session is still the same, as it is when switching grades in one workbench.
         }
+    }
+
+    private static void independentSelectedRow(HologramState early, HologramState.ControllerDetails preparation) {
+        NBTTagCompound selected = preparation.interactionRow(0);
+        SimpleAssert.that(selected != null && preparation.interactionRow(-1) == null
+            && preparation.interactionRow(1) == null, "only the real selected row is available before DTO completion");
+        HologramState.Cell known = new HologramState.Cell(early.cells.get(0), selected);
+        NBTTagCompound request = new NBTTagCompound();
+        request.setInteger("selected", 0);
+        request.setInteger("choiceindex", 0);
+        try {
+            NBTTagCompound row = HologramLocalControllerEdits.selectedRow(known, known, "pin", request);
+            HologramState edited = HologramLocalControllerEdits.applySelectedRows(early, list(row), 1);
+            SimpleAssert.that(edited.data.getBoolean("capturePending") && edited.cells.get(0).wantId.equals("minecraft:dirt")
+                && early.cells.get(0).wantId.equals("minecraft:stone")
+                && "manual".equals(edited.cells.get(0).pinScope),
+                "a real local pin renders as a sparse patch without unlocking whole capture or mutating its baseline");
+            request.setInteger("selected", 1);
+            try {
+                HologramLocalControllerEdits.selectedRow(known, known, "pin", request);
+                throw new AssertionError("stale position accepted");
+            } catch (java.io.IOException expected) {}
+            request.setInteger("selected", 0);
+            request.removeTag("choiceindex");
+            try {
+                HologramLocalControllerEdits.selectedRow(known, known, "pin", request);
+                throw new AssertionError("omitted candidate became default index zero");
+            } catch (java.io.IOException expected) {}
+            SimpleAssert.that(!HologramLocalControllerEdits.selectedOnly("customPin")
+                && !HologramLocalControllerEdits.selectedOnly("hatchPreset"), "no off-scope early mutation");
+        } catch (java.io.IOException failure) {
+            throw new AssertionError("independent native selection", failure);
+        }
+        NBTTagCompound input = new NBTTagCompound();
+        input.setInteger("mode", 1);
+        input.setBoolean("materialMe", true);
+        input.setBoolean("presetActive", true);
+        input.setBoolean("capturePending", false);
+        NBTTagCompound prefs = HologramScreen.localControllerPreferences(input);
+        SimpleAssert.that(prefs.getInteger("mode") == 1 && prefs.getBoolean("materialMe")
+            && !prefs.hasKey("presetActive") && !prefs.hasKey("capturePending"),
+            "controls carry only local preferences and cannot force readiness or claim quota");
     }
 
     public static void hatchFacings() {

@@ -491,7 +491,19 @@ final class HologramSnapshots {
             s.virtualPreset == null ? s.blueprintPrompt : s.virtualPreset.prompt == null ? "" : s.virtualPreset.prompt);
     }
 
+    /**
+     * Retain the original opening through the first productive direct batch, but at most through one
+     * unsuccessful batch. An ordinary second batch or any terminal outcome still publishes normally.
+     */
+    static boolean deferDirectOpening(HologramSession s) {
+        if (!s.directOpeningPending) return false;
+        if (s.open && s.job == 1 && s.completed == 0 && s.batchSeq < 2) return true;
+        s.directOpeningPending = false;
+        return false;
+    }
+
     static void sendJob(HologramSession s) {
+        if (deferDirectOpening(s)) return;
         if (!s.nativeCompactRequestId.isEmpty()) {
             sendCompactNativeJob(s);
             return;
@@ -522,6 +534,7 @@ final class HologramSnapshots {
     }
 
     static void sendStoppedJob(HologramSession s) {
+        s.directOpeningPending = false;
         if (!s.nativeCompactRequestId.isEmpty()) {
             sendCompactNativeJob(s);
             return;

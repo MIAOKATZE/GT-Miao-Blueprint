@@ -325,6 +325,7 @@ final class HologramProjectedPlacementService {
         private final HologramSession previous;
         private final long previousRevision, previousWorkspace;
         private final HologramPlacementRequest.Header header;
+        private final long nativeGeneration, materialGeneration;
         private final long started = System.nanoTime();
         private final FutureTask<Prepared> decoding;
         private final List<Resolved> variants = new ArrayList<>();
@@ -340,6 +341,8 @@ final class HologramProjectedPlacementService {
         private Job(EntityPlayerMP player, HologramPlacementRequest.Header header, NBTTagCompound tag) {
             this.player = player;
             this.header = header;
+            nativeGeneration = header.direct() ? HologramNativePlacement.generation() : -1L;
+            materialGeneration = header.direct() ? com.miaokatze.gtmb.api.MaterialVariants.generation() : -1L;
             world = player.worldObj;
             toolSlot = player.inventory.currentItem;
             tool = new HologramSessionPolicy.PreparationTool(player.getHeldItem());
@@ -357,6 +360,9 @@ final class HologramProjectedPlacementService {
             Reason rejection = firstRejection();
             if (rejection != null) throw HologramProjectedPlacementGuardTrace
                 .failure(phase, rejection, line -> GTMiaoBlueprint.LOG.info(line));
+            if (header.direct() && (nativeGeneration != HologramNativePlacement.generation()
+                || materialGeneration != com.miaokatze.gtmb.api.MaterialVariants.generation()))
+                throw new IOException("施工材料提供器已变化，请重新确认");
         }
 
         /** Preserve the former short-circuit order; diagnosing an early failure does not probe later conditions. */
@@ -477,7 +483,7 @@ final class HologramProjectedPlacementService {
             if (header.direct()) {
                 if (!session.executionNetworks.isEmpty()) throw new IOException("需明确配置蓝图网络，未开始施工");
                 session.materialSettings.me = false;
-                directPlan = HologramResourcePlanner.beginPlan(session);
+                directPlan = HologramResourcePlanner.beginDirectPlan(session);
                 return startDirect(deadline);
             }
             HologramWorkspace.activate(player.getUniqueID(), session);
@@ -493,7 +499,9 @@ final class HologramProjectedPlacementService {
             var sources = HologramMaterials.read(player.getHeldItem());
             if (sources.main != session.materialSettings.main
                 || sources.containers != session.materialSettings.containers
-                || sources.priority != session.materialSettings.priority) throw new IOException("材料来源设置已变化，未开始施工");
+                || sources.priority != session.materialSettings.priority
+                || sources.recoveryDestination != session.materialSettings.recoveryDestination)
+                throw new IOException("材料来源设置已变化，未开始施工");
             if (directStart == null) {
                 long remaining = Math.max(0L, deadline - System.nanoTime());
                 if (remaining == 0 || !directPlan.step(Integer.MAX_VALUE, remaining)) {
@@ -505,7 +513,7 @@ final class HologramProjectedPlacementService {
                     && (!session.blueprintResources.fluids.isEmpty() || !session.blueprintResources.essentia.isEmpty()))
                     throw new IOException("此蓝图有需另行明确的设备资源，未开始施工");
                 HologramMaterialQuote.stampDirectPlan(session);
-                directStart = new HologramExecutionReview.Start(session, new NBTTagCompound(), true);
+                directStart = new HologramExecutionReview.Start(session, new NBTTagCompound(), directPlan.directDemand());
             }
             if (!directStart.step(session, deadline)) {
                 progress("placement.admission", "", directStart.completed(session), 0);
@@ -514,9 +522,10 @@ final class HologramProjectedPlacementService {
             if (session.job != 1) throw new IOException(session.status.isEmpty() ? "未开始施工" : session.status);
             session.open = true;
             session.openPurpose = "blueprintPlacement";
+            session.directOpeningPending = true;
             HologramWorkspace.activate(player.getUniqueID(), session);
             reply(player, header.id(), true, null); // This path acknowledges a real job, never plan preparation.
-            HologramSnapshots.send(session);
+            // Its normal opening snapshot is queued by the job's result publication, not before its first world work.
             return true;
         }
 

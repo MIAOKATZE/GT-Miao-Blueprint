@@ -80,7 +80,7 @@ final class HologramEditorPropertiesPane {
         grade.child(action(81, () -> {
             NBTTagCompound cap = ui.config.primaryCapability();
             return cap == null ? "无独立等级" : ui.config.optionLabel(cap);
-        }, () -> ui.session.editable() && ui.config.primaryCapability() != null, () -> "从此能力的真实选项中选择，或填写原始正整数。")
+        }, () -> ui.session.configurationEditable() && ui.config.primaryCapability() != null, () -> "从此能力的真实选项中选择，或填写原始正整数。")
             .expanded());
         grade.child(action(82, () -> "+", () -> canStep(1), () -> "连续提高本结构声明的等级。").width(24));
         target.child(grade);
@@ -88,7 +88,7 @@ final class HologramEditorPropertiesPane {
             action(
                 95,
                 () -> "类型 / 等级 / 可替换目标",
-                () -> ui.session.editable() && ui.session.selectedCell() != null,
+                () -> ui.session.selectedNativeEditable(),
                 () -> ui.config.candidateNote()));
         Flow facing = row();
         facing.setEnabledIf(
@@ -103,14 +103,14 @@ final class HologramEditorPropertiesPane {
                     ui.session.cellTag()
                         .getInteger("hatchFacing"));
         },
-            () -> ui.session.editable() && ui.session.cellTag()
+            () -> ui.session.selectedNativeEditable() && ui.session.cellTag()
                 .getIntArray("hatchFacings").length > 0,
             () -> "只轮换当前设备与声明共同允许的朝向；仅修改当前格。").expanded());
         facing.child(
             action(
                 102,
                 () -> "自动",
-                () -> ui.session.editable() && ui.session.cellTag()
+                () -> ui.session.selectedNativeEditable() && ui.session.cellTag()
                     .getBoolean("hasFacingPin"),
                 () -> "清除显式朝向，恢复自动朝向。").width(44));
         target.child(facing);
@@ -188,9 +188,9 @@ final class HologramEditorPropertiesPane {
                 action(
                     70 + i,
                     () -> (ui.session.state().data.getInteger("mode") == mode ? "✓ " : "") + modeNames[mode],
-                    () -> ui.session.editable() && (mode != 2 || !ui.session.state().data.getBoolean("virtual")),
+                    () -> ui.session.configurationEditable() && (mode != 2 || !ui.session.state().data.getBoolean("virtual")),
                     () -> mode == 2 && ui.session.state().data.getBoolean("virtual") ? "虚拟预设不支持拆除；请先建立实体控制器。"
-                        : ui.session.editable() ? "只修改规划模式；施工须另行核对材料。" : ui.session.editingReason()).expanded());
+                        : ui.session.configurationEditable() ? "只修改规划模式；施工须另行核对材料。" : ui.session.editingReason()).expanded());
         }
         source.child(modes);
         Flow structure = section();
@@ -277,7 +277,7 @@ final class HologramEditorPropertiesPane {
         prepare();
         ListWidget<IWidget, ?> list = list("materials");
         Flow materials = section();
-        materials.child(action(78, () -> "材料来源", () -> ui.session.editable(), () -> "主背包、容器、ME 终端开关与优先次序。"));
+        materials.child(action(78, () -> "材料来源", () -> ui.session.configurationEditable(), () -> "主背包、容器、ME 终端开关与优先次序。"));
         materials.child(action(94, () -> "仓室预设", this::canHatchPreset, this::hatchPresetReason));
         materials.child(
             action(
@@ -334,8 +334,8 @@ final class HologramEditorPropertiesPane {
             action(
                 78,
                 () -> "材料来源",
-                () -> ui.session.editable(),
-                () -> ui.session.editable() ? "主背包、容器、ME 终端开关与优先次序。" : ui.session.editingReason()));
+                () -> ui.session.configurationEditable(),
+                () -> ui.session.configurationEditable() ? "主背包、容器、ME 终端开关与优先次序。" : ui.session.editingReason()));
         list.child(
             HologramEditorNativeTheme.label(() -> ui.review.completionSummary())
                 .widthRel(1f)
@@ -353,6 +353,7 @@ final class HologramEditorPropertiesPane {
     }
 
     private boolean canReviewConstruction() {
+        if (ui.review.nativeMaterialInspectionReady()) return true;
         NBTTagCompound state = ui.session.state().data;
         return ui.session.editable()
             && (!state.getBoolean("virtual")
@@ -364,6 +365,7 @@ final class HologramEditorPropertiesPane {
     }
 
     private String constructionReason() {
+        if (ui.review.nativeMaterialInspectionReady()) return "可先查看原生结构材料；仍需完成核验再确认施工。";
         NBTTagCompound state = ui.session.state().data;
         if (!ui.session.editable()) return ui.session.editingReason();
         if (state.getBoolean("virtual") && !state.getBoolean("virtualPlacement")) return "从蓝图库选择蓝图进入世界放置。";
@@ -477,7 +479,7 @@ final class HologramEditorPropertiesPane {
 
     private boolean canStep(int delta) {
         NBTTagCompound cap = ui.config.primaryCapability();
-        return ui.session.editable() && cap != null && ui.config.canStep(cap, delta);
+        return ui.session.configurationEditable() && cap != null && ui.config.canStep(cap, delta);
     }
 
     private boolean authorOverview() {

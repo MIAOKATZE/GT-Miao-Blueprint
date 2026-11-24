@@ -56,7 +56,9 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
     private final String session, generation;
     private NBTTagList rows;
     private List<HologramControllerTarget.Cell> targetCells;
+    private HologramControllerMaterialCounts.Builder targetMaterials;
     private NBTTagList detailRows;
+    private final Map<Integer, NBTTagCompound> prioritizedDetails = new java.util.LinkedHashMap<>();
     private final Map<IStructureElement<?>, Map<HologramBlueprintResources.ExactKey, Integer>> facingMasks = new IdentityHashMap<>();
     private final NBTTagCompound settings;
     private final ItemStack trigger;
@@ -69,6 +71,8 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
     private Iterator<HologramCapture.Cell> declared;
     private Iterator<HologramNativePreviewWorld.Placement> nativePlacements;
     private HologramChannelTrace.Report report;
+    private NBTTagList publishedCapabilities;
+    private boolean geometryReady;
     private StructureSources.ReadSet reuseProof;
     private boolean complete;
 
@@ -262,10 +266,11 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
     public HologramControllerTarget.Projection stepTarget(int maxRows, long maxNanos) throws IOException {
         if (!stepRows(maxRows, maxNanos, true)) return null;
         detailRows = new NBTTagList();
-        if (capture != null) declared = capture.cells.iterator();
         NBTTagCompound metadata = opening();
         if (nativePreview != null) metadata.setTag("structureDescription", nativePreview.description());
-        return new HologramControllerTarget.Projection(metadata, targetCells);
+        HologramControllerMaterialCounts materials = targetMaterials.seal();
+        targetMaterials = null;
+        return new HologramControllerTarget.Projection(metadata, targetCells, materials);
     }
 
     private boolean stepRows(int maxRows, long maxNanos, boolean targetOnly) throws IOException {
@@ -273,7 +278,10 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         if (detailRows != null) throw new IllegalStateException("Local controller target already published");
         if (targetOnly) {
             if (rows != null) throw new IllegalStateException("Local controller capture needs full rows");
-            if (targetCells == null) targetCells = new ArrayList<>();
+            if (targetCells == null) {
+                targetCells = new ArrayList<>();
+                targetMaterials = new HologramControllerMaterialCounts.Builder();
+            }
         } else {
             if (targetCells != null) throw new IllegalStateException("Local controller capture needs target cells");
             if (rows == null) rows = new NBTTagList();
@@ -283,6 +291,7 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
             long geometry = HologramRuntimeMetrics.start();
             try {
                 if (!prepareGeometry(started + maxNanos)) return false;
+                geometryReady = true;
             } finally {
                 HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_GEOMETRY, geometry);
             }
@@ -315,25 +324,54 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         try {
             while (detailRows.tagCount() < targetCells.size() && work < maxRows
                 && (work == 0 || System.nanoTime() - started < maxNanos)) {
-                HologramControllerTarget.Cell target = targetCells.get(detailRows.tagCount());
-                NBTTagCompound details = new NBTTagCompound();
-                HologramCapture.Cell cell = declared == null ? null : declared.next();
-                if (!target.anchor()) {
-                    if (cell == null) cell = nativePreview.candidateCell(
-                        target.dx() + detachedTile.xCoord,
-                        target.dy() + detachedTile.yCoord,
-                        target.dz() + detachedTile.zCoord,
-                        target.role());
-                    writeCandidates(details, cell, target.targetStack());
-                    if (!cell.role.equals(target.role())) details.setString("role", cell.role);
-                }
-                detailRows.appendTag(details);
+                int index = detailRows.tagCount();
+                NBTTagCompound details = prioritizedDetails.remove(index);
+                detailRows.appendTag(details == null ? detailRow(index) : details);
                 work++;
             }
         } finally {
             HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_ROWS, rowStart);
         }
         return detailRows.tagCount() == targetCells.size() ? finish(detailRows) : null;
+    }
+
+    /** The capability report depends on the declaration, not on rendering or candidate rows. */
+    public NBTTagList readyCapabilities() {
+        if (Thread.currentThread() != owner) throw new IllegalArgumentException("Invalid local capability owner");
+        if (!geometryReady || complete) return null;
+        if (publishedCapabilities == null)
+            publishedCapabilities = capabilities(nativePreview == null ? report : nativePreview.channels());
+        return (NBTTagList) publishedCapabilities.copy();
+    }
+
+    /** Prepare at most the selected exact row first, reusing it in the full ordered pass. Owner thread only. */
+    public NBTTagCompound selectedDetails(int index) throws IOException {
+        checkStep(1, 1);
+        if (detailRows == null || index < 0 || index >= targetCells.size()) return null;
+        if (index < detailRows.tagCount()) return (NBTTagCompound) detailRows.getCompoundTagAt(index).copy();
+        NBTTagCompound row = prioritizedDetails.get(index);
+        if (row == null) {
+            row = detailRow(index);
+            if (prioritizedDetails.size() >= 8) prioritizedDetails.remove(prioritizedDetails.keySet().iterator().next());
+            prioritizedDetails.put(index, row);
+        }
+        return (NBTTagCompound) row.copy();
+    }
+
+    private NBTTagCompound detailRow(int index) {
+        HologramControllerTarget.Cell target = targetCells.get(index);
+        NBTTagCompound details = new NBTTagCompound();
+        if (!target.anchor()) {
+            HologramCapture.Cell cell = capture != null ? capture.cells.get(index)
+                : nativePreview.candidateCell(
+                    target.dx() + detachedTile.xCoord,
+                    target.dy() + detachedTile.yCoord,
+                    target.dz() + detachedTile.zCoord,
+                    target.role());
+            writeCandidates(details, cell, target.targetStack());
+            if (!cell.role.equals(target.role())) details.setString("role", cell.role);
+        }
+        return details;
     }
 
     private void checkStep(int maxRows, long maxNanos) throws IOException {
@@ -362,7 +400,7 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         }
         long capabilityStart = HologramRuntimeMetrics.start();
         try {
-            state.setTag("capabilities", capabilities(report));
+            state.setTag("capabilities", publishedCapabilities == null ? capabilities(report) : publishedCapabilities);
         } finally {
             HologramRuntimeMetrics
                 .finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_CAPABILITIES, capabilityStart);
@@ -397,9 +435,12 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         if (nativePreview != null) nativePreview.close();
         nativePreview = null;
         report = null;
+        publishedCapabilities = null;
         rows = null;
         targetCells = null;
+        targetMaterials = null;
         detailRows = null;
+        prioritizedDetails.clear();
         facingMasks.clear();
     }
 
@@ -588,6 +629,7 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         HologramControllerTarget.Cell target = target(cell);
         if (targetOnly) {
             targetCells.add(target);
+            targetMaterials.add(target, x, y, z);
             return;
         }
         NBTTagCompound row = target.tag();

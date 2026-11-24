@@ -11,7 +11,9 @@ import net.minecraft.block.Block;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.nbt.NBTTagList;
 
+import com.miaokatze.gtmb.hologram.HologramControllerMaterialCounts;
 import com.miaokatze.gtmb.hologram.HologramControllerTarget;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
@@ -20,6 +22,7 @@ public final class HologramLocalMaterialPlannerRegression {
     private HologramLocalMaterialPlannerRegression() {}
 
     public static void run() {
+        capturedNativeMaterials();
         HologramState repeated = state(123_369, 0);
         NBTTagCompound config = configuration();
         AtomicReference<Runnable> queued = new AtomicReference<>();
@@ -70,6 +73,67 @@ public final class HologramLocalMaterialPlannerRegression {
         }
     }
 
+    private static void capturedNativeMaterials() {
+        HologramState geometry = state(6, 2, true);
+        HologramLocalMaterialReview captured = new HologramLocalMaterialReview(geometry, configuration(),
+            ignored -> { throw new AssertionError("captured material list must not queue a target scan"); });
+        var description = captured.description();
+        SimpleAssert.that(captured.ready() && geometry.data.getBoolean("capturePending") && description.size() == 1
+            && "minecraft:chest".equals(description.get(0).identity().registry())
+            && description.get(0).blueprintCells() == 3 && description.get(0).visibleBackpackCount() == null
+            && geometry.controllerMaterialCounts.unlisted() == 3,
+            "settled base loop supplies known mixed counts before candidate detail and inventory; tagged rows stay unknown");
+        captured.tick(new ItemStack[] { new ItemStack(Blocks.chest, 40), new ItemStack(Blocks.chest, 2) }, 0);
+        SimpleAssert.eq(Long.valueOf(2), captured.description().get(0).visibleBackpackCount(),
+            "independent owner stock excludes the protected projector slot");
+
+        NBTTagCompound finish = (NBTTagCompound) geometry.data.copy();
+        finish.setBoolean("projectionDataComplete", true);
+        finish.setBoolean("capturePending", false);
+        NBTTagList details = new NBTTagList();
+        for (int i = 0; i < geometry.cells.size(); i++) details.appendTag(new NBTTagCompound());
+        finish.setTag("cells", details);
+        HologramState.ControllerDetails enrichment = new HologramState.ControllerDetails(geometry, finish);
+        while (!enrichment.step(32, Long.MAX_VALUE)) {}
+        HologramState settled = enrichment.result();
+        SimpleAssert.that(captured.current(settled, 0), "same-generation detail publication preserves the base list");
+        java.util.concurrent.atomic.AtomicReference<Runnable> detailedWork = new java.util.concurrent.atomic.AtomicReference<>();
+        HologramLocalMaterialReview detailed = new HologramLocalMaterialReview(
+            settled, configuration(), true, detailedWork::set);
+        SimpleAssert.that(detailedWork.get() != null && !detailed.ready() && detailed.description() == null
+            && captured.ready(), "only the explicit detail mode queues the legacy full local estimator");
+        detailedWork.get().run();
+        reviews(detailed, new ItemStack[2], 0, 8);
+        SimpleAssert.that(detailed.ready() && detailed.visible().hasKey("rows", 9),
+            "the explicitly requested full local estimate keeps its prior target inputs and detail rows");
+        detailed.close();
+
+        NBTTagCompound change = settled.cells.get(0).tag();
+        change.setString("wantId", "minecraft:stone");
+        change.setTag("targetStack", new ItemStack(Blocks.stone).writeToNBT(new NBTTagCompound()));
+        change.setInteger("index", 0);
+        NBTTagList edits = new NBTTagList();
+        edits.appendTag(change);
+        NBTTagCompound patch = new NBTTagCompound();
+        patch.setBoolean("partial", true);
+        patch.setString("session", settled.session);
+        patch.setString("generation", settled.data.getString("generation"));
+        patch.setInteger("cellCount", settled.cells.size());
+        patch.setLong("baseRevision", 1);
+        patch.setLong("planRevision", 2);
+        patch.setTag("cells", edits);
+        HologramState edited = HologramState.apply(settled, patch);
+        var tally = edited.controllerMaterialCounts;
+        SimpleAssert.that(!captured.current(edited, 0) && tally.total() == 6 && tally.unlisted() == 3
+            && tally.rows().get(0).cells() == 2 && tally.rows().get(1).cells() == 1
+            && "minecraft:stone".equals(tally.rows().get(1).identity().registry()),
+            "point target replacement uses exactly one decrement/increment and retires the older pane");
+        NBTTagCompound recapture = new NBTTagCompound();
+        recapture.setBoolean("capturePending", true);
+        SimpleAssert.that(edited.withMetadata(recapture).controllerMaterialCounts == null,
+            "a recapture shell cannot serve the old geometry's list");
+    }
+
     static int reviews(HologramLocalMaterialReview review, ItemStack[] stock, int slot, int limit) {
         int ticks = 0;
         while (!review.ready() && ticks < limit) {
@@ -86,6 +150,12 @@ public final class HologramLocalMaterialPlannerRegression {
     }
 
     static HologramState state(int count, int style) {
+        return state(count, style, false);
+    }
+
+    private static HologramState state(int count, int style, boolean captureCounts) {
+        HologramControllerMaterialCounts.Builder tally = captureCounts ? new HologramControllerMaterialCounts.Builder()
+            : null;
         List<HologramControllerTarget.Cell> cells = new ArrayList<>(count);
         Block[] blocks = { Blocks.stone, Blocks.wool, Blocks.stained_glass, Blocks.chest };
         String[] ids = { "minecraft:stone", "minecraft:wool", "minecraft:stained_glass", "minecraft:chest" };
@@ -93,6 +163,8 @@ public final class HologramLocalMaterialPlannerRegression {
         metadata.setString("session", "controlled-local-material-planner");
         metadata.setBoolean("localStandardController", true);
         metadata.setLong("planRevision", 1);
+        metadata.setBoolean("capturePending", captureCounts);
+        metadata.setString("generation", "local-capture-one");
         NBTTagCompound tag = new NBTTagCompound();
         tag.setString("display", "owned sample retaining NBT");
         ItemStack[][] items = new ItemStack[blocks.length][16];
@@ -107,12 +179,14 @@ public final class HologramLocalMaterialPlannerRegression {
                 item.setTagCompound(tag);
             }
             int x = 1 + i % 64, y = i / 64 % 32, z = i / 2048;
-            cells.add(new HologramControllerTarget.Cell(x, y, z, x, y, z, "minecraft:air", ids[block], 0, damage,
-                Blocks.air, blocks[block], null, item, null, null, false, false, false, "", "", "sample", "", "",
-                -1, -1, null, null, -1, false, HologramControllerTarget.TargetKind.MATERIAL));
+            HologramControllerTarget.Cell cell = new HologramControllerTarget.Cell(x, y, z, x, y, z, "minecraft:air",
+                ids[block], 0, damage, Blocks.air, blocks[block], null, item, null, null, false, false, false, "", "",
+                "sample", "", "", -1, -1, null, null, -1, false, HologramControllerTarget.TargetKind.MATERIAL);
+            cells.add(cell);
+            if (tally != null) tally.add(cell, 0, 0, 0);
         }
         HologramState.Preparation preparation = new HologramState.Preparation(
-            new HologramControllerTarget.Projection(metadata, cells));
+            new HologramControllerTarget.Projection(metadata, cells, tally == null ? null : tally.seal()));
         while (!preparation.step(8192, Long.MAX_VALUE)) {
             // Exercise the same frozen structure representation as the local native controller.
         }

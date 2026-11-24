@@ -21,7 +21,11 @@ public final class HologramControllerTarget {
 
     /** The capture owns the cells and stops adding to the list before publishing it. */
     @Desugar
-    public record Projection(NBTTagCompound metadata, List<Cell> cells) {
+    public record Projection(NBTTagCompound metadata, List<Cell> cells, HologramControllerMaterialCounts materialCounts) {
+
+        public Projection(NBTTagCompound metadata, List<Cell> cells) {
+            this(metadata, cells, null);
+        }
 
         public Projection {
             cells = Collections.unmodifiableList(cells);

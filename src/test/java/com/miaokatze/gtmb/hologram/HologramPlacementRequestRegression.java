@@ -524,8 +524,12 @@ final class HologramPlacementRequestRegression {
             HologramSnapshotPreparation.cancel(s);
             sessions.remove(actor, s);
             s.job = 0;
+            // Beginning consumes the original approval nonce; obtain a new frozen witness for each new start.
+            var repriced = HologramResourcePlanner.beginDirectPlan(s);
+            SimpleAssert.that(repriced.step(Integer.MAX_VALUE, Long.MAX_VALUE), "fixture re-prices the detached plan");
+            var frozen = repriced.directDemand();
             HologramMaterialQuote.stampDirectPlan(s);
-            HologramExecutionReview.Start stale = new HologramExecutionReview.Start(s, new NBTTagCompound(), true);
+            HologramExecutionReview.Start stale = new HologramExecutionReview.Start(s, new NBTTagCompound(), frozen);
             revision.setLong(null, originalRevision + 1);
             try {
                 stale.step(s, Long.MAX_VALUE);
@@ -540,12 +544,29 @@ final class HologramPlacementRequestRegression {
             revision.setLong(null, originalRevision);
 
             HologramMaterialQuote.stampDirectPlan(s);
+            var observed = (HologramServiceEditRegression.ReadOnlyWorld) world;
+            long observedReads = worldReads(observed);
+            SimpleAssert.that(HologramMaterialWorkflow.recheckDirect(s, frozen), "unmodified current stock is available");
+            SimpleAssert.eq(observedReads, worldReads(observed), "final stock check never re-traverses the world");
             player.inventory.mainInventory[1] = null;
             SimpleAssert.eq(
                 true,
-                new HologramExecutionReview.Start(s, new NBTTagCompound(), true).step(s, Long.MAX_VALUE),
+                new HologramExecutionReview.Start(s, new NBTTagCompound(), frozen).step(s, Long.MAX_VALUE),
                 "missing stock ends authoritative startup check");
             SimpleAssert.eq(0, s.job, "a valid stamp cannot authorize missing stock");
+            SimpleAssert.eq(Blocks.air, world.getBlock(0, 64, 0), "missing stock changes no block");
+            player.inventory.mainInventory[1] = material;
+            observed.denyMine = true;
+            try {
+                new HologramExecutionReview.Start(s, new NBTTagCompound(), frozen).step(s, Long.MAX_VALUE);
+                throw new AssertionError("revoked permissions must refuse direct admission");
+            } catch (IOException expected) {
+                SimpleAssert.that(expected.getMessage().contains("权限"), "expected changed permission refusal");
+            } finally {
+                observed.denyMine = false;
+            }
+            SimpleAssert.eq(0, s.job, "revoked permissions cannot start a job");
+            exactDirectDemand(player, observed);
         } finally {
             HologramSession active = sessions.remove(actor);
             if (active != null) HologramSnapshotPreparation.cancel(active);
@@ -556,6 +577,99 @@ final class HologramPlacementRequestRegression {
             Files.deleteIfExists(root.resolve("gtmb-construction-recovery"));
             Files.deleteIfExists(root);
         }
+    }
+
+    private static long worldReads(HologramServiceEditRegression.ReadOnlyWorld world) {
+        return world.loadReads + world.blockReads + world.metaReads + world.tileReads + world.permissionReads;
+    }
+
+    private static void exactDirectDemand(EntityPlayerMP player, HologramServiceEditRegression.ReadOnlyWorld world)
+        throws IOException {
+        ItemStack exact = new ItemStack(Blocks.cobblestone);
+        NBTTagCompound tag = new NBTTagCompound();
+        tag.setString("variant", "retained exact component");
+        exact.setTagCompound(tag);
+        ItemStack wrong = exact.copy();
+        wrong.getTagCompound().setString("variant", "different component");
+        ItemStack shell = new ItemStack(Blocks.cobblestone);
+        ItemStack chest = new ItemStack(Blocks.chest);
+        var adapter = new HologramNativePlacement.Adapter() {
+
+            public boolean supports(net.minecraft.block.Block block) {
+                return block == Blocks.chest;
+            }
+
+            public net.minecraft.tileentity.TileEntity create(net.minecraft.block.Block block, int metadata,
+                NBTTagCompound payload, World detachedWorld) {
+                return new net.minecraft.tileentity.TileEntityChest();
+            }
+
+            public java.util.List<ItemStack> materials(net.minecraft.block.Block block, int metadata,
+                net.minecraft.tileentity.TileEntity tile) {
+                return Arrays.asList(chest.copy(), exact.copy());
+            }
+        };
+        String provider = "gtmb:regression_direct_exact";
+        HologramNativePlacement.register(provider, adapter);
+        try {
+            player.inventory.mainInventory[1] = shell;
+            player.inventory.mainInventory[2] = chest;
+            player.inventory.mainInventory[3] = exact;
+            var s = new HologramSession(player, 0, 64, 0, false, 1);
+            s.virtual = s.virtualPlacement = s.virtualLocked = true;
+            s.executionRequestId = UUID.randomUUID().toString();
+            s.virtualPreset = new HologramPresets.Preset();
+            s.virtualPreset.schema = 2;
+            s.virtualPreset.retainNbt = s.virtualPreset.retainCovers = true;
+            s.virtualPreset.deidentificationLevel = 1;
+            s.placementDeidentificationChosen = true;
+            s.capture = new HologramCapture(null, HologramSessionPolicy.trigger(s));
+            addExactDirectCell(s, Blocks.cobblestone, shell, "minecraft:cobblestone", "");
+            NBTTagCompound payload = new NBTTagCompound();
+            payload.setString("id", "Chest");
+            addExactDirectCell(s, Blocks.chest, chest, "minecraft:chest", HologramBlueprintNbt.encodeCanonical(payload));
+            var task = HologramResourcePlanner.beginDirectPlan(s);
+            SimpleAssert.that(task.step(Integer.MAX_VALUE, Long.MAX_VALUE), "native exact demands are planned");
+            SimpleAssert.that(s.planMissing == 0 && s.planRecoveryFits, "planner can price both shell and exact component");
+            SimpleAssert.eq(1, s.blueprintResources.items.size(), "retained native component is counted once");
+            SimpleAssert.that(ItemStack.areItemStackTagsEqual(exact, s.blueprintResources.items.get(0)),
+                "planned native bill preserves full component NBT");
+            var frozen = task.directDemand();
+            HologramMaterialQuote.stampDirectPlan(s);
+            long before = worldReads(world);
+            SimpleAssert.that(HologramMaterialWorkflow.recheckDirect(s, frozen), "exact component and shell both fit");
+            player.inventory.mainInventory[3] = wrong;
+            SimpleAssert.that(!HologramMaterialWorkflow.recheckDirect(s, frozen), "same item/damage cannot pay different NBT");
+            player.inventory.mainInventory[3] = exact;
+            player.inventory.mainInventory[1] = null;
+            SimpleAssert.that(!HologramMaterialWorkflow.recheckDirect(s, frozen), "one component cannot also pay its fuzzy shell");
+            SimpleAssert.eq(before, worldReads(world), "distinct stock recount performs no extra world reads");
+            SimpleAssert.eq(1, exact.stackSize, "stock recount cannot debit the exact component");
+            HologramNativePlacement.unregister(provider, adapter);
+            SimpleAssert.that(!frozen.current(s), "provider epoch change retires exact demand");
+        } finally {
+            HologramNativePlacement.unregister(provider, adapter);
+            player.inventory.mainInventory[1] = null;
+            player.inventory.mainInventory[2] = null;
+            player.inventory.mainInventory[3] = null;
+        }
+    }
+
+    private static void addExactDirectCell(HologramSession s, net.minecraft.block.Block block, ItemStack item,
+        String registryId, String tileNbt) {
+        int index = s.capture.cells.size();
+        var cell = new HologramCapture.Cell(null, index, 64, 0);
+        cell.block = block;
+        cell.userPosition = true;
+        cell.role = "prefab";
+        cell.blueprintBlock = cell.blueprintItem = registryId;
+        cell.tileNbt = tileNbt;
+        cell.stableIndex = index;
+        String position = HologramValues.position(cell);
+        s.capture.cells.add(cell);
+        s.capture.positions.put(position, cell);
+        s.pins.put(index, item.copy());
+        s.coordinatePins.put(position, item.copy());
     }
 
     private static void assertPreparation(Method current, Object incoming, Method firstRejection, Object job,
