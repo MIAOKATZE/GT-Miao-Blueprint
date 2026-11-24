@@ -166,7 +166,7 @@ final class HologramLocalMaterialQuietCase {
         mui.getContext().updateState(point[0], point[1], 0);
         mui.onFrameUpdate();
         ModularPanel panel = mui.getPanelManager().getOpenPanels().stream()
-            .filter(p -> "gtmb_material_confirmation".equals(p.getName())).findFirst()
+            .filter(p -> "gtmb_local_material_review".equals(p.getName())).findFirst()
             .orElseThrow(() -> new IllegalStateException("The material dialog is not the attached native panel"));
         List<?> buttons = panel.getChildren().stream().filter(ButtonWidget.class::isInstance)
             .collect(java.util.stream.Collectors.toList());
