@@ -87,6 +87,10 @@ public final class HologramTutorialIssue100Probe {
             Boolean.getBoolean("gtmb.testlab.tutorialIssue100") && Boolean.getBoolean("miaotest.host.environment")
                 && HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled() && HologramLocalPreviewStagesProbe.enabled(),
             "Prepared stock is only allowed in the exact isolated fixed EBF profile");
+        require(!HologramLocalPreviewStagesProbe.materialsOnlyEnabled()
+            || Boolean.getBoolean("gtmb.testlab.tutorialIssue100") && Boolean.getBoolean("miaotest.host.environment")
+                && HologramLocalPreviewStagesProbe.enabled(),
+            "Material browse requires the existing lease-owned integrated route");
         if (!Boolean.getBoolean("gtmb.testlab.tutorialIssue100")) return false;
         require(!HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled() || HologramLocalPreviewStagesProbe.enabled(),
             "Fixed native EBF requires the existing lease-owned local-preview route");
@@ -202,9 +206,10 @@ public final class HologramTutorialIssue100Probe {
                         localPreviewStages = new HologramLocalPreviewStagesProbe(mc, output, receipt);
                     }
                     if (!localPreviewStages.step(mc)) return;
-                    if (HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled()) {
+                    if (HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled()
+                        || HologramLocalPreviewStagesProbe.materialsOnlyEnabled()) {
                         transition(6);
-                        return; // separate preview-only EBF terminal; no Issue100 playback runs afterward
+                        return; // standalone probe; no Issue100 playback runs afterward
                     }
                 }
                 inventoryBefore = inventory(mc);
@@ -502,6 +507,16 @@ public final class HologramTutorialIssue100Probe {
             Files.write(
                 output.resolve(coil ? HologramEbfFixedControls.COIL_FILE : "gtmb-ebf-fixed-native.json"),
                 json(receipt), java.nio.file.StandardOpenOption.CREATE_NEW);
+        } else if (HologramLocalPreviewStagesProbe.materialsOnlyEnabled()) {
+            if ((!exactWorldOwned || noServerCreated) && failure == null) failure = "No lease-owned material browse";
+            receipt.put("schema", "gtmb-ordinary-local-materials-v1");
+            receipt.put("outcome", failure == null ? "PASS" : "FAIL");
+            receipt.put("failure", failure);
+            receipt.put("businessTransport", "Integrated client/server, passive GTMB application-message and codec counts");
+            Files.write(output.resolve("gtmb-ordinary-local-materials.json"), json(receipt),
+                java.nio.file.StandardOpenOption.CREATE_NEW);
+            // The registered host finishes from its normal native menu profile; the world case has its own receipt.
+            HologramTestLabUiProfile.install();
         } else {
             Files.write(output.resolve("gtmb-issue100-tutorial.json"), json(receipt));
             if (!HologramRenderParityProbe.install(originalMenu, output, run, failure)) HologramTestLabUiProfile.install();
