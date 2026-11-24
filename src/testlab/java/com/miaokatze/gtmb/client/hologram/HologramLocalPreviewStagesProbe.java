@@ -68,6 +68,7 @@ import gregtech.common.blocks.ItemMachines;
 import gregtech.common.tileentities.machines.multi.MTEElectricBlastFurnace;
 import io.netty.channel.Channel;
 import io.netty.channel.ChannelHandlerContext;
+import io.netty.channel.ChannelInboundHandlerAdapter;
 import io.netty.channel.ChannelOutboundHandlerAdapter;
 import io.netty.channel.ChannelPromise;
 
@@ -77,6 +78,7 @@ final class HologramLocalPreviewStagesProbe {
     private static final String FLAG = "gtmb.testlab.localPreviewStages";
     private static final String SOURCE = FLAG + "Source";
     private static final String HANDLER = "gtmb-testlab-local-preview-stages";
+    private static final String DIRECT_RECEIPT = HANDLER + "-direct-receipt";
     private static final int SOLAR_BODY_CELLS = 2847;
     private static final Set<String> PLACEMENT_FIELDS = new HashSet<>(
         Arrays.asList(
@@ -159,6 +161,7 @@ final class HologramLocalPreviewStagesProbe {
     private HologramScreen constructionReview;
     private String constructionSession;
     private volatile UUID directRequest;
+    private volatile Map<String, Object> directServerReceipt;
     private volatile String directCompleted = "", directBlocked = "";
     private int directTransportControls;
     private HologramLibraryMaterialReviewScreen directModal;
@@ -1280,6 +1283,11 @@ final class HologramLocalPreviewStagesProbe {
             HologramMuiProbeInput.click(directModal, point[0], point[1], 0);
             return false;
         }
+        Map<String, Object> receipt = directServerReceipt;
+        if (receipt == null) return false;
+        evidence.put("directServerReceipt", receipt);
+        require(Boolean.TRUE.equals(receipt.get("started")),
+            "Server refused direct placement before start: " + receipt.get("reason"));
         HologramState state = HologramClient.state;
         if (directRequest == null || state == null
             || !directRequest.toString().equals(state.data.getString("executionRequestId"))) return false;
@@ -1551,6 +1559,29 @@ final class HologramLocalPreviewStagesProbe {
             "Expected actual GTMB outbound channel");
         Field action = field(HologramNetwork.Packet.class, "tag");
         Field library = field(HologramNetwork.LibraryRequest.class.getSuperclass(), "tag");
+        if (directConstruction) channel.pipeline().addBefore(
+            HologramNetwork.ClientHandler.class.getName(), DIRECT_RECEIPT, new ChannelInboundHandlerAdapter() {
+
+                @Override
+                public void channelRead(ChannelHandlerContext context, Object message) throws Exception {
+                    try {
+                        UUID expected = directRequest;
+                        if (expected != null && directServerReceipt == null && message instanceof HologramNetwork.State) {
+                            NBTTagCompound state = (NBTTagCompound) action.get(message);
+                            if (state.hasKey("placementRequestId", 8) && state.hasKey("placementRequestAccepted", 1)
+                                && expected.toString().equals(state.getString("placementRequestId"))) {
+                                Map<String, Object> receipt = new LinkedHashMap<>();
+                                receipt.put("requestId", expected.toString());
+                                receipt.put("started", state.getBoolean("placementRequestAccepted"));
+                                receipt.put("reason", state.getString("errorMessage"));
+                                directServerReceipt = receipt;
+                            }
+                        }
+                    } finally {
+                        context.fireChannelRead(message);
+                    }
+                }
+            });
         channel.pipeline()
             .addLast(HANDLER, new ChannelOutboundHandlerAdapter() {
 
@@ -1646,6 +1677,8 @@ final class HologramLocalPreviewStagesProbe {
         if (channel != null && channel.pipeline()
             .get(HANDLER) != null) channel.pipeline()
                 .remove(HANDLER);
+        if (channel != null && channel.pipeline().get(DIRECT_RECEIPT) != null)
+            channel.pipeline().remove(DIRECT_RECEIPT);
         evidence.put("outboundIncludingTeardown", packets());
         if (fixedEbfEnabledMetrics) HologramRuntimeMetrics.setEnabled(false);
         finished = true;
