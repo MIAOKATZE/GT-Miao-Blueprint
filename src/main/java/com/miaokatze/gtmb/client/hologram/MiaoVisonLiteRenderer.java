@@ -88,6 +88,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     static int lastWorldGeometry, lastWorldGTGeometry, lastWorldFallback, lastWorldMatched, lastWorldGhosts;
     static int lastWorldPlacementOutlineColor;
     private static WorldRenderWitness worldRenderWitness;
+    private static boolean worldSubmissionTiming;
     private static long worldRenderGeneration;
     int lastPreviewRoleMarkers, lastPreviewAnchorMarkers;
     private static HologramState worldState;
@@ -2646,7 +2647,9 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     }
 
     static void world(HologramState state, float partialTicks, int projectionLayer) {
-        boolean witness = Boolean.getBoolean("gtmb.hologram.realInteractionSmoke")
+        boolean timing = worldSubmissionTiming;
+        long started = timing ? System.nanoTime() : 0;
+        boolean witness = timing || Boolean.getBoolean("gtmb.hologram.realInteractionSmoke")
             || Boolean.getBoolean("gtmb.hologram.followupAreaClient")
             || Boolean.getBoolean("gtmb.hologram.previewCaptureWitness");
         if (witness) worldRenderWitness = null;
@@ -2695,7 +2698,8 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         List<WorldGroup> candidates = worldSpatialIndex.select(sx, sy, sz, range);
         GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
         GL11.glPushMatrix();
-        int drawnLists = 0;
+        int drawnLists = 0, visibleGroups = 0, completedGroups = 0;
+        long firstSubmit = 0;
         try {
             GL11.glTranslated(-px, -py, -pz);
             GL11.glTranslated(offsetX, offsetY, offsetZ);
@@ -2739,22 +2743,50 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                         if (!compileWorldGroup(group, state.data.getInteger("mode") == 2, meshFrame)) break;
                     }
                 }
+                int beforeGroup = drawnLists;
                 for (WorldBatch batch : group.batches) {
                     batch.draw();
-                    if (witness) drawnLists++;
+                    if (witness) {
+                        drawnLists++;
+                        if (timing && firstSubmit == 0) firstSubmit = System.nanoTime();
+                    }
+                }
+                if (timing && !group.cells.isEmpty()) {
+                    visibleGroups++;
+                    if (drawnLists > beforeGroup && group.built == group.cells.size()) completedGroups++;
                 }
             }
-            if (witness && drawnLists > 0) worldRenderWitness = new WorldRenderWitness(
-                state,
-                anchor,
-                offsetX,
-                offsetY,
-                offsetZ,
-                ++worldRenderGeneration,
-                drawnLists);
         } finally {
             GL11.glPopMatrix();
             GL11.glPopAttrib();
+        }
+        if (witness && drawnLists > 0) worldRenderWitness = new WorldRenderWitness(
+            state, anchor, offsetX, offsetY, offsetZ, ++worldRenderGeneration, drawnLists,
+            timing ? new WorldSubmissionTiming(firstSubmit, System.nanoTime(), started,
+                visibleGroups, completedGroups, worldIndex == state.cells.size(), pose) : null);
+    }
+
+    /** TestLab owns activation on the render thread; normal world draws do not time or allocate samples. */
+    static void worldSubmissionTiming(boolean enabled) {
+        worldSubmissionTiming = enabled;
+    }
+
+    static final class WorldSubmissionTiming {
+
+        final long firstSubmit, ended, renderNanos;
+        final int visibleGroups, submittedCompleteGroups;
+        final boolean complete;
+        final HologramPreviewPose pose;
+
+        WorldSubmissionTiming(long firstSubmit, long ended, long started, int visibleGroups,
+            int submittedCompleteGroups, boolean indexComplete, HologramPreviewPose pose) {
+            this.firstSubmit = firstSubmit;
+            this.ended = ended;
+            renderNanos = ended - started;
+            this.visibleGroups = visibleGroups;
+            this.submittedCompleteGroups = submittedCompleteGroups;
+            complete = indexComplete && visibleGroups > 0 && visibleGroups == submittedCompleteGroups;
+            this.pose = pose;
         }
     }
 
@@ -2771,14 +2803,16 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         final int anchorX, anchorY, anchorZ, lists, geometry, ghosts, outlineColor;
         final double offsetX, offsetY, offsetZ;
         final boolean moving;
+        final WorldSubmissionTiming timing;
 
         WorldRenderWitness(HologramState state, int[] anchor, double offsetX, double offsetY, double offsetZ,
-            long generation, int lists) {
+            long generation, int lists, WorldSubmissionTiming timing) {
             this.state = state;
             session = state.session;
             revision = state.data.getLong("planRevision");
             this.generation = generation;
             this.lists = lists;
+            this.timing = timing;
             moving = anchor != null;
             anchorX = moving ? anchor[0] : state.data.getInteger("x");
             anchorY = moving ? anchor[1] : state.data.getInteger("y");

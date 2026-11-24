@@ -202,9 +202,10 @@ public final class HologramTutorialIssue100Probe {
                         localPreviewStages = new HologramLocalPreviewStagesProbe(mc, output, receipt);
                     }
                     if (!localPreviewStages.step(mc)) return;
-                    if (HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled()) {
+                    if (HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled()
+                        || HologramLocalPreviewStagesProbe.worldTimingEnabled()) {
                         transition(6);
-                        return; // separate preview-only EBF terminal; no Issue100 playback runs afterward
+                        return; // preview-only terminal; no Issue100 playback runs afterward
                     }
                 }
                 inventoryBefore = inventory(mc);
@@ -502,6 +503,14 @@ public final class HologramTutorialIssue100Probe {
             Files.write(
                 output.resolve(coil ? HologramEbfFixedControls.COIL_FILE : "gtmb-ebf-fixed-native.json"),
                 json(receipt), java.nio.file.StandardOpenOption.CREATE_NEW);
+        } else if (HologramLocalPreviewStagesProbe.worldTimingEnabled()) {
+            receipt.put("schema", "gtmb-world-projection-timing-v1");
+            receipt.remove("nativeWorldFrames"); // The samples are in localPreviewStages, not the Issue100 counters.
+            receipt.put("actorMode", "SURVIVAL; no OP; temporary client test projector");
+            receipt.put("businessTransport", "NOT_RUN; preview only, no submit, construction, or payment");
+            Files.write(output.resolve("gtmb-world-projection-timing.json"), json(receipt),
+                java.nio.file.StandardOpenOption.CREATE_NEW);
+            HologramTestLabUiProfile.install(); // Standard menu receipt still owns the host client exit.
         } else {
             Files.write(output.resolve("gtmb-issue100-tutorial.json"), json(receipt));
             if (!HologramRenderParityProbe.install(originalMenu, output, run, failure)) HologramTestLabUiProfile.install();
