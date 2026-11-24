@@ -15,10 +15,13 @@ import java.util.UUID;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.GuiScreen;
+import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 import net.minecraft.server.MinecraftServer;
 import net.minecraft.util.ScreenShotHelper;
+import net.minecraft.world.WorldServer;
 import net.minecraft.world.WorldSettings;
 import net.minecraft.world.WorldType;
 import net.minecraftforge.client.event.GuiScreenEvent;
@@ -30,6 +33,7 @@ import com.cleanroommc.modularui.screen.viewport.LocatedWidget;
 import com.google.gson.Gson;
 import com.google.gson.GsonBuilder;
 import com.google.gson.JsonObject;
+import com.miaokatze.gtmb.hologram.HologramV0115AeAcceptanceFixture;
 import com.miaokatze.gtmb.register.ProjectorRegistry;
 import com.miaokatze.miaokatzecore.api.testlab.ArtifactIdentity;
 
@@ -40,6 +44,12 @@ import cpw.mods.fml.common.gameevent.TickEvent;
 
 /** Explicit native world-render / tutorial ownership regression. Only a new marker-owned save is loaded. */
 public final class HologramTutorialIssue100Probe {
+
+    private final boolean ownedAeMode = Boolean.getBoolean(
+        HologramV0115AeAcceptanceFixture.OWNED_ORDER);
+    private volatile boolean ownedAeRequested, ownedAeClosing, ownedAeRetired, ownedAeRestored;
+    private volatile NBTTagCompound ownedAeResult;
+    private HologramV0115AeAcceptanceFixture ownedAe;
 
     private final Path output = Paths.get(System.getProperty("gtmb.testlab.clientUiReceiptDir"));
     private final String run = UUID.fromString(System.getProperty("miaotest.host.runId"))
@@ -72,6 +82,14 @@ public final class HologramTutorialIssue100Probe {
     private String failure;
 
     static boolean install() {
+        if (Boolean.getBoolean(HologramV0115AeAcceptanceFixture.OWNED_ORDER)) require(
+            Boolean.getBoolean("gtmb.testlab.tutorialIssue100") && Boolean.getBoolean("miaotest.host.environment")
+                && "gtmb".equals(System.getProperty("miaotest.host.module"))
+                && "client-ui".equals(System.getProperty("miaotest.host.profile"))
+                && !HologramLocalPreviewStagesProbe.enabled() && !HologramEbfFixedControls.coilOnlyEnabled()
+                && !Boolean.getBoolean(HologramEbfPreparedStock.FLAG)
+                && !Boolean.getBoolean("gtmb.v0115.acceptanceSmoke"),
+            "Owned native AE order is one separate canonical Issue100 case");
         if (HologramEbfFixedControls.coilOnlyEnabled()) require(
             HologramEbfFixedControls.coilProfileAllowed(Boolean.getBoolean("gtmb.testlab.tutorialIssue100"),
                 Boolean.getBoolean("miaotest.host.environment"), HologramLocalPreviewStagesProbe.enabled(),
@@ -102,6 +120,10 @@ public final class HologramTutorialIssue100Probe {
     public void serverTick(TickEvent.ServerTickEvent event) {
         if (complete || stage == 0 || event.phase != TickEvent.Phase.END) return;
         if (exactWorldOwned) {
+            if (ownedAeMode) {
+                tickOwnedAe();
+                return;
+            }
             try {
                 if (preparedStock != null && !preparedStock.verifyServer(server.worldServerForDimension(0))) return;
                 HologramLocalPreviewStagesProbe local = localPreviewStages;
@@ -136,6 +158,39 @@ public final class HologramTutorialIssue100Probe {
             exactWorldOwned = true;
         } catch (Throwable problem) {
             serverFailure = problem.toString();
+        }
+    }
+
+    private void tickOwnedAe() {
+        if (!ownedAeRequested || ownedAeRetired) return;
+        try {
+            if (ownedAeClosing) {
+                retireOwnedAe();
+                return;
+            }
+            WorldServer world = server.worldServerForDimension(0);
+            if (ownedAe == null) {
+                EntityPlayer actor = world.getPlayerEntityByName("MiaoHostQA");
+                if (!(actor instanceof EntityPlayerMP)) return;
+                ownedAe = HologramV0115AeAcceptanceFixture.createOwned(world, (EntityPlayerMP) actor);
+            }
+            ownedAeResult = ownedAe.poll();
+            if ("PASS".equals(ownedAeResult.getString("status"))) retireOwnedAe();
+        } catch (Exception | LinkageError problem) {
+            serverFailure = problem.toString();
+            retireOwnedAe();
+        }
+    }
+
+    private void retireOwnedAe() {
+        if (ownedAeRetired) return;
+        try {
+            if (ownedAe != null) ownedAe.close();
+            ownedAeRestored = true;
+        } catch (RuntimeException | LinkageError problem) {
+            serverFailure = "Owned AE retirement: " + problem;
+        } finally {
+            ownedAeRetired = true;
         }
     }
 
@@ -183,8 +238,9 @@ public final class HologramTutorialIssue100Probe {
                 // HostEnvironment reads this only in FMLServerAboutToStartEvent, after the exact host lease/marker.
                 System.setProperty("miaotest.host.worldPath", save.toString());
                 receipt.put("ownedSave", save.toString());
-                receipt.put("actorMode", preparedStock == null ? "SURVIVAL; no OP or inventory fixture changes"
-                    : "SURVIVAL; no OP; explicit pre-login vanilla playerdata fixture, no live inventory injection");
+                receipt.put("actorMode", ownedAeMode ? "SURVIVAL; no OP; two originally empty local fixture slots"
+                    : preparedStock == null ? "SURVIVAL; no OP or inventory fixture changes"
+                        : "SURVIVAL; no OP; explicit pre-login vanilla playerdata fixture, no live inventory injection");
                 transition(1);
                 launchedWorld = true;
                 mc.launchIntegratedServer(
@@ -196,6 +252,14 @@ public final class HologramTutorialIssue100Probe {
                 if (!exactWorldOwned || mc.theWorld == null || mc.thePlayer == null || mc.thePlayer.ticksExisted < 60)
                     return;
                 require(!mc.thePlayer.capabilities.isCreativeMode, "Business actor must remain survival");
+                if (ownedAeMode) {
+                    ownedAeRequested = true;
+                    if (!ownedAeRetired) return;
+                    require(ownedAeRestored && ownedAeResult != null && "PASS".equals(ownedAeResult.getString("status")),
+                        "Owned reviewed AE case did not complete and retire");
+                    transition(6);
+                    return;
+                }
                 if (HologramLocalPreviewStagesProbe.enabled()) {
                     if (localPreviewStages == null) {
                         if (preparedStock != null && !preparedStock.verifyClient(mc.thePlayer, preparedStockReceipt)) return;
@@ -426,6 +490,10 @@ public final class HologramTutorialIssue100Probe {
     }
 
     private void closeWorld(Minecraft mc) throws Exception {
+        if (ownedAeRequested && !ownedAeRetired) {
+            ownedAeClosing = true;
+            return; // Native receipt or failure and slot/order retirement remain on the owned server END tick.
+        }
         if (!unloadRequested) {
             if (localPreviewStages != null && !localPreviewStages.finish(mc)) return;
             if (screen != null) {
@@ -466,7 +534,8 @@ public final class HologramTutorialIssue100Probe {
             .bus()
             .unregister(this);
         MinecraftForge.EVENT_BUS.unregister(this);
-        boolean cleanupPending = mc.currentScreen != originalMenu || HologramLocalPlacement.INSTANCE.active();
+        boolean cleanupPending = mc.currentScreen != originalMenu || HologramLocalPlacement.INSTANCE.active()
+            || ownedAeRequested && !ownedAeRestored;
         if (cleanupPending && failure == null) failure = "Original menu or local preview cleanup was not restored";
         boolean preferencesUnchanged = preferencesBefore != null && preferencesBefore.equals(preferences(mc));
         if (!preferencesUnchanged && failure == null) failure = "Tutorial preference bytes changed";
@@ -496,7 +565,15 @@ public final class HologramTutorialIssue100Probe {
             "artifact",
             ArtifactIdentity.capture(HologramTutorialIssue100Probe.class)
                 .asMap());
-        if (HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled()) {
+        if (ownedAeMode) {
+            receipt.put("schema", "gtmb-owned-reviewed-native-ae-v1");
+            receipt.put("nativeAe", ownedAeResult == null ? null : ownedAeResult.toString());
+            receipt.put("ownedOrderAndSlotsRestored", ownedAeRestored);
+            receipt.put("businessTransport", "production server-side review + action, no GUI/FML assertion");
+            Files.write(output.resolve("gtmb-native-ae-reviewed-order.json"), json(receipt),
+                java.nio.file.StandardOpenOption.CREATE_NEW);
+            HologramTestLabUiProfile.install();
+        } else if (HologramLocalPreviewStagesProbe.fixedNativeEbfEnabled()) {
             boolean coil = HologramEbfFixedControls.coilOnlyEnabled();
             receipt.put("schema", coil ? HologramEbfFixedControls.COIL_SCHEMA : "gtmb-stock-ebf-native-controls-v1");
             Files.write(
@@ -521,6 +598,8 @@ public final class HologramTutorialIssue100Probe {
         status.put("runId", run);
         status.put("stage", stage);
         if (localPreviewStages != null) status.put("localPreviewStages", localPreviewStages.progress());
+        NBTTagCompound nativeAe = ownedAeResult;
+        if (ownedAeMode && nativeAe != null) status.put("ownedAeStatus", nativeAe.getString("status"));
         status.put("frame", frame);
         status.put("worldFrames", worldFrames);
         status.put("activeTutorialWorldFrames", activeWorldFrames);
