@@ -11,6 +11,7 @@ import java.util.List;
 import java.util.Map;
 
 import net.minecraft.block.Block;
+import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTBase;
 import net.minecraft.nbt.NBTTagCompound;
@@ -1161,6 +1162,9 @@ final class HologramState {
         private static final NBTTagCompound EMPTY_DISPLAY = new NBTTagCompound();
         private final NBTTagCompound raw;
         private final HologramControllerTarget.Cell controllerCell;
+        // Frozen plain-shell identity; never inspect a mutable ItemStack from the material planner.
+        final Item plainMaterialItem;
+        final int plainMaterialDamage;
         private final NBTTagCompound controllerDetails;
         private final NBTTagCompound coordinates;
         private final DescriptorTemplate descriptorTemplate;
@@ -1201,6 +1205,8 @@ final class HologramState {
         private Cell(int index, NBTTagCompound n, NBTTagCompound positions, boolean owned, boolean resolvedBlocks) {
             raw = owned ? n : (NBTTagCompound) n.copy();
             controllerCell = null;
+            plainMaterialItem = null;
+            plainMaterialDamage = 0;
             controllerDetails = null;
             coordinates = positions;
             descriptorTemplate = null;
@@ -1304,6 +1310,8 @@ final class HologramState {
             boolean compactPlain = template.compactPlain;
             raw = value.raw;
             controllerCell = null;
+            plainMaterialItem = null;
+            plainMaterialDamage = 0;
             controllerDetails = null;
             coordinates = positions;
             descriptorTemplate = template;
@@ -1365,6 +1373,8 @@ final class HologramState {
         private Cell(Cell target, NBTTagCompound details) {
             raw = target.raw;
             controllerCell = target.controllerCell;
+            plainMaterialItem = target.plainMaterialItem;
+            plainMaterialDamage = target.plainMaterialDamage;
             controllerDetails = details;
             coordinates = target.coordinates;
             descriptorTemplate = target.descriptorTemplate;
@@ -1482,6 +1492,8 @@ final class HologramState {
             iconOnly = target.iconOnly();
             actualStack = target.actualStack();
             targetStack = target.targetStack();
+            plainMaterialItem = targetStack != null && !targetStack.hasTagCompound() ? targetStack.getItem() : null;
+            plainMaterialDamage = plainMaterialItem == null ? 0 : targetStack.getItemDamage();
             actualDisplay = target.actualDisplay();
             targetDisplay = target.targetDisplay();
             hintIndex = target.hintIndex();

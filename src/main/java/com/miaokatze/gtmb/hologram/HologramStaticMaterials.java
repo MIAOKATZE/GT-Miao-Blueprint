@@ -90,6 +90,36 @@ public final class HologramStaticMaterials {
             cacheReviewRequired |= !cache.demand.empty() || !cache.warnings.isEmpty();
         }
 
+        /**
+         * Aggregate only exact plain shells. A native adapter, tile-capable block, network node, or retained
+         * item falls back to per-cell owning-thread inspection; this method never authorizes payment.
+         */
+        public boolean addRepeatedPlain(Block block, int metadata, ItemStack target, int count) throws IOException {
+            if (count < 2 || block == null || target == null || target.getItem() == null || target.hasTagCompound()
+                || block.hasTileEntity(metadata)
+                || HologramNativePlacement.supported(block)
+                || HologramDecorMaterials.supports(block)
+                || HologramAeBlueprint.supports(block, null)
+                || HologramNetworkBindings.node(block)) return false;
+
+            // Isolate the one original calculation so a provider/configuration failure cannot half-publish a batch.
+            Builder one = new Builder();
+            one.add(block, metadata, target, null, null);
+            BigInteger occurrences = BigInteger.valueOf(count);
+            for (Map.Entry<Object, NBTTagCompound> entry : one.rows.entrySet()) {
+                NBTTagCompound unit = entry.getValue();
+                BigInteger quantity = new BigInteger(unit.getString("requiredExact")).multiply(occurrences);
+                NBTTagCompound previous = rows.get(entry.getKey());
+                if (previous == null) {
+                    unit.setString("requiredExact", quantity.toString());
+                    rows.put(entry.getKey(), unit);
+                } else amount(previous, quantity);
+            }
+            cacheReviewRequired |= one.cacheReviewRequired;
+            alternatives |= one.alternatives;
+            return true;
+        }
+
         public void unaccounted(String reason) {
             unaccounted++;
             if (detail.isEmpty()) detail = reason == null ? "材料未核算" : reason;

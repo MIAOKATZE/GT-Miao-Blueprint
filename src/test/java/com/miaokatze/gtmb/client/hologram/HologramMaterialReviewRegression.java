@@ -192,7 +192,7 @@ public final class HologramMaterialReviewRegression {
         config.setInteger("selected", 2);
         config.setIntArray("selectedIndices", new int[] { 0, 2, 3, 4 });
         config.setBoolean("materialMain", true);
-        HologramLocalMaterialReview review = new HologramLocalMaterialReview(displayed, config);
+        HologramLocalMaterialReview review = new HologramLocalMaterialReview(displayed, config, Runnable::run);
         ItemStack[] backpack = { new ItemStack(net.minecraft.init.Blocks.stone, 2, 0) };
         for (int i = 0; i < 6 && !review.ready(); i++) review.tick(backpack, -1);
 
