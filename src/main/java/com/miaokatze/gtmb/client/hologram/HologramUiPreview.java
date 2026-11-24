@@ -162,7 +162,7 @@ final class HologramUiPreview {
     /** Only model/ghost/selection geometry. Native controls are siblings of this bounded scene widget. */
     boolean sourcePreparing() {
         if (ui.session.isTutorial() || ui.library.browsePreviewActive()) return false;
-        if (ui.library.openingPreview() != null) return true;
+        if (ui.library.openingLocalSource() || ui.library.openingPreview() != null) return true;
         if (ui.session.state().data.getBoolean("localStandardController")) return false;
         return ui.session.controllerOpening() || HologramClient.snapshotPreparing()
             || sourceSwitchWaiting(
@@ -248,7 +248,10 @@ final class HologramUiPreview {
 
     void scrollNativeScene(int wheel) {
         if (ui.library.browsePreviewActive()) zoom(browseZoom * (wheel > 0 ? 1.1 : 1 / 1.1));
-        else if (ui.shell.sceneNavigable()) zoom(zoom * (wheel > 0 ? 1.1 : 1 / 1.1));
+        else if (ui.library.openingLocalSource()) {
+            HologramOpeningPreview opening = navigableOpening();
+            if (opening != null && ui.shell.sceneNavigable()) opening.scroll(wheel);
+        } else if (ui.shell.sceneNavigable()) zoom(zoom * (wheel > 0 ? 1.1 : 1 / 1.1));
     }
 
     boolean viewControlEnabled(int id) {
@@ -397,31 +400,38 @@ final class HologramUiPreview {
     }
 
     private boolean drawOpeningPreview(MiaoVisonLiteRenderer viewport, int x, int y, int width, int height) {
-        if (ui.session.isTutorial() || !ui.library.openingLocalSource()) return false;
-        HologramState opening = ui.library.openingPreview();
+        HologramOpeningPreview opening = ui.session.isTutorial() ? null : ui.library.openingCamera();
         if (opening == null) return false;
         hovered = -1;
         viewport.selection = null;
         viewport.selectedStructureId = "";
+        viewport.showEmptyCells = false;
+        HologramOpeningPreview.Pose pose = opening.pose();
         viewport.preview(
-            opening,
+            opening.state,
             x,
             y,
             width,
             height,
-            yaw,
-            pitch,
-            zoom,
-            camera.x,
-            camera.y,
-            camera.z,
-            allLayers ? Integer.MAX_VALUE : layer,
-            view,
+            pose.yaw(),
+            pose.pitch(),
+            pose.zoom(),
+            pose.x(),
+            pose.y(),
+            pose.z(),
+            Integer.MAX_VALUE,
+            0,
             -1,
             -1,
             -1,
             -1,
             false);
+        opening.observe(
+            viewport.previewMeshVisible(opening.state) ? viewport.previewDisplayState() : null,
+            openingViewport(),
+            HologramTextures.resourceGeneration(),
+            viewport.gridScale(),
+            viewport.previewExtent());
         return true;
     }
 
@@ -855,12 +865,41 @@ final class HologramUiPreview {
     }
 
     boolean previewNavigable() {
+        if (ui.library.openingLocalSource()) return navigableOpening() != null;
         HologramState displayed = HologramRenderer.previewDisplayState();
         return previewInputOpen() && displayed != null && displayed.identity == ui.session.state().identity;
     }
 
+    private ViewportCoordinates openingViewport() {
+        if (ui.canvas.nativeScene()) return ui.canvas.nativeGuiViewport();
+        if (scene != null) return scene.openingBounds();
+        ViewportCoordinates area = ui.canvas.viewport();
+        double scale = ui.canvas.scale();
+        return new ViewportCoordinates(
+            ui.canvas.originX() + area.x() * scale,
+            ui.canvas.originY() + area.y() * scale,
+            area.width() * scale,
+            area.height() * scale);
+    }
+
+    private HologramOpeningPreview navigableOpening() {
+        HologramOpeningPreview opening = ui.library.openingCamera();
+        return opening != null && previewContextOpen() && !ui.library.browsePreviewActive()
+            && !HologramBackgroundTasks.busy()
+            && !ui.tools.modalOpen()
+            && !ui.tools.pointerCaptured()
+            && !ui.shell.hasModalPanel()
+            && opening.navigable(
+                HologramRenderer.previewDisplayState(), openingViewport(), HologramTextures.resourceGeneration())
+                    ? opening : null;
+    }
+
     private boolean previewInputOpen() {
-        return !sourcePreparing() && !ui.session.areaImporting()
+        return !sourcePreparing() && previewContextOpen();
+    }
+
+    private boolean previewContextOpen() {
+        return !ui.session.areaImporting()
             && ui.ae.aeReviewNavigation() == null
             && ui.ae.aeReview() == null
             && !ui.config.drawer()
@@ -985,7 +1024,7 @@ final class HologramUiPreview {
     }
 
     void editAction(String action) {
-        if (ui.library.browsePreviewActive()) return;
+        if (ui.library.browsePreviewActive() || ui.library.openingLocalSource()) return;
         boolean history = "editUndo".equals(action) || "editRedo".equals(action);
         HologramState.Cell cell = ui.session.selectedCell();
         if (!history && cell == null) return;
@@ -1108,16 +1147,44 @@ final class HologramUiPreview {
             .held("cameraForward") ? 1 : 0)
             - (ui.tools.commands()
                 .held("cameraBack") ? 1 : 0);
-        double speed = Math.max(
-            2,
-            HologramRenderer.editor()
-                .previewExtent() * .6)
-            / this.zoom;
-        this.camera.move(this.yaw, (now - previous) / 1_000_000_000.0, right, forward, speed);
+        if (right == 0 && forward == 0) return;
+        double seconds = (now - previous) / 1_000_000_000.0;
+        if (ui.library.openingLocalSource()) {
+            HologramOpeningPreview opening = navigableOpening();
+            if (opening != null) opening.move(seconds, right, forward);
+        } else {
+            double extent = HologramRenderer.editor().previewExtent();
+            camera.move(yaw, seconds, right, forward, Math.max(2, extent * .6) / zoom);
+        }
+    }
+
+    void adoptOpeningCamera(HologramOpeningPreview.Pose pose) {
+        releasePointerCapture();
+        yaw = pose.yaw();
+        pitch = pose.pitch();
+        zoom = pose.zoom();
+        camera.x = pose.x();
+        camera.y = pose.y();
+        camera.z = pose.z();
+        cameraFrame = 0;
+    }
+
+    void fixedCamera(double offset, double pitch) {
+        if (ui.library.openingLocalSource()) {
+            HologramOpeningPreview opening = navigableOpening();
+            if (opening != null) opening.fixed(offset, pitch);
+        } else {
+            yaw = frontCameraYaw() + offset;
+            this.pitch = pitch;
+        }
     }
 
     double frontCameraYaw() {
-        int facing = ui.session.state().data.getInteger("facing");
+        return frontCameraYaw(ui.session.state());
+    }
+
+    static double frontCameraYaw(HologramState state) {
+        int facing = state.data.getInteger("facing");
         if (facing < 0 || facing >= ExtendedFacing.values().length) return Math.PI / 4;
         ForgeDirection direction = ExtendedFacing.values()[facing].getDirection();
         if (direction.offsetX == 0 && direction.offsetZ == 0) return Math.PI / 4;
@@ -1145,6 +1212,9 @@ final class HologramUiPreview {
         if (id == 223) {
             if (ui.library.browsePreviewActive()) {
                 if (browseMeshInteractive()) browseYaw += Math.PI / 2;
+            } else if (ui.library.openingLocalSource()) {
+                HologramOpeningPreview opening = navigableOpening();
+                if (opening != null) opening.rotateQuarter();
             } else this.yaw = this.yaw + (Math.PI / 2);
             return true;
         }
@@ -1220,7 +1290,10 @@ final class HologramUiPreview {
                 ui.config.configure("layer", this.layer);
                 return true;
             case 14:
-                ui.preview.resetCamera();
+                if (ui.library.openingLocalSource()) {
+                    HologramOpeningPreview opening = navigableOpening();
+                    if (opening != null) opening.reset();
+                } else resetCamera();
                 return true;
             case 15:
                 HologramClient.worldPreview = !HologramClient.worldPreview;
@@ -1318,6 +1391,12 @@ final class HologramUiPreview {
 
     /** Blueprint camera presses precede context-menu presses; a short right release opens the existing menu. */
     boolean consumeViewportNavigationMouse(int mx, int my, int button) {
+        if (ui.library.openingLocalSource()) {
+            HologramOpeningPreview opening = navigableOpening();
+            return opening != null && ui.canvas.inViewport(mx, my)
+                && !previewNavigationBlockedAt(mx, my)
+                && opening.press(mx, my, button);
+        }
         if (!blueprintCameraControls() || ui.tools.modalOpen() || ui.tools.pointerCaptured()) return false;
         return button == 1 ? consumeViewportRightMouse(mx, my, button)
             : button == 2 && consumeViewportMiddleMouse(mx, my, button);
@@ -1491,6 +1570,12 @@ final class HologramUiPreview {
     }
 
     void mouseClickMove(int x, int y, int button, long elapsed) {
+        if (ui.library.openingLocalSource()) {
+            HologramOpeningPreview opening = navigableOpening();
+            if (opening != null) opening.drag(ui.canvas.localX(x), ui.canvas.localY(y), button);
+            else cancelOpeningDrag();
+            return;
+        }
         if (navigationButton >= 0 && navigationButton == button) {
             int mx = ui.canvas.localX(x), my = ui.canvas.localY(y), dx = mx - dragX, dy = my - dragY;
             navigationMotion += Math.abs((long) dx) + Math.abs((long) dy);
@@ -1568,6 +1653,12 @@ final class HologramUiPreview {
     }
 
     void mouseMovedOrUp(int x, int y, int button) {
+        if (ui.library.openingLocalSource()) {
+            HologramOpeningPreview opening = navigableOpening();
+            if (opening != null) opening.release(ui.canvas.localX(x), ui.canvas.localY(y), button);
+            else cancelOpeningDrag();
+            return;
+        }
         if (navigationButton >= 0 && navigationButton == button) {
             mouseClickMove(x, y, button, 0);
             boolean contextClick = button == 1 && !navigationDragged;
@@ -1668,7 +1759,18 @@ final class HologramUiPreview {
         gizmo.cancel();
     }
 
+    void invalidateOpeningFrame() {
+        HologramOpeningPreview opening = ui.library.openingCamera();
+        if (opening != null) opening.invalidate();
+    }
+
+    private void cancelOpeningDrag() {
+        HologramOpeningPreview opening = ui.library.openingCamera();
+        if (opening != null) opening.cancelDrag();
+    }
+
     void releasePointerCapture() {
+        cancelOpeningDrag();
         navigationButton = -1;
         browseDragging = false;
         cancelGeometryDrag();

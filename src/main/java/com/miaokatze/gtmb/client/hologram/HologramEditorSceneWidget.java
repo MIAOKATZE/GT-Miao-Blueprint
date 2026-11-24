@@ -50,6 +50,10 @@ final class HologramEditorSceneWidget extends Widget<HologramEditorSceneWidget> 
             matrix.transformY(0, getArea().height) - y);
     }
 
+    ViewportCoordinates openingBounds() {
+        return isValid() && getArea().width > 0 && getArea().height > 0 ? guiBounds() : null;
+    }
+
     private HologramUiCanvas.NativeSceneSpace space() {
         return ui.canvas.nativeSceneSpace(getArea().width, getArea().height, guiBounds());
     }
@@ -58,6 +62,7 @@ final class HologramEditorSceneWidget extends Widget<HologramEditorSceneWidget> 
         presented = false;
         presentedIdentity = null;
         presentedArea = null;
+        ui.preview.invalidateOpeningFrame();
         ui.preview.releasePointerCapture();
         HologramRenderer.sceneClosed();
     }
@@ -83,6 +88,10 @@ final class HologramEditorSceneWidget extends Widget<HologramEditorSceneWidget> 
         return current.x() == presentedArea.x() && current.y() == presentedArea.y()
             && current.width() == presentedArea.width()
             && current.height() == presentedArea.height();
+    }
+
+    private boolean pointerFrameReady() {
+        return ui.library.openingLocalSource() ? ui.shell.sceneNavigable() : frameValid();
     }
 
     /** Geometry commands use the current widget area and live UI pose; navigation keeps its separate frame gate. */
@@ -120,7 +129,7 @@ final class HologramEditorSceneWidget extends Widget<HologramEditorSceneWidget> 
         }
         try (HologramUiCanvas.NativeSceneSpace ignored = space()) {
             boolean waiting = ui.preview.sourcePreparing();
-            if (!waiting && !ui.session.isTutorial()) ui.preview.movePreviewCamera();
+            if (!ui.session.isTutorial()) ui.preview.movePreviewCamera();
             ui.canvas.tooltip(null);
             ui.preview.drawNativeScene(context.getMouseX(), context.getMouseY());
             if (!waiting) ui.shell.annotations()
@@ -135,6 +144,13 @@ final class HologramEditorSceneWidget extends Widget<HologramEditorSceneWidget> 
 
     @Override
     public Result onMousePressed(int button) {
+        if (ui.library.openingLocalSource()) {
+            if (!ui.shell.sceneNavigable()) return Result.STOP;
+            try (HologramUiCanvas.NativeSceneSpace ignored = space()) {
+                return ui.preview.consumeViewportNavigationMouse(getContext().getMouseX(), getContext().getMouseY(), button)
+                    ? Result.SUCCESS : Result.STOP;
+            }
+        }
         if (!frameValid()) return Result.STOP;
         if (!ui.shell.sceneNavigable() && !ui.library.browsePreviewActive()) return Result.STOP;
         int x = getContext().getMouseX(), y = getContext().getMouseY();
@@ -156,7 +172,7 @@ final class HologramEditorSceneWidget extends Widget<HologramEditorSceneWidget> 
 
     @Override
     public void onMouseDrag(int button, long elapsed) {
-        if (!frameValid()) {
+        if (!pointerFrameReady()) {
             ui.preview.releasePointerCapture();
             return;
         }
@@ -167,7 +183,7 @@ final class HologramEditorSceneWidget extends Widget<HologramEditorSceneWidget> 
 
     @Override
     public boolean onMouseRelease(int button) {
-        if (!frameValid()) {
+        if (!pointerFrameReady()) {
             ui.preview.releasePointerCapture();
             return true;
         }
@@ -179,7 +195,7 @@ final class HologramEditorSceneWidget extends Widget<HologramEditorSceneWidget> 
 
     @Override
     public boolean onMouseScroll(UpOrDown direction, int amount) {
-        if (!frameValid()) return true;
+        if (!pointerFrameReady()) return true;
         try (HologramUiCanvas.NativeSceneSpace ignored = space()) {
             ui.preview.scrollNativeScene(direction == UpOrDown.UP ? 1 : -1);
         }

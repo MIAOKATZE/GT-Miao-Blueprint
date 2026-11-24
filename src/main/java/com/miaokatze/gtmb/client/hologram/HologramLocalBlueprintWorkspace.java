@@ -89,6 +89,7 @@ final class HologramLocalBlueprintWorkspace {
         volatile long revision;
         HologramState.Preparation preparation;
         HologramState openingPreview;
+        HologramOpeningPreview openingCamera;
         HologramState preparedView;
         boolean opening, packedEditor;
         HologramLocalBlueprintDocument resumeDocument;
@@ -143,13 +144,37 @@ final class HologramLocalBlueprintWorkspace {
 
     boolean opening() {
         Task current = task;
-        return current != null && current.opening && screenCurrent(current);
+        return current != null && current.opening && current(current) && screenCurrent(current);
     }
 
     HologramState openingPreview() {
         Task current = task;
         if (current == null || !current.packedEditor || !current(current) || !screenCurrent(current)) return null;
         return current.openingPreview;
+    }
+
+    HologramOpeningPreview openingCamera() {
+        Task current = task;
+        return current != null && current.opening && current(current) && screenCurrent(current)
+            ? current.openingCamera : null;
+    }
+
+    private void beginOpening(Task current) {
+        ui.preview.releasePointerCapture();
+        current.opening = true;
+    }
+
+    private void offerOpeningPrefix(Task current, HologramState prefix) {
+        current.openingPreview = prefix;
+        if (current.opening && prefix != null)
+            current.openingCamera = new HologramOpeningPreview(prefix, HologramUiPreview.frontCameraYaw(prefix));
+    }
+
+    private void retireOpeningPrefix(Task current) {
+        if (current.openingCamera == null) return;
+        current.openingCamera.invalidate();
+        HologramRenderer.retireOpeningPrefix(current.openingCamera.state);
+        current.openingCamera = null;
     }
 
     String status() {
@@ -195,7 +220,7 @@ final class HologramLocalBlueprintWorkspace {
         Task task = beginView("正在准备本地蓝图", null);
         if (task == null) return;
         Minecraft client = ui.host.minecraft();
-        task.opening = true;
+        beginOpening(task);
         task.resumeDocument = document;
         task.resumeRevision = document.revision();
         task.resumeRetried = retried;
@@ -231,12 +256,16 @@ final class HologramLocalBlueprintWorkspace {
     /** Final root disposal ends presentation work, not an authored in-flight Save Current. */
     void retireView() {
         Task current = task;
-        if (current != null && current.viewOnly) task = null;
+        if (current != null && current.viewOnly) {
+            task = null;
+            retireOpeningPrefix(current);
+        }
     }
 
     private void retireStaleView(Task stale) {
         if (task != stale) return;
         task = null;
+        retireOpeningPrefix(stale);
         // A save that committed on the old window may advance the retained document while this window opens.
         // Retry once from the same live draft and new revision, never an old row or an old prepared view.
         if (stale.resumeDocument != null && !stale.resumeRetried
@@ -258,7 +287,7 @@ final class HologramLocalBlueprintWorkspace {
     void openPublic(String id) {
         Task current = beginView("正在读取服务器蓝图", null);
         if (current == null) return;
-        current.opening = true;
+        beginOpening(current);
         HologramLibraryClient.INSTANCE.openPublic(
             id,
             json -> work(
@@ -353,7 +382,7 @@ final class HologramLocalBlueprintWorkspace {
     private void open(FileSource source, String localId, boolean explicitPrivateEdit) {
         Task current = beginView("正在读取客户端蓝图", explicitPrivateEdit ? localId : null);
         if (current == null) return;
-        current.opening = true;
+        beginOpening(current);
         work(current, () -> prepareOpen(current, source.read(), localId, "已打开客户端蓝图"));
     }
 
@@ -884,19 +913,24 @@ final class HologramLocalBlueprintWorkspace {
         } catch (RuntimeException failure) {
             HologramLocalHistoryTrace.end(current.historyTrace, HologramLocalHistoryTrace.Terminal.FAILED);
             task = null;
+            retireOpeningPrefix(current);
             ui.session.notice(HologramUiText.reason(failure.getMessage()));
         }
     }
 
     private void publishView(Task current) {
         if (current.destination == null || current.preparedView == null) return;
-        if (current.resumeDocument != null
-            && (!current(current) || !screenCurrent(current) || current.destination != current.resumeDocument)) {
+        if ((current.opening || current.resumeDocument != null)
+            && (!current(current) || !screenCurrent(current)
+                || (current.resumeDocument != null && current.destination != current.resumeDocument))) {
             retireStaleView(current);
             return;
         }
         HologramState initial = current.preparedView;
+        HologramOpeningPreview.Pose pose = current.openingCamera == null ? null
+            : current.openingCamera.forInstalled(initial);
         task = null;
+        retireOpeningPrefix(current);
         if (ui.session.document() == current.destination) publishOwnedLocalView(current, current.destination, initial);
         else {
             HologramLocalHistoryTrace.end(current.historyTrace, HologramLocalHistoryTrace.Terminal.CANCELLED_OWNER);
@@ -905,6 +939,9 @@ final class HologramLocalBlueprintWorkspace {
                 HologramLibraryClient.INSTANCE.select(false, fileId);
             ui.session.installLocalDocument(current.destination, initial);
         }
+        HologramScreen root = ui.host.parent();
+        if (pose != null && root != null && root.ui.session.state() == initial
+            && root.ui.session.document() == current.destination) root.ui.preview.adoptOpeningCamera(pose);
         if (!current.notice.isEmpty()) ui.session.notice(current.notice);
     }
 
@@ -926,7 +963,7 @@ final class HologramLocalBlueprintWorkspace {
         if (preparation.canPrepareCompactIndex()) {
             HologramState.Preparation.DetachedIndex index = preparation.prepareCompactIndex(256, nanos);
             if (index == null) return;
-            current.openingPreview = index.firstDisplay();
+            offerOpeningPrefix(current, index.firstDisplay());
             current.preparation = null;
             work(current, () -> {
                 HologramState result = index.finish(() -> current(current));
@@ -954,7 +991,7 @@ final class HologramLocalBlueprintWorkspace {
                 cap,
                 complete);
             if (current.openingPreview == null && (!complete || current.destination == null))
-                current.openingPreview = preparation.firstDisplay();
+                offerOpeningPrefix(current, preparation.firstDisplay());
             if (complete) {
                 HologramLocalHistoryTrace.mark(history, HologramLocalHistoryTrace.Stage.RESULT_BEGIN);
                 current.preparedView = preparation.result();
@@ -1050,6 +1087,7 @@ final class HologramLocalBlueprintWorkspace {
         Minecraft mc = ui.host.minecraft();
         HologramState active = ui.session.state();
         HologramScreen root = ui.host.parent();
+        if (candidate.opening && (root == null || root.ui != ui)) return false;
         if (candidate.resumeDocument != null && (root == null || root.ui != ui
             || mc.thePlayer == null
             || mc.thePlayer != candidate.resumePlayer
@@ -1078,6 +1116,7 @@ final class HologramLocalBlueprintWorkspace {
             var trace = current.saveTrace;
             boolean sameRevision = trace == null || current(current);
             task = null;
+            retireOpeningPrefix(current);
             boolean sameScreen = screenCurrent(current);
             end(trace, sameScreen && sameRevision ? Terminal.FAILED : Terminal.CANCELLED_OWNER);
             if (current.historyTrace != null) HologramLocalHistoryTrace.end(

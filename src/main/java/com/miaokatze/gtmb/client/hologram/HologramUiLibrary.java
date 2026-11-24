@@ -49,6 +49,10 @@ final class HologramUiLibrary {
         return localWorkspace.openingPreview();
     }
 
+    HologramOpeningPreview openingCamera() {
+        return localWorkspace.openingCamera();
+    }
+
     void advanceLocalWorkspaceFrame() {
         localWorkspace.advanceFrame();
     }

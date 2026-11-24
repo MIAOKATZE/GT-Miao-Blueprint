@@ -322,7 +322,7 @@ final class HologramUiSession {
     }
 
     private boolean editOwnerReady() {
-        if (localDocument() && ui.library.localBusy()) return false;
+        if (ui.library.openingLocalSource() || (localDocument() && ui.library.localBusy())) return false;
         if (HologramBackgroundTasks.busy()) return false;
         int job = this.state.data.getInteger("job");
         return !ui.session.areaImporting() && !this.state.data.getBoolean("targetClosed")
@@ -382,6 +382,8 @@ final class HologramUiSession {
             return;
         }
         if (controllerOpening()) return;
+        if (ui.library.openingLocalSource() && !"close".equals(op) && !"cancelSourceSwitch".equals(op)
+            && !"switchEditorWorkspace".equals(op)) return;
         HologramScreen localRoot = ui.host == null ? null : ui.host.parent();
         if (localRoot != null
             && (state.data.getBoolean("localWorkspace") || state.data.getBoolean("localStandardController")
