@@ -59,6 +59,7 @@ public final class HologramControllerCaptureRegression {
             field.setAccessible(true);
             sun.misc.Unsafe unsafe = (sun.misc.Unsafe) field.get(null);
             orderedAdmissionSlices();
+            rejectsNativeFamilyChoices();
             retryCadence(unsafe);
             nativePrefix(unsafe);
             finishSlices(unsafe);
@@ -682,6 +683,30 @@ public final class HologramControllerCaptureRegression {
     }
 
     @SuppressWarnings("unchecked")
+    private static void rejectsNativeFamilyChoices() throws java.io.IOException {
+        NBTTagCompound family = new NBTTagCompound();
+        family.setInteger("scope", 3);
+        SimpleAssert.that(!HologramNativeOperationChoices.read(null, family).hasHatches(),
+            "legacy family scope without explicit coordinate choices stays available");
+        NBTTagCompound choice = new NBTTagCompound();
+        choice.setIntArray("xyz", new int[] { 16, 64, 0 });
+        choice.setInteger("hatch", 60);
+        choice.setInteger("facing", -1);
+        NBTTagList rows = new NBTTagList();
+        rows.appendTag(choice);
+        family.setTag(HologramNativeOperationChoices.KEY, rows);
+        for (int mode = 0; mode <= 1; mode++) {
+            family.setInteger("mode", mode);
+            try {
+                HologramNativeOperationChoices.read(null, family);
+                throw new AssertionError("Family scope reached native coordinate inspection or mutation");
+            } catch (java.io.IOException expected) {
+                SimpleAssert.that(expected.getMessage().contains("同族范围"),
+                    "reject before resolving the manually selected exact XYZ against the live controller");
+            }
+        }
+    }
+
     private static void presetActions(sun.misc.Unsafe unsafe) throws ReflectiveOperationException, java.io.IOException {
         int energyId = 32740, mufflerId = 32741;
         net.minecraft.block.Block previousBlock = GregTechAPI.sBlockMachines;
