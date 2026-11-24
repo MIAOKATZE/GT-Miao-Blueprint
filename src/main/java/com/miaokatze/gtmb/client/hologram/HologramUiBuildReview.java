@@ -70,6 +70,7 @@ final class HologramUiBuildReview implements LocalView {
     }
 
     private HologramMaterialConfirmationDialog materialDialog, localMaterialDialog;
+    private String localMaterialNotice = "";
     private HologramLocalMaterialReview localMaterials;
     private int localMaterialSelectionVersion;
     private NBTTagCompound presentedMaterialState;
@@ -89,6 +90,7 @@ final class HologramUiBuildReview implements LocalView {
         else {
             closeLocalMaterials();
             localMaterials = new HologramLocalMaterialReview(state, ui.config.configuration());
+            localMaterialNotice = "";
             localMaterialSelectionVersion = ui.preview.selection()
                 .version();
         }
@@ -111,32 +113,63 @@ final class HologramUiBuildReview implements LocalView {
     void closeLocalMaterials() {
         if (localMaterials != null) localMaterials.close();
         localMaterials = null;
+        localMaterialNotice = "";
         if (localMaterialDialog != null) localMaterialDialog.close();
     }
 
-    void refreshLocalMaterials() {
-        if (!localMaterialsCurrent()) {
+    private boolean localMaterialPaneCurrent() {
+        HologramScreen root = ui.host == null ? null : ui.host.parent();
+        return root != null && root.ui == ui && ui.host.minecraft() != null
+            && ui.host.minecraft().currentScreen == root
+            && root.localControllerStandard();
+    }
+
+    private void retireStaleLocalMaterials() {
+        if (localMaterials == null || localMaterialsCurrent()) return;
+        HologramScreen root = ui.host == null ? null : ui.host.parent();
+        if (!localMaterialPaneCurrent()) {
             closeLocalMaterials();
             return;
         }
+        String blocker = HologramPlacementConfirmation.localStructureReviewBlocker(ui.session.state());
+        localMaterialNotice = !root.localMaterialOwnerCurrent(ui) ? "控制器或手持投影仪已变化，请重新打开结构。"
+            : !blocker.isEmpty() ? blocker + "返回后请重新打开材料窗口。"
+            : "施工范围或计划已变化，返回后请重新打开材料窗口。";
+        // Keep only the explanation, never the original rows or a submission after ownership changes.
+        localMaterials = null;
+    }
+
+    void refreshLocalMaterials() {
+        retireStaleLocalMaterials();
+        if (localMaterials == null) return;
         net.minecraft.entity.player.EntityPlayer player = ui.host.minecraft().thePlayer;
         if (player != null) localMaterials.refresh(player.inventory.mainInventory, player.inventory.currentItem);
     }
 
     @Override
     public LocalFrame localFrame() {
-        if (!localMaterialsCurrent()) return null;
+        retireStaleLocalMaterials();
+        if (localMaterials == null) return localMaterialNotice.isEmpty() || !localMaterialPaneCurrent() ? null
+            : new LocalFrame(new NBTTagCompound(), "材料清单已失效", localMaterialNotice, "返回后重新打开材料窗口", false);
+        String status = !ui.session.editable() ? localMaterialEditingReason()
+            : !localMaterialNotice.isEmpty() ? localMaterialNotice : localMaterials.status();
         return new LocalFrame(
             localMaterials.visible(),
             localMaterials.scopeLabel(),
-            localMaterials.status(),
+            status,
             localMaterials.empty() ? "所选范围没有目标材料" : "本机没有可列出的材料",
             localMaterials.ready());
     }
 
+    private String localMaterialEditingReason() {
+        if (ui.session.state().data.getBoolean("currentPlacementPending")) return "正在等待当前施工请求，请稍候。";
+        if (HologramBackgroundTasks.busy()) return "另一个任务正在进行，请稍候。";
+        return ui.session.editingReason();
+    }
+
     @Override
     public boolean localSubmitAvailable() {
-        // Estimates never grant or deny construction permission. The existing execution path rechecks the plan.
+        // A current but unfinished estimate never grants or denies permission; the server checks materials.
         return localMaterialsCurrent() && ui.session.editable();
     }
 
@@ -150,16 +183,20 @@ final class HologramUiBuildReview implements LocalView {
     }
 
     void submitLocalMaterials() {
-        if (!localMaterialsCurrent()) {
-            closeLocalMaterials();
-            return;
+        HologramScreen root = ui.host == null ? null : ui.host.parent();
+        if (root != null) submitLocalMaterials(root::reviewLocalConstruction);
+    }
+
+    void submitLocalMaterials(java.util.function.Predicate<NBTTagCompound> dispatch) {
+        retireStaleLocalMaterials();
+        if (!localSubmitAvailable()) return;
+        ui.session.notice("");
+        // True means only that this local action sent or scheduled the request, never server acceptance.
+        if (dispatch.test(localMaterials.settings())) closeLocalMaterials();
+        else {
+            localMaterialNotice = ui.session.notice();
+            if (localMaterialNotice.isEmpty()) localMaterialNotice = "未提交施工，请检查当前状态后重试。";
         }
-        if (!ui.session.editable()) return;
-        NBTTagCompound settings = localMaterials.settings();
-        closeLocalMaterials();
-        // The existing execution preparation owns context checks, upload and the final server review.
-        ui.host.parent()
-            .reviewLocalConstruction(settings);
     }
 
     private HologramMaterialConfirmationDialog activeMaterialDialog() {
@@ -177,11 +214,12 @@ final class HologramUiBuildReview implements LocalView {
             && !ui.library.discardReview()
             && !ui.library.overwriteReview()
             && !ui.processing.processingPresetSaveReview();
-        if (localMaterials != null && !localMaterialsCurrent()) closeLocalMaterials();
-        boolean local = localMaterials != null && !confirmation && unobstructed;
+        retireStaleLocalMaterials();
+        boolean local = (localMaterials != null || !localMaterialNotice.isEmpty() && localMaterialPaneCurrent())
+            && !confirmation && unobstructed;
         net.minecraft.entity.player.EntityPlayer player = ui.host.minecraft().thePlayer;
         if (local && player != null) {
-            localMaterials.tick(player.inventory.mainInventory, player.inventory.currentItem);
+            if (localMaterials != null) localMaterials.tick(player.inventory.mainInventory, player.inventory.currentItem);
             if (localMaterialDialog == null) localMaterialDialog = new HologramMaterialConfirmationDialog(
                 ui.host.parent()
                     .panel(),
