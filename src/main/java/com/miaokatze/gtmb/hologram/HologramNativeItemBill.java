@@ -31,7 +31,7 @@ final class HologramNativeItemBill {
 
     private final HologramSession owner;
     private final HologramCapture capture;
-    private final long revision, workspaceEpoch, uiSequence;
+    private final long revision, workspaceEpoch, uiSequence, declarationGeneration;
     private final int materialOptions, scope, layer, selected;
     private final List<Row> pending = new ArrayList<>();
     private final List<Row> rows = Collections.unmodifiableList(pending);
@@ -44,6 +44,7 @@ final class HologramNativeItemBill {
         revision = owner.planRevision;
         workspaceEpoch = owner.editorWorkspaceEpoch;
         uiSequence = owner.uiSequence;
+        declarationGeneration = HologramDeclarationAdapters.admissionGeneration();
         scope = owner.scope;
         layer = owner.layer;
         selected = owner.selected;
@@ -97,9 +98,14 @@ final class HologramNativeItemBill {
     boolean current(HologramSession s) {
         return finished && !unsupported && s == owner && s.capture == capture && s.planRevision == revision
             && s.editorWorkspaceEpoch == workspaceEpoch && s.uiSequence == uiSequence
+            && declarationCurrent()
             && s.scope == scope && s.layer == layer && s.selected == selected
             && materialOptions == options(s) && knownNativeItems(s) && s.planRecoveryFits
             && HologramWorkspace.find(s.player.getUniqueID()) == s && HologramSessionPolicy.valid(s);
+    }
+
+    boolean declarationCurrent() {
+        return declarationGeneration == HologramDeclarationAdapters.admissionGeneration();
     }
 
     List<Row> rows() {

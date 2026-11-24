@@ -139,6 +139,10 @@ final class HologramExecutionReview {
 
     /** Only the admitted, unchanged physical controller is exempt from ordinary native PLACE work. */
     static boolean retainedPhysicalAnchor(HologramSession s, HologramCapture.Cell cell) {
+        return retainedPhysicalAnchor(s, cell, false);
+    }
+
+    static boolean retainedPhysicalAnchor(HologramSession s, HologramCapture.Cell cell, boolean readyOnly) {
         if (s.virtual || s.mode != 0 || s.target == null || s.machine == null
             || s.capture == null || s.capture.projectionOnly || s.capture.pending || s.capture.incomplete
             || !HologramEditorWorkspaceRegistry.physicalProjection(s)
@@ -151,7 +155,7 @@ final class HologramExecutionReview {
             && index < s.expectedTiles.size() && s.expectedTiles.get(index) == s.target
             && index < s.expectedBlocks.size() && index < s.expectedMeta.size() && index < s.expectedFacings.size()
             && HologramPlanPolicy.expectedCurrent(s, index)
-            && s.capture.sourceCurrent(HologramSessionPolicy.trigger(s));
+            && (readyOnly ? s.capture.readyPlacementCurrent(s) : s.capture.sourceCurrent(HologramSessionPolicy.trigger(s)));
     }
 
     static final class Start {

@@ -489,13 +489,22 @@ public final class HologramCapture {
 
     /** A ready native job may not run custom callbacks or inherited world reads in the new intake path. */
     boolean readyPlacementSource(HologramSession s) {
-        return sourceBinding != null && sourceResolution != null && sourceResolution.policy == null
+        return sourceBinding != null && sourceResolution != null
+            && sourceResolution.status == StructureSources.Status.ABSENT && sourceResolution.sourceId.isEmpty()
+            && buildPieceCalls && nativeConstructCalls == 1
             && sourceBinding.machine == s.machine && sourceBinding.world == s.libraryWorld
             && sourceBinding.worldTile == s.target && sourceBinding.x == s.x && sourceBinding.y == s.y
             && sourceBinding.z == s.z && sourceBinding.facing.ordinal() == s.facing
             && !sourceResolution.hasObservedReadSet() && ownSources.observations.isEmpty()
             && inheritedSources.isEmpty() && retainedSources.isEmpty() && memberSources.isEmpty()
             && definition != null && HologramStructureCursor.supports(definition);
+    }
+
+    /** No captured read-set callbacks or per-element declaration refresh during compact admission. */
+    boolean readyPlacementCurrent(HologramSession s) {
+        return readyPlacementSource(s) && ownSources.rejection.isEmpty()
+            && ItemStack.areItemStacksEqual(trigger, HologramSessionPolicy.trigger(s))
+            && sourceBinding.validityFailure(false) == null;
     }
 
     /** Runtime-only, graph-free qualification. Serialization deliberately carries only its metadata receipt. */
@@ -625,6 +634,10 @@ public final class HologramCapture {
         }
 
         String validityFailure() {
+            return validityFailure(true);
+        }
+
+        String validityFailure(boolean refreshDeclarations) {
             try {
                 if (machine.getBaseMetaTileEntity() != tile || ((TileEntity) tile).isInvalid()
                     || tile.getMetaTileEntity() != metaTile
@@ -636,7 +649,7 @@ public final class HologramCapture {
                 if (machine.getExtendedFacing() != facing) return "SOURCE_POSE_CHANGED";
                 if (!world.blockExists(x, y, z)) return "SOURCE_CHUNK_UNLOADED";
                 if (world.getTileEntity(x, y, z) != worldTile) return "SOURCE_CONTROLLER_CHANGED";
-                String declarationFailure = declarationBindings.validityFailure();
+                String declarationFailure = declarationBindings.validityFailure(refreshDeclarations);
                 if (declarationFailure != null) return declarationFailure;
                 return proof.invalidReason();
             } catch (RuntimeException | LinkageError failure) {
