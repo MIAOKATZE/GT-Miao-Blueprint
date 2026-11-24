@@ -104,6 +104,10 @@ public final class HologramNativeRenderRegistry {
         ADAPTERS.add(adapter);
     }
 
+    static boolean hasCommunityAdapters() {
+        return !ADAPTERS.isEmpty() || !MULTIPART_ADAPTERS.isEmpty();
+    }
+
     /** Remove an adapter when its client integration is disabled or replaced. */
     public static boolean unregister(Adapter adapter) {
         return ADAPTERS.remove(adapter);
