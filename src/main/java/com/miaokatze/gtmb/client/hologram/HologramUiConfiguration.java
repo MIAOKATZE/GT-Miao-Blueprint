@@ -722,7 +722,7 @@ final class HologramUiConfiguration {
             20,
             customPresets ? "应用所选搭配" : "生成预设目标",
             ui.session.editable() && ui.session.state().data.getBoolean("supported")
-                && (customPresets ? selectedPresetAvailable() : ui.session.state().data.getBoolean("presetAvailable")),
+                && (customPresets ? selectedPresetAvailable() : basicPresetActionAvailable()),
             mx,
             my);
         ui.canvas.button(
@@ -1743,6 +1743,16 @@ final class HologramUiConfiguration {
 
     int nativePresetOffset() {
         return presetOffset;
+    }
+
+    /** This allows an explicit server check, not a promise that the local preview knows the quota. */
+    boolean basicPresetActionAvailable() {
+        NBTTagCompound state = ui.session.state().data;
+        return state.getBoolean("presetAvailable") || state.getBoolean("localStandardController")
+            && state.getBoolean("supported")
+            && !state.getBoolean("virtual")
+            && state.getInteger("mode") != 2
+            && !state.getBoolean("capturePending");
     }
 
     int nativePresetCount() {
