@@ -727,10 +727,11 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     }
 
     void controllerOpened() {
+        long controllerOpenId = controllerRequest;
         controllerRequest = 0;
         NBTTagCompound operation = explicitControllerOperation;
         explicitControllerOperation = null;
-        if (operation != null) tryDeferAction(() -> reviewExplicitControllerOperation(operation));
+        if (operation != null) tryDeferAction(() -> reviewExplicitControllerOperation(operation, controllerOpenId));
         openingController = null;
         openingConnection = null;
         openingTool = null;
@@ -755,7 +756,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         }
     }
 
-    private void reviewExplicitControllerOperation(NBTTagCompound request) {
+    private void reviewExplicitControllerOperation(NBTTagCompound request, long controllerOpenId) {
         if (minecraft().currentScreen != this) return;
         java.util.Set<java.util.List<Integer>> wanted = new java.util.HashSet<>();
         var positions = request.getTagList("explicitPositions", 10);
@@ -773,8 +774,14 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         }
         request.removeTag("explicitPositions");
         request.removeTag("explicitPrimary");
+        int[] selectedIndices = selection.build().toArray();
+        if (selectedIndices.length != wanted.size() || primary.length == 3 && selected < 0) {
+            ui.session.notice("所选结构格已变化，请重新选择操作范围");
+            return;
+        }
         request.setInteger("selected", selected);
-        request.setIntArray("selectedIndices", selection.build().toArray());
+        request.setIntArray("selectedIndices", selectedIndices);
+        request.setLong("nativeOperationOpenId", controllerOpenId);
         request.setBoolean("operationPreflight", true);
         ui.session.awaitingScan(true);
         long previous = ui.session.sequence();

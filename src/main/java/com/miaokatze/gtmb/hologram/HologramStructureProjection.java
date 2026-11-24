@@ -35,6 +35,10 @@ final class HologramStructureProjection {
 
     /** Full operation preparation uses the native source/owner-checked continuation, never a preview plan. */
     static boolean prepareOperation(HologramSession s) {
+        return prepareOperation(s, () -> true);
+    }
+
+    private static boolean prepareOperation(HologramSession s, java.util.function.BooleanSupplier configure) {
         if (!showing(s)) return !s.capturePending;
         if (s.capturePending || s.capture.incomplete
             || !HologramSessionPolicy.valid(s)
@@ -45,6 +49,7 @@ final class HologramStructureProjection {
             if (s.capture.incomplete) HologramControllerCapture.stopRejectedSource(s);
             return false;
         }
+        if (!configure.getAsBoolean()) return false;
         cancel(s);
         HologramSnapshotPreparation.cancel(s);
         HologramSession.clearPending(s);
@@ -74,10 +79,18 @@ final class HologramStructureProjection {
 
     /** Prepare a new native plan for review; consent to the previous projection never starts placement. */
     static void requestOperationReview(HologramSession s) {
+        requestOperationReview(s, null);
+    }
+
+    static void requestOperationReview(HologramSession s, java.util.function.BooleanSupplier configure) {
         s.operationReviewSequence = -1;
         s.jobVoucherRequested = false;
-        if (showing(s)) prepareOperation(s);
+        if (showing(s)) prepareOperation(s, configure == null ? () -> true : configure);
         else {
+            if (configure != null && (s.capture == null || s.capturePending || s.capture.incomplete
+                || !HologramSessionPolicy.valid(s)
+                || HologramWorkspace.find(s.player.getUniqueID()) != s
+                || !s.capture.sourceCurrent(HologramSessionPolicy.trigger(s)) || !configure.getAsBoolean())) return;
             HologramSnapshotPreparation.cancel(s);
             s.forcePlacementReady = false;
             s.placementReviewIssued = false;

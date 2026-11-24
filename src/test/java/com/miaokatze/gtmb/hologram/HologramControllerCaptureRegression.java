@@ -820,6 +820,7 @@ public final class HologramControllerCaptureRegression {
                     && s.facingPins.equals(facings),
                 "regeneration preserves manual ownership and facing selections");
             scanScopes(s, energy, muffler);
+            explicitNativeOperationOptions(s);
             operationReviews(s, energy, muffler);
         } finally {
             HologramWorkspace.clear();
@@ -924,6 +925,64 @@ public final class HologramControllerCaptureRegression {
                 "an air-looking hint without the native air declaration cannot prove required emptiness");
         }
         SimpleAssert.eq(2, verified, "the real native source includes direct and transparently wrapped required air");
+    }
+
+    private static void explicitNativeOperationOptions(HologramSession s)
+        throws java.io.IOException {
+        long originalOpenId = s.controllerOpenId;
+        int originalScope = s.scope, originalSelected = s.selected, originalLayer = s.layer;
+        boolean originalNoHatches = s.noHatches;
+        var originalSelection = new java.util.LinkedHashSet<>(s.selectedIndices);
+        s.controllerOpenId = 101;
+        try {
+            for (int mode = 1; mode <= 2; mode++) {
+                HologramCapture before = s.capture;
+                long previousNonce = s.placementReviewNonce;
+                NBTTagCompound action = presetAction(s, "scan");
+                action.setBoolean("operationPreflight", true);
+                action.setLong("nativeOperationOpenId", 100);
+                action.setInteger("main", s.main);
+                action.setTag("channels", s.channels.copy());
+                action.setBoolean("noHatches", originalNoHatches);
+                action.setInteger("facing", s.facing);
+                action.setInteger("mode", mode);
+                action.setInteger("scope", 2);
+                action.setInteger("layer", 0);
+                action.setInteger("selected", 0);
+                action.setIntArray("selectedIndices", new int[] { 0 });
+                s.actionTick = Long.MIN_VALUE;
+                HologramActionDispatcher.handle(s.player, action);
+                SimpleAssert.that(s.capture == before && s.placementReviewNonce == previousNonce
+                    && s.job == 0, "a stale controller opening cannot alter native operation scope or review");
+                action.setLong("nativeOperationOpenId", 101);
+                action.setLong("uiSequence", s.uiSequence + 1);
+                action.setIntArray("selectedIndices", new int[] { before.cells.size() });
+                HologramActionDispatcher.handle(s.player, action);
+                SimpleAssert.that(s.capture == before && s.placementReviewNonce == previousNonce
+                    && s.job == 0, "an invalid selected cell cannot widen native operation scope");
+                action.setLong("uiSequence", s.uiSequence + 1);
+                action.setIntArray("selectedIndices", new int[] { 0 });
+                HologramActionDispatcher.handle(s.player, action);
+                complete(s);
+                SimpleAssert.that(s.capture != before && s.mode == mode && s.scope == 2 && s.job == 0
+                    && s.placementReviewNonce > previousNonce && HologramStructureProjection.operationReviewActive(s)
+                    && s.selectedIndices.size() == 1 && s.selectedIndices.contains(s.selected),
+                    "explicit native mode " + mode + " keeps the selected cell and only requests a new review: "
+                        + operationState(s));
+            }
+        } finally {
+            s.controllerOpenId = originalOpenId;
+            s.mode = 0;
+            s.scope = originalScope;
+            s.layer = originalLayer;
+            s.selected = originalSelected;
+            s.selectedIndices.clear();
+            s.selectedIndices.addAll(originalSelection);
+            s.actionTick = Long.MIN_VALUE;
+            HologramActionDispatcher.handle(s.player, presetAction(s, "scan"));
+            complete(s);
+            s.actionTick = Long.MIN_VALUE;
+        }
     }
 
     private static void operationReviews(HologramSession s, ItemStack energy, ItemStack muffler)
