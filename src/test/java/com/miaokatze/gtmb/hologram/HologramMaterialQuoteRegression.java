@@ -5,10 +5,14 @@ package com.miaokatze.gtmb.hologram;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.IdentityHashMap;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.Random;
 
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.init.Items;
@@ -35,7 +39,11 @@ final class HologramMaterialQuoteRegression {
             wireIdentityAndLongCounts();
             sharedFuzzyStockProtectsExactContents();
             actualFuzzyPaymentProtectsLaterExactMachine();
-            coordinateQuotesAndActualPaymentSharePhysicalCards();
+            Item sensor = sensorCard();
+            coordinateQuotesAndActualPaymentSharePhysicalCards(sensor);
+            indexedCoordinateQuotesMatchPriorAllocator(sensor);
+            indexedCoordinateQuotesDoLinearIdentityReads(sensor);
+            indexedCoordinateQuotesPreserveOverflowBoundary(sensor);
             boundToolSlotSurvivesHotbarSelection();
             voucherProjectionAndExactStockSnapshot();
             headlessAeLongArithmetic();
@@ -1048,8 +1056,176 @@ final class HologramMaterialQuoteRegression {
         return stack;
     }
 
-    private static void coordinateQuotesAndActualPaymentSharePhysicalCards() throws Exception {
-        Item item = sensorCard();
+    private static void indexedCoordinateQuotesMatchPriorAllocator(Item item) throws Exception {
+        ItemStack nativeA = card(item, 10, ""), nativeB = card(item, 11, "");
+        ItemStack opaque = card(item, 12, "");
+        opaque.getTagCompound().setString("privateConfig", "ab");
+        ItemStack otherOpaque = card(item, 12, "relative");
+        otherOpaque.getTagCompound().setString("privateConfig", "cd");
+        ItemStack typed = card(item, 13, "absolute");
+        typed.getTagCompound().setString("x", "13");
+        ItemStack legacyMarker = card(item, 20, "");
+        legacyMarker.getTagCompound().setBoolean(HologramCoordinatePolicies.PAYMENT, true);
+        ItemStack unknown = card(item, 10, "unreviewed");
+        var physical = Arrays.asList(nativeA, nativeA.copy(), nativeB, opaque);
+        var repeated = legacy(card(item, 10, "absolute"), 1, 0, 0);
+        var input = Arrays.asList(
+            legacy(card(item, 19, "relative"), 3, 0, 0),
+            legacy(nativeA, 1, 0, 0),
+            repeated,
+            repeated,
+            legacy(card(item, 11, "absolute"), 2, 0, 0),
+            legacy(card(item, 29, "clear"), 2, 0, 0),
+            legacy(legacyMarker, 1, 0, 0),
+            legacy(otherOpaque, 1, 0, 0),
+            legacy(typed, 1, 0, 0),
+            legacy(unknown, 1, 0, 0));
+        for (int seed = 0; seed < 16; seed++) {
+            var rows = new ArrayList<>(input);
+            Collections.shuffle(rows, new Random(seed));
+            List<NBTTagCompound> priorCalls = new ArrayList<>(), indexedCalls = new ArrayList<>();
+            var expected = priorCoordinateAllocation(rows, coordinateStock(physical, priorCalls));
+            var counter = new HologramMaterialQuote.QuoteCounter(rows, coordinateStock(physical, indexedCalls),
+                ignored -> false);
+            for (NBTTagCompound row : rows) require(
+                counter.count(row) == expected.get(row),
+                "indexed allocation must preserve prior per-row coordinate payment and shortages");
+            require(priorCalls.equals(indexedCalls), "coordinate stock callbacks keep their sample, order and limit");
+        }
+    }
+
+    private static HologramMaterialQuote.ItemStock coordinateStock(List<ItemStack> physical,
+        List<NBTTagCompound> calls) {
+        return new HologramMaterialQuote.ItemStock() {
+
+            @Override
+            public long exact(ItemStack expected, long limit) {
+                NBTTagCompound call = expected.writeToNBT(new NBTTagCompound());
+                call.setLong("limit", limit);
+                calls.add(call);
+                long stock = 0;
+                for (ItemStack actual : physical) if (HologramCoordinatePolicies.paymentEquivalent(expected, actual))
+                    stock++;
+                return Math.min(stock, limit);
+            }
+
+            @Override
+            public long fuzzy(ItemStack expected, long limit) {
+                throw new AssertionError("Coordinate payment must not use unqualified fuzzy stock");
+            }
+        };
+    }
+
+    /** The former pairwise overlap calculation is the oracle, not the indexed protection keys. */
+    private static Map<NBTTagCompound, Long> priorCoordinateAllocation(List<NBTTagCompound> rows,
+        HologramMaterialQuote.ItemStock stock) {
+        Map<NBTTagCompound, Long> result = new IdentityHashMap<>();
+        for (NBTTagCompound row : rows) {
+            ItemStack item = ItemStack.loadItemStackFromNBT(row);
+            if (HologramMaterialReservations.priority(item) != 0) continue;
+            long demand = HologramMaterialQuote.quantity(row, "required");
+            result.put(row, Math.max(0L, Math.min(demand, stock.exact(item, demand))));
+        }
+        for (int priority = 1; priority <= 2; priority++) {
+            Map<HologramBlueprintResources.ExactKey, List<NBTTagCompound>> pools = new LinkedHashMap<>();
+            for (NBTTagCompound row : rows) {
+                ItemStack item = ItemStack.loadItemStackFromNBT(row);
+                if (HologramMaterialReservations.priority(item) == priority)
+                    pools.computeIfAbsent(HologramMaterialReservations.key(item, priority), ignored -> new ArrayList<>())
+                        .add(row);
+            }
+            for (List<NBTTagCompound> pool : pools.values()) {
+                ItemStack first = ItemStack.loadItemStackFromNBT(pool.get(0));
+                long protectedStock = 0, demand = 0;
+                for (NBTTagCompound row : pool)
+                    demand = Math.addExact(demand, HologramMaterialQuote.quantity(row, "required"));
+                for (NBTTagCompound row : rows) {
+                    Long paid = result.get(row);
+                    if (paid != null
+                        && HologramCoordinatePolicies.paymentEquivalent(first, ItemStack.loadItemStackFromNBT(row)))
+                        protectedStock = Math.addExact(protectedStock, paid);
+                }
+                long remaining = Math.max(0L, stock.exact(first, Math.addExact(demand, protectedStock)) - protectedStock);
+                for (NBTTagCompound row : pool) {
+                    long paid = Math.min(remaining, HologramMaterialQuote.quantity(row, "required"));
+                    result.put(row, paid);
+                    remaining -= paid;
+                }
+            }
+        }
+        return result;
+    }
+
+    private static void indexedCoordinateQuotesDoLinearIdentityReads(Item item) throws Exception {
+        int size = 4096;
+        int[] reads = { 0 }, counts = { 0 };
+        var rows = new ArrayList<NBTTagCompound>(size);
+        for (int i = 0; i < size; i++) {
+            // ItemStack.readFromNBT reads "tag" on every identity load. Bound actual work rather than wall time.
+            NBTTagCompound row = new NBTTagCompound() {
+
+                @Override
+                public NBTTagCompound getCompoundTag(String key) {
+                    if ("tag".equals(key) && ++reads[0] > 6 * size)
+                        throw new AssertionError("Absolute pools must not read previously paid identities pairwise");
+                    return super.getCompoundTag(key);
+                }
+            };
+            card(item, i, "absolute").writeToNBT(row);
+            row.setLong("required", 1);
+            rows.add(row);
+        }
+        var counter = new HologramMaterialQuote.QuoteCounter(rows, new HologramMaterialQuote.ItemStock() {
+
+            @Override
+            public long exact(ItemStack expected, long limit) {
+                require(limit == 1, "distinct absolute coordinates cannot protect each other's stock");
+                counts[0]++;
+                return 1;
+            }
+
+            @Override
+            public long fuzzy(ItemStack expected, long limit) {
+                throw new AssertionError("Absolute payments use exact stock");
+            }
+        }, ignored -> false);
+        for (NBTTagCompound row : rows) require(counter.count(row) == 1, "each absolute pool is checked once");
+        require(counts[0] == size && reads[0] >= size, "the linear-work witness exercised all coordinate pools");
+    }
+
+    private static void indexedCoordinateQuotesPreserveOverflowBoundary(Item item) throws Exception {
+        NBTTagCompound strictA = legacy(card(item, 10, ""), Long.MAX_VALUE, 0, 0);
+        NBTTagCompound strictB = legacy(card(item, 11, ""), Long.MAX_VALUE, 0, 0);
+        NBTTagCompound matching = legacy(card(item, 12, "relative"), 1, 0, 0);
+        ItemStack unrelated = card(item, 12, "relative");
+        unrelated.getTagCompound().setString("title", "Other configuration");
+        NBTTagCompound other = legacy(unrelated, 1, 0, 0);
+        HologramMaterialQuote.ItemStock full = new HologramMaterialQuote.ItemStock() {
+
+            @Override
+            public long exact(ItemStack expected, long limit) {
+                return limit;
+            }
+
+            @Override
+            public long fuzzy(ItemStack expected, long limit) {
+                throw new AssertionError("Coordinate payments use exact stock");
+            }
+        };
+        var safe = new HologramMaterialQuote.QuoteCounter(Arrays.asList(strictA, strictB, other), full,
+            ignored -> false);
+        require(safe.count(other) == 1, "overflow for an unused normalized key must not reject another pool");
+        var overflow = new HologramMaterialQuote.QuoteCounter(Arrays.asList(strictA, strictB, matching), full,
+            ignored -> false);
+        try {
+            overflow.count(matching);
+            throw new AssertionError("A requested pool must not silently wrap overflowing protected stock");
+        } catch (ArithmeticException expected) {
+            require("long overflow".equals(expected.getMessage()), "matching overflow retains the checked sum failure");
+        }
+    }
+
+    private static void coordinateQuotesAndActualPaymentSharePhysicalCards(Item item) throws Exception {
         ItemStack relative = card(item, 19, "relative"), clear = card(item, 29, "clear");
         ItemStack n = card(item, 1, ""), m = card(item, 2, "");
         NBTTagCompound a = legacy(relative, 1, 0, 0), b = legacy(clear, 1, 0, 0);

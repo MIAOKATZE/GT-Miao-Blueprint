@@ -369,41 +369,66 @@ public final class HologramMaterialQuote {
         }
 
         private void countCoordinates(List<NBTTagCompound> group) {
+            Map<HologramBlueprintResources.ExactKey, List<NBTTagCompound>> absolute = new LinkedHashMap<>(),
+                broad = new LinkedHashMap<>();
             for (NBTTagCompound member : group) {
                 ItemStack identity = ItemStack.loadItemStackFromNBT(member);
-                if (HologramMaterialReservations.priority(identity) != 0) continue;
-                long demand = quantity(member, "required");
-                available.put(member, Math.max(0L, Math.min(demand, stock.exact(identity, demand))));
-            }
-            for (int priority = 1; priority <= 2; priority++) {
-                Map<HologramBlueprintResources.ExactKey, List<NBTTagCompound>> pools = new LinkedHashMap<>();
-                for (NBTTagCompound member : group) {
-                    ItemStack identity = ItemStack.loadItemStackFromNBT(member);
-                    if (HologramMaterialReservations.priority(identity) == priority) pools
-                        .computeIfAbsent(
-                            HologramMaterialReservations.key(identity, priority),
-                            ignored -> new ArrayList<>())
+                int priority = HologramMaterialReservations.priority(identity);
+                if (priority == 0) {
+                    long demand = quantity(member, "required");
+                    available.put(member, Math.max(0L, Math.min(demand, stock.exact(identity, demand))));
+                } else {
+                    (priority == 1 ? absolute : broad)
+                        .computeIfAbsent(HologramMaterialReservations.key(identity, priority), ignored -> new ArrayList<>())
                         .add(member);
                 }
-                for (List<NBTTagCompound> members : pools.values()) {
-                    ItemStack expected = ItemStack.loadItemStackFromNBT(members.get(0));
-                    long demand = 0, protectedStock = 0;
-                    for (NBTTagCompound member : members) demand = Math.addExact(demand, quantity(member, "required"));
-                    for (NBTTagCompound member : group) {
-                        Long paid = available.get(member);
-                        if (paid != null && HologramCoordinatePolicies
-                            .paymentEquivalent(expected, ItemStack.loadItemStackFromNBT(member)))
-                            protectedStock = Math.addExact(protectedStock, paid);
-                    }
-                    long proven = Math.max(0L, stock.exact(expected, Math.addExact(demand, protectedStock)));
-                    long pool = Math.max(0L, proven - Math.min(proven, protectedStock));
-                    for (NBTTagCompound member : members) {
-                        long paid = Math.min(pool, quantity(member, "required"));
-                        available.put(member, paid);
-                        pool -= paid;
-                    }
+            }
+            Map<HologramBlueprintResources.ExactKey, Long> absolutePaid = new LinkedHashMap<>(),
+                broadPaid = new LinkedHashMap<>();
+            // A pool matches a previously paid row exactly when its payment-normalized key matches. Distinct
+            // pools of the same priority are disjoint, but a broader payment must protect stricter purchases.
+            for (NBTTagCompound member : group) {
+                long paid = available.getOrDefault(member, 0L);
+                if (paid == 0) continue;
+                ItemStack identity = ItemStack.loadItemStackFromNBT(member);
+                if (!absolute.isEmpty()) credit(absolutePaid, identity, 1, paid);
+                if (!broad.isEmpty()) credit(broadPaid, identity, 2, paid);
+            }
+            countCoordinatePools(absolute, absolutePaid, broad.isEmpty() ? null : broadPaid);
+            countCoordinatePools(broad, broadPaid, null);
+        }
+
+        private void countCoordinatePools(Map<HologramBlueprintResources.ExactKey, List<NBTTagCompound>> pools,
+            Map<HologramBlueprintResources.ExactKey, Long> protectedPayments,
+            Map<HologramBlueprintResources.ExactKey, Long> broaderPayments) {
+            for (Map.Entry<HologramBlueprintResources.ExactKey, List<NBTTagCompound>> entry : pools.entrySet()) {
+                List<NBTTagCompound> members = entry.getValue();
+                ItemStack expected = ItemStack.loadItemStackFromNBT(members.get(0));
+                long demand = 0;
+                for (NBTTagCompound member : members) demand = Math.addExact(demand, quantity(member, "required"));
+                long protectedStock = protectedPayments.getOrDefault(entry.getKey(), 0L);
+                if (protectedStock < 0) throw new ArithmeticException("long overflow");
+                long proven = Math.max(0L, stock.exact(expected, Math.addExact(demand, protectedStock)));
+                long pool = Math.max(0L, proven - Math.min(proven, protectedStock));
+                for (NBTTagCompound member : members) {
+                    long paid = Math.min(pool, quantity(member, "required"));
+                    available.put(member, paid);
+                    pool -= paid;
+                }
+                if (broaderPayments != null) for (NBTTagCompound member : members) {
+                    long paid = available.get(member);
+                    if (paid != 0) credit(broaderPayments, ItemStack.loadItemStackFromNBT(member), 2, paid);
                 }
             }
+        }
+
+        private static void credit(Map<HologramBlueprintResources.ExactKey, Long> ledger, ItemStack item,
+            int priority, long paid) {
+            // Only a requested pool can overflow the former checked sum. An overflow marker leaves unused keys harmless.
+            ledger.merge(
+                HologramMaterialReservations.key(item, priority),
+                paid,
+                (previous, added) -> previous < 0 || Long.MAX_VALUE - previous < added ? -1L : previous + added);
         }
     }
 

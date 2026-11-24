@@ -240,10 +240,16 @@ final class HologramResourcePlanner {
                 s.replacementReady = false;
                 throw new IllegalStateException("Planning capture source changed");
             }
+            // Read the shared deadline only for a positive request; elapsed time between the two clocks must not
+            // manufacture a nonzero slice. Ownership/source invalidation above still applies to expired requests.
+            if (maxNanos <= 0) {
+                lastWork = 0;
+                return done();
+            }
             long measured = HologramRuntimeMetrics.start();
             long now = System.nanoTime();
             long available = maxNanos == Long.MAX_VALUE ? Long.MAX_VALUE
-                : Math.max(0L, HologramWorkBudget.deadline(Math.max(0L, maxNanos)) - now);
+                : Math.max(0L, HologramWorkBudget.deadline(maxNanos) - now);
             HologramPlanBudget budget = new HologramPlanBudget(maxWork, available);
             try {
                 while (!done() && budget.take()) advance();
