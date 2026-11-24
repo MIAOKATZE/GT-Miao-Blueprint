@@ -15,6 +15,7 @@ import net.minecraft.tileentity.TileEntity;
 import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 import com.miaokatze.gtmb.hologram.HologramControllerTarget;
 import com.miaokatze.gtmb.hologram.HologramLocalControllerCapture;
+import com.miaokatze.gtmb.hologram.HologramNativeOperationChoices;
 import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 
 /** Minecraft screen adapter. Domain state and behavior live in composed workflow modules. */
@@ -392,24 +393,23 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             return;
         }
         int mode = displayed.data.getInteger("mode");
+        boolean compact = com.miaokatze.gtmb.hologram.HologramCompactNativeRequest.enabled();
         net.minecraft.nbt.NBTTagList choices;
         try {
-            choices = mode == 2 ? new net.minecraft.nbt.NBTTagList()
-                : nativeReviewChoices(displayed, localNativeChoices, mode == 1);
+            choices = nativeReviewChoices(displayed, localNativeChoices, mode, settings.getInteger("scope"), compact);
         } catch (java.io.IOException invalid) {
             ui.session.notice(invalid.getMessage());
             return;
         }
         if (mode != 0 || choices.tagCount() != 0) {
             settings.setInteger("mode", mode);
-            if (choices.tagCount() != 0) settings.setTag(
-                com.miaokatze.gtmb.hologram.HologramNativeOperationChoices.KEY, choices);
+            if (choices.tagCount() != 0) settings.setTag(HologramNativeOperationChoices.KEY, choices);
             HologramClient.prepareExplicitControllerOperation(openingController, localControllerSide, settings, displayed);
             return;
         }
         java.util.UUID id = java.util.UUID.randomUUID();
         localExecutionRequest = id;
-        if (com.miaokatze.gtmb.hologram.HologramCompactNativeRequest.enabled()) {
+        if (compact) {
             try {
                 NBTTagCompound request = com.miaokatze.gtmb.hologram.HologramCompactNativeRequest.encode(
                     id, openingController, localControllerSide, client.thePlayer.inventory.currentItem, displayed.data,
@@ -483,11 +483,13 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         ui.session.notice(reason == null || reason.isEmpty() ? "施工清单准备失败" : reason);
     }
 
-    /** Only edited row identities get examined; never serialize the captured structure for an advanced review. */
+    /** Reserve native review for exact hatch-only intent. Disabled compact mode keeps the original full local plan otherwise. */
     static net.minecraft.nbt.NBTTagList nativeReviewChoices(HologramState displayed, Iterable<Integer> edited,
-        boolean replacement) throws java.io.IOException {
+        int mode, int scope, boolean compact) throws java.io.IOException {
         net.minecraft.nbt.NBTTagList choices = new net.minecraft.nbt.NBTTagList();
-        boolean other = false;
+        if (mode == 2) return choices;
+        boolean replacement = mode == 1, legacyOrdinary = mode == 0 && !compact;
+        boolean other = false, oversized = false;
         for (int index : edited) {
             if (index < 0 || index >= displayed.cells.size()) throw new java.io.IOException("原生结构选择已变化。");
             HologramState.Cell cell = displayed.cells.get(index);
@@ -496,19 +498,34 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
                 other = true;
                 continue;
             }
-            if (cell.anchor || target.hasTagCompound()
+            if (cell.anchor) throw new java.io.IOException("手选仓室包含不支持的设备配置。");
+            if (target.hasTagCompound()
                 || !(gregtech.common.blocks.ItemMachines.getMetaTileEntity(target) instanceof gregtech.api.metatileentity
-                    .implementations.MTEHatch)) throw new java.io.IOException("手选仓室包含不支持的设备配置。");
-            if (choices.tagCount() >= com.miaokatze.gtmb.hologram.HologramNativeOperationChoices.LIMIT)
-                throw new java.io.IOException("手选仓室过多，请分次确认。");
+                    .implementations.MTEHatch)) {
+                if (!legacyOrdinary) throw new java.io.IOException("手选仓室包含不支持的设备配置。");
+                other = true;
+                continue;
+            }
+            if (choices.tagCount() >= HologramNativeOperationChoices.LIMIT) {
+                if (!legacyOrdinary) throw new java.io.IOException("手选仓室过多，请分次确认。");
+                oversized = true;
+                continue;
+            }
             NBTTagCompound choice = new NBTTagCompound();
             choice.setIntArray("xyz", new int[] { cell.x, cell.y, cell.z });
             choice.setInteger("hatch", target.getItemDamage());
             choice.setInteger("facing", cell.hatchFacing);
             choices.appendTag(choice);
         }
-        if ((replacement || choices.tagCount() != 0) && (other || displayed.data.getBoolean("presetActive")))
-            throw new java.io.IOException("请在原生审阅工作台单独设置仓室预设或其他替换目标。");
+        if (other || displayed.data.getBoolean("presetActive")) {
+            // Decide before issuing a request. Do not send a subset of the player's edits to native review.
+            // Returning no choices here leaves the untouched displayed plan to the existing checked legacy compiler.
+            if (legacyOrdinary) return new net.minecraft.nbt.NBTTagList();
+            if (replacement || choices.tagCount() != 0)
+                throw new java.io.IOException("请在原生审阅工作台单独设置仓室预设或其他替换目标。");
+        }
+        if (oversized) throw new java.io.IOException("手选仓室过多，请分次确认。");
+        if (choices.tagCount() != 0) HologramNativeOperationChoices.requirePositionScope(scope);
         return choices;
     }
 

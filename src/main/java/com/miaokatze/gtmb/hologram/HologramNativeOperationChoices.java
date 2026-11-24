@@ -20,6 +20,7 @@ public final class HologramNativeOperationChoices {
 
     public static final String KEY = "nativeHatchChoices";
     public static final int LIMIT = 64;
+    private static final String FAMILY_SCOPE = "手选仓室不能使用同族范围，请选择具体位置或整个结构。";
     private final Map<String, Choice> requested = new LinkedHashMap<>();
     private final Map<Integer, Applied> staged = new LinkedHashMap<>();
     private String problem;
@@ -45,6 +46,10 @@ public final class HologramNativeOperationChoices {
         }
     }
 
+    public static void requirePositionScope(int scope) throws IOException {
+        if (scope == 3) throw new IOException(FAMILY_SCOPE);
+    }
+
     static HologramNativeOperationChoices read(HologramSession s, NBTTagCompound request) throws IOException {
         HologramNativeOperationChoices choices = new HologramNativeOperationChoices();
         if (!request.hasKey(KEY)) return choices;
@@ -53,6 +58,7 @@ public final class HologramNativeOperationChoices {
         if (rows.tagCount() > LIMIT || rows.tagCount() == 0 || rows.func_150303_d() != 10
             || request.getInteger("mode") == 2 || request.getBoolean("noHatches"))
             throw new IOException("此模式、设置或数量不支持手选仓室。");
+        requirePositionScope(request.getInteger("scope"));
         for (int i = 0; i < rows.tagCount(); i++) {
             NBTTagCompound row = rows.getCompoundTagAt(i);
             if (row.func_150296_c().size() != 3 || !row.hasKey("xyz", 11) || !row.hasKey("hatch", 3)
@@ -96,6 +102,7 @@ public final class HologramNativeOperationChoices {
     }
 
     String finish(HologramSession s) {
+        if (s.scope == 3 && hasHatches()) return FAMILY_SCOPE;
         if (s.scope >= 2 && (s.selectedIndices.size() != s.scanSelectedPositions.size()
             || s.scanSelectedPosition != null && s.selected < 0))
             return "原生施工选择已变化，请重新选择完整范围。";
