@@ -130,6 +130,13 @@ public final class HologramClientP0Regression {
             "the local preset selector displays the real GT voltage range without a server query");
         SimpleAssert.that(!opening.getBoolean("presetAvailable"),
             "the tier catalogue alone does not prove authoritative declared quotas");
+        NBTTagCompound scope = new NBTTagCompound();
+        SimpleAssert.that(HologramScreen.ordinaryNativeSubmit(opening, scope, false, false)
+            && !HologramScreen.ordinaryNativeSubmit(opening, scope, false, true),
+            "full ordinary mode never selects compatibility unless the player explicitly does");
+        scope.setIntArray("selectedIndices", new int[] { 2, 4 });
+        SimpleAssert.that(!HologramScreen.ordinaryNativeSubmit(opening, scope, false, false),
+            "an exact selected scope cannot accidentally become a whole native operation");
         NBTTagCompound live = new NBTTagCompound();
         live.setBoolean("target", true);
         live.setBoolean("supported", true);

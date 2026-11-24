@@ -328,6 +328,7 @@ final class HologramControllerCapture {
             if (resumed == null) s.captureAttempts++;
             ItemStack initialTrigger = HologramSessionPolicy.trigger(s);
             s.capture = s.nativeCompactSource != null ? HologramCapture.collectCompact(s, initialTrigger, resumed)
+                : HologramNativeCompactStart.ordinary(s) ? HologramCapture.collectOrdinary(s, initialTrigger, resumed)
                 : projection
                     ? HologramCapture.collectProjection(
                         s.machine,
@@ -346,6 +347,7 @@ final class HologramControllerCapture {
             ItemStack observedTrigger = HologramSessionPolicy.trigger(s);
             if (!s.capture.incomplete && !ItemStack.areItemStackTagsEqual(initialTrigger, observedTrigger)) {
                 s.capture = s.nativeCompactSource != null ? HologramCapture.collectCompact(s, observedTrigger, null)
+                    : HologramNativeCompactStart.ordinary(s) ? HologramCapture.collectOrdinary(s, observedTrigger, null)
                     : projection
                         ? HologramCapture.collectProjection(
                             s.machine,

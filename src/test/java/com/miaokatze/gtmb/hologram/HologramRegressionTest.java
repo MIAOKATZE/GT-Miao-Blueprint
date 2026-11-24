@@ -399,6 +399,8 @@ public final class HologramRegressionTest {
         cases.put(
             "local_material_estimates_never_grant_payment_or_inventory_authority",
             HologramStaticMaterialsRegression::run);
+        cases.put("large_local_material_planning_and_stale_scope",
+            com.miaokatze.gtmb.client.hologram.HologramLocalMaterialPlannerRegression::run);
         cases.put("rotation_cycles_all_six_legal_fronts", HologramRegressionTest::faceRotation);
         cases.put("hatch_direction_policy_keeps_built_snapshot", HologramRegressionTest::hatchDirectionSnapshot);
         cases.put("hatch_matching_preserves_override_and_legacy_class_rules", HologramRegressionTest::hatchMatching);

@@ -44,7 +44,32 @@ public final class HologramProjectionLifetimeRegression {
         SimpleAssert.that(
             !clock.visible("one", 5, 36_000_000_002L),
             "selection display never extends the old placement deadline");
+        rendererOwnership();
         activeWorkspaceSnapshot();
+    }
+
+    private static void rendererOwnership() {
+        net.minecraft.nbt.NBTTagCompound owner = new net.minecraft.nbt.NBTTagCompound();
+        owner.setString("session", "owned-world-projection");
+        owner.setString("generation", "owned-world-projection");
+        owner.setLong("planRevision", 2);
+        owner.setLong("placementReviewNonce", 3);
+        owner.setLong("editorWorkspaceEpoch", 4);
+        HologramState displayed = new HologramState(owner);
+        net.minecraft.nbt.NBTTagCompound changed = (net.minecraft.nbt.NBTTagCompound) owner.copy();
+        changed.setInteger("job", 3);
+        SimpleAssert.that(MiaoVisonLiteRenderer.sameWorldProjection(new HologramState(changed), displayed),
+            "terminal metadata matches its actual world renderer without needing object identity");
+        for (String key : new String[] { "planRevision", "placementReviewNonce", "editorWorkspaceEpoch",
+            "dimension", "x", "y", "z" }) {
+            changed.setLong(key, owner.getLong(key) + 1);
+            SimpleAssert.that(!MiaoVisonLiteRenderer.sameWorldProjection(new HologramState(changed), displayed),
+                "mismatched " + key + " cannot retire a different world renderer");
+            changed.setLong(key, owner.getLong(key));
+        }
+        changed.setBoolean("localPreview", true);
+        SimpleAssert.that(!MiaoVisonLiteRenderer.sameWorldProjection(new HologramState(changed), displayed),
+            "a transient local preview cannot retire a server renderer with similar metadata");
     }
 
     @SuppressWarnings("unchecked")

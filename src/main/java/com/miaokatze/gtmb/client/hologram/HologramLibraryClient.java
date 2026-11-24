@@ -100,6 +100,8 @@ final class HologramLibraryClient {
     private volatile UUID placementRequest;
     private boolean directPlacement;
     private boolean placementRequestSent;
+    private int placementProgressStage;
+    private long placementProgressDone, placementProgressTotal, placementProgressSequence;
     private PublicRead publicRead;
     private volatile PublicCopySave publicCopySave;
     private PublicIdentity incomingPublic;
@@ -1203,7 +1205,10 @@ final class HologramLibraryClient {
             HologramProgress observed = preparationProgress.view(now);
             if (observed != null) return observed;
             transferProgress.update(identity, "library.prepare", 0, 0, "", false, now);
-        } else if (preparing && upgradeTask == null)
+        } else if (preparing && placementRequest != null)
+            transferProgress.update(identity, localProgressPhase, Math.max(0, placementProgressDone),
+                placementProgressTotal, "operations", false, now);
+        else if (preparing && upgradeTask == null)
             transferProgress.update(identity, localProgressPhase, 0, 0, "", false, now);
         else if (quickPreview) transferProgress.update(identity, "library.read", 0, 0, "", false, now);
         else if (deletingServer) transferProgress.update(identity, "library.delete", 0, 0, "", false, now);
@@ -2304,6 +2309,10 @@ final class HologramLibraryClient {
         UUID request = UUID.randomUUID();
         placementRequest = request;
         placementRequestSent = false;
+        placementProgressStage = -1;
+        placementProgressDone = -1;
+        placementProgressTotal = 0;
+        placementProgressSequence = -1;
         placementSubmission = submission;
         directPlacement = direct;
         quickTool = mc.thePlayer.getHeldItem();
@@ -2319,7 +2328,7 @@ final class HologramLibraryClient {
         int worldHeight = mc.theWorld.getHeight();
         long token = generation;
         preparing = true;
-        localProgressPhase = "library.verify";
+        localProgressPhase = "placement.prepare";
         status = "正在准备锁定位置的施工清单";
         work(() -> {
             source.requireStoredUse();
@@ -2341,9 +2350,9 @@ final class HologramLibraryClient {
                 try {
                     HologramNetwork
                         .sendPreparedPlacement(prepared, () -> placementOwnerCurrent(token, request, submission));
-                    localProgressPhase = "library.session";
+                    localProgressPhase = direct ? "placement.upload" : "library.session";
                     lastActivity = System.nanoTime();
-                    status = direct ? "施工请求已发送，等待服务器开始" : "正在核对现场和施工材料";
+                    status = direct ? "已排队上传施工清单；服务器尚未开始施工" : "正在核对现场和施工材料";
                     placementRequestSent = true;
                 } catch (IOException | RuntimeException failure) {
                     finishProjectedPlacement(false, "施工上传失败，" + HologramUiText.reason(failure.getMessage()));
@@ -2362,6 +2371,41 @@ final class HologramLibraryClient {
             && submission.current()
             && libraryConnectionCurrent(mc)
             && sameQuickTool(mc);
+    }
+
+    void projectedPlacementProgress(NBTTagCompound progress) {
+        UUID request = placementRequest;
+        if (!placementRequestSent || request == null || placementSubmission == null
+            || !request.toString().equals(progress.getString("placementRequestId"))
+            || !placementOwnerCurrent(generation, request, placementSubmission)
+            || !progress.hasKey("done", 4) || !progress.hasKey("total", 4)
+            || !progress.hasKey("sequence", 4)) return;
+        long sequence = progress.getLong("sequence");
+        int stage = switch (progress.getString("phase")) {
+            case "placement.decode" -> 0;
+            case "placement.variants" -> 1;
+            case "placement.materialize" -> 2;
+            case "placement.plan" -> 3;
+            case "placement.admission" -> 4;
+            default -> -1;
+        };
+        long done = progress.getLong("done"), total = progress.getLong("total");
+        if (stage < 0 || sequence <= placementProgressSequence || stage < placementProgressStage
+            || done < 0 || total < 0 || (total > 0 && done > total)) return;
+        placementProgressSequence = sequence;
+        placementProgressStage = stage;
+        placementProgressDone = done;
+        placementProgressTotal = total;
+        localProgressPhase = progress.getString("phase");
+        lastActivity = System.nanoTime();
+        String current = switch (stage) {
+            case 0 -> "正在读取服务器施工清单";
+            case 1 -> "正在核对目标材料类型";
+            case 2 -> "正在准备施工范围";
+            case 3 -> "正在核对现场与材料";
+            default -> "正在复核施工范围与库存";
+        };
+        status = current + (total > 0 ? " " + done + "/" + total : done > 0 ? " · " + done : "…");
     }
 
     boolean acceptProjectedPlacement(NBTTagCompound receipt) {

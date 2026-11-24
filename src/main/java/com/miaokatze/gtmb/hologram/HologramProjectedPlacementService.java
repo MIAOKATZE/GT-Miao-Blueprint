@@ -34,6 +34,7 @@ final class HologramProjectedPlacementService {
 
     private static final int MAX_PENDING = 8;
     private static final int RECENT_LIMIT = 1024;
+    private static final long PROGRESS_INTERVAL = 250_000_000L;
     private static final Map<UUID, Job> PENDING = new LinkedHashMap<>();
     private static final Map<UUID, QuoteJob> QUOTES = new LinkedHashMap<>();
     private static final Set<Request> RECENT = new LinkedHashSet<>();
@@ -66,6 +67,9 @@ final class HologramProjectedPlacementService {
             PENDING.put(owner, job);
         } catch (IOException invalid) {
             if (id.length() == 36) reply(player, id, false, invalid.getMessage());
+        } catch (RuntimeException | LinkageError failed) {
+            GTMiaoBlueprint.LOG.warn("Projected placement intake failed", failed);
+            if (id.length() == 36) reply(player, id, false, "施工准备失败，未进行扣料或建造");
         }
     }
 
@@ -140,14 +144,18 @@ final class HologramProjectedPlacementService {
     }
 
     static void tick() {
-        long deadline = HologramWorkBudget.deadline(HologramWorkBudget.remainingNanos(2_000_000L));
-        tickQuotes(deadline);
+        long budget = Math.min(HologramWorkBudget.SLICE_NANOS, HologramWorkBudget.tickNanos());
+        long deadline = HologramWorkBudget.deadline(Math.min(budget, HologramWorkBudget.remainingNanos(budget)));
+        long now = System.nanoTime();
+        tickQuotes(PENDING.isEmpty() ? deadline : now + Math.max(0L, deadline - now) / 2);
         Iterator<Job> pending = PENDING.values()
             .iterator();
-        while (pending.hasNext() && System.nanoTime() < deadline) {
+        int remaining = PENDING.size();
+        while (pending.hasNext() && (now = System.nanoTime()) < deadline) {
             Job job = pending.next();
+            long share = Math.max(1L, (deadline - now) / remaining--);
             try {
-                if (!job.step(deadline)) continue;
+                if (!job.step(Math.min(deadline, now + share))) continue;
                 retire(job.player, job.header.id());
                 pending.remove();
             } catch (IOException | ExecutionException failure) {
@@ -163,6 +171,9 @@ final class HologramProjectedPlacementService {
                 job.refuse("施工准备失败，未进行扣料或建造");
                 pending.remove();
             } catch (InterruptedException interrupted) {
+                HologramAreaPreparation.cancel(job.decoding);
+                job.refuse("施工准备已中断，未进行扣料或建造");
+                pending.remove();
                 Thread.currentThread()
                     .interrupt();
                 return;
@@ -208,6 +219,45 @@ final class HologramProjectedPlacementService {
         if (reason != null) receipt.setString("errorMessage", reason);
         if (quote != null) receipt.setTag("materialCheckQuote", quote);
         HologramNetwork.sendState(player, receipt);
+    }
+
+    // Scoped progress is not a placement receipt, and older clients safely ignore the new progress scope.
+    static NBTTagCompound preparationProgress(String id, String phase, String detail, long done, long total) {
+        NBTTagCompound progress = new NBTTagCompound();
+        progress.setString("scope", "projectedPlacement");
+        progress.setString("placementRequestId", id);
+        progress.setString("phase", phase);
+        if (!detail.isEmpty()) progress.setString("detail", detail);
+        progress.setLong("done", done);
+        progress.setLong("total", total);
+        progress.setString("unit", "operations");
+        NBTTagCompound state = new NBTTagCompound();
+        state.setBoolean("progressOnly", true);
+        state.setTag("progress", progress);
+        return state;
+    }
+
+    @Desugar
+    private record Prepared(HologramPlacementRequest.Decoded decoded, int[] materializationOrder) {}
+
+    /** Partition the validated rows on the decoder, in the same controller-last stable capture order. */
+    static int[] materializationOrder(HologramPlacementRequest.Decoded decoded) throws InterruptedException {
+        if (decoded.variants().stream().noneMatch(HologramPlacementRequest.Variant::controller)) return null;
+        int size = decoded.size();
+        int[] order = new int[size];
+        int first = 0, last = size;
+        for (int i = 0; i < size; i++) {
+            if ((i & 1023) == 0 && Thread.interrupted()) throw new InterruptedException();
+            if (decoded.variants().get(decoded.variantIndex(i)).controller()) order[--last] = i;
+            else order[first++] = i;
+        }
+        for (int left = last, right = size - 1; left < right; left++, right--) {
+            if ((left & 1023) == 0 && Thread.interrupted()) throw new InterruptedException();
+            int old = order[left];
+            order[left] = order[right];
+            order[right] = old;
+        }
+        return order;
     }
 
     private static final class QuoteJob {
@@ -276,13 +326,16 @@ final class HologramProjectedPlacementService {
         private final long previousRevision, previousWorkspace;
         private final HologramPlacementRequest.Header header;
         private final long started = System.nanoTime();
-        private final FutureTask<HologramPlacementRequest.Decoded> decoding;
+        private final FutureTask<Prepared> decoding;
         private final List<Resolved> variants = new ArrayList<>();
         private HologramPlacementRequest.Decoded decoded;
+        private int[] materializationOrder;
         private HologramSession session;
         private HologramResourcePlanner.PlanTask directPlan;
         private HologramExecutionReview.Start directStart;
-        private int operation, pass;
+        private int operation;
+        private String reportedPhase = "", reportedDetail = "";
+        private long reportedDone = -1, reportedAt;
 
         private Job(EntityPlayerMP player, HologramPlacementRequest.Header header, NBTTagCompound tag) {
             this.player = player;
@@ -294,7 +347,10 @@ final class HologramProjectedPlacementService {
             previousRevision = previous == null ? -1 : previous.planRevision;
             previousWorkspace = previous == null ? -1 : previous.editorWorkspaceEpoch;
             int height = world.getHeight();
-            decoding = new FutureTask<>(() -> HologramPlacementRequest.decode(header, tag, height));
+            decoding = new FutureTask<>(() -> {
+                HologramPlacementRequest.Decoded validated = HologramPlacementRequest.decode(header, tag, height);
+                return new Prepared(validated, materializationOrder(validated));
+            });
         }
 
         private void requireCurrent(Phase phase) throws IOException {
@@ -345,12 +401,33 @@ final class HologramProjectedPlacementService {
                 reply(player, header.id(), false, reason);
         }
 
+        private void progress(String phase, String detail, long done, long total) {
+            if (!header.direct()) return;
+            long now = System.nanoTime();
+            if (reportedPhase.equals(phase) && reportedDetail.equals(detail)
+                && (reportedDone == done || now - reportedAt < PROGRESS_INTERVAL)) return;
+            reportedPhase = phase;
+            reportedDetail = detail;
+            reportedDone = done;
+            reportedAt = now;
+            try {
+                HologramNetwork.sendState(player, preparationProgress(header.id(), phase, detail, done, total));
+            } catch (RuntimeException | LinkageError unavailable) {
+                // A presentation-only progress send cannot change authoritative acceptance or refusal.
+            }
+        }
+
         private boolean step(long deadline) throws IOException, ExecutionException, InterruptedException {
             if (directPlan != null) return startDirect(deadline);
             requireCurrent(Phase.WAIT);
             if (decoded == null) {
-                if (!decoding.isDone()) return false;
-                decoded = decoding.get();
+                if (!decoding.isDone()) {
+                    progress("placement.decode", "", 0, 0);
+                    return false;
+                }
+                Prepared preparation = decoding.get();
+                decoded = preparation.decoded();
+                materializationOrder = preparation.materializationOrder();
             }
             if (session == null) {
                 session = new HologramSession(player, header.x(), header.y(), header.z(), false, 1);
@@ -383,19 +460,19 @@ final class HologramProjectedPlacementService {
                 }
                 variants.add(resolved);
             }
-            if (variants.size() < decoded.variants()
-                .size()) return false;
-            while (pass < 2 && System.nanoTime() < deadline) {
-                if (operation == decoded.size()) {
-                    operation = 0;
-                    pass++;
-                    continue;
-                }
-                Resolved resolved = variants.get(decoded.variantIndex(operation));
-                HologramProjectedPlacement.Cell target = decoded.cell(operation++);
-                if (target.controller() == (pass == 1)) add(target, resolved);
+            if (variants.size() < decoded.variants().size()) {
+                progress("placement.variants", "", variants.size(), decoded.variants().size());
+                return false;
             }
-            if (pass < 2) return false;
+            while (operation < decoded.size() && System.nanoTime() < deadline) {
+                int index = materializationOrder == null ? operation : materializationOrder[operation];
+                add(decoded.cell(index), variants.get(decoded.variantIndex(index)));
+                operation++;
+            }
+            if (operation < decoded.size()) {
+                progress("placement.materialize", "", operation, decoded.size());
+                return false;
+            }
             requireCurrent(Phase.PUBLISH);
             if (header.direct()) {
                 if (!session.executionNetworks.isEmpty()) throw new IOException("需明确配置蓝图网络，未开始施工");
@@ -419,7 +496,10 @@ final class HologramProjectedPlacementService {
                 || sources.priority != session.materialSettings.priority) throw new IOException("材料来源设置已变化，未开始施工");
             if (directStart == null) {
                 long remaining = Math.max(0L, deadline - System.nanoTime());
-                if (remaining == 0 || !directPlan.step(Integer.MAX_VALUE, remaining)) return false;
+                if (remaining == 0 || !directPlan.step(Integer.MAX_VALUE, remaining)) {
+                    progress("placement.plan", directPlan.phase(), directPlan.completed(), directPlan.total());
+                    return false;
+                }
                 if (session.planMissing != 0 || !session.planRecoveryFits) throw new IOException("施工材料不足或无法安全施工，未开始施工");
                 if (!session.blueprintEnergy.empty() || session.blueprintResources != null
                     && (!session.blueprintResources.fluids.isEmpty() || !session.blueprintResources.essentia.isEmpty()))
@@ -427,7 +507,10 @@ final class HologramProjectedPlacementService {
                 HologramMaterialQuote.stampDirectPlan(session);
                 directStart = new HologramExecutionReview.Start(session, new NBTTagCompound(), true);
             }
-            if (!directStart.step(session, deadline)) return false;
+            if (!directStart.step(session, deadline)) {
+                progress("placement.admission", "", directStart.completed(session), 0);
+                return false;
+            }
             if (session.job != 1) throw new IOException(session.status.isEmpty() ? "未开始施工" : session.status);
             session.open = true;
             session.openPurpose = "blueprintPlacement";

@@ -50,7 +50,13 @@ public final class HologramCompactNativeRequest {
         return Collections.unmodifiableSet(fields);
     }
 
+    static final String HATCH_PRESET_REVIEW_REQUIRED = "当前投影仪有仓室等级信道。请先在仓室预设明确应用目标等级，再核对施工；普通补建不会猜测等级。";
+
     private HologramCompactNativeRequest() {}
+
+    static boolean needsHatchPresetReview(NBTTagCompound config) {
+        return !config.getBoolean("noHatches") && config.getCompoundTag("channels").hasKey("gt_hatch", 3);
+    }
 
     public static boolean enabled() {
         return HologramNativeReadyPlacement.enabled();
@@ -76,6 +82,8 @@ public final class HologramCompactNativeRequest {
             || !confirmed.getString("structureId")
                 .isEmpty())
             throw new IOException("紧凑原生放置暂不支持局部范围、手动仓室位置或仓室预设。");
+        if (ordinary && needsHatchPresetReview(confirmed))
+            throw new IOException(HATCH_PRESET_REVIEW_REQUIRED);
         if (!ordinary && (!confirmed.getBoolean("materialMain") || confirmed.getBoolean("materialContainers")
             || confirmed.getBoolean("materialMe"))) throw new IOException("紧凑原生放置暂仅支持已明确选择的玩家背包材料。");
         NBTTagCompound request = new NBTTagCompound();

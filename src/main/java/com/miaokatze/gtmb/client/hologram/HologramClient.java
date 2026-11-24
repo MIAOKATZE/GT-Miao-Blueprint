@@ -239,6 +239,15 @@ public final class HologramClient {
                     }
                     return;
                 }
+                if ("projectedPlacement".equals(nbt.getString("scope"))) {
+                    HologramLibraryClient.INSTANCE.projectedPlacementProgress(nbt);
+                    return;
+                }
+                if ("nativePlacement".equals(nbt.getString("scope"))) {
+                    if (minecraft.currentScreen instanceof HologramScreen screen)
+                        screen.receiveNativePlacementProgress(nbt);
+                    return;
+                }
                 HologramClientProgress.receive(nbt);
                 if ("rejected".equals(nbt.getString("outcome")) && pendingPositionLock.rejected(nbt))
                     positionLockNotice(
@@ -247,13 +256,13 @@ public final class HologramClient {
                 if (state != null && state.session.equals(nbt.getString("session"))
                     && HologramClientProgress.matches(nbt)
                     && !"rejected".equals(nbt.getString("outcome"))) receivedAt = System.nanoTime();
-                projectionLifetime.observe(state);
                 if ("rejected".equals(nbt.getString("outcome")) || HologramClientProgress.matches(nbt))
                     HologramBackgroundTasks.progress(nbt);
                 if (nbt.getBoolean("jobDelta") && HologramClientProgress.matches(nbt)) {
                     HologramRenderer.jobVisualChanged(state, HologramJobVisuals.accept(state, nbt));
                     state = HologramJobVisuals.metadata(state);
                 }
+                projectionLifetime.observe(state);
                 if ("rejected".equals(nbt.getString("outcome"))) {
                     HologramLibraryClient.INSTANCE.transportRejectedSave(nbt);
                     if ("cut".equals(nbt.getString("scope"))) {
@@ -2322,6 +2331,7 @@ public final class HologramClient {
                 displayedBeforeInstall == null ? -1 : displayedBeforeInstall.data.getLong("planRevision"));
         }
         state = next;
+        projectionLifetime.observe(state);
         HologramUiConfiguration.observePresetSnapshot(next);
         HologramBackgroundTasks.snapshot(next);
         if ("blueprintPlacement".equals(nbt.getString("openPurpose"))) HologramScreen.rememberBlueprintPlacement(next);
@@ -2537,6 +2547,9 @@ public final class HologramClient {
         Minecraft mc = Minecraft.getMinecraft();
         assembly.expire(System.nanoTime());
         syncSnapshotWorld();
+        boolean serverVisible = state == null
+            || projectionLifetime.visible(state.session, state.data.getInteger("job"), System.nanoTime());
+        if (!serverVisible) HologramRenderer.releaseWorldFor(state);
         // Tutorial and read-only library scenes own a detached native render snapshot. A world projection,
         // local placement or Cut behind them would swap it twice per frame and restart cooperative preparation.
         if (mc.currentScreen instanceof HologramScreen
@@ -2556,11 +2569,6 @@ public final class HologramClient {
                 areaProjectorWorld() ? areaSelectionAnchor() : null);
             return;
         }
-        if (state != null && !projectionLifetime.visible(
-            state.session,
-            state.data.getInteger("job"),
-            System.nanoTime(),
-            localArea != null && localAreaContext())) return;
         if (state == null) return;
         String workspaceSession = mc.currentScreen instanceof HologramScreen screen && !screen.ui.session.isTutorial()
             ? screen.ui.session.state().session
@@ -2579,11 +2587,7 @@ public final class HologramClient {
         if (pendingPositionLock.cancelling(state.data)) return;
         if (localSelection == null && state.data.getBoolean("areaSelecting"))
             HologramAreaOverlay.render(state, event.partialTicks);
-        if (!worldPreview || !projectionLifetime.visible(
-            state.session,
-            state.data.getInteger("job"),
-            System.nanoTime(),
-            localArea != null && localAreaContext())) return;
+        if (!worldPreview || !serverVisible) return;
         if (state.data.getBoolean("virtual") && !state.data.getBoolean("virtualPlacement")) return;
         if (!HologramInputContext.worldProjection(
             state,
@@ -2592,6 +2596,7 @@ public final class HologramClient {
         // Avoid stale projection after disconnect/reconnect or travelling away from the target.
         if (state.distanceSquared(mc.thePlayer.posX, mc.thePlayer.posY, mc.thePlayer.posZ) > 4096
             && !(state.data.getBoolean("virtual") && state.data.getBoolean("moving"))) return;
+        if (mc.currentScreen instanceof HologramScreen screen && screen.occludesWorldProjection(state)) return;
         HologramRenderer.world(state, event.partialTicks);
     }
 }

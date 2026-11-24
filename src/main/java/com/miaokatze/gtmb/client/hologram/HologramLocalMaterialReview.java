@@ -76,13 +76,18 @@ final class HologramLocalMaterialReview {
         executor.execute(planning);
     }
 
+    private boolean closed;
+
     void close() {
+        closed = true;
         if (planning != null) planning.cancel(true);
         planning = null;
     }
 
     boolean current(HologramState state, int layer) {
-        return source.cells == state.cells && source.session.equals(state.session)
+        return !closed && source.cells == state.cells && source.session.equals(state.session)
+            && source.data.getString("generation").equals(state.data.getString("generation"))
+            && !state.data.getBoolean("capturePending")
             && source.data.getLong("planRevision") == state.data.getLong("planRevision")
             && source.data.getInteger("mode") == state.data.getInteger("mode")
             && source.data.getString("activeStructure")
@@ -123,6 +128,7 @@ final class HologramLocalMaterialReview {
     }
 
     void tick(ItemStack[] inventory, int protectedSlot) {
+        if (closed) return;
         if (theory == null) {
             if (plan == null) {
                 if (failed || planning == null || planning.isCancelled() || !planning.isDone()) return;
@@ -171,6 +177,7 @@ final class HologramLocalMaterialReview {
     }
 
     void refresh(ItemStack[] inventory, int protectedSlot) {
+        if (closed) return;
         if (theory == null) return;
         if (!settings.getBoolean("materialMain")) inventory = null;
         if (visible.hasKey("rows", 9) && observedSlot == protectedSlot
