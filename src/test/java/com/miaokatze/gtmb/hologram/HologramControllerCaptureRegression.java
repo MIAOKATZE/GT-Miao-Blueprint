@@ -970,6 +970,7 @@ public final class HologramControllerCaptureRegression {
                     "mode " + mode + " carries exact declared hatch type/coordinate/facing to its separate manual review: "
                         + operationState(s));
                 if (mode == 0) {
+                    checkLockedScopeRefusals(s);
                     SimpleAssert.eq(1L, quotedDemand(nativeDemand(s), energy),
                         "only the explicitly selected native hatch is payable");
                     HologramMaterialQuote.recheck(s);
@@ -987,6 +988,8 @@ public final class HologramControllerCaptureRegression {
                     // No native world operation runs in the read-only fixture.
                     s.job = 0;
                     HologramSession.clearPending(s);
+                    rejectLockedScopeAction(s, lockedScopeAction(s, "build"), "重新打开",
+                        "a finished confirmation cannot be reused even with the newest nonce");
                 }
             }
         } finally {
@@ -1527,6 +1530,15 @@ public final class HologramControllerCaptureRegression {
                     && s.selectedIndices.size() == 1 && s.selectedIndices.contains(s.selected),
                     "explicit native mode " + mode + " keeps the selected cell and only requests a new review: "
                         + operationState(s));
+                checkLockedScopeRefusals(s);
+                NBTTagCompound changed = lockedScopeAction(s, "build");
+                changed.setIntArray("selectedIndices", new int[] { s.capture.cells.size() });
+                long previousReview = s.placementReviewNonce;
+                rejectLockedScopeAction(s, changed, "施工范围已变化", "changed confirmation cannot overwrite exact scope");
+                SimpleAssert.that(s.operationReviewSequence < 0 && s.placementReviewNonce > previousReview,
+                    "a changed final request retires the old review and nonce instead of broadening it");
+                rejectLockedScopeAction(s, lockedScopeAction(s, "build"), "重新打开",
+                    "a new nonce is not a new review and cannot restart a dismissed native scope");
             }
         } finally {
             s.controllerOpenId = originalOpenId;
@@ -1541,6 +1553,44 @@ public final class HologramControllerCaptureRegression {
             complete(s);
             s.actionTick = Long.MIN_VALUE;
         }
+    }
+
+    private static void checkLockedScopeRefusals(HologramSession s) throws java.io.IOException {
+        SimpleAssert.that(HologramSnapshots.basicState(s).getBoolean("operationScopeLocked"),
+            "server only advertises owned scope with completed native capture");
+        rejectLockedScopeAction(s, lockedScopeAction(s, "start"), "重新打开",
+            "legacy start cannot run a frozen native operation, even with its current nonce");
+        NBTTagCompound missing = lockedScopeAction(s, "build");
+        missing.removeTag("placementReviewNonce");
+        rejectLockedScopeAction(s, missing, "重新打开", "a reviewed command needs a correctly typed nonce");
+        NBTTagCompound stale = lockedScopeAction(s, "build");
+        stale.setLong("placementReviewNonce", s.placementReviewNonce - 1);
+        rejectLockedScopeAction(s, stale, "重新打开", "an old confirmation cannot run the current native scope");
+    }
+
+    private static NBTTagCompound lockedScopeAction(HologramSession s, String operation) {
+        s.actionTick = Long.MIN_VALUE;
+        NBTTagCompound action = presetAction(s, operation);
+        action.setLong("placementReviewNonce", s.placementReviewNonce);
+        return action;
+    }
+
+    private static void rejectLockedScopeAction(HologramSession s, NBTTagCompound action, String reason,
+        String expectation) {
+        int selected = s.selected;
+        HologramCapture capture = s.capture;
+        var selection = new java.util.LinkedHashSet<>(s.selectedIndices);
+        var inventory = new java.util.ArrayList<ItemStack>();
+        for (ItemStack stack : s.player.inventory.mainInventory) inventory.add(stack == null ? null : stack.copy());
+        HologramActionDispatcher.handle(s.player, action);
+        SimpleAssert.that(s.status.contains(reason) && s.job == 0 && !s.replacementAuthorized
+            && s.work.isEmpty() && s.recovered.isEmpty() && s.capture == capture
+            && s.selected == selected && s.selectedIndices.equals(selection),
+            expectation + ": " + operationState(s));
+        for (int slot = 0; slot < inventory.size(); slot++)
+            SimpleAssert.that(ItemStack.areItemStacksEqual(inventory.get(slot), s.player.inventory.mainInventory[slot]),
+                "a refused review neither debits stock nor writes recovery into inventory");
+        // ReadOnlyWorld fails the fixture on any direct block or tile mutation.
     }
 
     private static void retainedPhysicalAnchor(HologramSession s) {

@@ -439,7 +439,8 @@ final class HologramUiSession {
             () -> ui.preview.selection()
                 .indices(),
             state.data.getString("activeStructure"),
-            state.session);
+            state.session,
+            state.data.getBoolean("operationScopeLocked"));
         if (HologramBackgroundTasks.libraryTask() && (op.startsWith("saveBlueprint") || "savePreset".equals(op)
             || "updatePreset".equals(op)
             || "exportDraft".equals(op)
@@ -480,9 +481,16 @@ final class HologramUiSession {
     /** Selection arrays are materialized only for server operations that consume them. */
     static NBTTagCompound buildOutgoingRequest(String op, NBTTagCompound request, int selected,
         java.util.function.Supplier<int[]> selection, String structure, String session) {
-        if (!request.hasKey("selected")) request.setInteger("selected", selected);
-        if (!request.hasKey("selectedIndices") && selectionConsumer(op))
-            request.setIntArray("selectedIndices", selection.get());
+        return buildOutgoingRequest(op, request, selected, selection, structure, session, false);
+    }
+
+    static NBTTagCompound buildOutgoingRequest(String op, NBTTagCompound request, int selected,
+        java.util.function.Supplier<int[]> selection, String structure, String session, boolean operationScopeLocked) {
+        if (!operationScopeLocked || !"build".equals(op)) {
+            if (!request.hasKey("selected")) request.setInteger("selected", selected);
+            if (!request.hasKey("selectedIndices") && selectionConsumer(op))
+                request.setIntArray("selectedIndices", selection.get());
+        }
         if (!request.hasKey("structureId")) request.setString("structureId", structure);
         request.setString("session", session);
         request.setString("op", op);

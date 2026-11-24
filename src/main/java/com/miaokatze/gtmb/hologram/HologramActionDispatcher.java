@@ -386,6 +386,12 @@ final class HologramActionDispatcher {
             HologramSnapshots.send(s);
             return;
         }
+        boolean lockedScope = construction && HologramStructureProjection.requiresLockedScope(s);
+        if (lockedScope && s.job != 1 && s.job != 2
+            && !HologramStructureProjection.allowLockedConfirmation(s, action, op)) {
+            HologramSnapshots.send(s);
+            return;
+        }
         if (operationPreflight && action.hasKey("nativeOperationOpenId")) {
             if (s.job != 1 && s.job != 2 && validNativeOperationOptions(s, action)) {
                 HologramSession bound = s;
@@ -415,12 +421,12 @@ final class HologramActionDispatcher {
                 HologramSnapshots.send(s);
                 return;
             }
-            if (action.hasKey("selected", 3)) {
+            if (!lockedScope && action.hasKey("selected", 3)) {
                 int selected = action.getInteger("selected");
                 if (selected < -1 || (s.capture != null && selected >= s.capture.cells.size())) return;
                 s.selected = selected;
             }
-            if (action.hasKey("selectedIndices", 11)) {
+            if (!lockedScope && action.hasKey("selectedIndices", 11)) {
                 s.selectedIndices.clear();
                 for (int index : action.getIntArray("selectedIndices"))
                     if (s.capture != null && index >= 0 && index < s.capture.cells.size()) s.selectedIndices.add(index);
@@ -594,6 +600,8 @@ final class HologramActionDispatcher {
                 return;
             }
         } else if ("build".equals(op) && s.job != 1 && s.job != 2) {
+            // A valid confirmation has its own sequence; keep a stock/permission refusal in this review.
+            if (lockedScope) s.operationReviewSequence = s.uiSequence;
             HologramBuildPreparation.reviewedBuild(s, action);
         } else if ("removePosition".equals(op) && s.job != 1 && s.job != 2) {
             int index = action.getInteger("selected");
