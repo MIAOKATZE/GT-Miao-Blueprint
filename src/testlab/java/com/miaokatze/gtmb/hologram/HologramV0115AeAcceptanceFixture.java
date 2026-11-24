@@ -11,6 +11,7 @@ import java.util.UUID;
 
 import net.minecraft.block.Block;
 import net.minecraft.entity.player.EntityPlayerMP;
+import net.minecraft.entity.player.InventoryPlayer;
 import net.minecraft.init.Blocks;
 import net.minecraft.inventory.IInventory;
 import net.minecraft.inventory.InventoryCrafting;
@@ -19,6 +20,7 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.item.crafting.CraftingManager;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
+import net.minecraft.network.play.server.S09PacketHeldItemChange;
 import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.ChunkCoordIntPair;
 import net.minecraft.util.MathHelper;
@@ -86,8 +88,63 @@ public final class HologramV0115AeAcceptanceFixture implements AutoCloseable {
         return new HologramV0115AeAcceptanceFixture(world, actor, false, 1200, 100, 1200);
     }
 
-    /** Called only after Issue100 verified the exact stock lease, marker and Core world policy. */
-    public static HologramV0115AeAcceptanceFixture createOwned(WorldServer world, EntityPlayerMP actor) throws Exception {
+    /** TestLab selects only an actually empty slot; the modpack startup item never leaves its slot. */
+    public static final class OwnedHotbar {
+        private final WorldServer world;
+        private final EntityPlayerMP actor;
+        private final int original, selected;
+        private final ItemStack startup;
+
+        private OwnedHotbar(WorldServer world, EntityPlayerMP actor, int original, int selected) {
+            this.world = world;
+            this.actor = actor;
+            this.original = original;
+            this.selected = selected;
+            startup = ItemStack.copyItemStack(actor.inventory.mainInventory[original]);
+            select(selected);
+        }
+
+        private void select(int slot) {
+            actor.inventory.currentItem = slot;
+            actor.playerNetServerHandler.sendPacket(new S09PacketHeldItemChange(slot));
+        }
+
+        public boolean ready(UUID actorId, int clientSelected) {
+            requireOwnedActor(world, actor);
+            return actor.getUniqueID().equals(actorId) && clientSelected == selected
+                && actor.inventory.currentItem == selected;
+        }
+
+        public void restore() {
+            requireOwnedActor(world, actor);
+            require(actor.inventory.currentItem == selected && actor.inventory.mainInventory[selected] == null
+                && ItemStack.areItemStacksEqual(startup, actor.inventory.mainInventory[original]),
+                "owned hotbar recovery preserves both the startup item and blank fixture slot");
+            select(original);
+        }
+
+        public boolean restored(UUID actorId, int clientSelected) {
+            return actor.getUniqueID().equals(actorId) && clientSelected == original
+                && actor.inventory.currentItem == original
+                && ItemStack.areItemStacksEqual(startup, actor.inventory.mainInventory[original]);
+        }
+
+        public int original() { return original; }
+        public int selected() { return selected; }
+    }
+
+    /** Called only after the stock Issue100 lease, marker and Core-owned world checks. */
+    public static OwnedHotbar chooseOwnedHotbar(WorldServer world, EntityPlayerMP actor, UUID clientActor,
+        int clientSelected) throws Exception {
+        requireOwnedWorld(world, actor);
+        require(actor.getUniqueID().equals(clientActor) && actor.inventory.currentItem == clientSelected,
+            "the exact local/server actor and initial hotbar selection agree");
+        for (int slot = 0; slot < InventoryPlayer.getHotbarSize(); slot++)
+            if (actor.inventory.mainInventory[slot] == null) return new OwnedHotbar(world, actor, clientSelected, slot);
+        throw new IllegalStateException("Owned AE test actor has no empty hotbar slot");
+    }
+
+    private static void requireOwnedWorld(WorldServer world, EntityPlayerMP actor) throws Exception {
         require(Boolean.getBoolean(OWNED_ORDER) && Boolean.getBoolean("miaotest.host.environment")
             && "gtmb".equals(System.getProperty("miaotest.host.module"))
             && "client-ui".equals(System.getProperty("miaotest.host.profile"))
@@ -97,6 +154,13 @@ public final class HologramV0115AeAcceptanceFixture implements AutoCloseable {
             "exact canonical private integrated world");
         requireOwnedActor(world, actor);
         requireNoOrderingExtension();
+    }
+
+    public static HologramV0115AeAcceptanceFixture createOwned(WorldServer world, EntityPlayerMP actor,
+        OwnedHotbar hotbar, UUID clientActor, int clientSelected) throws Exception {
+        requireOwnedWorld(world, actor);
+        require(hotbar.actor == actor && hotbar.world == world && hotbar.ready(clientActor, clientSelected),
+            "the exact owned empty slot is selected in both views");
         int x = MathHelper.floor_double(actor.posX) + 1, y = MathHelper.floor_double(actor.posY) + 3;
         int z = MathHelper.floor_double(actor.posZ) + 2;
         require(actor.getHeldItem() == null && actor.inventory.mainInventory[TERMINAL_SLOT] == null

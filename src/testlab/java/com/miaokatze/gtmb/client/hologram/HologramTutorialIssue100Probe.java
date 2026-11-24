@@ -49,7 +49,11 @@ public final class HologramTutorialIssue100Probe {
         HologramV0115AeAcceptanceFixture.OWNED_ORDER);
     private volatile boolean ownedAeRequested, ownedAeClosing, ownedAeRetired, ownedAeRestored;
     private volatile NBTTagCompound ownedAeResult;
+    private volatile UUID ownedAeClientActor;
+    private volatile int ownedAeClientSlot = -1;
     private HologramV0115AeAcceptanceFixture ownedAe;
+    private HologramV0115AeAcceptanceFixture.OwnedHotbar ownedAeHotbar;
+    private long ownedAeRestoreAt;
 
     private final Path output = Paths.get(System.getProperty("gtmb.testlab.clientUiReceiptDir"));
     private final String run = UUID.fromString(System.getProperty("miaotest.host.runId"))
@@ -164,16 +168,25 @@ public final class HologramTutorialIssue100Probe {
     private void tickOwnedAe() {
         if (!ownedAeRequested || ownedAeRetired) return;
         try {
-            if (ownedAeClosing) {
+            if (ownedAeClosing || ownedAeRestoreAt != 0) {
                 retireOwnedAe();
                 return;
             }
             WorldServer world = server.worldServerForDimension(0);
             if (ownedAe == null) {
                 EntityPlayer actor = world.getPlayerEntityByName("MiaoHostQA");
-                if (!(actor instanceof EntityPlayerMP)) return;
-                ownedAe = HologramV0115AeAcceptanceFixture.createOwned(world, (EntityPlayerMP) actor);
+                if (!(actor instanceof EntityPlayerMP) || ownedAeClientActor == null) return;
+                if (ownedAeHotbar == null) {
+                    ownedAeHotbar = HologramV0115AeAcceptanceFixture.chooseOwnedHotbar(world, (EntityPlayerMP) actor,
+                        ownedAeClientActor, ownedAeClientSlot);
+                    return;
+                }
+                if (!ownedAeHotbar.ready(ownedAeClientActor, ownedAeClientSlot)) return;
+                ownedAe = HologramV0115AeAcceptanceFixture.createOwned(world, (EntityPlayerMP) actor,
+                    ownedAeHotbar, ownedAeClientActor, ownedAeClientSlot);
             }
+            require(ownedAeHotbar.ready(ownedAeClientActor, ownedAeClientSlot),
+                "owned hotbar selection changed during the native order");
             ownedAeResult = ownedAe.poll();
             if ("PASS".equals(ownedAeResult.getString("status"))) retireOwnedAe();
         } catch (Exception | LinkageError problem) {
@@ -185,19 +198,34 @@ public final class HologramTutorialIssue100Probe {
     private void retireOwnedAe() {
         if (ownedAeRetired) return;
         try {
-            if (ownedAe != null) ownedAe.close();
+            if (ownedAeRestoreAt == 0) {
+                ownedAeRestoreAt = System.nanoTime();
+                try {
+                    if (ownedAe != null) ownedAe.close();
+                } finally {
+                    if (ownedAeHotbar != null) ownedAeHotbar.restore();
+                }
+            }
+            if (ownedAeHotbar != null && !ownedAeHotbar.restored(ownedAeClientActor, ownedAeClientSlot)) {
+                require(System.nanoTime() - ownedAeRestoreAt < 10_000_000_000L,
+                    "owned original hotbar selection did not synchronize to client");
+                return;
+            }
             ownedAeRestored = true;
         } catch (RuntimeException | LinkageError problem) {
             serverFailure = "Owned AE retirement: " + problem;
-        } finally {
-            ownedAeRetired = true;
         }
+        ownedAeRetired = true;
     }
 
     @SubscribeEvent
     public void tick(TickEvent.ClientTickEvent event) {
         if (complete || event.phase != TickEvent.Phase.END) return;
         Minecraft mc = Minecraft.getMinecraft();
+        if (ownedAeMode && exactWorldOwned && mc.theWorld != null && mc.thePlayer != null) {
+            ownedAeClientSlot = mc.thePlayer.inventory.currentItem;
+            ownedAeClientActor = mc.thePlayer.getUniqueID();
+        }
         try {
             progress(mc);
             if (stage < 6 && System.nanoTime() - started > 480_000_000_000L)
@@ -569,6 +597,11 @@ public final class HologramTutorialIssue100Probe {
             receipt.put("schema", "gtmb-owned-reviewed-native-ae-v1");
             receipt.put("nativeAe", ownedAeResult == null ? null : ownedAeResult.toString());
             receipt.put("ownedOrderAndSlotsRestored", ownedAeRestored);
+            if (ownedAeHotbar != null) {
+                receipt.put("originalHotbar", ownedAeHotbar.original());
+                receipt.put("fixtureHotbar", ownedAeHotbar.selected());
+                receipt.put("terminalClientHotbar", ownedAeClientSlot);
+            }
             receipt.put("businessTransport", "production server-side review + action, no GUI/FML assertion");
             Files.write(output.resolve("gtmb-native-ae-reviewed-order.json"), json(receipt),
                 java.nio.file.StandardOpenOption.CREATE_NEW);
