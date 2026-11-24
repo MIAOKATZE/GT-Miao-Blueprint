@@ -319,10 +319,23 @@ public final class HologramRenderingRegression {
             if (regions[region] == null) regions[region] = new java.util.BitSet();
             regions[region].set(((x & 15) << 8) | ((y & 15) << 4) | (z & 15));
         }
-        int expected = MiaoVisonLiteRenderer.boundaryEdges(cx, cy, cz, (x, y, z) -> {
+        HologramSelectionOutline.Occupancy cells = (x, y, z) -> {
             int dx = x - cx, dy = y - cy, dz = z - cz;
             return (occupied & 1 << ((dx + 1) * 9 + (dy + 1) * 3 + dz + 1)) != 0;
+        };
+        int expected = MiaoVisonLiteRenderer.boundaryEdges(cx, cy, cz, cells);
+        int[] queried = { 0 };
+        int world = MiaoVisonLiteRenderer.BoundaryNeighborhood.worldEdges(cx, cy, cz, (x, y, z) -> {
+            int bit = 1 << ((x - cx + 1) * 9 + (y - cy + 1) * 3 + z - cz + 1);
+            if ((queried[0] & bit) != 0) throw new AssertionError("repeated world outline occupancy read");
+            queried[0] |= bit;
+            return cells.contains(x, y, z);
         });
+        SimpleAssert.eq(expected, world, "world outline preserves exact per-cell edge ownership");
+        SimpleAssert.eq(19, Integer.bitCount(queried[0]), "world outline reads only the center and 18 neighbors");
+        SimpleAssert.eq(0, MiaoVisonLiteRenderer.BoundaryNeighborhood.worldEdges(cx, cy, cz,
+            (x, y, z) -> (x != cx || y != cy || z != cz) && cells.contains(x, y, z)),
+            "removed center owns no edge even with adjacent occupied cells");
         int local = ((cx & 15) << 8) | ((cy & 15) << 4) | (cz & 15);
         int actual = MiaoVisonLiteRenderer.BoundaryNeighborhood.edges(regions, local);
         SimpleAssert.eq(expected, actual, "all twelve edge positions match the original ownership and crease rule");
