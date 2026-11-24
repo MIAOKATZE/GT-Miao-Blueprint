@@ -126,6 +126,29 @@ public final class HologramClientP0Regression {
         SimpleAssert.that(opening.getBoolean("capturePending"), "local geometry generation temporarily gates edits");
         SimpleAssert.eq("projection", opening.getString("editorWorkspace"), "preserve original structure workspace");
         SimpleAssert.eq(-8, opening.getInteger("z"), "display follows the source controller anchor");
+        SimpleAssert.eq(gregtech.api.enums.GTValues.VN.length - 1, opening.getInteger("hatchTierMax"),
+            "the local preset selector displays the real GT voltage range without a server query");
+        SimpleAssert.that(!opening.getBoolean("presetAvailable"),
+            "the tier catalogue alone does not prove authoritative declared quotas");
+        NBTTagCompound live = new NBTTagCompound();
+        live.setBoolean("target", true);
+        live.setBoolean("supported", true);
+        live.setBoolean("noHatches", false);
+        live.setInteger("mode", 0);
+        live.setInteger("main", 1);
+        live.setInteger("facing", 0);
+        live.setTag("channels", new NBTTagCompound());
+        NBTTagCompound preset = (NBTTagCompound) live.copy();
+        preset.setBoolean("applyHatchPreset", true);
+        preset.setInteger("hatchTier", 3);
+        preset.setIntArray("selectedIndices", new int[] { 7 });
+        NBTTagCompound approved = HologramClient.controllerHatchPresetOptions(preset, live);
+        SimpleAssert.that(approved != null && approved.getBoolean("applyHatchPreset")
+            && approved.getInteger("hatchTier") == 3 && approved.getIntArray("selectedIndices").length == 0,
+            "explicit application forwards exact tier at whole-structure scope without stale local indices");
+        live.getCompoundTag("channels").setInteger("coil", 2);
+        SimpleAssert.that(HologramClient.controllerHatchPresetOptions(preset, live) == null,
+            "authority must not apply a local preset to a different channel configuration");
         for (String serverField : new String[] { "controllerOpenId", "controllerOpening", "snapshotPending",
             "planRevision", "placementReviewNonce", "toolId" })
             SimpleAssert.that(!opening.hasKey(serverField), "local preview cannot invent " + serverField);
