@@ -411,6 +411,7 @@ final class HologramProjectedPlacementService {
                 if (!session.blueprintEnergy.empty() || session.blueprintResources != null
                     && (!session.blueprintResources.fluids.isEmpty() || !session.blueprintResources.essentia.isEmpty()))
                     throw new IOException("此蓝图有需另行明确的设备资源，未开始施工");
+                HologramMaterialQuote.stampDirectPlan(session);
                 directStart = new HologramExecutionReview.Start(session, new NBTTagCompound(), true);
             }
             if (!directStart.step(session, deadline)) return false;

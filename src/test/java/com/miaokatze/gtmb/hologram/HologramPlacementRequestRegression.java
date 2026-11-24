@@ -5,12 +5,16 @@ package com.miaokatze.gtmb.hologram;
 
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.lang.reflect.InvocationTargetException;
 import java.lang.reflect.Method;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.Random;
 import java.util.UUID;
+import java.util.concurrent.FutureTask;
 import java.util.concurrent.TimeUnit;
 
 import net.minecraft.entity.player.EntityPlayerMP;
@@ -332,11 +336,93 @@ final class HologramPlacementRequestRegression {
             player.inventory.mainInventory[0] = virgin.copy();
             assertPreparation(current, unstampedIncoming, firstRejection, unstampedJob, false, Reason.STACK_REPLACED,
                 "untagged lookalikes receive no replacement authority");
+            player.inventory.mainInventory[0] = original;
+            detachedDirectAdmission(player, world, sessions, jobType, jobCtor);
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("real projected preparation guards", failure);
         } finally {
             if (player != null && player.playerNetServerHandler != null) player.playerNetServerHandler.netManager.channel().close();
             if (foreign != null && foreign.playerNetServerHandler != null) foreign.playerNetServerHandler.netManager.channel().close();
+        }
+    }
+
+    private static void detachedDirectAdmission(EntityPlayerMP player, World world,
+        java.util.Map<UUID, HologramSession> sessions, Class<?> jobType, java.lang.reflect.Constructor<?> constructor)
+        throws IOException, ReflectiveOperationException {
+        var cell = new HologramProjectedPlacement.Cell(0, 0, 0, "minecraft:cobblestone", 0,
+            "minecraft:cobblestone", 0, -1);
+        var plan = new HologramProjectedPlacement.Plan(Collections.singletonList(cell),
+            Collections.singletonList(new HologramProjectedPlacement.Need("minecraft:cobblestone", 0, 1)));
+        UUID request = UUID.randomUUID(), actor = player.getUniqueID();
+        int[] anchor = { 0, 64, 0 };
+        ItemStack material = new ItemStack(Blocks.cobblestone);
+        player.inventory.mainInventory[1] = material;
+        HologramMaterials.Settings settings = HologramMaterials.read(player.getHeldItem());
+        settings.containers = settings.me = false; // This standalone fixture uses the real main inventory only.
+        HologramMaterials.write(player.getHeldItem(), settings);
+        Path previous = HologramConstructionJournal.STORAGE_ROOT.get();
+        Path root = Files.createTempDirectory("gtmb-detached-direct-admission-");
+        HologramConstructionJournal.STORAGE_ROOT.set(root);
+        Field revision = DecorationVoucherConfig.class.getDeclaredField("revision");
+        revision.setAccessible(true);
+        long originalRevision = revision.getLong(null);
+        try {
+            NBTTagCompound tag = HologramPlacementRequest.encodeDirect(request, anchor, plan);
+            Object job = constructor.newInstance(player, HologramPlacementRequest.header(tag), tag);
+            Field decoding = jobType.getDeclaredField("decoding");
+            decoding.setAccessible(true);
+            ((FutureTask<?>) decoding.get(job)).run();
+            Method step = jobType.getDeclaredMethod("step", long.class);
+            step.setAccessible(true);
+            SimpleAssert.eq(null, HologramWorkspace.find(actor), "direct plan starts detached");
+            try {
+                SimpleAssert.eq(true, step.invoke(job, Long.MAX_VALUE), "real direct admission finishes its start");
+            } catch (InvocationTargetException failure) {
+                throw new AssertionError("real detached direct admission must get past the voucher-rules gate",
+                    failure.getCause());
+            }
+            HologramSession s = HologramWorkspace.find(actor);
+            SimpleAssert.that(s != null && s.executionRequestId.equals(request.toString()) && s.job == 1
+                && s.work.equals(Collections.singletonList(0)), "only a real Start publishes one running owned cell");
+            SimpleAssert.that(HologramMaterialQuote.rulesCurrent(s.materialQuote)
+                && s.id.equals(s.materialQuote.getString("session"))
+                && s.materialQuote.getLong("planRevision") == s.planRevision
+                && !s.materialQuote.getBoolean("complete") && !s.materialQuote.getBoolean("useDecorationVoucher")
+                && !s.blueprintAwaitingConfirmation && s.materialQuoteCache == null,
+                "direct stamp is current and scoped, never a presented quote or voucher selection");
+            SimpleAssert.that(world.getBlock(0, 64, 0) == Blocks.air && material.stackSize == 1,
+                "admitting a job is not placement or payment");
+
+            // Exercise the actual Start again against the same priced plan, off the live workspace.
+            HologramSnapshotPreparation.cancel(s);
+            sessions.remove(actor, s);
+            s.job = 0;
+            HologramMaterialQuote.stampDirectPlan(s);
+            HologramExecutionReview.Start stale = new HologramExecutionReview.Start(s, new NBTTagCompound(), true);
+            revision.setLong(null, originalRevision + 1);
+            try {
+                stale.step(s, Long.MAX_VALUE);
+                throw new AssertionError("changed voucher rules must refuse before direct Start");
+            } catch (IOException expected) {
+                SimpleAssert.that(expected.getMessage().contains("抵用券规则"), "expected changed voucher rules refusal");
+            }
+            SimpleAssert.eq(0, s.job, "stale rules cannot start a job");
+            revision.setLong(null, originalRevision);
+
+            HologramMaterialQuote.stampDirectPlan(s);
+            player.inventory.mainInventory[1] = null;
+            SimpleAssert.eq(true, new HologramExecutionReview.Start(s, new NBTTagCompound(), true)
+                .step(s, Long.MAX_VALUE), "missing stock ends authoritative startup check");
+            SimpleAssert.eq(0, s.job, "a valid stamp cannot authorize missing stock");
+        } finally {
+            HologramSession active = sessions.remove(actor);
+            if (active != null) HologramSnapshotPreparation.cancel(active);
+            HologramEditorWorkspaceRegistry.forget(actor);
+            revision.setLong(null, originalRevision);
+            if (previous == null) HologramConstructionJournal.STORAGE_ROOT.remove();
+            else HologramConstructionJournal.STORAGE_ROOT.set(previous);
+            Files.deleteIfExists(root.resolve("gtmb-construction-recovery"));
+            Files.deleteIfExists(root);
         }
     }
 
