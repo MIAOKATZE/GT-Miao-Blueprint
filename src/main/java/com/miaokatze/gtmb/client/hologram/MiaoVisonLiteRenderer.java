@@ -280,9 +280,9 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     static void worldSnapshotChanged(HologramState previous, HologramState next, Set<HologramRegionCache.Key> dirty,
         HologramPreviewAssets assets) {
         if (worldState == previous) {
-            if (worldIndex != previous.cells.size()
-                && (next.changedIndices.length != 0 || !next.changedPreviousCells.isEmpty())) {
-                clearWorldGroups();
+            if (worldIndex != previous.cells.size()) {
+                // A metadata-only publication shares the unfinished occupancy index, including its cursor.
+                if (next.changedIndices.length != 0 || !next.changedPreviousCells.isEmpty()) clearWorldGroups();
             } else {
                 for (HologramRegionCache.Key key : dirty) {
                     WorldGroup group = worldGroups.get(coordinate(key.x, key.y, key.z));
@@ -3042,9 +3042,12 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             }
         GL11.glPopAttrib();
         for (HologramState.Cell c : cells) if (worldGhosts.contains(coordinate(c.x, c.y, c.z))) {
+            // Do not record an empty transform in the display list for ghosts without link nodes.
+            List<HologramLinkNodePreview.Node> nodes = HologramLinkNodePreview.prepare(c, false);
+            if (nodes.isEmpty()) continue;
             GL11.glPushMatrix();
             GL11.glTranslated(c.x, c.y, c.z);
-            HologramLinkNodePreview.draw(c, false, .38f);
+            HologramLinkNodePreview.draw(nodes, .38f);
             GL11.glPopMatrix();
         }
         GL11.glDisable(GL11.GL_TEXTURE_2D);
