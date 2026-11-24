@@ -389,7 +389,18 @@ final class HologramActionDispatcher {
         if (operationPreflight && action.hasKey("nativeOperationOpenId")) {
             if (s.job != 1 && s.job != 2 && validNativeOperationOptions(s, action)) {
                 HologramSession bound = s;
-                HologramStructureProjection.requestOperationReview(bound, () -> configure(bound, action, true));
+                try {
+                    HologramNativeOperationChoices inputs = HologramNativeOperationChoices.read(s, action);
+                    HologramStructureProjection.requestOperationReview(bound, () -> {
+                        if (!configure(bound, action, true)) return false;
+                        bound.nativeOperationInputs = inputs;
+                        return true;
+                    });
+                } catch (java.io.IOException invalid) {
+                    s.status = invalid.getMessage();
+                } finally {
+                    s.nativeOperationInputs = null;
+                }
             } else s.status = "原生操作目标或参数已变化，请重新打开控制器";
             HologramSnapshots.send(s);
             return;
@@ -801,7 +812,8 @@ final class HologramActionDispatcher {
     private static boolean validNativeOperationOptions(HologramSession s, NBTTagCompound action) {
         if (!action.getBoolean("operationPreflight") || !action.hasKey("nativeOperationOpenId", 4)
             || s.controllerOpenId <= 0 || action.getLong("nativeOperationOpenId") != s.controllerOpenId
-            || !action.hasKey("mode", 3) || action.getInteger("mode") < 1 || action.getInteger("mode") > 2
+            || !action.hasKey("mode", 3) || action.getInteger("mode") < 0 || action.getInteger("mode") > 2
+            || action.getInteger("mode") == 0 && !action.hasKey(HologramNativeOperationChoices.KEY, 9)
             || !action.hasKey("main", 3) || !action.hasKey("channels", 10) || !action.hasKey("noHatches", 1)
             || !action.hasKey("facing", 3) || !action.hasKey("scope", 3) || !action.hasKey("layer", 3)
             || !action.hasKey("selected", 3) || !action.hasKey("selectedIndices", 11)

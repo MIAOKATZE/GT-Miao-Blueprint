@@ -34,6 +34,11 @@ final class HologramLocalControllerEdits {
 
     static HologramState apply(HologramState base, HologramState initial, String operation, NBTTagCompound request)
         throws IOException {
+        return apply(base, initial, operation, request, null);
+    }
+
+    static HologramState apply(HologramState base, HologramState initial, String operation, NBTTagCompound request,
+        java.util.function.Consumer<HologramState.Cell> onEdit) throws IOException {
         if (initial == null || base.cells.size() != initial.cells.size() || base.data.getBoolean("capturePending"))
             throw new IOException("请先等待本地结构采集完成");
         if (base.data.getInteger("mode") == 2) throw new IOException("拆除模式不接受建造目标");
@@ -102,7 +107,10 @@ final class HologramLocalControllerEdits {
             if (tierPreset) patch.setInteger("hatchTier", request.getInteger("tier"));
         }
         patch.setString("status", "已更新本地结构规划");
-        return HologramState.apply(base, patch);
+        HologramState result = HologramState.apply(base, patch);
+        if (onEdit != null) for (int i = 0; i < rows.tagCount(); i++)
+            onEdit.accept(result.cells.get(rows.getCompoundTagAt(i).getInteger("index")));
+        return result;
     }
 
     private static int nativeCandidateCount(NBTTagCompound row, int size) {

@@ -165,6 +165,7 @@ final class HologramSession {
     NBTTagCompound channels = new NBTTagCompound();
     HologramCapture capture;
     HologramControllerCapture.FinishWork captureWork;
+    HologramNativeOperationChoices nativeOperationInputs;
     String captureError = "";
     com.miaokatze.gtmb.api.StructureSources.CaptureIntent captureIntent = com.miaokatze.gtmb.api.StructureSources.CaptureIntent.NEW_TEMPLATE;
     boolean localPlanPending;

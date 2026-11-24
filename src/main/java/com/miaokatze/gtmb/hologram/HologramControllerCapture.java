@@ -317,7 +317,7 @@ final class HologramControllerCapture {
             }
             s.facing = s.machine.getExtendedFacing()
                 .ordinal();
-            work = s.captureWork = new FinishWork(savedPins);
+            work = s.captureWork = new FinishWork(savedPins, s.nativeOperationInputs);
         }
         s.capturePending = false;
         s.captureRetryDue = 0;
@@ -388,14 +388,21 @@ final class HologramControllerCapture {
 
         private final Thread owner = Thread.currentThread();
         private final Map<String, ItemStack> savedPins;
+        private final HologramNativeOperationChoices nativeInputs;
         private Iterator<String> pinPositions;
+        private Iterator<Integer> reviewSelection;
         private Iterator<HologramCapture.Cell> manual;
         private HologramResourcePlanner.PlanTask planner;
         private boolean pinsRetained, stopped;
         private int stage, cursor, lastWork;
 
         FinishWork(Map<String, ItemStack> savedPins) {
+            this(savedPins, null);
+        }
+
+        private FinishWork(Map<String, ItemStack> savedPins, HologramNativeOperationChoices nativeInputs) {
             this.savedPins = savedPins;
+            this.nativeInputs = nativeInputs;
         }
 
         boolean finalizing() {
@@ -441,7 +448,7 @@ final class HologramControllerCapture {
                 stop(s, "结构采集已停止：" + s.capture.failure + "；请重新读取控制器", null, true);
                 return false;
             }
-            while (stage < 6 && budget.take()) advance(s);
+            while (!stopped && stage < 7 && budget.take()) advance(s);
             lastWork = budget.used();
             if (planner == null) return false;
             boolean done = planner
@@ -502,14 +509,15 @@ final class HologramControllerCapture {
                     String key = HologramValues.position(cell);
                     ItemStack pin = savedPins.get(key);
                     if (pin != null && !cell.anchor) s.pins.put(i, pin);
-                    if (key.equals(s.scanSelectedPosition)) s.selected = i;
-                    if (s.scanSelectedPositions.contains(key)) s.selectedIndices.add(i);
+                    boolean selectable = nativeInputs == null || s.scope < 2
+                        || !cell.anchor && !cell.userPosition && cell.element != null;
+                    if (selectable && key.equals(s.scanSelectedPosition)) s.selected = i;
+                    if (selectable && s.scanSelectedPositions.contains(key)) s.selectedIndices.add(i);
                     cell.candidates = HologramCellPolicy.candidates(s, cell);
                     HologramCapture.prepareNativeHint(s, cell);
+                    if (nativeInputs != null && nativeInputs.hasHatches()) nativeInputs.inspect(s, cell, i, key);
                 } else stage = 5;
             } else if (stage == 5) {
-                s.scanSelectedPosition = null;
-                s.scanSelectedPositions.clear();
                 HologramDraftPersistence.restoreBlueprintAnnotations(s);
                 for (Map.Entry<String, HologramCapture.Cell> edit : s.projectionEdits.entrySet()) {
                     HologramCapture.Cell cell = s.capture.positions.get(edit.getKey());
@@ -518,11 +526,43 @@ final class HologramControllerCapture {
                         cell.excluded = edit.getValue().excluded;
                     }
                 }
-                planner = HologramResourcePlanner.beginCapturePlan(
-                    s,
-                    HologramNativeReadyPlacement.enabled() && s.capture.readyPlacementSource(s));
-                stage = 6;
+                if (nativeInputs != null && s.scope >= 2) {
+                    reviewSelection = (s.scope == 2 && !s.selectedIndices.isEmpty() ? s.selectedIndices
+                        : java.util.Collections.singleton(s.selected)).iterator();
+                    stage = 6;
+                } else finishReview(s);
+            } else if (stage == 6) {
+                if (!reviewSelection.hasNext()) finishReview(s);
+                else {
+                    int selected = reviewSelection.next();
+                    if (selected < 0 || !HologramSessionPolicy
+                        .inScope(s, s.capture.cells.get(selected), selected))
+                        refuseReview(s, "原生施工选择已变化，请重新选择完整范围。");
+                }
             }
+        }
+
+        private void refuseReview(HologramSession s, String reason) {
+            s.scanSelectedPosition = null;
+            s.scanSelectedPositions.clear();
+            stopped = true;
+            stop(s, reason, null);
+        }
+
+        private void finishReview(HologramSession s) {
+            if (nativeInputs != null) {
+                String refused = nativeInputs.finish(s);
+                if (refused != null) {
+                    refuseReview(s, refused);
+                    return;
+                }
+            }
+            s.scanSelectedPosition = null;
+            s.scanSelectedPositions.clear();
+            planner = HologramResourcePlanner.beginCapturePlan(
+                s,
+                HologramNativeReadyPlacement.enabled() && s.capture.readyPlacementSource(s));
+            stage = 7;
         }
     }
 
