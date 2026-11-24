@@ -42,7 +42,7 @@ final class HologramMaterialConfirmationDialog {
     private static final int WIDTH = 632, HEIGHT = 446, ROW_HEIGHT = 44, LIST_HEIGHT = 198;
     private static final int LIST_WIDTH = 604, ROW_INSET = 7, ROW_WIDTH = LIST_WIDTH - ROW_INSET * 2 - 6;
     enum LocalAction {
-        BACK, REFRESH, SUBMIT
+        BACK, REFRESH, SUBMIT, ADVANCED
     }
 
     /** The port lends its current detached rows for read-only rendering. */
@@ -61,6 +61,10 @@ final class HologramMaterialConfirmationDialog {
         LocalFrame localFrame(); // null if the owning screen/source is no longer current
 
         boolean localSubmitAvailable();
+
+        default boolean supportsAdvancedPlacement() {
+            return false;
+        }
 
         default String localSubmitLabel() {
             return "提交施工并核验…";
@@ -164,6 +168,7 @@ final class HologramMaterialConfirmationDialog {
             case 245 -> new int[] { 400, 340, 218 };
             case 246 -> new int[] { 476, 369, 142 };
             case 247 -> new int[] { 338, 369, 132 };
+            case 248 -> local && localView.supportsAdvancedPlacement() ? new int[] { 14, 369, 314 } : null;
             default -> null;
         };
         if (bounds == null) return null;
@@ -330,6 +335,13 @@ final class HologramMaterialConfirmationDialog {
                 () -> descriptive() ? "蓝图记录与背包观察仅供查看；明确提交后才核验施工。"
                     : "非施工报价。AE 下单、抵扣和最终施工确认仍在服务端核验页。",
                 14, 316, 604, 16, HologramMuiTheme.MUTED));
+            if (localView.supportsAdvancedPlacement())
+                panel.child(button(248, () -> "高级施工选项（旧流程）…", 14, 369, 314,
+                    () -> localView.localAction(LocalAction.ADVANCED), localView::localSubmitAvailable, () -> 0)
+                        .tooltipBuilder(t -> {
+                            t.addLine("会联系服务器打开旧版核验页，可选择 NBT、网络、抵用券等。");
+                            t.addLine("不会自动施工、清理原方块或下 AE 订单。");
+                        }));
             panel.child(button(247, () -> "刷新本地背包", 338, 369, 132,
                 () -> localView.localAction(LocalAction.REFRESH), () -> localFrame != null && localFrame.ready(),
                 () -> 0));

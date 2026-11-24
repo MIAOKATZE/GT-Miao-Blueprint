@@ -3,7 +3,12 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import java.io.IOException;
 import java.lang.reflect.Field;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityClientPlayerMP;
@@ -16,7 +21,10 @@ import net.minecraft.nbt.NBTTagCompound;
 
 import com.miaokatze.gtmb.client.hologram.HologramLibraryMaterialReviewScreen.Ticket;
 import com.miaokatze.gtmb.client.hologram.HologramLocalPlacement.Submission;
+import com.miaokatze.gtmb.client.hologram.HologramMaterialConfirmationDialog.LocalAction;
 import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
+import com.miaokatze.gtmb.hologram.HologramPlacementRequest;
+import com.miaokatze.gtmb.hologram.HologramProjectedPlacement;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
 /** Escrow contract only; does not submit to the real library service or launch a client UI. */
@@ -24,7 +32,53 @@ final class HologramLibrarySecondUseRegression {
 
     private HologramLibrarySecondUseRegression() {}
 
+    public static void main(String[] args) {
+        requestRouting();
+        System.out.println("Direct and advanced placement routing regression passed.");
+    }
+
+    private static void requestRouting() {
+        var frozen = new Submission(null, null, 0, new NBTTagCompound());
+        var pending = new AtomicReference<>(frozen);
+        UUID id = UUID.randomUUID();
+        int[] anchor = { 1, 64, 1 };
+        var cell = new HologramProjectedPlacement.Cell(0, 0, 0, "minecraft:cobblestone", 0,
+            "minecraft:cobblestone", 0, -1);
+        var plan = new HologramProjectedPlacement.Plan(Collections.singletonList(cell),
+            Collections.singletonList(new HologramProjectedPlacement.Need("minecraft:cobblestone", 0, 1)));
+        var calls = new ArrayList<Integer>();
+        java.util.function.BiPredicate<Submission, Boolean> refuse = (actual, direct) -> {
+            SimpleAssert.that(actual == frozen, "the original frozen submission crosses the port");
+            try {
+                NBTTagCompound request = direct ? HologramPlacementRequest.encodeDirect(id, anchor, plan)
+                    : HologramPlacementRequest.encode(id, anchor, plan);
+                calls.add(request.getInteger("placementWireVersion"));
+            } catch (IOException failure) {
+                throw new AssertionError("expected an ordinary valid placement request", failure);
+            }
+            return false;
+        };
+        for (var action : new LocalAction[] { LocalAction.REFRESH, LocalAction.BACK })
+            SimpleAssert.that(!HologramLibraryMaterialReviewScreen.dispatchRefused(
+                action, () -> { throw new AssertionError("Browse and Back must not consume a placement ticket"); }, refuse),
+                "browse/Back has no placement request");
+        SimpleAssert.that(calls.isEmpty(), "no preliminary request on browse/Back");
+        SimpleAssert.that(HologramLibraryMaterialReviewScreen.dispatchRefused(
+            LocalAction.SUBMIT, () -> pending.getAndSet(null), refuse), "the direct refusal stays visible");
+        SimpleAssert.eq(Collections.singletonList(4), calls, "normal click routes only to v4, no v2 retry");
+        SimpleAssert.that(!HologramLibraryMaterialReviewScreen.dispatchRefused(
+            LocalAction.ADVANCED, () -> pending.getAndSet(null), refuse),
+            "a second action cannot revive a consumed ticket");
+        SimpleAssert.eq(Collections.singletonList(4), calls, "no fallback after a refused direct click");
+        pending.set(frozen);
+        calls.clear();
+        SimpleAssert.that(HologramLibraryMaterialReviewScreen.dispatchRefused(
+            LocalAction.ADVANCED, () -> pending.getAndSet(null), refuse), "the explicit advanced refusal stays visible");
+        SimpleAssert.eq(Collections.singletonList(2), calls, "only the explicit advanced click chooses v2");
+    }
+
     static void run() throws Exception {
+        requestRouting();
         sun.misc.Unsafe unsafe = (sun.misc.Unsafe) field(sun.misc.Unsafe.class, "theUnsafe").get(null);
         Minecraft client = (Minecraft) unsafe.allocateInstance(Minecraft.class);
         WorldClient world = (WorldClient) unsafe.allocateInstance(WorldClient.class);
