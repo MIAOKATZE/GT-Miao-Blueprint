@@ -80,6 +80,7 @@ public final class HologramWorldServiceRegression {
             unavailableQuickSelectionKeepsDraft(session, player);
             completedJobQuickPlacementGuards(session, player);
             cancelLockedPlacementKeepsDraft(session, player);
+            cancelledExecutionRetiresItsScreen(player);
             controllerOpeningPurpose(session, player, world);
             replacementActorCannotReuseSession(unsafe, player, world, ctor);
             Method action = HologramAuthoringWorkflow.class
@@ -368,6 +369,42 @@ public final class HologramWorldServiceRegression {
         @Override
         public String[] getStructureDescription(ItemStack trigger) {
             return new String[] { "controller opening fixture" };
+        }
+    }
+
+    private static void cancelledExecutionRetiresItsScreen(EntityPlayerMP player) throws ReflectiveOperationException {
+        HologramSession s = new HologramSession(player, 0, 64, 0, false, 1);
+        s.virtual = s.virtualPlacement = s.virtualLocked = true;
+        s.blueprintAwaitingConfirmation = s.placementReviewIssued = true;
+        s.placementReviewNonce = 17;
+        s.executionRequestId = UUID.randomUUID().toString();
+        Field field = HologramWorkspace.class.getDeclaredField("SESSIONS");
+        field.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        java.util.Map<UUID, HologramSession> sessions = (java.util.Map<UUID, HologramSession>) field.get(null);
+        UUID actor = player.getUniqueID();
+        HologramSession previous = sessions.put(actor, s);
+        try {
+            NBTTagCompound displayed = HologramSnapshots.areaSelection(s);
+            NBTTagCompound back = new NBTTagCompound();
+            back.setString("op", "cancelBlueprintPlacement");
+            back.setString("session", s.id);
+            back.setLong("planRevision", s.planRevision);
+            back.setLong("editorWorkspaceEpoch", s.editorWorkspaceEpoch);
+            back.setLong("uiSequence", s.uiSequence + 1);
+            ItemStack held = player.getHeldItem();
+            HologramService.handle(player, back);
+            SimpleAssert.that(s.cancelled && !s.blueprintAwaitingConfirmation && !s.placementReviewIssued
+                && s.placementReviewNonce == 18 && s.job == 0 && player.getHeldItem() == held,
+                "authoritative Back revokes precisely this review without starting a job");
+            NBTTagCompound terminal = HologramSnapshots.cancellation(s);
+            com.miaokatze.gtmb.client.hologram.HologramPlacementReviewContextRegression
+                .executionRetirement(displayed, terminal);
+            HologramService.handle(player, back);
+            SimpleAssert.eq(18L, s.placementReviewNonce, "duplicate Back cannot revoke twice");
+        } finally {
+            if (previous == null) sessions.remove(actor);
+            else sessions.put(actor, previous);
         }
     }
 
