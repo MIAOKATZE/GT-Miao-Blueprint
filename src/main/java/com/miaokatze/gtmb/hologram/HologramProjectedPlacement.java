@@ -115,11 +115,12 @@ public final class HologramProjectedPlacement {
         if (preset.schema == 1) preset = HologramPresets.upgradeLegacy(preset);
         if (preset.cells == null || preset.cells.isEmpty() || !HologramBlueprintLimits.accepts(preset.cells.size()))
             throw new IOException("当前蓝图没有可施工的方块或方块数量超出范围");
+        HologramBlueprintParticipation participation = HologramBlueprintParticipation.fromPreset(preset);
         List<HologramPresets.Cell> included = new ArrayList<>();
         for (HologramPresets.Cell source : preset.cells) {
             ensureCurrent(current);
             if (source == null) throw new IOException("蓝图包含无法读取的方块记录");
-            if (!source.excluded && !plainAir(source)) included.add(source);
+            if (!source.excluded && !plainAir(source) && participation.includes(source)) included.add(source);
         }
         preset.cells = included;
         // The saved grid supplies placement operations independently of the original declaration provider.

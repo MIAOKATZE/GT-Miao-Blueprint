@@ -397,9 +397,10 @@ public final class HologramLocalBlueprintDocument {
         }
 
         public void visitDisplayCells(DisplayCell visitor, java.util.function.BooleanSupplier current) throws IOException {
+            HologramBlueprintParticipation participation = HologramBlueprintParticipation.fromPreset(document);
             for (Cell cell : document.cells) {
                 if (!current.getAsBoolean()) throw new IOException("蓝图预览已取消");
-                if (!cell.excluded) visitor.accept(
+                if (!cell.excluded && participation.includes(cell)) visitor.accept(
                     cell.x, cell.y, cell.z, text(cell.block), cell.metadata, text(cell.item), cell.damage, cell.facing,
                     text(cell.tileNbt), text(cell.itemNbt));
             }
@@ -547,7 +548,7 @@ public final class HologramLocalBlueprintDocument {
     }
 
     public static boolean metadataOnlyEdit(String op) {
-        return "editBlueprintPrompt".equals(op) || "configureBlueprintNbt".equals(op);
+        return "editBlueprintPrompt".equals(op) || "configureBlueprintNbt".equals(op) || "structureState".equals(op);
     }
 
     public HistoryDelta historyDelta(long previous) {
@@ -580,7 +581,7 @@ public final class HologramLocalBlueprintDocument {
 
     public static boolean handles(String op) {
         return switch (op) {
-            case "editCopy", "editCut", "editPaste", "editMove", "editDelete", "editUndo", "editRedo", "addPosition", "restoreCell", "clearPin", "pin", "customPin", "sourcePin", "hatchFacing", "rotateCell", "rotateBlueprint", "editBlueprintPrompt", "editCellFlags", "editHintArea", "configureBlueprintNbt", "selectStructure", "selectCell", "configure", "placeTextBox" -> true;
+            case "editCopy", "editCut", "editPaste", "editMove", "editDelete", "editUndo", "editRedo", "addPosition", "restoreCell", "clearPin", "pin", "customPin", "sourcePin", "hatchFacing", "rotateCell", "rotateBlueprint", "editBlueprintPrompt", "editCellFlags", "editHintArea", "configureBlueprintNbt", "selectStructure", "selectCell", "configure", "placeTextBox", "structureState" -> true;
             default -> processingCommand(op);
         };
     }
@@ -912,6 +913,17 @@ public final class HologramLocalBlueprintDocument {
                     throw new IOException("仓室不支持所选方向");
                 cell.facing = direction;
                 affected = new int[] { index };
+            }
+            case "structureState" -> {
+                if (!request.hasKey("structureId", 8) || !request.hasKey("enabled", 1))
+                    throw new IOException("结构参与施工参数无效");
+                String id = request.getString("structureId");
+                Structure member = id.isEmpty() ? null : HologramBlueprintData.blueprintSource(next, id);
+                if (member == null) throw new IOException("所选结构已变化，请重新选择");
+                boolean enabled = request.getBoolean("enabled");
+                if (member.enabled == enabled) return;
+                member.enabled = enabled;
+                message = enabled ? "结构参与施工已启用" : "结构参与施工已停用";
             }
             case "editBlueprintPrompt" -> next.prompt = HologramSessionPolicy
                 .boundedPrompt(request.getString("prompt"));

@@ -48,6 +48,7 @@ import com.miaokatze.gtmb.hologram.HologramAeNativePreview;
 import com.miaokatze.gtmb.client.hologram.HologramLocalSaveTrace.Stage;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec;
+import com.miaokatze.gtmb.hologram.HologramBlueprintParticipation;
 import com.miaokatze.gtmb.hologram.HologramGtMeOutputDisplay;
 import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.DetachedEditorRows;
 import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.EditorRows;
@@ -113,6 +114,7 @@ public final class HologramBlueprintPreview {
                 expandedDisplay(view.blueprint, view.blueprint.getAsJsonArray("cells"), progress),
                 null);
             CompactCells cells = new CompactCells(view.cells(), view.materials());
+            HologramBlueprintParticipation participation = HologramBlueprintParticipation.fromJson(view.blueprint);
             Payloads payloads = new Payloads();
             boolean[] excluded = new boolean[view.materials()];
             long[] materialBytes = new long[view.materials()];
@@ -125,7 +127,7 @@ public final class HologramBlueprintPreview {
                 if (excluded[material]) continue;
                 NBTTagCompound known = cells.materials[material];
                 JsonObject definition = known == null ? view.material(material) : null;
-                if (definition != null && excluded(definition)) {
+                if (definition != null && (excluded(definition) || !participation.includes(definition))) {
                     excluded[material] = true;
                     continue;
                 }
@@ -298,12 +300,13 @@ public final class HologramBlueprintPreview {
         NBTTagCompound data = displayMetadata(blueprint);
         NBTTagList cells = new NBTTagList();
         Payloads payloads = new Payloads();
+        HologramBlueprintParticipation participation = HologramBlueprintParticipation.fromJson(blueprint);
         int processed = 0;
         if (progress != null) progress.accept(0, sourceCells.size());
         for (JsonElement row : sourceCells) {
             if (progress != null && (++processed & 255) == 0) progress.accept(processed, sourceCells.size());
             JsonObject source = row.getAsJsonObject();
-            if (excluded(source)) continue;
+            if (excluded(source) || !participation.includes(source)) continue;
             int x = coordinate(source, "x"), y = coordinate(source, "y"), z = coordinate(source, "z");
             cells.appendTag(displayRow(displayMaterial(source, payloads), x, y, z));
         }

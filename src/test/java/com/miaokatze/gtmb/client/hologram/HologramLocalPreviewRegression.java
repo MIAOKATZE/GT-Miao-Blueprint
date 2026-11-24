@@ -13,6 +13,7 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
 import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument;
+import com.miaokatze.gtmb.hologram.HologramProjectedPlacement;
 import com.miaokatze.gtmb.testutil.SimpleAssert;
 
 /** Exercises detached display decoding: unknown construction identities stay outside validation and authority. */
@@ -25,6 +26,7 @@ public final class HologramLocalPreviewRegression {
         compactDirectDisplay();
         packedEditorParity();
         frozenDraftParity();
+        structureParticipation();
         singleCellAnnotation();
         compactCoordinateCompatibility();
         compactDenseRegion();
@@ -101,6 +103,64 @@ public final class HologramLocalPreviewRegression {
             !pending.sameClient(new Object(), connection, actor) && !pending.sameClient(world, null, actor)
                 && !pending.sameClient(world, connection, null),
             "an absent identity or replaced world cannot receive a delayed save presentation");
+    }
+
+    static void structureParticipation() throws Exception {
+        byte[] source = """
+            {"schema":2,"blueprint":{"schema":2,"id":"membership_fixture","name":"Member test",
+              "structures":[{"id":"A","name":"A"},{"id":"B","name":"B","enabled":false}],
+              "cells":[
+                {"x":0,"block":"minecraft:stone","item":"minecraft:stone","structureId":"A"},
+                {"x":1,"block":"minecraft:stone","item":"minecraft:stone","structureId":"B"},
+                {"x":2,"block":"minecraft:stone","item":"minecraft:stone","structureIds":["A","B"]},
+                {"x":3,"block":"minecraft:stone","item":"minecraft:stone"}
+              ]}}
+            """.getBytes(StandardCharsets.UTF_8);
+        int[] origin = { 0, 64, 0 };
+        var plan = HologramProjectedPlacement.compile(source, origin, new int[0], 256, () -> true);
+        SimpleAssert.eq(java.util.Arrays.asList(0, 2, 3), plan.cells().stream()
+            .map(HologramProjectedPlacement.Cell::x).collect(java.util.stream.Collectors.toList()),
+            "disabled-only members create no operation; shared and unlinked positions remain");
+        SimpleAssert.eq(3, plan.needs().get(0).count(), "disabled-only membership is not payable");
+
+        NBTTagList expanded = HologramBlueprintPreview.snapshot(source).getTagList("cells", 10);
+        SimpleAssert.eq(3, expanded.tagCount(), "historic expanded preview honors the same scope");
+        SimpleAssert.eq(2, expanded.getCompoundTagAt(1).getInteger("dx"), "shared expanded cell stays visible");
+
+        HologramLocalBlueprintDocument document = HologramLocalBlueprintDocument.open(source);
+        var first = document.freeze();
+        SimpleAssert.eq(4, document.snapshot().getTagList("cells", 10).tagCount(),
+            "authoring keeps disabled member cells available for re-enable");
+        NBTTagCompound change = new NBTTagCompound();
+        change.setString("structureId", "B");
+        change.setBoolean("enabled", true);
+        change.setLong("planRevision", document.revision());
+        SimpleAssert.that(document.apply("structureState", change), "the original participation control edits locally");
+        var all = document.freeze();
+        SimpleAssert.eq(4, HologramBlueprintPreview.displayInput(all, () -> true, null).cells.size(),
+            "all-enabled and unlinked placement stays whole");
+        SimpleAssert.eq(3, HologramBlueprintPreview.displayInput(first, () -> true, null).cells.size(),
+            "enabling in the editor must not change an earlier frozen placement");
+        change.setBoolean("enabled", false);
+        change.setLong("planRevision", document.revision());
+        document.apply("structureState", change);
+        byte[] compact = document.freeze().artifact();
+        var indexed = HologramBlueprintPreview.displayInput(compact, null, true);
+        SimpleAssert.that(indexed.cells != null && indexed.cells.size() == 3 && indexed.savedMaterials != null,
+            "compact geometry omits the same disabled-only member");
+        var forecast = HologramLibraryMaterialForecast.project(indexed.savedMaterials);
+        long observed = forecast.candidates().stream().mapToLong(HologramLibraryMaterialForecast.Need::cells).sum()
+            + forecast.unpriced().cells() + forecast.airCells();
+        SimpleAssert.eq(3L, observed, "compact forecast examines exactly the participating cells");
+        var compactPlan = HologramProjectedPlacement.compile(
+            com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.portableDocument(compact), origin,
+            new int[0], 256, () -> true);
+        SimpleAssert.eq(plan.cells(), compactPlan.cells(), "compact and expanded placement produce the same operations");
+        NBTTagCompound undo = new NBTTagCompound();
+        undo.setLong("planRevision", document.revision());
+        document.apply("editUndo", undo);
+        SimpleAssert.eq(4, HologramBlueprintPreview.displayInput(document.freeze(), () -> true, null).cells.size(),
+            "participation uses normal document undo");
     }
 
     private static void compactDisplay() throws Exception {
