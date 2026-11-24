@@ -415,22 +415,22 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         return true;
     }
 
-    void reviewLocalConstruction(NBTTagCompound settings) {
-        if (!localControllerStandard()) return;
+    boolean reviewLocalConstruction(NBTTagCompound settings) {
+        if (!localControllerStandard()) return false;
         if (localExecutionRequest != null) {
             ui.session.notice("上一次施工核对尚未结束，请稍候。");
-            return;
+            return false;
         }
         Minecraft client = minecraft();
         HologramState displayed = ui.session.state();
         String blocker = HologramPlacementConfirmation.localStructureReviewBlocker(displayed);
         if (!blocker.isEmpty()) {
             ui.session.notice(blocker);
-            return;
+            return false;
         }
         if (!controllerContextCurrent(false)) {
             ui.session.notice("控制器或手持投影仪已变化，请重新打开结构。");
-            return;
+            return false;
         }
         int mode = displayed.data.getInteger("mode");
         boolean compact = com.miaokatze.gtmb.hologram.HologramCompactNativeRequest.enabled();
@@ -439,27 +439,25 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             choices = nativeReviewChoices(displayed, localNativeChoices, mode, settings.getInteger("scope"), compact);
         } catch (java.io.IOException invalid) {
             ui.session.notice(invalid.getMessage());
-            return;
+            return false;
         }
         if (mode != 0 || choices.tagCount() != 0) {
             settings.setInteger("mode", mode);
             if (choices.tagCount() != 0) settings.setTag(HologramNativeOperationChoices.KEY, choices);
-            HologramClient
+            return HologramClient
                 .prepareExplicitControllerOperation(openingController, localControllerSide, settings, displayed);
-            return;
         }
+        boolean ordinary = ordinaryNativeSubmit(displayed.data, settings, !localNativeChoices.isEmpty());
         java.util.UUID id = java.util.UUID.randomUUID();
         localExecutionRequest = id;
-        if (compact) {
+        if (compact || ordinary) {
             try {
-                NBTTagCompound request = com.miaokatze.gtmb.hologram.HologramCompactNativeRequest.encode(
-                    id,
-                    openingController,
-                    localControllerSide,
-                    client.thePlayer.inventory.currentItem,
-                    displayed.data,
-                    settings,
-                    localControllerBaseline != null && displayed.cells == localControllerBaseline.cells);
+                boolean unedited = localControllerBaseline != null && displayed.cells == localControllerBaseline.cells;
+                NBTTagCompound request = compact
+                    ? com.miaokatze.gtmb.hologram.HologramCompactNativeRequest.encode(id, openingController,
+                        localControllerSide, client.thePlayer.inventory.currentItem, displayed.data, settings, unedited)
+                    : com.miaokatze.gtmb.hologram.HologramCompactNativeRequest.encodeOrdinary(id, openingController,
+                        localControllerSide, client.thePlayer.inventory.currentItem, displayed.data, settings, unedited);
                 localCompactNative = true;
                 localExecutionSent = true;
                 nativeCompactReceiptDeadline = System.nanoTime() + 35_000_000_000L;
@@ -467,8 +465,9 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
                 ui.session.notice("正在核对现场原生结构。");
             } catch (java.io.IOException | RuntimeException failure) {
                 localExecutionFailed(id, failure.getMessage());
+                return false;
             }
-            return;
+            return true;
         }
         int[] anchor = { displayed.data.getInteger("x"), displayed.data.getInteger("y"),
             displayed.data.getInteger("z") };
@@ -479,7 +478,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
                 key,
                 settings.getTag(key)
                     .copy());
-        ui.session.notice("正在准备施工清单…");
+        ui.session.notice("当前为局部范围或手工编辑，正在准备高级施工核对");
         try {
             EXECUTION_PREPARATION.execute(() -> {
                 try {
@@ -524,9 +523,18 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
                     client.func_152344_a(() -> localExecutionFailed(id, failure.getMessage()));
                 }
             });
+            return true;
         } catch (java.util.concurrent.RejectedExecutionException busy) {
             localExecutionFailed(id, "施工清单正在准备，请稍后重试");
+            return false;
         }
+    }
+
+    /** Only an intentional scope, preset, or hand edit can enter the advanced review path. */
+    static boolean ordinaryNativeSubmit(NBTTagCompound state, NBTTagCompound settings, boolean localEdits) {
+        return state.getInteger("mode") == 0 && settings.getInteger("scope") == 0
+            && settings.getIntArray("selectedIndices").length == 0 && !state.getBoolean("presetActive")
+            && settings.getString("structureId").isEmpty() && !localEdits;
     }
 
     private void localExecutionFailed(java.util.UUID id, String reason) {

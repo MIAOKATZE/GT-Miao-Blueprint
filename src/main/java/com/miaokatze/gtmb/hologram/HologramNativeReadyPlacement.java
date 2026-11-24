@@ -52,15 +52,17 @@ final class HologramNativeReadyPlacement {
     private final HologramNativeItemBill bill;
     private final HologramPlacementAdmissionSweep sweep;
     private final long sourceRevision, started;
+    private final boolean ordinary;
     private final int x, y, z, side;
     private final List<Integer> work = new NativeWork();
     private final HologramMaterials.Context inventory;
     private int stockCursor;
     private boolean anchor;
 
-    private HologramNativeReadyPlacement(HologramSession session, String id, long now) {
+    private HologramNativeReadyPlacement(HologramSession session, String id, long now, boolean ordinary) {
         this.session = session;
         this.id = id;
+        this.ordinary = ordinary;
         capture = session.capture;
         bill = session.nativeReadyBill;
         sweep = new HologramPlacementAdmissionSweep(capture.cells.size());
@@ -78,8 +80,9 @@ final class HologramNativeReadyPlacement {
     }
 
     static boolean admitPrepared(HologramSession s, String id) {
-        if (s.nativeCompactStart == null || s.nativeReadyPlacement != null || !ready(s)) return false;
-        s.nativeReadyPlacement = new HologramNativeReadyPlacement(s, id, System.nanoTime());
+        boolean ordinary = HologramNativeCompactStart.ordinary(s);
+        if (s.nativeCompactStart == null || s.nativeReadyPlacement != null || !ready(s, ordinary)) return false;
+        s.nativeReadyPlacement = new HologramNativeReadyPlacement(s, id, System.nanoTime(), ordinary);
         return true;
     }
 
@@ -101,11 +104,11 @@ final class HologramNativeReadyPlacement {
         HologramSession s = HologramWorkspace.find(player.getUniqueID());
         String refusal;
         try {
-            if (!enabled() || !matches(s, player, request) || !ready(s)) refusal = "当前没有同版本、已准备且受支持的原生放置计划。";
+            if (!enabled() || !matches(s, player, request) || !ready(s, false)) refusal = "当前没有同版本、已准备且受支持的原生放置计划。";
             else if (s.nativeReadyPlacement != null) refusal = "正在核对另一条原生放置请求。";
             else if (HologramConstructionJournal.pending(player)) refusal = RECOVERY_PENDING;
             else {
-                s.nativeReadyPlacement = new HologramNativeReadyPlacement(s, id, System.nanoTime());
+                s.nativeReadyPlacement = new HologramNativeReadyPlacement(s, id, System.nanoTime(), false);
                 return;
             }
         } catch (RuntimeException | LinkageError invalid) {
@@ -146,7 +149,7 @@ final class HologramNativeReadyPlacement {
             && r.getLong("sourceRevision") == StructureSources.revision();
     }
 
-    private static boolean ready(HologramSession s) {
+    private static boolean ready(HologramSession s, boolean ordinary) {
         if (s.nativeReadyBill == null || s.virtual
             || s.mode != 0
             || s.scope != 0
@@ -161,9 +164,7 @@ final class HologramNativeReadyPlacement {
             || !s.facingPins.isEmpty()
             || s.allocationsFrozen
             || !s.suppressedAuto.isEmpty()
-            || s.materialSettings.containers
-            || s.materialSettings.me
-            || !s.materialSettings.main
+            || (!ordinary && (s.materialSettings.containers || s.materialSettings.me || !s.materialSettings.main))
             || HologramWorkspace.find(s.player.getUniqueID()) != s
             || !HologramSessionPolicy.valid(s)
             || s.player.getDistanceSq(s.x + .5, s.y + .5, s.z + .5) > 64
@@ -231,7 +232,7 @@ final class HologramNativeReadyPlacement {
 
     private boolean step(int rows, long deadline, LongSupplier clock) throws IOException {
         HologramSession s = session;
-        if (!enabled() || clock.getAsLong() - started >= LIFETIME_NANOS
+        if ((!ordinary && !enabled()) || clock.getAsLong() - started >= LIFETIME_NANOS
             || s.capture != capture
             || s.nativeReadyBill != bill
             || x != s.x
@@ -239,7 +240,7 @@ final class HologramNativeReadyPlacement {
             || z != s.z
             || side != s.side
             || sourceRevision != StructureSources.revision()
-            || !ready(s)) throw new IOException("原生放置计划或当前目标已变更。");
+            || !ready(s, ordinary)) throw new IOException("原生放置计划或当前目标已变更。");
         var slice = new HologramPlacementAdmissionSweep.Slice(rows, deadline, clock);
         var progress = sweep.inspect(slice, index -> {
             HologramCapture.Cell cell = capture.cells.get(index);

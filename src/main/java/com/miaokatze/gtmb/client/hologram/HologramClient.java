@@ -560,7 +560,7 @@ public final class HologramClient {
     }
 
     /** Only the explicit replacement/demolition review may request the legacy native authority. */
-    static void prepareExplicitControllerOperation(TileEntity tile, int side, NBTTagCompound settings,
+    static boolean prepareExplicitControllerOperation(TileEntity tile, int side, NBTTagCompound settings,
         HologramState displayed) {
         Minecraft mc = Minecraft.getMinecraft();
         if (side < 0 || side > 5
@@ -569,7 +569,7 @@ public final class HologramClient {
             || tile.getWorldObj() != mc.theWorld
             || !HologramService.supportsController(tile)) {
             selectionNotice(text("controllerLocalChanged", "控制器或手持投影仪已变化"));
-            return;
+            return false;
         }
         rootCloseFence.clear();
         syncSnapshotWorld();
@@ -588,10 +588,11 @@ public final class HologramClient {
             opening.openFrom(mc.currentScreen);
             if (mc.currentScreen != opening) {
                 controllerOpen.dismiss(id);
-                return;
+                return false;
             }
             stampSemanticRevision(request);
             HologramNetwork.sendAction(request);
+            return true;
         } catch (RuntimeException failure) {
             dismissControllerOpening(id);
             throw failure;

@@ -572,7 +572,8 @@ final class HologramControllerCapture {
             s.scanSelectedPosition = null;
             s.scanSelectedPositions.clear();
             planner = HologramResourcePlanner
-                .beginCapturePlan(s, HologramNativeReadyPlacement.enabled() && s.capture.readyPlacementSource(s));
+                .beginCapturePlan(s, (HologramNativeReadyPlacement.enabled() || HologramNativeCompactStart.ordinary(s))
+                    && s.capture.readyPlacementSource(s));
             stage = 7;
         }
     }

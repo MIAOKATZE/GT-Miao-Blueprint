@@ -18,6 +18,8 @@ import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 public final class HologramCompactNativeRequest {
 
     static final String FLAG = "nativeCompactPlace";
+    /** Distinct action: an old server cannot misinterpret it as an ordinary controller-opening click. */
+    static final String ORDINARY_ACTION = "nativeOrdinaryPlace";
     private static final Set<String> FIELDS = Collections.unmodifiableSet(
         new HashSet<>(
             Arrays.asList(
@@ -40,6 +42,14 @@ public final class HologramCompactNativeRequest {
                 "materialMe",
                 "materialPriority")));
 
+    private static final Set<String> ORDINARY_FIELDS = ordinaryFields();
+
+    private static Set<String> ordinaryFields() {
+        Set<String> fields = new HashSet<>(FIELDS);
+        fields.remove(FLAG);
+        return Collections.unmodifiableSet(fields);
+    }
+
     private HologramCompactNativeRequest() {}
 
     public static boolean enabled() {
@@ -48,6 +58,16 @@ public final class HologramCompactNativeRequest {
 
     public static NBTTagCompound encode(UUID id, TileEntity controller, int side, int slot, NBTTagCompound state,
         NBTTagCompound confirmed, boolean unchangedCells) throws IOException {
+        return encode(id, controller, side, slot, state, confirmed, unchangedCells, false);
+    }
+
+    public static NBTTagCompound encodeOrdinary(UUID id, TileEntity controller, int side, int slot, NBTTagCompound state,
+        NBTTagCompound confirmed, boolean unchangedCells) throws IOException {
+        return encode(id, controller, side, slot, state, confirmed, unchangedCells, true);
+    }
+
+    private static NBTTagCompound encode(UUID id, TileEntity controller, int side, int slot, NBTTagCompound state,
+        NBTTagCompound confirmed, boolean unchangedCells, boolean ordinary) throws IOException {
         if (!(controller instanceof IGregTechTileEntity machine) || !unchangedCells
             || state.getInteger("mode") != 0
             || confirmed.getInteger("scope") != 0
@@ -56,11 +76,11 @@ public final class HologramCompactNativeRequest {
             || !confirmed.getString("structureId")
                 .isEmpty())
             throw new IOException("紧凑原生放置暂不支持局部范围、手动仓室位置或仓室预设。");
-        if (!confirmed.getBoolean("materialMain") || confirmed.getBoolean("materialContainers")
-            || confirmed.getBoolean("materialMe")) throw new IOException("紧凑原生放置暂仅支持已明确选择的玩家背包材料。");
+        if (!ordinary && (!confirmed.getBoolean("materialMain") || confirmed.getBoolean("materialContainers")
+            || confirmed.getBoolean("materialMe"))) throw new IOException("紧凑原生放置暂仅支持已明确选择的玩家背包材料。");
         NBTTagCompound request = new NBTTagCompound();
-        request.setString("action", "useBlock");
-        request.setBoolean(FLAG, true);
+        request.setString("action", ordinary ? ORDINARY_ACTION : "useBlock");
+        if (!ordinary) request.setBoolean(FLAG, true);
         request.setString("placementRequestId", id.toString());
         request.setInteger("x", controller.xCoord);
         request.setInteger("y", controller.yCoord);
@@ -82,16 +102,24 @@ public final class HologramCompactNativeRequest {
         return request;
     }
 
+    static boolean ordinary(NBTTagCompound request) {
+        return ORDINARY_ACTION.equals(request.getString("action"));
+    }
+
     static boolean valid(NBTTagCompound request) {
-        if (!hasFields(request, FIELDS) || !"useBlock".equals(request.getString("action"))
+        boolean ordinary = ordinary(request);
+        if (!hasFields(request, ordinary ? ORDINARY_FIELDS : FIELDS)
+            || !ordinary && !"useBlock".equals(request.getString("action"))
             || !request.hasKey("channels", 10)) return false;
         for (String key : new String[] { "x", "y", "z", "side", "slot", "controller", "facing", "main",
             "materialPriority" }) if (!request.hasKey(key, 3)) return false;
-        for (String key : new String[] { FLAG, "mainExplicit", "noHatches", "materialMain", "materialContainers",
-            "materialMe" }) if (!request.hasKey(key, 1)) return false;
-        return request.getBoolean(FLAG) && request.getBoolean("materialMain")
-            && !request.getBoolean("materialContainers")
-            && !request.getBoolean("materialMe")
+        for (String key : new String[] { "mainExplicit", "noHatches", "materialMain", "materialContainers",
+            "materialMe" }) {
+            if (!request.hasKey(key, 1) || request.getByte(key) < 0 || request.getByte(key) > 1) return false;
+        }
+        return (ordinary ? HologramLocalControllerCapture.validSettings(request)
+            : request.hasKey(FLAG, 1) && request.getByte(FLAG) == 1 && request.getBoolean("materialMain")
+                && !request.getBoolean("materialContainers") && !request.getBoolean("materialMe"))
             && request.getInteger("side") >= 0
             && request.getInteger("side") < 6
             && request.getInteger("slot") >= 0
