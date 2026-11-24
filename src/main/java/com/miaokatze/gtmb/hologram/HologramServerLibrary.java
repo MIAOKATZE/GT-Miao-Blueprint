@@ -417,7 +417,6 @@ final class HologramServerLibrary {
             NBTTagCompound deleted = HologramLibraryProtocol.reply("deleted");
             deleted.setString("id", id);
             send(peer, deleted);
-            list(peer, 0);
         } else if ("uploadBegin".equals(op) || "previewBegin".equals(op))
             begin(peer, request);
         else if ("uploadChunk".equals(op) || "previewChunk".equals(op))

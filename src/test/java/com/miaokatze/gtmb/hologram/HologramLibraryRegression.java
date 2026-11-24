@@ -1507,9 +1507,10 @@ public final class HologramLibraryRegression {
             // Use the real worker/transfer, but substitute the outbound reply boundary instead of starting Forge.
             LibraryReplyCapture capture = (LibraryReplyCapture) unsafe().allocateInstance(LibraryReplyCapture.class);
             capture.replies = new ArrayList<>();
+            capture.requests = new ArrayList<>();
             channel.set(null, capture);
             int entryCount = HologramLibraryProtocol.PAGE_SIZE + 1;
-            runWorker(store, () -> store.changeConfig(true, 1, 128, 512, entryCount));
+            runWorker(store, () -> store.changeConfig(true, 1, 128, 512, entryCount + 1));
             Object owner = peer(player(UUID.randomUUID(), "PagedPublisher"));
             HologramPresets.Preset source = blueprint();
             byte[] bytes = HologramServerLibrary.encodeShare(source);
@@ -1545,17 +1546,54 @@ public final class HologramLibraryRegression {
                     && after.getLong("sourceRevision") > before.getLong("sourceRevision"),
                 "explicit refresh sees new content and its newer revision");
 
-            list.setInteger("page", 0);
+            // Drive the real client's delete and ACK callback over the captured outbound boundary.
+            transfer(store, owner, bytes, "", false);
+            String extra = capture.uploadedId();
             runWorker(store, () -> handle(store, owner, list));
-            capture.onlyListReply(0, 2, entryCount, HologramLibraryProtocol.PAGE_SIZE);
-            NBTTagCompound delete = HologramLibraryProtocol.request("delete");
-            delete.setString("id", lastId);
-            runWorker(store, () -> handle(store, owner, delete));
-            SimpleAssert.eq(2, capture.replies.size(), "delete still sends its existing completion and first-page list");
-            NBTTagCompound deleted = capture.replies.remove(0);
-            SimpleAssert.eq("deleted", deleted.getString("op"), "delete completion is first");
-            SimpleAssert.eq(lastId, deleted.getString("id"), "delete completion identifies the removed entry");
-            capture.onlyListReply(0, 1, entryCount - 1, HologramLibraryProtocol.PAGE_SIZE);
+            Class<?> clientType = Class.forName("com.miaokatze.gtmb.client.hologram.HologramLibraryClient");
+            Constructor<?> create = clientType.getDeclaredConstructor();
+            create.setAccessible(true);
+            Object client = create.newInstance();
+            Method receive = clientType.getDeclaredMethod("receive", NBTTagCompound.class);
+            receive.setAccessible(true);
+            Method deleteSelected = clientType.getDeclaredMethod("deleteSelected", boolean.class);
+            deleteSelected.setAccessible(true);
+            receive.invoke(client, capture.replies.remove(0));
+            // Page two survives 14 -> 13, then clamps to page one on 13 -> 12. Also verify 1 -> 0.
+            for (int count = entryCount + 1; count > 0; count--) {
+                int requested = (count - 1) / HologramLibraryProtocol.PAGE_SIZE;
+                NBTTagList rows = (NBTTagList) get(client, "server");
+                String id = rows.getCompoundTagAt(rows.tagCount() - 1).getString("id");
+                if (count == entryCount + 1) SimpleAssert.eq(extra, id, "last row of nonempty second page");
+                if (count == entryCount) SimpleAssert.eq(lastId, id, "updated row survives first delete");
+                set(client, "selectedServer", id);
+                deleteSelected.invoke(client, true);
+                NBTTagCompound delete = capture.onlyRequest("delete");
+                SimpleAssert.eq(id, delete.getString("id"), "client deletes its selected row");
+                runWorker(store, () -> handle(store, owner, delete));
+                SimpleAssert.eq(1, capture.replies.size(), "delete sends only its acknowledgement");
+                NBTTagCompound ack = capture.replies.remove(0);
+                SimpleAssert.eq("deleted", ack.getString("op"), "delete acknowledged");
+                SimpleAssert.eq(id, ack.getString("id"), "delete acknowledged for the selected row");
+                receive.invoke(client, ack);
+                NBTTagCompound refresh = capture.onlyRequest("list");
+                SimpleAssert.eq(requested, refresh.getInteger("page"), "refresh requests the open page");
+                runWorker(store, () -> handle(store, owner, refresh));
+                SimpleAssert.eq(1, capture.replies.size(), "explicit refresh gets one catalog");
+                NBTTagCompound result = capture.replies.remove(0);
+                SimpleAssert.eq("list", result.getString("op"), "catalog response");
+                SimpleAssert.eq(count - 1, result.getInteger("total"), "updated catalog size");
+                receive.invoke(client, result);
+                int expected = Math.max(0, (count - 2) / HologramLibraryProtocol.PAGE_SIZE);
+                SimpleAssert.eq(expected, (int) get(client, "page"), "client shows clamped open page");
+                rows = (NBTTagList) get(client, "server");
+                SimpleAssert.eq(count - 1 - expected * HologramLibraryProtocol.PAGE_SIZE, rows.tagCount(),
+                    "new page row count");
+                for (int i = 0; i < rows.tagCount(); i++)
+                    SimpleAssert.that(!id.equals(rows.getCompoundTagAt(i).getString("id")), "removed row stays absent");
+                SimpleAssert.that(capture.requests.isEmpty() && !(boolean) get(client, "refreshingServer"),
+                    "catalog settled without another request");
+            }
         } finally {
             channel.set(null, previous);
             store.stop();
@@ -1568,7 +1606,19 @@ public final class HologramLibraryRegression {
 
     private static final class LibraryReplyCapture extends SimpleNetworkWrapper {
 
-        List<NBTTagCompound> replies;
+        List<NBTTagCompound> replies, requests;
+
+        @Override
+        public void sendToServer(IMessage message) {
+            requests.add(((HologramNetwork.LibraryRequest) message).tag);
+        }
+
+        NBTTagCompound onlyRequest(String operation) {
+            SimpleAssert.eq(1, requests.size(), "client emits exactly one request");
+            NBTTagCompound request = requests.remove(0);
+            SimpleAssert.eq(operation, request.getString("op"), "client request operation");
+            return request;
+        }
 
         private LibraryReplyCapture() {
             super("gtmb_test_capture"); // The fixture allocates this without registering a channel.
