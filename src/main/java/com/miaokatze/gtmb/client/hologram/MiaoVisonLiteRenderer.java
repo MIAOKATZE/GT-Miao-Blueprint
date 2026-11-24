@@ -88,6 +88,8 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     static int lastWorldGeometry, lastWorldGTGeometry, lastWorldFallback, lastWorldMatched, lastWorldGhosts;
     static int lastWorldPlacementOutlineColor;
     private static WorldRenderWitness worldRenderWitness;
+    private static boolean worldSubmissionTiming;
+    private static long worldTimingEntry, worldTimingIndexed;
     private static long worldRenderGeneration;
     int lastPreviewRoleMarkers, lastPreviewAnchorMarkers;
     private static HologramState worldState;
@@ -2651,7 +2653,9 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     }
 
     static void world(HologramState state, float partialTicks, int projectionLayer) {
-        boolean witness = Boolean.getBoolean("gtmb.hologram.realInteractionSmoke")
+        boolean timing = worldSubmissionTiming;
+        long started = timing ? System.nanoTime() : 0;
+        boolean witness = timing || Boolean.getBoolean("gtmb.hologram.realInteractionSmoke")
             || Boolean.getBoolean("gtmb.hologram.followupAreaClient")
             || Boolean.getBoolean("gtmb.hologram.previewCaptureWitness");
         if (witness) worldRenderWitness = null;
@@ -2681,7 +2685,12 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         HologramBlockRender.beginViewport(state);
         // Indexing and list compilation share the original per-frame budget.
         long deadline = System.nanoTime() + WORLD_BUILD_NANOS;
-        if (!localWorldRegions) indexWorld(state, deadline);
+        if (timing && worldTimingEntry == 0) worldTimingEntry = started;
+        if (!localWorldRegions) {
+            indexWorld(state, deadline);
+            if (timing && worldTimingIndexed == 0 && worldIndex == state.cells.size())
+                worldTimingIndexed = System.nanoTime();
+        }
         int[] anchor = state.data.getBoolean("virtual") && state.data.getBoolean("moving")
             ? HologramClient.movingAnchor(state)
             : null;
@@ -2705,7 +2714,9 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         List<WorldGroup> candidates = worldSpatialIndex.select(sx, sy, sz, range);
         GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
         GL11.glPushMatrix();
-        int drawnLists = 0;
+        int drawnLists = 0, visibleGroups = 0, completedGroups = 0;
+        long firstSubmit = 0;
+        WorldGroup firstSubmittedHalo = null;
         try {
             GL11.glTranslated(-px, -py, -pz);
             GL11.glTranslated(offsetX, offsetY, offsetZ);
@@ -2744,26 +2755,69 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
                 if (group.directGeometry != null && !group.directGeometry.belongsTo(meshFrame))
                     invalidateWorldGroup(group);
                 if (readyForWorldGeometry(state, group, deadline)) {
+                    if (timing && localWorldRegions && group.timingHaloReadyAt == 0)
+                        group.timingHaloReadyAt = System.nanoTime();
                     while (group.built < group.cells.size() && System.nanoTime() < deadline) {
                         if (!compileWorldGroup(group, state.data.getInteger("mode") == 2, meshFrame)) break;
                     }
                 }
+                int beforeGroup = drawnLists;
                 for (WorldBatch batch : group.batches) {
                     batch.draw();
-                    if (witness) drawnLists++;
+                    if (witness) {
+                        drawnLists++;
+                        if (timing && firstSubmit == 0) {
+                            firstSubmit = System.nanoTime();
+                            if (localWorldRegions) firstSubmittedHalo = group;
+                        }
+                    }
+                }
+                // A seeded region is nonempty even before any of its cells are indexed.
+                if (timing && (localWorldRegions || !group.cells.isEmpty())) {
+                    visibleGroups++;
+                    if (drawnLists > beforeGroup && group.built == group.cells.size()) completedGroups++;
                 }
             }
-            if (witness && drawnLists > 0) worldRenderWitness = new WorldRenderWitness(
-                state,
-                anchor,
-                offsetX,
-                offsetY,
-                offsetZ,
-                ++worldRenderGeneration,
-                drawnLists);
         } finally {
             GL11.glPopMatrix();
             GL11.glPopAttrib();
+        }
+        if (witness && drawnLists > 0) worldRenderWitness = new WorldRenderWitness(
+            state, anchor, offsetX, offsetY, offsetZ, ++worldRenderGeneration, drawnLists,
+            timing ? new WorldSubmissionTiming(firstSubmit, System.nanoTime(), started, worldTimingEntry,
+                worldTimingIndexed, visibleGroups, completedGroups, localWorldRegions || worldIndex == state.cells.size(),
+                pose, firstSubmittedHalo) : null);
+    }
+
+    /** TestLab owns activation on the render thread; normal world draws do not time or allocate samples. */
+    static void worldSubmissionTiming(boolean enabled) {
+        worldSubmissionTiming = enabled;
+        worldTimingEntry = worldTimingIndexed = 0;
+    }
+
+    static final class WorldSubmissionTiming {
+
+        final long firstSubmit, ended, renderNanos, firstWorldEntry, occupancyReady;
+        final int visibleGroups, submittedCompleteGroups, readyGroupX, readyGroupY, readyGroupZ;
+        final boolean complete, localHalo;
+        final HologramPreviewPose pose;
+
+        WorldSubmissionTiming(long firstSubmit, long ended, long started, long firstWorldEntry,
+            long occupancyComplete, int visibleGroups, int submittedCompleteGroups, boolean indexComplete,
+            HologramPreviewPose pose, WorldGroup firstSubmittedHalo) {
+            this.firstSubmit = firstSubmit;
+            this.ended = ended;
+            this.firstWorldEntry = firstWorldEntry;
+            localHalo = firstSubmittedHalo != null;
+            occupancyReady = localHalo ? firstSubmittedHalo.timingHaloReadyAt : occupancyComplete;
+            readyGroupX = localHalo ? firstSubmittedHalo.x : 0;
+            readyGroupY = localHalo ? firstSubmittedHalo.y : 0;
+            readyGroupZ = localHalo ? firstSubmittedHalo.z : 0;
+            renderNanos = ended - started;
+            this.visibleGroups = visibleGroups;
+            this.submittedCompleteGroups = submittedCompleteGroups;
+            complete = indexComplete && visibleGroups > 0 && visibleGroups == submittedCompleteGroups;
+            this.pose = pose;
         }
     }
 
@@ -2780,14 +2834,16 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         final int anchorX, anchorY, anchorZ, lists, geometry, ghosts, outlineColor;
         final double offsetX, offsetY, offsetZ;
         final boolean moving;
+        final WorldSubmissionTiming timing;
 
         WorldRenderWitness(HologramState state, int[] anchor, double offsetX, double offsetY, double offsetZ,
-            long generation, int lists) {
+            long generation, int lists, WorldSubmissionTiming timing) {
             this.state = state;
             session = state.session;
             revision = state.data.getLong("planRevision");
             this.generation = generation;
             this.lists = lists;
+            this.timing = timing;
             moving = anchor != null;
             anchorX = moving ? anchor[0] : state.data.getInteger("x");
             anchorY = moving ? anchor[1] : state.data.getInteger("y");
@@ -2819,6 +2875,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         worldOutlineCells.clear();
         worldIndex = 0;
         localWorldRegions = false;
+        worldTimingEntry = worldTimingIndexed = 0;
     }
 
     /** Cached geometry calls this tiny list, so a local lock changes color without rebuilding the blueprint. */
@@ -3159,6 +3216,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         List<HologramState.Cell> localSource;
         int localCursor;
         boolean localHaloReady;
+        long timingHaloReadyAt;
         MiaoVisonLiteMesh directGeometry;
         int built;
         int geometry, gt, fallback, ghosts;

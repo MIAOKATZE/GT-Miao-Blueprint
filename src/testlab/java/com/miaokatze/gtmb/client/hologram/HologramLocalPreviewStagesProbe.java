@@ -53,6 +53,7 @@ import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramMaterialQuote;
 import com.miaokatze.gtmb.hologram.HologramNativeControllerBrowserReference;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
+import com.miaokatze.gtmb.hologram.HologramPreviewPose;
 import com.miaokatze.gtmb.hologram.HologramRuntimeMetrics;
 import com.miaokatze.gtmb.hologram.HologramSnapshotPalette;
 import com.miaokatze.gtmb.register.ProjectorRegistry;
@@ -118,6 +119,8 @@ final class HologramLocalPreviewStagesProbe {
     private long timingWorkbenchInitNanos;
     private Map<String, Map<String, Long>> timingWorkbenchActivity;
     private HologramPreviewThresholdWitness timingMaterial;
+    private final WorldTiming worldTiming = worldTimingEnabled() ? new WorldTiming() : null;
+    private HologramLibraryClient.LocalPlacementPhases localPlacementPhases;
     private volatile Exception timingFailure;
     private final int x, y, z, toolSlot, stoneSlot;
     private final String actorName;
@@ -162,6 +165,10 @@ final class HologramLocalPreviewStagesProbe {
         return Boolean.getBoolean(FLAG);
     }
 
+    static boolean worldTimingEnabled() {
+        return enabled() && Boolean.getBoolean(FLAG + "WorldTiming");
+    }
+
     static boolean fixedNativeEbfEnabled() {
         return Boolean.getBoolean(HologramEbfFixedControls.FLAG);
     }
@@ -198,6 +205,11 @@ final class HologramLocalPreviewStagesProbe {
         evidence.put("nativeWorldInputExercised", !postFocus);
         evidence.put("constructionRequested", construction);
         evidence.put("observer", "actual FML client outbound IMessage pipeline, GTMB mod channel only");
+        if (worldTiming != null) {
+            require(postFocus && !construction && parity == null && timingMode.isEmpty() && !workbenchStages,
+                "World timing requires the isolated post-focus local blueprint profile");
+            evidence.put("worldProjectionTiming", worldTiming.receipt);
+        }
         if (!timingMode.isEmpty()) {
             require(("nei".equals(timingMode) || "gtmb".equals(timingMode)) && !construction,
                 "Timing mode must be 'nei' or 'gtmb' and runs separately from construction");
@@ -329,6 +341,7 @@ final class HologramLocalPreviewStagesProbe {
                 + ", outbound="
                 + packets());
         if (!timingMode.isEmpty()) return timingStep(mc);
+        if (stage == 8) return finishWorldTiming(mc);
         if (stage == 0) {
             if (!fixtureReady || !(mc.theWorld.getTileEntity(x, y, z) instanceof BaseMetaTileEntity base)
                 || !fixtureController(base)
@@ -421,6 +434,13 @@ final class HologramLocalPreviewStagesProbe {
                 || !postFocus && !HologramClient.worldInputFocused()) return false;
             stagePrivatePair(mc);
             look(mc, x + .5, y + .5, z + .5);
+            if (worldTiming != null) {
+                MiaoVisonLiteRenderer.worldSubmissionTiming(true);
+                if (worldTiming.firstDrawOnly) {
+                    localPlacementPhases = new HologramLibraryClient.LocalPlacementPhases(localId);
+                    HologramLibraryClient.INSTANCE.localPlacementPhases(localPlacementPhases);
+                }
+            }
             privateRequested = System.nanoTime();
             HologramLibraryClient.INSTANCE.previewLocal(localId, true);
             zero("privateSourceRequested");
@@ -443,6 +463,13 @@ final class HologramLocalPreviewStagesProbe {
             if (witness == null) return false;
             firstAnchor = witness.anchor();
             if (firstAnchor == null) return false;
+            if (worldTiming != null && worldTiming.firstDrawOnly) {
+                if (!worldTiming.finished()) return false;
+                evidence.put("movingCells", ghost.cells.size());
+                evidence.put("movingFirstAnchor", firstAnchor);
+                stage = 8;
+                return finishWorldTiming(mc);
+            }
             movedGeneration = witness.generation;
             evidence.put("movingCells", ghost.cells.size());
             evidence.put("privateMovingPresentedNanos", System.nanoTime() - privateRequested);
@@ -478,6 +505,7 @@ final class HologramLocalPreviewStagesProbe {
             stage++;
         } else if (stage == 5) {
             zero("privateLockedWaiting");
+            if (worldTiming != null && worldTiming.finished()) return finishWorldTiming(mc);
             MiaoVisonLiteRenderer.WorldRenderWitness witness = witness();
             if (witness == null || witness.generation <= lockedGeneration
                 || mc.theWorld.getTotalWorldTime() - lockedTick < 12) return false;
@@ -489,6 +517,10 @@ final class HologramLocalPreviewStagesProbe {
             evidence.put("lockedAnchor", lockedAnchor);
             evidence.put("lockedDrawnLists", witness.lists);
             evidence.put("lockedWorldTicks", mc.theWorld.getTotalWorldTime() - lockedTick);
+            if (worldTiming != null) {
+                worldTiming.arm(ghost, lockedAnchor, HologramLocalPlacement.INSTANCE.previewPose());
+                return false;
+            }
             zero("privateLockedPresented");
             submitInput = true;
             placementUse(mc);
@@ -580,7 +612,21 @@ final class HologramLocalPreviewStagesProbe {
         }
     }
 
+    private boolean finishWorldTiming(Minecraft mc) throws Exception {
+        if (!finish(mc)) return false;
+        zero("previewOnlyTeardown");
+        require(mc.thePlayer != null
+            && ItemStack.areItemStacksEqual(originalTool, mc.thePlayer.inventory.getStackInSlot(toolSlot)),
+            "Preview-only test projector slot was not restored");
+        evidence.put("localToolSlotRestored", true);
+        evidence.put("submitAttempted", false);
+        evidence.put("passed", true);
+        return true;
+    }
+
     void renderTail(long frame) throws Exception {
+        if (worldTiming != null && !finished && stage >= 3 && stage <= 5 && !worldTiming.finished())
+            worldTiming.sample(frame, privateRequested, localPlacementPhases);
         if (fixedEbf != null && !finished) fixedEbf.renderEnd(Minecraft.getMinecraft(), frame);
         if (!finished && stage == 1 && timingFrameToCapture != null && timingDrawFrame == frame - 1
             && Minecraft.getMinecraft().currentScreen == timingScreen) {
@@ -610,6 +656,123 @@ final class HologramLocalPreviewStagesProbe {
 
     Map<String, Object> progress() {
         return new LinkedHashMap<>(evidence);
+    }
+
+    /** Uses the product witness for the exact naturally drawn frame, not the client tick poll. */
+    private static final class WorldTiming {
+
+        private static final int WINDOW = 120;
+        private final boolean firstDrawOnly = Boolean.getBoolean(FLAG + "WorldTimingFirstDrawOnly");
+        private final Map<String, Object> receipt = new LinkedHashMap<>(), windows = new LinkedHashMap<>();
+        private final long[] renderer = new long[WINDOW], frameWall = new long[WINDOW];
+        private long generation = -1, lastTail, lastFrame;
+        private int sample;
+        private boolean rotating, done;
+        private HologramState armedState;
+        private int[] armedAnchor;
+        private HologramPreviewPose expectedPose;
+
+        private WorldTiming() {
+            if (firstDrawOnly) receipt.put("firstDrawOnly", true);
+            else receipt.put("frameWindows", windows);
+        }
+
+        boolean finished() {
+            return done;
+        }
+
+        void arm(HologramState state, int[] anchor, HologramPreviewPose pose) {
+            if (expectedPose != null) return;
+            armedState = state;
+            armedAnchor = anchor;
+            expectedPose = pose;
+        }
+
+        void sample(long frame, long requested, HologramLibraryClient.LocalPlacementPhases phases) {
+            long tail = System.nanoTime();
+            HologramLocalPlacement placement = HologramLocalPlacement.INSTANCE;
+            MiaoVisonLiteRenderer.WorldRenderWitness drawn = MiaoVisonLiteRenderer.lastWorldRenderWitness();
+            if (drawn == null || drawn.state != placement.display() || drawn.generation <= generation
+                || drawn.timing == null) {
+                require(lastTail == 0, "A timed world frame did not submit the current projection");
+                return;
+            }
+            generation = drawn.generation;
+            MiaoVisonLiteRenderer.WorldSubmissionTiming timing = drawn.timing;
+            if (!receipt.containsKey("firstDraw")) receipt.put("firstDraw", milestone(timing.firstSubmit - requested, drawn));
+            if (timing.complete && !receipt.containsKey("visibleDrawComplete"))
+                receipt.put("visibleDrawComplete", milestone(timing.ended - requested, drawn));
+            if (firstDrawOnly) {
+                if (!receipt.containsKey("phaseNanosFromRequest")) {
+                    long[] ends = { phases.readEnd, phases.geometryEnd, phases.syntaxEnd, phases.clientBegin,
+                        phases.prepared, phases.installed, timing.firstWorldEntry, timing.occupancyReady,
+                        timing.firstSubmit };
+                    String[] labels = { "readEnd", "geometryEnd", "storedSyntaxEnd", "clientBegin", "statePrepared",
+                        "placementInstalled", "worldRenderEntered",
+                        timing.localHalo ? "firstVisibleGroupHaloReady" : "worldOccupancyComplete", "firstSubmit" };
+                    if (timing.localHalo) receipt.put("firstVisibleHaloGroupLocalOrigin",
+                        new int[] { timing.readyGroupX, timing.readyGroupY, timing.readyGroupZ });
+                    Map<String, Long> marks = new LinkedHashMap<>();
+                    long previous = requested;
+                    for (int i = 0; i < ends.length; i++) {
+                        require(ends[i] != 0 && ends[i] >= previous, "Missing/out-of-order phase: " + labels[i]);
+                        marks.put(labels[i], ends[i] - requested);
+                        previous = ends[i];
+                    }
+                    receipt.put("phaseNanosFromRequest", marks);
+                }
+                done = timing.complete;
+                return;
+            }
+            if (expectedPose == null) return;
+            require(placement.locked() && drawn.state == armedState && timing.pose == expectedPose && timing.complete
+                && drawn.anchorX == armedAnchor[0] && drawn.anchorY == armedAnchor[1] && drawn.anchorZ == armedAnchor[2],
+                "Timed pose changed its locked projection or did not submit every currently visible group");
+            if (lastTail != 0) {
+                require(frame == lastFrame + 1, "A timed frame was skipped");
+                renderer[sample] = timing.renderNanos;
+                frameWall[sample++] = tail - lastTail;
+                if (sample == WINDOW) {
+                    Map<String, Object> statistics = new LinkedHashMap<>();
+                    statistics.put("frames", sample);
+                    statistics.put("worldRendererWallNanos", percentiles(renderer));
+                    statistics.put("renderTailToTailWallNanos", percentiles(frameWall));
+                    windows.put(rotating ? "quarterTurn" : "static", statistics);
+                    if (rotating) {
+                        done = true;
+                        return;
+                    }
+                    rotating = true;
+                    sample = 0;
+                }
+                if (rotating) {
+                    placement.turn(false);
+                    expectedPose = placement.previewPose();
+                }
+            }
+            lastTail = tail;
+            lastFrame = frame;
+        }
+
+        private static Map<String, Object> milestone(long nanos, MiaoVisonLiteRenderer.WorldRenderWitness drawn) {
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("requestToSubmissionNanos", nanos);
+            result.put("generation", drawn.generation);
+            result.put("submittedLists", drawn.lists);
+            result.put("visibleGroups", drawn.timing.visibleGroups);
+            result.put("submittedCompleteGroups", drawn.timing.submittedCompleteGroups);
+            return result;
+        }
+
+        private static Map<String, Long> percentiles(long[] times) {
+            long[] sorted = times.clone();
+            Arrays.sort(sorted);
+            Map<String, Long> result = new LinkedHashMap<>();
+            result.put("p50", sorted[59]);
+            result.put("p95", sorted[113]);
+            result.put("p99", sorted[118]);
+            return result;
+        }
     }
 
     private boolean timingStep(Minecraft mc) throws Exception {
@@ -1480,6 +1643,8 @@ final class HologramLocalPreviewStagesProbe {
 
     boolean finish(Minecraft mc) throws Exception {
         if (finished) return true;
+        if (worldTiming != null) MiaoVisonLiteRenderer.worldSubmissionTiming(false);
+        if (localPlacementPhases != null) HologramLibraryClient.INSTANCE.localPlacementPhases(null);
         if (construction) {
             restoreServerInventory = true;
             if (mc.thePlayer != null && (!serverInventoryRestored

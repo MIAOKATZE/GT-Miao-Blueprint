@@ -90,6 +90,26 @@ final class HologramLibraryClient {
     private volatile long lastActivity;
     private long lastDisplayFrame;
     private volatile HologramProgress workerDisplayProgress;
+    private volatile LocalPlacementPhases localPlacementPhases;
+
+    /** The TestLab owns the single exact local file identity. These marks never influence preparation. */
+    static final class LocalPlacementPhases {
+        final String localId;
+        volatile long readEnd, geometryEnd, syntaxEnd, clientBegin, prepared, installed;
+
+        LocalPlacementPhases(String localId) {
+            this.localId = localId;
+        }
+    }
+
+    void localPlacementPhases(LocalPlacementPhases phases) {
+        localPlacementPhases = phases;
+    }
+
+    private LocalPlacementPhases localPlacementPhases(String localId) {
+        LocalPlacementPhases phases = localPlacementPhases;
+        return phases != null && phases.localId.equals(localId) ? phases : null;
+    }
     private Object libraryConnection;
     private Object libraryWorld, quickTool;
     private String quickToolId = "";
@@ -1448,8 +1468,11 @@ final class HologramLibraryClient {
         work(() -> {
             DisplaySource source = readSavedDisplaySource(id, store.savedDisplayPath(id), !placement, token, epoch);
             if (placement) source.requireStoredUse();
+            LocalPlacementPhases phases = placement ? localPlacementPhases(id) : null;
+            if (phases != null) phases.syntaxEnd = System.nanoTime();
             main(() -> {
                 if (discardedBrowse(token, epoch, placement)) return;
+                if (phases != null) phases.clientBegin = System.nanoTime();
                 startDisplay(source, placement, epoch);
             });
         });
@@ -1532,6 +1555,8 @@ final class HologramLibraryClient {
         }
         byte[] json = readDisplayBytes(path, HologramBlueprintArtifact.MAX_JSON_BYTES);
         if (!stamp.equals(fileStamp(path))) throw new java.io.IOException("蓝图文件已变化，请重试");
+        LocalPlacementPhases phases = thumbnail ? null : localPlacementPhases(localId);
+        if (phases != null) phases.readEnd = System.nanoTime();
         DisplaySource source = new DisplaySource(key, stamp, json, null, localId, publicId, "", "", null,
             indexedDisplayPath);
         if (thumbnail) queueBrowseImage(source, path, token, epoch);
@@ -1545,6 +1570,7 @@ final class HologramLibraryClient {
         source.compactCells = input.cells;
         source.savedMaterials = input.savedMaterials;
         source.compactSource = input.cells != null;
+        if (phases != null) phases.geometryEnd = System.nanoTime();
         return source;
     }
 
@@ -1883,6 +1909,8 @@ final class HologramLibraryClient {
     private void displayReady() {
         DisplaySource source = displayPreparing;
         boolean placement = displayPlacement;
+        LocalPlacementPhases phases = placement ? localPlacementPhases(source.localId) : null;
+        if (phases != null) phases.prepared = System.nanoTime();
         displayPreparing = null;
         browsePreparation = null;
         displayIndex = null;
@@ -1908,6 +1936,7 @@ final class HologramLibraryClient {
             progressCompleted();
             finishBackgroundTask(backgroundTaskToken, true, "蓝图预览已准备好");
             HologramLocalPlacement.INSTANCE.install(source);
+            if (phases != null && HologramLocalPlacement.INSTANCE.display() != null) phases.installed = System.nanoTime();
         } else {
             if (displayEpoch == browseEpoch) {
                 browseState = source.state;
