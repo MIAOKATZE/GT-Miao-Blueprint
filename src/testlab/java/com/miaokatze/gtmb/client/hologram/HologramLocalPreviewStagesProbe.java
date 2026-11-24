@@ -493,14 +493,22 @@ final class HologramLocalPreviewStagesProbe {
             evidence.put("privateMovingPresentedNanos", System.nanoTime() - privateRequested);
             evidence.put("movingFirstLists", witness.lists);
             evidence.put("movingFirstAnchor", firstAnchor);
-            // Move the real camera ray from the control block to the ground beside the player.
-            look(mc, x - 1.5, y - .5, z - 1.5);
+            // The ordinary move witness serves one stone. This preflight only requires the actual first visible anchor.
+            if (!pressureReview) look(mc, x - 1.5, y - .5, z - 1.5);
             stage++;
         } else if (stage == 4) {
             zero("privateMoving");
             MiaoVisonLiteRenderer.WorldRenderWitness witness = witness();
             int[] moved = HologramLocalPlacement.INSTANCE.anchor();
-            if (witness == null || witness.generation <= movedGeneration
+            if (pressureReview) {
+                require(mc.currentScreen == null && moved != null && Arrays.equals(firstAnchor, moved)
+                    && mc.theWorld.blockExists(moved[0], moved[1], moved[2])
+                    && com.miaokatze.gtmb.hologram.HologramWorldFlow.withinPreviewReach(mc.thePlayer.posX,
+                        mc.thePlayer.posY + mc.thePlayer.getEyeHeight(), mc.thePlayer.posZ, moved[0], moved[1], moved[2]),
+                    "Frozen archive's first actually drawn aim is no longer the current loaded and reachable anchor");
+                if (witness == null || !Arrays.equals(witness.anchor(), moved)) return false;
+                evidence.put("lockedAtFirstVisibleAnchor", true);
+            } else if (witness == null || witness.generation <= movedGeneration
                 || moved == null
                 || Arrays.equals(firstAnchor, moved)
                 || !Arrays.equals(witness.anchor(), moved)) return false;
