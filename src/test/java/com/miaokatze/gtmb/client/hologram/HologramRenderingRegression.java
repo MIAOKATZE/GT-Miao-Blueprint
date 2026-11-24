@@ -17,6 +17,11 @@ import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
+import com.miaokatze.gtmb.api.ClientRendering;
+import com.miaokatze.gtmb.api.GTMBExtensions;
+import com.miaokatze.gtmb.client.compat.botania.BotaniaClientCompatibility;
+import com.miaokatze.gtmb.client.compat.cookingforblockheads.CookingForBlockheadsClientCompatibility;
+import com.miaokatze.gtmb.client.compat.floodlights.FloodLightsClientCompatibility;
 import com.miaokatze.gtmb.hologram.HologramBlueprintArtifact;
 import com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec;
 import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument;
@@ -524,6 +529,7 @@ public final class HologramRenderingRegression {
             SimpleAssert.that(!mode.getBoolean(null) && ((java.util.Map<?, ?>) groups.get(null)).isEmpty(),
                 "a received replacement can never inherit a partial local index");
             SimpleAssert.eq(Boolean.FALSE, seed.invoke(null, state, 15), "explicit layers use the existing path");
+            stockDeferredWorldBridges(seed, state);
             HologramNativeRenderRegistry.Adapter external = block -> false;
             HologramNativeRenderRegistry.register(external);
             try {
@@ -536,6 +542,33 @@ public final class HologramRenderingRegression {
             throw new AssertionError(failure);
         } finally {
             MiaoVisonLiteRenderer.releaseWorld();
+        }
+    }
+
+    private static void stockDeferredWorldBridges(Method seed, HologramState state) throws ReflectiveOperationException {
+        // API bridges from the real final module types, without starting their optional-mod renderers.
+        Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
+        unsafeField.setAccessible(true);
+        sun.misc.Unsafe unsafe = (sun.misc.Unsafe) unsafeField.get(null);
+        List<GTMBExtensions.Registration> registrations = new java.util.ArrayList<>();
+        try {
+            for (Class<? extends ClientRendering.Adapter> type : Arrays.asList(
+                BotaniaClientCompatibility.class,
+                CookingForBlockheadsClientCompatibility.class,
+                FloodLightsClientCompatibility.class))
+                registrations.add(ClientRendering.register(
+                    "gtmb:regression/deferred-world-" + registrations.size(), type.cast(unsafe.allocateInstance(type))));
+            SimpleAssert.eq(Boolean.TRUE, seed.invoke(null, state, Integer.MAX_VALUE),
+                "the three stock bridges do not disable installed local world indexing");
+            try (GTMBExtensions.Registration ignored = ClientRendering.register(
+                "gtmb:regression/deferred-world-external", block -> false)) {
+                SimpleAssert.eq(Boolean.FALSE, seed.invoke(null, state, Integer.MAX_VALUE),
+                    "external API bridges retain the established whole-index fallback");
+            } finally {
+                MiaoVisonLiteRenderer.releaseWorld();
+            }
+        } finally {
+            for (GTMBExtensions.Registration registration : registrations) registration.close();
         }
     }
 
