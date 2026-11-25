@@ -36,10 +36,31 @@ public final class NativeBlueprintMigration {
     private final List<byte[]> payloadByOldId=new ArrayList<>();
     private final Map<String,Integer> decodedNbt=new HashMap<>();
     private long totalNbt;
+    private final Map<Integer,Integer> payloadAliases=new HashMap<>();
     private boolean unknown;
     private NativeBlueprintMigration(BooleanSupplier current){this.current=current;}
     public static Result convert(byte[] source,int member,BooleanSupplier current)throws IOException {return new NativeBlueprintMigration(current).convert(source,member);}
     public static Result convert(byte[] source)throws IOException{return convert(source,-1,()->true);}
+    @FunctionalInterface
+    public interface AuthoredCell {
+        JsonObject at(int index) throws IOException;
+    }
+
+    /** Authored literal data only. A nonnegative group identifies identical non-coordinate fields;
+     * integer x/y/z are all present. Negative values always use the full per-cell codec. */
+    public interface IndexedAuthoredCell extends AuthoredCell {
+        int descriptor(int index);
+        int coordinate(int index, int axis);
+    }
+
+    /** Captured data enters directly as canonical header + row provider. No intermediate JSON document. */
+    public static Result author(JsonObject header, JsonObject envelope, int count, AuthoredCell reader,
+        BooleanSupplier current) throws IOException {
+        need(count > 0 && count <= NativeBlueprintLimits.CELLS, "native authored cell budget");
+        return new NativeBlueprintMigration(current).encode(header, null, envelope, new JsonObject(), false,
+            new JsonArray(), new JsonArray(), null, count, reader::at, reader instanceof IndexedAuthoredCell i ? i : null);
+    }
+
     private void check()throws IOException{need(current.getAsBoolean(),"conversion cancelled");}
     public static final class Result {
         public final byte[] bytes;public final long cells;public final Map<Integer,Integer> sectionBytes;
@@ -53,15 +74,48 @@ public final class NativeBlueprintMigration {
         else {need(member<0,"member on direct blueprint");doc=root;legacy.addProperty("shape","direct");}
         if(doc!=root){for(Map.Entry<String,JsonElement> e:root.entrySet())if(!Arrays.asList("blueprint","presets","previewBinding","schema").contains(e.getKey())&&(!compact||!Arrays.asList("materials","nbt","encoding").contains(e.getKey())))envelope.add(e.getKey(),e.getValue());if(root.has("schema"))legacy.add("schema",root.get("schema"));}
         if(compact)legacy.add("encoding",root.get("encoding"));if(root.has("previewBinding"))legacy.add("previewBinding",root.get("previewBinding"));
-        JsonArray materials=compact?asArray(root.get("materials"),"materials"):new JsonArray(),nbts=compact?asArray(root.get("nbt"),"nbt"):new JsonArray();boolean[] usedMat=new boolean[materials.size()],usedNbt=new boolean[nbts.size()];
-        need(doc.has("cells")&&doc.get("cells").isJsonArray(),"cells array required");NativeBlueprintJson.Rows cells=input.tables.get(doc);need(cells!=null,"cells table");int count=0;
+        JsonArray materials=compact?asArray(root.get("materials"),"materials"):new JsonArray(),nbts=compact?asArray(root.get("nbt"),"nbt"):new JsonArray();
+        need(doc.has("cells")&&doc.get("cells").isJsonArray(),"cells array required");NativeBlueprintJson.Rows cells=input.tables.get(doc);need(cells!=null,"cells table");
+        return encode(doc,root,envelope,legacy,compact,materials,nbts,
+            hash(source),-1,index->cells.hasNext()?cells.next():null);
+    }
+
+    @FunctionalInterface
+    private interface CellInput {
+        JsonElement at(int index) throws IOException;
+    }
+
+    private Result encode(JsonObject doc, JsonObject root, JsonObject envelope, JsonObject legacy, boolean compact,
+        JsonArray materials, JsonArray nbts, String sourceHash, int expected, CellInput input) throws IOException {
+        return encode(doc,root,envelope,legacy,compact,materials,nbts,sourceHash,expected,input,null);
+    }
+
+    private Result encode(JsonObject doc, JsonObject root, JsonObject envelope, JsonObject legacy, boolean compact,
+        JsonArray materials, JsonArray nbts, String sourceHash, int expected, CellInput input,
+        IndexedAuthoredCell indexed) throws IOException {
+        check();
+        boolean[] usedMat=new boolean[materials.size()],usedNbt=new boolean[nbts.size()];
+        int count=0;
         List<Row> rows=new ArrayList<>();TreeMap<Key,Integer> elementIds=new TreeMap<>(),extraIds=new TreeMap<>();
         int minX=Integer.MAX_VALUE,minY=minX,minZ=minX,maxX=Integer.MIN_VALUE,maxY=maxX,maxZ=maxX;
-        while(cells.hasNext()){int i=count++;check();JsonObject c=resolveCell(cells.next(),compact,materials,nbts,usedMat,usedNbt);unknown|=!NativeBlueprintSemantics.legacyCellKnown(c);int x=coordinate(c,"x"),y=coordinate(c,"y"),z=coordinate(c,"z");JsonObject e=new JsonObject(),extra=new JsonObject();for(Map.Entry<String,JsonElement> f:c.entrySet())if(ELEMENT.contains(f.getKey()))e.add(f.getKey(),f.getValue());else if(!Arrays.asList("x","y","z").contains(f.getKey()))extra.add(f.getKey(),f.getValue());
+        Map<Integer,GeometryAtom> repeated = indexed == null ? null : new HashMap<>();
+        while(expected<0 || count<expected){check();
+            int descriptor=indexed==null?-1:indexed.descriptor(count);
+            GeometryAtom hit=descriptor<0?null:repeated.get(descriptor);
+            if(hit!=null){
+                int i=count++, x=indexed.coordinate(i,0), y=indexed.coordinate(i,1), z=indexed.coordinate(i,2);
+                rows.add(new Row(x,y,z,i,hit.el,hit.ex));
+                minX=Math.min(minX,x);minY=Math.min(minY,y);minZ=Math.min(minZ,z);
+                maxX=Math.max(maxX,x);maxY=Math.max(maxY,y);maxZ=Math.max(maxZ,z);
+                continue;
+            }
+            JsonElement incoming=input.at(count);if(incoming==null){need(expected<0,"incomplete authored geometry");break;}
+            need(count<NativeBlueprintLimits.CELLS,"native authored cell budget");int i=count++;
+            JsonObject c=resolveCell(incoming,compact,materials,nbts,usedMat,usedNbt);unknown|=!NativeBlueprintSemantics.legacyCellKnown(c);int x=coordinate(c,"x"),y=coordinate(c,"y"),z=coordinate(c,"z");JsonObject e=new JsonObject(),extra=new JsonObject();for(Map.Entry<String,JsonElement> f:c.entrySet())if(ELEMENT.contains(f.getKey()))e.add(f.getKey(),f.getValue());else if(!Arrays.asList("x","y","z").contains(f.getKey()))extra.add(f.getKey(),f.getValue());
             // Preserve exceptional axis presence/-0 in a migration-only wrapper, never interpreted as a placement property.
             JsonObject syntax=new JsonObject();int mask=0,negative=0,bit=1;for(String axis:Arrays.asList("x","y","z")){if(c.has(axis)){mask|=bit;if(c.get(axis).toString().equals("-0"))negative|=bit;}bit<<=1;}syntax.addProperty("presentMask",mask);syntax.addProperty("negativeZeroMask",negative);
             JsonObject w=wrap(extra,Arrays.asList("/tileNbt","/itemNbt"));if(mask!=7||negative!=0)w.add("coordinateSource",syntax);
-            byte kind=(byte)(e.has("block")&&e.get("block").isJsonPrimitive()&&e.getAsJsonPrimitive("block").isString()&&e.get("block").getAsString().equals("minecraft:air")?1:0);byte[] j=NativeBlueprintJson.encode(e),eb=new byte[j.length+1];eb[0]=kind;System.arraycopy(j,0,eb,1,j.length);Key ek=new Key(eb),wk=new Key(NativeBlueprintJson.encode(w));ek=intern(elementIds,ek);wk=intern(extraIds,wk);rows.add(new Row(x,y,z,i,ek,wk));minX=Math.min(minX,x);minY=Math.min(minY,y);minZ=Math.min(minZ,z);maxX=Math.max(maxX,x);maxY=Math.max(maxY,y);maxZ=Math.max(maxZ,z);}
+            byte kind=(byte)(e.has("block")&&e.get("block").isJsonPrimitive()&&e.getAsJsonPrimitive("block").isString()&&e.get("block").getAsString().equals("minecraft:air")?1:0);byte[] j=NativeBlueprintJson.encode(e),eb=new byte[j.length+1];eb[0]=kind;System.arraycopy(j,0,eb,1,j.length);Key ek=new Key(eb),wk=new Key(NativeBlueprintJson.encode(w));ek=intern(elementIds,ek);wk=intern(extraIds,wk);if(descriptor>=0)repeated.put(descriptor,new GeometryAtom(ek,wk));rows.add(new Row(x,y,z,i,ek,wk));minX=Math.min(minX,x);minY=Math.min(minY,y);minZ=Math.min(minZ,z);maxX=Math.max(maxX,x);maxY=Math.max(maxY,y);maxZ=Math.max(maxZ,z);}
         unknown|=!envelope.entrySet().isEmpty();for(Map.Entry<String,JsonElement> e:doc.entrySet())unknown|=!DOCUMENT.contains(e.getKey())&&!(doc==root&&mechanic(e.getKey(),compact));
         JsonObject metaFields=new JsonObject(),other=new JsonObject(),regions=new JsonObject();for(Map.Entry<String,JsonElement> e:doc.entrySet())if(META.contains(e.getKey()))metaFields.add(e.getKey(),e.getValue());else if(e.getKey().equals("structures")||e.getKey().equals("hintAreas"))regions.add(e.getKey(),e.getValue());else if(!e.getKey().equals("cells")&&!(doc==root&&mechanic(e.getKey(),compact)))other.add(e.getKey(),e.getValue());
         // Legacy palette rows share compact descriptors but are never occupied geometry.
@@ -72,19 +126,120 @@ public final class NativeBlueprintMigration {
         JsonObject regionWrap=wrap(regions,regionPointers);JsonObject unusedMat=new JsonObject();addUnused(legacy,"unusedMaterials",materials,usedMat);addUnused(legacy,"unusedNbt",nbts,usedNbt);
         if(unknown&&compact){JsonObject order=new JsonObject();order.add("materials",materials);order.add("nbt",nbts);legacy.add("dictionaryOrder",order);}
         JsonObject extrasDoc=new JsonObject();extrasDoc.add("document",other);extrasDoc.add("envelope",envelope);extrasDoc.add("legacyEnvelope",legacy);List<String> docPointers=new ArrayList<>(Arrays.asList("/document/processingNbt","/document/semanticNbt","/document/quantumGroupingNbt"));if(other.has("palette")&&other.get("palette").isJsonArray())for(int i=0;i<other.getAsJsonArray("palette").size();i++){docPointers.add("/document/palette/"+i+"/tileNbt");docPointers.add("/document/palette/"+i+"/itemNbt");}JsonObject documentWrap=wrap(extrasDoc,docPointers);
+        JsonObject meta=new JsonObject(),migration=new JsonObject();meta.add("fields",metaFields);if(sourceHash!=null){migration.addProperty("format",compact?"gtmb-dictionary-1":"expanded-json");migration.addProperty("sourceSha256",sourceHash);migration.add("legacyContentIdentity",JsonNull.INSTANCE);migration.addProperty("unknownSemantics",unknown);meta.add("migration",migration);}
+        return emit(rows,elementIds,extraIds,meta,regionWrap,documentWrap,payloadByOldId.size(),minX,minY,minZ,maxX,maxY,maxZ,0,0,0);
+    }
+
+    // Shared by the native geometry editor and the author/migration writer. This emits native sections, not a legacy document.
+    private Result emit(List<Row> rows,TreeMap<Key,Integer> elementIds,TreeMap<Key,Integer> extraIds,
+        JsonObject meta,JsonObject regionWrap,JsonObject documentWrap,int oldPayloadCount,
+        int minX,int minY,int minZ,int maxX,int maxY,int maxZ,int ax,int ay,int az) throws IOException {
+        int count=rows.size();
         // Payload IDs are finalized after all three ownership scopes have been visited.
-        int[] remap=new int[payloadByOldId.size()+1];int id=0;for(Map.Entry<Key,Integer> e:payloadIds.entrySet()){remap[e.getValue()]=++id;}
+        int[] remap=new int[oldPayloadCount+1];int id=0;for(Map.Entry<Key,Integer> e:payloadIds.entrySet()){remap[e.getValue()]=++id;}
+        for(var alias:payloadAliases.entrySet())remap[alias.getKey()]=remap[alias.getValue()];
         TreeMap<Key,Integer> finalExtras=new TreeMap<>();Map<Key,Key> extraMapping=new HashMap<>();for(Key k:extraIds.keySet()){JsonObject w=NativeBlueprintJson.parse(k.data).getAsJsonObject();remap(w,remap);Key v=new Key(NativeBlueprintJson.encode(w));finalExtras.put(v,0);extraMapping.put(k,v);}for(Row row:rows)row.extra=extraMapping.get(row.extra);remap(regionWrap,remap);remap(documentWrap,remap);
         int ei=0;for(Map.Entry<Key,Integer> e:elementIds.entrySet())e.setValue(++ei);Key empty=new Key(NativeBlueprintJson.encode(NativeBlueprintDefinition.emptyWrap()));finalExtras.remove(empty);int wi=0;for(Map.Entry<Key,Integer> e:finalExtras.entrySet())e.setValue(++wi);
         rows.sort((a,b)->{int v=Integer.compare(a.y,b.y);if(v==0)v=Integer.compare(a.z,b.z);return v==0?Integer.compare(a.x,b.x):v;});for(int i=1;i<rows.size();i++)need(!rows.get(i).samePosition(rows.get(i-1)),"duplicate cell position");
-        TreeMap<Integer,byte[]> sections=new TreeMap<>();JsonObject meta=new JsonObject(),migration=new JsonObject();meta.add("fields",metaFields);migration.addProperty("format",compact?"gtmb-dictionary-1":"expanded-json");migration.addProperty("sourceSha256",hash(source));migration.add("legacyContentIdentity",JsonNull.INSTANCE);migration.addProperty("unknownSemantics",unknown);meta.add("migration",migration);sections.put(1,NativeBlueprintJson.encode(meta));
+        TreeMap<Integer,byte[]> sections=new TreeMap<>();sections.put(1,NativeBlueprintJson.encode(meta));
         Out elements=new Out();elements.var(elementIds.size());for(Key e:elementIds.keySet()){elements.u8(e.data[0]);elements.blob(Arrays.copyOfRange(e.data,1,e.data.length));}sections.put(2,elements.toByteArray());
-        Geometry geo=geometry(rows,elementIds,count==0?0:minX,count==0?0:minY,count==0?0:minZ,count==0?0:(long)maxX-minX+1,count==0?0:(long)maxY-minY+1,count==0?0:(long)maxZ-minZ+1);sections.put(3,geo.index);sections.put(4,geo.bytes);
+        Geometry geo=geometry(rows,elementIds,count==0?0:minX,count==0?0:minY,count==0?0:minZ,count==0?0:(long)maxX-minX+1,count==0?0:(long)maxY-minY+1,count==0?0:(long)maxZ-minZ+1);java.nio.ByteBuffer pivot=java.nio.ByteBuffer.wrap(geo.index).order(java.nio.ByteOrder.LITTLE_ENDIAN);pivot.position(24);pivot.putInt(ax).putInt(ay).putInt(az);sections.put(3,geo.index);sections.put(4,geo.bytes);
         if(!payloadIds.isEmpty()){Out pi=new Out(),pb=new Out();pi.u32(payloadIds.size());pi.u32(0);for(Key k:payloadIds.keySet()){byte[] raw=k.data,gzip=NativeBlueprintNbt.gzip(raw);boolean zipped=gzip.length+16<=raw.length;byte[] b=zipped?gzip:raw;pi.u64(pb.size());pi.u32(b.length);pi.u32(raw.length);pi.u8(1);pi.u8(zipped?1:0);pi.u16(0);pi.u32(0);pb.bytes(b);}sections.put(5,pi.toByteArray());sections.put(6,pb.toByteArray());}
         if(!finalExtras.isEmpty()){Out ex=new Out();ex.var(finalExtras.size());for(Key k:finalExtras.keySet())ex.blob(k.data);Map<Integer,Map<Key,Integer>> frequencies=new TreeMap<>();for(Row r:rows)frequencies.computeIfAbsent(elementIds.get(r.element),k->new TreeMap<>()).merge(r.extra,1,Integer::sum);Map<Integer,Key> defaults=new TreeMap<>();for(Map.Entry<Integer,Map<Key,Integer>> e:frequencies.entrySet()){Key best=null;int n=-1;for(Map.Entry<Key,Integer> f:e.getValue().entrySet())if(f.getValue()>n){best=f.getKey();n=f.getValue();}if(!best.equals(empty))defaults.put(e.getKey(),best);}
             ex.var(defaults.size());for(Map.Entry<Integer,Key> e:defaults.entrySet()){ex.var(e.getKey());ex.var(finalExtras.get(e.getValue()));}int no=0;for(Row r:rows)if(!r.extra.equals(defaults.getOrDefault(elementIds.get(r.element),empty)))no++;ex.var(no);for(Row r:rows)if(!r.extra.equals(defaults.getOrDefault(elementIds.get(r.element),empty))){ex.i32(r.x);ex.i32(r.y);ex.i32(r.z);ex.var(r.extra.equals(empty)?0:finalExtras.get(r.extra));}sections.put(7,ex.toByteArray());}
-        if(!regions.entrySet().isEmpty())sections.put(8,NativeBlueprintJson.encode(regionWrap));sections.put(9,NativeBlueprintJson.encode(documentWrap));if(unknown){int[] order=new int[count];for(int i=0;i<count;i++)order[rows.get(i).original]=i;Out o=new Out();o.var(count);for(int p:order)o.var(p);sections.put(10,o.toByteArray());}
+        if(regionWrap!=null&&!regionWrap.getAsJsonObject("fields").entrySet().isEmpty())sections.put(8,NativeBlueprintJson.encode(regionWrap));sections.put(9,NativeBlueprintJson.encode(documentWrap));if(unknown){int[] order=new int[count];for(int i=0;i<count;i++)order[rows.get(i).original]=i;Out o=new Out();o.var(count);for(int p:order)o.var(p);sections.put(10,o.toByteArray());}
         check();return pack(sections,count);
+    }
+
+    @FunctionalInterface interface GeometryInput { void produce(GeometryRows sink)throws IOException; }
+    static final class GeometryAtom{final Key el,ex;GeometryAtom(Key el,Key ex){this.el=el;this.ex=ex;}}
+    static final class GeometryRows {
+        final Map<Key,Integer> newPayloads=new HashMap<>();
+        final Map<Long,GeometryAtom> turnedAtoms=new HashMap<>();
+        boolean turn;
+        final List<Row> rows=new ArrayList<>();
+        final TreeMap<Key,Integer> elements=new TreeMap<>(),extras=new TreeMap<>();
+        final int[] min={Integer.MAX_VALUE,Integer.MAX_VALUE,Integer.MAX_VALUE},
+            max={Integer.MIN_VALUE,Integer.MIN_VALUE,Integer.MIN_VALUE};
+        final Map<Integer,Key> existing=new HashMap<>();
+        final Map<Long,Key> wrappers=new HashMap<>();
+        final List<byte[]> imported=new ArrayList<>();
+        private final Map<NativeBlueprintDefinition,Map<Integer,Integer>> importIds=new java.util.IdentityHashMap<>();
+        private final Map<NativeBlueprintDefinition,Map<Integer,Key>> externalElements=new java.util.IdentityHashMap<>();
+        private final Map<NativeBlueprintEdits,Map<Long,Key>> externalWrappers=new java.util.IdentityHashMap<>();
+        private final NativeBlueprintEdits edits;
+        GeometryRows(NativeBlueprintEdits edits){this.edits=edits;}
+        void add(int x,int y,int z,NativeBlueprintEdits from,long descriptor,int rank,boolean rewritten)throws IOException{
+            need(rows.size()<NativeBlueprintLimits.CELLS,"native geometry edit limit");
+            boolean sameSource=from.source()==edits.source();
+            var pool=sameSource?existing:externalElements.computeIfAbsent(from.source(),k->new HashMap<>());
+            int e=NativeBlueprintSpatialView.element(descriptor);
+            Key ek=pool.get(e);
+            if(ek==null){ek=intern(elements,new Key(from.source().encodedElement(e)));pool.put(e,ek);}
+            long variant=descriptor|(rewritten?Long.MIN_VALUE:0);
+            boolean custom=from.changed(rank);
+            var forms=from==edits?wrappers:externalWrappers.computeIfAbsent(from,k->new HashMap<>());
+            Key wk=custom?null:forms.get(variant);
+            if(wk==null){JsonObject w=from.wrapper(rank,descriptor);if(rewritten)w.remove("coordinateSource");
+                if(!sameSource&&w.has("nbt")){
+                    var ids=importIds.computeIfAbsent(from.source(),k->new HashMap<>());
+                    JsonArray rewrittenRefs=new JsonArray();
+                    for(JsonElement ref:w.getAsJsonArray("nbt")){
+                        JsonArray pair=ref.getAsJsonArray();int key=pair.get(1).getAsInt();Integer importedId=ids.get(key);
+                        if(importedId==null){imported.add(from.source().payload(key));importedId=edits.source().payloadCount()+imported.size();ids.put(key,importedId);}
+                        JsonArray newPair=new JsonArray();newPair.add(pair.get(0));newPair.add(new JsonPrimitive(importedId));rewrittenRefs.add(newPair);
+                    }w.add("nbt",rewrittenRefs);
+                }
+                wk=intern(extras,new Key(NativeBlueprintJson.encode(w)));if(!custom)forms.put(variant,wk);}
+            addAtom(x,y,z,ek,wk);
+        }
+        void addAtom(int x,int y,int z,GeometryAtom atom)throws IOException{addAtom(x,y,z,atom.el,atom.ex);}
+        void addAtom(int x,int y,int z,Key ek,Key wk)throws IOException{
+            need(rows.size()<NativeBlueprintLimits.CELLS,"native geometry edit limit");
+            rows.add(new Row(x,y,z,rows.size(),ek,wk));
+            min[0]=Math.min(min[0],x);max[0]=Math.max(max[0],x);min[1]=Math.min(min[1],y);max[1]=Math.max(max[1],y);
+            min[2]=Math.min(min[2],z);max[2]=Math.max(max[2],z);
+        }
+        GeometryAtom turned(long descriptor,JsonObject old,JsonObject delta)throws IOException{
+            JsonObject w=NativeBlueprintJson.copy(old);w.remove("coordinateSource");
+            JsonObject e=edits.source().element(NativeBlueprintSpatialView.element(descriptor));
+            if(delta.has("metadata"))e.add("metadata",delta.get("metadata"));
+            if(delta.has("facing"))w.getAsJsonObject("fields").add("facing",delta.get("facing"));
+            if(delta.has("tileNbt")||delta.has("itemNbt")){
+                TreeMap<String,Integer> pointers=new TreeMap<>();
+                if(w.has("nbt"))for(var r:w.getAsJsonArray("nbt")){var pair=r.getAsJsonArray();pointers.put(pair.get(0).getAsString(),pair.get(1).getAsInt());}
+                for(String field:new String[]{"tileNbt","itemNbt"})if(delta.has(field)){
+                    w.getAsJsonObject("fields").remove(field);pointers.remove("/"+field);
+                    JsonElement encoded=delta.get(field);
+                    if(encoded!=null&&!encoded.isJsonNull()&&!encoded.getAsString().isEmpty()){
+                        byte[] raw=NativeBlueprintNbt.gunzip(Base64.getDecoder().decode(encoded.getAsString()),-1);NativeBlueprintNbt.validate(raw);
+                        Key k=new Key(raw);Integer id=newPayloads.get(k);if(id==null){imported.add(raw);id=edits.source().payloadCount()+imported.size();newPayloads.put(k,id);}
+                        pointers.put("/"+field,id);
+                    }else if(encoded!=null)w.getAsJsonObject("fields").add(field,encoded);
+                }
+                w.remove("nbt");if(!pointers.isEmpty()){JsonArray refs=new JsonArray();for(var ref:pointers.entrySet()){
+                    JsonArray r=new JsonArray();r.add(new JsonPrimitive(ref.getKey()));r.add(new JsonPrimitive(ref.getValue()));refs.add(r);}w.add("nbt",refs);}
+            }
+            byte[] json=NativeBlueprintJson.encode(e),element=new byte[json.length+1];System.arraycopy(json,0,element,1,json.length);
+            element[0]=edits.source().encodedElement(NativeBlueprintSpatialView.element(descriptor))[0];
+            return new GeometryAtom(intern(elements,new Key(element)),intern(extras,new Key(NativeBlueprintJson.encode(w))));
+        }
+    }
+    /** Retains typed raw payloads and original metadata. Drop only payloads no remaining field refers to. */
+    static Result editGeometry(NativeBlueprintEdits edits, GeometryInput visit,BooleanSupplier current)throws IOException{
+        NativeBlueprintDefinition src=edits.source();need(src.allowsGeometryMutation(),"unsupported geometry semantics");
+        NativeBlueprintMigration codec=new NativeBlueprintMigration(current);
+        GeometryRows sink=new GeometryRows(edits);visit.produce(sink);codec.check();need(!sink.rows.isEmpty(),"cannot remove every blueprint cell");
+        JsonObject doc=edits.documentWrapper(),regions=edits.regionWrapper();if(regions==null)regions=NativeBlueprintDefinition.emptyWrap();
+        Set<Integer> refs=new HashSet<>();collectRefs(doc,refs);collectRefs(regions,refs);
+        for(Key k:sink.extras.keySet())collectRefs(NativeBlueprintJson.parse(k.data).getAsJsonObject(),refs);
+        for(int id:refs){codec.check();Key k=new Key(id<=src.payloadCount()?src.payload(id):sink.imported.get(id-src.payloadCount()-1));
+            Integer first=codec.payloadIds.putIfAbsent(k,id);if(first!=null)codec.payloadAliases.put(id,first);}
+        var f=src.frame();return codec.emit(sink.rows,sink.elements,sink.extras,edits.metadataWrapper(),regions,doc,src.payloadCount()+sink.imported.size(),
+            sink.min[0],sink.min[1],sink.min[2],sink.max[0],sink.max[1],sink.max[2],sink.turn?Math.negateExact(f.anchorZ):f.anchorX,f.anchorY,sink.turn?f.anchorX:f.anchorZ);
+    }
+    private static void collectRefs(JsonObject wrapper,Set<Integer> refs){
+        if(wrapper.has("nbt"))for(JsonElement pair:wrapper.getAsJsonArray("nbt"))refs.add(pair.getAsJsonArray().get(1).getAsInt());
     }
     private static boolean mechanic(String key,boolean compact){
         return key.equals("previewBinding")||compact&&(key.equals("encoding")||key.equals("materials")||key.equals("nbt"));

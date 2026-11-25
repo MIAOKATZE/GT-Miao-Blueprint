@@ -31,7 +31,8 @@ public final class HologramLifecycle {
             long deadline = HologramWorkBudget.deadline(slicedBudget);
             stockFirst = !stockFirst;
             if (stockFirst) HologramNetwork.tickStockNativeServer(deadline);
-            HologramNetwork.tickProjectedLayerServer(deadline);
+            HologramNativeLocalConstruction.tick(deadline);
+            HologramPrivateNativeServer.tickLive();
             if (!stockFirst) HologramNetwork.tickStockNativeServer(deadline);
         } finally {
             HologramWorkBudget.endServerTick();

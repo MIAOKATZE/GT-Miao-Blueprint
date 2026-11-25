@@ -915,7 +915,7 @@ public final class HologramNativePlacementSmoke {
             area.point(1, sourceX, y, z);
             area.point(2, sourceX, y, z);
             area.begin(world);
-            for (int attempt = 0; attempt < 256 && !area.imported; attempt++) area.tick(player, player.getHeldItem());
+            for (int attempt = 0; attempt < 256 && !area.imported; attempt++) area.tick(player);
             require(area.imported && area.blueprint.cells.size() == 1, "real_area_capture_completes_" + kind);
             HologramPresets.Cell saved = area.blueprint.cells.get(0);
             ItemStack primary = saved.stack();

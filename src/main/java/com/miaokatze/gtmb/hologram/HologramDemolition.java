@@ -210,7 +210,7 @@ public final class HologramDemolition {
         }
     }
 
-    private static HologramMaterials.Context recoveryContext(EntityPlayerMP player, int slot, int destination) {
+    static HologramMaterials.Context recoveryContext(EntityPlayerMP player, int slot, int destination) {
         HologramMaterials.Settings settings = new HologramMaterials.Settings();
         settings.containers = false;
         settings.me = destination != 0;
@@ -290,6 +290,14 @@ public final class HologramDemolition {
 
     /** No precomputed getDrops or sealed TE extraction: native callbacks own every actual drop. */
     static Removal removeBlock(EntityPlayerMP player, World world, int x, int y, int z) throws IOException {
+        return removeBlock(player, world, x, y, z, null);
+    }
+
+    static Removal removeBlock(EntityPlayerMP player, World world, int x, int y, int z,
+        java.util.function.BooleanSupplier ownership) throws IOException {
+        boolean scoped = ownership != null;
+        java.util.function.BooleanSupplier stillOwned = scoped ? ownership : () -> true;
+        if (!stillOwned.getAsBoolean()) return new Removal(false, Collections.emptyList(), null);
         HologramCapture.Cell cell = new HologramCapture.Cell(null, x, y, z);
         Block block = world.getBlock(x, y, z);
         int metadata = world.getBlockMetadata(x, y, z);
@@ -298,11 +306,13 @@ public final class HologramDemolition {
             || !world.canMineBlock(player, x, y, z)
             || !player.canPlayerEdit(x, y, z, 1, player.getHeldItem()))
             return new Removal(false, Collections.emptyList(), null);
-        try (ToolScope tool = new ToolScope(player, block, metadata, x, y, z); DropScope scope = new DropScope(world)) {
+        try (ToolScope tool = new ToolScope(player, block, metadata, x, y, z);
+            DropScope scope = new DropScope(world, scoped, x, y, z)) {
             try {
                 BlockEvent.BreakEvent event = new BlockEvent.BreakEvent(x, y, z, world, block, metadata, player);
-                if (MinecraftForge.EVENT_BUS.post(event)
-                    || !HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile))
+                if (!stillOwned.getAsBoolean() || MinecraftForge.EVENT_BUS.post(event)
+                    || !HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile)
+                    || !stillOwned.getAsBoolean())
                     return new Removal(
                         !HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile),
                         scope.items,
@@ -310,24 +320,32 @@ public final class HologramDemolition {
                 ItemStack held = player.getHeldItem();
                 if (held != null && held.getItem()
                     .onBlockStartBreak(held, x, y, z, player)
-                    || !HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile))
+                    || !HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile)
+                    || !stillOwned.getAsBoolean())
                     return new Removal(
                         !HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile),
                         scope.items,
                         null);
                 // Unlike manual mining, a rejected harvest keeps the block instead of destroying it without loot.
-                if (!block.canHarvestBlock(player, metadata)) return new Removal(false, scope.items, null);
+                if (!block.canHarvestBlock(player, metadata) || !stillOwned.getAsBoolean())
+                    return new Removal(false, scope.items, null);
                 if (held != null) {
                     held.func_150999_a(world, block, x, y, z, player);
                     if (held.stackSize == 0) player.destroyCurrentEquippedItem();
                 }
                 if (!HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile))
                     return new Removal(true, scope.items, null);
+                if (!stillOwned.getAsBoolean()) return new Removal(false, scope.items, null);
                 block.onBlockHarvested(world, x, y, z, metadata, player);
                 if (!HologramWorldTransactions.sameWorldCell(world, cell, block, metadata, tile))
                     return new Removal(world.isAirBlock(x, y, z), scope.items, null);
-                if (!block.removedByPlayer(world, player, x, y, z, true)) return new Removal(false, scope.items, null);
+                if (!stillOwned.getAsBoolean() || !block.removedByPlayer(world, player, x, y, z, true))
+                    return new Removal(false, scope.items, null);
                 block.onBlockDestroyedByPlayer(world, x, y, z, metadata);
+                // Audited GT removal defers the real write to harvestBlock. A listener that replaced the
+                // original meanwhile cannot make harvestBlock consume its neighbor/new device.
+                if (scoped && !stillOwned.getAsBoolean())
+                    return new Removal(world.blockExists(x, y, z) && world.isAirBlock(x, y, z), scope.items, null);
                 block.harvestBlock(world, player, x, y, z, metadata);
                 block.dropXpOnBlockBreak(world, x, y, z, event.getExpToDrop());
                 return new Removal(
@@ -408,6 +426,7 @@ public final class HologramDemolition {
             if (scope == null || event.world != scope.world) return;
             if (event.isCanceled() || !(event.entity instanceof EntityItem)) return;
             EntityItem item = (EntityItem) event.entity;
+            if (!scope.atSource(item)) return;
             ItemStack stack = item.getEntityItem();
             if (stack == null || stack.stackSize <= 0) return;
             scope.items.add(stack.copy());
@@ -424,11 +443,26 @@ public final class HologramDemolition {
 
         final World world;
         final List<ItemStack> items = new ArrayList<>();
+        final boolean scoped;
+        final int x, y, z;
 
         DropScope(World world) {
+            this(world, false, 0, 0, 0);
+        }
+
+        DropScope(World world, boolean scoped, int x, int y, int z) {
             if (CAPTURE.get() != null) throw new IllegalStateException("Nested area demolition drop capture");
             this.world = world;
+            this.scoped = scoped;
+            this.x = x;
+            this.y = y;
+            this.z = z;
             CAPTURE.set(this);
+        }
+
+        boolean atSource(EntityItem item) {
+            return !scoped || item.posX >= x && item.posX < x + 1 && item.posY >= y && item.posY < y + 1
+                && item.posZ >= z && item.posZ < z + 1;
         }
 
         @Override

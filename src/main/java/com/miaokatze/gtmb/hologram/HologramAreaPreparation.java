@@ -64,14 +64,15 @@ final class HologramAreaPreparation {
 
     private boolean captureIdentities(HologramPresets.Preset source, int budget, long deadline, boolean liveGrid)
         throws IOException {
-        for (int work = 0; networkCursor < source.cells.size() && work < budget; work++) {
+        var cells = source.cells instanceof HologramLiteralCaptureRows packed ? packed.sensitive() : source.cells;
+        for (int work = 0; networkCursor < cells.size() && work < budget; work++) {
             if (work > 0 && System.nanoTime() >= deadline) break;
-            HologramPresets.Cell cell = source.cells.get(networkCursor);
+            HologramPresets.Cell cell = cells.get(networkCursor);
             if (liveGrid) HologramNetworkBindings.captureNetwork(cell, networks, identities);
             HologramAePolicy.captureNativeShell(cell, nativeShells);
             networkCursor++;
         }
-        if (networkCursor < source.cells.size()) return false;
+        if (networkCursor < cells.size()) return false;
         identities.clear(); // Never retain live grids in a queued worker or its completed result.
         return true;
     }
@@ -84,11 +85,19 @@ final class HologramAreaPreparation {
     boolean start(HologramPresets.Preset source) {
         if (task != null) return true;
         FutureTask<HologramPresets.Preset> candidate = new FutureTask<>(
-            () -> HologramAePolicy.sanitizeOwned(
-                source,
-                Collections.unmodifiableMap(networks),
-                Collections.unmodifiableMap(nativeShells),
-                this::update).preset);
+            () -> {
+                var input = source;
+                if (source.cells instanceof HologramLiteralCaptureRows packed) {
+                    // Use a detached header. Progress/UI may still read source.cells on the owner thread.
+                    input = HologramSnapshotMetadataSource.copyMetadata(source);
+                    input.palette = source.palette;
+                    input.cells = packed.sensitive();
+                }
+                var sanitized = HologramAePolicy.sanitizeOwned(input, Collections.unmodifiableMap(networks),
+                    Collections.unmodifiableMap(nativeShells), this::update).preset;
+                if (input != source) sanitized.cells = source.cells;
+                return sanitized;
+            });
         if (execute(candidate)) {
             task = candidate;
             return true;

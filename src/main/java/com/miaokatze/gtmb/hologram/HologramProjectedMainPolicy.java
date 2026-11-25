@@ -8,24 +8,20 @@ public final class HologramProjectedMainPolicy {
 
     private HologramProjectedMainPolicy() {}
 
-    /** Use the same explicit stock choices and priority as the existing material transaction. */
-    public static boolean eligible(HologramMaterials.Settings configured) {
-        return configured != null && configured.main && configured.priority >= 0 && configured.priority <= 2
-            && (configured.priority != 1 || !configured.containers);
-    }
-
     /** The ordinary projected path supports all explicitly selected existing providers. */
     public static boolean eligibleSelected(HologramMaterials.Settings configured) {
         return configured != null && (configured.main || configured.containers || configured.me)
             && configured.priority >= 0 && configured.priority <= 2;
     }
 
-    static Snapshot captureSelected(HologramMaterials.Settings configured) {
-        return eligibleSelected(configured) ? new Snapshot(configured) : null;
+    /** Wire-friendly equality of the settings shown at review, never a server permission. */
+    public static int settingsKey(HologramMaterials.Settings s) {
+        if (!eligibleSelected(s) || s.recoveryDestination < 0 || s.recoveryDestination > 1) return -1;
+        return (s.main?1:0) | (s.containers?2:0) | (s.me?4:0) | (s.priority<<3) | (s.recoveryDestination<<5);
     }
 
-    static Snapshot capture(HologramMaterials.Settings configured) {
-        return eligible(configured) ? new Snapshot(configured) : null;
+    static Snapshot captureSelected(HologramMaterials.Settings configured) {
+        return eligibleSelected(configured) ? new Snapshot(configured) : null;
     }
 
     /** Immutable exact original tool settings, independent of the private execution view. */
@@ -55,14 +51,6 @@ public final class HologramProjectedMainPolicy {
             settings.me = me;
             settings.priority = priority;
             settings.recoveryDestination = recoveryDestination;
-            return settings;
-        }
-
-        /** Existing stock-native profile remains explicitly main-only. */
-        HologramMaterials.Settings mainScope() {
-            var settings = selectedScope();
-            settings.main = true;
-            settings.containers = settings.me = false;
             return settings;
         }
 

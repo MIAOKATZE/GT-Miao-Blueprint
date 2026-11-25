@@ -465,6 +465,8 @@ final class HologramNetworkBindings {
 
         private final Map<String, Selection> selected = new LinkedHashMap<>();
 
+        boolean holds(String group){return selected.containsKey(group);}
+
         void clear() {
             selected.clear();
         }
@@ -530,6 +532,8 @@ final class HologramNetworkBindings {
     private static boolean carrier(ItemStack stack) {
         return terminal(stack);
     }
+
+    static boolean isTerminal(ItemStack stack) {return terminal(stack);}
 
     private static boolean terminal(ItemStack stack) {
         return stack != null && stack.getItem() != null

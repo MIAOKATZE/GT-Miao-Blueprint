@@ -388,13 +388,14 @@ final class HologramStockNativeServerRegression {
             Key containerFirst = new Key(UUID.randomUUID(), 39, generation);
             var requested = confirm(containerFirst, realTool, player.dimension, former, hatch);
             requested.setInteger("priority", 1);
+            requested.setInteger("sources",1 | (1<<3)); // well-formed stale snapshot: omits the active container source.
             send(handler, context, requested);
             tick();
             SimpleAssert.that(wire.has(containerFirst, Phase.REFUSED, 0)
                 && HologramMaterials.read(projector).priority == 1 && world.writes().size() == writes
                 && originalSlots[1].stackSize == 24
                 && HologramWorkspace.find(player.getUniqueID()) == null,
-                "matching container-first configuration is refused, never silently rewritten to main-only");
+                "a confirmed main-only mask that omits a newly enabled container source is refused without rewriting the projector");
         } finally {
             wire.observe = null;
             player.inventory = originalInventory;

@@ -14,7 +14,6 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
 import com.github.bsideup.jabel.Desugar;
-import com.miaokatze.gtmb.hologram.HologramProjectedLayerEncoder.Plain;
 
 /** A partial ordinary-material forecast. Nothing here proposes a payable bill or reads a registry or world. */
 final class HologramLibraryMaterialForecast {
@@ -59,19 +58,6 @@ final class HologramLibraryMaterialForecast {
 
     static HologramLibraryMaterialForecast fromCapture(HologramLibraryClient.DisplaySource captured) {
         if (captured == null) return null;
-        // For the formal plain route the manifest and material pane share one exact captured identity/count.
-        // Geometry and the independent generic description are not consulted again at the button.
-        var exact = captured.plainPlacementEvidence();
-        if (exact != null) {
-            Plain[] kinds = Plain.values();
-            List<Need> known = new ArrayList<>(kinds.length);
-            for (Plain kind : kinds) {
-                int cells = exact.count(kind);
-                if (cells != 0) known.add(new Need(new Identity(kind.registry(), 0), cells));
-            }
-            return new HologramLibraryMaterialForecast(known, new Unpriced(0, 0, 0, 0, 0), 0, false);
-        }
-        // Unknown or richer sources can still offer descriptive rows, without gaining placement authority.
         return captured.savedMaterials != null && (captured.capturedIndexedMaterialSource() || captured.draft != null)
             ? project(captured.savedMaterials) : null;
     }
@@ -167,7 +153,7 @@ final class HologramLibraryMaterialForecast {
         }
     }
 
-    /** Fixed-cost candidates only, even at default pose. Aliases, mod blocks, and directional shapes stay unknown. */
+    /** Structural forecast candidate only, resolved by the ordinary no-provider adapter before showing cost. */
     private static boolean ordinary(HologramSavedMaterialSource.Variant variant) {
         int damage = variant.damage();
         if (variant.controller() || variant.facing() != -1
@@ -176,12 +162,6 @@ final class HologramLibraryMaterialForecast {
             || !variant.block()
                 .equals(variant.item()))
             return false;
-        return switch (variant.item()) {
-            case "minecraft:stone", "minecraft:cobblestone", "minecraft:glass", "minecraft:brick_block" -> damage == 0;
-            case "minecraft:stonebrick" -> damage <= 3;
-            case "minecraft:planks" -> damage <= 5;
-            case "minecraft:wool", "minecraft:stained_glass" -> damage <= 15;
-            default -> false;
-        };
+        return damage<=15&&!variant.item().isEmpty();
     }
 }

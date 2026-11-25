@@ -18,6 +18,19 @@ final class HologramBlockTransformLittleTiles {
 
     private HologramBlockTransformLittleTiles() {}
 
+    /** A field named tilesCount in an unrelated device is not a link. Only an actual marked structure member
+     * needs neighbouring hosts; independent microboxes use the original adapter and its normal validation. */
+    static boolean needsNeighbours(net.minecraft.block.Block host,NBTTagCompound tag)throws IOException {
+        if(tag==null||!tag.hasKey("tilesCount"))return false;
+        boolean isLittle="LittleTilesTileEntity".equals(tag.getString("id"));
+        for(Class<?> type=host==null?null:host.getClass();!isLittle&&type!=null;type=type.getSuperclass())
+            isLittle=type.getName().startsWith("com.creativemd.littletiles.");
+        if(!isLittle)return false;
+        int count=bounded(tag.getInteger("tilesCount"));
+        for(int i=0;i<count;i++)if(tag.getCompoundTag("t"+i).getBoolean("isStructure"))return true;
+        return false;
+    }
+
     static Map<String, int[]> presetReferences(List<HologramPresets.Cell> cells, boolean vertical) throws IOException {
         Map<String, int[]> result = new HashMap<>();
         for (HologramPresets.Cell cell : cells)
@@ -32,7 +45,7 @@ final class HologramBlockTransformLittleTiles {
         return result;
     }
 
-    private static void references(Map<String, int[]> map, NBTTagCompound tag, int x, int y, int z, boolean vertical)
+    static void references(Map<String, int[]> map, NBTTagCompound tag, int x, int y, int z, boolean vertical)
         throws IOException {
         if (tag == null || !tag.hasKey("tilesCount")) return;
         int count = bounded(tag.getInteger("tilesCount"));

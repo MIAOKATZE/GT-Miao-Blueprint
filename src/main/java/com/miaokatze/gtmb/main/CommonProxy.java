@@ -65,7 +65,7 @@ public class CommonProxy {
 
     public void serverStopping() {
         try {
-            HologramNetwork.closeProjectedLayerServer();
+            com.miaokatze.gtmb.hologram.HologramNativeLocalConstruction.stopServer();
         } finally {
             com.miaokatze.gtmb.hologram.HologramCutService.clear();
             HologramService.clear();

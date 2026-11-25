@@ -19,13 +19,11 @@ import com.miaokatze.gtmb.testutil.SimpleAssert;
 public final class HologramLocalPreviewRegression {
 
     public static void run() throws Exception {
-        admissionReceipts();
         rejectStaleAuthoringOwner();
         compactDisplay();
         compactDirectDisplay();
         packedEditorParity();
         frozenDraftParity();
-        frozenDraftFormalSource();
         singleCellAnnotation();
         compactCoordinateCompatibility();
         compactDenseRegion();
@@ -184,64 +182,6 @@ public final class HologramLocalPreviewRegression {
         SimpleAssert.that(
             Arrays.equals(original, frozen.artifact()),
             "the already frozen placement remains byte-exact after later edits and saves");
-    }
-
-    private static void frozenDraftFormalSource() throws Exception {
-        String first = "{\"x\":-3,\"y\":2,\"z\":1,\"block\":\"minecraft:stone\",\"item\":\"minecraft:stone\"}";
-        String second = "{\"x\":4,\"y\":2,\"z\":1,\"block\":\"minecraft:quartz_block\",\"item\":\"minecraft:quartz_block\"}";
-        String header = "{\"schema\":2,\"blueprint\":{\"schema\":2,\"controllerType\":\"area\",\"cells\":[";
-        String json = header + first + "," + second + "]}}";
-        HologramLocalBlueprintDocument document = HologramLocalBlueprintDocument
-            .open(json.getBytes(StandardCharsets.UTF_8), "");
-        NBTTagCompound note = new NBTTagCompound();
-        note.setString("prompt", "an unsaved editor revision");
-        document.apply("editBlueprintPrompt", note);
-        var draft = document.freeze();
-        var input = HologramBlueprintPreview.displayInput(draft, () -> true, null);
-        var source = HologramLibraryClient.DisplaySource.previewDraft(draft, input);
-        SimpleAssert.that(source.json == null && source.localId.isEmpty() && source.publicId.isEmpty()
-            && !source.capturedIndexedMaterialSource() && source.plainPlacementEvidence() == input.plainPlacement
-            && input.plainPlacement != null && input.plainPlacement.cells() == 2
-            && input.plainPlacement.sameCapture(draft)
-            && HologramLibraryMaterialForecast.fromCapture(source).candidates().size() == 2,
-            "normal current draft preview publishes exact owned typed-placement and material facts without a save ID");
-        var material = HologramLibraryMaterialForecast.fromCapture(source);
-        SimpleAssert.eq(0L, material.unpriced().cells(), "every variant in the formal source's exact proof is listed");
-        SimpleAssert.that(material.candidates().stream().anyMatch(row -> "minecraft:quartz_block".equals(
-            row.identity().registry()) && row.identity().damage() == 0 && row.cells() == 1)
-            && HologramLibraryMaterialForecast.project(input.savedMaterials).unpriced().cells() == 1,
-            "the formal pane reads the same exact coordinate/material counts as its manifest, not the generic fallback");
-        SimpleAssert.eq(null, HologramLibraryClient.DisplaySource.previewDraft(document.freeze(), input)
-            .plainPlacementEvidence(), "an equal-but-different freeze cannot borrow another display proof");
-        HologramState.Preparation preparation = new HologramState.Preparation(input.snapshot, true, input.cells);
-        while (!preparation.step(4, Long.MAX_VALUE)) {}
-        var typed = new HologramPrivatePlainPlacementSource(input.plainPlacement, draft, preparation.result().regions,
-            new int[] { 12, 64, 20 }, new int[0], 256, () -> true);
-        var manifest = com.miaokatze.gtmb.hologram.HologramProjectedLayerEncoder.prepare(UUID.randomUUID(),
-            12, 64, 20, typed, () -> true, null);
-        SimpleAssert.that(manifest != null && typed.layout().atY(66) == 2,
-            "the normal frozen display feeds the same typed encoder, bounds and layer counts as a saved source");
-
-        String[] invalid = {
-            json.replace("\"cells\":", "\"semanticNbt\":\"opaque-quantum-metadata\",\"cells\":"),
-            json.replace("\"cells\":", "\"fullyVoucherCovered\":true,\"cells\":"),
-            json.replace("\"cells\":", "\"retainedNbtKeys\":[],\"cells\":"),
-            json.replace("\"cells\":", "\"surpriseResourcePolicy\":true,\"cells\":"),
-            json.replace(first, first.replace("}", ",\"surpriseResourceCost\":12}")),
-            json.replace(first, first.replace("}", ",\"excluded\":true}")),
-            json.replace(first, first.replace("}", ",\"controller\":\"false\"}")),
-            json.replace(first, first.replace("}", ",\"defaultItem\":\"minecraft:glass\"}")),
-            json.replace(first, first.replace("}", ",\"structureRole\":\"hatch\"}"))
-        };
-        for (String rejected : invalid) {
-            var candidate = HologramLocalBlueprintDocument.open(rejected.getBytes(StandardCharsets.UTF_8), "").freeze();
-            var display = HologramBlueprintPreview.displayInput(candidate, () -> true, null);
-            SimpleAssert.that(display.cells.size() > 0 && display.plainPlacement == null,
-                "potential native/resource semantics remain previewable but must not enter typed placement");
-        }
-        var retained = HologramLocalBlueprintDocument.open(invalid[0].getBytes(StandardCharsets.UTF_8), "").freeze();
-        SimpleAssert.that(HologramBlueprintPreview.displayInput(retained, () -> true, null).savedMaterials
-            .retentionNeedsReview(), "opaque editor metadata is not lost from the detached material summary");
     }
 
     private static void openingCamera(HologramState prefix, HologramState full) {
@@ -1037,40 +977,7 @@ public final class HologramLocalPreviewRegression {
             "already compact sources are reused without another compression pass");
     }
 
-    private static void admissionReceipts() {
-        String first = new String(new char[64]).replace('\0', 'a');
-        String second = new String(new char[64]).replace('\0', 'b');
-        HologramContentAdmissionFence source = new HologramContentAdmissionFence(17, "first-source", first);
-        SimpleAssert.eq(false, source.accept(18, 17, "first-source", first), "a newer task cannot inherit old ready");
-        SimpleAssert.eq(
-            false,
-            source.accept(17, 0, "first-source", first),
-            "a token-less control receipt cannot open world preview");
-        SimpleAssert
-            .eq(false, source.accept(17, 17, "other-source", first), "another selection cannot inherit admission");
-        SimpleAssert.eq(
-            false,
-            source.accept(17, 17, "first-source", second),
-            "a changed content digest cannot inherit admission");
-        SimpleAssert.eq(
-            true,
-            source.accept(17, 17, "first-source", first),
-            "the exact current UI selection may enter world preview");
-        SimpleAssert.eq(false, source.accept(17, 17, "first-source", first), "a duplicate ready cannot reopen preview");
-        HologramContentAdmissionFence cancelled = new HologramContentAdmissionFence(18, "second-source", second);
-        cancelled.cancel();
-        SimpleAssert.eq(
-            false,
-            cancelled.accept(18, 18, "second-source", second),
-            "cancelled preparation cannot revive on late ready");
-        HologramContentAdmissionFence serverHeld = new HologramContentAdmissionFence(19, "known-id", "");
-        SimpleAssert.eq(
-            false,
-            serverHeld.accept(19, 19, "known-id", ""),
-            "a known ID still needs a valid server content digest");
-        SimpleAssert
-            .eq(true, serverHeld.accept(19, 19, "known-id", first), "server-held source supplies its admission digest");
-    }
+
 
     private static void expectFailure(String json) throws Exception {
         try {

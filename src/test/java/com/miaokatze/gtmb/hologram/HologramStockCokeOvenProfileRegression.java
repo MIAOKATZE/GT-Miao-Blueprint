@@ -201,6 +201,7 @@ final class HologramStockCokeOvenProfileRegression {
             var session = new HologramSession(player, 0, 64, 0);
             session.materialSettings.main = true;
             session.materialSettings.containers = session.materialSettings.me = false;
+            HologramMaterials.write(player.getHeldItem(),session.materialSettings);
             HologramWorkspace.activate(player.getUniqueID(), session);
             HologramWorkspace.publishActionEndpoint(player, false);
             var endpoint = HologramWorkspace.captureActionEndpoint(player.playerNetServerHandler);
@@ -298,8 +299,8 @@ final class HologramStockCokeOvenProfileRegression {
             verifyConstructorFences(world, player, session, endpoint, selected);
             verifyEntryAdapter(world, player, session, endpoint, selected, item, first);
             HologramStockNativeServerRegression.run(unsafe, world, player, session, endpoint, selected, item, first);
-            try (var files = Files.list(ledger)) {
-                SimpleAssert.eq(0L, files.count(), "normal scoped writes do not force durability files per casing");
+            try(var files=Files.walk(ledger)){
+                SimpleAssert.eq(0L,files.filter(Files::isRegularFile).count(),"normal scoped writes do not leave durability files per casing");
             }
             HologramWorkspace.revokeActionEndpoint(player);
         } finally {
@@ -308,7 +309,9 @@ final class HologramStockCokeOvenProfileRegression {
             HologramWorkspace.clear();
             if (previousRoot == null) HologramConstructionJournal.STORAGE_ROOT.remove();
             else HologramConstructionJournal.STORAGE_ROOT.set(previousRoot);
-            Files.deleteIfExists(ledger);
+            try(var files=Files.walk(ledger)){
+                for(var path:(Iterable<Path>)files.sorted(java.util.Comparator.reverseOrder())::iterator)Files.deleteIfExists(path);
+            }
         }
     }
 

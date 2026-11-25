@@ -32,12 +32,40 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
     private HologramMaterialConfirmationDialog dialog;
     private PlainAvailability availability = PlainAvailability.SOURCE;
     private boolean voucherSelected;
+    private final java.util.List<Integer> bindGroups;
+    private int groupCursor;
+    private final java.util.SortedMap<Integer,Integer> choices=new java.util.TreeMap<>();
+    private int group(){return groupCursor==0?0:bindGroups.get(groupCursor-1);}
+    @Override public boolean hasBindingChoices(){return !bindGroups.isEmpty();}
+    @Override public String bindingGroupLabel(){return group()==0?"量子组：默认槽":"量子组：q"+group();}
+    @Override public String bindingSlotLabel(){
+        Integer slot=choices.get(group());
+        return slot==null?(group()==0?"终端：未选择":"终端：沿用默认槽"):"终端：背包槽 "+(slot+1);
+    }
+    private void nextTerminal(ItemStack[] inventory) {
+        int group=group(),start=choices.getOrDefault(group,-1);
+        for(int i=start+1;i<Math.min(36,inventory.length);i++){
+            if(com.miaokatze.gtmb.hologram.HologramSavedBindingChoices.terminal(inventory[i])){
+                if(!choices.containsKey(group)&&choices.size()>=com.miaokatze.gtmb.hologram.HologramSavedBindingChoices.MAX_CHOICES){
+                    HologramClient.selectionNotice("已达到单次控制消息的单选上限，可为其余类群设置默认槽");return;
+                }
+                choices.put(group,i);return;
+            }
+        }
+        choices.remove(group);
+        if(start<0)HologramClient.selectionNotice("背包中没有可选量子终端；请先放入已绑定终端");
+    }
+    private int[] bindingChoices(){return choices.entrySet().stream().mapToInt(e->(e.getKey()<<6)|e.getValue()).toArray();}
 
     HologramLibraryMaterialReviewScreen(HologramLocalPlacement placement, Submission frozen, Minecraft client) {
         super("library_material_review", 1, 1);
         this.placement = placement;
+        var view=frozen.display().nativeViewport;
+        bindGroups=frozen.source().nativeReceipt!=null&&view!=null?view.bindingGroups:java.util.Collections.emptyList();
         ticket = new Ticket(placement, frozen, client, this);
-        description = new CapturedDescription(HologramLibraryMaterialForecast.fromCapture(frozen.source()));
+        description = frozen.source().nativeReceipt == null
+            ? new CapturedDescription(HologramLibraryMaterialForecast.fromCapture(frozen.source()))
+            : new CapturedDescription(frozen.display(), client.thePlayer.getHeldItem());
     }
 
     @Override
@@ -101,8 +129,12 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
 
     /** A choice belongs to this exact confirmation, never mutates the tool or the frozen source. */
     static Submission paymentChoice(Submission frozen, boolean voucherSelected) {
+        return paymentChoice(frozen,voucherSelected,new int[0]);
+    }
+    static Submission paymentChoice(Submission frozen,boolean voucherSelected,int[] bindingSlots) {
         if (frozen == null) return null;
         NBTTagCompound intent = frozen.intent();
+        if(bindingSlots.length>0)intent.setIntArray("savedBindingSlots",bindingSlots.clone());
         intent.setBoolean("voucherRequested", voucherSelected);
         return new Submission(frozen.source(), frozen.display(), frozen.lockGeneration(), intent);
     }
@@ -112,6 +144,8 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
         deferAction(() -> {
             Minecraft client = Minecraft.getMinecraft();
             if (action == LocalAction.BACK) returnToWorld(client);
+            else if(action==LocalAction.BIND_GROUP&&hasBindingChoices()&&ticket.current(client))groupCursor=(groupCursor+1)%(bindGroups.size()+1);
+            else if(action==LocalAction.BIND_SLOT&&hasBindingChoices()&&ticket.current(client))nextTerminal(client.thePlayer.inventory.mainInventory);
             else if (action == LocalAction.VOUCHER) {
                 if (localVoucherAvailable()) voucherSelected = !voucherSelected;
             } else if (action == LocalAction.REFRESH) {
@@ -120,10 +154,8 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
             } else if (action == LocalAction.SUBMIT && ticket.current(client)) {
                 availability = HologramLibraryClient.INSTANCE.plainPlacementAvailability(ticket.frozen, client);
                 if (availability != PlainAvailability.READY) {
-                    if (availability == PlainAvailability.TRANSPORT)
-                        HologramClientProjectedPlacement.logMissingTransport();
                     HologramClient.selectionNotice(availability.reason + "，未开始施工。");
-                } else if (dispatchRefused(action, () -> paymentChoice(ticket.consume(client), voucherSelected), placement::submitFrozen)) {
+                } else if (dispatchRefused(action, () -> paymentChoice(ticket.consume(client), voucherSelected,bindingChoices()), placement::submitFrozen)) {
                     returnToWorld(client);
                     HologramClient.selectionNotice("当前锁定范围或连接未通过施工检查；已保留位置，未开始施工。");
                 }
@@ -164,10 +196,22 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
 
         private static final int MAIN_SLOTS = 36;
         private final HologramLibraryMaterialForecast forecast;
+        private final HologramLocalMaterialReview nativeReview;
+        private final boolean nativeMain;
         private LocalFrame cached;
 
         CapturedDescription(HologramLibraryMaterialForecast forecast) {
             this.forecast = forecast;
+            this.nativeReview = null;
+            this.nativeMain = false;
+        }
+
+        CapturedDescription(HologramState state, ItemStack tool) {
+            this.forecast = null;
+            NBTTagCompound settings = new NBTTagCompound();
+            nativeMain = HologramMaterials.read(tool).main;
+            settings.setBoolean("materialMain", nativeMain);
+            nativeReview = new HologramLocalMaterialReview(state, settings);
         }
 
         LocalFrame frame(Supplier<ItemStack[]> mainInventory, int toolSlot) {
@@ -176,6 +220,12 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
         }
 
         void refresh(Supplier<ItemStack[]> mainInventory, int toolSlot) {
+            if (nativeReview != null) {
+                nativeReview.refresh(nativeMain ? mainInventory.get() : null, toolSlot);
+                cached = new LocalFrame(nativeReview.visible(), "已锁定蓝图 · 整份范围",
+                    nativeReview.status() + " · 仅为图内用量", "图内没有可列明的材料", nativeReview.ready(), null);
+                return;
+            }
             boolean canObserve = forecast != null && !forecast.candidates()
                 .isEmpty();
             if (!canObserve && cached != null) return;
@@ -206,16 +256,19 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
         private final int slot, dimension;
         private final ItemStack tool;
         private final String toolId;
+        private final int reviewedSources;
         private boolean retired;
 
         Ticket(HologramLocalPlacement placement, Submission frozen, Minecraft client, GuiScreen owner) {
             this.placement = placement;
+
             this.frozen = frozen;
             this.owner = owner;
             slot = client.thePlayer.inventory.currentItem;
             dimension = client.thePlayer.dimension;
             tool = client.thePlayer.getHeldItem();
             toolId = id(tool);
+            var intent=frozen.intent();reviewedSources=intent.hasKey("reviewedSources",3)?intent.getInteger("reviewedSources"):Integer.MIN_VALUE;
         }
 
         boolean current(Minecraft client) {
@@ -228,7 +281,8 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
                 && client.thePlayer.dimension == dimension
                 && client.thePlayer.inventory.currentItem == slot
                 && client.thePlayer.getHeldItem() == tool
-                && toolId.equals(id(tool));
+                && toolId.equals(id(tool))
+                && (reviewedSources==Integer.MIN_VALUE||reviewedSources==com.miaokatze.gtmb.hologram.HologramProjectedMainPolicy.settingsKey(HologramMaterials.read(tool)));
         }
 
         Submission consume(Minecraft client) {

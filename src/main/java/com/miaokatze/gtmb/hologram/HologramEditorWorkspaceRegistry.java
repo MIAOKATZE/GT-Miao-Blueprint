@@ -332,7 +332,6 @@ final class HologramEditorWorkspaceRegistry {
         boolean retained = owned != null && owned.get("projection") == source;
         if (source.cancelled && !retained) return;
         if (retained) owned.remove("projection");
-        if (source.currentPlacementTask != null) source.currentPlacementTask.cancel();
         source.presentationTransition = null;
         source.projectionPersistPending = false;
         if (source.projectionAreaImportDiscard) HologramAreaWorkflow.cancelAreaImport(source);

@@ -116,15 +116,6 @@ final class HologramActionDispatcher {
             if (HologramLibraryWorkflow.acknowledgeBlueprintSave(s, action)) HologramSnapshots.send(s);
             return;
         }
-        if (s.currentPlacementTask != null) {
-            String operation = action.getString("op");
-            if ("close".equals(operation) || "cancel".equals(operation) || "clearWorkspace".equals(operation)) {
-                s.currentPlacementTask.cancel();
-            } else {
-                HologramSnapshots.sendUi(s);
-                return;
-            }
-        }
         if (s.attachmentTask != null) {
             String operation = action.getString("op");
             if ("cancelAttachment".equals(operation) || "cancel".equals(operation)
@@ -295,13 +286,9 @@ final class HologramActionDispatcher {
             HologramSnapshots.send(s);
             return;
         }
-        if ("placeCurrentBlueprint".equals(op)) {
-            try {
-                HologramWorldPlacementWorkflow.placeCurrentBlueprint(s, action);
-            } catch (java.io.IOException rejected) {
-                s.status = rejected.getMessage();
-            }
-            HologramSnapshots.send(s);
+        if("placeCurrentBlueprint".equals(op)||"choosePlacementPreset".equals(op)){
+            s.status="请先保存为原生蓝图，再从客户端蓝图库选择施工";
+            HologramSnapshots.sendUi(s);
             return;
         }
         if ("rotateBlueprint".equals(op)) {
@@ -403,25 +390,15 @@ final class HologramActionDispatcher {
         boolean construction = "build".equals(op) || "start".equals(op)
             || "native".equals(op)
             || "confirmBlueprintPlacement".equals(op);
-        if (construction && s.virtual && (!s.virtualPlacement || !s.virtualLocked || s.mode == 2)) {
-            s.forcePlacementReady = false;
-            s.status = s.mode == 2 ? "虚拟预设不支持拆除" : !s.virtualPlacement ? "请在蓝图库点击放置，再右击确定位置并核对材料" : "请先右击确定位置，再在界面确认施工";
-            HologramSnapshots.send(s);
+        if(construction&&s.virtual&&s.virtualPreset!=null){
+            s.forcePlacementReady=false;
+            s.status="此旧蓝图只保留预览和编辑；请在客户端保存原生版本后施工";
+            HologramSnapshots.sendUi(s);
             return;
         }
         if (construction && (!action.hasKey("planRevision", 4) || action.getLong("planRevision") != s.planRevision)) {
             s.forcePlacementReady = false;
             s.status = "确认计划已更新，请重新核对材料与位置";
-            HologramSnapshots.send(s);
-            return;
-        }
-        if (construction && s.virtual && s.blueprintAwaitingConfirmation && !"confirmBlueprintPlacement".equals(op)) {
-            s.status = "请先在材料界面确认本次放置";
-            HologramSnapshots.send(s);
-            return;
-        }
-        if (construction && s.virtual && s.blueprintAwaitingConfirmation && !s.placementReviewIssued) {
-            s.status = "位置已锁定，请再次右键打开材料与 NBT 确认界面";
             HologramSnapshots.send(s);
             return;
         }
@@ -566,32 +543,6 @@ final class HologramActionDispatcher {
             HologramPresetWorkflow.savePreset(s, action.getString("name"));
         } else if ("loadPreset".equals(op) && s.job != 1 && s.job != 2) {
             HologramPresetWorkflow.loadPreset(s, action.getString("presetId"));
-        } else if ("choosePlacementPreset".equals(op) && s.job != 1 && s.job != 2) {
-            if (HologramEditorWorkspaceRegistry.physicalProjection(s)) {
-                HologramSession source = s;
-                s = HologramPresetWorkflow.editPreset(source, action.getString("presetId"));
-                if (s == source) {
-                    HologramSnapshots.send(source);
-                    return;
-                }
-            }
-            s.virtual = true;
-            HologramSessionPolicy.clearPlacementSelection(s);
-            HologramPresetWorkflow.loadPreset(s, action.getString("presetId"), false);
-            if (s.virtualPreset != null && action.getString("presetId")
-                .equals(s.virtualPreset.id)) {
-                s.virtualPlacement = true;
-                s.target = null;
-                s.machine = null;
-                s.context = null;
-                s.blueprintAwaitingConfirmation = false;
-                s.placementReviewIssued = false;
-                s.virtualLocked = false;
-                s.forcePlacementReady = false;
-                HologramProjectorWorkflow.libraryCloseUi(s);
-                s.openPurpose = "blueprintPlacement";
-                s.status = "移动鼠标预览位置；右键锁定，再次右键核对材料与 NBT，Esc 取消放置";
-            }
         } else if ("dismissPresetBrowse".equals(op)) {
             HologramProjectorWorkflow.dismissPresetBrowse(s);
             HologramProjectorWorkflow.libraryCloseUi(s);

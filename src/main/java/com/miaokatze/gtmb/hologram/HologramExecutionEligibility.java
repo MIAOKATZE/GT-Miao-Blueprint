@@ -63,11 +63,32 @@ final class HologramExecutionEligibility {
 
     static void validate(Block block, int metadata, ItemStack sample, int facing, boolean controller,
         NBTTagCompound tile, NBTTagCompound item) throws IOException {
+        validate(block,metadata,sample,facing,controller,tile,item,false,false);
+    }
+
+    static void validateSaved(Block block,int metadata,ItemStack sample,int facing,boolean controller,
+        NBTTagCompound tile,NBTTagCompound item,boolean cleared)throws IOException{
+        validate(block,metadata,sample,facing,controller,tile,item,true,cleared);
+    }
+
+    private static void validate(Block block,int metadata,ItemStack sample,int facing,boolean controller,
+        NBTTagCompound tile,NBTTagCompound item,boolean saved,boolean cleared)throws IOException{
         if (block == null || block == Blocks.air || metadata < 0 || metadata > 15 || sample == null)
             throw new IOException("服务器无法识别施工方块或耗材");
-        forbidSourceAuthority(tile);
+        if(saved&&tile!=null&&(tile.hasKey(HologramNetworkBindings.ORIGINAL)
+            ||tile.hasKey(HologramNetworkBindings.MODE))){
+            // Saved private sources may preserve an original binding, but never authorize it here. The
+            // logical server still verifies the current save, owner/registry, and live binding prior to writes.
+            String mode=tile.getString(HologramNetworkBindings.MODE);
+            if(!tile.hasKey(HologramNetworkBindings.GROUP)||tile.hasKey(HologramRecovery.TAG)
+                ||tile.hasKey(HologramFullPreservation.TAG)||tile.hasKey(HologramNetworkBindings.CAPTURE_ANCHOR)
+                ||!("preserve".equals(mode)&&tile.hasKey(HologramNetworkBindings.ORIGINAL)
+                    ||"rebind".equals(mode)&&!tile.hasKey(HologramNetworkBindings.ORIGINAL)))
+                throw new IOException("已保存原生设备的量子来源记录无效");
+            if("preserve".equals(mode))HologramNetworkBindings.validateOriginal(tile);
+        }else forbidSourceAuthority(tile);
         forbidSourceAuthority(item);
-        validateNetwork(block, sample, tile);
+        validateNetwork(block,sample,tile,saved&&cleared);
         if (item != null && item.hasKey(HologramNetworkBindings.GROUP)) throw new IOException("量子绑定只允许用于设备状态");
         if (sample.getItem() instanceof ItemMachines) {
             if (block != GregTechAPI.sBlockMachines || ItemMachines.getMetaTileEntity(sample) == null
@@ -163,10 +184,10 @@ final class HologramExecutionEligibility {
             || tag.hasKey(HologramNetworkBindings.MODE)) throw new IOException("施工指令不能携带原世界的绑定或设备恢复凭据");
     }
 
-    private static void validateNetwork(Block block, ItemStack sample, NBTTagCompound tile) throws IOException {
+    private static void validateNetwork(Block block, ItemStack sample, NBTTagCompound tile,boolean cleared) throws IOException {
         boolean node = HologramNetworkBindings.node(block);
         if (tile == null || !tile.hasKey(HologramNetworkBindings.GROUP)) {
-            if (node) throw new IOException("量子节点缺少本地组，请先处理蓝图网络设置");
+            if (node && !cleared) throw new IOException("量子节点缺少本地组，请先处理蓝图网络设置");
             return;
         }
         HologramNetworkBindings.group(tile);

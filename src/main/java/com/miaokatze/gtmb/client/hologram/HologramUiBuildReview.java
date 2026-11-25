@@ -72,8 +72,9 @@ final class HologramUiBuildReview implements LocalView {
     private HologramMaterialConfirmationDialog materialDialog, localMaterialDialog;
     private String localMaterialNotice = "";
     private HologramLocalMaterialReview localMaterials;
-    private HologramClientStockNative.Site localStockSite;
+    private HologramClientStockNative.DeclarationSite localStockSite;
     private boolean localMaterialsDetailed;
+    private int nativeDemolitionDestination;
     private int localMaterialSelectionVersion;
     private NBTTagCompound presentedMaterialState;
     private long presentedMaterialRevision = -1;
@@ -93,13 +94,18 @@ final class HologramUiBuildReview implements LocalView {
     }
 
     boolean openNativeLocalMaterials() {
+        return openNativeLocalMaterials(false);
+    }
+
+    private boolean openNativeLocalMaterials(boolean construction) {
         HologramScreen root = ui.host == null ? null : ui.host.parent();
         HologramState state = ui.session.state();
         if(state.nativeViewport!=null&&ui.session.localDocument()){
             closeLocalMaterials();localMaterials=new HologramLocalMaterialReview(state,ui.config.configuration(),true,ui.preview.selection());
             localMaterialSelectionVersion=ui.preview.selection().version();return true;
         }
-        if (!state.data.getBoolean("localStandardController") || state.data.getInteger("mode") != 0) return false;
+        if (!state.data.getBoolean("localStandardController")
+            || !construction && state.data.getInteger("mode") != 0) return false;
         if (root == null || !root.localMaterialOwnerCurrent(ui)) {
             closeLocalMaterials();
             ui.session.notice("控制器或手持投影仪已变化，请重新打开结构。");
@@ -181,7 +187,13 @@ final class HologramUiBuildReview implements LocalView {
             : status + " · " + localMaterialEditingReason();
         String scope = localStockSite == null ? localMaterials.scopeLabel()
             : localMaterials.scopeLabel() + " · " + localStockSite.description();
-        if (localStockSite != null) status += " · 现场或库存变更时保留已完成方块";
+        if (reviewedNativeMode(2)) {
+            scope = "逐格拆除 · " + localDemolitionDestinationLabel();
+            status = "只拆所选且由原机登记、归你所有的仓室；由上至下，保留控制器和外壳。";
+        } else if (reviewedNativeMode(1)) {
+            scope = "逐格换装 · 仅原机登记的自有仓室";
+            status = "只处理所选改动。仅转向不扣料；换料前检查当前库存，回收原设备。";
+        } else if (localStockSite != null) status += " · 现场或库存变更时保留已完成方块";
         return new LocalFrame(
             localMaterials.visible(),
             scope,
@@ -205,13 +217,18 @@ final class HologramUiBuildReview implements LocalView {
     @Override
     public boolean localSubmitAvailable() {
         // A current but unfinished estimate never grants or denies permission; the server checks materials.
-        return ui.session.state().nativeViewport==null && localMaterialsCurrent() && ui.session.editable()
-            && HologramPlacementConfirmation.localStructureReviewBlocker(ui.session.state()).isEmpty();
+        if(!localMaterialsCurrent()||!ui.session.editable())return false;
+        if(ui.session.state().nativeViewport!=null)return ui.library.savedNativePlacementReady();
+        if ((reviewedNativeMode(1) || reviewedNativeMode(2)) && ui.preview.selection().size() == 0) return false;
+        return HologramPlacementConfirmation.localStructureReviewBlocker(ui.session.state()).isEmpty();
     }
 
     @Override
     public String localSubmitLabel() {
-        if(ui.session.state().nativeViewport!=null)return "原生蓝图施工未启用";
+        if(ui.session.state().nativeViewport!=null)return ui.library.savedNativePlacementReady()
+            ? "定位并施工" : "请先保存蓝图";
+        if (reviewedNativeMode(2)) return "确认拆除所选仓室 · " + localDemolitionDestinationLabel();
+        if (reviewedNativeMode(1)) return "确认换装所选仓室";
         if (localStockSite == null) return "确认补建（无可用短请求时不会提交）";
         var context = HologramClientStockNative.context(ui.host == null ? null : ui.host.minecraft());
         return HologramClientStockNative.OWNER.serverConfirmed(context) ? localStockSite.submitLabel()
@@ -245,6 +262,21 @@ final class HologramUiBuildReview implements LocalView {
         localMaterialNotice = "";
     }
 
+    private boolean reviewedNativeMode(int mode) {
+        return localMaterials != null && ui.session.state().data.getBoolean("localStandardController")
+            && ui.session.state().data.getInteger("mode") == mode;
+    }
+
+    @Override
+    public boolean localDemolitionAvailable() {
+        return reviewedNativeMode(2) && localMaterialsCurrent();
+    }
+
+    @Override
+    public String localDemolitionDestinationLabel() {
+        return "回收至" + (nativeDemolitionDestination == 0 ? "背包" : "AE");
+    }
+
     @Override
     public void localAction(LocalAction action) {
         switch (action) {
@@ -252,12 +284,16 @@ final class HologramUiBuildReview implements LocalView {
             case REFRESH -> refreshLocalMaterials();
             case SUBMIT -> submitLocalMaterials();
             case DETAILS -> toggleDetailedLocalMaterials();
+            case DEMOLITION_DESTINATION -> {
+                if (localDemolitionAvailable()) nativeDemolitionDestination = 1 - nativeDemolitionDestination;
+            }
         }
     }
 
     void submitLocalMaterials() {
         HologramScreen root = ui.host == null ? null : ui.host.parent();
-        if (root != null) submitLocalMaterials(settings -> root.confirmStockNative(settings, localStockSite));
+        if(root!=null)submitLocalMaterials(settings -> ui.session.state().nativeViewport!=null
+            ? ui.library.placeNativeSaved() : root.confirmStockNative(settings,localStockSite));
     }
 
     void submitLocalMaterials(java.util.function.Predicate<NBTTagCompound> dispatch) {
@@ -265,7 +301,9 @@ final class HologramUiBuildReview implements LocalView {
         if (!localSubmitAvailable()) return;
         ui.session.notice("");
         // True means only that this local action sent or scheduled the request, never server acceptance.
-        if (dispatch.test(localMaterials.settings())) closeLocalMaterials();
+        NBTTagCompound settings = localMaterials.settings();
+        if (reviewedNativeMode(2)) settings.setInteger("demolitionDestination", nativeDemolitionDestination);
+        if (dispatch.test(settings)) closeLocalMaterials();
         else {
             localMaterialNotice = ui.session.notice();
             if (localMaterialNotice.isEmpty()) localMaterialNotice = "未提交施工，请检查当前状态后重试。";
@@ -463,7 +501,7 @@ final class HologramUiBuildReview implements LocalView {
                     && !ui.session.state().data.getBoolean("virtualLocked")) ui.session.send("lockVirtual", null, true);
                 return true;
             case 50:
-                if ((nativeMaterialInspectionReady() || ui.session.editable()) && openNativeLocalMaterials()) return true;
+                if ((nativeMaterialInspectionReady() || ui.session.editable()) && openNativeLocalMaterials(true)) return true;
                 if (ui.session.editable() && (!ui.session.state().data.getBoolean("virtual")
                     || ui.session.state().data.getBoolean("virtualPlacement")
                         && ui.session.state().data.getBoolean("virtualLocked"))) {

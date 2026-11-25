@@ -291,83 +291,16 @@ public final class HologramRegressionTest {
             "isolated_owned_placement_progress",
             com.miaokatze.gtmb.client.hologram.HologramOwnedPlacementProgressRegression::run);
         cases.put("isolated_scoped_world_transactions", HologramWorldTransactionsScopedRegression::run);
-        cases.put("isolated_projected_layer_encoder", () -> {
-            try {
-                HologramProjectedLayerEncoderRegression.run();
-            } catch (java.io.IOException failure) {
-                throw new RuntimeException(failure);
-            }
+        cases.put("native_saved_submission_to_world_stock_hud",()->{
+            try {com.miaokatze.gtmb.client.hologram.HologramClientSavedPlacementRegression.runNativeConnected();
+                com.miaokatze.gtmb.client.hologram.HologramClientSavedPlacementRegression.runNativeRemoteConnected();
+                HologramPrivateNativeCacheRegression.exercise();}
+            catch(Exception e){throw new RuntimeException(e);}
         });
-        cases.put("isolated_private_plain_source", () -> {
-            try {
-                com.miaokatze.gtmb.client.hologram.HologramPrivatePlainPlacementSourceRegression.run();
-            } catch (java.io.IOException failure) {
-                throw new RuntimeException(failure);
-            }
+        cases.put("saved_native_registered_adapters_committed_world_stock_and_refunds",()->{
+            try{HologramSavedPlacementAdapterRegression.run();}
+            catch(Exception failure){throw new RuntimeException(failure);}
         });
-        cases.put("isolated_projected_layer_wire_and_plan", () -> {
-            try {
-                HologramProjectedLayerRegression.run();
-            } catch (Exception failure) {
-                throw new RuntimeException(failure);
-            }
-        });
-        cases.put("projected_layer_groups_preserve_six_layer_ten_tick_cadence",
-            () -> HologramLayerCadenceRegression.main(new String[0]));
-        cases.put("official_blueprint_material_button_transport_stop_and_projection_lifecycle", () -> {
-            try {
-                com.miaokatze.gtmb.client.hologram.HologramClientProjectedPlacementLifecycleRegression.run();
-            } catch (Exception failure) {
-                throw new RuntimeException(failure);
-            }
-        });
-        cases.put("isolated_projected_layer_server_service", () -> {
-            try {
-                HologramProjectedLayerServiceRegression.run();
-            } catch (Exception failure) {
-                throw new RuntimeException(failure);
-            }
-        });
-        cases.put("isolated_projected_layer_authenticated_transport", () -> {
-            try {
-                HologramProjectedLayerServerRegression.run();
-            } catch (Exception failure) {
-                throw new RuntimeException(failure);
-            }
-        });
-        cases.put("isolated_projected_layer_real_client_sender", () -> {
-            try {
-                com.miaokatze.gtmb.client.hologram.HologramClientProjectedPlacementRegression.run();
-            } catch (Exception failure) {
-                throw new RuntimeException(failure);
-            }
-        });
-        cases.put("isolated_projected_variant_pricing", () -> {
-            try {
-                HologramProjectedVariantPricingRegression.run();
-            } catch (Exception failure) {
-                throw new RuntimeException(failure);
-            }
-        });
-        if (!System.getProperty("gtmb.reviewedMetadata.fixture", "").isEmpty()) {
-            cases.put("isolated_projected_roof_tile_generic_proof", () -> {
-                try {
-                    HologramProjectedRoofTileProofRegression.run();
-                    System.out.println("[GTMB-ROOF-TILE-GENERIC] offline proof passed; native provider not invoked");
-                } catch (Exception failure) {
-                    throw new RuntimeException(failure);
-                }
-            });
-        }
-        if (!System.getProperty("gtmb.reviewedMetadata.fixture", "").isEmpty()) {
-            cases.put("isolated_projected_layer_reviewed_metadata_123369", () -> {
-                try {
-                    HologramProjectedLayerReviewedMetadataRegression.run();
-                } catch (Exception failure) {
-                    throw new RuntimeException(failure);
-                }
-            });
-        }
         cases.put("isolated_archive_region_source", () -> {
             try {
                 com.miaokatze.gtmb.client.hologram.HologramArchiveRegionSourceRegression.run();
@@ -664,6 +597,14 @@ public final class HologramRegressionTest {
         cases.put("native_blueprint_game_staging_keeps_original_active",
             com.miaokatze.gtmb.client.hologram.HologramNativeBlueprintStorageRegression::run);
         cases.put("native_blueprint_local_consumers_share_the_accepted_definition",com.miaokatze.gtmb.client.hologram.HologramNativeViewportRegression::run);
+        cases.put("native_blueprint_revision_and_formal_placement_boundary",
+            com.miaokatze.gtmb.client.hologram.HologramNativeViewportRegression::runRevisionBoundary);
+        cases.put("native_blueprint_formal_first_save_retains_capture_and_bound_cover",
+            com.miaokatze.gtmb.client.hologram.HologramNativeViewportRegression::runAuthoredCapture);
+        cases.put("native_blueprint_singleplayer_settlement_without_execution_frames", () -> {
+            try { HologramNativeSavedWorldRegression.runNativeLocalPlacement(); }
+            catch (Exception e) { throw new IllegalStateException(e); }
+        });
         TestRunner.run(HologramRegressionTest.class, cases);
         net.minecraft.world.storage.ThreadedFileIOBase.threadedIOInstance.waitForFinish();
     }

@@ -256,7 +256,7 @@ final class HologramAreaWorkflow {
             s.areaImportPreviousDirty = s.blueprintDirty;
             s.areaImportPreviousSource = s.blueprintSource;
             if (HologramEditorWorkspaceRegistry.physicalProjection(s) || s.emptyProjection) {
-                s.status = "正在分段导入区域与声明结构，请稍候";
+                s.status = "正在读取选区内实际方块与设备数据，请稍候";
                 return true;
             }
             HologramSession.cancelCaptureRetry(s);
@@ -268,7 +268,7 @@ final class HologramAreaWorkflow {
             s.placementReviewNonce++;
             s.virtualPlacement = false;
             s.virtualLocked = false;
-            s.status = "正在分段导入区域与声明结构，请稍候";
+            s.status = "正在读取选区内实际方块与设备数据，请稍候";
             return true;
         } catch (java.io.IOException failure) {
             s.status = "区域导入失败：" + failure.getMessage();
@@ -560,62 +560,6 @@ final class HologramAreaWorkflow {
         return staged;
     }
 
-    private static void importStructure(HologramArea area, HologramArea.Structure structure) {
-        HologramPresets.Structure saved = new HologramPresets.Structure();
-        saved.id = structure.id;
-        saved.name = structure.machine.getLocalName();
-        saved.x = structure.x - area.minX;
-        saved.y = structure.y - area.minY;
-        saved.z = structure.z - area.minZ;
-        saved.controllerId = structure.machine.getBaseMetaTileEntity()
-            .getMetaTileID();
-        saved.sourceClass = structure.machine.getClass()
-            .getName();
-        saved.sourceMod = HologramSessionPolicy.sourceMod(structure.machine.getClass());
-        saved.enabled = structure.enabled;
-        if (structure.capture != null) {
-            try {
-                if (!structure.capture.sourceMetadata.hasNoTags())
-                    saved.semanticNbt = HologramBlueprintNbt.encodeCanonical(structure.capture.sourceMetadata);
-            } catch (java.io.IOException invalidMetadata) {
-                throw new IllegalStateException("Invalid source metadata", invalidMetadata);
-            }
-            saved.main = Math.max(1, structure.capture.trigger.stackSize);
-            com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor
-                .iterateChannelData(structure.capture.trigger)
-                .forEach(entry -> saved.channels.put(entry.getKey(), entry.getValue()));
-        }
-        area.blueprint.structures.add(saved);
-    }
-
-    private static void importMembership(HologramArea area, HologramPresets.Cell saved) {
-        HologramSession staged = area.staging;
-        int x = area.minX + saved.x, y = area.minY + saved.y, z = area.minZ + saved.z;
-        saved.structureIds = area.memberships(x, y, z);
-        saved.structureId = saved.structureIds.isEmpty() ? null : saved.structureIds.get(0);
-        if (saved.structureIds.isEmpty() || saved.controller) return;
-        List<ItemStack> allowed = null;
-        for (String member : saved.structureIds) {
-            HologramSession source = HologramAreaDeclarations
-                .areaDeclarationSession(staged, area, member, area.declarationSessions);
-            HologramCapture.Cell declared = source == null ? null : source.capture.positions.get(x + "," + y + "," + z);
-            List<ItemStack> local = declared == null || source.capture.incomplete ? Collections.emptyList()
-                : HologramCellPolicy.declaredCandidates(source, declared);
-            if (allowed == null) allowed = new ArrayList<>(local);
-            else {
-                // Material intersections ignore NBT by definition; hash exact item identity + damage once per member.
-                Map<net.minecraft.item.Item, java.util.Set<Integer>> materials = new java.util.IdentityHashMap<>();
-                for (ItemStack option : local) if (option != null)
-                    materials.computeIfAbsent(option.getItem(), ignored -> new java.util.HashSet<>())
-                        .add(option.getItemDamage());
-                allowed.removeIf(
-                    target -> target == null || !materials.getOrDefault(target.getItem(), Collections.emptySet())
-                        .contains(target.getItemDamage()));
-            }
-        }
-        saved.allowedTargets = HologramBlueprintData.savedTargets(allowed == null ? Collections.emptyList() : allowed);
-    }
-
     static boolean importOwned(HologramSession s, HologramArea area) {
         return area.importing && HologramWorkspace.find(s.player.getUniqueID()) == s
             && HologramWorkspace.AREAS.get(s.player.getUniqueID()) == area
@@ -629,22 +573,11 @@ final class HologramAreaWorkflow {
         try {
             if (!importOwned(s, area)) throw new java.io.IOException("工具、维度或玩家状态已变化");
             if (!area.imported) {
-                area.tick(s.player, HologramSessionPolicy.trigger(s));
-            } else if ("memberships".equals(area.importPhase)) {
-                if (area.staging == null) area.staging = importStaging(s, area);
-                long deadline = HologramWorkBudget.deadline(HologramWorkBudget.remainingNanos(2_000_000L));
-                for (int work = 0; work < Integer.MAX_VALUE; work++) {
-                    if (work > 0 && System.nanoTime() >= deadline) break;
-                    if (area.structureIndex < area.discovery.size())
-                        importStructure(area, area.discovery.get(area.structureIndex++));
-                    else if (area.membershipIndex < area.blueprint.cells.size())
-                        importMembership(area, area.blueprint.cells.get(area.membershipIndex++));
-                    else {
-                        area.population = new HologramBlueprintProjection.Population(area.staging);
-                        area.importPhase = "projection";
-                        break;
-                    }
-                }
+                area.tick(s.player);
+            } else if ("captured".equals(area.importPhase)) {
+                area.staging = importStaging(s, area);
+                area.population = new HologramBlueprintProjection.Population(area.staging);
+                area.importPhase = "projection";
             } else if ("projection".equals(area.importPhase)) {
                 if (area.population.step()) {
                     if (area.staging.capture.incomplete) throw new java.io.IOException(area.staging.capture.failure);
@@ -691,7 +624,7 @@ final class HologramAreaWorkflow {
                 .removeTag(HologramSessionKeys.SELECTED_PRESET);
             staged.player.inventory.markDirty();
         }
-        staged.status = "区域已导入；识别 " + area.structures.size() + " 个声明控制器，可分别编辑与保存蓝图";
+        staged.status = "区域已导入：" + area.blueprint.cells.size() + " 个实际方块，可编辑并保存蓝图";
         staged.open = true;
         staged.openPurpose = "blueprintEdit";
         HologramWorkspace.AREA_STRUCTURES.put(previous.player.getUniqueID(), area.declarationSessions);

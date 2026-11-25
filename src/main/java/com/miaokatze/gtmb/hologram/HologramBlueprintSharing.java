@@ -218,28 +218,19 @@ final class HologramBlueprintSharing {
 
     /** Structural JSON admission only; caller must run the canonical safety boundary before use. */
     static HologramPresets.Preset decodeUnchecked(String json) throws IOException {
-        return decodeUnchecked(json, false);
-    }
-
-    /** Historic documents have no provenance header. Construction still admits their actual operations. */
-    static HologramPresets.Preset decodePlacementSource(String json) throws IOException {
-        return decodeUnchecked(json, true);
+        boundedJson(json);
+        return decodeRoot(HologramBlueprintCompactCodec.parse(json, MAX_BYTES));
     }
 
     /** Decodes the original share once; format admission replaces neither schema nor gameplay validation. */
     static HologramPresets.Preset decodeStored(byte[] source) throws IOException {
         var original = HologramBlueprintCompactCodec.parseStored(source, MAX_BYTES);
-        HologramPresets.Preset preset = decodeRoot(original.root(), false);
+        HologramPresets.Preset preset = decodeRoot(original.root());
         if (!original.compact()) throw new HologramCompactRequiredException();
         return preset;
     }
 
-    private static HologramPresets.Preset decodeUnchecked(String json, boolean historical) throws IOException {
-        boundedJson(json);
-        return decodeRoot(HologramBlueprintCompactCodec.parse(json, MAX_BYTES), historical);
-    }
-
-    private static HologramPresets.Preset decodeRoot(JsonElement root, boolean historical) throws IOException {
+    private static HologramPresets.Preset decodeRoot(JsonElement root) throws IOException {
         try {
             if (!root.isJsonObject() || !root.getAsJsonObject()
                 .has("schema")
@@ -260,7 +251,7 @@ final class HologramBlueprintSharing {
                     .get("blueprint"));
             JsonObject blueprint = root.getAsJsonObject()
                 .getAsJsonObject("blueprint");
-            if (!historical || blueprint.has("nativeBlueprint")) HologramBlueprintVersions.validateJson(blueprint);
+            HologramBlueprintVersions.validateJson(blueprint);
             Share share = GSON.fromJson(root, Share.class);
             return share.blueprint;
         } catch (RuntimeException invalid) {

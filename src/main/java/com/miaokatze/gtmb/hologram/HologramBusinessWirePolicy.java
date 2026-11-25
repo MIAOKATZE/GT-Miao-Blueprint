@@ -83,13 +83,15 @@ public final class HologramBusinessWirePolicy {
         return switch (tag.getString("op")) {
             case "uploadBegin" -> (origin == Origin.EXPLICIT_LIBRARY_UPLOAD || origin == Origin.NETWORK_INGRESS)
                 && shape(tag, false, "op:8", "clientTaskToken:4", "transfer:8", "total:3", "hash:8",
-                    "artifactVersion:3", "?replaceId:8")
+                    "artifactVersion:3", "?replaceId:8", "?sourceHash:8", "?sourceRevision:4")
                 && uploadHeader(tag)
                 && (!tag.hasKey("replaceId") || publicId(tag.getString("replaceId")))
+                && pairedRevision(tag) && nativeUploadRevision(tag)
                     ? Intent.LIBRARY_UPLOAD : Intent.BLOCK;
             case "download" -> (origin == Origin.EXPLICIT_LIBRARY_DOWNLOAD || origin == Origin.NETWORK_INGRESS)
                 && shape(tag, false, "op:8", "clientTaskToken:4", "id:8", "downloadIntent:8", "?sourceHash:8",
-                    "?sourceRevision:4")
+                    "?sourceRevision:4", "?acceptNative:1")
+                && (!tag.hasKey("acceptNative") || tag.getByte("acceptNative") == 1)
                 && PUBLIC_COPY.equals(tag.getString(DOWNLOAD_INTENT_KEY)) && publicId(tag.getString("id"))
                 && pairedRevision(tag) ? Intent.LIBRARY_DOWNLOAD : Intent.BLOCK;
             case "uploadChunk" -> owner == Owner.LIBRARY_UPLOAD && libraryChunk(tag) ? Intent.LIBRARY_CHUNK
@@ -105,10 +107,15 @@ public final class HologramBusinessWirePolicy {
     private static boolean uploadHeader(NBTTagCompound tag) {
         try {
             HologramLibraryProtocol.header(tag.getString("transfer"), tag.getInteger("total"), tag.getString("hash"));
-            return tag.getInteger("artifactVersion") == HologramBlueprintArtifact.VERSION;
+            return HologramNativePublicArtifact.supported(tag.getInteger("artifactVersion"));
         } catch (IOException invalid) {
             return false;
         }
+    }
+
+    private static boolean nativeUploadRevision(NBTTagCompound tag) {
+        return tag.hasKey("sourceHash") == (tag.getInteger("artifactVersion") == HologramNativePublicArtifact.VERSION
+            && tag.hasKey("replaceId"));
     }
 
     private static boolean pairedRevision(NBTTagCompound tag) {
@@ -165,7 +172,7 @@ public final class HologramBusinessWirePolicy {
             || !tag.getString("localId").isEmpty()
             || !tag.getString("session").isEmpty()
             || tag.getLong("planRevision") != 0
-            || tag.getInteger("artifactVersion") != HologramBlueprintArtifact.VERSION) return false;
+            || !HologramNativePublicArtifact.supported(tag.getInteger("artifactVersion"))) return false;
         try {
             HologramLibraryDownload.header(tag.getString("transfer"), tag.getInteger("total"), tag.getString("encoding"),
                 tag.getInteger("decodedTotal"), tag.getString("hash"));

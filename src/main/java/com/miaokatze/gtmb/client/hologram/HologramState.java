@@ -818,7 +818,9 @@ final class HologramState {
         NBTTagCompound updates = metadata(patch);
         for (Object name : updates.func_150296_c()) {
             String key = (String) name;
-            data.setTag(key, updates.getTag(key));
+            // The packet session identifies the immutable geometry source. A local placement
+            // has a separate presentation session; an in-place patch must not change that owner.
+            if (decoration || !"session".equals(key)) data.setTag(key, updates.getTag(key));
         }
         if (patch.hasKey("processingPatch", 10) || patch.hasKey("processingConfirmedStages", 9)) {
             NBTTagCompound processing = shallow(data.getCompoundTag("processing"));

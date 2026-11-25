@@ -350,12 +350,12 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         return false;
     }
 
-    HologramClientStockNative.Site stockNativeSite() {
+    HologramClientStockNative.DeclarationSite stockNativeSite() {
         return localControllerStandard() && controllerContextCurrent(false)
-            ? HologramClientStockNative.choose(minecraft().theWorld, openingController) : null;
+            ? HologramClientStockNative.DeclarationSite.read(minecraft().theWorld, openingController) : null;
     }
 
-    boolean confirmStockNative(NBTTagCompound settings, HologramClientStockNative.Site paneSite) {
+    boolean confirmStockNative(NBTTagCompound settings, HologramClientStockNative.DeclarationSite paneSite) {
         if (!localControllerStandard()) return false;
         if (HologramClientStockNative.OWNER.pending(this)) {
             ui.session.notice("上一次施工请求尚未确认结束，请先核对现场。");
@@ -363,22 +363,14 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         }
         HologramState displayed = ui.session.state();
         String blocker = HologramPlacementConfirmation.localStructureReviewBlocker(displayed);
+        if (blocker.isEmpty()) blocker = nativeConstructionUnavailable(displayed.data, settings, !localNativeChoices.isEmpty());
         if (!blocker.isEmpty()) {
             ui.session.notice(blocker);
             return false;
         }
-        String unavailable = nativeConstructionUnavailable(displayed.data, settings, !localNativeChoices.isEmpty());
-        if (!unavailable.isEmpty()) {
-            ui.session.notice(unavailable);
-            return false;
-        }
         Minecraft client = minecraft();
-        if (!controllerContextCurrent(false)) {
-            ui.session.notice("控制器或手持投影仪已变化，请重新打开结构。");
-            return false;
-        }
-        if (paneSite == null || !paneSite.equals(stockNativeSite())) {
-            ui.session.notice("此短请求只支持未成型焦炉 #236、电力高炉 #1000 及材料页显示的已安装仓室；未发送施工。");
+        if (paneSite == null || !controllerContextCurrent(false) || !paneSite.equals(stockNativeSite())) {
+            ui.session.notice("已确认的原生控制器或手持投影仪已变化，请重新打开结构。");
             return false;
         }
         ItemStack held = client.thePlayer.getHeldItem();
@@ -388,73 +380,120 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             return false;
         }
         var configured = com.miaokatze.gtmb.hologram.HologramMaterials.read(held);
-        if (!stockNativeSettings(settings, configured, paneSite.ebf())) {
-            ui.session.notice("当前信道或材料来源不受支持。请先启用主背包并选择主背包优先；未发送施工。");
+        var declaration = declaredSelection(paneSite.controllerId(), displayed, settings, localNativeChoices);
+        if (declaration == null || !stockNativeSources(settings, configured)) {
+            ui.session.notice("施工范围、信道、手选仓室或材料来源无效，请重新确认。未发送施工。");
             return false;
         }
         int main = settings.getInteger("main");
-        if (main < 1 || main > 64 || localControllerBaseline == null || displayed.cells != localControllerBaseline.cells) {
-            ui.session.notice("原生控制器设置、范围或显示内容已变化；未发送施工。");
+        if (main < 1 || main > 64) {
+            ui.session.notice("原生控制器的等级无效，请重新确认。未发送施工。");
             return false;
         }
-        var scope = HologramClientStockNative.context(client);
+        var context = HologramClientStockNative.context(client);
         long sequence = com.miaokatze.gtmb.hologram.HologramNetwork.nextConstructionIntentSequence();
-        if (sequence <= 0 || scope == null) return false;
+        if (sequence <= 0 || context == null) return false;
         int picked = ui.preview.selection().version();
         int x = openingController.xCoord, y = openingController.yCoord, z = openingController.zCoord;
         ItemStack pinnedTool = held.copy();
         var nonce = new com.miaokatze.gtmb.hologram.HologramStockNativeWire.Key(java.util.UUID.randomUUID(), sequence, 0);
-        boolean mainExplicit = displayed.data.getBoolean("mainExplicit"), noHatches = settings.getBoolean("noHatches");
-        var original = paneSite.ebf()
-            ? com.miaokatze.gtmb.hologram.HologramStockNativeWire.Confirmation.ebf(
-                nonce, client.thePlayer.dimension, tool, x, y, z, localControllerSide, openingSlot, paneSite.controllerFacing(),
-                main, mainExplicit, noHatches, 0, settings.getCompoundTag("channels").getInteger("coil"), paneSite.ebfHatches())
-            : new com.miaokatze.gtmb.hologram.HologramStockNativeWire.Confirmation(
-                nonce, client.thePlayer.dimension, tool, x, y, z, localControllerSide, openingSlot, paneSite.controllerFacing(),
-                main, mainExplicit, noHatches, 0, paneSite.hx(), paneSite.hy(), paneSite.hz(), paneSite.hatchFacing());
+        int sourceKey = com.miaokatze.gtmb.hologram.HologramProjectedMainPolicy.settingsKey(configured);
+        var original = com.miaokatze.gtmb.hologram.HologramStockNativeWire.Confirmation.declared(
+            nonce, client.thePlayer.dimension, tool, x, y, z, localControllerSide, openingSlot, paneSite.facing(),
+            main, displayed.data.getBoolean("mainExplicit"), settings.getBoolean("noHatches"), sourceKey, declaration);
         var view = ui;
         java.util.function.BooleanSupplier visible = () -> minecraft().currentScreen == this && ui == view
-            && localControllerStandard() && scope.same(HologramClientStockNative.context(minecraft()));
+            && localControllerStandard() && context.same(HologramClientStockNative.context(minecraft()));
         var owner = new HologramClientStockNative.Owner(this, () -> {
             if (!visible.getAsBoolean() || ui.session.state() != displayed || !controllerContextCurrent(false)
                 || ui.preview.selection().version() != picked || openingController.xCoord != x
                 || openingController.yCoord != y || openingController.zCoord != z
-                || minecraft().thePlayer.getHeldItem() != held || !ItemStack.areItemStacksEqual(pinnedTool, held)
-                || !localNativeChoices.isEmpty()) return false;
-            NBTTagCompound activeSettings = ui.config.configuration();
-            return stockNativeSettings(activeSettings, com.miaokatze.gtmb.hologram.HologramMaterials.read(held), paneSite.ebf())
-                && activeSettings.getInteger("main") == original.main()
-                && (!paneSite.ebf() || activeSettings.getCompoundTag("channels").getInteger("coil") == original.coil())
-                && activeSettings.getBoolean("noHatches") == original.noHatches()
-                && ordinaryNativeSubmit(displayed.data, activeSettings, false)
+                || minecraft().thePlayer.getHeldItem() != held || !ItemStack.areItemStacksEqual(pinnedTool, held)) return false;
+            NBTTagCompound active = ui.config.configuration();
+            if (declaration.operation() == 2) active.setInteger("demolitionDestination", declaration.destination());
+            return stockNativeSources(active, com.miaokatze.gtmb.hologram.HologramMaterials.read(held))
+                && active.getInteger("main") == original.main()
+                && active.getBoolean("noHatches") == original.noHatches()
+                && ordinaryNativeSubmit(displayed.data, active, !localNativeChoices.isEmpty())
+                && declaration.equals(declaredSelection(paneSite.controllerId(), displayed, active, localNativeChoices))
                 && paneSite.current(minecraft().theWorld);
         }, visible, view.session::notice, this::rescanDisplayedStructure);
-        return HologramClientStockNative.OWNER.submit(original, scope, owner, System.nanoTime());
+        return HologramClientStockNative.OWNER.submit(original, context, owner, System.nanoTime());
     }
 
-    private static boolean stockNativeSettings(NBTTagCompound confirmed,
-        com.miaokatze.gtmb.hologram.HologramMaterials.Settings projector, boolean ebf) {
-        return confirmed.getBoolean("materialMain") && confirmed.getInteger("materialPriority") == 0
-            && confirmed.hasKey("channels", 10)
-            && (ebf ? com.miaokatze.gtmb.hologram.HologramStockNativeWire.ebfChannels(
-                confirmed.getInteger("main"), confirmed.getCompoundTag("channels"))
-                : confirmed.getCompoundTag("channels").hasNoTags())
-            && projector.priority == 0 && com.miaokatze.gtmb.hologram.HologramProjectedMainPolicy.eligible(projector);
+    static com.miaokatze.gtmb.hologram.HologramDeclaredNativeSelection declaredSelection(int controller,
+        HologramState displayed, NBTTagCompound settings, java.util.Set<Integer> manual) {
+        var selected = new java.util.ArrayList<com.miaokatze.gtmb.hologram.HologramDeclaredNativeSelection.Offset>();
+        var hatches = new java.util.ArrayList<com.miaokatze.gtmb.hologram.HologramDeclaredNativeSelection.Hatch>();
+        var channels = new java.util.LinkedHashMap<String, Integer>();
+        if (!settings.hasKey("channels", 10)) return null;
+        var source = settings.getCompoundTag("channels");
+        for (Object name : source.func_150296_c()) {
+            if (!source.hasKey((String) name, 3)) return null;
+            channels.put((String) name, source.getInteger((String) name));
+        }
+        int mode = displayed.data.getInteger("mode");
+        if ((mode != 0 || settings.hasKey("mode")) && !settings.hasKey("mode", 3)
+            || settings.getInteger("mode") != mode) return null;
+        int destination = mode == 2 && settings.hasKey("demolitionDestination", 3)
+            ? settings.getInteger("demolitionDestination") : -1;
+        int scope = settings.getInteger("scope"), layer = scope == 1 ? settings.getInteger("layer") : 0;
+        int primary = settings.hasKey("selected", 3) ? settings.getInteger("selected") : -1;
+        int[] indices = scope == 2 ? settings.getIntArray("selectedIndices") : new int[0];
+        if (scope == 3 || scope == 2 && indices.length == 0) indices = new int[] { primary };
+        if (indices.length > com.miaokatze.gtmb.hologram.HologramDeclaredNativeSelection.MAX_POINTS) return null;
+        var indicesInScope = new java.util.HashSet<Integer>();
+        for (int index : indices) {
+            if (index < 0 || index >= displayed.cells.size() || !indicesInScope.add(index)) return null;
+            var cell = displayed.cells.get(index);
+            selected.add(new com.miaokatze.gtmb.hologram.HologramDeclaredNativeSelection.Offset(cell.dx, cell.dy, cell.dz));
+        }
+        String family = scope == 3 ? displayed.cells.get(primary).family : "";
+        for (int index : mode == 2 ? java.util.Collections.<Integer>emptySet() : manual) {
+            if (index < 0 || index >= displayed.cells.size()) return null;
+            var cell = displayed.cells.get(index);
+            if (!(scope == 0 || scope == 1 && cell.dy == layer || scope == 2 && indicesInScope.contains(index)
+                || scope == 3 && !family.isEmpty() && family.equals(cell.family))) continue;
+            var target = cell.targetStack;
+            if (target == null || !(target.getItem() instanceof gregtech.common.blocks.ItemMachines)
+                || target.hasTagCompound() || hatches.size() >= com.miaokatze.gtmb.hologram.HologramDeclaredNativeSelection.MAX_POINTS)
+                return null;
+            var point = new com.miaokatze.gtmb.hologram.HologramDeclaredNativeSelection.Offset(cell.dx, cell.dy, cell.dz);
+            hatches.add(new com.miaokatze.gtmb.hologram.HologramDeclaredNativeSelection.Hatch(
+                point, target.getItemDamage(), cell.hatchFacing));
+        }
+        hatches.sort(java.util.Comparator.comparingInt((com.miaokatze.gtmb.hologram.HologramDeclaredNativeSelection.Hatch h) -> h.position().x())
+            .thenComparingInt(h -> h.position().y()).thenComparingInt(h -> h.position().z()));
+        var result = new com.miaokatze.gtmb.hologram.HologramDeclaredNativeSelection(controller, channels,
+            scope, layer, selected, hatches, mode, destination);
+        return result.valid() ? result : null;
+    }
+
+    private static boolean stockNativeSources(NBTTagCompound confirmed,
+        com.miaokatze.gtmb.hologram.HologramMaterials.Settings projector) {
+        return confirmed.getBoolean("materialMain") == projector.main && confirmed.getBoolean("materialContainers") == projector.containers
+            && confirmed.getBoolean("materialMe") == projector.me && confirmed.getInteger("materialPriority") == projector.priority
+            && com.miaokatze.gtmb.hologram.HologramProjectedMainPolicy.eligibleSelected(projector);
     }
 
     static String nativeConstructionUnavailable(NBTTagCompound state, NBTTagCompound settings, boolean localEdits) {
-        if (state.getInteger("mode") == 1 || state.getInteger("mode") == 2)
-            return "换装／拆除暂不可用：旧核对会传送完整结构。当前选择保留，未改动现场。";
+        int mode = state.getInteger("mode");
+        if (mode != 0 && settings.getInteger("scope") != 2)
+            return "请逐格选中原机已登记的仓室。当前不允许整机换装或拆除。";
+        if (mode == 1 && !localEdits)
+            return "请为所选仓室逐格指定替换类型或朝向。";
         if (!ordinaryNativeSubmit(state, settings, localEdits))
-            return "当前范围、手选目标或仓室预设还不能使用简短原生请求。规划保留，未传送或施工。";
+            return "当前配置不属于现场控制器的原生声明。规划保留，未发送施工。";
         return "";
     }
 
-    /** Only a full, unedited native configuration can start the short ordinary native request. */
+    /** A current local display owns modes/scopes; the server resolves the same scope from its own definition. */
     static boolean ordinaryNativeSubmit(NBTTagCompound state, NBTTagCompound settings, boolean localEdits) {
-        return state.getInteger("mode") == 0 && settings.getInteger("scope") == 0
-            && settings.getIntArray("selectedIndices").length == 0 && !state.getBoolean("presetActive")
-            && settings.getString("structureId").isEmpty() && !localEdits;
+        int scope = settings.getInteger("scope");
+        int mode = state.getInteger("mode");
+        return mode >= 0 && mode <= 2 && settings.getInteger("mode") == mode
+            && (mode == 0 ? scope >= 0 && scope <= 3 : scope == 2)
+            && !state.getBoolean("presetActive") && settings.getString("structureId").isEmpty();
     }
 
     void rescanDisplayedStructure() {
@@ -831,10 +870,6 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         openingToolId = null;
     }
 
-    // Retire the old opener's full-baseline continuation even if a stale caller still requests it.
-    void explicitControllerOperation(NBTTagCompound request, HologramState displayed) {
-        ui.session.notice("旧原生核对已停用；未传送或修改结构。");
-    }
 
     boolean closeControllerOpening() {
         if (controllerRequest == 0) return false;

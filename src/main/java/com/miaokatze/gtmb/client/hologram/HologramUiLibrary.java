@@ -37,6 +37,10 @@ final class HologramUiLibrary {
         localWorkspace = new HologramLocalBlueprintWorkspace(ui);
     }
 
+    boolean savedNativePlacementReady(){return localWorkspace.savedNativePlacementReady();}
+
+    boolean placeNativeSaved(){return localWorkspace.placeNativeSaved();}
+
     boolean localBusy() {
         return localWorkspace.busy();
     }
@@ -499,7 +503,7 @@ final class HologramUiLibrary {
         cancelLibraryNavigation();
         if (presetNameField != null) presetNameField.setFocused(false);
         if (ui.session.localDocument()) localWorkspace.placeCurrent();
-        else ui.session.send("placeCurrentBlueprint", new NBTTagCompound(), true);
+        else ui.session.notice("请先保存到客户端蓝图库，再选择已保存的原生蓝图施工");
     }
 
     boolean nativeAdmin() {

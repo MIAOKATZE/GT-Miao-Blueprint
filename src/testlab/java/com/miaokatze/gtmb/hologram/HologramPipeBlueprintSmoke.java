@@ -57,7 +57,7 @@ final class HologramPipeBlueprintSmoke {
         area.point(2, source.xCoord, source.yCoord, source.zCoord);
         area.begin(world);
         int attempts = 0;
-        while (!area.tick(player, player.getHeldItem()) && ++attempts < 16) {}
+        while (!area.tick(player) && ++attempts < 16) {}
         require(area.imported && area.blueprint.cells.size() == 1, "area_captures_exact_real_pipe_cell");
         HologramPresets.Preset preset = area.blueprint;
         preset.id = UUID.randomUUID()

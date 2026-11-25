@@ -72,6 +72,7 @@ public final class HologramLibraryRegression {
         uploadAdmissionLifecycle();
         downloads();
         publicDownloadPreservesPortableArtifact();
+        nativePublicPairAndAudit();
         downloadReservations();
         taskCorrelation();
         configuration();
@@ -887,6 +888,84 @@ public final class HologramLibraryRegression {
             "maximum JSON plus PNG artifact survives bounded whole-file decode and final SHA");
     }
 
+    /** Only a clean typed specimen may become a public pair. Disk and revision checks run in the real store. */
+    private static void nativePublicPairAndAudit() throws Exception {
+        Path root = Files.createTempDirectory("gtmb-public-native-contract-");
+        try {
+            var store = new HologramNativePublicStore(root);
+            store.initialize();
+            var sign = new NBTTagCompound();
+            sign.setString("id", "Sign");
+            sign.setString("Text1", "Keep this exact text");
+            sign.setString("Text2", "");
+            sign.setString("Text3", "");
+            sign.setString("Text4", "");
+            byte[] good = publicNativeSign(sign);
+            String id = "public_" + UUID.randomUUID();
+            var owner = UUID.randomUUID();
+            var original = store.prepare(id, owner, "Uploader", 2, good);
+            SimpleAssert.eq("Native author", original.label().author(), "source author survives policy");
+            SimpleAssert.eq(1, original.label().cells(), "typed source is still a single cell");
+            SimpleAssert.eq("", store.commit(original, good, null, () -> {}), "first native pair commits");
+            SimpleAssert.that(Arrays.equals(good, store.download(original)), "exact typed source and covered bytes");
+            Path record = store.directory().resolve(id + HologramNativePublicStore.SUFFIX);
+            var restart = new HologramNativePublicStore(root);
+            restart.initialize();
+            SimpleAssert.that(original.equals(restart.load(record)), "ownership and revision survive reopen");
+
+            NBTTagCompound marked = (NBTTagCompound) sign.copy();
+            marked.setBoolean("dropItem", true);
+            denied(() -> store.prepare(id, owner, "Uploader", 3, publicNativeSign(marked)),
+                "typed NBT with a forbidden payload cannot be published");
+            NBTTagCompound privateBinding = (NBTTagCompound) sign.copy();
+            privateBinding.setString(HologramNetworkBindings.ORIGINAL, "private-binding");
+            denied(() -> store.prepare(id, owner, "Uploader", 3, publicNativeSign(privateBinding)),
+                "native private binding is never published unmodified");
+
+            var pair = HologramNativePublicArtifact.decode(good);
+            byte[] invalidCover = pair.cover().clone();
+            invalidCover[invalidCover.length - 1] ^= 1;
+            denied(() -> store.prepare(id, owner, "Uploader", 3,
+                HologramNativePublicArtifact.encode(pair.source(), invalidCover)), "bound cover integrity");
+            sign.setString("Text1", "Later reviewed revision");
+            byte[] later = publicNativeSign(sign);
+            var revised = store.prepare(id, owner, "Uploader", 3, later);
+            denied(() -> store.commit(revised, later, original, () -> { throw new IOException("retired fixture task"); }),
+                "cancellation before commit");
+            SimpleAssert.that(Arrays.equals(good, store.download(original)), "cancelled replacement preserves original");
+            store.commit(revised, later, original, () -> {});
+            denied(() -> store.download(original), "old version cannot return the next pair");
+            SimpleAssert.that(Arrays.equals(later, store.download(revised)), "exact replacement pair");
+            denied(() -> store.commit(original, good, original, () -> {}), "old revision cannot replace its successor");
+            System.out.println("[GTMB-NATIVE-PUBLIC] typed sign, original owner, bound cover, restart and fixed-point refusal passed");
+        } finally {
+            try (var files = Files.walk(root)) {
+                for (Path path : files.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(path);
+            }
+        }
+    }
+
+    private static byte[] publicNativeSign(NBTTagCompound nbt) throws IOException {
+        var header = new com.google.gson.JsonObject();
+        header.addProperty("schema", 2);
+        header.addProperty("name", "Native public sign");
+        header.addProperty("authorName", "Native author");
+        header.addProperty("authorUuid", "00000000-0000-0000-0000-000000000078");
+        var cell = new com.google.gson.JsonObject();
+        cell.addProperty("x", 0);
+        cell.addProperty("y", 0);
+        cell.addProperty("z", 0);
+        cell.addProperty("block", "minecraft:standing_sign");
+        cell.addProperty("item", "minecraft:sign");
+        cell.addProperty("tileNbt", HologramBlueprintNbt.encodeCanonical(nbt));
+        byte[] source = com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintMigration.author(header,
+            new com.google.gson.JsonObject(), 1, i -> cell, () -> true).bytes;
+        byte[] cover = com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintPng.bind(
+            com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintCodecRegression.png(),
+            HologramBlueprintArtifact.hash(source));
+        return HologramNativePublicArtifact.encode(source, cover);
+    }
+
     private static void publicDownloadPreservesPortableArtifact() throws Exception {
         Field channel = HologramNetwork.class.getDeclaredField("channel");
         channel.setAccessible(true);
@@ -1213,7 +1292,8 @@ public final class HologramLibraryRegression {
             byte[].class,
             String.class,
             NBTTagCompound.class,
-            String.class);
+            String.class,
+            int.class);
         method.setAccessible(true);
         try {
             NBTTagCompound request = HologramLibraryProtocol.request("download");
@@ -1221,7 +1301,7 @@ public final class HologramLibraryRegression {
             String id = "public_" + UUID.randomUUID();
             request.setString("id", id);
             request.setString(HologramBusinessWirePolicy.DOWNLOAD_INTENT_KEY, HologramBusinessWirePolicy.PUBLIC_COPY);
-            method.invoke(store, peer, bytes, "Bounded fixture", request, id);
+            method.invoke(store, peer, bytes, "Bounded fixture", request, id, HologramBlueprintArtifact.VERSION);
         } catch (InvocationTargetException failure) {
             throw (Exception) failure.getCause();
         }

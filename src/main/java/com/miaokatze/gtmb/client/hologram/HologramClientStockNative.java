@@ -83,8 +83,8 @@ public final class HologramClientStockNative {
         }
 
         String submitLabel() {
-            return ebf() ? "主背包补建 · 先备 12 个耐热外壳和 16 个所选线圈，只按缺位扣除"
-                : "主背包补建 · 先备 24 块焦炉砖，只按缺位扣除";
+            return ebf() ? "所选来源补建 · 先备 12 个耐热外壳和 16 个所选线圈，只按缺位扣除"
+                : "所选来源补建 · 先备 24 块焦炉砖，只按缺位扣除";
         }
 
         String description() {
@@ -92,6 +92,29 @@ public final class HologramClientStockNative {
             return "保留已安装 ULV 焦炉仓室 (" + (controller.xCoord + hx) + ", " + (controller.yCoord + hy)
                 + ", " + (controller.zCoord + hz) + ") · " + net.minecraftforge.common.util.ForgeDirection.getOrientation(hatchFacing).name();
         }
+    }
+
+    @Desugar
+    record DeclarationSite(BaseMetaTileEntity controller,
+        gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase<?> machine, int controllerId,
+        int facing) {
+
+        static DeclarationSite read(World world, TileEntity target) {
+            if (world == null || !(target instanceof BaseMetaTileEntity base) || base.isInvalid()
+                || base.getWorldObj() != world || base.getMetaTileID() <= 0
+                || !(base.getMetaTileEntity() instanceof
+                    gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase<?> machine)) return null;
+            return new DeclarationSite(base, machine, base.getMetaTileID(), machine.getExtendedFacing().ordinal());
+        }
+
+        boolean current(World world) {
+            int x = controller.xCoord, y = controller.yCoord, z = controller.zCoord;
+            return world != null && world.blockExists(x, y, z) && world.getTileEntity(x, y, z) == controller
+                && equals(read(world, controller));
+        }
+
+        String description() { return "按原生声明补建，保留现场已匹配的方块和仓室"; }
+        String submitLabel() { return "确认原生补建 · 仅按缺位扣料"; }
     }
 
     private static final class Attempt {
@@ -102,6 +125,19 @@ public final class HologramClientStockNative {
         Key key;
         long deadline;
         int placed = -1;
+
+        boolean placing() {
+            return original.declaration() == null || original.declaration().operation() == 0;
+        }
+
+        String operationLabel() {
+            if (original.declaration() == null) return "原生补建";
+            return switch (original.declaration().operation()) {
+                case 1 -> "原生换装";
+                case 2 -> "原生拆除";
+                default -> "原生补建";
+            };
+        }
         boolean beginSent, afterProbe, stopSent, uncertain;
 
         Attempt(Confirmation original, Context context, Owner owner, long deadline) {
@@ -170,7 +206,7 @@ public final class HologramClientStockNative {
                 reportUnknown(attempt);
                 return true;
             }
-            attempt.owner.notice.accept("已提交原生补建请求，等待服务器确认。");
+            attempt.owner.notice.accept("已提交" + attempt.operationLabel() + "请求，等待服务器确认。");
             return true;
         }
 
@@ -219,16 +255,18 @@ public final class HologramClientStockNative {
             if (reply.phase() == Phase.ACCEPTED || reply.phase() == Phase.ACTIVE) {
                 if (previous < attempt.placed && !attempt.stopSent) attempt.deadline = now + RESULT_NANOS;
                 if (attempt.owner.visible.getAsBoolean() && !attempt.stopSent && !attempt.uncertain)
-                    attempt.owner.notice.accept(reply.phase() == Phase.ACCEPTED ? "服务器已受理原生补建；尚未确认方块提交。"
-                        : "原生补建：已确认 " + attempt.placed + " 格。");
+                    attempt.owner.notice.accept(reply.phase() == Phase.ACCEPTED ? "服务器已受理" + attempt.operationLabel()
+                        + (attempt.placing() ? "；尚未确认方块提交。" : "；尚未确认现场变更。")
+                        : attempt.operationLabel() + "：已确认 " + attempt.placed + " 格。");
                 return;
             }
             active = null;
             if (!attempt.owner.visible.getAsBoolean()) return;
             String status = switch (reply.phase()) {
-                case COMPLETE -> "原生补建完成，实际放置 " + attempt.placed + " 格。";
-                case STOPPED -> "原生补建已停止，已确认 " + attempt.placed + " 格。" + reply.reason();
-                case RECOVERY_PENDING -> "原生补建结果待核定，已确认 " + attempt.placed + " 格。" + reply.reason();
+                case COMPLETE -> attempt.operationLabel() + (attempt.placing() ? "完成，实际放置 " : "完成，实际变更 ")
+                    + attempt.placed + " 格。";
+                case STOPPED -> attempt.operationLabel() + "已停止，已确认 " + attempt.placed + " 格。" + reply.reason();
+                case RECOVERY_PENDING -> attempt.operationLabel() + "结果待核定，已确认 " + attempt.placed + " 格。" + reply.reason();
                 default -> reply.reason();
             };
             attempt.owner.notice.accept(status);
@@ -271,7 +309,7 @@ public final class HologramClientStockNative {
             forgetWarm(attempt);
             boolean stopped = stopOnce(attempt);
             if (attempt.owner.visible.getAsBoolean())
-                attempt.owner.notice.accept("尚无法确认原生补建结果。" + (stopped ? "已请求停止，未确认停工。"
+                attempt.owner.notice.accept("尚无法确认" + attempt.operationLabel() + "结果。" + (stopped ? "已请求停止，未确认停工。"
                     : "没有重试；请先核对现场。"));
         }
 

@@ -39,16 +39,24 @@ final class HologramProjectedMeFixture implements AutoCloseable {
     private Item terminalItem = new Item();
 
     @SuppressWarnings("unchecked")
-    HologramProjectedMeFixture(EntityPlayerMP actor, boolean allowed) throws Exception {
+    HologramProjectedMeFixture(EntityPlayerMP actor, boolean allowed) throws ReflectiveOperationException {
+        this(actor,allowed,null,null);
+    }
+    @SuppressWarnings("unchecked")
+    HologramProjectedMeFixture(EntityPlayerMP actor,boolean allowed,ItemStack[] types,int[] quantities) throws ReflectiveOperationException {
         var monitor = proxy(IMEMonitor.class, (p, m, a) -> {
             if (!"extractItems".equals(m.getName())) throw new AssertionError(m.getName());
             var wanted = (IAEItemStack) a[0];
             if (!(a[2] instanceof PlayerSource source) || source.player != actor
-                || !wanted.getItemStack().isItemEqual(new ItemStack(Blocks.stone))
                 || wanted.getItemStack().hasTagCompound() || !allowed) throw new AssertionError("inexact/unauthorized ME extraction");
-            int qty = (int) Math.min(stock, wanted.getStackSize());
+            int at=-1;
+            if(types!=null) {
+                for(int k=0;k<types.length;k++) if(wanted.getItemStack().isItemEqual(types[k])) {at=k;break;}
+                if(at<0)return null;
+            } else if(!wanted.getItemStack().isItemEqual(new ItemStack(Blocks.stone)))throw new AssertionError("unexpected source item");
+            int qty = (int) Math.min(at<0?stock:quantities[at], wanted.getStackSize());
             if (qty == 0) return null;
-            if (a[1] == Actionable.MODULATE) { modulates++; stock -= qty; }
+            if (a[1] == Actionable.MODULATE) { modulates++; if(at<0)stock-=qty;else quantities[at]-=qty; }
             return wanted.copy().setStackSize(qty);
         });
         var storage = proxy(IStorageGrid.class, (p, m, a) -> monitor);

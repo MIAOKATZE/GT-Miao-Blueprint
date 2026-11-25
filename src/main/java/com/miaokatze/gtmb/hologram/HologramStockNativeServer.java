@@ -290,7 +290,7 @@ final class HologramStockNativeServer {
         if (gate == null || gate.query(endpoint.constructionScope, key.gateRequest()).phase
             != HologramConstructionTaskGate.Phase.UNSEEN) return;
         if (waiting.submission == null || !waiting.submission.current()) {
-            emit(endpoint, new Reply(key, Phase.REFUSED, 0, "投影仪、现场归属或主背包材料设置已变化。"));
+            emit(endpoint, new Reply(key, Phase.REFUSED, 0, "投影仪、现场归属或材料来源设置已变化。"));
             return;
         }
         long now = System.nanoTime();
@@ -381,7 +381,7 @@ final class HologramStockNativeServer {
         }
         if (submission == null || anotherOwner) {
             tombstone(waiting.endpoint, key, Phase.REFUSED, anotherOwner ? "当前另有原生施工任务。"
-                : "原生补建的投影仪、维度或已确认主背包材料设置不匹配。");
+                : "原生补建的投影仪、维度或已确认材料来源设置不匹配。");
             return;
         }
         HologramStockNativeEntry entry;

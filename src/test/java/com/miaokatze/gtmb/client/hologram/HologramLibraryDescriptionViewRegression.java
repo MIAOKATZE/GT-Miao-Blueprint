@@ -48,7 +48,7 @@ final class HologramLibraryDescriptionViewRegression {
         LocalFrame first = observation.frame(backpack, 0);
         SimpleAssert.that(
             first.description()
-                .size() == 2
+                .size() == 3
                 && first.description()
                     .get(0)
                     .blueprintCells() == 2
@@ -58,10 +58,9 @@ final class HologramLibraryDescriptionViewRegression {
                             .get(0)
                             .visibleBackpackCount())
                 && first.description()
-                    .get(1)
-                    .visibleBackpackCount() == null
-                && first.status()
-                    .contains("1 格未列明"),
+                    .get(1).visibleBackpackCount().equals(0L)
+                && first.description().get(2).visibleBackpackCount().equals(0L)
+                && !first.status().contains("格未列明"),
             "separate captured counts and observed backpack, excluding slot zero and storage past slot 35");
         inventory[4].stackSize = 8;
         SimpleAssert.that(
@@ -131,8 +130,8 @@ final class HologramLibraryDescriptionViewRegression {
             .collect(java.util.stream.Collectors.toList());
         SimpleAssert.that(
             labels.contains("蓝图记录格数") && labels.contains("本机背包同物品")
-                && labels.stream()
-                    .anyMatch(text -> text.contains("施工用量未核算"))
+                && frame.status().contains("现场及所选来源待核验")
+                && labels.stream().anyMatch(text->text.contains("不代表可扣料")||text.contains("待核验"))
                 && !labels.contains("需求")
                 && !labels.contains("缺失")
                 && !labels.contains("背包差额"),
@@ -141,7 +140,7 @@ final class HologramLibraryDescriptionViewRegression {
         ordinary.setAccessible(true);
         SimpleAssert.that(
             ((HologramMaterialReview) ordinary.get(dialog)).size() == 0 && dialog.probeState(null)
-                .getInteger("rows") == 2,
+                .getInteger("rows") == 3,
             "the descriptive pane bypasses native quote row decoding");
     }
 

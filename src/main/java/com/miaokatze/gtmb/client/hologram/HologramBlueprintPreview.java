@@ -52,8 +52,6 @@ import com.miaokatze.gtmb.hologram.HologramGtMeOutputDisplay;
 import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.DetachedEditorRows;
 import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.EditorRows;
 import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.FrozenDraft;
-import com.miaokatze.gtmb.hologram.HologramProjectedLayerEncoder;
-import com.miaokatze.gtmb.hologram.HologramProjectedLayerEncoder.Evidence;
 import com.miaokatze.gtmb.hologram.HologramSnapshotCodec;
 import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteRenderScope;
 import com.miaokatze.miaokatzecore.client.miaovisonlite.MiaoVisonLiteTarget;
@@ -115,16 +113,14 @@ public final class HologramBlueprintPreview {
     static DisplayInput displayInput(byte[] bytes, java.util.function.BiConsumer<Integer, Integer> progress,
         boolean savedPrivateSource, boolean indexedPrivate) throws IOException {
         try {
-            var inspection = savedPrivateSource ? HologramProjectedLayerEncoder.inspectLocal(bytes, indexedPrivate)
-                : HologramProjectedLayerEncoder.inspect(bytes, false);
-            HologramBlueprintCompactCodec.DisplayRows view = inspection.rows();
-            var proof = inspection.builder();
+            var view=savedPrivateSource?HologramBlueprintCompactCodec.localDisplayGeometry(bytes,indexedPrivate)
+                :HologramBlueprintCompactCodec.displayGeometry(bytes);
             if (!view.compact()) {
                 HologramSavedMaterialSource.Tally tally = savedPrivateSource
                     ? new HologramSavedMaterialSource.Tally(view.blueprint, view.cells()) : null;
                 NBTTagCompound display = expandedDisplay(view.blueprint, view.blueprint.getAsJsonArray("cells"),
                     progress, tally);
-                return new DisplayInput(display, null, tally == null ? null : tally.snapshot(), null);
+                return new DisplayInput(display, null, tally == null ? null : tally.snapshot());
             }
             CompactCells cells = new CompactCells(view.cells(), view.materials());
             Payloads payloads = new Payloads();
@@ -154,15 +150,13 @@ public final class HologramBlueprintPreview {
                 } else payloads.account(materialBytes[material]);
                 cells.add(x, y, z, material);
                 if (tally != null) tally.include(material, definition);
-                if (proof != null) proof.row(index, material);
             }
             if (cells.size() == 0) throw new IOException("Blueprint preview has no buildable cells");
             if (progress != null) progress.accept(view.cells(), view.cells());
             return new DisplayInput(
                 displayMetadata(view.blueprint),
                 cells,
-                tally == null ? null : tally.snapshot(),
-                proof == null ? null : proof.finish());
+                tally == null ? null : tally.snapshot());
         } catch (RuntimeException invalid) {
             throw new IOException("Invalid blueprint preview JSON", invalid);
         }
@@ -176,7 +170,6 @@ public final class HologramBlueprintPreview {
         Payloads payloads = new Payloads();
         HologramSavedMaterialSource.Tally tally = new HologramSavedMaterialSource.Tally(total,
             draft.materialSummarySchemaKnown(), draft.materialSummaryNeedsReview());
-        var proof = HologramProjectedLayerEncoder.inspectDraft(draft);
         if (progress != null) progress.accept(0, total);
         draft.visitDisplayCells((x, y, z, block, metadata, item, damage, facing, tileNbt, itemNbt, count, controller) -> {
             DisplayMaterial material = new DisplayMaterial(block, metadata, item, damage, facing, tileNbt, itemNbt);
@@ -196,10 +189,10 @@ public final class HologramBlueprintPreview {
                 position);
             tally.includeFrozen(block, metadata, item, damage, facing, count, controller, tileNbt, itemNbt);
             if (progress != null && (cells.size() & 255) == 0) progress.accept(cells.size(), total);
-        }, current, proof);
+        }, current);
         if (cells.size() == 0) throw new IOException("Blueprint preview has no buildable cells");
         if (progress != null) progress.accept(total, total);
-        return new DisplayInput(displayMetadata(draft), cells, tally.snapshot(), proof == null ? null : proof.finish());
+        return new DisplayInput(displayMetadata(draft), cells, tally.snapshot());
     }
 
     static NBTTagCompound snapshot(FrozenDraft draft, BooleanSupplier current) throws IOException {
@@ -226,18 +219,15 @@ public final class HologramBlueprintPreview {
         final NBTTagCompound snapshot;
         final CompactCells cells;
         final HologramSavedMaterialSource savedMaterials;
-        final Evidence plainPlacement;
 
         DisplayInput(NBTTagCompound snapshot, CompactCells cells) {
-            this(snapshot, cells, null, null);
+            this(snapshot,cells,null);
         }
 
-        DisplayInput(NBTTagCompound snapshot, CompactCells cells, HologramSavedMaterialSource savedMaterials,
-            Evidence plainPlacement) {
+        DisplayInput(NBTTagCompound snapshot, CompactCells cells, HologramSavedMaterialSource savedMaterials) {
             this.snapshot = snapshot;
             this.cells = cells;
             this.savedMaterials = savedMaterials;
-            this.plainPlacement = plainPlacement;
         }
     }
 

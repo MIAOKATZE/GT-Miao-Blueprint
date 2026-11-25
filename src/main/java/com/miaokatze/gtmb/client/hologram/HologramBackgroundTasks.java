@@ -171,7 +171,7 @@ public final class HologramBackgroundTasks {
         placementProgress.expireTerminal(placementContext, System.nanoTime());
         if (ownedPlacementTask() && !placementProgress.active(placement, placementContext)) {
             // Dropping a connection retires our observation, not the server transaction.
-            String detail = HologramClientProjectedPlacement.contextLostText(placement);
+            String detail = "原世界或连接已离开，服务器施工结果未知";
             placementProgress.clear();
             operation = OWNED_CONTEXT_LOST;
             OWNER.finish(OWNER.token(), HologramTaskOwner.Result.FAILURE, detail);

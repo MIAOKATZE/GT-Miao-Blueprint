@@ -240,7 +240,6 @@ public final class HologramClient {
                     return;
                 }
                 if ("projectedPlacement".equals(nbt.getString("scope"))) {
-                    HologramLibraryClient.INSTANCE.projectedPlacementProgress(nbt);
                     return;
                 }
                 // The modern native short command has its own typed receipts. No legacy progress owns a local view.
@@ -563,14 +562,6 @@ public final class HologramClient {
         }
     }
 
-    /** Explicit replacement/removal keeps its send result for the local submission dialog. */
-    static boolean prepareExplicitControllerOperation(TileEntity tile, int side, NBTTagCompound settings,
-        HologramState displayed) {
-        return openControllerAuthority(
-            tile,
-            side,
-            (opening, id) -> opening.explicitControllerOperation(settings, displayed));
-    }
 
     private static final class ControllerHatchPreset {
 
@@ -1473,7 +1464,6 @@ public final class HologramClient {
                 localAreaCapture = new com.miaokatze.gtmb.hologram.HologramLocalAreaCapture(
                     mc.theWorld,
                     mc.thePlayer.dimension,
-                    mc.thePlayer.getHeldItem(),
                     localArea);
                 localAreaFinishing = true;
             } catch (java.io.IOException invalid) {
@@ -1750,7 +1740,6 @@ public final class HologramClient {
     }
 
     private static void receive(NBTTagCompound nbt) {
-        if (HologramLibraryClient.INSTANCE.acceptProjectedPlacement(nbt)) return;
         syncSnapshotWorld();
         if (Minecraft.getMinecraft().theWorld == null) return;
         if (nbt.hasKey("controllerOpenUnavailable", 4)) {

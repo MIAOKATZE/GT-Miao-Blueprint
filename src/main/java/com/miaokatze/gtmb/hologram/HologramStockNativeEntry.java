@@ -19,6 +19,7 @@ import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 
 import gregtech.api.GregTechAPI;
 import gregtech.api.metatileentity.BaseMetaTileEntity;
+import gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase;
 import gregtech.common.tileentities.machines.multi.MTECokeOven;
 import gregtech.common.tileentities.machines.multi.MTEElectricBlastFurnace;
 
@@ -31,6 +32,7 @@ final class HologramStockNativeEntry {
         EXPLICIT_AVAILABLE_STOCK
     }
 
+    static final String DECLARED = "gtmb:gregtech_declared";
     static final String EBF = "gtmb:gregtech_ebf_1000";
 
     @Desugar
@@ -51,7 +53,20 @@ final class HologramStockNativeEntry {
     @Desugar
     record Intent(HologramConstructionTaskGate.Request request, long generation, String source, int controller,
         int x, int y, int z, int side, int slot, int facing, int main, boolean mainExplicit, boolean noHatches,
-        int materialPriority, Funding funding, HologramStockNativeConstruction.HatchChoice hatch, EbfConfig ebf) {
+        int materialPriority, Funding funding, HologramStockNativeConstruction.HatchChoice hatch, EbfConfig ebf,int sources,
+        HologramDeclaredNativeSelection declaration) {
+        Intent(HologramConstructionTaskGate.Request request,long generation,String source,int controller,int x,int y,int z,
+            int side,int slot,int facing,int main,boolean mainExplicit,boolean noHatches,int materialPriority,Funding funding,
+            HologramStockNativeConstruction.HatchChoice hatch,EbfConfig ebf,int sources) {
+            this(request,generation,source,controller,x,y,z,side,slot,facing,main,mainExplicit,noHatches,materialPriority,
+                funding,hatch,ebf,sources,null);
+        }
+        Intent(HologramConstructionTaskGate.Request request,long generation,String source,int controller,int x,int y,int z,
+            int side,int slot,int facing,int main,boolean mainExplicit,boolean noHatches,int materialPriority,Funding funding,
+            HologramStockNativeConstruction.HatchChoice hatch,EbfConfig ebf) {
+            this(request,generation,source,controller,x,y,z,side,slot,facing,main,mainExplicit,noHatches,
+                materialPriority,funding,hatch,ebf,1|(materialPriority<<3));
+        }
 
         Intent(HologramConstructionTaskGate.Request request, long generation, String source, int controller,
             int x, int y, int z, int side, int slot, int facing, int main, boolean mainExplicit, boolean noHatches,
@@ -61,15 +76,26 @@ final class HologramStockNativeEntry {
         }
 
         boolean valid() {
+            // Every request freezes the exact enabled providers, ordering and recovery destination.
+            // No missing/zero mask may silently fall back to a main-inventory-only payment.
+            if(materialPriority<0||materialPriority>2)return false;
+            if(sources<=0 || (sources&~63)!=0 || (sources&7)==0 || ((sources>>>3)&3)!=materialPriority)
+                return false;
+            if (declaration != null) return request != null
+                && request.kind == HologramConstructionTaskGate.Kind.INCREMENTAL_NATIVE && generation > 0
+                && DECLARED.equals(source) && controller == declaration.controller() && declaration.valid()
+                && (declaration.operation() != 1 || !noHatches)
+                && hatch == null && ebf == null && side >= 0 && side < 6 && slot >= 0 && slot < 9
+                && facing >= 0 && facing < 48 && main >= 1 && main <= 64 && funding == Funding.REQUIRE_FULL_BOUND;
             if (ebf != null) return request != null
                 && request.kind == HologramConstructionTaskGate.Kind.INCREMENTAL_NATIVE && generation > 0
                 && EBF.equals(source) && controller == HologramStockEbfProfile.CONTROLLER && hatch == null
                 && side >= 0 && side < 6 && slot >= 0 && slot < 9 && facing >= 0 && facing < 48
-                && main >= 1 && main <= 64 && materialPriority == 0 && funding == Funding.REQUIRE_FULL_BOUND
+                && main >= 1 && main <= 64 && funding == Funding.REQUIRE_FULL_BOUND
                 && ebf.coil >= 0 && ebf.coil <= 64 && HologramStockEbfProfile.validInstalled(ebf.installed);
 
-            // This schema represents only stock mode-0/full-scope/main-only intent. It cannot express edits,
-            // channels, geometry, payloads, creative supply, destructive operations or external stock.
+            // This schema represents only stock mode-0/full-scope intent. It cannot express edits,
+            // geometry, arbitrary NBT, creative supply or destructive operations.
             return request != null && request.kind == HologramConstructionTaskGate.Kind.INCREMENTAL_NATIVE
                 && generation > 0 && HologramStockCokeOvenProfile.SOURCE_ID.equals(source)
                 && controller == HologramStockCokeOvenProfile.CONTROLLER
@@ -142,6 +168,10 @@ final class HologramStockNativeEntry {
                 && inventory.currentItem == intent.slot && slots[intent.slot] == projector;
         }
 
+        HologramMaterials.Settings sources() {
+            return configured.selectedScope();
+        }
+
         boolean current() {
             return stillHeld() && toolId.equals(toolId(projector))
                 && (exactEbfTool == null || exactEbfTool.matches(projector))
@@ -177,16 +207,24 @@ final class HologramStockNativeEntry {
     private final HologramSession session;
     private final HologramStockNativeConstruction job;
     private final HologramStockEbfConstruction ebfJob;
+    private final HologramDeclaredNativeConstruction declaredJob;
     private HologramStockNativeConstruction.State state = HologramStockNativeConstruction.State.ACTIVE;
     private boolean advancing, retired;
 
     private HologramStockNativeEntry(Submission submission, Prior prior, HologramSession session,
         HologramStockNativeConstruction job, HologramStockEbfConstruction ebfJob) {
+        this(submission, prior, session, job, ebfJob, null);
+    }
+
+    private HologramStockNativeEntry(Submission submission, Prior prior, HologramSession session,
+        HologramStockNativeConstruction job, HologramStockEbfConstruction ebfJob,
+        HologramDeclaredNativeConstruction declaredJob) {
         this.submission = submission;
         this.prior = prior;
         this.session = session;
         this.job = job;
         this.ebfJob = ebfJob;
+        this.declaredJob = declaredJob;
     }
 
     static Submission ingress(HologramWorkspace.ActionEndpoint endpoint, Intent intent, String confirmedToolId) {
@@ -205,7 +243,8 @@ final class HologramStockNativeEntry {
         ItemStack held = slots[intent.slot];
         if (!ItemNekoHologramProjector.isProjector(held)) return null;
         var settings = HologramMaterials.read(held);
-        var configured = HologramProjectedMainPolicy.capture(settings);
+        if(HologramProjectedMainPolicy.settingsKey(settings)!=intent.sources)return null;
+        var configured = HologramProjectedMainPolicy.captureSelected(settings);
         if (configured == null || settings.priority != intent.materialPriority) return null;
         String id = toolId(held);
         // A blank UUID would let Session's constructor mint one across markDirty callbacks. Until a distinct
@@ -229,9 +268,9 @@ final class HologramStockNativeEntry {
         var player = endpoint.player;
         Prior prior = Prior.capture(endpoint);
         boolean current = submission.current();
-        boolean competing = !current || HologramProjectedLayerService.competingWork(player)
+        boolean competing = !current || HologramConstructionAuthority.competingWork(player)
             || prior.session != null && !HologramSessionPolicy.valid(prior.session);
-        boolean recovery = current && HologramProjectedLayerService.hasKnownRecovery(player);
+        boolean recovery = current && HologramConstructionAuthority.hasKnownRecovery(player);
         // Consume the authenticated sequence even for refusal. A transport replay may not wait out missing stock,
         // stale tool, invalid anchor, busy work or recovery and then become a delayed start.
         var admission = gate.acquire(endpoint.constructionScope, intent.request, competing, recovery);
@@ -256,6 +295,7 @@ final class HologramStockNativeEntry {
         if (submission.projector.hasTagCompound()
             && submission.projector.getTagCompound().hasKey(HologramSessionKeys.DRAFT))
             throw new IOException("此投影仪有未移开的本地草稿；未启动原生补建。");
+        if (intent.declaration != null) return openDeclared(submission, gate, lease, prior);
         if (intent.ebf != null) return openEbf(submission, gate, lease, prior);
         var profile = HologramStockCokeOvenProfile.inspectRegistered();
         if (profile == null) throw new IOException("当前服务器未识别受支持的原生焦炉声明。");
@@ -273,9 +313,9 @@ final class HologramStockNativeEntry {
         ItemStack casing = profile.casingItem();
         if (casing == null) throw new IOException("无法确认原生焦炉砖。");
         if (intent.funding == Funding.REQUIRE_FULL_BOUND
-            && !HologramStockNativeConstruction.hasMaximumStock(player, intent.slot, casing))
-            throw new IOException("普通逐格补建须在背包含有 24 块焦炉砖；未开始施工。");
-        if (HologramProjectedLayerService.competingWork(player) || !submission.current() || !prior.current(endpoint)
+            && !HologramStockNativeConstruction.hasMaximumStock(player, intent.slot, casing, submission.sources()))
+            throw new IOException("所选材料来源须备齐 24 块焦炉砖；未开始施工。");
+        if (HologramConstructionAuthority.competingWork(player) || !submission.current() || !prior.current(endpoint)
             || gate.query(lease.scope, lease.request).phase != HologramConstructionTaskGate.Phase.ACTIVE)
             throw new IOException("等待期间投影仪或原工作台已变化。");
 
@@ -283,7 +323,7 @@ final class HologramStockNativeEntry {
         // narrow temporary session, without activating, publishing or saving anything over the old UI.
         var target = new HologramSession(player, intent.x, intent.y, intent.z, true, intent.side);
         target.stockNativePrivate = true;
-        if (!submission.current() || HologramProjectedLayerService.competingWork(player)
+        if (!submission.current() || HologramConstructionAuthority.competingWork(player)
             || !submission.toolId.equals(target.toolId) || !prior.current(endpoint)
             || target.boundTool != submission.projector || target.target != tile || target.machine != machine
             || target.facing != intent.facing
@@ -302,7 +342,7 @@ final class HologramStockNativeEntry {
                 throw new IOException("已设置的原生信道或仓室规则尚不支持逐格补建。");
             // Shared direct-source policy approves main without overriding a configured container-first choice.
             // Do not persist the private execution view to the actual projector.
-            target.materialSettings = submission.configured.mainScope();
+            target.materialSettings = submission.sources();
             var job = HologramStockNativeConstruction.openOwned(
                 endpoint, gate, lease, target, intent.main, intent.hatch, intent.funding);
             if (!reservedCurrent(submission, prior, target, gate, lease))
@@ -335,16 +375,16 @@ final class HologramStockNativeEntry {
         var channels = intent.ebf.channels();
         var site = profile.qualify(world, tile, machine.getExtendedFacing(), intent.main, channels, intent.ebf.installed);
         if (site == null) throw new IOException("未能核实电力高炉的线圈和五个已安装仓室。");
-        var stock = submission.configured.mainScope();
+        var stock = submission.sources();
         if (!site.fullyFunded(player.inventory, intent.slot, stock))
-            throw new IOException("普通高炉补建须先在主背包备齐 12 个耐热外壳和 16 个所选线圈；未开始施工。");
-        if (HologramProjectedLayerService.competingWork(player) || !submission.current() || !prior.current(endpoint)
+            throw new IOException("普通高炉补建须在所选来源备齐 12 个耐热外壳和 16 个所选线圈；未开始施工。");
+        if (HologramConstructionAuthority.competingWork(player) || !submission.current() || !prior.current(endpoint)
             || gate.query(lease.scope, lease.request).phase != HologramConstructionTaskGate.Phase.ACTIVE)
             throw new IOException("等待期间投影仪或原工作台已变化。");
 
         var target = new HologramSession(player, intent.x, intent.y, intent.z, true, intent.side);
         target.stockNativePrivate = true;
-        if (!submission.current() || HologramProjectedLayerService.competingWork(player)
+        if (!submission.current() || HologramConstructionAuthority.competingWork(player)
             || !submission.toolId.equals(target.toolId) || !prior.current(endpoint) || target.boundTool != submission.projector
             || target.target != tile || target.machine != machine || target.facing != intent.facing
             || gate.query(lease.scope, lease.request).phase != HologramConstructionTaskGate.Phase.ACTIVE
@@ -371,6 +411,51 @@ final class HologramStockNativeEntry {
         }
     }
 
+    private static HologramStockNativeEntry openDeclared(Submission submission, HologramConstructionTaskGate gate,
+        HologramConstructionTaskGate.Lease lease, Prior prior) throws IOException {
+        var endpoint = submission.endpoint;
+        var intent = submission.intent;
+        var player = endpoint.player;
+        World world = endpoint.world;
+        if (!HologramWorldFlow.worldPosition(intent.x, intent.y, intent.z, world.getHeight())
+            || !world.blockExists(intent.x, intent.y, intent.z)
+            || player.getDistanceSq(intent.x + .5, intent.y + .5, intent.z + .5) > 64
+            || world.getBlock(intent.x, intent.y, intent.z) != GregTechAPI.sBlockMachines
+            || !(world.getTileEntity(intent.x, intent.y, intent.z) instanceof BaseMetaTileEntity tile)
+            || tile.isInvalid() || tile.getMetaTileID() != intent.controller
+            || intent.controller >= GregTechAPI.METATILEENTITIES.length
+            || !(tile.getMetaTileEntity() instanceof MTEEnhancedMultiBlockBase<?> machine)
+            || !(GregTechAPI.METATILEENTITIES[intent.controller] instanceof MTEEnhancedMultiBlockBase<?> profile)
+            || machine.getClass() != profile.getClass() || machine.getExtendedFacing().ordinal() != intent.facing)
+            throw new IOException("现场控制器、注册声明或朝向与确认不一致。");
+        var target = new HologramSession(player, intent.x, intent.y, intent.z, true, intent.side);
+        target.stockNativePrivate = true;
+        if (!submission.current() || HologramConstructionAuthority.competingWork(player)
+            || !submission.toolId.equals(target.toolId) || !prior.current(endpoint) || target.boundTool != submission.projector
+            || target.target != tile || target.machine != machine || target.facing != intent.facing
+            || gate.query(lease.scope, lease.request).phase != HologramConstructionTaskGate.Phase.ACTIVE
+            || !HologramWorkspace.reserveStockNative(endpoint, prior.session, prior.epoch, prior.plan, target))
+            throw new IOException("控制器或已确认的工作台在准入前发生变化。");
+        boolean taken = false;
+        try {
+            if (!reservedCurrent(submission, prior, target, gate, lease) || target.hatchDowngrade)
+                throw new IOException("工作台、投影仪或仓室降级规则与当前确认不兼容。");
+            target.main = intent.main;
+            target.mainExplicit = intent.mainExplicit;
+            target.noHatches = intent.noHatches;
+            target.channels = intent.declaration.channelTag();
+            target.mode = intent.declaration.operation();
+            target.materialSettings = submission.sources();
+            var job = new HologramDeclaredNativeConstruction(endpoint, gate, lease, target, intent.declaration,
+                () -> submission.current() && prior.unchanged());
+            var owned = new HologramStockNativeEntry(submission, prior, target, null, null, job);
+            taken = true;
+            return owned;
+        } finally {
+            if (!taken) HologramWorkspace.rollbackCompactNative(prior.restorable(endpoint), target);
+        }
+    }
+
     private static boolean reservedCurrent(Submission submission, Prior prior, HologramSession target,
         HologramConstructionTaskGate gate, HologramConstructionTaskGate.Lease lease) {
         return submission.current() && prior.unchanged()
@@ -388,7 +473,7 @@ final class HologramStockNativeEntry {
         if (advancing) throw new IllegalStateException("Native stock entry cannot re-enter");
         advancing = true;
         try {
-            state = ebfJob == null ? job.drain(deadline, admission)
+            state = declaredJob != null ? declaredJob.drain(deadline, admission) : ebfJob == null ? job.drain(deadline, admission)
                 : ebfJob.drain(deadline, admission);
             return state;
         } finally {
@@ -400,7 +485,7 @@ final class HologramStockNativeEntry {
     boolean stop(HologramWorkspace.ActionEndpoint endpoint, HologramConstructionTaskGate.Request request) {
         if (retired || state != HologramStockNativeConstruction.State.ACTIVE || endpoint != submission.endpoint
             || !submission.intent.request.equals(request) || !HologramWorkspace.currentActionEndpoint(endpoint)
-            || !(ebfJob == null ? job.cancel() : ebfJob.cancel())) return false;
+            || !(declaredJob != null ? declaredJob.cancel() : ebfJob == null ? job.cancel() : ebfJob.cancel())) return false;
         state = HologramStockNativeConstruction.State.STOPPED;
         if (!advancing) retireIfSettled();
         return true;
@@ -420,14 +505,14 @@ final class HologramStockNativeEntry {
     }
 
     int placed() {
-        return ebfJob == null ? job.placed() : ebfJob.placed();
+        return declaredJob != null ? declaredJob.placed() : ebfJob == null ? job.placed() : ebfJob.placed();
     }
 
     String reason() {
-        return ebfJob == null ? job.reason() : ebfJob.reason();
+        return declaredJob != null ? declaredJob.reason() : ebfJob == null ? job.reason() : ebfJob.reason();
     }
 
     HologramConstructionTaskGate.Permit unsettled() {
-        return ebfJob == null ? job.unsettled() : ebfJob.unsettled();
+        return declaredJob != null ? declaredJob.unsettled() : ebfJob == null ? job.unsettled() : ebfJob.unsettled();
     }
 }

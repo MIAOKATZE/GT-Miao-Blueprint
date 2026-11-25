@@ -42,6 +42,23 @@ public final class NativeBlueprintDefinition implements Closeable {
     private boolean unsupported;
     private final String revision;
 
+    private Path ephemeral;
+    private int references=1;private boolean ownerReleased;
+    public final class Lease implements AutoCloseable {
+        private boolean released;
+        private Lease(){}
+        public void close(){synchronized(NativeBlueprintDefinition.this){if(!released){released=true;dropReference();}}}
+    }
+    /** Thumbnail, projected view and world jobs have independent lifetimes; only the last closes the source. */
+    public synchronized Lease retain(){
+        if(references==0||!file.isOpen())throw new IllegalStateException("原生蓝图已释放，请重新打开");
+        references++;return new Lease();
+    }
+    private void dropReference(){
+        if(--references!=0)return;
+        try{file.close();}catch(IOException e){throw new java.io.UncheckedIOException(e);}
+        finally{if(ephemeral!=null)try{java.nio.file.Files.deleteIfExists(ephemeral);}catch(IOException e){ephemeral.toFile().deleteOnExit();}}
+    }
     private NativeBlueprintDefinition(Path path)throws IOException {
         file=FileChannel.open(path,StandardOpenOption.READ,java.nio.file.LinkOption.NOFOLLOW_LINKS);
         try { readHeader(); readElements();readIndex();readPayloads();readExtras();validateWrappers();validateGeometry();
@@ -51,6 +68,12 @@ public final class NativeBlueprintDefinition implements Closeable {
         }catch(IOException|RuntimeException|java.security.NoSuchAlgorithmException e){file.close();if(e instanceof IOException)throw(IOException)e;throw new IOException("Native blueprint decode",e);}
     }
     public static NativeBlueprintDefinition open(Path path)throws IOException{return new NativeBlueprintDefinition(path);}
+    static NativeBlueprintDefinition transientDefinition(byte[] bytes)throws IOException{
+        Path path=java.nio.file.Files.createTempFile("gtmb-native-edit-", ".gtnb");
+        try{java.nio.file.Files.write(path,bytes);NativeBlueprintDefinition result=open(path);result.ephemeral=path;return result;}
+        catch(IOException|RuntimeException failure){java.nio.file.Files.deleteIfExists(path);throw failure;}
+    }
+    byte[] encodedElement(int id){return elements.get(id-1);}
     public static boolean hasMagic(Path path)throws IOException {
         try(FileChannel f=FileChannel.open(path,StandardOpenOption.READ,java.nio.file.LinkOption.NOFOLLOW_LINKS)){
             return f.size()>=MAGIC.length && Arrays.equals(read(f,0,MAGIC.length),MAGIC);
@@ -114,7 +137,8 @@ public final class NativeBlueprintDefinition implements Closeable {
         }return result;
     }
     public long sectionBytes(int type){Section s=sections.get(type);return s==null?0:s.size;}
-    public void close()throws IOException{file.close();}
+    public synchronized void close()throws IOException{if(!ownerReleased){ownerReleased=true;try{dropReference();}
+        catch(java.io.UncheckedIOException e){throw e.getCause();}}}
     static JsonObject emptyWrap(){JsonObject o=new JsonObject();o.add("fields",new JsonObject());return o;}
 
     private void readHeader()throws IOException {

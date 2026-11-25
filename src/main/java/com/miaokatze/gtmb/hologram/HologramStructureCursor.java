@@ -87,6 +87,23 @@ final class HologramStructureCursor {
         return index == elements.length;
     }
 
+    /** Declaration-only cursor. It does not read or load any world cell or call the structure walker. */
+    HologramDeclaredNativeSelection.Offset declarationOffset(ExtendedFacing facing) {
+        IStructureElement<?> element = elements[index++];
+        if (element.isNavigating()) {
+            abc[0] = Math.addExact(element.resetA() ? base[0] : abc[0], element.getStepA());
+            abc[1] = Math.addExact(element.resetB() ? base[1] : abc[1], element.getStepB());
+            abc[2] = Math.addExact(element.resetC() ? base[2] : abc[2], element.getStepC());
+            return null;
+        }
+        if (!HologramDeclaredNativeSelection.coordinate(abc[0]) || !HologramDeclaredNativeSelection.coordinate(abc[1])
+            || !HologramDeclaredNativeSelection.coordinate(abc[2]))
+            throw new IllegalArgumentException("Out-of-range StructureLib declaration");
+        facing.getWorldOffset(abc, xyz);
+        abc[0] = Math.incrementExact(abc[0]);
+        return new HologramDeclaredNativeSelection.Offset(xyz[0], xyz[1], xyz[2]);
+    }
+
     @SuppressWarnings("unchecked")
     private void advanceElement(World world, ExtendedFacing facing, int x, int y, int z, IStructureWalker walker,
         IStructureElement element, boolean instrument) {

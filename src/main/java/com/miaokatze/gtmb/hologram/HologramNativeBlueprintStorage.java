@@ -106,6 +106,23 @@ public final class HologramNativeBlueprintStorage {
         return p;
     }
 
+    /** Index a newly authored, exact capture revision without writing or pretending a legacy original exists. */
+    public static Prepared prepareAuthoredSave(Path directory, String id, byte[] bytes, String revision,
+        byte[] freshlyCapturedPng, BooleanSupplier current) throws IOException {
+        Path root = directory.toAbsolutePath().normalize();
+        Path slot = HologramBlueprintFiles.resolve(root,id), image = HologramBlueprintArtifact.previewPath(slot);
+        if (!current.getAsBoolean()) throw new IOException("保存已取消");
+        if (NativeBlueprintPairStore.receipt(root,id)!=null || Files.exists(slot,LinkOption.NOFOLLOW_LINKS)
+            || Files.exists(image,LinkOption.NOFOLLOW_LINKS)) throw new IOException("另存目标已存在");
+        if (!revision.equals(HologramBlueprintArtifact.hash(bytes))) throw new IOException("保存的原生蓝图版本已变化");
+        var receipt = NativeBlueprintPairStore.publish(
+            staging(root,id,revision,HologramBlueprintArtifact.hash(freshlyCapturedPng)),
+            id,bytes,freshlyCapturedPng,null,null,current);
+        Prepared prepared = new Prepared(root,id,id,slot,null,null,receipt,null,true,null);
+        checkSlot(prepared,current);
+        return prepared;
+    }
+
     private static NativeBlueprintPairStore.LegacyMirrorProof legacyMirror(byte[] source,String hash,String id) {
         try{
             var root=HologramBlueprintCompactCodec.parseStored(source,NativeBlueprintLimits.FILE_BYTES).root();

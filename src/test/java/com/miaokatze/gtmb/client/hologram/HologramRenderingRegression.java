@@ -578,17 +578,48 @@ public final class HologramRenderingRegression {
             HologramState next = HologramState.apply(state, delta);
             HologramRenderer.snapshotChanged(state, next);
             SimpleAssert.that(
-                !mode.getBoolean(null) && ((java.util.Map<?, ?>) groups.get(null)).isEmpty(),
-                "a received replacement can never inherit a partial local index");
-            SimpleAssert.eq(Boolean.FALSE, seed.invoke(null, state, 15), "explicit layers use the existing path");
+                mode.getBoolean(null) && !((java.util.Map<?, ?>) groups.get(null)).isEmpty(),
+                "unchanged validated metadata shares the same authoritative directory without dropping the partial index");
+            SimpleAssert.eq(Boolean.TRUE, seed.invoke(null, state, 15), "explicit Y filtering uses the same bounded visible halo");
+            // The nearest group is the final directory entry. It must become drawable without reading all 1,100.
+            MiaoVisonLiteRenderer.releaseWorld();
+            NBTTagCompound sparse=new NBTTagCompound();sparse.setString("session","blueprint-artifact");
+            NBTTagList sparseRows=new NBTTagList();
+            for(int i=0;i<1100;i++)sparseRows.appendTag(haloRow(i*16,0,0,"minecraft:stone"));
+            sparse.setTag("cells",sparseRows);
+            var far=HologramLocalPlacement.displayForPlacement(new HologramState(sparse),0);
+            owner.set(null,far);layer.setInt(null,0);mode.setBoolean(null,(Boolean)seed.invoke(null,far,0));
+            Method discover=renderer.getDeclaredMethod("discoverWorldRegions",HologramState.class,double.class,double.class,double.class,long.class);
+            discover.setAccessible(true);discover.invoke(null,far,1099d*16,0d,0d,Long.MAX_VALUE);
+            var sparseSeeded=(java.util.Map<?,?>)groups.get(null);
+            Object target=sparseSeeded.get(position.invoke(null,1099,0,0));
+            SimpleAssert.that(target!=null&&sparseSeeded.size()<170&&cursor.getInt(null)==0,
+                "camera-side sparse group is available before the full directory or cell pass");
+            SimpleAssert.that(Boolean.TRUE.equals(ready.invoke(null,far,target,Long.MAX_VALUE)),
+                "camera section builds geometry using authoritative adjacent buckets on selected Y");
+            // A late visual receipt and an actual cell-edit delta must not drop the camera-side route.
+            MiaoVisonLiteRenderer.jobVisualChanged(far,new int[]{0});
+            SimpleAssert.that(mode.getBoolean(null)&&sparseSeeded.get(position.invoke(null,1099,0,0))==target,
+                "distant job receipt leaves camera group and its directory intact");
+            NBTTagCompound changed=new NBTTagCompound();changed.setBoolean("partial",true);changed.setString("session",far.session);
+            changed.setLong("baseRevision",far.data.getLong("planRevision"));changed.setLong("planRevision",far.data.getLong("planRevision")+1);
+            changed.setInteger("cellCount",far.cells.size());NBTTagList edited=new NBTTagList();
+            var row=haloRow(1099*16,0,0,"minecraft:glass");row.setInteger("index",1099);edited.appendTag(row);changed.setTag("cells",edited);
+            var altered=HologramState.apply(far,changed);HologramRenderer.snapshotChanged(far,altered);
+            SimpleAssert.that(mode.getBoolean(null)&&cursor.getInt(null)==0,"validated local edit retains the presentation owner and first-visible directory");
+            discover.invoke(null,altered,1099d*16,0d,0d,Long.MAX_VALUE);
+            Object revised=((java.util.Map<?,?>)groups.get(null)).get(position.invoke(null,1099,0,0));
+            SimpleAssert.that(revised!=null && revised!=target && Boolean.TRUE.equals(ready.invoke(null,altered,revised,Long.MAX_VALUE))
+                && "minecraft:glass".equals(altered.regions.at(1099*16,0,0).wantId),"first available near geometry uses revised block");
+            MiaoVisonLiteRenderer.releaseWorld();
             stockDeferredWorldBridges(seed, state);
             HologramNativeRenderRegistry.Adapter external = block -> false;
             HologramNativeRenderRegistry.register(external);
             try {
                 SimpleAssert.eq(
-                    Boolean.FALSE,
+                    Boolean.TRUE,
                     seed.invoke(null, state, Integer.MAX_VALUE),
-                    "a registered extension keeps the established path");
+                    "extension registration does not block unrelated visible regions");
             } finally {
                 HologramNativeRenderRegistry.unregister(external);
             }
@@ -622,9 +653,9 @@ public final class HologramRenderingRegression {
             try (GTMBExtensions.Registration ignored = ClientRendering
                 .register("gtmb:regression/deferred-world-external", block -> false)) {
                 SimpleAssert.eq(
-                    Boolean.FALSE,
+                    Boolean.TRUE,
                     seed.invoke(null, state, Integer.MAX_VALUE),
-                    "external API bridges retain the established whole-index fallback");
+                    "external bridges use the normal adapter dispatch without blocking the directory");
             } finally {
                 MiaoVisonLiteRenderer.releaseWorld();
             }

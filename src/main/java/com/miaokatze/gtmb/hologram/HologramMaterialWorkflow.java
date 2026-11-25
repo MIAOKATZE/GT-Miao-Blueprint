@@ -104,11 +104,7 @@ final class HologramMaterialWorkflow {
     }
 
     static void validateConfirmation(HologramSession s, NBTTagCompound action) throws IOException {
-        validateStart(s, action, false);
-    }
-
-    static void validateStart(HologramSession s, NBTTagCompound action, boolean direct) throws IOException {
-        requireReview(s, action, direct);
+        requireReview(s,action);
         if (HologramAeCraftingOrders.active(s.player)) throw new IOException("请等待 AE 合成完成并刷新材料后再施工");
         validateVoucherChoice(s, action);
     }
@@ -123,16 +119,7 @@ final class HologramMaterialWorkflow {
             && HologramDecorationVoucher.available(s.player) < 1) throw new IOException("主背包中没有可用建筑材料抵扣券，请取消抵扣或补充后再确认");
     }
 
-    /** Direct placement has a fresh private demand, not a published material-review quote. */
-    static boolean recheckDirect(HologramSession s, HologramResourceTask.DirectDemand demand) throws IOException {
-        if (!demand.finished() || !demand.current(s) || s.planMissing != 0 || !s.planRecoveryFits
-            || !s.blueprintEnergy.empty() || s.blueprintResources == null
-            || !s.blueprintResources.fluids.isEmpty() || !s.blueprintResources.essentia.isEmpty())
-            throw new IOException("施工材料规划已变化，请重新确认");
-        if (demand.stocked(s) && demand.current(s)) return true;
-        s.status = "可用材料已变化，未开始施工，请重新核对材料";
-        return false;
-    }
+
 
     /** Replaces the startup inventory check with a recount of the already reviewed exact identities. */
     static boolean recheckBuild(HologramSession s, NBTTagCompound action) {
@@ -226,15 +213,11 @@ final class HologramMaterialWorkflow {
     }
 
     private static void requireReview(HologramSession s, NBTTagCompound action) throws IOException {
-        requireReview(s, action, false);
-    }
-
-    private static void requireReview(HologramSession s, NBTTagCompound action, boolean direct) throws IOException {
         HologramGeometryEdits.validate(s);
         if (!s.virtual || s.virtualPreset == null
             || !s.virtualPlacement
             || !s.virtualLocked
-            || (direct ? s.executionRequestId.isEmpty() : !s.blueprintAwaitingConfirmation || !s.placementReviewIssued)
+            || (!s.blueprintAwaitingConfirmation || !s.placementReviewIssued)
             || s.job == 1
             || s.job == 2
             || !s.id.equals(action.getString("session"))) throw new IOException("请先确定蓝图位置并打开材料确认");
