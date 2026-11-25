@@ -29,6 +29,21 @@ public final class NativeBlueprintPairStore {
     private NativeBlueprintPairStore(){}
     public interface Fault {void at(String stage)throws IOException;}
     private static final Fault NONE=stage->{};
+    private static final String ACTIVE_MIRROR=".legacyMirror",DELETED_MIRROR="legacy-mirror-deleted.";
+    public static final class LegacyMirrorProof {
+        public final String originHash,digest;
+        public LegacyMirrorProof(String originHash,String digest){
+            if(!sha(originHash)||!sha(digest))throw new IllegalArgumentException("legacy mirror SHA-256");
+            this.originHash=originHash;this.digest=digest;
+        }
+    }
+    private static boolean sha(String value){return value!=null&&value.matches("[0-9a-f]{64}");}
+    private static String legacyOrigin(NativeBlueprintDefinition definition)throws IOException {
+        var meta=definition.metadata();var migration=meta.get("migration");
+        if(migration==null||!migration.isJsonObject())return "";
+        var value=migration.getAsJsonObject().get("sourceSha256");
+        return value!=null&&value.isJsonPrimitive()&&value.getAsJsonPrimitive().isString()?value.getAsString():"";
+    }
     public static final class Receipt {
         public final Path source,png;public final String logicalId,physicalHash,contentHash,pngHash;
         Receipt(Path s,Path p,String id,String physical,String content,String image){source=s;png=p;logicalId=id;physicalHash=physical;contentHash=content;pngHash=image;}
@@ -44,11 +59,11 @@ public final class NativeBlueprintPairStore {
     }
     public static synchronized Receipt publishCandidate(Path directory,String id,byte[] nativeBytes,byte[] png,
         Path previousSource,String previousHash,BooleanSupplier current,Fault fault,String... aliases)throws IOException {
-        return publishCandidate(directory,id,nativeBytes,png,previousSource,previousHash,current,fault,null,false,aliases);
+        return publishCandidate(directory,id,nativeBytes,png,previousSource,previousHash,current,fault,null,false,null,aliases);
     }
     public static synchronized Receipt publishCandidate(Path directory,String id,byte[] nativeBytes,byte[] png,
         Path previousSource,String previousHash,BooleanSupplier current,Fault fault,Receipt expected,boolean requireVacant,
-        String... aliases)throws IOException {
+        LegacyMirrorProof mirror,String... aliases)throws IOException {
         Path root=directory.toAbsolutePath().normalize();
         Files.createDirectories(root);
         need(Files.isDirectory(root,LinkOption.NOFOLLOW_LINKS),"library directory");
@@ -57,7 +72,7 @@ public final class NativeBlueprintPairStore {
         try(FileChannel lock=lockFile(root);java.nio.channels.FileLock ignored=lock.lock()) {
             reconcileLocked(root);
             NativeBlueprintPng.validatePreview(png);
-            return publishLocked(root,id,nativeBytes,png,previousSource,previousHash,current,fault,aliases,expected,requireVacant);
+            return publishLocked(root,id,nativeBytes,png,previousSource,previousHash,current,fault,aliases,expected,requireVacant,mirror);
         }
     }
     private static FileChannel lockFile(Path root)throws IOException {
@@ -65,7 +80,7 @@ public final class NativeBlueprintPairStore {
             StandardOpenOption.WRITE, LinkOption.NOFOLLOW_LINKS);
     }
     private static Receipt publishLocked(Path root,String id,byte[] nativeBytes,byte[] png,Path previousSource,
-        String previousHash,BooleanSupplier current,Fault fault,String[] aliases,Receipt expected,boolean requireVacant)throws IOException {
+        String previousHash,BooleanSupplier current,Fault fault,String[] aliases,Receipt expected,boolean requireVacant,LegacyMirrorProof mirror)throws IOException {
         byte[] beforeBytes=catalogBytes(root);
         Properties before=catalog(root);
         Receipt previous=receipt(root,id,before);
@@ -90,6 +105,8 @@ public final class NativeBlueprintPairStore {
             try(NativeBlueprintDefinition d=NativeBlueprintDefinition.open(staged)){
                 physical=d.revision();content=NativeBlueprintIdentity.content(d);
                 name=new JsonName(d.metadata()).name;card=displayCard(d);
+                if(mirror!=null)need(previousSource!=null&&!previousSource.getFileName().toString().endsWith(".gtnb")
+                    &&mirror.originHash.equals(previousHash)&&mirror.originHash.equals(legacyOrigin(d)),"legacy mirror provenance");
             }
             byte[] bound=NativeBlueprintPng.bind(png,physical);
             String imageHash=hash(bound);
@@ -109,6 +126,7 @@ public final class NativeBlueprintPairStore {
             next.setProperty(k+".sourceHash",physical);next.setProperty(k+".pngHash",imageHash);
             next.setProperty(k+".contentHash",content);next.setProperty(k+".card",card);next.setProperty(k+".tx",tx);
             next.remove("deleted."+k);
+            if(mirror!=null)next.setProperty(k+ACTIVE_MIRROR,mirror.digest);
             for(String alias:aliases){
                 validIdentifier(alias);
                 if(id.equals(alias))continue;
@@ -172,7 +190,7 @@ public final class NativeBlueprintPairStore {
         need(hash!=null&&hash.equals(hashFile(source,NativeBlueprintLimits.FILE_BYTES)),"source changed before migration");
     }
     /** Unpublish first; only after index acknowledgement retire the exact catalog-owned native pair. */
-    public static synchronized void delete(Path directory,Receipt expected,Fault fault)throws IOException {
+    public static synchronized void delete(Path directory,Receipt expected,Fault fault,LegacyMirrorProof recovered)throws IOException {
         Path root=directory.toAbsolutePath().normalize();
         try(FileChannel lock=lockFile(root);java.nio.channels.FileLock ignored=lock.lock()) {
             reconcileLocked(root);
@@ -182,12 +200,17 @@ public final class NativeBlueprintPairStore {
             String id=expected.logicalId,k=key(id);
             Receipt live=receipt(root,id,before);
             need(sameReceipt(live,expected),"native delete selection changed");
-            try(NativeBlueprintDefinition d=openExact(live.source,live.png,live.physicalHash,live.pngHash)) {}
+            String mirror=before.getProperty(k+ACTIVE_MIRROR);
+            try(NativeBlueprintDefinition d=openExact(live.source,live.png,live.physicalHash,live.pngHash)) {
+                if(mirror==null&&recovered!=null&&recovered.originHash.equals(legacyOrigin(d))
+                    &&retainedOriginal(root,before,recovered.originHash)!=null)mirror=recovered.digest;
+            }
             String tx=UUID.randomUUID().toString();
             for(String property:before.stringPropertyNames())
                 if(property.startsWith(k+".")||property.startsWith("alias.")&&id.equals(before.getProperty(property)))
                     next.remove(property);
             next.setProperty("deleted."+k,tx);
+            if(sha(mirror))next.setProperty(DELETED_MIRROR+key(LegacyBlueprintMirror.logicalId(id))+"."+mirror,"1");
             Properties pending=new Properties();
             pending.setProperty("op","delete");pending.setProperty("id",id);pending.setProperty("tx",tx);
             putPair(pending,"retired.",live);
@@ -260,6 +283,66 @@ public final class NativeBlueprintPairStore {
         p.setProperty(k+"pngHash",r.pngHash);
         p.setProperty(k+"contentHash",r.contentHash);
     }
+    /** Previously accepted native candidates have exact source-hash provenance but predate mirror proofs. */
+    public static synchronized Path retainedOriginal(Path directory,Receipt receipt)throws IOException {
+        Path root=directory.toAbsolutePath().normalize();Properties catalog=catalog(root);
+        if(!sameReceipt(receipt(root,receipt.logicalId,catalog),receipt))return null;
+        try(var d=openExact(receipt.source,receipt.png,receipt.physicalHash,receipt.pngHash)){
+            return retainedOriginal(root,catalog,legacyOrigin(d));
+        }
+    }
+
+    private static Path retainedOriginal(Path root,Properties catalog,String origin)throws IOException{
+        if(!sha(origin))return null;
+        for(String k:catalog.stringPropertyNames())if(k.startsWith("inactive.")&&origin.equals(catalog.getProperty(k))){
+            String name;
+            try{name=new String(Base64.getUrlDecoder().decode(k.substring(9)),StandardCharsets.UTF_8);}
+            catch(IllegalArgumentException invalid){continue;}
+            Path p=child(root,name);
+            if(Files.isRegularFile(p,LinkOption.NOFOLLOW_LINKS)&&hashFile(p,NativeBlueprintLimits.FILE_BYTES).equals(origin))return p;
+        }
+        return null;
+    }
+
+    public static final class CollectionVisibility {
+        private final Map<String,java.util.Set<String>> mirrors=new LinkedHashMap<>();
+        private final Map<String,String> nativeIds=new LinkedHashMap<>();
+        private final java.util.Set<String> activeProven=new java.util.HashSet<>();
+        public java.util.Set<String> mirrored(String uuid){
+            return mirrors.getOrDefault(key(uuid),java.util.Collections.emptySet());
+        }
+        public boolean nativeSlot(String uuid){return nativeIds.containsKey(key(uuid));}
+        public String nativeId(String uuid){return nativeIds.get(key(uuid));}
+        public boolean activeProof(String uuid){return activeProven.contains(key(uuid));}
+    }
+
+    /** Immutable per-operation view of the same catalog transaction used by native publish/delete. */
+    public static synchronized CollectionVisibility collectionVisibility(Path directory)throws IOException{
+        var result=new CollectionVisibility();
+        Properties catalog=catalog(directory.toAbsolutePath().normalize());
+        for(String entry:catalog.stringPropertyNames()){
+            if(entry.endsWith(".id")){
+                String logical=LegacyBlueprintMirror.logicalId(catalog.getProperty(entry));
+                if(!logical.isEmpty())result.nativeIds.put(key(logical),catalog.getProperty(entry));
+            }
+            String encoded=null,digest=null;
+            if(entry.endsWith(ACTIVE_MIRROR)){
+                String base=entry.substring(0,entry.length()-ACTIVE_MIRROR.length());
+                String logical=LegacyBlueprintMirror.logicalId(catalog.getProperty(base+".id"));
+                if(!logical.isEmpty()){
+                    encoded=key(logical);digest=catalog.getProperty(entry);
+                    if(sha(digest))result.activeProven.add(encoded);
+                }
+            }else if(entry.startsWith(DELETED_MIRROR)){
+                int dot=entry.lastIndexOf('.');
+                if(dot>DELETED_MIRROR.length()){encoded=entry.substring(DELETED_MIRROR.length(),dot);digest=entry.substring(dot+1);}
+            }
+            if(encoded!=null&&sha(digest))result.mirrors.computeIfAbsent(encoded,ignored->new java.util.HashSet<>()).add(digest);
+        }
+        result.mirrors.replaceAll((k,v)->java.util.Collections.unmodifiableSet(v));
+        return result;
+    }
+
     private static boolean samePair(Properties p,String k,Receipt r){
         return r!=null&&r.source.getFileName().toString().equals(p.getProperty(k+"source"))
             &&r.png.getFileName().toString().equals(p.getProperty(k+"png"))

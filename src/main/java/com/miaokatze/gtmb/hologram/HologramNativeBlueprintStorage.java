@@ -26,11 +26,12 @@ public final class HologramNativeBlueprintStorage {
         private final Path root;
         private final NativeBlueprintPairStore.Receipt expected;
         private final boolean requireVacant;
+        private final NativeBlueprintPairStore.LegacyMirrorProof mirror;
 
         private Prepared(Path root, String id, String lookup, Path original, String originalHash, String originalPngHash,
-            NativeBlueprintPairStore.Receipt receipt, NativeBlueprintPairStore.Receipt expected,boolean requireVacant) {
+            NativeBlueprintPairStore.Receipt receipt, NativeBlueprintPairStore.Receipt expected,boolean requireVacant,NativeBlueprintPairStore.LegacyMirrorProof mirror) {
             this.root = root;
-            this.expected=expected;this.requireVacant=requireVacant;
+            this.expected=expected;this.requireVacant=requireVacant;this.mirror=mirror;
             logicalId = id;
             this.lookup = lookup;
             this.original = original;
@@ -72,20 +73,16 @@ public final class HologramNativeBlueprintStorage {
         byte[] nativeBytes=NativeBlueprintCli.migratePair(source,image,-1,current).bytes;
         NativeBlueprintPairStore.Receipt receipt = NativeBlueprintPairStore.publish(
             staging(root,stableId,sourceHash,pngHash),stableId,nativeBytes,image,null,null,current);
-        Prepared p = new Prepared(root,stableId,id,original,sourceHash,pngHash,receipt,null,false);
+        Prepared p = new Prepared(root,stableId,id,original,sourceHash,pngHash,receipt,null,false,legacyMirror(source,sourceHash,stableId));
         checkSlot(p, current);
         return p;
     }
 
     /** An already-frozen native revision and its corresponding capture. No JSON/Cell/Preset roundtrip. */
     public static Prepared prepareSave(Path directory, String id, NativeBlueprintDefinition frozen,
-        byte[] freshlyCapturedPng, BooleanSupplier current) throws IOException {
-        return prepareSave(directory,id,frozen,freshlyCapturedPng,current,null,false);
-    }
-
-    public static Prepared prepareSave(Path directory, String id, NativeBlueprintDefinition frozen,
         byte[] freshlyCapturedPng, BooleanSupplier current, NativeBlueprintPairStore.Receipt expected,
         boolean requireVacant) throws IOException {
+        if((expected==null)!=requireVacant)throw new IOException("Native save requires an exact current receipt or a vacant new slot");
         Path root = directory.toAbsolutePath().normalize();
         if(expected!=null&&!NativeBlueprintPairStore.sameReceipt(NativeBlueprintPairStore.receipt(root,id),expected))
             throw new IOException("蓝图或预览已被其他编辑更新；请重新打开");
@@ -104,9 +101,39 @@ public final class HologramNativeBlueprintStorage {
         if(!frozen.revision().equals(HologramBlueprintArtifact.hash(bytes))) throw new IOException("Frozen revision changed");
         NativeBlueprintPairStore.Receipt receipt = NativeBlueprintPairStore.publish(staging(root,id,frozen.revision(),HologramBlueprintArtifact.hash(freshlyCapturedPng)),id,bytes,
             freshlyCapturedPng,null,null,current);
-        Prepared p = new Prepared(root,id,id,slot,oldHash,oldImage,receipt,expected,requireVacant);
+        Prepared p = new Prepared(root,id,id,slot,oldHash,oldImage,receipt,expected,requireVacant,null);
         checkSlot(p,current);
         return p;
+    }
+
+    private static NativeBlueprintPairStore.LegacyMirrorProof legacyMirror(byte[] source,String hash,String id) {
+        try{
+            var root=HologramBlueprintCompactCodec.parseStored(source,NativeBlueprintLimits.FILE_BYTES).root();
+            var member=HologramBlueprintCompactCodec.documentBlueprint(root);
+            String digest=com.miaokatze.gtmb.hologram.gtnb.LegacyBlueprintMirror.digest(root,member,id);
+            return digest.isEmpty()?null:new NativeBlueprintPairStore.LegacyMirrorProof(hash,digest);
+        }catch(IOException|RuntimeException invalid){
+            return null; // Archival admission must not erase/guess unsupported legacy business data.
+        }
+    }
+
+    /** Compatibility for native candidates published before the mirror provenance field existed. */
+    public static NativeBlueprintPairStore.LegacyMirrorProof recoverMirror(Path directory,NativeBlueprintPairStore.Receipt selected){
+        if(selected==null)return null;
+        try{
+            Path retained=NativeBlueprintPairStore.retainedOriginal(directory,selected);
+            if(retained==null)return null;
+            byte[] source=NativeBlueprintPairStore.readRegular(retained,NativeBlueprintLimits.FILE_BYTES);
+            return legacyMirror(source,HologramBlueprintArtifact.hash(source),selected.logicalId);
+        }catch(IOException|RuntimeException invalid){return null;}
+    }
+
+    public static void delete(Path directory,NativeBlueprintPairStore.Receipt selected,
+        NativeBlueprintPairStore.Fault fault)throws IOException{
+        var visibility=NativeBlueprintPairStore.collectionVisibility(directory);
+        var recovered=visibility.activeProof(com.miaokatze.gtmb.hologram.gtnb.LegacyBlueprintMirror.logicalId(selected.logicalId))
+            ? null : recoverMirror(directory,selected);
+        NativeBlueprintPairStore.delete(directory,selected,fault,recovered);
     }
 
     private static void checkSlot(Prepared p, BooleanSupplier current) throws IOException {
@@ -148,7 +175,7 @@ public final class HologramNativeBlueprintStorage {
                     p.originalHash==null?null:p.original,p.originalHash,ownerCurrent,s -> {
                         fault.at(s);
                         if(s.equals("before-catalog")) checkSlot(p,ownerCurrent);
-                    },p.expected,p.requireVacant,aliases);
+                    },p.expected,p.requireVacant,p.mirror,aliases);
             }
         }
     }
