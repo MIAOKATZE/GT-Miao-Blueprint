@@ -47,6 +47,11 @@ public final class HologramAeNativePreview {
             throw new IllegalArgumentException("Unreviewed AE visual facade factory");
         ItemStack result = new ItemStack(item, 1, definition.getInteger("Damage"));
         NBTTagCompound input = definition.getCompoundTag("tag"), material = new NBTTagCompound();
+        try {
+            HologramBlueprintNbt.requireFacadeMaterial(input);
+        } catch (java.io.IOException invalid) {
+            throw new IllegalArgumentException(invalid.getMessage(), invalid);
+        }
         int[] ids = input.getIntArray("x");
         if (ids.length != 2) throw new IllegalArgumentException("Malformed AE visual facade material");
         material.setIntArray("x", ids.clone());

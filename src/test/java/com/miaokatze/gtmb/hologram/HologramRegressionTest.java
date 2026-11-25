@@ -46,6 +46,12 @@ public final class HologramRegressionTest {
             com.miaokatze.gtmb.client.hologram.HologramClientSavedPlacementRegression.runNativeRemoteConnected();
             return;
         }
+        if (java.util.Arrays.asList(args).contains("--saved-material-identities")) {
+            HologramNativeItemIdsRegression.run();
+            HologramSavedPlacementAdapterRegression.unboundMaterial();
+            System.out.println("PASS portable saved blueprint materials, display and no-debit refusal");
+            return;
+        }
         if (java.util.Arrays.asList(args).contains("--blueprint-preview-input")) {
             com.miaokatze.gtmb.client.hologram.HologramLocalPreviewRegression.run();
             System.out.println("PASS blueprint preview input and detached display");

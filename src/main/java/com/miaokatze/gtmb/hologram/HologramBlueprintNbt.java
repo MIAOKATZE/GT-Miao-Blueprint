@@ -40,7 +40,7 @@ import com.miaokatze.miaokatzecore.api.items.NativeItemIds;
 import cpw.mods.fml.relauncher.ReflectionHelper;
 
 /** Bounded binary NBT transport and detached ownership rewriting for shared blueprints. */
-final class HologramBlueprintNbt {
+public final class HologramBlueprintNbt {
 
     static final int MAX_COMPRESSED = 8 * 1024 * 1024;
     static final int MAX_EXPANDED = 8 * 1024 * 1024;
@@ -271,9 +271,24 @@ final class HologramBlueprintNbt {
 
     static NBTTagCompound resolveNativePayload(NBTTagCompound source)throws IOException{
         if(source==null)return null;
+        checkDepth(source, 0);
+        requireItemBindings(source);
         NBTTagCompound copy=(NBTTagCompound)source.copy();
-        try{stableItems(copy,false);return copy;}
-        catch(RuntimeException invalid){throw new IOException("原生蓝图 NBT 材料无法解析",invalid);}
+        resolveSavedIdentities(copy);
+        return copy;
+    }
+
+    /** Resolve a detached display payload with the same registry mapping as saved construction. */
+    public static void resolvePreviewIdentities(NBTTagCompound payload) throws IOException {
+        checkDepth(payload, 0);
+        resolveSavedIdentities(payload);
+    }
+
+    private static void resolveSavedIdentities(NBTTagCompound payload) throws IOException {
+        try {
+            stableItems(payload, false);
+            if (hasMissingItems(payload)) throw new IOException("Blueprint payload contains an unavailable item or cover");
+        }        catch(RuntimeException invalid){throw new IOException("原生蓝图 NBT 材料无法解析",invalid);}
     }
 
     /** First admission resolves identities on the owner; later reads use only that task's frozen numeric IDs. */
@@ -313,10 +328,43 @@ final class HologramBlueprintNbt {
             NBTTagCompound compound = (NBTTagCompound) tag;
             if (itemCompound(compound) && !compound.hasKey(ITEM_REGISTRY, 8))
                 throw new IOException("An offline observation has an unbound numeric ItemStack ID");
+            if (compound.hasKey("gt.covers", 9)) {
+                NBTTagList covers = compound.getTagList("gt.covers", 10);
+                for (int i = 0; i < covers.tagCount(); i++) {
+                    NBTTagCompound cover = covers.getCompoundTagAt(i);
+                    if (cover.hasKey("id", 3) && cover.getInteger("id") != 0 && !cover.hasKey(COVER_REGISTRY, 8))
+                        throw new IOException("Blueprint has an unbound numeric GT cover ID");
+                    if (cover.hasKey(COVER_REGISTRY, 8)) {
+                        Item item = stableRegistryItem(cover.getString(COVER_REGISTRY));
+                        if (item == null || (Item.getIdFromItem(item) & ~0xFFFF) != 0
+                            || !cover.hasKey(COVER_DAMAGE, 3) || (cover.getInteger(COVER_DAMAGE) & ~0xFFFF) != 0)
+                            throw new IOException("Blueprint has an unavailable or unrepresentable GT cover");
+                    }
+                }
+            }
+            if (itemCompound(compound)) {
+                Item item = stableItem(compound);
+                if (item != null && "appeng.items.parts.ItemFacade".equals(item.getClass().getName()))
+                    requireFacadeMaterial(compound.getCompoundTag("tag"));
+            }
             for (Object key : compound.func_150296_c()) requireItemBindings(compound.getTag((String) key));
         } else if (tag instanceof NBTTagList) {
             for (NBTBase entry : listEntries((NBTTagList) tag)) requireItemBindings(entry);
         }
+    }
+
+    static void requireFacadeMaterial(NBTTagCompound material) throws IOException {
+        String mod = material.getString("modid"), name = material.getString("itemname");
+        if (mod.isEmpty() || name.isEmpty() || material.getIntArray("x").length != 2)
+            throw new IOException("AE facade has no portable material identity");
+        Block block = cpw.mods.fml.common.registry.GameRegistry.findBlock(mod, name);
+        if (block == null || block == net.minecraft.init.Blocks.air)
+            throw new IOException("AE facade material is unavailable: " + mod + ":" + name);
+    }
+
+    private static Item stableRegistryItem(String name) {
+        Object item = Item.itemRegistry.getObject(name);
+        return item instanceof Item ? (Item) item : null;
     }
 
     static NBTTagCompound decodeData(String value) throws IOException {

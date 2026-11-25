@@ -172,10 +172,12 @@ public final class HologramNativeBlueprintDraft {
         var source=revision.source();
         var block=cell.block();
         var keys=header.retainNbt?header.retainedNbtKeys:Collections.<String>emptyList();
-        var tile=HologramBlueprintNbt.resolveNativePayload(payloads.get(source,source.payloadRef(wrapper,"tileNbt")));
-        var item=HologramBlueprintNbt.resolveNativePayload(payloads.get(source,source.payloadRef(wrapper,"itemNbt")));
-        if(tile!=null)tile=HologramBlueprintNbt.filterSelection(block,tile,keys,header.retainCovers);
-        if(item!=null)item=HologramBlueprintNbt.filterSelection(item,keys,header.retainCovers);
+        var tile=payloads.get(source,source.payloadRef(wrapper,"tileNbt"));
+        var item=payloads.get(source,source.payloadRef(wrapper,"itemNbt"));
+        if(tile!=null)tile=HologramBlueprintNbt.resolveNativePayload(
+            HologramBlueprintNbt.filterSelection(block,tile,keys,header.retainCovers));
+        if(item!=null)item=HologramBlueprintNbt.resolveNativePayload(
+            HologramBlueprintNbt.filterSelection(item,keys,header.retainCovers));
         cell.tileNbt=tile==null||tile.hasNoTags()?"":HologramBlueprintNbt.encodeCanonical(block,tile);
         cell.itemNbt=item==null||item.hasNoTags()?"":HologramBlueprintNbt.encodeCanonical(item);
         return cell;
@@ -187,17 +189,30 @@ public final class HologramNativeBlueprintDraft {
         var source=revision.source();
         NBTTagCompound rawTile=payloads.get(source,source.payloadRef(wrap,"tileNbt"));
         NBTTagCompound rawItem=payloads.get(source,source.payloadRef(wrap,"itemNbt"));
-        var row=HologramLocalBlueprintDocument.nativeDisplayDescriptor(cell,rawTile,rawItem);
+        NBTTagCompound visualTile=null,visualItem=null;
+        boolean invalidAppearance=false;
+        try{
+            visualTile=HologramBlueprintNbt.resolveNativePayload(rawTile);
+            visualItem=HologramBlueprintNbt.resolveNativePayload(rawItem);
+            HologramNativePlacement.validateSavedAppearance(cell.block(),visualTile);
+        }catch(IOException failure){invalidAppearance=true;}
+        var row=HologramLocalBlueprintDocument.nativeDisplayDescriptor(cell,visualTile,visualItem);
+        if(invalidAppearance){
+            row.removeTag("previewTile");
+            row.removeTag("previewItemTag");
+            row.setBoolean("missingBlock",true);
+        }
         HologramStaticMaterials.Builder bill=new HologramStaticMaterials.Builder();
         boolean included=!cell.excluded&&!"minecraft:air".equals(cell.block);
         if(included)try{
             if(!revision.source().allowsGeometryMutation()||cell.count!=1||cell.missing())throw new IOException("未解析或不支持的原生材料");
             ItemStack item=cell.stack();Block block=(cell.block==null||cell.block.isEmpty())&&item!=null?Block.getBlockFromItem(item.getItem()):cell.block();
             if(item==null||block==null||block==Blocks.air)throw new IOException("未解析的方块或物品");
-            NBTTagCompound tile=HologramBlueprintNbt.resolveNativePayload(rawTile),it=HologramBlueprintNbt.resolveNativePayload(rawItem);
             List<String> keys=header.retainNbt?header.retainedNbtKeys:Collections.emptyList();
-            if(tile!=null)tile=HologramBlueprintNbt.filterSelection(block,tile,keys,header.retainCovers);
-            if(it!=null)it=HologramBlueprintNbt.filterSelection(it,keys,header.retainCovers);
+            NBTTagCompound tile=rawTile==null?null:HologramBlueprintNbt.resolveNativePayload(
+                HologramBlueprintNbt.filterSelection(block,rawTile,keys,header.retainCovers));
+            NBTTagCompound it=rawItem==null?null:HologramBlueprintNbt.resolveNativePayload(
+                HologramBlueprintNbt.filterSelection(rawItem,keys,header.retainCovers));
             int bindingGroup=HologramSavedBindingChoices.requiredGroup(tile);
             if(bindingGroup!=0)row.setInteger("savedBindingGroup",bindingGroup);
             if(it!=null)item.setTagCompound(it);
