@@ -41,8 +41,27 @@ public final class NativeBlueprintCodecRegression {
             Path committed=Files.createDirectory(root.resolve("committed"));Path original=committed.resolve("old.json");Files.write(original,old);NativeBlueprintPairStore.Receipt receipt=NativeBlueprintPairStore.publish(committed,"local_gold",result.bytes,image,original,old,()->true,s->{if(s.equals("after-catalog"))throw new IOException("cleanup interrupted");});require(receipt!=null&&NativeBlueprintPairStore.inactive(committed,original),"CAS committed despite cleanup interruption");NativeBlueprintPairStore.recover(committed);try(NativeBlueprintDefinition d=NativeBlueprintPairStore.open(committed,"local_gold")){require(d.cells()==1,"recovery committed pair");}
             Path cliInput=root.resolve("cli.json");Files.write(cliInput,old);Path cliImage=root.resolve("cli.png");Files.write(cliImage,image);Path cliOut=Files.createDirectory(root.resolve("cli-out"));NativeBlueprintCli.run(new String[]{"convert",cliInput.toString(),cliOut.toString(),"local_gold",cliImage.toString()});NativeBlueprintPairStore.Receipt cliReceipt=NativeBlueprintPairStore.receipt(cliOut,"local_gold");require(Arrays.equals(result.bytes,Files.readAllBytes(cliReceipt.source)),"CLI calls identical core");
             Path sourceOnly=root.resolve("source-only.gtnb");NativeBlueprintCli.run(new String[]{"source-only",cliInput.toString(),sourceOnly.toString()});require(Arrays.equals(result.bytes,Files.readAllBytes(sourceOnly)),"source-only remains separate staging");
+            // Same literal geometry as the production world cursor: long horizontal runs crossing
+            // rows/pages, isolated descriptor overrides, sparse gaps, and a second vertical layer.
+            var geometry=new StringBuilder("{\"cells\":[");
+            int dense=NativeBlueprintLimits.PAGE_CELLS+57;
+            for(int face=0;face<dense;face++){
+                if(face>0)geometry.append(',');
+                geometry.append("{\"x\":").append(face%200-80).append(",\"y\":6,\"z\":")
+                    .append(face/200-100).append(",\"block\":\"minecraft:stone\"");
+                if(face==0||face==200||face==NativeBlueprintLimits.PAGE_CELLS)geometry.append(",\"prompt\":\"override\"");
+                geometry.append('}');
+            }
+            geometry.append(",{\"x\":-20,\"y\":6,\"z\":1000,\"block\":\"minecraft:wool\"},")
+                .append("{\"x\":-80,\"y\":42,\"z\":-100,\"block\":\"minecraft:stone\"}]}");
+            Path cursorFile=root.resolve("placement-cursor.gtnb");
+            Files.write(cursorFile,NativeBlueprintMigration.convert(bytes(geometry.toString())).bytes);
+            try(var definition=NativeBlueprintDefinition.open(cursorFile)){
+                require(definition.pages.size()>=3&&!definition.overrides.isEmpty(),"fixture spans run, chunk rows, pages and overrides");
+                cursorParity(definition.spatial());
+            }
             // Sparse width > signed-int range: two points, no dense volume allocation.
-            byte[] sparse=NativeBlueprintMigration.convert(bytes("{\"cells\":[{\"x\":-2147483648},{\"x\":0}]}" )).bytes;Path sparsePath=root.resolve("sparse.gtnb");Files.write(sparsePath,sparse);try(NativeBlueprintDefinition d=NativeBlueprintDefinition.open(sparsePath)){require(d.cells()==2&&d.frame().sizeX==2147483649L,"sparse wide frame");}
+            byte[] sparse=NativeBlueprintMigration.convert(bytes("{\"cells\":[{\"x\":-2147483648},{\"x\":0}]}" )).bytes;Path sparsePath=root.resolve("sparse.gtnb");Files.write(sparsePath,sparse);try(NativeBlueprintDefinition d=NativeBlueprintDefinition.open(sparsePath)){require(d.cells()==2&&d.frame().sizeX==2147483649L,"sparse wide frame");cursorParity(d.spatial());}
         } finally {try(java.util.stream.Stream<Path> paths=Files.walk(root)){paths.sorted(java.util.Comparator.reverseOrder()).forEach(p->{try{Files.deleteIfExists(p);}catch(IOException e){throw new java.io.UncheckedIOException(e);}});}}
     }
     private static void json()throws Exception {byte[] raw=bytes("{\"z\":-0,\"x\":9007199254740993,\"a\":1.00,\"u\":\"\\ud800\"}");String j=new String(NativeBlueprintJson.encode(NativeBlueprintJson.parse(raw)),StandardCharsets.US_ASCII);require(j.contains("9007199254740993")&&j.contains("1.00")&&j.contains("-0")&&j.contains("\\ud800"),"exact J1 numbers and surrogate");reject(()->NativeBlueprintJson.parse(bytes("{\"a\":1,\"a\":2}")),"duplicate JSON key");}
@@ -101,6 +120,19 @@ public final class NativeBlueprintCodecRegression {
     }
     private static byte[] bytes(String s){return s.getBytes(StandardCharsets.UTF_8);}
     public static byte[] png()throws IOException{BufferedImage image=new BufferedImage(640,640,BufferedImage.TYPE_INT_ARGB);image.setRGB(10,10,0xffaaccdd);ByteArrayOutputStream out=new ByteArrayOutputStream();ImageIO.write(image,"png",out);return out.toByteArray();}
+    private static void cursorParity(NativeBlueprintSpatialView view) throws Exception {
+        var cursor=view.cursor();
+        for(int i=0;i<view.size();i++){
+            require(cursor.hasNext(),"no early cursor termination");
+            cursor.advance();
+            var expected=view.atOrdinal(i);
+            require(cursor.x()==expected.x&&cursor.y()==expected.y&&cursor.z()==expected.z
+                &&cursor.descriptor()==expected.descriptor,"cursor order matches canonical coordinate+override at "+i);
+        }
+        require(!cursor.hasNext(),"exact cursor termination");
+        System.out.println("[GTMB-SAVED-CURSOR] canonical coordinates+overrides="+view.size());
+    }
+
     private interface Action{void run()throws Exception;}
     private static void reject(Action a,String name)throws Exception {try{a.run();}catch(IOException expected){return;}throw new AssertionError("accepted "+name);}
     private static void require(boolean b,String s){if(!b)throw new AssertionError(s);}

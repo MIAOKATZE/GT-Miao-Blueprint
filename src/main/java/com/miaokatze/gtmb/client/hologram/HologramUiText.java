@@ -20,8 +20,16 @@ final class HologramUiText {
 
     /** Formats only the locale template, never interprets escape sequences in user-authored arguments. */
     static String projector(String key, Object... args) {
-        String template = StatCollector.translateToLocal("gtmb.hologram.projector." + key)
-            .replace("\\n", "\n");
+        return formatProjector(StatCollector.translateToLocal("gtmb.hologram.projector." + key), args);
+    }
+
+    /** Explicit fallback for code paths also used before the Minecraft locale table is loaded. */
+    static String projectorOr(String key, String fallback, Object... args) {
+        return formatProjector(localized("gtmb.hologram.projector." + key, fallback), args);
+    }
+
+    private static String formatProjector(String template, Object... args) {
+        template = template.replace("\\n", "\n");
         if (args.length == 0) return template;
         try {
             return String.format(Locale.ROOT, template, args);

@@ -241,6 +241,20 @@ final class HologramClientLibrary {
         return entries;
     }
 
+    /** Cheap presence check on the worker. Full receipt/payload validation still belongs to native open. */
+    synchronized java.util.Set<String> availableNativePairs(List<Entry> entries) throws IOException {
+        java.util.Set<String> present = new java.util.HashSet<>();
+        for (Entry entry : entries) {
+            if (!entry.nativeFile) continue;
+            Path source = displayPaths.get(entry.id);
+            if (source != null && Files.isRegularFile(source, LinkOption.NOFOLLOW_LINKS)
+                && Files.isRegularFile(HologramBlueprintArtifact.previewPath(source), LinkOption.NOFOLLOW_LINKS)) {
+                present.add(entry.id);
+            }
+        }
+        return present;
+    }
+
     private static String stamp(Path path) throws IOException {
         java.nio.file.attribute.BasicFileAttributes attributes = Files
             .readAttributes(path, java.nio.file.attribute.BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);

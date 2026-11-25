@@ -363,8 +363,21 @@ public final class HologramStockEbfConstructionRegression {
             inventory[1] = new ItemStack(GregTechAPI.sBlockCasings1, 32, 11);
             inventory[2] = new ItemStack(GregTechAPI.sBlockCasings5, 16, 9);
             var survivor = create.apply(4);
+            var sourceContexts = new java.util.IdentityHashMap<HologramMaterials.Context, Integer>();
+            world.observePlacement = () -> {
+                var execution = HologramWorkspace.find(endpoint.actor);
+                SimpleAssert.that(execution != null && execution.stockNativePrivate && execution.materialContext != null,
+                    "actual native placement owns its stock context");
+                if (player.capabilities.isCreativeMode)
+                    SimpleAssert.that(!execution.materialSettings.main && !execution.materialSettings.containers
+                        && !execution.materialSettings.me, "creative opens no real inventory source");
+                sourceContexts.merge(execution.materialContext, 1, Integer::sum);
+            };
             proveDeclared(server, endpoint, replies, survivor);
             var built = finishDeclared(server, endpoint, replies, survivor.forGeneration(generation));
+            SimpleAssert.that(sourceContexts.size() == 1 && sourceContexts.containsValue(32),
+                "all 32 real survival setters reuse the source from funding");
+            sourceContexts.clear();
             SimpleAssert.that(HologramWorkspace.find(endpoint.actor) == prior && prior.blueprintDirty && prior.open
                 && prior.status.equals("unsaved origin") && inventory[0] == projector && projector.getTagCompound() == projectorTag
                 && java.util.Arrays.equals(expectedDraft, HologramSnapshotCodec.compress(projectorTag.getCompoundTag(HologramSessionKeys.DRAFT))),
@@ -381,9 +394,14 @@ public final class HologramStockEbfConstructionRegression {
             world.writes().clear();
             inventory[1] = inventory[2] = null;
             player.capabilities.isCreativeMode = true;
-            var creative = create.apply(5);
+            var fullSources = new HologramMaterials.Settings();
+            HologramMaterials.write(projector, fullSources);
+            var creative = create.apply(5).withSources(HologramProjectedMainPolicy.settingsKey(fullSources));
             proveDeclared(server, endpoint, replies, creative);
             var free = finishDeclared(server, endpoint, replies, creative.forGeneration(generation));
+            SimpleAssert.that(sourceContexts.size() == 1 && sourceContexts.containsValue(32)
+                && HologramMaterials.read(projector).me && HologramMaterials.read(projector).containers,
+                "all 32 actual Creative setters reuse one free context without changing held provider settings");
             SimpleAssert.that(free.phase() == HologramStockNativeWire.Phase.COMPLETE && free.placed() == 32
                 && free.reason().contains("1 处未选仓室") && world.writes().size() == 32
                 && inventory[1] == null && inventory[2] == null && !HologramConstructionJournal.pending(player)
@@ -406,6 +424,10 @@ public final class HologramStockEbfConstructionRegression {
             if (oldTileName == null) tileNames.remove(BaseMetaTileEntity.class);
             map.remove(endpoint.actor, prior);
             projectorTag.removeTag(HologramSessionKeys.DRAFT);
+            var backpackOnly = new HologramMaterials.Settings();
+            backpackOnly.me = backpackOnly.containers = false;
+            HologramMaterials.write(projector, backpackOnly);
+            world.observePlacement = null;
             inventory[1] = heldCasing;
             inventory[2] = heldCoil;
             player.capabilities.isCreativeMode = false;
@@ -715,6 +737,7 @@ public final class HologramStockEbfConstructionRegression {
     static final class RawWorld extends HologramServiceEditRegression.ReadOnlyWorld {
 
         private List<String> writes;
+        private Runnable observePlacement;
         private int[] watch, candidate, forbidVirtualCandidate;
         private Runnable pending;
         private boolean reachedLastCoil;
@@ -832,6 +855,7 @@ public final class HologramStockEbfConstructionRegression {
         public boolean setBlock(int x, int y, int z, Block block, int meta, int flags) {
             seed(x, y, z, block, meta);
             writes.add(x + "," + y + "," + z);
+            if (observePlacement != null) observePlacement.run();
             return true;
         }
 

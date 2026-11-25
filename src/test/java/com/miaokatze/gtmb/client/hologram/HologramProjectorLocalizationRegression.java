@@ -49,8 +49,20 @@ public final class HologramProjectorLocalizationRegression {
         expect("Search blueprints", "library.search");
         expect("Place Selected Blueprint", "library.place_selected");
         expect("Edit Selected", "library.edit_selected");
-        expect("Upgrade / Compact", "library.upgrade");
+        expect("Upgrade All Legacy Blueprints", "library.upgrade");
         expect("Controller Projection", "editor.controller");
+        var site = new net.minecraft.nbt.NBTTagCompound();
+        SimpleAssert.eq("Confirm Construction", HologramUiBuildReview.buildLabel(site), "uncertain native site uses English");
+        site.setInteger("siteOccupied", 0);
+        SimpleAssert.eq("Confirm New Build", HologramUiBuildReview.buildLabel(site), "empty native site uses English");
+        site.setInteger("siteMatchingSolid", 1);
+        SimpleAssert.eq("Confirm Fill Missing Blocks", HologramUiBuildReview.buildLabel(site), "matching native site uses English");
+        var data = new net.minecraft.nbt.NBTTagCompound();
+        data.setBoolean("localStandardController", true);
+        SimpleAssert.eq("This controller has no native structure available for construction.",
+            HologramPlacementConfirmation.localStructureReviewBlocker(new HologramState(data)), "native eligibility blocker uses English");
+        expect("Construction complete. 12 cells placed.", "stock.done_placement", "Construction", 12);
+        expect("The selected material sources do not have enough stock. Placement did not start.", "stock.reason_materials");
         expect("7 cells · 2 structures", "library.row_counts", 7, 2);
         expect(
             "Permission group: Custom · Publish: Allowed · Download: Denied · Quota: 8",

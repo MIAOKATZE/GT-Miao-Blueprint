@@ -318,6 +318,15 @@ public final class HologramBackgroundTasks {
         return ownedPlacementStatus(placementProgress.ticket());
     }
 
+    static boolean ownedPlacementContinuing(Ticket ticket) {
+        return ownsPlacement(ticket) && placementProgress.visible(placementBinding());
+    }
+
+    /** The exact result outlives the short HUD progress window while its confirmation screen remains open. */
+    static String ownedPlacementResult(Ticket ticket) {
+        return ticket != null && completedToken == ticket.token ? completion : "";
+    }
+
     static void leaveOwnedPlacement(Ticket ticket) {
         if (ownsPlacement(ticket) && placementProgress.visible(placementBinding())) OWNER.detach();
     }

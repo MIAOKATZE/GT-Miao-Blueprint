@@ -434,7 +434,18 @@ public final class HologramMaterialReviewRegression {
             NBTTagCompound data = new NBTTagCompound();
             data.setTag("rows", rows);
             LocalFrame[] frame = { new LocalFrame(data, "fixture scope", "fixture summary", "fixture empty", true) };
+            boolean[] removing = { false };
             LocalView view = new LocalView() {
+
+                @Override
+                public boolean localDemolitionAvailable() {
+                    return removing[0];
+                }
+
+                @Override
+                public String localDemolitionDestinationLabel() {
+                    return removing[0] ? "回收至背包" : "";
+                }
 
                 @Override
                 public LocalFrame localFrame() {
@@ -481,8 +492,16 @@ public final class HologramMaterialReviewRegression {
                 .collect(java.util.stream.Collectors.toList());
             SimpleAssert.that(
                 controls.keySet()
-                    .equals(new java.util.HashSet<>(java.util.Arrays.asList(162, 245, 247, 54, 55))) && buttons.size() == 5,
-                "one local review tree retains shared voucher/order control ids with unavailable capabilities disabled");
+                    .equals(new java.util.HashSet<>(java.util.Arrays.asList(245, 247, 252, 54, 55))) && buttons.size() == 4,
+                "local review keeps voucher/refresh/back/submit but never mounts the no-op AE order");
+            var recovery = (com.cleanroommc.modularui.widget.ParentWidget<?>) panel.getChildren().stream()
+                .filter(widget -> "material_recovery_destination".equals(widget.getName()))
+                .findFirst().orElseThrow();
+            SimpleAssert.that(!recovery.isEnabled(), "placement has no visible empty recovery button");
+            SimpleAssert.eq(
+                HologramEditorTheme.TEXT,
+                HologramMaterialConfirmationDialog.materialButtonInk(0, false),
+                "disabled action on this pale panel uses dark ink");
             SimpleAssert.that(
                 dialog.consumeKey(org.lwjgl.input.Keyboard.KEY_RETURN) && actions.isEmpty(),
                 "Enter still does not act on a local estimate");
@@ -494,6 +513,12 @@ public final class HologramMaterialReviewRegression {
                 java.util.Arrays.asList(LocalAction.REFRESH, LocalAction.BACK, LocalAction.SUBMIT),
                 actions,
                 "actual existing widgets dispatch the corresponding local verbs");
+            removing[0] = true;
+            recovery.onUpdate();
+            SimpleAssert.that(recovery.isEnabled(), "reused material panel shows recovery for removal");
+            removing[0] = false;
+            recovery.onUpdate();
+            SimpleAssert.that(!recovery.isEnabled(), "reused panel hides recovery again for placement");
             frame[0] = null;
             dialog.tick(true);
             SimpleAssert.that(

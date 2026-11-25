@@ -1596,7 +1596,7 @@ public final class HologramMaterials {
             if (terminalState != null) ledger.setTag("terminalState", terminalState.writeToNBT(new NBTTagCompound()));
             journal.setTag("payment", ledger);
             journal
-                .setTag("heldInventory", HologramConstructionJournal.inventory(context.player.inventory.mainInventory));
+                .setTag("heldInventory", HologramConstructionJournal.inventory(context.player.inventory.mainInventory, journal));
         }
 
         NBTTagCompound journalReceipt() {

@@ -649,7 +649,7 @@ final class HologramEditorLibraryPane {
 
     private String rowLabel(int slot) {
         NBTTagCompound row = row(slot);
-        return (ui.library.nativeSelected(row) ? "▸ " : "") + row.getString("name");
+        return (ui.library.nativeSelected(row) ? "▸ " : "") + ui.library.libraryRowTitle(row);
     }
 
     /** Font measurement is only called from the row's client draw callback; the tooltip retains the complete name. */
@@ -664,7 +664,9 @@ final class HologramEditorLibraryPane {
 
     private String rowTooltip(int slot) {
         NBTTagCompound row = row(slot);
-        return row.getString("name") + (ui.library.conversionRequired(row) ? "\n" + projector("library.convert_required") : "") + "\n"
+        return ui.library.libraryRowTitle(row)
+            + (!row.getString("nativeCounterpart").isEmpty() ? "\n" + projector("library.historical_native_help")
+                : ui.library.conversionRequired(row) ? "\n" + projector("library.convert_required") : "") + "\n"
             + projector("library.row_counts", row.getInteger("cells"), row.getInteger("structures"))
             + " · "
             + ui.library.blueprintSource(row)

@@ -214,6 +214,10 @@ final class HologramConstructionJournal {
         return inventory(inventory, -1);
     }
 
+    static NBTTagList inventory(ItemStack[] inventory, NBTTagCompound journal) {
+        return inventory(inventory, untouchedSlot(journal));
+    }
+
     private static NBTTagList inventory(ItemStack[] inventory, int untouchedSlot) {
         NBTTagList result = new NBTTagList();
         for (int i = 0; i < inventory.length; i++) {

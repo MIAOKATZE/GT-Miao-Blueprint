@@ -55,6 +55,12 @@ public final class HologramLibraryNativeConversionRegression {
         HologramBlueprintArtifact.writePair(source,json,NativeBlueprintCodecRegression.png());
         return source;
     }
+    private static boolean hasRow(HologramLibraryClient lib,String id) {
+        var rows=lib.rows(false);
+        for(int i=0;i<rows.tagCount();i++) if(id.equals(rows.getCompoundTagAt(i).getString("id"))) return true;
+        return false;
+    }
+
     private static NBTTagCompound row(HologramLibraryClient lib,String id) {
         var rows=lib.rows(false);
         for(int i=0;i<rows.tagCount();i++)if(id.equals(rows.getCompoundTagAt(i).getString("id")))return rows.getCompoundTagAt(i);
@@ -174,6 +180,59 @@ public final class HologramLibraryNativeConversionRegression {
             check(!HologramBackgroundTasks.succeeded() && owner.upgradeDetails().size()==1
                 && owner.upgradeDetails().get(0).contains(nativeBefore.source.getFileName().toString()),
                 "broken native receipt is not silently treated as a stale legacy pointer");
+            // Same-name, same-ID archive with real content differences must remain visible yet not send
+            // the player back to the dead upgrade dialog. An identical mirror and unrelated name are distinct cases.
+            String historicB = "legacy:"+B.substring("local_".length());
+            String historicA = "legacy:"+A.substring("local_".length());
+            String unrelated = id(45).substring("local_".length());
+            var fixtureJson = new com.google.gson.JsonParser();
+            var same = fixtureJson.parse(new String(old,StandardCharsets.UTF_8)).getAsJsonObject().getAsJsonObject("blueprint");
+            same.addProperty("id",A.substring("local_".length()));
+            var different = fixtureJson.parse(new String(otherOld,StandardCharsets.UTF_8)).getAsJsonObject().getAsJsonObject("blueprint");
+            different.addProperty("id",B.substring("local_".length()));
+            different.getAsJsonArray("cells").get(0).getAsJsonObject().addProperty("block","minecraft:glass");
+            var namesake = fixtureJson.parse(different.toString()).getAsJsonObject();
+            namesake.addProperty("id",unrelated);
+            byte[] archives = ("{\"presets\":["+same+","+different+","+namesake+"]}").getBytes(StandardCharsets.UTF_8);
+            Path history=store.legacyCatalogPath();
+            Files.write(history,archives);
+            owner.refreshLocal();idle(mc,owner);
+            var clicked = (NBTTagCompound)row(owner,historicB).copy();
+            check(!hasRow(owner,historicA) && row(owner,A).getBoolean("nativeFile"),"identical mirror remains one native card");
+            check(B.equals(clicked.getString("nativeCounterpart")) && !ui.library.conversionRequired(clicked)
+                && ui.library.conversionRequired(row(owner,"legacy:"+unrelated))
+                && row(owner,"legacy:"+unrelated).getString("nativeCounterpart").isEmpty(),"no repeated upgrade at the same local ID, no title-based redirect");
+            String details = new String(store.readLegacyDocument(historicB),StandardCharsets.UTF_8);
+            check(details.contains("minecraft:glass") && Arrays.equals(archives,Files.readAllBytes(history)),"different archive's exact contents are preserved");
+            var dirty = new NBTTagCompound(); dirty.setBoolean("blueprintDirty",true);
+            field(HologramUiSession.class,"state").set(ui.session,new HologramState(dirty));
+            owner.select(false,A);
+            ui.library.nativeBindRow(0,clicked);ui.router.activate(14000);
+            check(ui.library.discardReview() && !ui.library.conversionPromptOpen() && owner.selected(false).equals(A),
+                "formal row click goes to the existing unsaved-editor guard, never to upgrade");
+            check(B.equals(field(HologramUiLibrary.class,"deferredLibraryTargetId").get(ui.library)),
+                "accepted row switch is pinned to the actual native receipt ID");
+            ui.library.cancelSwitchReview(225);
+            field(HologramUiSession.class,"state").set(ui.session,new HologramState(new NBTTagCompound()));
+            field(HologramUiLibrary.class,"libraryDrawer").setBoolean(ui.library,true);
+            ui.library.nativeBindRow(0,clicked);ui.router.activate(14000);
+            check(!ui.library.conversionPromptOpen() && owner.selected(false).equals(B),
+                "clean workspace formal click opens the existing native card by stable ID");
+            var readyBefore=NativeBlueprintPairStore.receipt(store.directory(),B);
+            try (var nativeOpened = store.readPrivateEditorSource(owner.selected(false)).openNative()) {
+                check(nativeOpened.cells()==1 && nativeOpened.elementAt(-2,1,3)>0,
+                    "the routed ID cold-opens the actual preserved native pair");
+            }
+            check(NativeBlueprintPairStore.sameReceipt(readyBefore,NativeBlueprintPairStore.receipt(store.directory(),B))
+                && Arrays.equals(archives,Files.readAllBytes(history)), "opening never reruns conversion or mutates the archive");
+            byte[] imageB=Files.readAllBytes(readyBefore.png); Files.delete(readyBefore.png);
+            owner.refreshLocal();idle(mc,owner);
+            check(row(owner,historicB).getString("nativeCounterpart").isEmpty(),"missing native cover invalidates row redirect");
+            ui.library.nativeBindRow(0,clicked);ui.router.activate(14000);
+            check(ui.library.conversionPromptOpen() && !ui.library.promptCanConvert(),
+                "stale click does not redirect to a now-missing pair or upgrade an unpaired archive");
+            ui.library.cancelConversionPrompt();Files.write(readyBefore.png,imageB);
+            System.out.println("PASS packed-library identity, different archive retention, native route/discard and stale row handling.");
             System.out.println("PASS stale index classification, precise success/partial/failure, preserved active native precedence and idempotent retries.");
             System.out.println("PASS native library settings: gray row/no open, cancel, clicked-ID vs typed-ID, native no-op, cold open + unchanged originals, all legacy + partial failure, whole-library action.");
         }finally{

@@ -3,6 +3,8 @@
 
 package com.miaokatze.gtmb.client.hologram;
 
+import static com.miaokatze.gtmb.client.hologram.HologramUiText.projectorOr;
+
 import static com.miaokatze.gtmb.client.hologram.HologramUiCanvas.*;
 
 import java.util.List;
@@ -108,7 +110,7 @@ final class HologramUiBuildReview implements LocalView {
             || !construction && state.data.getInteger("mode") != 0) return false;
         if (root == null || !root.localMaterialOwnerCurrent(ui)) {
             closeLocalMaterials();
-            ui.session.notice("控制器或手持投影仪已变化，请重新打开结构。");
+            ui.session.notice(projectorOr("stock.owner_changed", "控制器或手持投影仪已变化，请重新打开结构。"));
             return true; // A stale local control must not fall through to the legacy query.
         }
         String blocker = HologramPlacementConfirmation.localStructureReviewBlocker(state);
@@ -161,9 +163,9 @@ final class HologramUiBuildReview implements LocalView {
             return;
         }
         String blocker = HologramPlacementConfirmation.localStructureReviewBlocker(ui.session.state());
-        localMaterialNotice = !root.localMaterialOwnerCurrent(ui) ? "控制器或手持投影仪已变化，请重新打开结构。"
-            : !blocker.isEmpty() ? blocker + "返回后请重新打开材料窗口。"
-            : "施工范围或计划已变化，返回后请重新打开材料窗口。";
+        localMaterialNotice = !root.localMaterialOwnerCurrent(ui) ? projectorOr("stock.owner_changed", "控制器或手持投影仪已变化，请重新打开结构。")
+            : !blocker.isEmpty() ? blocker + " " + projectorOr("stock.reopen_back_tip", "返回后请重新打开材料窗口。")
+            : projectorOr("stock.scope_changed", "施工范围或计划已变化，返回后请重新打开材料窗口。");
         // Retire the exact asynchronous ticket before dropping the pane's last reference.
         localMaterials.close();
         localMaterials = null;
@@ -181,19 +183,19 @@ final class HologramUiBuildReview implements LocalView {
     public LocalFrame localFrame() {
         retireStaleLocalMaterials();
         if (localMaterials == null) return localMaterialNotice.isEmpty() || !localMaterialPaneCurrent() ? null
-            : new LocalFrame(new NBTTagCompound(), "材料清单已失效", localMaterialNotice, "返回后重新打开材料窗口", false);
+            : new LocalFrame(new NBTTagCompound(), projectorOr("stock.gone", "材料清单已失效"), localMaterialNotice, projectorOr("stock.reopen_back", "返回后重新打开材料窗口"), false);
         String status = !localMaterialNotice.isEmpty() ? localMaterialNotice : localMaterials.status();
         if (!ui.session.editable()) status = localMaterials.description() == null ? localMaterialEditingReason()
             : status + " · " + localMaterialEditingReason();
         String scope = localStockSite == null ? localMaterials.scopeLabel()
             : localMaterials.scopeLabel() + " · " + localStockSite.description();
         if (reviewedNativeMode(2)) {
-            scope = "逐格拆除 · " + localDemolitionDestinationLabel();
-            status = "只拆所选且由原机登记、归你所有的仓室；由上至下，保留控制器和外壳。";
+            scope = projectorOr("stock.remove_scope", "逐格拆除") + " · " + localDemolitionDestinationLabel();
+            status = projectorOr("stock.remove_note", "只拆所选且由原机登记、归你所有的仓室；由上至下，保留控制器和外壳。");
         } else if (reviewedNativeMode(1)) {
-            scope = "逐格换装 · 仅原机登记的自有仓室";
-            status = "只处理所选改动。仅转向不扣料；换料前检查当前库存，回收原设备。";
-        } else if (localStockSite != null) status += " · 现场或库存变更时保留已完成方块";
+            scope = projectorOr("stock.replace_scope", "逐格换装 · 仅原机登记的自有仓室");
+            status = projectorOr("stock.replace_note", "只处理所选改动。仅转向不扣料；换料前检查当前库存，回收原设备。");
+        } else if (localStockSite != null) status += " · " + projectorOr("stock.keep_done", "现场或库存变更时保留已完成方块");
         String blocker = localSubmitBlocker();
         if (!localMaterialNotice.isEmpty()) status = localMaterialNotice;
         else if (!blocker.isEmpty()) status = blocker;
@@ -202,7 +204,7 @@ final class HologramUiBuildReview implements LocalView {
             localMaterials.visible(),
             scope,
             status,
-            localMaterials.empty() ? "所选范围没有目标材料" : "本机没有可列出的材料",
+            localMaterials.empty() ? projectorOr("stock.no_scope_materials", "所选范围没有目标材料") : projectorOr("stock.no_materials", "本机没有可列出的材料"),
             localMaterials.ready(),
             localMaterials.description());
     }
@@ -213,8 +215,8 @@ final class HologramUiBuildReview implements LocalView {
     }
 
     private String localMaterialEditingReason() {
-        if (ui.session.state().data.getBoolean("currentPlacementPending")) return "正在等待当前施工请求，请稍候。";
-        if (HologramBackgroundTasks.busy()) return "另一个任务正在进行，请稍候。";
+        if (ui.session.state().data.getBoolean("currentPlacementPending")) return projectorOr("stock.pending_current", "正在等待当前施工请求，请稍候。");
+        if (HologramBackgroundTasks.busy()) return projectorOr("stock.pending_other", "另一个任务正在进行，请稍候。");
         return ui.session.editingReason();
     }
 
@@ -226,14 +228,14 @@ final class HologramUiBuildReview implements LocalView {
 
     @Override
     public String localSubmitBlocker() {
-        if (localMaterials == null) return localMaterialNotice.isEmpty() ? "请重新打开材料页。" : localMaterialNotice;
-        if (!localMaterialsCurrent()) return "施工范围或现场已变化，请重新打开材料页。";
+        if (localMaterials == null) return localMaterialNotice.isEmpty() ? projectorOr("stock.reopen", "请重新打开材料页。") : localMaterialNotice;
+        if (!localMaterialsCurrent()) return projectorOr("stock.site_changed", "施工范围或现场已变化，请重新打开材料页。");
         if (!ui.session.editable()) return localMaterialEditingReason();
         if (ui.session.state().nativeViewport != null)
-            return ui.library.savedNativePlacementReady() ? "" : "请先保存蓝图。";
+            return ui.library.savedNativePlacementReady() ? "" : projectorOr("stock.save_first_reason", "请先保存蓝图。");
         HologramScreen root = ui.host == null ? null : ui.host.parent();
         if (localStockSite != null && root != null && root.stockNativePending())
-            return "正在等候本次施工结果。";
+            return projectorOr("stock.await_result", "正在等候本次施工结果。");
         String blocker = HologramPlacementConfirmation.localStructureReviewBlocker(ui.session.state());
         if (!blocker.isEmpty()) return blocker;
         return localHatchDelta() ? localMaterials.hatchDelta.blocker : "";
@@ -252,16 +254,16 @@ final class HologramUiBuildReview implements LocalView {
     @Override
     public String localSubmitLabel() {
         if(ui.session.state().nativeViewport!=null)return ui.library.savedNativePlacementReady()
-            ? "定位并施工" : "请先保存蓝图";
-        if (reviewedNativeMode(2)) return "确认拆除";
-        if (reviewedNativeMode(1)) return "确认换装";
+            ? projectorOr("stock.position_build", "定位并施工") : projectorOr("stock.save_first", "请先保存蓝图");
+        if (reviewedNativeMode(2)) return projectorOr("stock.confirm_remove", "确认拆除");
+        if (reviewedNativeMode(1)) return projectorOr("stock.confirm_replace", "确认换装");
         return buildLabel(ui.session.state().data);
     }
 
     static String buildLabel(NBTTagCompound site) {
-        if (site.getInteger("siteMatchingSolid") > 0 || site.getInteger("siteHatches") > 0) return "确认补建";
-        if (!site.hasKey("siteOccupied", 3) || site.getInteger("siteUnknown") > 0) return "确认施工";
-        return "确认新建";
+        if (site.getInteger("siteMatchingSolid") > 0 || site.getInteger("siteHatches") > 0) return projectorOr("stock.confirm_fill", "确认补建");
+        if (!site.hasKey("siteOccupied", 3) || site.getInteger("siteUnknown") > 0) return projectorOr("stock.confirm_build", "确认施工");
+        return projectorOr("stock.confirm_new", "确认新建");
     }
 
     @Override
@@ -276,7 +278,7 @@ final class HologramUiBuildReview implements LocalView {
 
     @Override
     public String localDetailsLabel() {
-        return localMaterialsDetailed ? "返回基材清单" : "详细材料清单";
+        return localMaterialsDetailed ? projectorOr("stock.basic_list", "返回基材清单") : projectorOr("stock.details_list", "详细材料清单");
     }
 
     private void toggleDetailedLocalMaterials() {
@@ -303,7 +305,7 @@ final class HologramUiBuildReview implements LocalView {
 
     @Override
     public String localDemolitionDestinationLabel() {
-        return "回收至" + (nativeDemolitionDestination == 0 ? "背包" : "AE");
+        return nativeDemolitionDestination == 0 ? projectorOr("stock.recover_inventory", "回收至背包") : projectorOr("stock.recover_ae", "回收至AE");
     }
 
     @Override
@@ -347,7 +349,7 @@ final class HologramUiBuildReview implements LocalView {
             if (localStockSite == null || root == null || !root.stockNativePending()) closeLocalMaterials();
         } else {
             localMaterialNotice = ui.session.notice();
-            if (localMaterialNotice.isEmpty()) localMaterialNotice = "未提交施工，请检查当前状态后重试。";
+            if (localMaterialNotice.isEmpty()) localMaterialNotice = projectorOr("stock.submit_failed", "未提交施工，请检查当前状态后重试。");
             // A dispatch error might originate in external content; do not log its arbitrary message.
             com.miaokatze.gtmb.hologram.HologramStockActionTrace.event("client.not_sent", null, "dispatch_declined");
         }

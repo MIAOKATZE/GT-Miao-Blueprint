@@ -81,7 +81,13 @@ public final class HologramNativeLocalConstruction {
 
     @com.github.bsideup.jabel.Desugar
     private record Target(Block block, ItemStack sample, int metadata, int facing, String tile,
-        String item, boolean controller, boolean stateful) {}
+        String item, boolean controller, boolean stateful, String blockId, String itemId) {
+        Target(Block block,ItemStack sample,int metadata,int facing,String tile,String item,boolean controller,boolean stateful) {
+            this(block,sample,metadata,facing,tile,item,controller,stateful,
+                Block.blockRegistry.getNameForObject(block),
+                net.minecraft.item.Item.itemRegistry.getNameForObject(sample.getItem()));
+        }
+    }
 
     /** FIFO and retained source refer to one pinned, immutable file revision. */
     public static final class Prepared {
@@ -341,11 +347,16 @@ public final class HologramNativeLocalConstruction {
         final String toolId;
         final int[] anchor;
         final HologramPreviewPose pose;
+        final NativeBlueprintSpatialView.Cursor cursor;
+        final int frameX,frameY,frameZ;
+        final int[] rotated=new int[3];
         final Map<Long,Target> samples;
         final EntityPlayerMP player;
         final World world;
         final boolean creative;
-        int cursor, placed, satisfied;
+        long activeDescriptor=Long.MIN_VALUE;
+        Target activeTarget;
+        int placed, satisfied;
         boolean uncertain;
 
         Job(Attempt attempt, Prepared prepared, HologramWorkspace.ActionEndpoint endpoint,
@@ -364,6 +375,9 @@ public final class HologramNativeLocalConstruction {
             this.toolId=toolId;
             this.anchor=anchor;
             this.pose=pose;
+            this.cursor=prepared.source.cursor();
+            var frame=prepared.source.definition().frame();
+            frameX=frame.anchorX;frameY=frame.anchorY;frameZ=frame.anchorZ;
             this.samples=samples;
             player=endpoint.player;
             world=player.worldObj;
@@ -381,28 +395,31 @@ public final class HologramNativeLocalConstruction {
             if (!current()) return stop(Phase.CANCELLED,"施工已停止，未完成部分不再扣料");
             int old = placed + satisfied;
             try {
-                while (cursor < prepared.source.size() && System.nanoTime() < deadline) {
+                while (cursor.hasNext() && System.nanoTime() < deadline) {
                     if (!current()) return stop(Phase.CANCELLED,"施工已停止，未完成部分不再扣料");
-                    var point = prepared.source.atOrdinal(cursor);
-                    Target target = prepared.excluded.contains(point.descriptor) ? null : samples.get(point.descriptor);
-                    if (target != null && !place(point,target))
+                    cursor.advance();
+                    long descriptor=cursor.descriptor();
+                    if(descriptor!=activeDescriptor){
+                        activeDescriptor=descriptor;
+                        // Only included descriptors have resolved, authenticated targets.
+                        activeTarget=samples.get(descriptor);
+                    }
+                    if (activeTarget != null && !place(cursor.x(),cursor.y(),cursor.z(),activeTarget))
                         return stop(attempt.cancelled.get()?Phase.CANCELLED:Phase.FAILED,
                             uncertain ? "施工结果待核定，已停止" : "施工受阻或缺料，已停止");
-                    cursor++;
                 }
             } catch (IOException | RuntimeException | LinkageError invalid) {
                 return stop(Phase.FAILED,uncertain ? "施工结果待核定，已停止" : "读取或执行原生蓝图失败，已停止");
             }
-            if (cursor == prepared.source.size()) return stop(Phase.COMPLETE,"原生蓝图施工完成");
+            if (!cursor.hasNext()) return stop(Phase.COMPLETE,"原生蓝图施工完成");
             if (old != placed + satisfied)
                 attempt.publish(Phase.EXECUTING,placed,satisfied,prepared.total,"原生蓝图施工中");
             return false;
         }
 
-        boolean place(NativeBlueprintSpatialView.Point point, Target target) {
-            var frame = prepared.source.definition().frame();
-            int[] rotated = pose.apply(Math.subtractExact(point.x,frame.anchorX),
-                Math.subtractExact(point.y,frame.anchorY),Math.subtractExact(point.z,frame.anchorZ));
+        boolean place(int baseX,int baseY,int baseZ, Target target) {
+            pose.apply(Math.subtractExact(baseX,frameX),Math.subtractExact(baseY,frameY),
+                Math.subtractExact(baseZ,frameZ),rotated);
             int x=Math.addExact(anchor[0],rotated[0]),y=Math.addExact(anchor[1],rotated[1]),z=Math.addExact(anchor[2],rotated[2]);
             if (!HologramWorldFlow.worldPosition(x,y,z,world.getHeight()) || !world.blockExists(x,y,z)) return false;
             Permit permit = gate.beginTransaction(lease);
@@ -412,8 +429,8 @@ public final class HologramNativeLocalConstruction {
                 var capture = new HologramCapture(null,HologramSessionPolicy.trigger(tx));
                 var cell = new HologramCapture.Cell(null,x,y,z);
                 cell.block=target.block;cell.meta=target.metadata;
-                cell.blueprintBlock=Block.blockRegistry.getNameForObject(target.block);
-                cell.blueprintItem=net.minecraft.item.Item.itemRegistry.getNameForObject(target.sample.getItem());
+                cell.blueprintBlock=target.blockId;
+                cell.blueprintItem=target.itemId;
                 cell.blueprintDamage=target.sample.getItemDamage();
                 cell.tileNbt=target.tile;cell.itemNbt=target.item;
                 cell.userPosition=true;cell.role=target.controller?"templateController":"prefab";

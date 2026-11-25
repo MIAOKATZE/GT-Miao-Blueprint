@@ -30,6 +30,7 @@ import com.cleanroommc.modularui.screen.viewport.ModularGuiContext;
 import com.cleanroommc.modularui.theme.WidgetThemeEntry;
 import com.cleanroommc.modularui.utils.Platform;
 import com.cleanroommc.modularui.widget.AbstractScrollWidget;
+import com.cleanroommc.modularui.widget.ParentWidget;
 import com.cleanroommc.modularui.widget.Widget;
 import com.cleanroommc.modularui.widget.scroll.VerticalScrollData;
 import com.cleanroommc.modularui.widgets.ButtonWidget;
@@ -451,16 +452,21 @@ final class HologramMaterialConfirmationDialog {
                     ()->localView.localAction(LocalAction.BIND_GROUP),()->true,()->0));
                 panel.child(button(251,localView::bindingSlotLabel,165,369,165,
                     ()->localView.localAction(LocalAction.BIND_SLOT),()->true,()->0));
-            } else panel.child(button(162, () -> "AE 补单", 234, 340, 160,
-                () -> {}, () -> false, () -> 0));
+            }
             panel.child(button(245, localView::localVoucherLabel, 400, 340, 218,
                 () -> { if (localView.localVoucherAvailable()) localView.localAction(LocalAction.VOUCHER); },
                 localView::localVoucherAvailable,
                 () -> localView.localVoucherSelected() ? HologramUiAccent.SUGGESTION : 0));
-            // Mount this on every panel build: MUI can reuse the panel when switching from place to remove.
-            panel.child(button(252, localView::localDemolitionDestinationLabel, 165, 369, 165,
-                () -> localView.localAction(LocalAction.DEMOLITION_DESTINATION), localView::localDemolitionAvailable,
-                () -> 0).setEnabledIf(widget -> localView.localDemolitionAvailable()));
+            // The same panel can be reused for removal. Hide the whole action rather than painting an empty disabled button.
+            ParentWidget<?> recovery = new ParentWidget<>().name("material_recovery_destination")
+                .pos(165, 369)
+                .size(165, 23)
+                .child(button(
+                    252, localView::localDemolitionDestinationLabel, 0, 0, 165,
+                    () -> { if (localView.localDemolitionAvailable()) localView.localAction(LocalAction.DEMOLITION_DESTINATION); },
+                    localView::localDemolitionAvailable, () -> 0));
+            recovery.setEnabled(localView.localDemolitionAvailable());
+            panel.child(recovery.setEnabledIf(widget -> localView.localDemolitionAvailable()));
             panel.child(
                 button(
                     247,
@@ -707,7 +713,6 @@ final class HologramMaterialConfirmationDialog {
         if (local) {
             if (id == 55) return localView.localSubmitBlocker();
             if (id == 245 && !localView.localVoucherAvailable()) return localView.localVoucherBlocker();
-            if (id == 162) return "本地施工不支持 AE 自动补单";
             return "";
         }
         if (id == 168 && !ui.nbt.hasPlacementNbtChoices()) return "本次蓝图没有可调整的 NBT 条目。";
@@ -774,7 +779,7 @@ final class HologramMaterialConfirmationDialog {
             .hoverBackground(HologramMuiTheme.guidanceBackground(true, accent, enabled))
             .overlay(
                 IKey.dynamic(text)
-                    .color(() -> HologramUiAccent.textColor(accent.getAsInt(), enabled.getAsBoolean()))
+                    .color(() -> materialButtonInk(accent.getAsInt(), enabled.getAsBoolean()))
                     .shadow(false))
             .tooltipBuilder(t -> {
                 String reason = unavailableReason(id);
@@ -783,6 +788,11 @@ final class HologramMaterialConfirmationDialog {
             .tooltipAutoUpdate(true)
             // Keep the grey local confirm target explainable on click; the guarded callback cannot dispatch.
             .setEnabledIf(widget -> local && id == 55 || enabled.getAsBoolean());
+    }
+
+    static int materialButtonInk(int accent, boolean enabled) {
+        // The disabled button texture is pale on this paper panel; its text still needs dark ink.
+        return enabled ? HologramUiAccent.textColor(accent, true) : HologramEditorTheme.TEXT;
     }
 
     private int getHoveredRow() {
