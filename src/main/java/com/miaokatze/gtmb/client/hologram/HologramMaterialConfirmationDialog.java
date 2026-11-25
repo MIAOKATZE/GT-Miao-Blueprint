@@ -47,7 +47,7 @@ final class HologramMaterialConfirmationDialog {
         REFRESH,
         SUBMIT,
         DETAILS,
-        VOUCHER
+        VOUCHER, BIND_GROUP, BIND_SLOT, DEMOLITION_DESTINATION
     }
 
     /** The port lends its current detached rows for read-only rendering. */
@@ -87,6 +87,11 @@ final class HologramMaterialConfirmationDialog {
             return "提交施工并核验…";
         }
 
+        default boolean localDemolitionAvailable() { return false; }
+        default String localDemolitionDestinationLabel() { return ""; }
+        default boolean hasBindingChoices(){return false;}
+        default String bindingGroupLabel(){return "";}
+        default String bindingSlotLabel(){return "";}
         default boolean localVoucherAvailable() {
             return false;
         }
@@ -428,7 +433,14 @@ final class HologramMaterialConfirmationDialog {
                     t.addLine("主物品栏观察只是本机数量；背包适配器、无线 AE、权限和实际缺料由服务端核验。");
                     t.addLine("AE 补单、设备资源及去标识设置未接入本地提交，不将其伪装成可用功能。");
                 }));
-            panel.child(button(162, () -> "AE 补单：本地模式未接入", 234, 340, 160,
+            if(localView.hasBindingChoices()) {
+                panel.child(button(250,localView::bindingGroupLabel,234,340,160,
+                    ()->localView.localAction(LocalAction.BIND_GROUP),()->true,()->0)
+                    .tooltipBuilder(t->t.addLine("切换量子类群；默认槽仅在手动选择后应用到未单选的类群。")));
+                panel.child(button(251,localView::bindingSlotLabel,165,369,165,
+                    ()->localView.localAction(LocalAction.BIND_SLOT),()->true,()->0)
+                    .tooltipBuilder(t->t.addLine("循环背包中真实量子终端槽；服务端核验绑定、权限与实际物品。")));
+            } else panel.child(button(162, () -> "AE 补单：本地模式未接入", 234, 340, 160,
                 () -> {}, () -> false, () -> 0).tooltipBuilder(t ->
                     t.addLine("无线 AE 直接取料按工具设置执行；这不是 AE 自动合成订单。")));
             panel.child(button(245, localView::localVoucherLabel, 400, 340, 218,
@@ -438,6 +450,11 @@ final class HologramMaterialConfirmationDialog {
                     t.addLine("仅明确勾选才请求抵扣；服务端按当前规则确认可抵扣装饰材料。");
                     t.addLine("首个成功抵扣才消耗主物品栏中一张券；失败和重发不重复扣券。");
                 }));
+            // Mount this on every panel build: MUI can reuse the panel when switching from place to remove.
+            panel.child(button(252, localView::localDemolitionDestinationLabel, 165, 369, 165,
+                () -> localView.localAction(LocalAction.DEMOLITION_DESTINATION), localView::localDemolitionAvailable,
+                () -> 0).setEnabledIf(widget -> localView.localDemolitionAvailable())
+                    .tooltipBuilder(t -> t.addLine("仅切换本次回收去向；确认后实际掉落只投到所选目的地。")));
             panel.child(
                 button(
                     247,

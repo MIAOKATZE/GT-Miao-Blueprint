@@ -85,6 +85,10 @@ public final class HologramLibraryConfig {
                 if (revision < 1 || revision == Long.MAX_VALUE) throw new IOException("Invalid library revision");
                 candidate = new View(candidate.uploadKiB, candidate.downloadKiB, permissions, revision);
             }
+            int privateSlots=loaded.get(CATEGORY,"privateNativeCacheSlots",HologramPrivateNativeCache.DEFAULT_SLOTS,
+                "Private saved native blueprint revisions per owner; FIFO, in-use entries are pinned.").getInt(5);
+            if(privateSlots<1||privateSlots>HologramPrivateNativeCache.MAX_SLOTS)throw new IOException("Invalid private native cache quota");
+            candidate=new View(candidate.uploadKiB,candidate.downloadKiB,candidate.permissions,candidate.revision,privateSlots);
             persist(candidate);
             current = candidate;
         } finally {
@@ -94,7 +98,7 @@ public final class HologramLibraryConfig {
 
     public static final class View {
 
-        public final int uploadKiB, downloadKiB, maxUploads;
+        public final int uploadKiB, downloadKiB, maxUploads, nativeCacheSlots;
         public final long revision;
         public final HologramLibraryPermissions permissions;
 
@@ -103,6 +107,10 @@ public final class HologramLibraryConfig {
         }
 
         View(int up, int down, HologramLibraryPermissions permissions, long revision) {
+            this(up,down,permissions,revision,HologramPrivateNativeCache.DEFAULT_SLOTS);
+        }
+        View(int up,int down,HologramLibraryPermissions permissions,long revision,int slots){
+            nativeCacheSlots=slots;
             uploadKiB = up;
             downloadKiB = down;
             this.permissions = permissions;
@@ -114,7 +122,8 @@ public final class HologramLibraryConfig {
             NBTTagCompound tag = HologramLibraryProtocol.reply("config");
             tag.setInteger("uploadKiB", uploadKiB);
             tag.setInteger("downloadKiB", downloadKiB);
-            tag.setInteger("maxUploads", maxUploads);
+            tag.setInteger("maxUploads", maxUploads);tag.setInteger("nativeSavedProtocol",1);
+            tag.setInteger("privateNativeCacheSlots",nativeCacheSlots);
             tag.setLong("configRevision", revision);
             tag.setBoolean("admin", admin);
             tag.setInteger("permissionGroupsVersion", HologramLibraryPermissions.VERSION);
@@ -137,12 +146,16 @@ public final class HologramLibraryConfig {
 
     synchronized View update(boolean admin, long expected, int up, int down, HologramLibraryPermissions permissions)
         throws IOException {
+        return update(admin,expected,up,down,permissions,current.nativeCacheSlots);
+    }
+    synchronized View update(boolean admin,long expected,int up,int down,HologramLibraryPermissions permissions,int slots)throws IOException{
         if (!admin) throw new IOException("Operator level 4 required");
+        if(slots<1||slots>HologramPrivateNativeCache.MAX_SLOTS)throw new IOException("私有施工缓存数量必须为 1..32");
         if (expected != current.revision) throw new IOException("Configuration changed; refresh before saving");
         if (permissions == null || !valid(up, down, permissions.effective(null).quota))
             throw new IOException("Bandwidth must be 1..1024 KiB/s; quota must be 1..1000");
         if (current.revision >= Long.MAX_VALUE - 1) throw new IOException("Library revision exhausted");
-        View next = new View(up, down, permissions, current.revision + 1);
+        View next = new View(up, down, permissions, current.revision + 1,slots);
         persist(next);
         current = next;
         return next;
@@ -168,6 +181,7 @@ public final class HologramLibraryConfig {
                     DEFAULT_DOWNLOAD_KIB_PER_SECOND,
                     "Global aggregate download KiB/s (default 512).")
                 .set(view.downloadKiB);
+            output.get(CATEGORY,"privateNativeCacheSlots",HologramPrivateNativeCache.DEFAULT_SLOTS,"Private native build versions per player, separate from public uploads.").set(view.nativeCacheSlots);
             output.get(CATEGORY, "maxUploadsPerPlayer", 10, "Maximum published blueprints per player UUID.")
                 .set(view.maxUploads);
             output.get(CATEGORY, "bandwidthDefaultsVersion", 1, "Legacy bandwidth defaults migration version.")
@@ -186,6 +200,7 @@ public final class HologramLibraryConfig {
             read.load();
             String category = CATEGORY.toLowerCase(Locale.ENGLISH);
             if (!read.hasKey(category, "uploadKiBPerSecond") || !read.hasKey(category, "downloadKiBPerSecond")
+                || read.get(CATEGORY,"privateNativeCacheSlots",-1).getInt(-1)!=view.nativeCacheSlots
                 || !read.hasKey(category, "maxUploadsPerPlayer")
                 || read.get(CATEGORY, "uploadKiBPerSecond", -1)
                     .getInt(-1) != view.uploadKiB

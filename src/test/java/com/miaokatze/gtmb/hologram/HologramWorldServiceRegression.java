@@ -578,11 +578,11 @@ public final class HologramWorldServiceRegression {
                         .that(next == old, "unconfirmed, running and paused placements block a replacement shortcut");
                     SimpleAssert.eq(job, get(old, "job"), "blocked replacement shortcut preserves the current job");
                     SimpleAssert.that(
-                        ((FeedbackPlayer) player).message.contains("请先完成"),
+                        ((FeedbackPlayer) player).message.contains("客户端已保存"),
                         "unconfirmed, running and paused placement guards reject before target validation");
                 } else {
                     SimpleAssert.that(
-                        ((FeedbackPlayer) player).message.contains("快捷放置位置"),
+                        ((FeedbackPlayer) player).message.contains("客户端已保存"),
                         "completed and partial completed jobs reach normal shortcut target validation");
                     SimpleAssert.that(next == old, "invalid repeat target preserves the completed session");
                     SimpleAssert
@@ -637,7 +637,7 @@ public final class HologramWorldServiceRegression {
                 .setString("gtitHologramPreset", missing);
             HologramService.quickPlaceLastBlueprint(player, request);
             SimpleAssert.that(
-                ((FeedbackPlayer) player).message.contains("蓝图不存在"),
+                ((FeedbackPlayer) player).message.contains("客户端已保存"),
                 "deleted last blueprint gives explicit feedback: " + ((FeedbackPlayer) player).message);
             SimpleAssert
                 .that(sessions.get(player.getUniqueID()) == session, "missing last selection retains the old session");

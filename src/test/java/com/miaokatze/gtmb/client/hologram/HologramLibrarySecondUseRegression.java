@@ -128,7 +128,6 @@ final class HologramLibrarySecondUseRegression {
     static void run() throws Exception {
         requestRouting();
         supportedModeAndSource();
-        unrelatedLibraryError();
         sun.misc.Unsafe unsafe = (sun.misc.Unsafe) field(sun.misc.Unsafe.class, "theUnsafe").get(null);
         Minecraft client = (Minecraft) unsafe.allocateInstance(Minecraft.class);
         WorldClient world = (WorldClient) unsafe.allocateInstance(WorldClient.class);
@@ -235,39 +234,6 @@ final class HologramLibrarySecondUseRegression {
                 && frame.description()
                     .isEmpty(),
             "already-present unproved source uses an explicit local unknown frame, not an authoritative quote");
-    }
-
-    private static void unrelatedLibraryError() throws Exception {
-        var library = new HologramLibraryClient();
-        var request = new UUID(7, 9);
-        Field placementRequest = field(HologramLibraryClient.class, "placementRequest");
-        Field generation = field(HologramLibraryClient.class, "generation");
-        Field submitting = field(HologramLocalPlacement.class, "submitting");
-        Field status = field(HologramLibraryClient.class, "status");
-        placementRequest.set(library, request);
-        generation.setLong(library, 19L);
-        status.set(library, "本地预览已准备好");
-        SimpleAssert.eq("本地预览已准备好", library.status(), "normal library accessor preserves the old preview status");
-        var receive = HologramLibraryClient.class.getDeclaredMethod("receive", NBTTagCompound.class);
-        receive.setAccessible(true);
-        var reply = new NBTTagCompound();
-        reply.setString("op", "error");
-        reply.setString("message", "fixture catalogue failure");
-        reply.setLong("clientTaskToken", 0L);
-        boolean saved = submitting.getBoolean(HologramLocalPlacement.INSTANCE);
-        try {
-            submitting.setBoolean(HologramLocalPlacement.INSTANCE, true);
-            receive.invoke(library, reply);
-            SimpleAssert.that(placementRequest.get(library) == request && generation.getLong(library) == 19L
-                && submitting.getBoolean(HologramLocalPlacement.INSTANCE),
-                "unrelated catalogue error cannot retire or unlock the live typed construction request");
-            SimpleAssert.eq("服务器蓝图库：fixture catalogue failure", library.status(),
-                "ordinary library UI reads the exact auxiliary error through the real status accessor");
-            SimpleAssert.eq("本地预览已准备好", status.get(library),
-                "a library error does not overwrite the prior local preview state");
-        } finally {
-            submitting.setBoolean(HologramLocalPlacement.INSTANCE, saved);
-        }
     }
 
     private static Field field(Class<?> type, String name) throws ReflectiveOperationException {

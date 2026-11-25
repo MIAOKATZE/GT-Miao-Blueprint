@@ -48,6 +48,27 @@ public final class NativeBlueprintPairStore {
         public final Path source,png;public final String logicalId,physicalHash,contentHash,pngHash;
         Receipt(Path s,Path p,String id,String physical,String content,String image){source=s;png=p;logicalId=id;physicalHash=physical;contentHash=content;pngHash=image;}
     }
+    // Weak owners: once a confirmation/queue is released it no longer occupies a watcher.
+    // All writes and initial registration share the catalog's writer lock. The server thread only
+    // reads a volatile flag, never blocks on disk, hashing, or a catalog write.
+    public static final class AdmissionVersion implements BooleanSupplier {
+        final Receipt receipt; private volatile boolean current = true;
+        private AdmissionVersion(Receipt receipt) { this.receipt=receipt; }
+        public boolean getAsBoolean() { return current; }
+    }
+    private static final java.util.Set<AdmissionVersion> pending = java.util.Collections.newSetFromMap(new java.util.WeakHashMap<>());
+    public static synchronized AdmissionVersion watchForAdmission(Receipt receipt) throws IOException {
+        if (receipt==null || !sameReceipt(receipt,receipt(receipt.source.getParent(),receipt.logicalId)))
+            throw new IOException("蓝图已更新，请重新打开材料页");
+        var watch = new AdmissionVersion(receipt); pending.add(watch); return watch;
+    }
+    private static void changed(Receipt previous, Receipt replacement) {
+        if (previous==null || sameReceipt(previous,replacement)) return;
+        pending.removeIf(watch -> {
+            if (!sameReceipt(watch.receipt,previous)) return false;
+            watch.current=false; return true;
+        });
+    }
     public static Receipt publish(Path directory,String id,byte[] nativeBytes,byte[] png,Path previousSource,
         byte[] expectedPrevious,BooleanSupplier current)throws IOException {
         return publish(directory,id,nativeBytes,png,previousSource,expectedPrevious,current,NONE);
@@ -163,6 +184,7 @@ public final class NativeBlueprintPairStore {
             check(current);
             if(previousSource!=null)pinPrevious(root,previousSource,previousHash);
             replaceCatalog(root,beforeBytes,next,current,fault);
+            changed(previous,result);
             committed=true;
             fault.at("after-catalog");
             finishCommitted(root,next,journal,pending);
@@ -221,6 +243,7 @@ public final class NativeBlueprintPairStore {
             try {
                 fault.at("before-catalog");
                 replaceCatalog(root,beforeBytes,next,()->true,fault);
+                changed(live,null);
                 committed=true;
                 fault.at("after-catalog");
                 finishCommitted(root,next,journal,pending);
@@ -354,10 +377,20 @@ public final class NativeBlueprintPairStore {
     }
     public static synchronized NativeBlueprintDefinition open(Path directory,String id)throws IOException{Receipt r=receipt(directory,id);need(r!=null,"native entry absent");return openExact(r.source,r.png,r.physicalHash,r.pngHash);}
     public static NativeBlueprintDefinition openExact(Path source,Path image,String revision,String imageHash)throws IOException {
+        return openExact(source,image,revision,imageHash,null);
+    }
+
+    /** A display uses the same authenticated thumbnail bytes, not a second unbound file read. */
+    public static NativeBlueprintDefinition openExact(Path source,Path image,String revision,String imageHash,
+        java.util.function.Consumer<byte[]> verifiedImage)throws IOException {
         byte[] png=readRegular(image,4*1024*1024);
         need(hash(png).equals(imageHash),"catalog PNG hash");NativeBlueprintPng.verify(png,revision);
         NativeBlueprintDefinition d=NativeBlueprintDefinition.open(source);
-        if(!d.revision().equals(revision)){d.close();throw bad("catalog source changed");}return d;
+        try {
+            need(d.revision().equals(revision),"catalog source changed");
+            if(verifiedImage!=null)verifiedImage.accept(png);
+            return d;
+        }catch(IOException|RuntimeException failure){d.close();throw failure;}
     }
     public static synchronized Map<String,Path> active(Path directory)throws IOException {Path root=directory.toAbsolutePath().normalize();Properties p=catalog(root);Map<String,Path> result=new LinkedHashMap<>();for(String k:p.stringPropertyNames())if(k.endsWith(".id")){String id=p.getProperty(k);Receipt r=receipt(root,id,p);need(r!=null,"incomplete native catalog");result.put(id,r.source);}return result;}
     public static synchronized boolean inactive(Path directory,Path source)throws IOException {

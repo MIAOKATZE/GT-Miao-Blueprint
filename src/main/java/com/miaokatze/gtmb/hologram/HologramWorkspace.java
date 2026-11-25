@@ -266,7 +266,6 @@ final class HologramWorkspace {
         if (previous != null && previous != session) {
             HologramNativeCompactStart.cancel(previous);
             HologramNativeReadyPlacement.cancel(previous);
-            if (previous.currentPlacementTask != null) previous.currentPlacementTask.cancel();
             previous.presentationTransition = null;
             HologramDeferredPlanRefresh.cancel(previous);
             if (previous.capturePending) {
@@ -557,7 +556,6 @@ final class HologramWorkspace {
         HologramEditorWorkspaceRegistry.clear();
         HologramNetwork.clearServerQueues();
         for (HologramSession s : SESSIONS.values()) {
-            if (s.currentPlacementTask != null) s.currentPlacementTask.cancel();
             HologramDeferredPlanRefresh.cancel(s);
             clearAreaSelection(s);
         }
@@ -589,7 +587,6 @@ final class HologramWorkspace {
             // Its exact StockNativeServer/permit owns settlement and receipt. Never publish or change it here.
             if (s.stockNativePrivate) continue;
             HologramNativeReadyPlacement.cancel(s);
-            if (s.currentPlacementTask != null) s.currentPlacementTask.cancel();
             HologramDeferredPlanRefresh.cancel(s);
             HologramSession.cancelCaptureRetry(s);
             s.job = 4;
@@ -639,7 +636,6 @@ final class HologramWorkspace {
                 || session.player.playerNetServerHandler.netManager == null
                 || !session.player.playerNetServerHandler.netManager.isChannelOpen()) {
                 HologramSession.clearPending(session);
-                if (session.currentPlacementTask != null) session.currentPlacementTask.cancel();
                 HologramSession.cancelCaptureRetry(session);
                 HologramDeferredPlanRefresh.cancel(session);
                 clearAreaSelection(session);

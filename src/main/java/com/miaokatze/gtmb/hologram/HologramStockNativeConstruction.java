@@ -67,6 +67,7 @@ final class HologramStockNativeConstruction {
     private final HologramMaterials.Settings settings;
     private final InventoryPlayer originalInventory;
     private final ItemStack[] originalSlots;
+    private final int sourceKey;
     private final ItemStack projector, pinnedTool, trigger, casing;
     private final BaseMetaTileEntity controller, hatch;
     private final MTECokeOven machine;
@@ -130,6 +131,7 @@ final class HologramStockNativeConstruction {
         settings = session.materialSettings;
         originalInventory = session.player.inventory;
         originalSlots = originalInventory.mainInventory;
+        sourceKey=HologramProjectedMainPolicy.settingsKey(settings);
         priority = settings.priority;
         recoveryDestination = settings.recoveryDestination;
         epoch = session.editorWorkspaceEpoch;
@@ -151,8 +153,8 @@ final class HologramStockNativeConstruction {
             throw refusal("没有当前原生逐格补建的明确确认。");
         if (!HologramStockCokeOvenProfile.SOURCE_ID.equals(source))
             throw refusal("当前控制器没有已审核的原生逐格补建配置。");
-        boolean busy = HologramProjectedLayerService.competingWork(endpoint.player);
-        boolean recovery = HologramProjectedLayerService.hasKnownRecovery(endpoint.player);
+        boolean busy = HologramConstructionAuthority.competingWork(endpoint.player);
+        boolean recovery = HologramConstructionAuthority.hasKnownRecovery(endpoint.player);
         var admission = gate.acquire(endpoint.constructionScope, request, busy, recovery);
         if (admission.decision != HologramConstructionTaskGate.Decision.GRANTED)
             throw refusal("本次原生施工未获得独占许可：" + admission.decision);
@@ -203,9 +205,18 @@ final class HologramStockNativeConstruction {
             material, installed, (MTEHatchCokeOven) meta, choice);
         if (!job.current(true))
             throw refusal("所选焦炉仓室、朝向、结构声明或投影仪已更改。");
-        if (funding == HologramStockNativeEntry.Funding.REQUIRE_FULL_BOUND && !hasMaximumStock(session.player, session.slot, material))
-            throw refusal("普通逐格补建须在背包含有 24 块焦炉砖；未开始施工。");
+        if (funding == HologramStockNativeEntry.Funding.REQUIRE_FULL_BOUND && !hasMaximumStock(session.player, session.slot, material,session.materialSettings))
+            throw refusal("所选材料来源须备齐 24 块焦炉砖；未开始施工。");
         return job;
+    }
+
+    static boolean hasMaximumStock(net.minecraft.entity.player.EntityPlayerMP player,int slot,ItemStack casing,
+        HologramMaterials.Settings sources) {
+        if(!HologramProjectedMainPolicy.eligibleSelected(sources))return false;
+        if(!sources.containers && !sources.me)return hasMaximumStock(player,slot,casing);
+        if (player==null || player.inventory==null || player.inventory.currentItem!=slot || casing==null || casing.hasTagCompound())return false;
+        var inventory=player.inventory;
+        return new HologramMaterials.Context(player,sources,slot).count(casing,24)>=24 && player.inventory==inventory && inventory.currentItem==slot;
     }
 
     /** At most 25 shell rows, less the exact installed hatch proved by begin. No world or quote scan. */
@@ -235,10 +246,9 @@ final class HologramStockNativeConstruction {
             && !s.cancelled && !s.hatchDowngrade && s.areaStructureId.isEmpty() && s.capture == null
             && s.planTargets.isEmpty() && s.pins.isEmpty() && s.coordinatePins.isEmpty() && s.facingPins.isEmpty()
             && s.manualPositions.isEmpty() && s.nativeOperationInputs == null && s.pendingAssetBudget.isEmpty()
-            && s.cellAssetBudgets.isEmpty() && !s.jobVoucherRequested && s.materialSettings.main
-            && !s.materialSettings.containers && !s.materialSettings.me && !s.player.capabilities.isCreativeMode
+            && s.cellAssetBudgets.isEmpty() && !s.jobVoucherRequested && HologramProjectedMainPolicy.eligibleSelected(s.materialSettings) && !s.player.capabilities.isCreativeMode
             && HologramWorkspace.find(s.player.getUniqueID()) == s
-            && !HologramProjectedLayerService.competingWork(s.player)
+            && !HologramConstructionAuthority.competingWork(s.player)
             && !StructureLibAPI.isInstrumentEnabled()
             && !BlueprintSnapshots.hasProcessors(BlueprintSnapshots.Stage.CAPTURE_COMPLETE);
     }
@@ -258,7 +268,7 @@ final class HologramStockNativeConstruction {
             && stockLinksCurrent()
             && session.main == main && session.mainExplicit == mainExplicit
             && session.channels.hasNoTags() && session.noHatches == noHatches && !session.hatchDowngrade
-            && session.materialSettings == settings && settings.main && !settings.containers && !settings.me
+            && session.materialSettings == settings && sourceKey>=0 && sourceKey==HologramProjectedMainPolicy.settingsKey(settings)
             && settings.priority == priority && settings.recoveryDestination == recoveryDestination
             && inventory == originalInventory && inventory.mainInventory == originalSlots
             && session.slot == inventory.currentItem && session.slot >= 0 && session.slot < originalSlots.length
@@ -273,7 +283,7 @@ final class HologramStockNativeConstruction {
     private boolean current(boolean checkJournal) {
         if (!bound(null) || gate.query(lease.scope, lease.request).phase != HologramConstructionTaskGate.Phase.ACTIVE
             || !ready(session) || !HologramSessionPolicy.valid(session)
-            || checkJournal && HologramProjectedLayerService.hasKnownRecovery(endpoint.player)) return false;
+            || checkJournal && HologramConstructionAuthority.hasKnownRecovery(endpoint.player)) return false;
         if (!liveStockCurrent()) return false;
         return bound(null) && gate.query(lease.scope, lease.request).phase == HologramConstructionTaskGate.Phase.ACTIVE
             && ItemStack.areItemStacksEqual(trigger, HologramSessionPolicy.trigger(session));

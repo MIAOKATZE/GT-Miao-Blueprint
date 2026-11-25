@@ -18,7 +18,116 @@ public final class HologramNativeViewportRegression {
     private static void check(boolean value,String why){if(!value)throw new AssertionError(why);}
     private static final String UUID_TEXT="77777777-7777-7777-7777-777777777777",ID="local_"+UUID_TEXT;
     private static final String STONE="{\"block\":\"minecraft:stone\",\"item\":\"minecraft:stone\",\"count\":1,\"x\":%d,\"y\":%d,\"z\":%d}";
+    /** The actual new-capture Save As preparation and pair publisher; the cover is a fixture, not a rendered PNG. */
+    public static void largeLiteralSaveAndColdRead(HologramLocalBlueprintDocument draft, int count) throws Exception {
+        Path dir=Files.createTempDirectory("gtmb-literal-million-");
+        var lib=new HologramClientLibrary(dir);
+        try {
+            Files.createDirectories(lib.directory());
+            var options=new NBTTagCompound();options.setString("name","Million selected world cells");
+            try (var capture=HologramLocalBlueprintWorkspace.prepareNewNativeCapture(draft,options,"Fixture",
+                    UUID.fromString(UUID_TEXT),ID,()->true)) {
+                HologramLocalBlueprintWorkspace.publishNewNativeCapture(lib,capture,ID,NativeBlueprintCodecRegression.png(),()->true);
+            }
+            var newlyOpened=new HologramClientLibrary(dir);
+            try (var cold=newlyOpened.readPrivateEditorSource(ID).openNative()) {
+                int first=cold.elementAt(0,0,0);
+                check(cold.cells()==count && first>0 && first==cold.elementAt(127,63,127)
+                    && first==cold.elementAt(57,32,93) && cold.elementAt(128,63,127)==0,
+                    "cold pair has exactly 128*64*128 real stone cells and no out-of-bounds voxel");
+                System.out.println("GTMB_CAPTURE "+count+" non-air physical cells; native save + cold reads; bytes="
+                    +Files.size(com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintPairStore.receipt(lib.directory(),ID).source));
+            }
+        } finally {
+            try(Stream<Path> files=Files.walk(dir)){
+                for(Path file:(Iterable<Path>)files.sorted(Comparator.reverseOrder())::iterator)Files.deleteIfExists(file);
+            }
+        }
+    }
+    private static void exerciseNativeTopology()throws Exception{
+        Path dir=Files.createTempDirectory("gtmb-native-topology-");
+        HologramClientLibrary lib=new HologramClientLibrary(dir);Files.createDirectories(lib.directory());
+        NBTTagCompound typed=new NBTTagCompound();typed.setLong("serial",989899899898L);typed.setByteArray("raw",new byte[]{-3,0,127});
+        java.io.ByteArrayOutputStream bytes=new java.io.ByteArrayOutputStream();net.minecraft.nbt.CompressedStreamTools.writeCompressed(typed,bytes);
+        String binary=Base64.getEncoder().encodeToString(bytes.toByteArray());
+        String json="{\"schema\":2,\"blueprint\":{\"schema\":2,\"id\":\""+ID+"\",\"name\":\"Topo\",\"authorName\":\"Fixture\",\"authorUuid\":\""+UUID_TEXT+"\",\"cells\":["
+            +"{\"x\":-2,\"y\":0,\"z\":0,\"block\":\"minecraft:chest\",\"item\":\"minecraft:chest\",\"count\":1,\"tileNbt\":\""+binary+"\"},"
+            +String.format(Locale.ROOT,STONE,2,0,0)+","+String.format(Locale.ROOT,STONE,4,0,0)+"]}}";
+        try{
+            var png=NativeBlueprintCodecRegression.png();
+            HologramBlueprintArtifact.writePair(lib.directory().resolve(ID+".json"),json.getBytes(StandardCharsets.UTF_8),png);
+            var staged=lib.prepareNativeUpgrade(ID,()->true);HologramNativeBlueprintStorage.activate(lib.directory(),staged,staged.revision,()->true);
+            var doc=open(lib,ID);try{
+                var select=new NBTTagCompound();select.setInteger("selected",0);
+                doc.apply("editCut",select);
+                check(doc.nativeDraft().revision().wrapper(0,doc.nativeDraft().space().atOrdinal(0).descriptor)
+                    .getAsJsonObject("fields").get("excluded").getAsBoolean(),"cut marks original only");
+                var paste=new NBTTagCompound();paste.setInteger("selected",1);doc.apply("editPaste",paste);
+                check(doc.nativeDraft().space().atPosition(2,0,0)!=null && doc.nativeDraft().space().size()==3,
+                    "paste replaces selected ordinary destination without duplicating its position");
+                var move=new NBTTagCompound();move.setInteger("selected",1);move.setInteger("dx",1);move.setInteger("dy",2);move.setInteger("dz",-3);
+                doc.apply("editMove",move);check(doc.nativeDraft().space().atPosition(2,0,0)==null&&doc.nativeDraft().space().atPosition(3,2,-3)!=null,"move changes actual native geometry");
+                doc.apply("editUndo",new NBTTagCompound());check(doc.nativeDraft().space().atPosition(2,0,0)!=null,"undo restores old source");
+                doc.apply("editRedo",new NBTTagCompound());check(doc.nativeDraft().space().atPosition(3,2,-3)!=null,"redo native source");
+                int stone=doc.nativeDraft().space().atPosition(4,0,0).ordinal;
+                select.setInteger("selected",stone);doc.apply("editDelete",select);
+                check(doc.nativeDraft().space().atPosition(4,0,0)==null,"delete removes from occupancy");
+                doc.apply("rotateBlueprint",new NBTTagCompound());check(doc.nativeDraft().space().atPosition(3,2,3)!=null&&doc.nativeDraft().space().atPosition(0,0,-2)!=null,"whole authored rotation uses original local pivot and cannot invent filled cells");
+                doc.apply("editUndo",new NBTTagCompound());
+                var hint=new NBTTagCompound();hint.setIntArray("indices",new int[]{0,1});hint.setString("prompt","两个保留坐标");
+                doc.apply("editHintArea",hint);
+                var frozen=doc.nativeSaveRevision(new NBTTagCompound(),"Fixture",UUID.fromString(UUID_TEXT),ID,LocalSaveIntent.SAVE_CURRENT);
+                var saved=HologramLocalBlueprintWorkspace.saveNativePair(lib,frozen,png,ID,LocalSaveIntent.SAVE_CURRENT,doc.nativeReceipt(),()->true);
+                doc.nativeSaved(doc.revision(),frozen,ID,saved);
+                var reread=open(lib,ID);try{
+                    var r=reread.nativeDraft().revision();var p=r.source().spatial().atPosition(3,2,-3);
+                    var hints=r.regionWrapper().getAsJsonObject("fields").getAsJsonArray("hintAreas");
+                    check(hints.size()==1&&"两个保留坐标".equals(hints.get(0).getAsJsonObject().get("prompt").getAsString()),
+                        "native editor area hint persisted in region section, not a cell annotation");
+                    check(p!=null&&r.source().cells()==2,"saved native topology reopened with literal positions");
+                    var w=r.wrapper(p.ordinal,p.descriptor);int id=r.source().payloadRef(w,"tileNbt");
+                    check(id>0&&!w.getAsJsonObject("fields").has("excluded"),"cut clipboard retained original NBT, not excluded flag");
+                    var raw=r.source().payload(id);
+                    var tag=net.minecraft.nbt.CompressedStreamTools.func_152456_a(new java.io.DataInputStream(new java.io.ByteArrayInputStream(raw)),new net.minecraft.nbt.NBTSizeTracker(1<<16));
+                    check(tag.equals(typed),"typed NBT remained byte/long on real save/reopen");
+                }finally{reread.closeNative();}
+            }finally{doc.closeNative();}
+        }finally{try(Stream<Path> paths=Files.walk(dir)){for(Path path:(Iterable<Path>)paths.sorted(Comparator.reverseOrder())::iterator)Files.deleteIfExists(path);}}
+    }
+    private static void exerciseRegionAndOrientation()throws Exception {
+        Path dir=Files.createTempDirectory("gtmb-native-orient-hint-");
+        try{
+            var lib=new HologramClientLibrary(dir);Files.createDirectories(lib.directory());
+            var png=NativeBlueprintCodecRegression.png();
+            String block="{\"x\":%d,\"y\":0,\"z\":0,\"block\":\"minecraft:furnace\",\"item\":\"minecraft:furnace\",\"metadata\":2}";
+            String json="{\"schema\":2,\"blueprint\":{\"schema\":2,\"id\":\""+ID+"\",\"name\":\"Turn\",\"authorName\":\"Fixture\",\"authorUuid\":\""+UUID_TEXT+"\",\"cells\":["
+                +String.format(Locale.ROOT,block,0)+","+String.format(Locale.ROOT,block,1)+"]}}";
+            HologramBlueprintArtifact.writePair(lib.directory().resolve(ID+".json"),json.getBytes(StandardCharsets.UTF_8),png);
+            var staged=lib.prepareNativeUpgrade(ID,()->true);HologramNativeBlueprintStorage.activate(lib.directory(),staged,staged.revision,()->true);
+            var doc=open(lib,ID);try{
+                var select=new NBTTagCompound();select.setInteger("selected",0);
+                var hint=new NBTTagCompound();hint.setIntArray("indices",new int[]{0,1});hint.setString("prompt","first");
+                doc.apply("editHintArea",hint);
+                doc.apply("rotateCell",select);
+                hint.setString("prompt","second");doc.apply("editHintArea",hint);
+                var e=doc.nativeSaveRevision(new NBTTagCompound(),"Fixture",UUID.fromString(UUID_TEXT),ID,LocalSaveIntent.SAVE_CURRENT);
+                var saved=HologramLocalBlueprintWorkspace.saveNativePair(lib,e,png,ID,LocalSaveIntent.SAVE_CURRENT,doc.nativeReceipt(),()->true);
+                doc.nativeSaved(doc.revision(),e,ID,saved);
+                var reread=open(lib,ID);try{
+                    var def=reread.nativeDraft().revision().source();var view=def.spatial();
+                    int a=def.element(com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintSpatialView.element(view.atPosition(0,0,0).descriptor)).get("metadata").getAsInt();
+                    int b=def.element(com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintSpatialView.element(view.atPosition(1,0,0).descriptor)).get("metadata").getAsInt();
+                    check((a==4||a==5)&&b==2,"turn only the selected furnace; preserve neighbor coordinates and metadata");
+                    var hints=reread.nativeDraft().revision().regionWrapper().getAsJsonObject("fields").getAsJsonArray("hintAreas");
+                    var h=hints.get(0).getAsJsonObject();
+                    check(hints.size()==1&&h.get("x1").getAsInt()==0&&h.get("x2").getAsInt()==1&&h.get("prompt").getAsString().equals("second"),
+                        "region preserved through single-cell edit, update deduplicated, filesystem round-trip");
+                }finally{reread.closeNative();}
+            }finally{doc.closeNative();}
+        }finally{try(Stream<Path> paths=Files.walk(dir)){for(Path path:(Iterable<Path>)paths.sorted(Comparator.reverseOrder())::iterator)Files.deleteIfExists(path);}}
+    }
     private static void exercise()throws Exception {
+        exerciseNativeTopology();exerciseRegionAndOrientation();
         byte[] PNG=NativeBlueprintCodecRegression.png();Path dir=Files.createTempDirectory("gtmb-native-editor-");
         try{
             HologramClientLibrary lib=new HologramClientLibrary(dir);Files.createDirectories(lib.directory());
@@ -67,6 +176,14 @@ public final class HologramNativeViewportRegression {
                 check(doc.dirty(),"edit dirty");
                 doc.apply("editUndo",new NBTTagCompound());check(doc.nativeDraft()==old&&!doc.dirty(),"undo to opened definition is clean");
                 doc.apply("editRedo",new NBTTagCompound());check(doc.dirty(),"redo dirty");
+                NBTTagCompound nbtPolicy=new NBTTagCompound();nbtPolicy.setBoolean("retainNbt",false);nbtPolicy.setBoolean("retainCovers",false);
+                nbtPolicy.setBoolean("all",false);net.minecraft.nbt.NBTTagList keys=new net.minecraft.nbt.NBTTagList();
+                keys.appendTag(new net.minecraft.nbt.NBTTagString("color"));nbtPolicy.setTag("keys",keys);
+                doc.apply("configureBlueprintNbt",nbtPolicy);
+                var policyHeader=doc.nativeDraft().revision().header();
+                check(!policyHeader.get("retainNbt").getAsBoolean()&&!policyHeader.get("retainCovers").getAsBoolean()
+                    &&policyHeader.getAsJsonArray("retainedNbtKeys").size()==1,"retention policy is native authored metadata");
+                doc.apply("editUndo",new NBTTagCompound());doc.apply("editRedo",new NBTTagCompound());
                 var frozen=doc.nativeSaveRevision(new NBTTagCompound(),"Fixture",UUID.fromString(UUID_TEXT),ID,LocalSaveIntent.SAVE_CURRENT);
                 boolean stale=false;try{HologramLocalBlueprintWorkspace.saveNativePair(lib,frozen,PNG,ID,LocalSaveIntent.SAVE_CURRENT,doc.nativeReceipt(),()->false);}catch(java.io.IOException expected){stale=true;}check(stale,"retired user cannot save");
                 var receipt=HologramLocalBlueprintWorkspace.saveNativePair(lib,frozen,PNG,ID,LocalSaveIntent.SAVE_CURRENT,doc.nativeReceipt(),()->true);
@@ -108,6 +225,280 @@ public final class HologramNativeViewportRegression {
             String metadata=System.getProperty("gtmb.reviewedMetadata.fixture","");if(!metadata.isEmpty())mixed(dir,Paths.get(metadata).getParent());
         }finally{try(Stream<Path> files=Files.walk(dir)){for(Path p:(Iterable<Path>)files.sorted(Comparator.reverseOrder())::iterator)Files.deleteIfExists(p);}}
     }
+    public static void runRevisionBoundary() {
+        try {
+            exerciseRevisionBoundary();
+        } catch (Exception failure) {
+            throw new IllegalStateException(failure);
+        }
+    }
+
+    private static void exerciseRevisionBoundary() throws Exception {
+        Path root = Files.createTempDirectory("gtmb-native-revision-boundary-");
+        var earlier = new HologramClientLibrary(root.resolve("earlier"));
+        var later = new HologramClientLibrary(root.resolve("later"));
+        try {
+            // Same logical ID and quantities are deliberately insufficient as a geometry/revision witness.
+            var a = nativeRevision(earlier, 4);
+            try {
+                var b = nativeRevision(later, 7);
+                try {
+                    check(!a.nativeReceipt().physicalHash.equals(b.nativeReceipt().physicalHash),
+                        "same ID and quantities, different physical file revision");
+                    var aIndex = new HologramNativeViewport.Index(a.nativeDraft().space(), () -> true);
+                    var av = HologramLocalBlueprintWorkspace.nativeView(a.nativeEditorMetadata(), a.nativeDraft(),
+                        aIndex, null);
+                    var bv = HologramLocalBlueprintWorkspace.nativeView(b.nativeEditorMetadata(), b.nativeDraft(),
+                        new HologramNativeViewport.Index(b.nativeDraft().space(), () -> true), null);
+                    check(av.regions.at(4, 5, -2) != null && av.regions.at(7, 5, -2) == null
+                            && bv.regions.at(4, 5, -2) == null && bv.regions.at(7, 5, -2) != null,
+                        "both preview models own only their specific saved geometry");
+                    NBTTagCompound sa = renderedMaterial(av);
+                    NBTTagCompound sb = renderedMaterial(bv);
+                    check(hasRequired(sa, "2") && hasRequired(sb, "2"),
+                        "both revisions display the same expected two-stone total");
+                    check(av.regions.at(-2, 0, 1) != null && bv.regions.at(-2, 0, 1) != null
+                            && av.regions.at(0, 0, 1) == null && bv.regions.at(0, 0, 1) == null,
+                        "negative coordinates and sparse holes survive in both definitions");
+
+                    var ui = new HologramUiModules(null);
+                    // Install the same model and typed document the formal editor uses, without opening a screen.
+                    var stateField = HologramUiSession.class.getDeclaredField("state");
+                    stateField.setAccessible(true);
+                    stateField.set(ui.session, av);
+                    var docField = HologramUiSession.class.getDeclaredField("document");
+                    docField.setAccessible(true);
+                    docField.set(ui.session, a);
+                    check(ui.session.document() == a && !ui.session.isTutorial(), "bound real native editor state");
+                    NBTTagCompound unsaved = new NBTTagCompound();
+                    unsaved.setString("prompt", "unsaved");
+                    a.apply("editBlueprintPrompt",unsaved);
+                    new HologramLocalBlueprintWorkspace(ui).placeCurrent();
+                    check(a.dirty() && ui.session.notice().contains("先保存"),"dirty native workbench cannot place an older version");
+                    a.apply("editUndo",new NBTTagCompound());
+                    check(!a.dirty(),"undo restores saved workbench version");
+                    try {
+                        a.freeze();
+                        throw new AssertionError("native was frozen as legacy for placement");
+                    } catch (IllegalStateException expected) {
+                        check(expected.getMessage().contains("不使用旧施工协议"), "native legacy freeze boundary");
+                    }
+                    var beforeUnsupportedEdit = a.nativeDraft();
+                    for (String op : new String[] { "placeTextBox" }) {
+                        try {
+                            a.apply(op, new NBTTagCompound());
+                            throw new AssertionError("unsupported editor route unexpectedly used a fallback: " + op);
+                        } catch (java.io.IOException expected) {
+                            check(expected.getMessage().contains("尚未接入") && a.nativeDraft() == beforeUnsupportedEdit
+                                    && !a.dirty(), "unsupported editor command keeps the exact draft and original: " + op);
+                        }
+                    }
+
+                    var selection = earlier.savedDisplayPath(ID);
+                    check(selection.path().equals(a.nativeReceipt().source) && selection.indexed(),
+                        "private library knows the active native pair");
+                    var browser = new HologramLibraryClient();
+                    // Exact production saved display entry used by both gallery and world preview.
+                    var gallery = browser.readSavedDisplaySource(ID, selection, true, 0, 0);
+                    var world = browser.readSavedDisplaySource(ID, selection, false, 0, 0);
+                    check(world == gallery && gallery.json == null
+                            && gallery.nativeReceipt.physicalHash.equals(a.nativeReceipt().physicalHash),
+                        "gallery and world reuse the pinned native definition, not JSON or old construction authority");
+                    check(gallery.thumbnail != null && gallery.thumbnail.getRGB(10, 10) == 0xffaaccdd
+                            && !gallery.state.data.getBoolean("localBlueprintDocument"),
+                        "gallery uses verified PNG pixels and a read-only display");
+                    world.requireStoredUse();
+                    var placement = HologramLocalPlacement.displayForPlacement(world.state, 7);
+                    check(placement.nativeViewport == gallery.state.nativeViewport && placement.data.getBoolean("virtualPlacement")
+                            && placement.data.getInteger("dimension") == 7 && placement.regions.at(4, 5, -2) != null
+                            && placement.regions.at(7, 5, -2) == null,
+                        "world preview overlays client context without recreating or changing native geometry");
+                    var review = new HologramLibraryMaterialReviewScreen.CapturedDescription(placement, null);
+                    var frame = review.frame(() -> new net.minecraft.item.ItemStack[36], 0);
+                    check(frame.ready() && hasRequired(frame.rows(), "2"),
+                        "actual existing placement material dialog reads the shared native summary");
+                    var frozen = new HologramLocalPlacement.Submission(world, placement, 1, new NBTTagCompound());
+                    check(browser.plainPlacementAvailability(frozen, null) == HologramLibraryClient.PlainAvailability.NATIVE_PENDING,
+                        "view-only native source does not silently become an old construction source");
+
+                    var moved = browser.readSavedDisplaySource(ID, later.savedDisplayPath(ID), true, 0, 0);
+                    check(moved != gallery && moved.state.regions.at(7, 5, -2) != null
+                            && moved.state.regions.at(4, 5, -2) == null && gallery.state.regions.at(4, 5, -2) != null,
+                        "same logical ID and material totals never reuse replaced coordinates");
+                    byte[] goodPng = Files.readAllBytes(gallery.nativeReceipt.png);
+                    try {
+                        Files.write(gallery.nativeReceipt.png, new byte[] { 1, 2, 3 });
+                        try {
+                            browser.readSavedDisplaySource(ID, selection, true, 0, 0);
+                            throw new AssertionError("damaged pair became a gallery preview");
+                        } catch (java.io.IOException expected) {
+                            check(!expected.getMessage().equals("Input length = 1"),
+                                "native corruption is rejected by pair validation, not legacy decoding");
+                        }
+                    } finally {
+                        Files.write(gallery.nativeReceipt.png, goodPng);
+                    }
+                    System.out.println("[GTMB-NATIVE-GALLERY] native preview/world/material model and exact revision PASS");
+                    var outbound = earlier.publicationArtifact(ID);
+                    check(outbound.version() == com.miaokatze.gtmb.hologram.HologramNativePublicArtifact.VERSION,
+                        "saved native pair chooses the native public format");
+                    var pair = com.miaokatze.gtmb.hologram.HologramNativePublicArtifact.decode(outbound.bytes());
+                    check(gallery.nativeReceipt.physicalHash.equals(pair.revision())
+                        && gallery.nativeReceipt.pngHash.equals(HologramBlueprintArtifact.hash(pair.cover())),
+                        "public transfer held the exact saved source and cover, not a compatibility JSON pair");
+                    System.out.println("[GTMB-NATIVE-REVISION] equal totals, different geometry and revisions; place gated");
+                } finally {
+                    b.closeNative();
+                }
+            } finally {
+                a.closeNative();
+            }
+        } finally {
+            try (Stream<Path> paths = Files.walk(root)) {
+                for (Path path : (Iterable<Path>) paths.sorted(Comparator.reverseOrder())::iterator)
+                    Files.deleteIfExists(path);
+            }
+        }
+    }
+
+    private static HologramLocalBlueprintDocument nativeRevision(HologramClientLibrary lib, int x) throws Exception {
+        Files.createDirectories(lib.directory());
+        String cells = String.format(Locale.ROOT, STONE, -2, 0, 1) + "," + String.format(Locale.ROOT, STONE, x, 5, -2);
+        String json = "{\"schema\":2,\"blueprint\":{\"id\":\"" + ID + "\",\"name\":\"Revision fixture\","
+            + "\"authorName\":\"Fixture\",\"authorUuid\":\"" + UUID_TEXT + "\",\"cells\":[" + cells + "]}}";
+        Path original = lib.directory().resolve(ID + ".json");
+        HologramBlueprintArtifact.writePair(original, json.getBytes(StandardCharsets.UTF_8), NativeBlueprintCodecRegression.png());
+        var prepared = lib.prepareNativeUpgrade(ID, () -> true);
+        check(lib.readPrivateEditorSource(ID).nativePair() == null,
+            "conversion preparation never activates or changes default source");
+        // Explicit internal opt-in exercises the native editor; no claim that the public UI activates it.
+        HologramNativeBlueprintStorage.activate(lib.directory(), prepared, prepared.revision, () -> true);
+        check(Arrays.equals(json.getBytes(StandardCharsets.UTF_8), Files.readAllBytes(original)),
+            "source bytes unchanged when opting into the native pair");
+        return open(lib, ID);
+    }
+
+    private static NBTTagCompound renderedMaterial(HologramState view) {
+        var material = new HologramLocalMaterialReview(view, new NBTTagCompound());
+        material.refresh(null, -1);
+        check(material.ready() && !material.status().contains("未核算"), "known vanilla material is resolved");
+        return material.visible();
+    }
+
+    public static void runAuthoredCapture() {
+        try {
+            exerciseAuthoredCapture();
+        } catch (Exception failure) {
+            throw new IllegalStateException(failure);
+        }
+    }
+
+    private static void exerciseAuthoredCapture() throws Exception {
+        var snapshot = new NBTTagCompound();
+        snapshot.setString("title", "Native capture fixture");
+        snapshot.setString("sourceClass", "fixture:must-not-instantiate");
+        snapshot.setString("sourceMod", "fixture");
+        snapshot.setInteger("x", 91);
+        snapshot.setInteger("y", 68);
+        snapshot.setInteger("z", 46);
+        NBTTagCompound channels = new NBTTagCompound();
+        channels.setInteger("hatchType", 3);
+        snapshot.setTag("channels", channels);
+        var cells = new net.minecraft.nbt.NBTTagList();
+        var chest = new NBTTagCompound();
+        chest.setString("id", "Chest");
+        chest.setLong("fixtureLong", 1234567891234567L);
+        chest.setByteArray("fixtureBytes", new byte[] { 127, -1, 0, 67 });
+        var inventory = new net.minecraft.nbt.NBTTagList();
+        inventory.appendTag(new net.minecraft.item.ItemStack(net.minecraft.init.Items.diamond, 3).writeToNBT(new NBTTagCompound()));
+        chest.setTag("Inventory", inventory);
+        for (int i = 0; i < 3; i++) {
+            var row = new NBTTagCompound();
+            row.setInteger("dx", i == 0 ? -2 : i == 1 ? 6 : 11);
+            row.setInteger("dy", i == 0 ? 0 : 5);
+            row.setInteger("dz", i == 0 ? 1 : -3);
+            row.setString("wantId", i == 1 ? "minecraft:chest" : "minecraft:stone");
+            row.setBoolean("excluded", i == 2);
+            if (i == 1) {
+                row.setInteger("wantMeta", 4);
+                var display = new NBTTagCompound();
+                display.setTag("nativeTile", chest);
+                row.setTag("targetDisplay", display);
+            }
+            cells.appendTag(row);
+        }
+        snapshot.setTag("cells", cells);
+        var draft = HologramLocalBlueprintInputs.controller(snapshot);
+        check(draft.unsavedLocalCapture()
+                && HologramLocalBlueprintWorkspace.nativeNewSave(draft, LocalSaveIntent.SAVE_AS_NEW, true)
+                && !HologramLocalBlueprintWorkspace.nativeNewSave(draft, LocalSaveIntent.SAVE_AS_NEW, false)
+                && !HologramLocalBlueprintWorkspace.nativeNewSave(draft, LocalSaveIntent.SAVE_CURRENT, true),
+            "the existing Save As can opt in on a capture without switching the default or changing a current save");
+        Path root = Files.createTempDirectory("gtmb-first-authored-native-");
+        var library = new HologramClientLibrary(root);
+        try {
+            Files.createDirectories(library.directory());
+            var options = new NBTTagCompound();
+            options.setString("name", "Captured without legacy file");
+            var actor = UUID.fromString(UUID_TEXT);
+            try (var capture = HologramLocalBlueprintWorkspace.prepareNewNativeCapture(draft, options, "Fixture", actor,
+                ID, () -> true)) {
+                check(capture.view.nativeViewport != null && capture.view.cells.size() == 3
+                        && capture.view.regions.at(6, 5, -3).tag().getInteger("wantMeta") == 4
+                        && capture.view.regions.at(0, 0, 1) == null
+                        && capture.view.regions.at(11, 5, -3).excluded,
+                    "screenshot model already reads the same native coordinates, variant, sparse holes and exclusions");
+                var png = NativeBlueprintCodecRegression.png();
+                try {
+                    HologramLocalBlueprintWorkspace.publishNewNativeCapture(library, capture, ID, png, () -> false);
+                    throw new AssertionError("retired capture published");
+                } catch (java.io.IOException expected) {
+                    check(library.list().isEmpty(), "cancel never changes the catalog or publishes a partial pair");
+                }
+                try {
+                    HologramLocalBlueprintWorkspace.publishNewNativeCapture(library, capture,
+                        "local_88888888-8888-8888-8888-888888888888", png, () -> true);
+                    throw new AssertionError("capture owned by a different slot was published");
+                } catch (java.io.IOException expected) {
+                    check(library.list().isEmpty(), "a valid capture cannot be rebound to a different save target");
+                }
+                var saved = HologramLocalBlueprintWorkspace.publishNewNativeCapture(library, capture, ID, png, () -> true);
+                check(saved.physicalHash.equals(capture.revision) && library.list().size() == 1
+                        && !Files.exists(library.directory().resolve(ID + ".json")),
+                    "the first save produces exactly one native source+PNG pair and no legacy intermediate file");
+                try (var definition = library.readPrivateEditorSource(ID).openNative()) {
+                    int chestId = definition.elementAt(6, 5, -3);
+                    var sourceHeader = definition.metadata();
+                    check(!sourceHeader.has("migration") && definition.cells() == 3
+                            && definition.elementAt(-2, 0, 1) > 0 && chestId > 0
+                            && sourceHeader.getAsJsonObject("fields").get("authorUuid").getAsString().equals(UUID_TEXT)
+                            && sourceHeader.getAsJsonObject("fields").get("name").getAsString().equals("Captured without legacy file"),
+                        "new capture contains exact saved geometry and real authorship, with no fabricated migration");
+                    var fields = definition.restoredFields(definition.extras(6, 5, -3, chestId));
+                    byte[] typed = Base64.getDecoder().decode(fields.get("tileNbt").getAsString());
+                    var reopened = net.minecraft.nbt.CompressedStreamTools.readCompressed(new java.io.ByteArrayInputStream(typed));
+                    check(reopened.getLong("fixtureLong") == 1234567891234567L
+                            && Arrays.equals(reopened.getByteArray("fixtureBytes"), new byte[] { 127, -1, 0, 67 })
+                            && reopened.getTagList("Inventory", 10).tagCount() == 1,
+                        "first save preserves binary special-block NBT (Long, byte array, inventory)");
+                }
+                try {
+                    HologramLocalBlueprintWorkspace.publishNewNativeCapture(library, capture, ID, png, () -> true);
+                    throw new AssertionError("native first save overwrote an occupied slot");
+                } catch (java.io.IOException expected) {
+                    check(library.readPrivateEditorSource(ID).nativePair().physicalHash.equals(saved.physicalHash),
+                        "occupied slot remains same exact source on refusal");
+                }
+            }
+            System.out.println("[GTMB-NATIVE-FIRST-SAVE] authored coordinates, binary payload, preview binding and no legacy intermediate PASS");
+        } finally {
+            try (Stream<Path> paths = Files.walk(root)) {
+                for (Path path : (Iterable<Path>) paths.sorted(Comparator.reverseOrder())::iterator)
+                    Files.deleteIfExists(path);
+            }
+        }
+    }
+
     private static byte[] tiny(int size)throws java.io.IOException{
         var image=new java.awt.image.BufferedImage(size,size,java.awt.image.BufferedImage.TYPE_INT_ARGB);
         image.setRGB(0,0,0xffeeaabb);var out=new java.io.ByteArrayOutputStream();javax.imageio.ImageIO.write(image,"PNG",out);return out.toByteArray();

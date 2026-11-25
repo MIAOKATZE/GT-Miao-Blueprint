@@ -8,6 +8,7 @@ import static com.miaokatze.gtmb.client.hologram.HologramLocalSaveTrace.mark;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
@@ -31,6 +32,9 @@ import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.FrozenDraft;
 import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.HistoryDelta;
 import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.LocalEditorOrigin;
 import com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument.LocalSaveIntent;
+import com.miaokatze.gtmb.hologram.HologramNativeBlueprintStorage;
+import com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintDefinition;
+import com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintPairStore;
 
 /** File I/O and viewport preparation for the ordinary in-client authoring workspace. */
 final class HologramLocalBlueprintWorkspace {
@@ -290,9 +294,8 @@ final class HologramLocalBlueprintWorkspace {
         beginOpening(current);
         HologramLibraryClient.INSTANCE.openPublic(
             id,
-            json -> work(
-                current,
-                () -> prepareOpen(current, new EditorSource(json, LocalEditorOrigin.STRICT), "", "已打开服务器蓝图的本地副本")),
+            source -> work(current, () -> prepareOpen(current, source,
+                source.nativePair() == null ? "" : source.nativePair().logicalId, "已打开服务器蓝图的本地副本")),
             reason -> failed(current, new IOException(reason)));
     }
 
@@ -460,6 +463,118 @@ final class HologramLocalBlueprintWorkspace {
             }
         }finally{java.nio.file.Files.deleteIfExists(temp);}
     }
+    static boolean nativeNewSave(HologramLocalBlueprintDocument draft, LocalSaveIntent intent, boolean experimental) {
+        // Temporary opt-in, only for a new logical slot. Never strand an existing playable legacy save.
+        return experimental && intent == LocalSaveIntent.SAVE_AS_NEW && draft.unsavedLocalCapture();
+    }
+
+    static final class NewNativeCapture implements AutoCloseable {
+        private final byte[] bytes;
+        final String id, revision;
+        final HologramState view;
+        private final NativeBlueprintDefinition definition;
+        private final Path temporary;
+
+        private NewNativeCapture(String id, byte[] bytes, NativeBlueprintDefinition definition, Path temporary,
+            HologramState view) {
+            this.id = id;
+            this.bytes = bytes;
+            this.revision = definition.revision();
+            this.definition = definition;
+            this.temporary = temporary;
+            this.view = view;
+        }
+
+        @Override
+        public void close() throws IOException {
+            try { definition.close(); }
+            finally { Files.deleteIfExists(temporary); }
+        }
+    }
+
+    static NewNativeCapture prepareNewNativeCapture(HologramLocalBlueprintDocument draft, NBTTagCompound options,
+        String author, UUID actor, String id, java.util.function.BooleanSupplier current) throws IOException {
+        if (!draft.unsavedLocalCapture()) throw new IOException("现有文件请走明确的原生蓝图迁移");
+        var frozen = draft.prepareSaveDraft(options, author, actor, id, LocalSaveIntent.SAVE_AS_NEW);
+        byte[] bytes = frozen.nativeArtifact(id, current).bytes;
+        Path temporary = Files.createTempFile("gtmb-authored-capture-", ".gtnb");
+        NativeBlueprintDefinition definition = null;
+        try {
+            Files.write(temporary, bytes);
+            definition = NativeBlueprintDefinition.open(temporary);
+            var view = HologramLibraryClient.nativeDisplayModel(definition, id, null, current);
+            if (!current.getAsBoolean()) throw new IOException("保存已取消");
+            return new NewNativeCapture(id, bytes, definition, temporary, view);
+        } catch (IOException | RuntimeException failure) {
+            try {
+                if (definition != null) definition.close();
+            } finally {
+                Files.deleteIfExists(temporary);
+            }
+            throw failure;
+        }
+    }
+
+    static NativeBlueprintPairStore.Receipt publishNewNativeCapture(HologramClientLibrary store,
+        NewNativeCapture capture, String id, byte[] png, java.util.function.BooleanSupplier current)
+        throws IOException {
+        if (!capture.id.equals(id)) throw new IOException("本地蓝图保存目标已变化");
+        var staged = HologramNativeBlueprintStorage.prepareAuthoredSave(store.directory(), id, capture.bytes,
+            capture.revision, png, current);
+        return HologramNativeBlueprintStorage.activate(store.directory(), staged, capture.revision, current);
+    }
+
+    private void saveNewNative(Task task, HologramClientLibrary store, NBTTagCompound options, String id,
+        String author, UUID actor, double yaw, double pitch) {
+        var owner = (java.util.function.BooleanSupplier) () -> current(task) && clientCurrent(task);
+        work(task, () -> {
+            var capture = prepareNewNativeCapture(task.draft, options, author, actor, id, owner);
+            try {
+                main(() -> {
+                    if (!owner.getAsBoolean()) {
+                        finishNewCapture(task, capture, new IOException("保存已取消"));
+                        return;
+                    }
+                    try {
+                        HologramBlueprintPreview.captureNative(capture.view, yaw, pitch, owner, image -> {
+                            if (!finishNewCapture(task, capture, null)) return;
+                            work(task, () -> {
+                                ByteArrayOutputStream png = new ByteArrayOutputStream();
+                                if (!ImageIO.write(image,"png",png)) throw new IOException("无法编码蓝图预览 PNG");
+                                var receipt = publishNewNativeCapture(store, capture, id, png.toByteArray(), owner);
+                                main(() -> {
+                                    if (!owner.getAsBoolean()) return;
+                                    HologramLibraryClient.INSTANCE.select(false,id);
+                                    HologramLibraryClient.INSTANCE.refreshLocal();
+                                    HologramUiLibrary.committedSave(task.source.session);
+                                    work(task, () -> prepareOpen(task, new EditorSource(null, LocalEditorOrigin.TRACKED_PRIVATE,
+                                        receipt), id, "原生蓝图已保存到客户端本地"));
+                                });
+                            });
+                        }, failure -> finishNewCapture(task, capture, failure));
+                    } catch (RuntimeException failure) {
+                        finishNewCapture(task, capture, failure);
+                    }
+                });
+            } catch (RuntimeException failure) {
+                finishNewCapture(task, capture, failure);
+            }
+        });
+    }
+
+    private boolean finishNewCapture(Task task, NewNativeCapture capture, Throwable failure) {
+        try { capture.close(); }
+        catch (IOException closeFailure) {
+            if (failure == null) failure = closeFailure;
+            else failure.addSuppressed(closeFailure);
+        }
+        if (failure != null) {
+            failed(task, failure);
+            return false;
+        }
+        return true;
+    }
+
     void save(NBTTagCompound options, String replaceId, LocalSaveIntent intent) {
         Minecraft mc = ui.host.minecraft();
         if (!catalogAvailable() || ui.session.document() == null || mc.thePlayer == null) return;
@@ -475,6 +590,9 @@ final class HologramLocalBlueprintWorkspace {
         double yaw = ui.preview.yaw(), pitch = ui.preview.pitch();
         if(current.draft.nativeDraft()!=null){
             saveNative(current,store,saveOptions,id,intent,authorName,authorId,yaw,pitch);return;
+        }
+        if (nativeNewSave(current.draft, intent, Boolean.getBoolean("gtmb.nativeBlueprint.newSave"))) {
+            saveNewNative(current,store,saveOptions,id,authorName,authorId,yaw,pitch);return;
         }
         tracedWork(current, Stage.DRAFT_IO_QUEUED, Stage.JSON_FREEZE_BEGIN, () -> {
             var prepared = current.draft.prepareSaveDraft(saveOptions, authorName, authorId, id, intent);
@@ -865,19 +983,32 @@ final class HologramLocalBlueprintWorkspace {
         if (current != null && current.attachmentRequest == request && current(current)) task = null;
     }
 
+    boolean savedNativePlacementReady(){
+        var doc=ui.session.document();
+        return doc!=null&&doc.nativeDraft()!=null&&!doc.dirty()&&doc.nativeReceipt()!=null;
+    }
+
+    boolean placeNativeSaved(){
+        var doc=ui.session.document();
+        if(doc==null||doc.nativeDraft()==null)return false;
+        if(!savedNativePlacementReady()){
+            ui.session.notice("请先保存蓝图，再提交施工");
+            return false;
+        }
+        var saved=doc.nativeReceipt();
+        return HologramLibraryClient.INSTANCE.previewLocal(saved.logicalId,true,saved);
+    }
+
     void placeCurrent() {
         if (ui.session.document() == null) return;
-        if(ui.session.document().nativeDraft()!=null){ui.session.notice("原生蓝图施工尚未启用，不使用旧施工包");return;}
-        Task current = begin("正在准备蓝图预览");
-        if (current == null) return;
-        work(current, () -> {
-            var draft = current.draft.freeze();
-            main(() -> {
-                if (task != current) return;
-                task = null;
-                if (screenCurrent(current)) HologramLibraryClient.INSTANCE.previewDraftPlacement(draft);
-            });
-        });
+        var document = ui.session.document();
+        if (document.nativeDraft() != null) {
+            placeNativeSaved();
+            return;
+        }
+        ui.session.notice(document.dirty()||document.fileId().isEmpty()
+            ?"请先保存蓝图，再提交施工"
+            :"旧蓝图请在客户端蓝图库维护页升级指定文件，重开原生版本后再施工");
     }
 
     private void prepareView(Task current, HologramLocalBlueprintDocument document, String notice) throws IOException {

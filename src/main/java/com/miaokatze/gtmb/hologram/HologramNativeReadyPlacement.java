@@ -178,7 +178,6 @@ final class HologramNativeReadyPlacement {
             || s.localPlanPending
             || !s.localPlanError.isEmpty()
             || s.executionStart != null
-            || s.currentPlacementTask != null
             || s.voucherCoverageTask != null
             || s.attachmentTask != null
             || s.presentationTransition != null

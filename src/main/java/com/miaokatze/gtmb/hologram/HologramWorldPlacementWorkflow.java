@@ -20,74 +20,6 @@ final class HologramWorldPlacementWorkflow {
 
     private HologramWorldPlacementWorkflow() {}
 
-    /** The current server draft is a placement source; a library save is never an admission requirement. */
-    static void placeCurrentBlueprint(HologramSession s, NBTTagCompound request) throws java.io.IOException {
-        if (HologramWorkspace.find(s.player.getUniqueID()) != s || s.cancelled
-            || !s.id.equals(request.getString("session"))
-            || !request.hasKey("editorWorkspaceEpoch", 4)
-            || request.getLong("editorWorkspaceEpoch") != s.editorWorkspaceEpoch
-            || !request.hasKey("planRevision", 4)
-            || request.getLong("planRevision") != s.planRevision
-            || !HologramSessionPolicy.valid(s)
-            || !com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector.isProjector(s.player.getHeldItem()))
-            throw new java.io.IOException("蓝图会话、工具或计划已变化，请重新打开当前蓝图");
-        if (!HologramSessionPolicy.authoring(s) || s.settingsOnly
-            || s.presetBrowseForPlacement
-            || s.job == 1
-            || s.job == 2
-            || s.job == 4
-            || s.capture == null
-            || s.capture.cells.isEmpty()
-            || s.capture.incomplete
-            || s.capture.pending
-            || s.capture.projectionOnly
-            || !s.capture.sourceCurrent()
-            || s.capturePending
-            || s.attachmentTask != null
-            || HologramAttachmentUpload.pending(s)
-            || s.localPlanPending
-            || s.currentPlacementTask != null
-            || !s.blueprintSaveReceipt.isEmpty()
-            || HologramAeCraftingOrders.active(s.player)
-            || !s.player.capabilities.allowEdit
-            || HologramSessionPolicy.blockedByAreaImport(s)) throw new java.io.IOException("请等待当前蓝图与附加对象处理完成，再放置当前蓝图");
-        if (s.processingWorkflowStarted && !s.processingReviewed)
-            throw new java.io.IOException("请先完成当前蓝图处理流程，再放置当前蓝图；无需保存");
-        if (!HologramWorldFlow.worldPosition(s.x, s.y, s.z, s.player.worldObj.getHeight())
-            || !HologramSessionPolicy.previewReach(s.player, s.x, s.y, s.z)
-            || !s.player.worldObj.blockExists(s.x, s.y, s.z)) throw new java.io.IOException("当前位置不可用于放置；请靠近已加载区域后重试");
-        // Freeze and validate over bounded owner-thread slices; bitmap decoding stays on the detached worker.
-        s.currentPlacementTask = new HologramCurrentPlacementPreparation(s);
-        s.status = "正在核对当前蓝图；无需保存，完成后进入世界定位";
-    }
-
-    static void publishCurrentPlacement(HologramSession s, HologramPresets.Preset draft) {
-        s.virtualPreset = draft;
-        s.processingSource = draft;
-        s.geometryEdits.validationPending = false;
-        s.target = null;
-        s.machine = null;
-        s.context = null;
-        s.constructable = null;
-        s.mode = 0;
-        s.job = 0;
-        HologramSessionPolicy.clearPlacementSelection(s);
-        s.placementReviewNonce++;
-        s.ae.invalidateReviews();
-        s.virtualPlacement = true;
-        s.virtualLocked = false;
-        s.blueprintAwaitingConfirmation = false;
-        s.placementReviewIssued = false;
-        s.forcePlacementReady = false;
-        HologramDeferredPlanRefresh.request(s, java.util.Collections.emptySet());
-        HologramProjectorWorkflow.libraryCloseUi(s);
-        s.settingsOnly = false;
-        s.presetBrowseForPlacement = false;
-        s.openPurpose = "blueprintPlacement";
-        s.status = "移动鼠标预览位置；右键锁定位置，再次右键核对材料与 NBT，Esc 取消放置";
-        // Keep source identity, dirty state and save receipt untouched. Only reviewed construction can pay/write.
-    }
-
     static void openVirtual(EntityPlayerMP player, int x, int y, int z, int side, String presetId) {
         HologramSession previous = HologramWorkspace.find(player.getUniqueID());
         if (previous != null && previous.player == player && HologramSessionPolicy.blockedByAreaImport(previous)) {
@@ -116,102 +48,16 @@ final class HologramWorldPlacementWorkflow {
         HologramSnapshots.send(s);
     }
 
-    /** Last selection belongs to the held logical tool; shortcut loading uses the ordinary validated preset path. */
-    static void quickPlaceLastBlueprint(EntityPlayerMP player, NBTTagCompound request) {
-        boolean dedicated = HologramLibraryFacade.enabled();
-        if (dedicated) {
-            if (!HologramLibraryService.connectedProjector(player)) return;
-            ItemStack held = player.getHeldItem();
-            HologramSession current = HologramWorkspace.find(player.getUniqueID());
-            String remembered = held != null && held.hasTagCompound()
-                ? held.getTagCompound().getString(HologramSessionKeys.SELECTED_PRESET) : "";
-            if (current != null && current.player == player && current.projectionDiscardApproved
-                && "projectionQuickPlace".equals(request.getString("op"))) remembered = request.getString("presetId");
-            if (!request.getString("publicPresetId").isEmpty() || HologramPresetWorkflow.publicLibraryId(remembered)) {
-                HologramPresetWorkflow.refusePublicHydration(player);
-                return;
-            }
-        }
-        HologramSession previous = HologramProjectorWorkflow.uiSession(player);
-        if (!HologramSessionPolicy.valid(previous)) return;
-        String id = HologramSessionPolicy.selectedPreset(previous);
-        if (previous.projectionDiscardApproved && "projectionQuickPlace".equals(request.getString("op")))
-            id = request.getString("presetId");
-        if (dedicated && HologramPresetWorkflow.publicLibraryId(id)) {
+    static void quickPlaceLastBlueprint(EntityPlayerMP player,NBTTagCompound obsolete){
+        var held=player.getHeldItem();
+        String remembered=held!=null&&held.hasTagCompound()?held.getTagCompound().getString(HologramSessionKeys.SELECTED_PRESET):"";
+        if(HologramLibraryFacade.enabled()&&(!obsolete.getString("publicPresetId").isEmpty()
+            ||HologramPresetWorkflow.publicLibraryId(remembered))){
             HologramPresetWorkflow.refusePublicHydration(player);
             return;
         }
-        HologramArea area = HologramWorkspace.AREAS.get(player.getUniqueID());
-        if (previous.job == 1 || previous.job == 2
-            || area != null && (area.selecting || area.importing)
-            || previous.virtual && previous.virtualPlacement
-                && previous.job != 3
-                && previous.job != 4
-                && previous.job != 5) {
-            previous.status = "请先完成当前框选或放置，再快捷放置蓝图";
-            HologramPresetWorkflow.presetGuidance(previous, previous.status);
-            HologramSnapshots.send(previous);
-            return;
-        }
-        if (id.isEmpty()) {
-            previous.status = "尚未选择有效蓝图，或上次选择已删除；普通右键打开蓝图库重新选择后可用 Alt + 右键快捷放置";
-            HologramPresetWorkflow.presetGuidance(previous, previous.status);
-            HologramSnapshots.send(previous);
-            return;
-        }
-        int x = request.getInteger("x"), y = request.getInteger("y"), z = request.getInteger("z");
-        if (!request.hasKey("x", 3) || !request.hasKey("y", 3)
-            || !request.hasKey("z", 3)
-            || !request.hasKey("side", 3)
-            || request.getInteger("side") < 0
-            || request.getInteger("side") > 5
-            || !HologramWorldFlow.worldPosition(x, y, z, player.worldObj.getHeight())
-            || !HologramSessionPolicy.previewReach(player, x, y, z)
-            || !player.worldObj.blockExists(x, y, z)) {
-            previous.status = "快捷放置位置未加载或超出范围；请靠近目标后重试";
-            HologramPresetWorkflow.presetGuidance(previous, previous.status);
-            HologramSnapshots.send(previous);
-            return;
-        }
-        try {
-            if (HologramLibraryFacade.get(player, id) == null) throw new java.io.IOException("蓝图不存在");
-        } catch (java.io.IOException unavailable) {
-            previous.status = "快捷放置失败：" + unavailable.getMessage();
-            HologramPresetWorkflow.presetGuidance(previous, previous.status);
-            HologramSnapshots.send(previous);
-            return;
-        }
-        if (!HologramAuthoringWorkflow.allowBlueprintDiscard(
-            previous,
-            request,
-            HologramEditorWorkspaceRegistry.physicalProjection(previous) ? "projectionQuickPlace"
-                : "choosePlacementPreset",
-            id)) {
-            previous.open = true;
-            HologramSnapshots.send(previous);
-            return;
-        }
-        HologramSession placement = HologramWorkspace.create(player, x, y, z, false, request.getInteger("side"));
-        HologramLibraryWorkflow.copyLibraryIntent(previous, placement);
-        placement.virtual = true;
-        HologramPresetWorkflow.loadPreset(placement, id, false);
-        if (placement.virtualPreset == null || placement.capture == null
-            || placement.capture.incomplete
-            || !virtualBoundsValid(placement)
-            || !beginVirtualPlacement(placement, x, y, z, placement.side)) {
-            previous.status = "上次选择的蓝图不可快捷放置：" + placement.status + "；普通右键打开蓝图库重新选择";
-            HologramPresetWorkflow.presetGuidance(previous, previous.status);
-            HologramSnapshots.send(previous);
-            return;
-        }
-        HologramWorkspace.clearAreaSelection(previous);
-        placement.openPurpose = "blueprintPlacement";
-        if (HologramEditorWorkspaceRegistry.physicalProjection(previous)) {
-            HologramWorkspace.PresentationTransition transition = HologramWorkspace
-                .preparePresentation(previous, placement);
-            if (transition == null || !HologramWorkspace.activatePresentation(transition)) return;
-        } else HologramWorkspace.activate(player.getUniqueID(), placement);
-        HologramSnapshots.send(placement);
+        // Old clients get guidance without reading old files, starting previews or acquiring a construction lease.
+        player.addChatMessage(new net.minecraft.util.ChatComponentText("快捷施工只读取客户端已保存的原生蓝图；请先从客户端蓝图库选择"));
     }
 
     static boolean virtualBoundsValid(HologramSession s) {

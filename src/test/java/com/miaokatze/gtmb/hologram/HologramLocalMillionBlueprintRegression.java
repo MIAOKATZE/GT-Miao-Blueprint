@@ -26,7 +26,6 @@ public final class HologramLocalMillionBlueprintRegression {
             || HologramBlueprintLimits.acceptsLocal(-1)
             || HologramBlueprintLimits.acceptsLocal(Long.MAX_VALUE))
             throw new AssertionError("local cell limit has an off-by-one or overflow");
-        transactionBounds(expected);
         AtomicInteger callbacks = new AtomicInteger();
         long start = System.nanoTime();
         var opened = HologramLocalBlueprintDocument.openStoredForEditor(
@@ -71,36 +70,6 @@ public final class HologramLocalMillionBlueprintRegression {
             + Long.toUnsignedString(originalFingerprint) + " noGame=true noNetwork=true");
     }
 
-    private static void transactionBounds(int count) throws Exception {
-        UUID request = new UUID(1, 2);
-        var variant = new HologramProjectedLayerWire.Variant(
-            "minecraft:stone", 0, "minecraft:stone", 0, -1, false, "", "", count);
-        var header = new HologramProjectedLayerWire.Header(request, 0, 64, 0,
-            0, 64, 0, count - 1, 64, 0, count,
-            (count + HologramProjectedLayerWire.MAX_SLICE_CELLS - 1) / HologramProjectedLayerWire.MAX_SLICE_CELLS,
-            java.util.Collections.singletonList(variant));
-        if (header.cells != count || HologramProjectedLayerWire.MAX_SLICE_CELLS != 512
-            || HologramProjectedLayerWire.MAX_SLICE_BYTES != 8192)
-            throw new AssertionError("whole-job admission changed per-slice bounds");
-        try {
-            new HologramProjectedLayerWire.Variant("minecraft:stone", 0, "minecraft:stone", 0,
-                -1, false, "", "", HologramBlueprintLimits.LOCAL_CELLS + 1);
-            throw new AssertionError("oversized projected transaction admitted");
-        } catch (java.io.IOException expected) {}
-        try {
-            new HologramProjectedLayerWire.Slice(request, 0, 64, new int[(512 + 1) * 3]);
-            throw new AssertionError("oversized single slice admitted");
-        } catch (java.io.IOException expected) {}
-        var unit = new net.minecraft.item.ItemStack(net.minecraft.init.Blocks.stone, 1);
-        var term = new HologramLayerStockBill.Term(unit, 1, 1);
-        var bill = new HologramLayerStockBill(java.util.Collections.singletonList(new HologramLayerStockBill.Row(count, term)));
-        if (bill.required().size() != 1 || bill.required().get(0).count != count)
-            throw new AssertionError("large job material arithmetic changed");
-        try {
-            new HologramLayerStockBill.Row(HologramBlueprintLimits.LOCAL_CELLS + 1, term);
-            throw new AssertionError("stock total exceeds explicit local transaction bound");
-        } catch (java.io.IOException expected) {}
-    }
     private static long fingerprint(HologramBlueprintCompactCodec.DisplayRows rows) {
         long hash = 0xcbf29ce484222325L;
         for (int i = 0; i < rows.materials(); i++) {

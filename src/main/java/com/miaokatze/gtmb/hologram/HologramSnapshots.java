@@ -741,7 +741,6 @@ final class HologramSnapshots {
         state.setTag("textPlacementAck", s.textPlacementAck.copy());
         state.setBoolean("geometryValidationPending", s.geometryEdits.validationPending);
         state.setBoolean("attachmentPending", s.attachmentTask != null);
-        state.setBoolean("currentPlacementPending", s.currentPlacementTask != null);
         state.setBoolean("workspaceHasCapture", s.capture != null);
         state.setBoolean("workspaceCapturePending", s.capturePending);
         state.setBoolean("snapshotPending", s.capture != null || s.capturePending);
@@ -956,7 +955,6 @@ final class HologramSnapshots {
             state.setString("editorWorkspacePreviousSession", s.presentationTransition.originId);
         state.setBoolean("geometryValidationPending", s.geometryEdits.validationPending);
         state.setBoolean("attachmentPending", s.attachmentTask != null);
-        state.setBoolean("currentPlacementPending", s.currentPlacementTask != null);
         state.setTag("textPlacementAck", s.textPlacementAck.copy());
         state.setBoolean("placementValidating", s.placementValidating || s.executionStart != null);
         state.setBoolean("open", s.open);

@@ -109,19 +109,19 @@ final class HologramLibraryMaterialForecastRegression {
         var forecast = HologramLibraryMaterialForecast.project(tally.snapshot());
         SimpleAssert.that(
             forecast.candidates()
-                .size() == 5
+                .size() == 8
                 && forecast.candidates()
                     .get(0)
                     .cells() == 3
                 && forecast.unpriced()
-                    .nonOrdinary() == 7
+                    .nonOrdinary() == 4
                 && forecast.unpriced()
-                    .cells() == 10,
-            "only equal canonical vanilla names with stable plain metadata are even resolution candidates");
+                    .cells() == 7,
+            "structural candidates are registry-named tuples; no cost or readiness is inferred without resolution");
         var skipped = forecast.stockRows(null, null, -1);
         SimpleAssert.that(
             skipped.getTagList("rows", 10)
-                .tagCount() == 0 && skipped.getLong("unresolvedItems") == 7
+                .tagCount() == 0 && skipped.getLong("unresolvedItems") == 10
                 && skipped.getLong("unaccounted") == 17
                 && skipped.getInteger("airCells") == 1,
             "without explicit resolution, all candidate costs are still unknown");
@@ -143,6 +143,7 @@ final class HologramLibraryMaterialForecastRegression {
             if ("minecraft:stonebrick".equals(name)) return proved("minecraft:stone", new ItemStack(Blocks.stone));
             if ("minecraft:planks".equals(name)) return proved(name, taggedResult);
             if ("minecraft:glass".equals(name)) return null; // No proof this runtime kept ordinary provider semantics.
+            if("minecraft:log".equals(name)||"minecraft:quartz_block".equals(name)||"detached:provider".equals(name))return null;
             throw new AssertionError("nonordinary, tagged and extension source descriptors cannot reach the resolver");
         },
             new ItemStack[] { new ItemStack(Blocks.stone, 60, 0), stone, fakeStock,
@@ -164,7 +165,7 @@ final class HologramLibraryMaterialForecastRegression {
                 && "1".equals(rows.row(1).available),
             "reuse exact backpack arithmetic; tags and protected slot do not count");
         SimpleAssert.that(
-            stock.getLong("unaccounted") == 13 && stock.getLong("unresolvedItems") == 3
+            stock.getLong("unaccounted") == 13 && stock.getLong("unresolvedItems") == 6
                 && !stock.hasKey("complete")
                 && !rows.ready()
                 && !rows.hasItemShortage(),
@@ -269,8 +270,8 @@ final class HologramLibraryMaterialForecastRegression {
                     stonebrick.identity()
                         .registry())
                     && stonebrick.blueprintCells() == 1
-                    && stonebrick.visibleBackpackCount() == null,
-                "an unresolved but recognized source row remains visible without a zero stock");
+                    && Long.valueOf(64).equals(stonebrick.visibleBackpackCount()),
+                "registered plain metadata counts only the exact inventory damage");
             SimpleAssert.that(
                 HologramLibraryMaterialDescription.describe(null, inventory, 0) == null
                     && HologramLibraryMaterialDescription.describe(forecast, null, 0)

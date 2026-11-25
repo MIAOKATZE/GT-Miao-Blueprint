@@ -31,7 +31,7 @@ final class HologramStockEbfConstruction {
     private final ItemStack projector, pinnedTool, trigger;
     private final NBTTagCompound channels;
     private final long epoch, plan;
-    private final int ax, ay, az, side, slot, main, priority, recoveryDestination;
+    private final int ax, ay, az, side, slot, main, priority, recoveryDestination,sourceKey;
     private final boolean mainExplicit, noHatches;
     private int cx, cy, cz, activeRow = -1, placed;
     private boolean positioned, loaded, advancing;
@@ -81,6 +81,7 @@ final class HologramStockEbfConstruction {
         main = session.main;
         mainExplicit = session.mainExplicit;
         noHatches = session.noHatches;
+        sourceKey=HologramProjectedMainPolicy.settingsKey(settings);
         priority = settings.priority;
         recoveryDestination = settings.recoveryDestination;
     }
@@ -107,7 +108,7 @@ final class HologramStockEbfConstruction {
             && HologramWorkspace.find(endpoint.actor) == session && session.stockNativePrivate
             && (area == null || !area.selecting && !area.importing)
             && !session.blueprintDirty && session.blueprintSaveReceipt.isEmpty()
-            && session.currentPlacementTask == null && session.executionStart == null
+            && session.executionStart == null
             && session.nativeReadyPlacement == null && session.nativeCompactStart == null
             && session.presentationTransition == null
             && !actor.isDead && actor.capabilities.allowEdit && !actor.capabilities.isCreativeMode
@@ -122,8 +123,8 @@ final class HologramStockEbfConstruction {
             && session.coordinatePins.isEmpty() && session.facingPins.isEmpty() && session.manualPositions.isEmpty()
             && session.nativeOperationInputs == null && session.pendingAssetBudget.isEmpty()
             && session.cellAssetBudgets.isEmpty() && !session.jobVoucherRequested && !StructureLibAPI.isInstrumentEnabled()
-            && session.materialSettings == settings && settings.main && !settings.containers && !settings.me
-            && settings.priority == priority && priority == 0 && settings.recoveryDestination == recoveryDestination
+            && session.materialSettings == settings && sourceKey>=0 && sourceKey==HologramProjectedMainPolicy.settingsKey(settings)
+            && settings.priority == priority && settings.recoveryDestination == recoveryDestination
             && actor.inventory == inventory && inventory.mainInventory == mainInventory && inventory.currentItem == slot
             && slot >= 0 && slot < mainInventory.length && mainInventory[slot] == projector
             && ItemStack.areItemStacksEqual(projector, pinnedTool)
@@ -131,7 +132,7 @@ final class HologramStockEbfConstruction {
     }
 
     private boolean current(boolean journal) {
-        return bound(null) && permitted() && (!journal || !HologramProjectedLayerService.hasKnownRecovery(endpoint.player))
+        return bound(null) && permitted() && (!journal || !HologramConstructionAuthority.hasKnownRecovery(endpoint.player))
             && site.physicalCurrent() && transportCurrent() && bound(null) && permitted();
     }
 

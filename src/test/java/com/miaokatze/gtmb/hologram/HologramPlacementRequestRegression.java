@@ -73,59 +73,28 @@ final class HologramPlacementRequestRegression {
             RetiredReceiptChannel captured = new RetiredReceiptChannel();
             channel.set(null, captured);
             long reads = worldReads(world);
-            UUID actionId = UUID.randomUUID(), fragmentId = UUID.randomUUID(), staleId = UUID.randomUUID();
-            NBTTagCompound whole = (NBTTagCompound) original.copy();
-            whole.setString("placementRequestId", actionId.toString());
-            whole.setString("op", "snapshotFlow"); // Refusal must precede any snapshot-capability handling.
-            HologramNetwork.Action packet = retiredAction(whole);
-            HologramNetwork.ServerHandler actions = new HologramNetwork.ServerHandler();
-            HologramRetiredPlacementPackets.Handler fragments = new HologramRetiredPlacementPackets.Handler();
-            HologramRetiredPlacementPackets.RetiredFrame first = retiredFrame(fragmentId, 0);
-            HologramRetiredPlacementPackets.RetiredFrame suffix = retiredFrame(fragmentId, 1);
-            actions.onMessage(packet, context);
-            fragments.onMessage(first, context);
-            placementTick();
-            SimpleAssert.eq(0, captured.sends, "an unpublished endpoint cannot start or receive a refusal");
-
-            HologramWorkspace.publishActionEndpoint(player, false);
-            actions.onMessage(packet, context);
-            fragments.onMessage(first, context); // Same exact endpoint: only one identity-only reply may queue.
-            placementTick();
-            captured.assertRefusal(player, actionId, 1);
-            fragments.onMessage(suffix, context);
-            placementTick();
-            SimpleAssert.eq(1, captured.sends, "suffixes do not allocate a job or amplify replies");
-            fragments.onMessage(first, context);
-            placementTick();
-            captured.assertRefusal(player, fragmentId, 2);
-
-            fragments.onMessage(retiredFrame(staleId, 0), context);
-            HologramWorkspace.publishActionDimension(player);
-            placementTick();
-            SimpleAssert.eq(2, captured.sends, "refusal cannot redirect after an authenticated endpoint transition");
-            HologramConstructionReceipts.retire(player, staleId.toString());
-            fragments.onMessage(retiredFrame(staleId, 0), context);
-            placementTick();
-            SimpleAssert.eq(2, captured.sends, "a request ID already owned by a native lane is not failed by old frames");
-            SimpleAssert.eq(reads, worldReads(world), "old wire rejection never checks world geometry");
-            SimpleAssert.that(HologramWorkspace.find(player.getUniqueID()) == null
-                && !HologramConstructionReceipts.consumed(player, actionId.toString())
-                && !HologramConstructionReceipts.consumed(player, fragmentId.toString()),
-                "refusal never starts an upload, reserves an ID, installs a workspace or queues a placement job");
-            liveLayerProbe(player, context, captured);
-            UUID retiredQuoteId = UUID.randomUUID();
-            NBTTagCompound retiredQuote = (NBTTagCompound) whole.copy();
-            retiredQuote.setString("action", "checkPlacementMaterials");
-            retiredQuote.setString("placementRequestId", retiredQuoteId.toString());
-            actions.onMessage(retiredAction(retiredQuote), context);
-            placementTick();
-            captured.assertRefusal(player, retiredQuoteId, 5);
-            SimpleAssert.eq(reads, worldReads(world), "ordinary negotiation and retired quote never inspect geometry");
-            reciprocalLegacyRefusal(player, world, captured);
+            UUID actionId=UUID.randomUUID();
+            var whole=(NBTTagCompound)original.copy();
+            whole.setString("placementRequestId",actionId.toString());
+            whole.setString("op","snapshotFlow");
+            var actions=new HologramNetwork.ServerHandler();
+            var packet=retiredAction(whole);
+            actions.onMessage(packet,context);placementTick();
+            SimpleAssert.eq(0,captured.sends,"unpublished endpoint has no refusal authority");
+            HologramWorkspace.publishActionEndpoint(player,false);
+            actions.onMessage(packet,context);placementTick();
+            captured.assertRefusal(player,actionId,1);
+            var quote=(NBTTagCompound)whole.copy();UUID quoteId=UUID.randomUUID();
+            quote.setString("action","checkPlacementMaterials");quote.setString("placementRequestId",quoteId.toString());
+            actions.onMessage(retiredAction(quote),context);placementTick();
+            captured.assertRefusal(player,quoteId,2);
+            SimpleAssert.eq(reads,worldReads(world),"retired actions do not inspect the world");
+            SimpleAssert.that(HologramWorkspace.find(player.getUniqueID())==null
+                &&!HologramConstructionReceipts.consumed(player,actionId.toString()),
+                "retired action cannot install a session, queue work or claim an ID");
         } catch (ReflectiveOperationException failure) {
             throw new AssertionError("Retired placement production ingress fixture", failure);
         } finally {
-            HologramNetwork.closeProjectedLayerServer();
             if (player != null) {
                 HologramWorkspace.revokeActionEndpoint(player);
                 player.playerNetServerHandler.netManager.channel().close();
@@ -136,122 +105,6 @@ final class HologramPlacementRequestRegression {
                 throw new AssertionError(failure);
             }
         }
-    }
-
-    private static void liveLayerProbe(EntityPlayerMP player, MessageContext context, RetiredReceiptChannel captured)
-        throws ReflectiveOperationException {
-        HologramNetwork.ServerHandler ingress = new HologramNetwork.ServerHandler();
-        NBTTagCompound oldNoOp = new NBTTagCompound();
-        oldNoOp.setString("action", "serverRules");
-        ingress.onMessage(retiredAction(oldNoOp), context);
-        placementTick();
-        SimpleAssert.eq(2, captured.sends, "the old bare rules probe stays a no-op before generic dispatch");
-
-        long swappedIntent = HologramNetwork.nextConstructionIntentSequence();
-        SimpleAssert.that(HologramNetwork.sendProjectedLayerProbe(UUID.randomUUID(), swappedIntent),
-            "a live actual-confirm probe can enter the authenticated queue before a slot change");
-        HologramNetwork.Action swapped = (HologramNetwork.Action) captured.outbound;
-        ingress.onMessage(swapped, context);
-        int originalSlot = player.inventory.currentItem;
-        try {
-            player.inventory.currentItem = originalSlot == 0 ? 1 : 0;
-            placementTick();
-        } finally {
-            player.inventory.currentItem = originalSlot;
-        }
-        ingress.onMessage(swapped, context);
-        placementTick();
-        SimpleAssert.eq(2, captured.sends,
-            "a queued probe cannot mint against the replacement projector and returning to the old slot cannot remint it");
-
-        UUID id = UUID.randomUUID();
-        long firstIntent = HologramNetwork.nextConstructionIntentSequence();
-        SimpleAssert.that(HologramNetwork.sendProjectedLayerProbe(id, firstIntent)
-            && captured.outbound instanceof HologramNetwork.Action,
-            "production sends the confirmation probe over the prior known Action discriminator");
-        NBTTagCompound probe = ((HologramNetwork.Action) captured.outbound).tag;
-        SimpleAssert.that(probe.func_150296_c().size() == 4 && !probe.hasKey("clientSnapshotFlow")
-            && "serverRules".equals(probe.getString("action")),
-            "confirmation probe contains no geometry or local-view capability fields");
-
-        NBTTagCompound piggyback = (NBTTagCompound) probe.copy();
-        piggyback.setIntArray("placementOperations", new int[] { 1, 64, 1, 0 });
-        HologramNetwork.Action unrelated = new HologramNetwork.Action();
-        unrelated.tag = piggyback;
-        ingress.onMessage(unrelated, context);
-        placementTick();
-        SimpleAssert.eq(2, captured.sends, "unknown fields are not accepted as an actual-confirm probe");
-
-        HologramNetwork.Action exact = (HologramNetwork.Action) captured.outbound;
-        ingress.onMessage(exact, context);
-        placementTick();
-        HologramWorkspace.ActionEndpoint endpoint = HologramWorkspace.captureActionEndpoint(player.playerNetServerHandler);
-        long generation = endpoint.constructionScope.generation;
-        NBTTagCompound proof = captured.receipt;
-        SimpleAssert.that(captured.recipient == player && captured.sends == 3 && proof.func_150296_c().size() == 5
-            && proof.getBoolean("serverRulesOnly") && proof.getInteger("ordinaryLayerProbe") == HologramProjectedLayerTransport.VERSION
-            && id.toString().equals(proof.getString("ordinaryLayerRequest"))
-            && proof.getLong("ordinaryLayerIntent") == firstIntent && proof.getLong("ordinaryLayerGeneration") == generation,
-            "owned proof is tiny and binds the actual lifecycle scope");
-
-        Field clientReceiver = HologramNetwork.class.getDeclaredField("projectedLayerNegotiation");
-        clientReceiver.setAccessible(true);
-        var before = (HologramNetwork.ProjectedLayerNegotiation) clientReceiver.get(null);
-        int[] negotiated = { 0 };
-        try {
-            HologramNetwork.setProjectedLayerNegotiation((request, intent, version, scope, inbound) -> {
-                SimpleAssert.that(id.equals(request) && intent == firstIntent && version == HologramProjectedLayerTransport.VERSION && scope == generation
-                    && inbound == context.netHandler, "probe conveys the actual inbound play-handler identity");
-                negotiated[0]++;
-            });
-            NBTTagCompound oldReply = new NBTTagCompound();
-            oldReply.setBoolean("serverRulesOnly", true);
-            new HologramNetwork.ClientHandler().onMessage(new HologramNetwork.State(oldReply), context);
-            SimpleAssert.eq(0, negotiated[0], "old generic rules response cannot unlock typed packet transmission");
-            NBTTagCompound obsoleteProof = (NBTTagCompound) proof.copy();
-            obsoleteProof.setInteger("ordinaryLayerProbe", HologramProjectedLayerTransport.VERSION - 1);
-            new HologramNetwork.ClientHandler().onMessage(new HologramNetwork.State(obsoleteProof), context);
-            SimpleAssert.eq(0, negotiated[0], "old-version proof cannot unlock the modern bounded-window transport");
-            new HologramNetwork.ClientHandler().onMessage(new HologramNetwork.State(proof), context);
-            SimpleAssert.eq(1, negotiated[0], "the exact production receipt reaches normal client negotiation");
-        } finally {
-            HologramNetwork.setProjectedLayerNegotiation(before);
-        }
-
-        Method claim = HologramNetwork.class.getDeclaredMethod(
-            "consumeProjectedLayerTicket", HologramWorkspace.ActionEndpoint.class, HologramProjectedLayerTransport.Key.class);
-        claim.setAccessible(true);
-        var key = new HologramProjectedLayerTransport.Key(id, firstIntent, generation);
-        var wrong = new HologramProjectedLayerTransport.Key(UUID.randomUUID(), firstIntent, generation);
-        SimpleAssert.that(!Boolean.TRUE.equals(claim.invoke(null, endpoint, wrong))
-            && Boolean.TRUE.equals(claim.invoke(null, endpoint, key))
-            && !Boolean.TRUE.equals(claim.invoke(null, endpoint, key)),
-            "actual server BEGIN authorizer requires an issued exact ticket and consumes it once");
-        ingress.onMessage(exact, context);
-        HologramWorkspace.publishActionDimension(player);
-        placementTick();
-        ingress.onMessage(exact, context);
-        placementTick();
-        SimpleAssert.eq(3, captured.sends, "late old probe cannot renew across an exact endpoint transition");
-
-        long secondIntent = HologramNetwork.nextConstructionIntentSequence();
-        UUID second = UUID.randomUUID();
-        SimpleAssert.that(secondIntent > firstIntent && HologramNetwork.sendProjectedLayerProbe(second, secondIntent),
-            "a new explicit confirmation may negotiate a new intent");
-        ingress.onMessage((HologramNetwork.Action) captured.outbound, context);
-        placementTick();
-        HologramWorkspace.ActionEndpoint current = HologramWorkspace.captureActionEndpoint(player.playerNetServerHandler);
-        var secondKey = new HologramProjectedLayerTransport.Key(second, secondIntent, current.constructionScope.generation);
-        int previousSlot = player.inventory.currentItem;
-        try {
-            player.inventory.currentItem = previousSlot == 0 ? 1 : 0;
-            SimpleAssert.that(!Boolean.TRUE.equals(claim.invoke(null, current, secondKey)),
-                "the probe's exact server-held slot must still agree at the new BEGIN");
-        } finally {
-            player.inventory.currentItem = previousSlot;
-        }
-        SimpleAssert.that(!Boolean.TRUE.equals(claim.invoke(null, current, secondKey)) && captured.sends == 4,
-            "returning to the original tool cannot resurrect a refused begin");
     }
 
     private static void reciprocalLegacyRefusal(EntityPlayerMP player,
@@ -315,7 +168,7 @@ final class HologramPlacementRequestRegression {
             SimpleAssert.that(order.contains("已有施工") && !HologramAeCraftingOrders.active(player),
                 "AE's actual direct submit cannot touch a grid or parse its quote while the scoped lease is live");
             SimpleAssert.eq(before, worldReads(world), "competing legacy starts do not run world probes");
-            SimpleAssert.that(origin.job == 0 && origin.currentPlacementTask == null
+            SimpleAssert.that(origin.job == 0
                 && origin.nativeReadyPlacement == null && !HologramDemolition.active(player)
                 && HologramWorkspace.find(player.getUniqueID()) == origin && gate.scopeCurrent(endpoint.constructionScope),
                 "the legacy refusals leave the original scope and workspace intact");
@@ -339,26 +192,6 @@ final class HologramPlacementRequestRegression {
             packet.fromBytes(wire);
             SimpleAssert.eq(0, wire.readableBytes(), "old generic Action envelope uses its real bounded codec");
             return packet;
-        } finally {
-            wire.release();
-        }
-    }
-
-    private static HologramRetiredPlacementPackets.RetiredFrame retiredFrame(UUID request, int index) {
-        int chunk = HologramRetiredPlacementPackets.CHUNK_BYTES;
-        ByteBuf wire = Unpooled.buffer();
-        try {
-            // Immutable framing fixture, not a production sender or full-plan codec.
-            wire.writeLong(request.getMostSignificantBits());
-            wire.writeLong(request.getLeastSignificantBits());
-            wire.writeInt(chunk + 1);
-            wire.writeInt(index);
-            wire.writeZero(32);
-            wire.writeZero(index == 0 ? chunk : 1);
-            var frame = new HologramRetiredPlacementPackets.RetiredFrame();
-            frame.fromBytes(wire);
-            SimpleAssert.eq(0, wire.readableBytes(), "obsolete framing is consumed without retaining geometry");
-            return frame;
         } finally {
             wire.release();
         }

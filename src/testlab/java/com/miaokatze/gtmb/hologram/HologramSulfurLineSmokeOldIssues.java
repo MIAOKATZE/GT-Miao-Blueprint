@@ -176,7 +176,7 @@ public final class HologramSulfurLineSmokeOldIssues {
         area.point(1, SOURCE_X, Y, z);
         area.point(2, SOURCE_X, Y, z);
         area.begin(world);
-        for (int attempt = 0; attempt < 256 && !area.imported; attempt++) area.tick(actor, actor.getHeldItem());
+        for (int attempt = 0; attempt < 256 && !area.imported; attempt++) area.tick(actor);
         require(
             area.imported && area.blueprint.cells.size() == 1,
             "actual one-cell area capture completes for " + kind);

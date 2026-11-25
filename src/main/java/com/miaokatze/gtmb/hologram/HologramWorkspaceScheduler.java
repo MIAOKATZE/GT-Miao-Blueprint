@@ -92,17 +92,13 @@ final class HologramWorkspaceScheduler {
         if (HologramStructureProjection.canAdvance(s)) return true;
         HologramArea area = HologramWorkspace.AREAS.get(s.player.getUniqueID());
         if (area != null && area.importing) return canAdvanceImport(area) || HologramSnapshotPreparation.canAdvance(s);
-        return s.currentPlacementTask != null && s.currentPlacementTask.ready() || s.voucherCoverageTask != null
+        return s.voucherCoverageTask != null
             || s.attachmentTask != null && s.attachmentTask.ready()
             || s.localPlanPending && s.localPlanError.isEmpty()
             || HologramSnapshotPreparation.canAdvance(s);
     }
 
     private static void continueSession(HologramSession s) {
-        if (s.currentPlacementTask != null) {
-            s.currentPlacementTask.tick();
-            return;
-        }
         if (s.voucherCoverageTask != null) {
             s.voucherCoverageTask.tick();
             return;
@@ -133,10 +129,6 @@ final class HologramWorkspaceScheduler {
         if (HologramNativeReadyPlacement.tick(s)) return;
         HologramWorkspace.pruneRemovedController(s.player);
         if (HologramWorkspace.find(s.player.getUniqueID()) != s) return;
-        if (s.currentPlacementTask != null) {
-            s.currentPlacementTask.tick();
-            return;
-        }
         if (s.voucherCoverageTask != null) {
             s.voucherCoverageTask.tick();
             return;

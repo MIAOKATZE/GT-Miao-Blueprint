@@ -412,6 +412,17 @@ final class HologramClientLibrary {
         return com.miaokatze.gtmb.hologram.HologramNativeBlueprintStorage.prepare(directory, id, current);
     }
 
+    /** An explicit maintenance action, not a construction fallback. The legacy source remains on disk. */
+    synchronized String commitSelectedNativeUpgrade(String alias,java.util.function.BooleanSupplier current)throws IOException{
+        String base=alias.endsWith(".json")?alias.substring(0,alias.length()-5):alias;
+        Path existing=fileOrNamed(base);
+        if(existing.getFileName().toString().endsWith(".gtnb"))return "此蓝图已使用原生格式";
+        var staged=prepareNativeUpgrade(base,current);
+        com.miaokatze.gtmb.hologram.HologramNativeBlueprintStorage.activate(directory,staged,staged.revision,current);
+        entryCache.clear();
+        return "已转换并保存为原生蓝图；旧文件已保留";
+    }
+
     String upgradeLegacy() throws IOException {
         return upgradeLegacy(() -> true, (done, total) -> {});
     }
@@ -563,11 +574,19 @@ final class HologramClientLibrary {
         return HologramBlueprintArtifact.encode(saved.json, saved.png);
     }
 
-    /** An actual publication, unlike an internal disk receipt, must originate from a compact pair. */
-    byte[] publicationArtifact(String id) throws IOException {
+    @com.github.bsideup.jabel.Desugar
+    record Publication(byte[] bytes, int version) {}
+
+    /** A public upload must originate from the current, explicit saved pair, never an editor draft. */
+    synchronized Publication publicationArtifact(String id) throws IOException {
+        recoverNativeOnOpen();
+        var nativePair = NativeBlueprintPairStore.receipt(directory, id);
+        if (nativePair != null)
+            return new Publication(com.miaokatze.gtmb.hologram.HologramNativePublicArtifact.read(nativePair),
+                com.miaokatze.gtmb.hologram.HologramNativePublicArtifact.VERSION);
         HologramBlueprintArtifact.Artifact saved = HologramBlueprintArtifact.readPair(file(id));
         com.miaokatze.gtmb.hologram.HologramCompactRequiredException.require(saved.json);
-        return HologramBlueprintArtifact.encode(saved.json, saved.png);
+        return new Publication(HologramBlueprintArtifact.encode(saved.json, saved.png), HologramBlueprintArtifact.VERSION);
     }
 
     /** Package an already written pair for its exact receipt. */

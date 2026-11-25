@@ -96,6 +96,52 @@ mapOf(
     tasks.named("check") { dependsOn(taskName) }
 }
 
+tasks.register<JavaExec>("runLargeLiteralCaptureRegression") {
+    group = "verification"
+    mainClass = "com.miaokatze.gtmb.hologram.HologramLargeLiteralCaptureRegression"
+    classpath = tasks.named<JavaExec>("runHologramTest").get().classpath
+    val scratchDir = layout.buildDirectory.dir("runLargeLiteralCaptureRegression")
+    workingDir(scratchDir)
+    doFirst { scratchDir.get().asFile.mkdirs() }
+}
+
+// GT's real TE serializer links ChunkAPI. Use the matching installed pack jars read-only for this
+// dedicated headless fixture; never publish them, or depend on a developer-specific machine path.
+val physicalFixtureMods = providers.gradleProperty("gtmbFixtureModsDir")
+tasks.register<JavaExec>("runStockEbfConstructionRegression") {
+    group = "verification"
+    mainClass = "com.miaokatze.gtmb.hologram.HologramStockEbfConstructionRegression"
+    classpath = tasks.named<JavaExec>("runHologramTest").get().classpath
+    physicalFixtureMods.orNull?.let { classpath += fileTree(it) { include("chunkapi-*.jar", "falsepatternlib-*.jar") } }
+    val scratchDir = layout.buildDirectory.dir("runStockEbfConstructionRegression")
+    workingDir(scratchDir)
+    doFirst {
+        check(physicalFixtureMods.isPresent && classpath.files.any { it.name.startsWith("chunkapi-") }) {
+            "Set -PgtmbFixtureModsDir to the matching pack mods directory for the physical GT serializer fixture."
+        }
+        scratchDir.get().asFile.mkdirs()
+    }
+}
+if (physicalFixtureMods.isPresent) tasks.named("check") { dependsOn("runStockEbfConstructionRegression") }
+
+// Uses a separately supplied, SRG→MCP remapped copy of Allen's installed Ztones JAR, only in the fixture JVM.
+tasks.register<JavaExec>("runMixedZtonesSavedPlacementRegression") {
+    group="verification"
+    dependsOn("compileTestJava")
+    mainClass="com.miaokatze.gtmb.hologram.HologramMixedZtonesPlacementRegression"
+    classpath=tasks.named<JavaExec>("runHologramTest").get().classpath
+    providers.gradleProperty("gtmbFixtureZtonesDevJar").orNull?.let { classpath+=files(it) }
+    providers.gradleProperty("gtmbFixtureExtraUtilitiesDevJar").orNull?.let {
+        classpath+=files(it)
+        systemProperty("gtmb.mixedExtraUtilities","true")
+    }
+    providers.gradleProperty("gtmbFixtureMixedSource").orNull?.let{systemProperty("gtmb.mixedZtonesSource",it)}
+    val scratchDir=layout.buildDirectory.dir("runMixedZtonesSavedPlacementRegression")
+    workingDir(scratchDir)
+    doFirst {check(project.hasProperty("gtmbFixtureZtonesDevJar")&&project.hasProperty("gtmbFixtureMixedSource"))
+        scratchDir.get().asFile.mkdirs() }
+}
+
 // The unsaved-placement contract exercises the native LittleTiles host, including mixed-material geometry.
 tasks.named<JavaExec>("runUnsavedPlacementRegression") {
     classpath += configurations.detachedConfiguration(

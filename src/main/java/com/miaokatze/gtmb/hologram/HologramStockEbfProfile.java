@@ -276,10 +276,16 @@ final class HologramStockEbfProfile {
         boolean fullyFunded(InventoryPlayer inventory, int toolSlot, HologramMaterials.Settings settings) {
             if (inventory == null || inventory.player == null || inventory.player.inventory != inventory
                 || inventory.currentItem != toolSlot
-                || toolSlot < 0 || toolSlot >= 9 || settings == null || settings.priority != 0
-                || !HologramProjectedMainPolicy.eligible(settings) || !linksCurrent()) return false;
+                || toolSlot < 0 || toolSlot >= 9 || settings == null
+                || !HologramProjectedMainPolicy.eligibleSelected(settings) || !linksCurrent()) return false;
             var main = inventory.mainInventory;
             if (main == null || main.length != 36) return false;
+            if(settings.containers || settings.me) {
+                if (!(inventory.player instanceof net.minecraft.entity.player.EntityPlayerMP actor)) return false;
+                var available=new HologramMaterials.Context(actor,settings,toolSlot);
+                return available.count(casing,CASING_BOUND)>=CASING_BOUND && available.count(coil,COIL_BOUND)>=COIL_BOUND
+                    && inventory.player.inventory==inventory && inventory.mainInventory==main && inventory.currentItem==toolSlot && linksCurrent();
+            }
             int casingLeft = CASING_BOUND, coilLeft = COIL_BOUND;
             for (int i = 0; i < main.length; i++) {
                 var stack = main[i];

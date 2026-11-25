@@ -28,7 +28,7 @@ final class HologramPlacementLoadingScreen extends HologramMuiScreen {
     @Override
     protected boolean muiKey(char character, int key) {
         if (key != Keyboard.KEY_ESCAPE) return false;
-        if (owned == null) HologramLibraryClient.INSTANCE.cancelProjectedPlacement();
+        if(owned==null)return false;
         else if (!HologramBackgroundTasks.cancelOwnedPlacement(owned)) HologramBackgroundTasks.leaveOwnedPlacement(owned);
         Minecraft.getMinecraft()
             .displayGuiScreen(null);

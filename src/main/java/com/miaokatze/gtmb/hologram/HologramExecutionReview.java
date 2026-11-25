@@ -182,17 +182,10 @@ final class HologramExecutionReview {
         private final HologramCapture capture;
         private final HologramPlacementAdmissionSweep work;
         private final long started = System.nanoTime();
-        private final boolean creative, direct;
-        private final HologramResourceTask.DirectDemand directDemand;
+        private final boolean creative;
         private int blocked, protectedCells, unsupported, satisfied;
 
         Start(HologramSession s, NBTTagCompound request) {
-            this(s, request, null);
-        }
-
-        Start(HologramSession s, NBTTagCompound request, HologramResourceTask.DirectDemand directDemand) {
-            this.directDemand = directDemand;
-            direct = directDemand != null;
             classifier = new HologramPlanClassifier(s);
             capture = s.capture;
             work = new HologramPlacementAdmissionSweep(capture.cells.size());
@@ -229,14 +222,12 @@ final class HologramExecutionReview {
             var slice = new HologramPlacementAdmissionSweep.Slice(Integer.MAX_VALUE, deadline, System::nanoTime);
             HologramPlacementAdmissionSweep.Progress progress = work.inspect(slice, index -> {
                 HologramCapture.Cell cell = capture.cells.get(index);
-                if (direct && !HologramSessionPolicy.inScope(s, cell, index)) return true;
                 if (!HologramPlanPolicy.expectedCurrent(s, index)) {
-                    if (direct) throw new IOException("现场已变化，未开始施工");
                     refresh(s, "现场或区块加载状态已变化，正在重新核对施工范围");
                     return false;
                 }
                 String status = s.planStatus.get(index);
-                if (!creative || direct && "pending".equals(status)) {
+                if (!creative) {
                     String current = classifier.classify(
                         s,
                         cell,
@@ -246,15 +237,11 @@ final class HologramExecutionReview {
                         s.expectedMeta.get(index),
                         s.expectedTiles.get(index));
                     if ("blocked".equals(current)) blocked++;
-                    else if (direct && "pending".equals(status) && !"pending".equals(current))
-                        throw new IOException("现场或施工权限已变化，未开始施工");
                 }
                 if ("unsupported".equals(status) && !cell.resourceError.isEmpty())
                     throw new IOException("施工设备状态无法安全解析：" + cell.resourceError);
                 switch (status) {
                     case "pending" -> {
-                        if (direct && creative && s.expectedBlocks.get(index) != net.minecraft.init.Blocks.air)
-                            throw new IOException("目标位置不为空，直接施工不会清理原方块");
                         work.stage(index, cell.x, cell.y, cell.z);
                     }
                     case "satisfied" -> satisfied++;
@@ -266,7 +253,6 @@ final class HologramExecutionReview {
             if (progress == HologramPlacementAdmissionSweep.Progress.RETIRED) return true;
             if (progress == HologramPlacementAdmissionSweep.Progress.PENDING) return false;
             if (blocked > 0) throw new IOException("选定范围有 " + blocked + " 格被占用，请清空后重试");
-            if (direct && (protectedCells != 0 || unsupported != 0)) throw new IOException("范围内有保护或不支持的位置，未开始施工");
             if (work.isEmpty()) {
                 s.status = "没有需要且可安全施工的位置。已满足 " + satisfied
                     + " 格，保护或占位 "
@@ -278,14 +264,8 @@ final class HologramExecutionReview {
             }
             if (!work.drain(slice, s.work::add)) return false;
             if (!HologramBuildPreparation.aeReady(s)) return true;
-            HologramMaterialWorkflow.validateStart(s, approval, direct);
-            boolean stocked = direct ? HologramMaterialWorkflow.recheckDirect(s, directDemand)
-                : HologramPlacementJobs.approvedMaterials(s, approval);
-            if (stocked) {
-                if (direct) {
-                    requireCurrent(s); // Native inventory SIMULATE is a callback, not a durable authority grant.
-                    HologramMaterialWorkflow.validateStart(s, approval, true);
-                }
+            HologramMaterialWorkflow.validateConfirmation(s,approval);
+            if (HologramPlacementJobs.approvedMaterials(s,approval)) {
                 HologramPlacementJobs.begin(s, approval);
                 if (s.job == 1) s.blueprintAwaitingConfirmation = false;
             }

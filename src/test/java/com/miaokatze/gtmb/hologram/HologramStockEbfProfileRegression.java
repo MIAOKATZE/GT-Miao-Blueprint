@@ -303,7 +303,7 @@ public final class HologramStockEbfProfileRegression {
 
     private static BaseMetaTileEntity install(sun.misc.Unsafe unsafe, FixtureWorld world, Pos position,
         IMetaTileEntity machine, int id, ForgeDirection facing) throws ReflectiveOperationException {
-        var tile = (BaseMetaTileEntity) unsafe.allocateInstance(BaseMetaTileEntity.class);
+        var tile = new BaseMetaTileEntity();
         tile.setWorldObj(world);
         tile.xCoord = position.x;
         tile.yCoord = position.y;

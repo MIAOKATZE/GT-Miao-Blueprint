@@ -136,7 +136,7 @@ public final class HologramBlueprintCompactCodec {
     }
 
     /** Strict-syntax evidence is opt-in; plain display keeps its historical fallback. */
-    static DisplayRows localDisplayGeometry(byte[] bytes, boolean wantExactSyntax) throws IOException {
+    public static DisplayRows localDisplayGeometry(byte[] bytes, boolean wantExactSyntax) throws IOException {
         if (bytes == null || bytes.length == 0 || bytes.length > HologramBlueprintLimits.LOCAL_FILE_BYTES)
             throw new IOException("Local blueprint file byte budget");
         // A strict decode is part of the exact syntax proof, not a lossy replacement-character view.

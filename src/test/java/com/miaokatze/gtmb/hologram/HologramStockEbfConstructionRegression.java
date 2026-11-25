@@ -50,7 +50,8 @@ public final class HologramStockEbfConstructionRegression {
         int status = 0;
         try {
             if (MinecraftTestBootstrap.enter(HologramStockEbfConstructionRegression.class, args)) {
-                HologramStockEbfProfileRegression.run(HologramStockEbfConstructionRegression::contracts);
+                HologramNativeSavedWorldRegression.withOfflineRegistries(()->
+                    HologramStockEbfProfileRegression.run(HologramStockEbfConstructionRegression::contracts));
                 System.out.println("HologramStockEbfConstructionRegression passed (offline stock writes and debits)");
             }
         } catch (Throwable failure) {
@@ -70,6 +71,7 @@ public final class HologramStockEbfConstructionRegression {
         var player = HologramLibraryServiceRegression.placementPlayer(
             unsafe, HologramPlacementFixtureWorld.create(unsafe), "RealStockEbfEngine");
         player.worldObj = world;
+        literalCapture(unsafe, world, controller, player);
         var network = player.playerNetServerHandler.netManager;
         network.setNetHandler(player.playerNetServerHandler);
         var reentry = new TransportProbe(network);
@@ -92,6 +94,8 @@ public final class HologramStockEbfConstructionRegression {
             var projectorTag = new NBTTagCompound();
             projectorTag.setString(HologramSessionKeys.TOOL_ID, id);
             main[0].setTagCompound(projectorTag);
+            var backpackOnly=new HologramMaterials.Settings();backpackOnly.me=backpackOnly.containers=false;
+            HologramMaterials.write(main[0],backpackOnly);
             main[1] = new ItemStack(GregTechAPI.sBlockCasings1, 12, 11);
             main[2] = new ItemStack(GregTechAPI.sBlockCasings5, 16, 1); // Wrong heat.
             HologramWorkspace.publishActionEndpoint(player, false);
@@ -99,6 +103,7 @@ public final class HologramStockEbfConstructionRegression {
             var gate = HologramWorkspace.constructionGate(endpoint);
             SimpleAssert.that(gate != null, "headless fixture publishes real authenticated endpoint owner");
             var configuration = new HologramStockNativeEntry.EbfConfig(6, installed);
+            selectedEbfMe(world,controller,facing,endpoint,id,configuration);
             var wrong = typed(endpoint, controller, facing, id, request(1), configuration);
             try {
                 HologramStockNativeEntry.begin(wrong);
@@ -389,6 +394,114 @@ public final class HologramStockEbfConstructionRegression {
         }
     }
 
+    /** Ordinary server and client imports see the physical subset; standalone stock construction below still sees the definition. */
+    private static void literalCapture(sun.misc.Unsafe unsafe, RawWorld world, BaseMetaTileEntity controller,
+        net.minecraft.entity.player.EntityPlayerMP player) throws IOException, ReflectiveOperationException {
+        int x = controller.xCoord, y = controller.yCoord, z = controller.zCoord;
+        Block prior = world.getBlock(x,y+7,z);
+        var items = player.inventory.mainInventory;
+        int slot = player.inventory.currentItem;
+        var old = items[slot];
+        @SuppressWarnings("unchecked")
+        var tileNames = (java.util.Map<Class<?>,String>) cpw.mods.fml.relauncher.ReflectionHelper
+            .findField(TileEntity.class,"classToNameMap","field_145853_j").get(null);
+        String oldName = tileNames.putIfAbsent(BaseMetaTileEntity.class,"gtmb_fixture:registered_gt_device");
+        world.seed(x,y+7,z,Blocks.diamond_block,0); // Outside both selections.
+        try {
+            String signature = null;
+            for (int setting : new int[] {1, 7}) {
+                var tool = new ItemStack(Blocks.stone,setting);
+                com.gtnewhorizon.structurelib.alignment.constructable.ChannelDataAccessor
+                    .setChannelData(tool,"coil",setting);
+                items[slot] = tool;
+                var area = new HologramArea();
+                area.point(1,x,y,z,"replace"); area.point(2,x,y,z,"replace");
+                area.begin(world);
+                long end = System.nanoTime() + 5_000_000_000L;
+                while (!area.tick(player)) {
+                    SimpleAssert.that(area.importProgress()<100,"raw server editor is not yet published");
+                    if (System.nanoTime() > end) throw new AssertionError("server literal capture did not complete");
+                    Thread.yield();
+                }
+                String server=literalSignature(area.blueprint, controller);
+                SimpleAssert.that(area.blueprint.cells instanceof HologramLiteralCaptureRows,"server/standalone literal inputs keep one packed source and sparse special rows");
+                SimpleAssert.that(area.structures.isEmpty() && area.members.isEmpty() && "captured".equals(area.importStage()),
+                    "ordinary server capture has no inferred machines, membership second pass, or tool dependency");
+                boolean remote=world.isRemote;
+                try {
+                    world.isRemote=true;
+                    var client = new HologramLocalAreaCapture(world, player.dimension, area);
+                    HologramLocalBlueprintDocument doc = null;
+                    while(doc==null) {
+                        if (System.nanoTime() > end) throw new AssertionError("client literal capture did not finish");
+                        SimpleAssert.that(client.progress()<100, "only completed drafts report 100");
+                        doc=client.step(128,10_000_000L);
+                        Thread.yield();
+                    }
+                    var docField=HologramLocalBlueprintDocument.class.getDeclaredField("document");
+                    docField.setAccessible(true);
+                    SimpleAssert.eq(server,literalSignature((HologramPresets.Preset)docField.get(doc),controller),
+                        "both formal local and server region-capture paths preserve identical physical state");
+                    SimpleAssert.eq(100,client.progress(),"completed local literal capture");
+                } finally { world.isRemote=remote; }
+                if(signature!=null)SimpleAssert.eq(signature,server,"changing held tool master and coil never changes capture");
+                signature=server;
+            }
+        } finally {
+            if(oldName==null)tileNames.remove(BaseMetaTileEntity.class);
+            items[slot]=old; world.seed(x,y+7,z,prior,0);
+        }
+    }
+
+    private static String literalSignature(HologramPresets.Preset preset, BaseMetaTileEntity controller) throws IOException {
+        SimpleAssert.that(preset.structures.isEmpty() && preset.cells.size()==1,
+            "partial GT machine selection includes just its controller, no exterior marker, hatches or template cells");
+        var cell=preset.cells.get(0);
+        SimpleAssert.that(!cell.controller && (cell.structureIds==null || cell.structureIds.isEmpty())
+            && cell.structureId==null && cell.x==0 && cell.y==0 && cell.z==0,
+            "the physical controller is not a structure anchor, nor a machine-membership group");
+        var nbt=HologramBlueprintNbt.decode(cell.tileNbt);
+        SimpleAssert.that(nbt!=null && nbt.getInteger("mID")==1000 && nbt.getByte("mFacing")==cell.facing && cell.damage==1000
+            && cell.facing==HologramBlockIdentity.front(controller),"literal controller identity, stored NBT, and facing survive");
+        return cell.block+"/"+cell.metadata+"/"+cell.damage+"/"+cell.facing+"/"+nbt;
+    }
+
+    /** Genuine GT cell + projected source options through native BEGIN and real wireless auth/storage path. */
+    private static void selectedEbfMe(RawWorld world,BaseMetaTileEntity controller,ExtendedFacing facing,
+        HologramWorkspace.ActionEndpoint endpoint,String tool,HologramStockNativeEntry.EbfConfig config) throws IOException,ReflectiveOperationException {
+        var actor=endpoint.player;var slots=actor.inventory.mainInventory;
+        var beforeTool=(NBTTagCompound)slots[0].getTagCompound().copy();
+        var shownOne=slots[1];var shownTwo=slots[2];int[] booked={12,16};
+        try(var grid=new HologramProjectedMeFixture(actor,true,new ItemStack[]{
+            new ItemStack(GregTechAPI.sBlockCasings1,1,11),new ItemStack(GregTechAPI.sBlockCasings5,1,9)},booked)) {
+            slots[1]=null;
+            var choice=new HologramMaterials.Settings();choice.main=choice.containers=false;choice.me=true;
+            HologramMaterials.write(slots[0],choice);
+            var request=new HologramConstructionTaskGate.Request(UUID.randomUUID(),1,HologramConstructionTaskGate.Kind.INCREMENTAL_NATIVE);
+            var control=confirmation(endpoint,controller,facing,tool,request,config)
+                .withSources(HologramProjectedMainPolicy.settingsKey(choice));
+            var wire=HologramStockNativeWire.confirm(control);
+            var decoded=HologramStockNativeWire.readRequest(wire);
+            SimpleAssert.that(decoded!=null && !wire.hasKey("cells"),"small BEGIN preserves selected ME-only policy");
+            var replay=(NBTTagCompound)wire.copy();replay.setInteger("sources",1);
+            var other=HologramStockNativeWire.readRequest(replay);
+            SimpleAssert.that(other!=null && HologramStockNativeEntry.ingress(endpoint,other.confirmation().intent(),tool)==null,
+                "stale provider selection rejected instead of silently extracting from another source");
+            var submit=HologramStockNativeEntry.ingress(endpoint,decoded.confirmation().intent(),tool);
+            SimpleAssert.that(submit!=null,"server receives ME-only consent");
+            var job=HologramStockNativeEntry.begin(submit);
+            SimpleAssert.eq(0,grid.modulates,"admission only simulates");
+            SimpleAssert.eq(State.ACTIVE,tickPrefix(job,1),"ME-only stock pays a physical EBF shell");
+            var pt=coordinate(controller,facing,-1,-3,0);
+            SimpleAssert.that(job.placed()==1 && world.getBlock(pt[0],pt[1],pt[2])==GregTechAPI.sBlockCasings1
+                && world.getBlockMetadata(pt[0],pt[1],pt[2])==11 && booked[0]==11 && booked[1]==16 && grid.modulates==1
+                && slots[1]==null && !HologramConstructionJournal.pending(actor),"original physical casing paid only once from the wireless grid");
+            SimpleAssert.that(job.stop(endpoint,request),"exact owning EBF can cancel after first genuine cell");
+            world.seed(pt[0],pt[1],pt[2],Blocks.air,0); world.writes().clear();
+            System.out.println("GTMB_EBF_SELECTED_ME one actual heatproof casing, one physical write/ME MODULATE, zero backpack, stale-source refused");
+        }finally{slots[0].setTagCompound(beforeTool);slots[1]=shownOne;slots[2]=shownTwo;}
+    }
+
     private static HologramStockNativeEntry.Submission typed(HologramWorkspace.ActionEndpoint endpoint,
         BaseMetaTileEntity controller, ExtendedFacing facing, String tool, HologramConstructionTaskGate.Request request,
         HologramStockNativeEntry.EbfConfig configuration) {
@@ -417,7 +530,7 @@ public final class HologramStockEbfConstructionRegression {
 
     private static HologramConstructionTaskGate.Request request(long sequence) {
         return new HologramConstructionTaskGate.Request(
-            UUID.randomUUID(), sequence, HologramConstructionTaskGate.Kind.INCREMENTAL_NATIVE);
+            UUID.randomUUID(), sequence+10, HologramConstructionTaskGate.Kind.INCREMENTAL_NATIVE);
     }
 
     private static int[] coordinate(BaseMetaTileEntity controller, ExtendedFacing facing, int a, int b, int c) {
@@ -445,6 +558,7 @@ public final class HologramStockEbfConstructionRegression {
             setWorld(created, "perWorldStorage", new MapStorage(null));
             created.capturedBlockSnapshots = new ArrayList<>();
             created.theChunkProviderServer = new ChunkProviderServer(created, null, null);
+            setWorld(created,"chunkProvider",created.theChunkProviderServer);
             for (int dx = -1; dx <= 1; dx++) for (int dz = -1; dz <= 1; dz++) {
                 var chunk = new Chunk(created, (x >> 4) + dx, (z >> 4) + dz);
                 chunk.isChunkLoaded = true;

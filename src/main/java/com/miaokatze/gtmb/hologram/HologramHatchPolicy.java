@@ -248,7 +248,8 @@ public final class HologramHatchPolicy {
     private static int inspect(IHatchElement<?> element, IMetaTileEntity tile, int depth, boolean quota,
         IdentityHashMap<IHatchElement<?>, Boolean> path) {
         if (element == null || depth >= 12 || path.put(element, Boolean.TRUE) != null) return -1;
-        if (element instanceof gregtech.api.enums.HatchElement || reviewedSteamBus(element)) {
+        if (element instanceof gregtech.api.enums.HatchElement || reviewedSteamBus(element)
+            || !quota && reviewedStockCokeElement(element)) {
             path.remove(element);
             return tile != null && matchesHatch(element, tile) ? 1 : 0;
         }
@@ -313,6 +314,15 @@ public final class HologramHatchPolicy {
             .equals(
                 "gtPlusPlus.xmod.gregtech.api.metatileentity.implementations.base.MTESteamMultiBlockBase$SteamHatchElement")
             && ("InputBus_Steam".equals(role.name()) || "OutputBus_Steam".equals(role.name()));
+    }
+
+    private static boolean reviewedStockCokeElement(IHatchElement<?> element) {
+        // GT's declared CokeHatch leaf exposes a fixed MTEHatchCokeOven class matcher. Its count/adder are
+        // not used here; this trusts one declaration primitive, not the controller or a handpicked position.
+        return element instanceof Enum<?> role && "CokeHatch".equals(role.name())
+            && role.getDeclaringClass().getClassLoader() == IHatchElement.class.getClassLoader()
+            && role.getDeclaringClass().getName().equals(
+                "gregtech.common.tileentities.machines.multi.MTECokeOven$CokeHatchElement");
     }
 
     static synchronized int manualSteamId(IStructureElement<?> element, Object context) {

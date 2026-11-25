@@ -14,6 +14,7 @@ final class HologramLocalPlacement {
 
     static final HologramLocalPlacement INSTANCE = new HologramLocalPlacement();
     private HologramState display;
+    private com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintDefinition.Lease nativeLease;
     private HologramLibraryClient.DisplaySource source;
     private Object world, connection, player;
     private boolean locked, submitting;
@@ -78,8 +79,15 @@ final class HologramLocalPlacement {
         return locked && anchor != null ? anchor.clone() : HologramClient.localPlacementAnchor();
     }
 
-    int[] transform(int x, int y, int z) {
-        return pose.apply(x, y, z);
+    /** Pixel centers and spatial tests share the exact authored pivot the server subtracts. */
+    static int[] localPivot(HologramState state) {
+        if (state == null || state.nativeViewport == null) return new int[3];
+        var frame = state.nativeViewport.geometry.definition().frame();
+        return new int[] { frame.anchorX, frame.anchorY, frame.anchorZ };
+    }
+
+    int[] pivot() {
+        return localPivot(display);
     }
 
     HologramPreviewPose previewPose() {
@@ -91,14 +99,17 @@ final class HologramLocalPlacement {
         int[] turns = pose.recipe();
         for (int i = turns.length - 1; i >= 0; i--)
             org.lwjgl.opengl.GL11.glRotatef(turns[i] == 1 ? 90 : -90, turns[i] == 1 ? 1 : 0, turns[i] == 0 ? 1 : 0, 0);
-        org.lwjgl.opengl.GL11.glTranslated(-.5, -.5, -.5);
+        int[] origin = pivot();
+        org.lwjgl.opengl.GL11.glTranslated(-.5 - origin[0], -.5 - origin[1], -.5 - origin[2]);
     }
 
     double[] bounds(int x, int y, int z) {
         double[] bounds = { Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY, Double.POSITIVE_INFINITY,
             Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY };
+        int[] origin = pivot();
         for (int dx = 0; dx <= 16; dx += 16) for (int dy = 0; dy <= 16; dy += 16) for (int dz = 0; dz <= 16; dz += 16) {
-            int[] turned = transform(2 * (x + dx) - 1, 2 * (y + dy) - 1, 2 * (z + dz) - 1);
+            int[] turned = pose.apply(2 * (x + dx - origin[0]) - 1, 2 * (y + dy - origin[1]) - 1,
+                2 * (z + dz - origin[2]) - 1);
             for (int axis = 0; axis < 3; axis++) {
                 double value = (turned[axis] + 1) * .5;
                 bounds[axis] = Math.min(bounds[axis], value);
@@ -112,6 +123,7 @@ final class HologramLocalPlacement {
         clear();
         Minecraft mc = Minecraft.getMinecraft();
         if (mc.theWorld == null || mc.thePlayer == null) return;
+        nativeLease=prepared.pinNative();
         source = prepared;
         world = mc.theWorld;
         connection = mc.getNetHandler();
@@ -186,7 +198,11 @@ final class HologramLocalPlacement {
     boolean submitFrozen(Submission submission, boolean direct) {
         if (submitting || !submission.current()) return false;
         submitting = HologramLibraryClient.INSTANCE.prepareLocalPlacement(submission, direct);
-        if (submitting) HologramClientProjectedPlacement.showCurrent();
+        if(submitting){
+            var client=Minecraft.getMinecraft();
+            if(client!=null&&client.isIntegratedServerRunning())HologramClientNativePlacement.showCurrent();
+            else HologramClientRemoteNativePlacement.show();
+        }
         return submitting;
     }
 
@@ -213,6 +229,11 @@ final class HologramLocalPlacement {
         request.setInteger("placementZ", at[2]);
         request.setInteger("side", 1);
         request.setIntArray("previewPose", pose.recipe());
+        if (source != null && source.nativeReceipt != null) {
+            var held = Minecraft.getMinecraft().thePlayer.getHeldItem();
+            request.setInteger("reviewedSources", com.miaokatze.gtmb.hologram.HologramProjectedMainPolicy.settingsKey(
+                com.miaokatze.gtmb.hologram.HologramMaterials.read(held)));
+        }
         if (!options.hasKey("openReview", 1)) request.setBoolean("openReview", true);
         return new Submission(source, display, lockGeneration, request);
     }
@@ -244,6 +265,7 @@ final class HologramLocalPlacement {
         if (display != null) HologramRenderer.nativeSnapshotChanged();
         display = null;
         source = null;
+        if(nativeLease!=null){nativeLease.close();nativeLease=null;}
         world = connection = player = null;
         locked = submitting = false;
         lockGeneration++;

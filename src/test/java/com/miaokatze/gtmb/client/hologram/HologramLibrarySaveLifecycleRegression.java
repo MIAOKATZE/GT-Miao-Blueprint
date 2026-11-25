@@ -739,9 +739,9 @@ public final class HologramLibrarySaveLifecycleRegression {
             SimpleAssert.that(wire.requests.isEmpty() && worker.getQueue().isEmpty() && client.backgroundTaskToken() == 0,
                 "cold browse/place/edit literally send zero packets and acquire no transfer owner");
             library.rememberPublic("", id); // A legacy remembered public ID, not a downloaded local pair.
-            Method recent = HologramLibraryClient.class.getDeclaredMethod("previewLastLocal", String.class);
+            Method recent = HologramLibraryClient.class.getDeclaredMethod("previewLastLocal");
             recent.setAccessible(true);
-            recent.invoke(client, "would-be-legacy-fallback");
+            recent.invoke(client);
             worker.getQueue().remove().run();
             drainPublicCopyCallbacks(clientQueue);
             SimpleAssert.that(wire.requests.isEmpty() && worker.getQueue().isEmpty() && client.backgroundTaskToken() == 0,
@@ -880,7 +880,7 @@ public final class HologramLibrarySaveLifecycleRegression {
                         drainPublicCopyCallbacks(clientQueue);
                         SimpleAssert.eq(0, wire.requests.size(), "refreshing the verified local copy sends no request");
                         java.util.concurrent.atomic.AtomicReference<byte[]> opened = new java.util.concurrent.atomic.AtomicReference<>();
-                        client.openPublic(id, opened::set, reason -> { throw new AssertionError(reason); });
+                        client.openPublic(id, source -> opened.set(source.legacyBytes()), reason -> { throw new AssertionError(reason); });
                         worker.getQueue().remove().run();
                         drainPublicCopyCallbacks(clientQueue);
                         SimpleAssert.that(java.util.Arrays.equals(expected.json, opened.get()) && wire.requests.isEmpty(),
@@ -888,10 +888,8 @@ public final class HologramLibrarySaveLifecycleRegression {
                         client.previewPublic(id, true);
                         worker.getQueue().remove().run();
                         drainPublicCopyCallbacks(clientQueue);
-                        var display = (HologramLibraryClient.DisplaySource) get(client, "displayPreparing");
-                        SimpleAssert.that(display != null && saved.equals(display.localId)
-                            && display.publicId.isEmpty() && wire.requests.isEmpty(),
-                            "warm place uses the verified indexed private artifact, never public geometry");
+                        SimpleAssert.that(get(client,"displayPreparing")==null&&wire.requests.isEmpty(),
+                            "a warm downloaded legacy copy still cannot create a placement before explicit conversion");
                         client.cancel();
                         drainPublicCopyCallbacks(clientQueue);
                         SimpleAssert.that(wire.requests.isEmpty(), "cancelling this local preview sends zero packets");
@@ -991,7 +989,7 @@ public final class HologramLibrarySaveLifecycleRegression {
             java.io.ByteArrayOutputStream png = new java.io.ByteArrayOutputStream();
             javax.imageio.ImageIO.write(cover, "png", png);
             String localId = store.save(json, png.toByteArray(), "");
-            byte[] pair = store.publicationArtifact(localId);
+            byte[] pair = store.publicationArtifact(localId).bytes();
             String other = "local_33333333-3333-3333-3333-333333333333";
             String unrelatedPublic = "public_aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
             store.uploadedId("other-server", localId, unrelatedPublic);

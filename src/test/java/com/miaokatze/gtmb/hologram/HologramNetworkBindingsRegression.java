@@ -27,6 +27,7 @@ public final class HologramNetworkBindingsRegression {
 
     public static void run() throws Exception {
         grouping();
+        savedQuantumChoices();
         malformedGroup();
         physicalPatternsCost();
         bindingSurvivesDisabledPayload();
@@ -37,6 +38,26 @@ public final class HologramNetworkBindingsRegression {
         ordinaryAeScan();
     }
 
+    private static void savedQuantumChoices() throws Exception {
+        int[] choices={4,7*64+3,400*64};
+        SimpleAssert.that(HologramSavedBindingChoices.valid(choices)&&HologramSavedBindingChoices.slot(choices,7)==3
+            &&HologramSavedBindingChoices.slot(choices,400)==0&&HologramSavedBindingChoices.slot(choices,6)==4
+            &&HologramSavedBindingChoices.slot(new int[0],7)<0,"explicit group wins; default only when player chose it");
+        for(int[] invalid:new int[][]{{64,65},{128,64},{36},{-1},{1000000*64}})
+            SimpleAssert.that(!HologramSavedBindingChoices.valid(invalid),"malformed group/duplicate/slot rejected");
+        NBTTagCompound payload=new NBTTagCompound();payload.setString(HologramNetworkBindings.GROUP,"q7");
+        payload.setString(HologramNetworkBindings.ROLE,"node");payload.setString(HologramNetworkBindings.MODE,"rebind");
+        SimpleAssert.that(HologramSavedBindingChoices.requiredGroup(payload)==7,"actual rebind group in retained source");
+        payload.setString(HologramNetworkBindings.MODE,"preserve");
+        SimpleAssert.that(HologramSavedBindingChoices.requiredGroup(payload)==0,"private original network never bound by slot choice");
+        // Test the same existing authority that handles an actual saved-source group. No fake terminal passes.
+        var state=new HologramNetworkBindings.State();
+        HologramNativeSavedWorldRegression.withConnectedWorld(0,world->{ var player=world.nativeActor();
+            player.inventory.mainInventory[3]=new net.minecraft.item.ItemStack(net.minecraft.init.Items.stick);
+            try{state.select(player,"q7",3);throw new AssertionError("ordinary item acquired a quantum group");}
+            catch(IOException expected){SimpleAssert.that(!state.holds("q7"),"authentication rejection leaves zero selections");}
+        });
+    }
     private static void ordinaryAeScan() throws Exception {
         HologramPresets.Preset source = new HologramPresets.Preset();
         String[] encoded = new String[4];

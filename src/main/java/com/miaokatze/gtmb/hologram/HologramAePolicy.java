@@ -164,7 +164,17 @@ final class HologramAePolicy {
         Map<String, Issue> issues = new LinkedHashMap<>();
         for (Issue issue : networkChanges) add(issues, issue);
         Set<String> positions = new HashSet<>();
-        for (HologramPresets.Cell cell : result.cells) positions.add(cell.x + "," + cell.y + "," + cell.z);
+        if (result.aeIssues != null && !result.aeIssues.isEmpty()) {
+            // A literal capture usually has no outstanding issue coordinates at all.
+            Set<String> needed = new HashSet<>();
+            for (Issue issue : result.aeIssues) if ("blocker".equals(issue.severity))
+                needed.add(issue.x + "," + issue.y + "," + issue.z);
+            if (!needed.isEmpty()) for (HologramPresets.Cell cell : result.cells) {
+                String key=cell.x + "," + cell.y + "," + cell.z;
+                if (needed.remove(key)) positions.add(key);
+                if (needed.isEmpty()) break;
+            }
+        }
         // An omitted invalid field cannot be rediscovered. Only a validated explicit edit may retire its blocker.
         if (result.aeIssues != null) for (Issue issue : result.aeIssues) {
             // An explicitly removed whole cell has no artifact left to restore at that coordinate.

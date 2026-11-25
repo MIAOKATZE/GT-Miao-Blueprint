@@ -73,15 +73,7 @@ public final class HologramNetwork {
     private static final HologramRequestGate receiptGate = new HologramRequestGate(4, 128);
     private static final HologramRequestGate snapshotControlGate = new HologramRequestGate(2, 256);
     private static final HologramRequestGate retiredPlacementGate = new HologramRequestGate(1, 32);
-    private static final HologramRequestGate projectedLayerProbeGate = new HologramRequestGate(1, 32);
     private static final AtomicLong constructionIntentSequence = new AtomicLong();
-    private static final long PROJECTED_LAYER_TICKET_NANOS = TimeUnit.SECONDS.toNanos(90);
-    private static final int MAX_PROJECTED_LAYER_TICKETS = 256;
-    private static final String LAYER_VERSION = "ordinaryLayerProbe", LAYER_REQUEST = "ordinaryLayerRequest";
-    private static final String LAYER_INTENT = "ordinaryLayerIntent", LAYER_SCOPE = "ordinaryLayerGeneration";
-    private static final Map<UUID, ProjectedLayerTicket> projectedLayerTickets = new LinkedHashMap<>();
-    private static HologramProjectedLayerServer projectedLayerServer;
-    private static volatile ProjectedLayerNegotiation projectedLayerNegotiation;
     private static final HologramStockNativeServer stockNativeServer =
         new HologramStockNativeServer(HologramNetwork::sendStockNativeReply);
     private static volatile StockNativeReplies stockNativeReplies;
@@ -104,9 +96,7 @@ public final class HologramNetwork {
         stockNativeServer.reset();
         HologramAttachmentUpload.clearServer();
         retiredPlacementGate.clear();
-        projectedLayerProbeGate.clear();
         // On an in-process reset keep the intent watermark; an old already-issued ticket is no longer usable.
-        for (ProjectedLayerTicket ticket : projectedLayerTickets.values()) ticket.claimed = true;
         actionGate.clear();
         receiptGate.clear();
         snapshotControlGate.clear();
@@ -143,6 +133,7 @@ public final class HologramNetwork {
     public static void init() {
         if (channel != null) return;
         channel = NetworkRegistry.INSTANCE.newSimpleChannel("gtmb_hologram");
+        HologramPrivateNativeWire.register(channel);
         channel.registerMessage(ServerHandler.class, Action.class, 0, Side.SERVER);
         channel.registerMessage(ClientHandler.class, State.class, 1, Side.CLIENT);
         channel.registerMessage(FragmentHandler.class, Fragment.class, 2, Side.CLIENT);
@@ -161,42 +152,11 @@ public final class HologramNetwork {
             HologramAttachmentUpload.Ack.class,
             9,
             Side.CLIENT);
-        channel.registerMessage(
-            HologramRetiredPlacementPackets.Handler.class,
-            HologramRetiredPlacementPackets.RetiredFrame.class,
-            10,
-            Side.SERVER);
-        channel.registerMessage(
-            HologramRetiredPlacementPackets.AckHandler.class,
-            HologramRetiredPlacementPackets.Ack.class,
-            11,
-            Side.CLIENT);
-        channel.registerMessage(
-            HologramProjectedLayerTransport.ServerHandler.class,
-            HologramProjectedLayerTransport.Request.class,
-            12,
-            Side.SERVER);
-        channel.registerMessage(
-            HologramProjectedLayerTransport.ClientHandler.class,
-            HologramProjectedLayerTransport.Reply.class,
-            13,
-            Side.CLIENT);
         HologramAttachmentUpload.init(channel);
         HologramLibraryFacade.init();
         FMLCommonHandler.instance()
             .bus()
             .register(new TransportTicks());
-    }
-
-    @FunctionalInterface
-    public interface ProjectedLayerNegotiation {
-
-        void accept(UUID request, long intent, int version, long scope, Object inboundHandler);
-    }
-
-    /** Installed on normal client init only; opening a preview never sends or negotiates. */
-    public static void setProjectedLayerNegotiation(ProjectedLayerNegotiation receiver) {
-        projectedLayerNegotiation = receiver;
     }
 
     public static long nextConstructionIntentSequence() {
@@ -206,27 +166,6 @@ public final class HologramNetwork {
             if (previous == Long.MAX_VALUE) return 0;
         } while (!constructionIntentSequence.compareAndSet(previous, previous + 1));
         return previous + 1;
-    }
-
-    /** A confirmed attempt may ask a legacy peer safely, without trying an unknown message discriminator. */
-    public static boolean sendProjectedLayerProbe(UUID request, long intent) {
-        SimpleNetworkWrapper wire = channel;
-        if (wire == null || !nonzero(request) || intent < 1) return false;
-        Action probe = new Action(); // No snapshot capability flags, local geometry, or workspace identifiers.
-        probe.tag.setString("action", "serverRules");
-        probe.tag.setInteger(LAYER_VERSION, HologramProjectedLayerTransport.VERSION);
-        probe.tag.setString(LAYER_REQUEST, request.toString());
-        probe.tag.setLong(LAYER_INTENT, intent);
-        wire.sendToServer(probe);
-        return true;
-    }
-
-    /** Only the client's matching negotiation receipt should unlock a typed request; exceptions remain uncertain. */
-    public static boolean sendProjectedLayerRequest(HologramProjectedLayerTransport.Request request) {
-        SimpleNetworkWrapper wire = channel;
-        if (wire == null || request == null) return false;
-        wire.sendToServer(request);
-        return true;
     }
 
     @FunctionalInterface
@@ -278,176 +217,6 @@ public final class HologramNetwork {
 
     static boolean stockNativeOwns(HologramSession session) {
         return stockNativeServer.owns(session);
-    }
-
-    private static boolean nonzero(UUID request) {
-        return request != null && (request.getMostSignificantBits() != 0 || request.getLeastSignificantBits() != 0);
-    }
-
-    private static UUID projectedLayerIdentity(NBTTagCompound tag, boolean reply) {
-        if (tag.func_150296_c().size() != (reply ? 5 : 4)
-            || !(reply ? tag.hasKey("serverRulesOnly", 1) && tag.getBoolean("serverRulesOnly")
-                : tag.hasKey("action", 8) && "serverRules".equals(tag.getString("action")))
-            || !tag.hasKey(LAYER_VERSION, 3)
-            || tag.getInteger(LAYER_VERSION) != HologramProjectedLayerTransport.VERSION
-            || !tag.hasKey(LAYER_REQUEST, 8) || !tag.hasKey(LAYER_INTENT, 4) || tag.getLong(LAYER_INTENT) < 1
-            || reply && (!tag.hasKey(LAYER_SCOPE, 4) || tag.getLong(LAYER_SCOPE) < 1)) return null;
-        String id = tag.getString(LAYER_REQUEST);
-        if (!HologramNativeCompactStart.canonical(id)) return null;
-        UUID request = UUID.fromString(id);
-        return nonzero(request) ? request : null;
-    }
-
-    /** Current authenticated connection's last attempted proof; kept through expiry/consumption to prevent remint. */
-    private static final class ProjectedLayerTicket {
-
-        final WeakReference<NetHandlerPlayServer> sender;
-        final HologramProjectedLayerTransport.Key key;
-        final long issuedAt;
-        final ProjectedLayerTool tool;
-        boolean claimed;
-
-        ProjectedLayerTicket(HologramWorkspace.ActionEndpoint endpoint, HologramProjectedLayerTransport.Key key,
-            ProjectedLayerTool tool, long now) {
-            sender = new WeakReference<>(endpoint.connection);
-            this.key = key;
-            issuedAt = now;
-            this.tool = tool;
-        }
-
-        boolean usable(long now) {
-            return tool != null && !claimed && now - issuedAt < PROJECTED_LAYER_TICKET_NANOS;
-        }
-    }
-
-    /** Exact server-side held projector at authenticated ingress; no copy or traversal of tool NBT. */
-    private static final class ProjectedLayerTool {
-
-        final int slot;
-        final Item item;
-        final String toolId;
-        final WeakReference<ItemStack> original;
-
-        private ProjectedLayerTool(int slot, ItemStack held, String id) {
-            this.slot = slot;
-            item = held.getItem();
-            toolId = id;
-            original = id.isEmpty() ? new WeakReference<>(held) : null;
-        }
-
-        static ProjectedLayerTool capture(EntityPlayerMP player) {
-            int slot = player.inventory.currentItem;
-            ItemStack held = player.getHeldItem();
-            if (!ItemNekoHologramProjector.isProjector(held)) return null;
-            String id = projectedToolId(held);
-            return id.isEmpty() || HologramNativeCompactStart.canonical(id)
-                ? new ProjectedLayerTool(slot, held, id) : null;
-        }
-
-        boolean current(EntityPlayerMP player) {
-            ItemStack held = player.getHeldItem();
-            return held != null && player.inventory.currentItem == slot && held.getItem() == item
-                && toolId.equals(projectedToolId(held)) && (original == null || original.get() == held);
-        }
-    }
-
-    private static String projectedToolId(ItemStack held) {
-        return held.hasTagCompound() ? held.getTagCompound().getString(HologramSessionKeys.TOOL_ID) : "";
-    }
-
-    private static void queueProjectedLayerProbe(NBTTagCompound tag, MessageContext context) {
-        UUID request = projectedLayerIdentity(tag, false);
-        if (request == null || context == null) return;
-        HologramWorkspace.ActionEndpoint endpoint =
-            HologramWorkspace.captureActionEndpoint(context.getServerHandler());
-        if (endpoint == null || endpoint.constructionScope == null) return;
-        ProjectedLayerTool submitted = ProjectedLayerTool.capture(endpoint.player);
-        if (submitted == null) return;
-        HologramRequestGate.Lease lease = projectedLayerProbeGate.acquire(endpoint.connection);
-        if (lease == null) return;
-        long intent = tag.getLong(LAYER_INTENT);
-        ServerTaskScheduler.scheduleServerTask(() -> runQueuedAction(endpoint, lease,
-            () -> issueProjectedLayerTicket(endpoint, request, intent, submitted)));
-    }
-
-    private static void issueProjectedLayerTicket(HologramWorkspace.ActionEndpoint endpoint, UUID request,
-        long intent, ProjectedLayerTool submitted) {
-        SimpleNetworkWrapper wire = channel;
-        HologramConstructionTaskGate gate = HologramWorkspace.constructionGate(endpoint);
-        EntityPlayerMP player = endpoint.player;
-        if (wire == null || gate == null) return;
-        boolean eligible = !player.isDead && player.capabilities.allowEdit && submitted.current(player);
-        var key = new HologramProjectedLayerTransport.Key(request, intent, endpoint.constructionScope.generation);
-        if (gate.query(endpoint.constructionScope, key.gateRequest()).phase != HologramConstructionTaskGate.Phase.UNSEEN)
-            return;
-        long now = System.nanoTime();
-        ProjectedLayerTicket previous = projectedLayerTickets.get(endpoint.actor);
-        if (previous != null && previous.sender.get() == endpoint.connection && intent <= previous.key.intent) {
-            if (!previous.key.equals(key) || !previous.usable(now)) return;
-            if (!eligible || !previous.tool.current(player)) {
-                previous.claimed = true;
-                return;
-            }
-            // A lost capability receipt may be retried, but it never renews the same proof or transfers it to a new scope.
-        } else {
-            if (previous == null && projectedLayerTickets.size() >= MAX_PROJECTED_LAYER_TICKETS) {
-                pruneProjectedLayerTickets();
-                if (projectedLayerTickets.size() >= MAX_PROJECTED_LAYER_TICKETS) return;
-            }
-            // A refused ingress advances only its replay watermark, with no usable ticket or positive reply.
-            projectedLayerTickets.put(endpoint.actor, new ProjectedLayerTicket(endpoint, key, eligible ? submitted : null, now));
-            if (!eligible) return;
-        }
-        if (projectedLayerServer == null) {
-            projectedLayerServer = new HologramProjectedLayerServer(
-                HologramNetwork::sendProjectedLayerReply, HologramNetwork::consumeProjectedLayerTicket);
-            HologramProjectedLayerTransport.installServer(projectedLayerServer);
-        }
-        NBTTagCompound proof = new NBTTagCompound();
-        proof.setBoolean("serverRulesOnly", true); // Old clients discard it without requesting new geometry.
-        proof.setInteger(LAYER_VERSION, HologramProjectedLayerTransport.VERSION);
-        proof.setString(LAYER_REQUEST, request.toString());
-        proof.setLong(LAYER_INTENT, intent);
-        proof.setLong(LAYER_SCOPE, endpoint.constructionScope.generation);
-        wire.sendTo(new State(proof), player);
-    }
-
-    private static boolean consumeProjectedLayerTicket(HologramWorkspace.ActionEndpoint endpoint,
-        HologramProjectedLayerTransport.Key key) {
-        if (HologramWorkspace.constructionGate(endpoint) == null) return false;
-        ProjectedLayerTicket ticket = projectedLayerTickets.get(endpoint.actor);
-        if (ticket == null || ticket.sender.get() != endpoint.connection || !ticket.key.equals(key)
-            || !ticket.usable(System.nanoTime())) return false;
-        ticket.claimed = true; // Even a now-incompatible exact attempt must not start after a later tool swap.
-        return ticket.tool.current(endpoint.player);
-    }
-
-    private static void sendProjectedLayerReply(HologramWorkspace.ActionEndpoint endpoint,
-        HologramProjectedLayerTransport.Reply reply) {
-        SimpleNetworkWrapper wire = channel;
-        if (wire != null && HologramWorkspace.currentActionEndpoint(endpoint)) wire.sendTo(reply, endpoint.player);
-    }
-
-    private static void pruneProjectedLayerTickets() {
-        projectedLayerTickets.values().removeIf(ticket -> {
-            NetHandlerPlayServer sender = ticket.sender.get();
-            return sender == null || sender.netManager == null || !sender.netManager.isChannelOpen();
-        });
-    }
-
-    static void tickProjectedLayerServer(long deadline) {
-        HologramProjectedLayerServer server = projectedLayerServer;
-        if (server != null) server.tick(deadline);
-    }
-
-    /** Normal logical server stop, not a client event. Pending permits remain held by the shared gate. */
-    public static void closeProjectedLayerServer() {
-        HologramProjectedLayerTransport.installServer(null);
-        HologramProjectedLayerServer server = projectedLayerServer;
-        projectedLayerServer = null;
-        projectedLayerProbeGate.clear();
-        projectedLayerTickets.clear();
-        if (server != null) server.close();
     }
 
     public static void setClientReceiver(Consumer<NBTTagCompound> value) {
@@ -1203,14 +972,6 @@ public final class HologramNetwork {
             && player.playerNetServerHandler.netManager.isChannelOpen();
     }
 
-    private static byte[] compressSnapshot(NBTTagCompound tag) throws IOException {
-        long started = HologramRuntimeMetrics.start();
-        try {
-            return HologramSnapshotCodec.compress(tag);
-        } finally {
-            HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.SNAPSHOT_COMPRESS, started);
-        }
-    }
 
     private static final class Outbox {
 
@@ -1774,10 +1535,7 @@ public final class HologramNetwork {
                     stockNativeServer.enqueue(HologramWorkspace.captureActionEndpoint(ctx.getServerHandler()), request);
                 return null; // Exact marker never falls through to old construction or library actions.
             }
-            if ("serverRules".equals(action)) {
-                queueProjectedLayerProbe(msg.tag, ctx);
-                return null;
-            }
+            if("serverRules".equals(action)||ctx==null)return null;
             HologramWorkspace.ActionEndpoint endpoint = HologramWorkspace.captureActionEndpoint(ctx.getServerHandler());
             if (endpoint == null) return null;
             if ("projectedPlacement".equals(action) || "checkPlacementMaterials".equals(action)) {
@@ -1958,15 +1716,7 @@ public final class HologramNetwork {
                 if (reply != null && ctx != null) receiver.accept(reply, ctx.netHandler);
                 return null;
             }
-            if (msg.tag.getBoolean("serverRulesOnly")) {
-                ProjectedLayerNegotiation negotiation = projectedLayerNegotiation;
-                UUID request = negotiation == null ? null : projectedLayerIdentity(msg.tag, true);
-                if (request != null && ctx != null) negotiation.accept(
-                    request, msg.tag.getLong(LAYER_INTENT), msg.tag.getInteger(LAYER_VERSION),
-                    msg.tag.getLong(LAYER_SCOPE), ctx.netHandler);
-                return null;
-            }
-            if (msg.tag.getBoolean(RETIRED_PLACEMENT_REPLY)) return null;
+            if(msg.tag.getBoolean(RETIRED_PLACEMENT_REPLY)||msg.tag.getBoolean("serverRulesOnly"))return null;
             if (msg.tag.getBoolean("progressOnly")) {
                 observeProgress(msg.tag.getCompoundTag("progress"));
                 return null;

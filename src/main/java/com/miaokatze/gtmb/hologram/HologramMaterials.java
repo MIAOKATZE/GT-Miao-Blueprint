@@ -1824,6 +1824,11 @@ public final class HologramMaterials {
         }
 
         public void commit() {
+            commitWithWorldRecovery(Collections.emptyList());
+        }
+
+        /** Only a successful scoped replacement transfers the sealed original to player recovery. */
+        void commitWithWorldRecovery(List<ItemStack> committedDrops) {
             if (uncertain()) throw new IllegalStateException("Cannot commit unresolved extraction");
             if (journal != null) {
                 snapshot();
@@ -1845,6 +1850,7 @@ public final class HologramMaterials {
             meEssentia.clear();
             energyTaken = BigInteger.ZERO;
             terminalState = null;
+            if (!committedDrops.isEmpty()) context.recoverWorld(committedDrops);
             if (journal != null) HologramConstructionJournal.clear(context.player);
         }
 

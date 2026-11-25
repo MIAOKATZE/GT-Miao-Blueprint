@@ -43,7 +43,6 @@ public final class HologramClientLibraryRegression {
             exerciseSaveRequest();
             HologramLibrarySaveLifecycleRegression.run();
             HologramLibraryAdminUiRegression.run();
-            exerciseQuickFence();
             exerciseLegacyMappings();
             exerciseImportedAuthorUpdates();
             exerciseNameOnlyLocalAuthoring();
@@ -946,71 +945,7 @@ public final class HologramClientLibraryRegression {
         }
     }
 
-    private static void exerciseQuickFence() {
-        HologramLibraryQuickState quick = new HologramLibraryQuickState();
-        String first = quick.begin();
-        SimpleAssert.that(quick.matches(first), "bootstrap token exists before async IO begins");
-        SimpleAssert
-            .that(quick.bootstrap(first, "first-session"), "matching fresh-session ACK can begin the private upload");
-        SimpleAssert
-            .that(!quick.bootstrap(first, "first-session"), "duplicate bootstrap ACK cannot start another upload");
-        SimpleAssert.that(quick.matches(first), "upload completion retains cancellation authority until world lock");
-        SimpleAssert.eq(first, quick.cancel(), "Escape can cancel the token after the final chunk");
-        SimpleAssert.that(
-            !quick.bootstrap(first, "first-session") && !quick.matches(first),
-            "late bootstrap/final ACK cannot revive a canceled placement");
-        String second = quick.begin();
-        SimpleAssert.that(
-            !quick.bootstrap(first, "first-session") && quick.bootstrap(second, "second-session"),
-            "replaced/world-reset token cannot cross into fresh placement");
-        SimpleAssert.that(
-            !quick.commitLockedSession("first-session") && quick.active(),
-            "an unrelated locked snapshot cannot retire the current shortcut");
-        SimpleAssert.that(
-            quick.commitLockedSession("second-session"),
-            "the acknowledged session lock retires the current shortcut");
-        SimpleAssert
-            .that(!quick.active() && !quick.matches(second), "world lock retires temporary cancellation capability");
-        String third = quick.begin();
-        SimpleAssert.that(
-            !quick.commitLockedSession("second-session") && quick.matches(third),
-            "post-completion Alt remains active while the old locked snapshot is still displayed");
-        SimpleAssert.that(
-            quick.bootstrap(third, "third-session"),
-            "post-completion fresh bootstrap remains accepted after the old snapshot");
-        SimpleAssert.that(
-            !quick.commitLockedSession("second-session") && quick.matches(third),
-            "old completion cannot retire a newly acknowledged upload");
-        quick.cancel();
-        SimpleAssert.that(!quick.bootstrap(third, "third-session"), "Escape prevents a later upload from starting");
-        String fourth = quick.begin();
-        SimpleAssert
-            .that(!quick.bootstrap(fourth, ""), "a bootstrap without a server session grants no upload authority");
-        quick.cancel();
-        SimpleAssert.that(
-            !quick.bootstrap(fourth, "fourth-session"),
-            "Escape during disk loading prevents a later upload from starting");
-        String fallback = quick.begin();
-        SimpleAssert.that(quick.bootstrap(fallback, "fallback-bootstrap"), "fallback gets its own server capability");
-        SimpleAssert.that(
-            !quick.snapshotMatches(third, 21, 21) && !quick.snapshotMatches(fallback, 22, 21),
-            "old shortcut snapshot and old task token cannot complete a fresh background shortcut");
-        SimpleAssert.that(
-            !quick.placement(third, "fallback-bootstrap", "placed"),
-            "old fallback reply cannot replace the current session");
-        SimpleAssert.that(
-            quick.placement(fallback, "fallback-bootstrap", "placed"),
-            "current fallback reply binds the actual new placement session");
-        SimpleAssert.that(
-            !quick.commitLockedSession("fallback-bootstrap"),
-            "bootstrap or old locked session does not imply final placement");
-        SimpleAssert.that(
-            quick.snapshotMatches(fallback, 22, 22) && quick.commitLockedSession("placed"),
-            "matching task, quick capability and actual locked placement finish the background shortcut");
-        SimpleAssert.that(
-            !quick.placement(fallback, "fallback-bootstrap", "placed"),
-            "late fallback success cannot revive the completed task");
-    }
+
 
     private interface Operation {
 

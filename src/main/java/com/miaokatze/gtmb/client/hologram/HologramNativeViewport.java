@@ -89,6 +89,7 @@ final class HologramNativeViewport {
         if(!d.source.row.getString("prompt").isEmpty())return true;
         return d.example.quantumNetworkHint();
     }
+    final List<Integer> bindingGroups;
     private final Map<Long,Resolved> descriptors;
     private final Map<Integer,Resolved> edited;
     private final Map<Resolved,Integer> totalAdjust;
@@ -109,7 +110,7 @@ final class HologramNativeViewport {
         java.util.function.BooleanSupplier current)throws IOException{
         this.draft=draft;this.index=index;geometry=draft.space();
         providerVersion=HologramStaticMaterials.nativeGeneration();resourceVersion=ResourceContainers.generation();
-        boolean share=previous!=null&&previous.geometry==geometry&&previous.currentProviders();
+        boolean share=previous!=null&&previous.geometry==geometry&&previous.currentProviders()&&draft.sameMaterialPolicy(previous.draft);
         descriptors= share?previous.descriptors:new HashMap<>();
         boolean capacity=HologramBlueprintPreview.showMeOutputCapacity(meta);
         if(!share)for(long d:geometry.counts().keySet()){
@@ -189,13 +190,15 @@ final class HologramNativeViewport {
             memberships=Collections.unmodifiableMap(members);structureBounds=Collections.unmodifiableMap(boundsByGroup);missingStructures=Collections.unmodifiableSet(missing);
         }
         if(share){layerTotals.putAll(previous.layerTotals);families.putAll(previous.families);}
-        if(share&&changes.length==0){total=previous.total;return;}
+        if(share&&changes.length==0){total=previous.total;bindingGroups=previous.bindingGroups;return;}
         if(share)for(int y:dirtyLayers)layerTotals.put(y,fold(index.layers.get(y),layerAdjust.get(y)));
         else for(var e:index.layers.entrySet())layerTotals.put(e.getKey(),fold(e.getValue(),layerAdjust.get(e.getKey())));
         total=fold(geometry.counts(),totalAdjust);
+        Map<Integer,Integer> groupCounts=new TreeMap<>();
         Map<String,Map<Resolved,Integer>> byFamily=new HashMap<>();
-        geometry.counts().forEach((k,n)->{Resolved d=descriptors.get(k);String fName=d.source.row.getString("family");if(!fName.isEmpty())byFamily.computeIfAbsent(fName,unused->new HashMap<>()).merge(d,n,Integer::sum);});
-        totalAdjust.forEach((d,n)->{String fName=d.source.row.getString("family");if(!fName.isEmpty())byFamily.computeIfAbsent(fName,unused->new HashMap<>()).merge(d,n,Integer::sum);});
+        geometry.counts().forEach((k,n)->{Resolved d=descriptors.get(k);int group=d.source.row.getInteger("savedBindingGroup");if(group>0)groupCounts.merge(group,n,Integer::sum);String fName=d.source.row.getString("family");if(!fName.isEmpty())byFamily.computeIfAbsent(fName,unused->new HashMap<>()).merge(d,n,Integer::sum);});
+        totalAdjust.forEach((d,n)->{int group=d.source.row.getInteger("savedBindingGroup");if(group>0)groupCounts.merge(group,n,Integer::sum);String fName=d.source.row.getString("family");if(!fName.isEmpty())byFamily.computeIfAbsent(fName,unused->new HashMap<>()).merge(d,n,Integer::sum);});
+        groupCounts.values().removeIf(n->n<=0);bindingGroups=Collections.unmodifiableList(new ArrayList<>(groupCounts.keySet()));
         byFamily.forEach((k,units)->families.put(k,sum(units)));
     }
     private static void bump(Map<Resolved,Integer> tally,Resolved target,int amount){

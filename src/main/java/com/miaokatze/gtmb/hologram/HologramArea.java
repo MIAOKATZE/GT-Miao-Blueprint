@@ -33,20 +33,14 @@ final class HologramArea extends HologramAreaSelection {
     HologramPresets.Preset blueprint;
     final Map<String, Structure> structures = new LinkedHashMap<>();
     final Map<String, java.util.LinkedHashSet<String>> members = new java.util.HashMap<>();
-    final java.util.Set<String> paletteKeys = new java.util.HashSet<>();
     final java.util.Set<String> edited = new java.util.HashSet<>();
-    final List<Structure> discovery = new ArrayList<>();
-    int discoveryIndex;
-    private java.util.Iterator<Map.Entry<String, HologramCapture.Cell>> declarationMembers;
-    private int declarationMemberDone, declarationMemberTotal;
     String importPhase = "blocks";
     HologramAreaPreparation preparation;
     HologramSession staging;
     Map<String, HologramSession> declarationSessions = new java.util.HashMap<>();
-    int structureIndex, membershipIndex;
     HologramBlueprintProjection.Population population;
     HologramResourcePlanner.PlanTask planTask;
-    long expandedNbt;
+    private HologramLiteralAreaWriter writer;
     private HologramAreaBlockCursor blockCursor;
     private final java.util.Set<java.util.UUID> seenFrames = new java.util.HashSet<>();
     String active = "";
@@ -65,7 +59,6 @@ final class HologramArea extends HologramAreaSelection {
         final MTEEnhancedMultiBlockBase<?> machine;
         boolean enabled = true;
         HologramCapture capture;
-        HologramAreaSignalInference signalInference;
 
         Structure(int x, int y, int z, MTEEnhancedMultiBlockBase<?> machine) {
             this.x = x;
@@ -93,31 +86,27 @@ final class HologramArea extends HologramAreaSelection {
         y = minY;
         z = minZ;
         blueprint = new HologramPresets.Preset();
+        blueprint.cells = new HologramLiteralCaptureRows(true);
         blueprint.schema = 2;
         blueprint.name = "施工区域";
         blueprint.controllerType = "area";
         seenFrames.clear();
         structures.clear();
         members.clear();
-        discovery.clear();
-        paletteKeys.clear();
         edited.clear();
-        discoveryIndex = 0;
-        declarationMembers = null;
         importPhase = "blocks";
         preparation = null;
         staging = null;
         declarationSessions = new java.util.HashMap<>();
-        structureIndex = membershipIndex = 0;
         population = null;
         planTask = null;
-        expandedNbt = 0;
+        writer = new HologramLiteralAreaWriter();
         importing = true;
         imported = false;
     }
 
     /** No world mutation or material extraction occurs during import. */
-    boolean tick(EntityPlayerMP player, ItemStack trigger) throws IOException {
+    boolean tick(EntityPlayerMP player) throws IOException {
         if (imported) return true;
         World world = player.worldObj;
         long deadline = HologramWorkBudget.deadline(HologramWorkBudget.remainingNanos(HologramWorkBudget.SLICE_NANOS));
@@ -132,94 +121,13 @@ final class HologramArea extends HologramAreaSelection {
                 Block block = world.getBlock(x, y, z);
                 int meta = world.getBlockMetadata(x, y, z);
                 TileEntity tile = world.getTileEntity(x, y, z);
-                if (block != Blocks.air) {
-                    HologramBlueprintLimits.require((long) blueprint.cells.size() + 1);
-                    NBTTagCompound data = tile == null ? null : HologramNativeCapture.capture(tile);
-                    ItemStack sample = serverSample(block, meta, tile, data);
-                    HologramPresets.Cell cell = sample == null ? new HologramPresets.Cell()
-                        : HologramPresets.cell(sample, x - minX, y - minY, z - minZ, -1, false);
-                    cell.x = x - minX;
-                    cell.y = y - minY;
-                    cell.z = z - minZ;
-                    cell.block = String.valueOf(Block.blockRegistry.getNameForObject(block));
-                    cell.metadata = meta;
-                    int cellExpandedNbt = 0;
-                    if (sample != null && sample.hasTagCompound()) {
-                        HologramBlueprintNbt.Encoded encoded = HologramBlueprintNbt
-                            .encodeCapturedWithSize(block, sample.getTagCompound());
-                        cell.itemNbt = encoded.value;
-                        cellExpandedNbt += encoded.expandedBytes;
-                    }
-                    if (tile != null) {
-                        HologramBlueprintNbt.Encoded encoded = HologramAeBlueprint.supports(block, data)
-                            ? HologramBlueprintNbt.encodeCanonicalWithSize(block, data)
-                            : HologramBlueprintNbt.encodeCapturedWithSize(block, data);
-                        cell.tileNbt = encoded.value;
-                        cellExpandedNbt += encoded.expandedBytes;
-                    }
-                    expandedNbt += cellExpandedNbt;
-                    if (expandedNbt > 64L * 1024 * 1024) throw new IOException("区域设备 NBT 超过 64MiB 上限，请拆分选区");
-                    if (tile instanceof IGregTechTileEntity) {
-                        IGregTechTileEntity gt = (IGregTechTileEntity) tile;
-                        cell.facing = HologramBlockIdentity.front(gt);
-                        if (gt.getMetaTileEntity() instanceof MTEEnhancedMultiBlockBase && HologramStructureDiscovery
-                            .captureSupported((MTEEnhancedMultiBlockBase<?>) gt.getMetaTileEntity())) {
-                            cell.controller = true;
-                            Structure structure = new Structure(
-                                x,
-                                y,
-                                z,
-                                (MTEEnhancedMultiBlockBase<?>) gt.getMetaTileEntity());
-                            structures.put(structure.id, structure);
-                            addMember(structure.id, structure.id);
-                            discovery.add(structure);
-                        }
-                    }
-                    blueprint.cells.add(cell);
-                    if (sample != null
-                        && paletteKeys.add(String.valueOf(sample.getItem()) + ":" + sample.getItemDamage()))
-                        blueprint.palette.add(HologramPresets.cell(sample, 0, 0, 0, -1, false));
-                }
+                if (block != Blocks.air)
+                    writer.append(blueprint, block, meta, tile, x - minX, y - minY, z - minZ);
             }
         }
         if (!blockCursor.done()) return false;
-        if (discoveryIndex < discovery.size()) {
-            Structure structure = discovery.get(discoveryIndex);
-            if (declarationMembers != null) {
-                importPhase = "declaration_memberships";
-                for (int work = 0; declarationMembers.hasNext(); work++) {
-                    if (work > 0 && System.nanoTime() >= deadline) break;
-                    Map.Entry<String, HologramCapture.Cell> entry = declarationMembers.next();
-                    HologramCapture.Cell cell = entry.getValue();
-                    if (contains(cell.x, cell.y, cell.z)) addMember(entry.getKey(), structure.id);
-                    declarationMemberDone++;
-                }
-                if (!declarationMembers.hasNext()) {
-                    declarationMembers = null;
-                    discoveryIndex++;
-                }
-                return false;
-            }
-            importPhase = "declarations";
-            if (world.getTileEntity(structure.x, structure.y, structure.z) != structure.machine.getBaseMetaTileEntity())
-                throw new IOException("控制器在导入期间变化，请重新选择区域");
-            if (structure.signalInference == null)
-                structure.signalInference = new HologramAreaSignalInference(structure.machine, trigger);
-            boolean inferred = structure.signalInference.step(deadline);
-            structure.capture = structure.signalInference.capture();
-            if (inferred) {
-                if (!structure.capture.incomplete) {
-                    declarationMembers = structure.capture.positions.entrySet()
-                        .iterator();
-                    declarationMemberDone = 0;
-                    declarationMemberTotal = structure.capture.positions.size();
-                } else discoveryIndex++;
-            }
-            return false;
-        }
         if (preparation == null) preparation = new HologramAreaPreparation();
-        if ("blocks".equals(importPhase) || "declarations".equals(importPhase)
-            || "declaration_memberships".equals(importPhase)) importPhase = "networks";
+        if ("blocks".equals(importPhase)) importPhase = "networks";
         if ("networks".equals(importPhase)) {
             if (preparation.captureNetworks(blueprint, Integer.MAX_VALUE, deadline)) {
                 importPhase = "canonicalize";
@@ -245,8 +153,8 @@ final class HologramArea extends HologramAreaSelection {
                 }
                 player.addChatMessage(report);
             }
-            // Workflow continues with detached memberships, projection and plan; publication is atomic.
-            importPhase = "memberships";
+            // The workflow takes ownership of the literal snapshot and prepares its projection.
+            importPhase = "captured";
             return true;
         }
         return false;
@@ -255,12 +163,6 @@ final class HologramArea extends HologramAreaSelection {
     void cancelImportWork() {
         if (importing) imported = false;
         importing = false;
-        if (discoveryIndex < discovery.size()) {
-            Structure current = discovery.get(discoveryIndex);
-            if (current.signalInference != null) current.signalInference.cancel();
-            HologramCapture capture = current.capture;
-            if (capture != null) capture.cancelPending();
-        }
         if (preparation != null) preparation.cancel();
         staging = null;
         if (!imported) declarationSessions.clear();
@@ -313,11 +215,8 @@ final class HologramArea extends HologramAreaSelection {
         if ("blocks".equals(importPhase)) {
             return blockCursor == null ? 0 : blockCursor.completed();
         }
-        if ("declarations".equals(importPhase)) return discoveryIndex;
-        if ("declaration_memberships".equals(importPhase)) return declarationMemberDone;
         if ("networks".equals(importPhase)) return preparation == null ? 0 : preparation.networksDone();
         if ("canonicalize".equals(importPhase)) return preparation == null ? 0 : preparation.progress().done;
-        if ("memberships".equals(importPhase)) return (long) structureIndex + membershipIndex;
         if ("projection".equals(importPhase)) return population == null ? 0 : population.completed();
         if ("plan".equals(importPhase)) return planTask == null ? 0 : planTask.completed();
         return 0;
@@ -325,18 +224,16 @@ final class HologramArea extends HologramAreaSelection {
 
     long importTotal() {
         if ("blocks".equals(importPhase)) return blockCursor == null ? 0 : blockCursor.total();
-        if ("declarations".equals(importPhase)) return discovery.size();
-        if ("declaration_memberships".equals(importPhase)) return declarationMemberTotal;
         if ("canonicalize".equals(importPhase)) return preparation == null ? 1 : preparation.progress().total;
         if ("projection".equals(importPhase)) return population == null ? 0 : population.total();
         if ("plan".equals(importPhase)) return planTask == null ? 0 : planTask.total();
-        if ("memberships".equals(importPhase)) return blueprint.cells.size() + (long) discovery.size();
+        if ("networks".equals(importPhase) && blueprint != null && blueprint.cells instanceof HologramLiteralCaptureRows packed)
+            return packed.sensitive().size();
         return blueprint == null ? 0 : blueprint.cells.size();
     }
 
     String importUnit() {
-        if ("declarations".equals(importPhase)) return "structures";
-        if ("memberships".equals(importPhase) || "projection".equals(importPhase)
+        if ("projection".equals(importPhase)
             || "plan".equals(importPhase)
             || "canonicalize".equals(importPhase)) return "entries";
         return "cells";
@@ -356,7 +253,7 @@ final class HologramArea extends HologramAreaSelection {
     /** Progress belongs to the current phase, with no estimated weights between unrelated operations. */
     int importProgress() {
         HologramAreaPreparation.Progress current = progressSnapshot();
-        return current.total <= 0 ? 0 : (int) Math.max(0, Math.min(100, 100D * current.done / current.total));
+        return current.total <= 0 ? 0 : (int) Math.max(0, Math.min(importing ? 99 : 100, 100D * current.done / current.total));
     }
 
     /** Inventory identity is read without client-only pick hooks or harvesting callbacks. */
