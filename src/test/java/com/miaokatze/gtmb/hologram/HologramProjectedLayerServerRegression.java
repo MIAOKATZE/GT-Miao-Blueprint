@@ -91,6 +91,8 @@ public final class HologramProjectedLayerServerRegression {
             unsupportedReviewedProfileCannotStart(unsafe);
             ordinaryMainFirstDoesNotChangeSources(unsafe);
             selectedBackpackPaysOnlyActualPlacements(unsafe);
+            selectedMeSettles(unsafe);
+            voucherSelectionSettlesOnce(unsafe);
             reentrantBeginDoesNotAdoptChangedOwner(unsafe);
             rejectedBeginAndControls(unsafe);
             stopOvertakesBeginAndRevokedGateIsNotActive(unsafe);
@@ -437,6 +439,43 @@ public final class HologramProjectedLayerServerRegression {
             } finally {
                 unsafe.putObjectVolatile(base, offset, prior);
             }
+        }
+    }
+
+    private static void selectedMeSettles(sun.misc.Unsafe unsafe) throws Exception {
+        for (boolean allowed : new boolean[] {true, false}) try (Fixture f = new Fixture(unsafe, 0);
+            var me = new HologramProjectedMeFixture(f.player, allowed)) {
+            f.player.inventory.mainInventory[1] = null;
+            var settings = new HologramMaterials.Settings();
+            settings.main = settings.containers = false;
+            settings.priority = 2;
+            HologramMaterials.write(f.player.getHeldItem(), settings);
+            f.world.seed(1, 64, 0, Blocks.stone, 0);
+            f.login();
+            Plan p = new Plan();
+            p.generation = f.generation();
+            f.approve(p, 1);
+            f.send(f.player, p.begin(1));
+            f.tick();
+            if (!allowed) {
+                require(f.last().reason == Reason.MISSING_STOCK && me.modulates == 0 && me.stock == 3,
+                    "ME without EXTRACT permission must not grant placement or debit: " + f.last().reason);
+                continue;
+            }
+            require(f.last().phase == Phase.AWAITING_SLICE && me.stock == 3,
+                "authenticated ME dry admission: " + f.last().reason);
+            f.world.arm();
+            f.send(f.player, p.first(1));
+            f.tick();
+            require(f.last().placed == 1 && f.last().alreadySatisfied == 1 && me.stock == 2 && me.modulates == 1,
+                "ME pays only new exact blocks: " + f.last().reason);
+            f.send(f.player, p.first(1));
+            f.tick();
+            require(me.stock == 2 && me.modulates == 1, "replay cannot withdraw twice");
+            f.send(f.player, p.tail(1));
+            f.tick();
+            require(f.last().phase == Phase.COMPLETE && me.stock == 1 && me.modulates == 2,
+                "formal completion reflects two actual ME withdrawals");
         }
     }
 
@@ -798,6 +837,122 @@ public final class HologramProjectedLayerServerRegression {
             return malformed;
         } finally {
             bytes.release();
+        }
+    }
+
+    /** Same registered ingress and scoped transaction as ordinary construction; only world and peer are fixtures. */
+    private static void voucherSelectionSettlesOnce(sun.misc.Unsafe unsafe) throws Exception {
+        Field config = DecorationVoucherConfig.class.getDeclaredField("current");
+        config.setAccessible(true);
+        Object oldConfig = config.get(null);
+        var oldVoucher = com.miaokatze.gtmb.register.DecorationVoucherRegistry.voucher;
+        var voucher = new com.miaokatze.gtmb.common.items.hologram.ItemDecorationVoucher();
+        if (net.minecraft.item.Item.itemRegistry.getObject("gtmb_fixture:projected_voucher") == null)
+            net.minecraft.item.Item.itemRegistry.addObject(31971, "gtmb_fixture:projected_voucher", voucher);
+        else voucher = (com.miaokatze.gtmb.common.items.hologram.ItemDecorationVoucher)
+            net.minecraft.item.Item.itemRegistry.getObject("gtmb_fixture:projected_voucher");
+        com.miaokatze.gtmb.register.DecorationVoucherRegistry.voucher = voucher;
+        config.set(null, DecorationVoucherConfig.defaults());
+        try {
+            for (int mode = 0; mode < 5; mode++) try (Fixture fixture = new Fixture(unsafe, 0)) {
+                boolean selected = mode != 2;
+                boolean veto = mode == 1;
+                boolean vetoTail = mode == 4;
+                boolean hasOrdinaryStock = mode == 3;
+                fixture.player.inventory.mainInventory[1] = hasOrdinaryStock ? new ItemStack(Blocks.stonebrick, 2) : null;
+                fixture.player.inventory.mainInventory[2] = new ItemStack(voucher, 1);
+                fixture.login();
+                UUID id = UUID.randomUUID();
+                long generation = fixture.generation();
+                String brick = "minecraft:stonebrick";
+                Header header = new Header(id, 0, 64, 0, 0, 64, 0, 0, 65, 0, 2, 2,
+                    Collections.singletonList(new Variant(brick, 0, brick, 0, -1, false, "", "", 2)),
+                    selected && !hasOrdinaryStock);
+                byte[] manifest = HologramProjectedLayerWire.encodeManifest(new Manifest(header));
+                require(HologramProjectedLayerWire.decodeManifest(manifest).header.voucherRequested
+                    == (selected && !hasOrdinaryStock), "wire selection survives codec without auto-opt-in");
+                fixture.approve(id, generation, 1);
+                fixture.send(fixture.player, HologramProjectedLayerTransport.begin(id, 1, generation, manifest));
+                fixture.tick();
+                if (mode == 2) {
+                    require(fixture.last().phase == Phase.REJECTED && fixture.last().reason == Reason.MISSING_STOCK
+                        && fixture.player.inventory.mainInventory[2].stackSize == 1
+                        && fixture.world.writes().isEmpty(),
+                        "without explicit opt-in a coupon cannot substitute for absent brick stock");
+                    continue;
+                }
+                require(fixture.last().phase == Phase.AWAITING_SLICE
+                    && fixture.player.inventory.mainInventory[2].stackSize == 1,
+                    "selected coupon is observed at admission, not consumed: " + fixture.last().phase + "/" + fixture.last().reason
+                        + ", covered=" + HologramDecorationVoucher.covered(Blocks.stonebrick, new ItemStack(Blocks.stonebrick))
+                        + ", vouchers=" + HologramDecorationVoucher.available(fixture.player));
+                fixture.world.arm();
+                Field bus = MinecraftForge.class.getDeclaredField("EVENT_BUS");
+                Object base = unsafe.staticFieldBase(bus);
+                long offset = unsafe.staticFieldOffset(bus);
+                EventBus prior = MinecraftForge.EVENT_BUS;
+                if (veto || vetoTail) unsafe.putObjectVolatile(base, offset, new EventBus() {
+                    @Override
+                    public boolean post(Event event) {
+                        if (event instanceof BlockEvent.PlaceEvent place && place.player == fixture.player
+                            && (veto || place.y == 65)) {
+                            event.setCanceled(true);
+                            return true;
+                        }
+                        return false;
+                    }
+                });
+                try {
+                    byte[] first = HologramProjectedLayerWire.encodeSlice(new Slice(id, 0, 64, new int[] { 0, 0, 0 }));
+                    Request firstRequest = HologramProjectedLayerTransport.slice(id, 1, generation, first);
+                    fixture.send(fixture.player, firstRequest);
+                    fixture.tick();
+                    if (veto) {
+                        ItemStack restoredVoucher = fixture.player.inventory.mainInventory[2];
+                        require(fixture.last().phase == Phase.STOPPED && fixture.last().placed == 0
+                            && restoredVoucher != null && restoredVoucher.getItem() == voucher
+                            && restoredVoucher.stackSize == 1
+                            && fixture.world.getBlock(0, 64, 0) == Blocks.air
+                            && !HologramConstructionJournal.pending(fixture.player),
+                            "Forge rejection before the first eligible commit returns the one coupon with no debt");
+                        continue;
+                    }
+                    require(fixture.last().placed == 1, "first coupon-backed ordinary cell commits");
+                    fixture.send(fixture.player, firstRequest);
+                    fixture.tick();
+                    require(fixture.world.writes().size() == 1, "replayed first slice cannot write/debit twice");
+                    byte[] last = HologramProjectedLayerWire.encodeSlice(new Slice(id, 1, 65, new int[] { 0, 0, 0 }));
+                    Request lastRequest = HologramProjectedLayerTransport.slice(id, 1, generation, last);
+                    fixture.send(fixture.player, lastRequest);
+                    fixture.tick();
+                    if (vetoTail) {
+                        require(fixture.last().phase == Phase.STOPPED && fixture.last().placed == 1
+                            && fixture.world.getBlock(0, 64, 0) == Blocks.stonebrick
+                            && fixture.world.getBlock(0, 65, 0) == Blocks.air
+                            && fixture.player.inventory.mainInventory[2] == null
+                            && !HologramConstructionJournal.pending(fixture.player),
+                            "failure after a committed coupon use does not refund it or consume another coupon");
+                        continue;
+                    }
+                    require(fixture.last().phase == Phase.COMPLETE && fixture.last().placed == 2
+                        && fixture.world.getBlock(0, 64, 0) == Blocks.stonebrick
+                        && fixture.world.getBlock(0, 65, 0) == Blocks.stonebrick
+                        && (hasOrdinaryStock ? fixture.player.inventory.mainInventory[2] != null
+                            && fixture.player.inventory.mainInventory[2].stackSize == 1
+                            : fixture.player.inventory.mainInventory[2] == null)
+                        && fixture.player.inventory.mainInventory[1] == null
+                        && !HologramConstructionJournal.pending(fixture.player),
+                        "two actual frames consume one opted-in coupon, or normal bricks without touching an unselected coupon");
+                    fixture.send(fixture.player, lastRequest);
+                    fixture.tick();
+                    require(fixture.world.writes().size() == 2, "terminal replay has zero additional writes or payment");
+                } finally {
+                    if (veto || vetoTail) unsafe.putObjectVolatile(base, offset, prior);
+                }
+            }
+        } finally {
+            config.set(null, oldConfig);
+            com.miaokatze.gtmb.register.DecorationVoucherRegistry.voucher = oldVoucher;
         }
     }
 

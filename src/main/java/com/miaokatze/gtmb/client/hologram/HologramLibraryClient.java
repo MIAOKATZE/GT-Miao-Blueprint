@@ -2483,7 +2483,7 @@ final class HologramLibraryClient {
             java.util.function.LongConsumer observed) throws IOException {
             return HologramProjectedLayerEncoder.prepare(
                 request, source.anchor(0), source.anchor(1), source.anchor(2), source,
-                () -> workerCurrent(owner), observed);
+                () -> workerCurrent(owner), observed, submission.intent().getBoolean("voucherRequested"));
         }
     }
 

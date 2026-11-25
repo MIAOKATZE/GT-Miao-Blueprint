@@ -77,7 +77,8 @@ final class HologramWorldTransactions {
     static boolean operateScopedSelected(HologramSession s, HologramCapture.Cell c, int index,
         BooleanSupplier authority) {
         PlacementScope scope = new PlacementScope(s, c, Objects.requireNonNull(authority), null, null, null);
-        scope.selectedSources = !s.materialSettings.main || s.materialSettings.containers || s.materialSettings.me;
+        scope.selectedSources = s.jobVoucherRequested || !s.materialSettings.main || s.materialSettings.containers || s.materialSettings.me;
+        scope.allowVoucher = s.jobVoucherRequested;
         return operate(s, c, index, scope);
     }
 
@@ -104,7 +105,7 @@ final class HologramWorldTransactions {
         final boolean creative;
         HologramMaterials.Context materials;
         HologramMaterials.ScopedMainClaim claim;
-        boolean unresolved, selectedSources;
+        boolean unresolved, selectedSources, allowVoucher;
 
         PlacementScope(HologramSession s, HologramCapture.Cell cell, BooleanSupplier authority,
             BooleanSupplier livePrecommit, BooleanSupplier liveTransport, HologramStockEbfProfile.PreparedCell ebf) {
@@ -137,7 +138,7 @@ final class HologramWorldTransactions {
 
         boolean inputs(HologramSession s) {
             return endpoint(s) && s.mode == 0 && s.slot == slot && settings == s.materialSettings
-                && (selectedSources || settings.main && !settings.containers && !settings.me) && !s.jobVoucherRequested
+                && (selectedSources || settings.main && !settings.containers && !settings.me) && (allowVoucher == s.jobVoucherRequested)
                 && s.player.capabilities.allowEdit && s.player.capabilities.isCreativeMode == creative
                 && (materials == null
                     || s.materialContext == materials && (selectedSources ? materials.scopedSelected(s.player, settings, slot)
@@ -209,7 +210,8 @@ final class HologramWorldTransactions {
             && target.getItem().getMetadata(target.getItemDamage()) == c.meta
             && c.itemNbt.isEmpty() && c.tileNbt.isEmpty() && c.coverMaterials.isEmpty() && c.coverCostsNbt.isEmpty()
             && !c.invalidCoverCosts && s.pendingAssetBudget.isEmpty() && s.cellAssetBudgets.isEmpty()
-            && !HologramMaterialAccess.voucherSelected(s) && HologramGtswnPlacementMaterials.supplyKind(target) < 0
+            && (!HologramMaterialAccess.voucherSelected(s) || scope.allowVoucher)
+            && HologramGtswnPlacementMaterials.supplyKind(target) < 0
             && !HologramGtswnPlacementMaterials.freeShell(c.block, target)
             && (scope.ebf == null ? !HologramNativePlacement.supported(c.block, null)
                 : scope.ebf.matches(s, c, 0, target))
@@ -453,8 +455,21 @@ final class HologramWorldTransactions {
                 if (!scope.creative) {
                     ItemStack specimen = energyTarget.copy();
                     specimen.stackSize = 1;
+                    voucherShell = scope.allowVoucher && HologramMaterialAccess.voucherSelected(s)
+                        && HologramDecorationVoucher.covered(c.block, specimen);
+                    if (voucherShell && !s.jobVoucherConsumed) {
+                        if (!HologramDecorationVoucher.reserveMain(s.player)) {
+                            rollbackMaterials(s, transaction, inventory, scope);
+                            c.status = "missing";
+                            s.status = "装饰抵用券不足，本格未施工、未扣材料";
+                            return false;
+                        }
+                        voucherReserved = true;
+                    }
                     boolean funded;
-                    if (scope.selectedSources) {
+                    if (voucherShell) {
+                        funded = true;
+                    } else if (scope.selectedSources) {
                         funded = transaction.takeOne(specimen, false);
                     } else {
                         scope.claim = HologramMaterials.ScopedMainClaim
@@ -468,7 +483,7 @@ final class HologramWorldTransactions {
                         return false;
                     }
                     // A fungible local escrow token only; StructureLib never extracts from a live backpack.
-                    reserved = specimen;
+                    reserved = voucherShell ? null : specimen;
                 }
             } else {
                 decorDescriptor = HologramCellPolicy.decoration(s, c);
@@ -1026,6 +1041,7 @@ final class HologramWorldTransactions {
                         return retainScopedJournal(s, transaction, scope, "selected-payment-commit-uncertain");
                     }
                 }
+                if (voucherReserved) s.jobVoucherConsumed = true;
                 c.status = "placed";
                 return true;
             }

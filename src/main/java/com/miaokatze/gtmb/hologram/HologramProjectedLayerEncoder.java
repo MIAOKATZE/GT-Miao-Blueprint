@@ -441,6 +441,11 @@ public final class HologramProjectedLayerEncoder {
     /** Use captured layout facts; preparation never visits geometry before admission. */
     public static Prepared prepare(UUID request, int x, int y, int z, Source source, BooleanSupplier current,
         LongConsumer observed) throws IOException {
+        return prepare(request, x, y, z, source, current, observed, false);
+    }
+
+    public static Prepared prepare(UUID request, int x, int y, int z, Source source, BooleanSupplier current,
+        LongConsumer observed, boolean voucherRequested) throws IOException {
         checkpoint(current);
         if (request == null || source == null) throw invalid();
         Layout layout = source.layout();
@@ -479,7 +484,7 @@ public final class HologramProjectedLayerEncoder {
         }
         if (slices < 1 || slices > HologramProjectedLayerService.MAX_SLICES) throw invalid();
         Header header = new Header(request, x, y, z, low[0], low[1], low[2], high[0], high[1], high[2], cells,
-            slices, palette);
+            slices, palette, voucherRequested);
         // Layout and aggregate quantities came from the same immutable decode. No geometry prepass.
         checkpoint(current);
         return new Prepared(source, header, layout, variant, observed,

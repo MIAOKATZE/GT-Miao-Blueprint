@@ -102,20 +102,27 @@ final class HologramProjectedLayerWire {
         final int x, y, z, minX, minY, minZ, maxX, maxY, maxZ;
         final int cells, slices, profile;
         final List<Variant> palette;
+        final boolean voucherRequested;
 
         Header(UUID request, int x, int y, int z, int minX, int minY, int minZ, int maxX, int maxY, int maxZ,
             int cells, int slices, List<Variant> palette) throws IOException {
-            this(request, x, y, z, minX, minY, minZ, maxX, maxY, maxZ, cells, slices, palette, VERSION);
+            this(request, x, y, z, minX, minY, minZ, maxX, maxY, maxZ, cells, slices, palette, VERSION, false);
+        }
+
+        Header(UUID request, int x, int y, int z, int minX, int minY, int minZ, int maxX, int maxY, int maxZ,
+            int cells, int slices, List<Variant> palette, boolean voucherRequested) throws IOException {
+            this(request, x, y, z, minX, minY, minZ, maxX, maxY, maxZ, cells, slices, palette, VERSION,
+                voucherRequested);
         }
 
         static Header reviewed(UUID request, int x, int y, int z, int minX, int minY, int minZ, int maxX, int maxY,
             int maxZ, int cells, int slices, List<Variant> palette) throws IOException {
             return new Header(request, x, y, z, minX, minY, minZ, maxX, maxY, maxZ,
-                cells, slices, palette, REVIEWED_PROFILE);
+                cells, slices, palette, REVIEWED_PROFILE, false);
         }
 
         private Header(UUID request, int x, int y, int z, int minX, int minY, int minZ, int maxX, int maxY, int maxZ,
-            int cells, int slices, List<Variant> palette, int profile) throws IOException {
+            int cells, int slices, List<Variant> palette, int profile, boolean voucherRequested) throws IOException {
             boolean reviewed = profile == REVIEWED_PROFILE;
             int variantCap = reviewed ? MAX_REVIEWED_VARIANTS : MAX_VARIANTS;
             if (!validRequest(request) || !position(x, y, z) || !position(minX, minY, minZ)
@@ -147,6 +154,7 @@ final class HologramProjectedLayerWire {
             this.cells = cells;
             this.slices = slices;
             this.profile = profile;
+            this.voucherRequested = voucherRequested;
             this.palette = Collections.unmodifiableList(copy);
         }
     }
@@ -268,9 +276,12 @@ final class HologramProjectedLayerWire {
                 } else if (in.readInt() != 0 || in.readInt() != 0) throw malformed();
                 palette.add(new Variant(block, metadata, item, damage, -1, false, tile, itemState, count, reviewed));
             }
-            if (in.available() != 0) throw malformed();
+            // Missing optional selection means the pre-selection protocol: never silently opt in.
+            boolean hasChoice = in.available() != 0;
+            int choice = hasChoice ? in.readUnsignedByte() : 0;
+            if (hasChoice && choice != 1 || reviewed && choice != 0 || in.available() != 0) throw malformed();
             return new Manifest(new Header(request, x, y, z, minX, minY, minZ, maxX, maxY, maxZ, cells, slices,
-                palette, profile));
+                palette, profile, choice == 1));
         }
     }
 
@@ -310,6 +321,7 @@ final class HologramProjectedLayerWire {
                 out.writeInt(0);
             }
         }
+        if (value.voucherRequested) out.writeByte(1);
     }
 
     static byte[] encodeSlice(Slice value) throws IOException {

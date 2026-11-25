@@ -21,6 +21,7 @@ import com.miaokatze.gtmb.client.hologram.HologramMaterialConfirmationDialog.Loc
 import com.miaokatze.gtmb.client.hologram.HologramMaterialConfirmationDialog.LocalFrame;
 import com.miaokatze.gtmb.client.hologram.HologramMaterialConfirmationDialog.LocalView;
 import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
+import com.miaokatze.gtmb.hologram.HologramMaterials;
 
 /** Lightweight local modal over the already-present world ghost; no second workspace or source read. */
 final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implements LocalView {
@@ -30,6 +31,7 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
     private final CapturedDescription description;
     private HologramMaterialConfirmationDialog dialog;
     private PlainAvailability availability = PlainAvailability.SOURCE;
+    private boolean voucherSelected;
 
     HologramLibraryMaterialReviewScreen(HologramLocalPlacement placement, Submission frozen, Minecraft client) {
         super("library_material_review", 1, 1);
@@ -64,7 +66,7 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
 
     @Override
     public String localSubmitLabel() {
-        return availability == PlainAvailability.READY ? "开始施工（仅使用主背包）" : "施工不可用 · " + availability.reason;
+        return availability == PlainAvailability.READY ? "开始施工（按所选料源）" : "施工不可用 · " + availability.reason;
     }
 
     @Override
@@ -73,11 +75,46 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
     }
 
     @Override
+    public boolean localVoucherAvailable() {
+        return availability == PlainAvailability.READY && ticket.current(Minecraft.getMinecraft());
+    }
+
+    @Override
+    public boolean localVoucherSelected() {
+        return voucherSelected;
+    }
+
+    @Override
+    public String localVoucherLabel() {
+        return voucherSelected ? "✓ 请求装饰抵扣 · 服务端核验" : "使用猫猫装饰抵用券";
+    }
+
+    @Override
+    public String localSourcesLabel() {
+        Minecraft client = Minecraft.getMinecraft();
+        if (!ticket.current(client)) return "材料来源：上下文已失效";
+        var settings = HologramMaterials.read(client.thePlayer.getHeldItem());
+        return "所选料源：" + (settings.main ? "物品栏 " : "")
+            + (settings.containers ? "背包 " : "") + (settings.me ? "无线 AE" : "")
+            + " · 优先" + (settings.priority == 1 ? "背包" : settings.priority == 2 ? "AE" : "物品栏");
+    }
+
+    /** A choice belongs to this exact confirmation, never mutates the tool or the frozen source. */
+    static Submission paymentChoice(Submission frozen, boolean voucherSelected) {
+        if (frozen == null) return null;
+        NBTTagCompound intent = frozen.intent();
+        intent.setBoolean("voucherRequested", voucherSelected);
+        return new Submission(frozen.source(), frozen.display(), frozen.lockGeneration(), intent);
+    }
+
+    @Override
     public void localAction(LocalAction action) {
         deferAction(() -> {
             Minecraft client = Minecraft.getMinecraft();
             if (action == LocalAction.BACK) returnToWorld(client);
-            else if (action == LocalAction.REFRESH) {
+            else if (action == LocalAction.VOUCHER) {
+                if (localVoucherAvailable()) voucherSelected = !voucherSelected;
+            } else if (action == LocalAction.REFRESH) {
                 if (ticket.current(client))
                     description.refresh(() -> client.thePlayer.inventory.mainInventory, ticket.slot);
             } else if (action == LocalAction.SUBMIT && ticket.current(client)) {
@@ -86,7 +123,7 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
                     if (availability == PlainAvailability.TRANSPORT)
                         HologramClientProjectedPlacement.logMissingTransport();
                     HologramClient.selectionNotice(availability.reason + "，未开始施工。");
-                } else if (dispatchRefused(action, () -> ticket.consume(client), placement::submitFrozen)) {
+                } else if (dispatchRefused(action, () -> paymentChoice(ticket.consume(client), voucherSelected), placement::submitFrozen)) {
                     returnToWorld(client);
                     HologramClient.selectionNotice("当前锁定范围或连接未通过施工检查；已保留位置，未开始施工。");
                 }
@@ -147,7 +184,8 @@ final class HologramLibraryMaterialReviewScreen extends HologramMuiScreen implem
                 : source.length == MAIN_SLOTS ? source : Arrays.copyOf(source, MAIN_SLOTS);
             HologramLibraryMaterialDescription.Description result = HologramLibraryMaterialDescription
                 .describe(forecast, observed, toolSlot);
-            String status = "施工用量未核算";
+            String status = forecast != null && forecast.unpriced().cells() == 0
+                ? "图内目标用量 · 现场及所选来源待核验" : "施工用量未核算";
             if (result == null) status += " · 本机没有可核对的来源记录";
             else if (result.unlistedCells() > 0) status += " · " + result.unlistedCells() + " 格未列明";
             cached = new LocalFrame(
