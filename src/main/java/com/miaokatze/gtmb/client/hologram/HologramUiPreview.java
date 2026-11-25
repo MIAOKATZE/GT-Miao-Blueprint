@@ -47,7 +47,8 @@ final class HologramUiPreview {
     void chooseControllerSiteView(NBTTagCompound metadata) {
         if (controllerViewChosen || !metadata.getBoolean("localStandardController") || !metadata.hasKey("siteOccupied", 3)) return;
         controllerViewChosen = true;
-        view = metadata.getInteger("siteOccupied") > 0 ? 1 : 0;
+        // Terrain crossing a declared cell is a conflict, not evidence of an installed machine.
+        view = metadata.getInteger("siteMatchingSolid") > 0 || metadata.getInteger("siteHatches") > 0 ? 1 : 0;
     }
 
     private int hovered = -1;

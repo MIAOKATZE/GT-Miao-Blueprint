@@ -20,7 +20,7 @@ import gregtech.api.GregTechAPI;
 /** Display-only evidence collected inside the existing, loaded-client-world declaration walk.
  * Counts refer to declared positions, not GT's server-owned formed flag or hatch membership. */
 final class HologramLocalControllerSite {
-    private int occupied, missing, different, unknown, hatches, matching;
+    private int occupied, missing, different, unknown, hatches, matching, matchingSolid;
     private final Map<IStructureElement<?>, Channel> declarations = new IdentityHashMap<>();
     private final Map<String, Integer> channels = new LinkedHashMap<>();
 
@@ -45,7 +45,11 @@ final class HologramLocalControllerSite {
             ? actual == expected && stack != null && wanted != null && HologramValues.same(stack, wanted)
                 && (wantedFacing < 0 || facing == wantedFacing)
             : HologramBlockIdentity.sameForPlacement(actual, meta, expected, expectedMeta);
-        if (same) { matching++; return "satisfied"; }
+        if (same) {
+            matching++;
+            if (actual != Blocks.air) matchingSolid++;
+            return "satisfied";
+        }
         different++;
         return "occupied";
     }
@@ -56,6 +60,7 @@ final class HologramLocalControllerSite {
         header.setInteger("siteDifferent", different);
         header.setInteger("siteUnknown", unknown);
         header.setInteger("siteMatching", matching);
+        header.setInteger("siteMatchingSolid", matchingSolid);
         header.setInteger("siteHatches", hatches);
         NBTTagCompound observed = new NBTTagCompound();
         channels.forEach((id, value) -> { if (value > 0) observed.setInteger(id, value); });

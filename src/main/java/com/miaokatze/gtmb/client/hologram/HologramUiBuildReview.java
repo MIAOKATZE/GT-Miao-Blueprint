@@ -194,6 +194,10 @@ final class HologramUiBuildReview implements LocalView {
             scope = "逐格换装 · 仅原机登记的自有仓室";
             status = "只处理所选改动。仅转向不扣料；换料前检查当前库存，回收原设备。";
         } else if (localStockSite != null) status += " · 现场或库存变更时保留已完成方块";
+        String blocker = localSubmitBlocker();
+        if (!localMaterialNotice.isEmpty()) status = localMaterialNotice;
+        else if (!blocker.isEmpty()) status = blocker;
+        else if (localHatchDelta()) status = localMaterials.status();
         return new LocalFrame(
             localMaterials.visible(),
             scope,
@@ -215,29 +219,51 @@ final class HologramUiBuildReview implements LocalView {
     }
 
     @Override
-    public boolean localSubmitAvailable() {
-        // A current but unfinished estimate never grants or denies permission; the server checks materials.
-        if(!localMaterialsCurrent()||!ui.session.editable())return false;
-        if(ui.session.state().nativeViewport!=null)return ui.library.savedNativePlacementReady();
-        if ((reviewedNativeMode(1) || reviewedNativeMode(2)) && ui.preview.selection().size() == 0) return false;
-        return HologramPlacementConfirmation.localStructureReviewBlocker(ui.session.state()).isEmpty();
+    public boolean localSubmitAvailable() { return localSubmitBlocker().isEmpty(); }
+
+    @Override
+    public boolean localHatchDelta() { return localMaterials != null && localMaterials.hatchDelta != null; }
+
+    @Override
+    public String localSubmitBlocker() {
+        if (localMaterials == null) return localMaterialNotice.isEmpty() ? "请重新打开材料页。" : localMaterialNotice;
+        if (!localMaterialsCurrent()) return "施工范围或现场已变化，请重新打开材料页。";
+        if (!ui.session.editable()) return localMaterialEditingReason();
+        if (ui.session.state().nativeViewport != null)
+            return ui.library.savedNativePlacementReady() ? "" : "请先保存蓝图。";
+        String blocker = HologramPlacementConfirmation.localStructureReviewBlocker(ui.session.state());
+        if (!blocker.isEmpty()) return blocker;
+        return localHatchDelta() ? localMaterials.hatchDelta.blocker : "";
+    }
+
+    @Override
+    public void localSubmitDenied() {
+        String blocker = localSubmitBlocker();
+        if (!blocker.isEmpty()) {
+            localMaterialNotice = blocker;
+            ui.session.notice(blocker);
+            com.miaokatze.gtmb.hologram.HologramStockActionTrace.event("client.blocked", null, "ineligible");
+        }
     }
 
     @Override
     public String localSubmitLabel() {
         if(ui.session.state().nativeViewport!=null)return ui.library.savedNativePlacementReady()
             ? "定位并施工" : "请先保存蓝图";
-        if (reviewedNativeMode(2)) return "确认拆除所选仓室 · " + localDemolitionDestinationLabel();
-        if (reviewedNativeMode(1)) return "确认换装所选仓室";
-        if (localStockSite == null) return "确认补建（无可用短请求时不会提交）";
-        var context = HologramClientStockNative.context(ui.host == null ? null : ui.host.minecraft());
-        return HologramClientStockNative.OWNER.serverConfirmed(context) ? localStockSite.submitLabel()
-            : localStockSite.submitLabel() + " · 提交前检查服务器支持";
+        if (reviewedNativeMode(2)) return "确认拆除";
+        if (reviewedNativeMode(1)) return "确认换装";
+        return buildLabel(ui.session.state().data);
+    }
+
+    static String buildLabel(NBTTagCompound site) {
+        if (site.getInteger("siteMatchingSolid") > 0 || site.getInteger("siteHatches") > 0) return "确认补建";
+        if (!site.hasKey("siteOccupied", 3) || site.getInteger("siteUnknown") > 0) return "确认施工";
+        return "确认新建";
     }
 
     @Override
     public boolean supportsDetailedMaterials() {
-        return localMaterialPaneCurrent() && ui.session.state().controllerMaterialCounts != null;
+        return !localHatchDelta() && localMaterialPaneCurrent() && ui.session.state().controllerMaterialCounts != null;
     }
 
     @Override
@@ -298,7 +324,11 @@ final class HologramUiBuildReview implements LocalView {
 
     void submitLocalMaterials(java.util.function.Predicate<NBTTagCompound> dispatch) {
         retireStaleLocalMaterials();
-        if (!localSubmitAvailable()) return;
+        if (!localSubmitAvailable()) {
+            if (localMaterials != null || !localMaterialNotice.isEmpty()) localSubmitDenied();
+            return;
+        }
+        com.miaokatze.gtmb.hologram.HologramStockActionTrace.event("client.click", null, "confirm");
         ui.session.notice("");
         // True means only that this local action sent or scheduled the request, never server acceptance.
         NBTTagCompound settings = localMaterials.settings();
@@ -307,6 +337,8 @@ final class HologramUiBuildReview implements LocalView {
         else {
             localMaterialNotice = ui.session.notice();
             if (localMaterialNotice.isEmpty()) localMaterialNotice = "未提交施工，请检查当前状态后重试。";
+            // A dispatch error might originate in external content; do not log its arbitrary message.
+            com.miaokatze.gtmb.hologram.HologramStockActionTrace.event("client.not_sent", null, "dispatch_declined");
         }
     }
 

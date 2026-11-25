@@ -67,6 +67,12 @@ final class HologramMaterialConfirmationDialog {
 
         boolean localSubmitAvailable();
 
+        default String localSubmitBlocker() { return localSubmitAvailable() ? "" : "当前无法提交。"; }
+
+        default boolean localHatchDelta() { return false; }
+
+        default void localSubmitDenied() {}
+
         default boolean describesNativeTargets() {
             return false;
         }
@@ -336,6 +342,10 @@ final class HologramMaterialConfirmationDialog {
                             : "原图记录格数不是施工需求；背包同物品数量不代表可扣料。");
                         return;
                     }
+                    if (local && localView.localHatchDelta()) {
+                        t.addLine("只计算所选仓室的改动；服务端复核现场与归属。");
+                        return;
+                    }
                     if (local) {
                         t.addLine("需求按目标估算，未扣除现场已有方块；容器、AE、权限及抵扣待执行时核验。");
                         return;
@@ -390,6 +400,7 @@ final class HologramMaterialConfirmationDialog {
             HologramMaterialReview.Row row = materials.row(getHoveredRow());
             if (row == null) return;
             t.addLine(row.name);
+            if (row.data.hasKey("hatchChange", 8)) t.addLine(row.data.getString("hatchChange"));
             t.addLine(
                 "需求 " + row.required
                     + (local ? " / 背包已知 " : " / 已有 ")
@@ -414,7 +425,8 @@ final class HologramMaterialConfirmationDialog {
             panel.child(HologramMuiTheme.label(this::status, 14, 299, 604, 16, HologramMuiTheme.TEXT));
             panel.child(
                 HologramMuiTheme.label(
-                    () -> descriptive() ? "蓝图记录与背包观察仅供查看；明确提交后才核验施工。" : "本地估算，不是施工报价。普通补建核验通过后开始，自选仓室在服务端复核。",
+                    () -> localView.localHatchDelta() ? "只处理已选仓室；现场与库存由服务器确认。"
+                        : descriptive() ? "仅供查看，未扣料。" : "本地估算，未扣料。",
                     14,
                     316,
                     604,
@@ -485,7 +497,10 @@ final class HologramMaterialConfirmationDialog {
                     184,
                     402,
                     434,
-                    () -> localView.localAction(LocalAction.SUBMIT),
+                    () -> {
+                        if (localView.localSubmitAvailable()) localView.localAction(LocalAction.SUBMIT);
+                        else localView.localSubmitDenied();
+                    },
                     localView::localSubmitAvailable,
                     () -> HologramUiAccent.INFORMATION));
             return panel;
@@ -676,6 +691,7 @@ final class HologramMaterialConfirmationDialog {
         if (descriptive()) return localView.describesNativeTargets()
             ? "原生预览目标基材；背包独立观察，施工用量、容器及 AE 均未核验。"
             : "查看原图记录和本机背包；施工用量、容器及 AE 均未核验。";
+        if (local && localView.localHatchDelta()) return "需求仅计入换入物品；转向、拆除不扣料。";
         if (local) return "理论需求与本机背包；AE / 容器库存未知，不查询服务器。";
         if (lessonClose != null) return "同一规划的精确材料需求 · 教学库存为 0 · 此处不查询玩家库存或执行施工";
         boolean creative = state().getCompoundTag("materialQuote")
@@ -709,7 +725,7 @@ final class HologramMaterialConfirmationDialog {
 
     private String unavailableReason(int id) {
         if (local) {
-            if (id == 55) return "明确提交本次选择后，服务端核验当前现场、权限、料源和抵扣规则。";
+            if (id == 55) return localView.localSubmitBlocker();
             if (id == 245 && !localView.localVoucherAvailable()) return "本次来源或施工入口尚不支持装饰抵扣。";
             if (id == 162) return "此入口尚无 AE 自动合成订单；无线 AE 直接取料仍按工具设置执行。";
             return "";
@@ -785,7 +801,8 @@ final class HologramMaterialConfirmationDialog {
                 if (!reason.isEmpty()) t.addLine(reason);
             })
             .tooltipAutoUpdate(true)
-            .setEnabledIf(widget -> enabled.getAsBoolean());
+            // Keep the grey local confirm target explainable on click; the guarded callback cannot dispatch.
+            .setEnabledIf(widget -> local && id == 55 || enabled.getAsBoolean());
     }
 
     private int getHoveredRow() {
@@ -878,7 +895,8 @@ final class HologramMaterialConfirmationDialog {
                         y + 15,
                         HologramUiAccent.INFORMATION);
                     font.drawString(font.trimStringToWidth(row.name, 220), 31, y + 8, HologramMuiTheme.TEXT);
-                    String note = "#" + (i + 1) + " · " + (row.tagged ? "精确 NBT" : row.unit);
+                    String note = row.data.hasKey("hatchChange", 8) ? row.data.getString("hatchChange")
+                        : "#" + (i + 1) + " · " + (row.tagged ? "精确 NBT" : row.unit);
                     font.drawString(font.trimStringToWidth(note, 220), 31, y + 24, HologramMuiTheme.MUTED);
                     if (row.data.getBoolean("voucherEligible")) {
                         String badge = "可用抵用券";

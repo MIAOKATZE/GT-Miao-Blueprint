@@ -69,6 +69,7 @@ public final class HologramMaterialNamesRegression {
                     @Override public boolean localSubmitAvailable() { return false; }
                     @Override public void localAction(HologramMaterialConfirmationDialog.LocalAction action) {}
                 });
+            verifySelectedChanges(item, first, second);
             var a = dialog.descriptionMaterial(row(HOST, first));
             var b = dialog.descriptionMaterial(row(HOST, second));
             SimpleAssert.eq("First hatch", a.name, "real localized machine subtype label");
@@ -92,6 +93,46 @@ public final class HologramMaterialNamesRegression {
 
     private static HologramLibraryMaterialDescription.Row row(String id, int meta) {
         return new HologramLibraryMaterialDescription.Row(new HologramLibraryMaterialForecast.Identity(id, meta), 2, null);
+    }
+
+    private static void verifySelectedChanges(ItemMachines item, int first, int second) {
+        var data = new net.minecraft.nbt.NBTTagCompound();
+        var list = new net.minecraft.nbt.NBTTagList();
+        data.setBoolean("localStandardController", true); data.setInteger("mode", 1);
+        for (int i = 0; i < 6; i++) {
+            var row = new net.minecraft.nbt.NBTTagCompound();
+            row.setInteger("x", i+1); row.setInteger("dx", i+1); row.setBoolean("inScope", true);
+            row.setString("wantId", HOST); row.setString("id", HOST);
+            row.setString("pinScope", "manual"); row.setInteger("actualFacing", 2);
+            row.setInteger("hatchFacing", i == 2 ? 3 : 2);
+            var display = new net.minecraft.nbt.NBTTagCompound();
+            if (i != 4) display.setInteger("siteHatchTier", 1);
+            row.setTag("actualDisplay", display);
+            row.setTag("actualStack", new net.minecraft.item.ItemStack(item, 1, first).writeToNBT(new net.minecraft.nbt.NBTTagCompound()));
+            row.setTag("targetStack", new net.minecraft.item.ItemStack(item, 1, i == 2 || i == 3 ? first : second).writeToNBT(new net.minecraft.nbt.NBTTagCompound()));
+            list.appendTag(row);
+        }
+        data.setTag("cells", list);
+        var state = new HologramState(data);
+        var settings = new net.minecraft.nbt.NBTTagCompound();
+        settings.setInteger("scope", 2);settings.setIntArray("selectedIndices", new int[] {0, 1, 2, 3});
+        var review = new HologramLocalMaterialReview(state, settings);
+        var delta = review.hatchDelta;
+        var rows = review.visible().getTagList("rows", 10);
+        SimpleAssert.that(review.description() == null && delta.blocker.isEmpty() && delta.exchanges == 2
+            && delta.turns == 1 && delta.unchanged == 1 && rows.tagCount() == 2, "only selected site/target pairs contribute");
+        var swap = rows.getCompoundTagAt(0);var turn = rows.getCompoundTagAt(1);
+        SimpleAssert.that(swap.getLong("required") == 2 && swap.getCompoundTag("item").getShort("Damage") == second
+            && swap.getString("hatchChange").contains("First hatch") && turn.getLong("required") == 0,
+            "two identical swaps grouped with real old item; facing change zero; unselected cells excluded");
+        settings.setIntArray("selectedIndices", new int[] {0,4});
+        review = new HologramLocalMaterialReview(state, settings);
+        SimpleAssert.that(!review.hatchDelta.blocker.isEmpty() && review.visible().getTagList("rows",10).tagCount()==0,
+            "one unproved old hatch never yields a partial or whole-structure bill");
+        settings.setInteger("scope",0); settings.setIntArray("selectedIndices", new int[0]);
+        review = new HologramLocalMaterialReview(state, settings);
+        SimpleAssert.that(!review.hatchDelta.blocker.isEmpty() && review.visible().getTagList("rows",10).tagCount()==0,
+            "missing explicit scope has no fallback to full construction");
     }
 
     private static MTEHatchOutputBusME prototype(String name) throws Exception {

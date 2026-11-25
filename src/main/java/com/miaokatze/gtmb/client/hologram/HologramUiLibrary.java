@@ -1056,7 +1056,7 @@ final class HologramUiLibrary {
             for (int index = 0; index < Math.min(8, details.size()); index++) ui.canvas.tooltip()
                 .add(details.get(index));
             if (details.size() > 8) ui.canvas.tooltip()
-                .add("另有 " + (details.size() - 8) + " 条跳过原因，完整明细见游戏日志。");
+                .add("另有 " + (details.size() - 8) + " 条记录未在此提示中显示。");
         }
     }
 

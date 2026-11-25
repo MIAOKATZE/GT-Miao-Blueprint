@@ -181,20 +181,33 @@ final class HologramClientLibrary {
         return list(MAX_ENTRIES, null);
     }
 
-    private List<Entry> list(int displayLimit, java.util.List<String> errors) throws IOException {
+    private List<Entry> list(int displayLimit, ConversionReport batch) throws IOException {
         recoverNativeOnOpen();
         List<Entry> entries = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
         Files.createDirectories(directory);
+        // A missing legacy index member is not an active native receipt or an incomplete on-disk pair.
+        java.util.Set<Path> indexedLegacy = batch == null ? null : new java.util.HashSet<>();
         displayPaths.clear();
         {
-            for (java.util.Map.Entry<String, Path> member : HologramBlueprintFiles.displayCandidates(directory)
+            for (java.util.Map.Entry<String, Path> member : HologramBlueprintFiles.displayCandidates(directory, indexedLegacy)
                 .entrySet()) {
                 Path file = member.getValue();
                 String key = file.toString();
                 seen.add(key);
                 try {
-                    String signature = stamp(file);
+                    String signature;
+                    try {
+                        signature = stamp(file);
+                    } catch (java.nio.file.NoSuchFileException absent) {
+                        if (batch == null || !indexedLegacy.contains(file)
+                            || !Files.notExists(file, LinkOption.NOFOLLOW_LINKS)) throw absent;
+                        if (!Files.notExists(HologramBlueprintArtifact.previewPath(file), LinkOption.NOFOLLOW_LINKS))
+                            throw new IOException("旧蓝图 JSON 缺失，配套预览图仍在或无法确认；已保留原件");
+                        batch.stale++;
+                        entryCache.remove(key);
+                        continue; // stale metadata only: never delete or hide a present, unreadable or changed source
+                    }
                     CachedEntry cached = entryCache.get(key);
                     if (cached == null || !cached.stamp.equals(signature)) {
                         boolean nativeFile = file.getFileName().toString().endsWith(".gtnb");
@@ -213,7 +226,7 @@ final class HologramClientLibrary {
                     if (displayPaths.putIfAbsent(entry.id, file) == null) entries.add(entry);
                 } catch (IOException | RuntimeException invalid) {
                     entryCache.remove(key);
-                    if (errors != null) errors.add(file.getFileName() + ": " + HologramUiText.reason(invalid.getMessage()));
+                    if (batch != null) batch.problems.add(file.getFileName() + ": " + conversionReason(invalid));
                     // A damaged individual file must not hide every other portable blueprint.
                 }
                 if (entries.size() >= displayLimit) break;
@@ -230,7 +243,7 @@ final class HologramClientLibrary {
 
     private static String stamp(Path path) throws IOException {
         java.nio.file.attribute.BasicFileAttributes attributes = Files
-            .readAttributes(path, java.nio.file.attribute.BasicFileAttributes.class);
+            .readAttributes(path, java.nio.file.attribute.BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
         if (!attributes.isRegularFile() || attributes.size() > MAX_LOCAL_BYTES)
             throw new IOException("Invalid local blueprint member");
         return path.toAbsolutePath()
@@ -426,8 +439,16 @@ final class HologramClientLibrary {
 
     /** An explicit maintenance action, not a construction fallback. The legacy source remains on disk. */
     synchronized String commitSelectedNativeUpgrade(String id, java.util.function.BooleanSupplier current) throws IOException {
+        return commitSelectedNativeUpgrade(id, current, new ConversionReport());
+    }
+
+    synchronized String commitSelectedNativeUpgrade(String id, java.util.function.BooleanSupplier current,
+        ConversionReport report) throws IOException {
         Path existing = file(id);
-        if(existing.getFileName().toString().endsWith(".gtnb"))return HologramUiText.localized("gtmb.hologram.projector.library.convert_already_native", "此蓝图已使用原生格式");
+        if (existing.getFileName().toString().endsWith(".gtnb")) {
+            report.skipped++;
+            return HologramUiText.localized("gtmb.hologram.projector.library.convert_already_native", "此蓝图已使用原生格式");
+        }
         // For an unindexed portable file, pin the exact displayed basename. Preparing the generated
         // display UUID would otherwise invoke whole-library adoption, touching unrelated aliases.
         String lookup = id;
@@ -438,38 +459,66 @@ final class HologramClientLibrary {
         }
         var staged=prepareNativeUpgrade(lookup,current);
         if (!id.equals(staged.logicalId)) throw new IOException("所选蓝图身份已变化，请刷新后重试");
+        report.validated++;
         com.miaokatze.gtmb.hologram.HologramNativeBlueprintStorage.activate(directory,staged,staged.revision,current);
+        report.converted++;
         entryCache.clear();
         return HologramUiText.localized("gtmb.hologram.projector.library.convert_done", "已转换并保存为原生蓝图，已保留旧文件和预览图");
     }
 
+    static final class ConversionReport {
+        final List<String> problems = new ArrayList<>();
+        int converted, skipped, stale, validated, requested = -1;
+
+        int skippedTotal() { return skipped + stale; }
+        HologramTaskOwner.Result outcome() {
+            if (problems.isEmpty()) return HologramTaskOwner.Result.SUCCESS;
+            return converted > 0 ? HologramTaskOwner.Result.PARTIAL : HologramTaskOwner.Result.FAILURE;
+        }
+        String summary() {
+            // This also goes to game chat; per-file identities and diagnostics belong only in the gallery details.
+            return HologramUiText.projector("library.convert_summary", converted, skippedTotal(), problems.size());
+        }
+    }
+
+    static String conversionReason(Throwable failure) {
+        if (failure instanceof java.nio.file.NoSuchFileException) return "蓝图文件或配套预览图缺失";
+        if (failure instanceof java.nio.file.AccessDeniedException || failure instanceof SecurityException)
+            return "没有读取或写入蓝图文件的权限";
+        if (failure instanceof java.nio.file.FileSystemException) return "蓝图文件读写失败";
+        String message = failure.getMessage();
+        // The general reason formatter preserves Chinese messages. Never pass it an embedded OS path.
+        if (message == null || message.indexOf('\\') >= 0 || message.indexOf('/') >= 0)
+            return "未能读取或校验蓝图文件，请检查文件及配套预览图";
+        return HologramUiText.reason(message);
+    }
+
     /** One stable worklist for this local library. Never enumerate server stores or publish its collection as a file. */
-    synchronized String convertAllLocal(java.util.function.BooleanSupplier current,
-        java.util.function.BiConsumer<Integer, Integer> progress, java.util.List<String> problems) throws IOException {
-        List<Entry> entries = list(Integer.MAX_VALUE, problems); // gallery display cap is not a batch scope
-        int converted = 0, skipped = 0, failed = problems.size(), done = 0;
+    synchronized void convertAllLocal(java.util.function.BooleanSupplier current,
+        java.util.function.BiConsumer<Integer, Integer> progress, ConversionReport report) throws IOException {
+        List<Entry> entries = list(Integer.MAX_VALUE, report); // gallery display cap is not a batch scope
+        int done = 0;
+        report.requested = entries.size() + report.stale + report.problems.size();
         try {
-            skipped = listLegacy().size(); // collection-only entries have no independent image pair
+            report.skipped = listLegacy().size();
+            report.requested += report.skipped; // collection-only entries have no independent image pair
         } catch (IOException | RuntimeException error) {
-            failed++;
-            problems.add("hologram-presets.json: " + HologramUiText.reason(error.getMessage()));
+            report.requested++;
+            report.problems.add("hologram-presets.json: " + conversionReason(error));
         }
         progress.accept(0, entries.size());
         for (Entry entry : entries) {
             if (!current.getAsBoolean()) throw new IOException("蓝图转换已取消");
-            if (entry.nativeFile || !entry.convertiblePair) skipped++;
+            if (entry.nativeFile) report.skipped++;
             else try {
-                commitSelectedNativeUpgrade(entry.id, current);
-                converted++;
+                // The displayed sidecar flag is a hint. Revalidate the actual pair at the time of conversion.
+                commitSelectedNativeUpgrade(entry.id, current, report);
             } catch (IOException | RuntimeException error) {
                 if (!current.getAsBoolean()) throw new IOException("蓝图转换已取消", error);
-                failed++;
-                problems.add(entry.name + " (" + entry.id + "): " + HologramUiText.reason(error.getMessage()));
+                report.problems.add(entry.id + ": " + conversionReason(error));
             }
             progress.accept(++done, entries.size());
         }
-        String result = HologramUiText.projector("library.convert_summary", converted, skipped, failed);
-        return problems.isEmpty() ? result : result + " · " + problems.get(0);
     }
 
     String upgradeLegacy() throws IOException {

@@ -66,6 +66,18 @@ final class HologramNativePreviewWorld extends HologramResourceWorld {
         return placements.size();
     }
 
+    boolean hasPlacement(int x, int y, int z) {
+        return packable(x, y, z) && placements.containsKey(CoordinatePacker.pack(x, y, z));
+    }
+
+    /** Separate dummy worlds keep creative callbacks from replacing already selected survival blocks or hatches. */
+    void retainOnlyAdditionalTo(HologramNativePreviewWorld primary) throws java.io.IOException {
+        for (var it = placements.keySet().iterator(); it.hasNext();) {
+            if (primary.placements.containsKey(it.nextLong())) it.remove();
+        }
+        HologramBlueprintLimits.require(1L + primary.placements.size() + placements.size());
+    }
+
     boolean takeChanged() {
         boolean result = changed;
         changed = false;

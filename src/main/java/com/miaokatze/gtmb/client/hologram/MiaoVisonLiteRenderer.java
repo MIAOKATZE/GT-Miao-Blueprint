@@ -213,7 +213,8 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     private final Set<String> missingStructures = new HashSet<>();
     private final Map<String, double[][]> hintBoxes = new LinkedHashMap<>();
     private HologramState structureBoundsState;
-    private Map<String, int[]> cachedStructureBounds = new LinkedHashMap<>();
+    // Borrowed from the current snapshot on the native path; never mutate or copy its spatial index.
+    private Map<String, int[]> cachedStructureBounds = java.util.Collections.emptyMap();
     private boolean visibleEmptyCells;
 
     @Override
@@ -246,6 +247,8 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     }
 
     private void releasePreview() {
+        HologramState released = visibleState != null ? visibleState : structureBoundsState;
+        int groups = cachedStructureBounds.size();
         projectedFrame = presentedFrame = null;
         projectedRequest = presentedRequest = null;
         cameraOnlyProjection = previewCameraMoving = false;
@@ -270,7 +273,13 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         missingStructures.clear();
         hintBoxes.clear();
         structureBoundsState = null;
-        cachedStructureBounds.clear();
+        cachedStructureBounds = java.util.Collections.emptyMap();
+        if (released != null && com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.isDebugEnabled()) {
+            com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.debug(
+                "GTMB preview.release view={} native={} revision={} request={} cells={} groups={}",
+                browseViewport ? "library" : cleanCapture ? "capture" : "editor", released.nativeViewport != null,
+                released.data.getLong("planRevision"), released.data.getLong("uiSequence"), released.cells.size(), groups);
+        }
     }
 
     /** Preserve detached geometry across a validated delta; teardown still owns world/session and reload changes. */
@@ -1200,6 +1209,12 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             PREVIEW_TIMINGS.end(previewSubmitted, budgeted ? previewPreparation.boundary : null);
         if (budgeted && previewSubmitted && !previewPreparation.readyObserved) {
             previewPreparation.readyObserved = true;
+            if (!browseViewport && state.data.getBoolean("localStandardController") && !state.cells.isEmpty())
+                com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.info(
+                    "Controller preview stage=render-ready generation={} view={} target={} prepared={} published={} visible={} faces={} nativeModels={} elapsedMs={}",
+                    state.data.getString("generation"), view, state.cells.size(), previewPreparation.completed,
+                    previewPreparation.projection.published, visibleCellCount, cachedFaces.size(),
+                    nativePreviewCells.size(), (System.nanoTime() - previewPreparation.startedAt) / 1_000_000L);
             com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.loadStage(
                 com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.LoadStage.CLIENT_RENDER_READY,
                 state.data,
@@ -2008,6 +2023,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         final PreviewBoundary boundary;
         final boolean localBlueprint;
         PreviewProjection projection;
+        final long startedAt = System.nanoTime();
         boolean outlineObserved, materialObserved, readyObserved, completeGeometryPresented;
 
         PreviewPreparation(HologramState state, boolean outline) {

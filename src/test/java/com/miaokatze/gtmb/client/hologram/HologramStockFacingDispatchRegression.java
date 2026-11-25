@@ -27,6 +27,7 @@ public final class HologramStockFacingDispatchRegression {
 
     public static void main(String[] args) throws Exception {
         if (!MinecraftTestBootstrap.enter(HologramStockFacingDispatchRegression.class, args)) return;
+        HologramStockNativeClientRegression.run(); // real MUI ID55 -> local confirmation -> Forge request/receipt
         Field channel = field(HologramNetwork.class, "channel");
         Object saved = channel.get(null);
         sun.misc.Unsafe unsafe = (sun.misc.Unsafe) field(sun.misc.Unsafe.class, "theUnsafe").get(null);
