@@ -52,6 +52,28 @@ final class HologramSavedPlacementAdapterRegression {
         wireless(false);
     }
 
+    static void unboundMaterial() throws Exception {
+        HologramNativeSavedWorldRegression.withConnectedWorld(0, connected -> {
+            EntityPlayerMP player=connected.nativeActor();
+            player.inventory.mainInventory[1]=new ItemStack(Items.sign, 1);
+            player.inventory.mainInventory[2]=new ItemStack(Items.stick, 2);
+            connected.arm();
+            NBTTagCompound tag=new NBTTagCompound();
+            tag.setString("id","Sign");
+            NBTTagCompound oldStack = new ItemStack(Items.stick).writeToNBT(new NBTTagCompound());
+            tag.setTag("historicalNested",oldStack);
+            JsonObject row=cell("minecraft:standing_sign","minecraft:sign");
+            row.addProperty("metadata",4);
+            row.addProperty("tileNbt",java.util.Base64.getEncoder().encodeToString(HologramSnapshotCodec.compress(tag)));
+            var result=place(connected,player,row,true);
+            check(result.phase==HologramNativeLocalConstruction.Phase.FAILED && result.placed==0
+                && result.detail.contains("unbound numeric ItemStack ID")
+                && connected.at(X,Y,Z,Blocks.air) && stock(player,Items.sign)==1 && stock(player,Items.stick)==2
+                && !connected.pendingPayment(), "real saved entry refuses unbound occupied ID without world write or charge: "
+                + describe(result));
+        });
+    }
+
     private static void sign(boolean veto) throws Exception {
         HologramNativeSavedWorldRegression.withConnectedWorld(0, connected -> {
             EntityPlayerMP player = connected.nativeActor();
@@ -192,6 +214,12 @@ final class HologramSavedPlacementAdapterRegression {
     private static HologramNativeLocalConstruction.Result place(
         HologramNativeSavedWorldRegression.ConnectedWorld connected, EntityPlayerMP player, JsonObject cell)
         throws Exception {
+        return place(connected, player, cell, false);
+    }
+
+    private static HologramNativeLocalConstruction.Result place(
+        HologramNativeSavedWorldRegression.ConnectedWorld connected, EntityPlayerMP player, JsonObject cell,
+        boolean expectMissingPreview) throws Exception {
         Path root = Files.createTempDirectory("gtmb-saved-adapter-fixture-");
         try {
             JsonObject header = new JsonObject();
@@ -205,6 +233,12 @@ final class HologramSavedPlacementAdapterRegression {
             var receipt = HologramNativeBlueprintStorage.activate(root, stage, stage.revision, () -> true);
             try (var source = NativeBlueprintPairStore.open(root, ID)) {
                 var draft = new HologramNativeBlueprintDraft(new NativeBlueprintEdits(source));
+                if (expectMissingPreview) {
+                    var at = draft.space().atOrdinal(0);
+                    var resolved = draft.resolve(at.descriptor, draft.space().wrapper(at.descriptor));
+                    check(resolved.row.getBoolean("missingBlock") && !resolved.row.hasKey("previewTile")
+                        && !resolved.row.hasKey("previewItemTag"), "invalid payload displays as missing, not the current item");
+                }
                 String toolId = new UUID(4, 389).toString();
                 if (!player.getHeldItem().hasTagCompound()) player.getHeldItem().setTagCompound(new NBTTagCompound());
                 player.getHeldItem().getTagCompound().setString(HologramSessionKeys.TOOL_ID, toolId);

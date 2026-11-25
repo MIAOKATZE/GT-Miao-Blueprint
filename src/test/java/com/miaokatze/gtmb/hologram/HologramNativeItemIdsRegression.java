@@ -59,6 +59,37 @@ final class HologramNativeItemIdsRegression {
             physical,
             HologramBlueprintNbt.stableItem(restored),
             "portable identity resolves to the real current item");
+        NBTTagCompound display = (NBTTagCompound) high.copy();
+        HologramBlueprintNbt.resolvePreviewIdentities(display);
+        SimpleAssert.eq(restored, display, "preview and saved payload use the same extended-ID decoder");
+        NBTTagCompound collision = new ItemStack(Items.stick).writeToNBT(new NBTTagCompound());
+        NBTTagCompound oldCover = new NBTTagCompound(), coverPayload = new NBTTagCompound();
+        oldCover.setInteger("id", Item.getIdFromItem(Items.stick) | 7 << 16);
+        NBTTagList covers = new NBTTagList();
+        covers.appendTag(oldCover);
+        coverPayload.setTag("gt.covers", covers);
+        for (NBTTagCompound unbound : new NBTTagCompound[] {collision, coverPayload}) {
+            NBTTagCompound before = (NBTTagCompound) unbound.copy();
+            boolean refused = false;
+            try { HologramBlueprintNbt.resolveNativePayload(unbound); }
+            catch (IOException expected) { refused = expected.getMessage().contains("unbound"); }
+            SimpleAssert.that(refused, "a numeric ID occupied by a real different item is not a portable binding");
+            SimpleAssert.eq(before, unbound, "refusal does not rewrite the source");
+        }
+        oldCover.setString(HologramBlueprintNbt.COVER_REGISTRY, registry);
+        oldCover.setInteger(HologramBlueprintNbt.COVER_DAMAGE, 7);
+        var mappedCover=HologramBlueprintNbt.resolveNativePayload(coverPayload).getTagList("gt.covers",10)
+            .getCompoundTagAt(0);
+        SimpleAssert.eq(nativeId | 7 << 16, mappedCover.getInteger("id"), "bound cover remaps by name");
+        NBTTagCompound facade = new NBTTagCompound();
+        facade.setIntArray("x", new int[]{net.minecraft.block.Block.getIdFromBlock(net.minecraft.init.Blocks.dirt), 0});
+        try {
+            HologramBlueprintNbt.requireFacadeMaterial(facade);
+            throw new AssertionError("number-only facade accepted");
+        } catch (IOException expected) {}
+        facade.setString("modid", "minecraft");
+        facade.setString("itemname", "stone");
+        HologramBlueprintNbt.requireFacadeMaterial(facade);
         NBTTagCompound missing = (NBTTagCompound) high.copy();
         missing.setString(HologramBlueprintNbt.ITEM_REGISTRY, "test:missing-native-item");
         missing = HologramBlueprintNbt.decode(raw(missing));

@@ -835,7 +835,7 @@ public final class HologramBlueprintPreview {
         }
         if (stack != null && cell.hasKey("previewItemTag", 10)) {
             NBTTagCompound itemTag = cell.getCompoundTag("previewItemTag");
-            restoreStableItems(itemTag);
+            com.miaokatze.gtmb.hologram.HologramBlueprintNbt.resolvePreviewIdentities(itemTag);
             stack.setTagCompound(itemTag);
         }
         boolean inferredBlock = cell.getString("wantId")
@@ -852,7 +852,7 @@ public final class HologramBlueprintPreview {
                     .getMetadata(stack.getItemDamage()));
         cell.setString("wantId", String.valueOf(Block.blockRegistry.getNameForObject(block)));
         NBTTagCompound tile = cell.hasKey("previewTile", 10) ? cell.getCompoundTag("previewTile") : null;
-        if (tile != null) restoreStableItems(tile);
+        if (tile != null) com.miaokatze.gtmb.hologram.HologramBlueprintNbt.resolvePreviewIdentities(tile);
         NBTTagCompound display = new NBTTagCompound();
         display.setInteger("color", -1);
         int facing = cell.getInteger("targetFacing");
@@ -887,42 +887,6 @@ public final class HologramBlueprintPreview {
         cell.removeTag("previewItemTag");
         cell.removeTag("previewItem");
         cell.removeTag("previewDamage");
-    }
-
-    /** The same stable item/cover transport identities used by the native blueprint codec. */
-    private static void restoreStableItems(NBTBase value) throws IOException {
-        if (value instanceof NBTTagCompound) {
-            NBTTagCompound tag = (NBTTagCompound) value;
-            if (tag.hasKey("id", 99) && tag.hasKey("Count", 99)
-                && tag.hasKey("Damage", 99)
-                && tag.hasKey("gtitBlueprintItemRegistry", 8)) {
-                Object item = Item.itemRegistry.getObject(tag.getString("gtitBlueprintItemRegistry"));
-                if (!(item instanceof Item)) throw new IOException(
-                    "Blueprint preview nested item is missing: " + tag.getString("gtitBlueprintItemRegistry"));
-                tag.setShort("id", (short) Item.getIdFromItem((Item) item));
-                tag.removeTag("gtitBlueprintMissingItem");
-            }
-            if (tag.hasKey("id", 3) && tag.hasKey("gtitBlueprintCoverRegistry", 8)) {
-                Object item = Item.itemRegistry.getObject(tag.getString("gtitBlueprintCoverRegistry"));
-                if (!(item instanceof Item)) throw new IOException(
-                    "Blueprint preview cover is missing: " + tag.getString("gtitBlueprintCoverRegistry"));
-                tag.setInteger(
-                    "id",
-                    Item.getIdFromItem((Item) item) | tag.getInteger("gtitBlueprintCoverDamage") << 16);
-                tag.removeTag("gtitBlueprintMissingCover");
-            }
-            for (Object key : new ArrayList<>(tag.func_150296_c())) restoreStableItems(tag.getTag((String) key));
-        } else if (value instanceof NBTTagList) {
-            try {
-                @SuppressWarnings("unchecked")
-                List<NBTBase> entries = (List<NBTBase>) ReflectionHelper
-                    .findField(NBTTagList.class, "tagList", "field_74747_a")
-                    .get(value);
-                for (NBTBase child : entries) restoreStableItems(child);
-            } catch (IllegalAccessException inaccessible) {
-                throw new IllegalStateException("Blueprint preview NBT list inaccessible", inaccessible);
-            }
-        }
     }
 
     private static int integer(JsonObject row, String key, int fallback) {

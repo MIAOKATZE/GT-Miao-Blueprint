@@ -620,6 +620,46 @@ public final class HologramNativePlacement {
         }
     }
 
+    /** Check saved appearance by the same registry rules before preview or native tile creation. */
+    static void validateSavedAppearance(Block block, NBTTagCompound tag) throws IOException {
+        if (block == null || tag == null) return;
+        String type = block.getClass().getName();
+        try {
+            if (type.equals("codechicken.multipart.BlockMultipart")) {
+                var parts = tag.getTagList("parts", 10);
+                for (int i = 0; i < parts.tagCount(); i++) {
+                    var part = parts.getCompoundTagAt(i);
+                    if (part.getString("id").startsWith("mcr_")
+                        && Class.forName("codechicken.microblock.MicroMaterialRegistry")
+                            .getMethod("getMaterial", String.class)
+                            .invoke(null, part.getString("material")) == null)
+                        throw unsupported("unregistered multipart material");
+                }
+            } else if (type.equals("gcewing.architecture.common.block.BlockShape")) {
+                Object shape = Class.forName("gcewing.architecture.common.shape.Shape")
+                    .getMethod("forId", int.class).invoke(null, tag.getInteger("Shape"));
+                if (!tag.hasKey("Shape", 99) || shape == null
+                    || shape.getClass().getField("id").getInt(shape) != tag.getInteger("Shape"))
+                    throw unsupported("unregistered ArchitectureCraft shape");
+                for (String key : new String[] { "BaseName", "Name2" }) {
+                    if (key.equals("Name2") && !tag.hasKey(key)) continue;
+                    requireAppearanceBlock(tag.getString(key), "ArchitectureCraft material");
+                }
+            } else if (type.equals("crazypants.enderio.conduit.BlockConduitBundle")) {
+                String facade = tag.getString("facadeId");
+                if (!facade.isEmpty() && !facade.equals("null")) requireAppearanceBlock(facade, "EnderIO facade");
+            }
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError failure) {
+            throw new IOException("Cannot resolve native blueprint appearance", failure);
+        }
+    }
+
+    private static void requireAppearanceBlock(String name, String family) throws IOException {
+        Object block = Block.blockRegistry.getObject(name);
+        if (!(block instanceof Block) || block == net.minecraft.init.Blocks.air)
+            throw unsupported("unregistered " + family + ": " + name);
+    }
+
     private static final class Builtin implements Adapter {
 
         public boolean includesInventoryDrops(Block block) {
@@ -652,22 +692,12 @@ public final class HologramNativePlacement {
                 tile.readFromNBT((NBTTagCompound) tag.copy());
                 return tile;
             }
+            validateSavedAppearance(block, tag);
             if (type.equals("codechicken.multipart.BlockMultipart")) {
                 // MultipartSaveLoad uses savedMultipart -> TileNBTContainer at load time, then creates a dynamic tile.
                 // Its writer maps every dynamic tile class back to this exact native persistence carrier.
                 if (tag.hasKey("id") && (!tag.hasKey("id", 8) || !"savedMultipart".equals(tag.getString("id"))))
                     throw unsupported("multipart root id does not match the native persistence carrier");
-                for (int i = 0; i < tag.getTagList("parts", 10)
-                    .tagCount(); i++) {
-                    NBTTagCompound part = tag.getTagList("parts", 10)
-                        .getCompoundTagAt(i);
-                    if (part.getString("id")
-                        .startsWith("mcr_")
-                        && Class.forName("codechicken.microblock.MicroMaterialRegistry")
-                            .getMethod("getMaterial", String.class)
-                            .invoke(null, part.getString("material")) == null)
-                        throw unsupported("unregistered multipart material");
-                }
                 Object loading = Class.forName("codechicken.multipart.handler.MultipartSaveLoad$")
                     .getField("MODULE$")
                     .get(null);
@@ -684,21 +714,6 @@ public final class HologramNativePlacement {
                 if ((Integer) call(parts, "size", new Class<?>[0]) != tag.getTagList("parts", 10)
                     .tagCount()) throw unsupported("unregistered multipart component");
             } else {
-                if (type.equals("gcewing.architecture.common.block.BlockShape")) {
-                    Object shape = Class.forName("gcewing.architecture.common.shape.Shape")
-                        .getMethod("forId", int.class)
-                        .invoke(null, tag.getInteger("Shape"));
-                    if (!tag.hasKey("Shape", 99) || shape.getClass()
-                        .getField("id")
-                        .getInt(shape) != tag.getInteger("Shape"))
-                        throw unsupported("unregistered ArchitectureCraft shape");
-                    for (String material : new String[] { "BaseName", "Name2" }) {
-                        if (material.equals("Name2") && !tag.hasKey(material)) continue;
-                        Block nativeBlock = Block.getBlockFromName(tag.getString(material));
-                        if (nativeBlock == null || nativeBlock == net.minecraft.init.Blocks.air)
-                            throw unsupported("unregistered ArchitectureCraft material");
-                    }
-                }
                 tile = block.createTileEntity(world, metadata);
                 if (tile == null) throw unsupported("missing native tile factory");
                 if (type.equals("gcewing.architecture.common.block.BlockShape")
