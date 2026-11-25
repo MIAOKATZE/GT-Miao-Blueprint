@@ -308,11 +308,6 @@ final class HologramClientLibrary {
 
     /** Native counterpart of the frozen editor save. Stage2 hands ownership to the exact accepted revision. */
     HologramNativeBlueprintStorage.Prepared prepareEditorSave(NativeBlueprintDefinition frozen, byte[] png, String id,
-        java.util.function.BooleanSupplier stillCurrent) throws IOException {
-        return HologramNativeBlueprintStorage.prepareSave(directory,id,frozen,png,stillCurrent);
-    }
-
-    HologramNativeBlueprintStorage.Prepared prepareEditorSave(NativeBlueprintDefinition frozen, byte[] png, String id,
         java.util.function.BooleanSupplier stillCurrent, NativeBlueprintPairStore.Receipt expected,
         boolean requireVacant) throws IOException {
         return HologramNativeBlueprintStorage.prepareSave(directory,id,frozen,png,stillCurrent,expected,requireVacant);
@@ -506,15 +501,22 @@ final class HologramClientLibrary {
             return java.util.Collections.emptyList();
         List<Entry> entries = new ArrayList<>();
         java.util.Set<String> seen = new java.util.HashSet<>();
+        recoverNativeOnOpen();
+        var visibility=NativeBlueprintPairStore.collectionVisibility(directory);
         JsonObject root = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec
             .readLegacyCatalog(legacyCatalogPath());
         for (JsonElement member : root.getAsJsonArray("presets")) {
             try {
                 JsonObject blueprint = blueprint(member.getAsJsonObject());
                 String id = string(blueprint, "id");
-                if (!id.matches("[a-zA-Z0-9_-]{1,96}") || !seen.add(id)) continue;
-                if (id.matches("(?:local_)?[a-fA-F0-9-]{36}")
-                    && Files.isRegularFile(file(id.startsWith("local_") ? id : "local_" + id))) continue;
+                if (!id.matches("[a-zA-Z0-9_-]{1,96}") || seen.contains(id)) continue;
+                String logical=com.miaokatze.gtmb.hologram.gtnb.LegacyBlueprintMirror.logicalId(id);
+                var mirrors=collectionMirrors(visibility,id);
+                if(com.miaokatze.gtmb.hologram.gtnb.LegacyBlueprintMirror.hidden(root,blueprint,id,mirrors))continue;
+                // Keep historical loose JSON deduplication unchanged. Native slots only suppress a proven mirror.
+                if (!logical.isEmpty()&&!visibility.nativeSlot(logical)&&mirrors.isEmpty()
+                    &&Files.isRegularFile(file(id.startsWith("local_")?id:"local_"+id)))continue;
+                seen.add(id);
                 entries.add(new Entry("legacy:" + id, blueprint, 0));
             } catch (IOException | RuntimeException invalid) {
                 // Other readable members stay visible.
@@ -524,13 +526,25 @@ final class HologramClientLibrary {
         return entries;
     }
 
+    private java.util.Set<String> collectionMirrors(NativeBlueprintPairStore.CollectionVisibility snapshot,String id)throws IOException{
+        String logical=com.miaokatze.gtmb.hologram.gtnb.LegacyBlueprintMirror.logicalId(id);
+        var mirrors=snapshot.mirrored(logical);
+        if(logical.isEmpty()||!snapshot.nativeSlot(logical)||snapshot.activeProof(logical))return mirrors;
+        var receipt=NativeBlueprintPairStore.receipt(directory,snapshot.nativeId(logical));
+        var proof=HologramNativeBlueprintStorage.recoverMirror(directory,receipt);
+        if(proof==null)return mirrors;
+        var result=new java.util.HashSet<>(mirrors);result.add(proof.digest);return result;
+    }
+
     byte[] readLegacyDocument(String id) throws IOException {
         String memberId = id.startsWith("legacy:") ? id.substring("legacy:".length()) : id;
         if (!memberId.matches("[a-zA-Z0-9_-]{1,96}")) throw new IOException("旧蓝图 ID 无效");
         var catalog = com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.readStoredCatalog(legacyCatalogPath());
+        var mirrors=collectionMirrors(NativeBlueprintPairStore.collectionVisibility(directory),memberId);
         for (JsonElement member : catalog.root()
             .getAsJsonArray("presets")) {
-            if (member.isJsonObject() && memberId.equals(string(member.getAsJsonObject(), "id")))
+            if (member.isJsonObject() && memberId.equals(string(member.getAsJsonObject(), "id"))
+                &&!com.miaokatze.gtmb.hologram.gtnb.LegacyBlueprintMirror.hidden(catalog.root(),member.getAsJsonObject(),memberId,mirrors))
                 return com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec
                     .legacyCatalogMember(catalog, member.getAsJsonObject());
         }
@@ -592,14 +606,16 @@ final class HologramClientLibrary {
     synchronized void delete(String id, NativeBlueprintPairStore.Fault fault) throws IOException {
         recoverNativeOnOpen();
         if (id.startsWith("legacy:")) {
-            HologramBlueprintFiles.deleteHistoricMember(legacyCatalogPath(), id.substring("legacy:".length()));
+            String memberId=id.substring("legacy:".length());
+            var mirrors=collectionMirrors(NativeBlueprintPairStore.collectionVisibility(directory),memberId);
+            HologramBlueprintFiles.deleteVisibleHistoricMember(legacyCatalogPath(),memberId,mirrors);
             return;
         }
         NativeBlueprintPairStore.Receipt expectedNative=NativeBlueprintPairStore.receipt(directory,id);
         Path selected = file(id);
         if(expectedNative!=null){
             if(!selected.equals(expectedNative.source))throw new IOException("删除前原生蓝图内容已变化");
-            NativeBlueprintPairStore.delete(directory,expectedNative,fault);
+            HologramNativeBlueprintStorage.delete(directory,expectedNative,fault);
             displayPaths.remove(id);
             entryCache.remove(selected.toString());
             return;

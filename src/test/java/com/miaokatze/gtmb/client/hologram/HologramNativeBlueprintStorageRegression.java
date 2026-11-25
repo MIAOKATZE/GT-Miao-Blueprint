@@ -59,7 +59,7 @@ public final class HologramNativeBlueprintStorageRegression {
                 try {fresh.readPrivateEditorSource(id).json();throw new AssertionError("native read leaked into old editor");}
                 catch(java.io.IOException expected){}
                 String second="local_88888888-8888-8888-8888-888888888888";
-                HologramNativeBlueprintStorage.Prepared saved=fresh.prepareEditorSave(nativeSource,originalPng,second,()->true);
+                HologramNativeBlueprintStorage.Prepared saved=fresh.prepareEditorSave(nativeSource,originalPng,second,()->true,null,true);
                 require(fresh.list().size()==1,"prepared native save not visible");
                 try(NativeBlueprintDefinition reopened=HologramNativeBlueprintStorage.openPrepared(saved)) {
                     require(reopened.revision().equals(nativeSource.revision())&&reopened.elementAt(-2,1,3)>0,"native save/open exact revision and geometry");
@@ -72,6 +72,7 @@ public final class HologramNativeBlueprintStorageRegression {
             portableRetry(game,id,json,image);
             namedTransaction(game,id,json,image);
             unicodePhysicalNames(game,id,json,image);
+            retainedCollectionMirror(game,id,json,image);
             realMixedFixture(game);
         }finally{try(java.util.stream.Stream<Path> files=Files.walk(game)){files.sorted(Comparator.reverseOrder()).forEach(p->{try{Files.deleteIfExists(p);}catch(Exception e){throw new IllegalStateException(e);}});}}
     }
@@ -122,7 +123,7 @@ public final class HologramNativeBlueprintStorageRegression {
         byte[] freshImage=thumbnail(0xff0000ff);
         HologramNativeBlueprintStorage.Prepared thumb;
         try(var opened=cold.readPrivateEditorSource(id).openNative()){
-            thumb=cold.prepareEditorSave(opened,freshImage,id,()->true);
+            thumb=cold.prepareEditorSave(opened,freshImage,id,()->true,cold.readPrivateEditorSource(id).nativePair(),false);
         }
         Path catalog=dir.resolve(".gtmb-native-catalog.properties");
         byte[] beforeThumb=Files.readAllBytes(catalog);
@@ -170,7 +171,7 @@ public final class HologramNativeBlueprintStorageRegression {
         cold.delete(id);
         // A deliberately reused logical slot is available, even with the exact same source bytes.
         try(var frozen=HologramNativeBlueprintStorage.openPrepared(staged)){
-            var again=cold.prepareEditorSave(frozen,image,id,()->true);
+            var again=cold.prepareEditorSave(frozen,image,id,()->true,null,true);
             HologramNativeBlueprintStorage.activate(dir,again,again.revision,()->true);
         }
         require(new HologramClientLibrary(gameRoot).list().size()==1&&NativeBlueprintPairStore.receipt(dir,"FieldReport")==null,
@@ -217,6 +218,83 @@ public final class HologramNativeBlueprintStorageRegression {
         catch(java.io.IOException e){require(e.getMessage().startsWith("injected"),"expected injected failure: "+e);return;}
         throw new AssertionError("injected fault went unreported");
     }
+    /** Actual library workers, not an in-memory duplicate filter. Both archives stay byte-exact. */
+    private static void retainedCollectionMirror(Path parent,String id, byte[] json,byte[] image)throws Exception {
+        Path game=parent.resolve("collection");HologramClientLibrary lib=new HologramClientLibrary(game);
+        Path dir=lib.directory();Files.createDirectories(dir);
+        Path source=dir.resolve(id+".json"),collection=dir.resolve("hologram-presets.json");
+        HologramBlueprintArtifact.writePair(source,json,image);
+        var parsed=new com.google.gson.JsonParser().parse(new String(json,StandardCharsets.UTF_8)).getAsJsonObject();
+        var member=parsed.getAsJsonObject("blueprint");
+        var clone=new com.google.gson.JsonObject();
+        // A mirror may reorder object keys and use a bare UUID. Neither changes ownership/geometry.
+        var keys=new java.util.ArrayList<String>();
+        for(var entry:member.entrySet())keys.add(entry.getKey());
+        java.util.Collections.reverse(keys);
+        for(String key:keys)clone.add(key,member.get(key));
+        clone.addProperty("id",id.substring("local_".length()));
+        // Keep exact same raw ID in conflicting second row to exercise list/read/delete discrimination.
+        var other=new com.google.gson.JsonParser().parse(clone.toString()).getAsJsonObject();
+        other.getAsJsonArray("cells").get(0).getAsJsonObject().addProperty("block","minecraft:dirt");
+        String cloneId=clone.get("id").getAsString(),entry="legacy:"+cloneId;
+        byte[] cloneOnly=("{\"presets\":["+clone+"]}").getBytes(StandardCharsets.UTF_8);
+        byte[] both=("{\"presets\":["+clone+","+other+"]}").getBytes(StandardCharsets.UTF_8);
+        Path png=HologramBlueprintArtifact.previewPath(source);
+        byte[] original=Files.readAllBytes(source),originalPng=Files.readAllBytes(png);
+        Files.write(collection,cloneOnly);
+        require(lib.list().size()==1&&lib.listLegacy().isEmpty(),"ordinary legacy merged listing unchanged");
+        require(lib.upgradeNamedHistoric(id,()->true).contains("暂存"),"official named action stages only");
+        require(lib.readPrivateEditorSource(id).nativePair()==null&&lib.savedPath(id).equals(source),"default stays legacy after stage");
+        var staged=lib.prepareNativeUpgrade(id,()->true);
+        HologramNativeBlueprintStorage.activate(dir,staged,staged.revision,()->true);
+        require(lib.list().size()==1&&lib.listLegacy().isEmpty(),"accepted native + exact mirror are one card");
+        Files.write(collection,both);
+        require(lib.list().size()==1&&lib.listLegacy().size()==1&&lib.listLegacy().get(0).id.equals(entry),"same UUID but different business content remains available");
+        require(new String(lib.readLegacyDocument(entry),StandardCharsets.UTF_8).contains("minecraft:dirt"),"legacy read selects visible conflict even when exact mirror comes first");
+        try{
+            lib.delete(id,stage->{if(stage.equals("index-replaced"))throw new java.io.IOException("mirror-delete-rollback");});
+            throw new AssertionError("delete rollback failure not delivered");
+        }catch(java.io.IOException expected){require(expected.getMessage().contains("mirror-delete-rollback"),"fault crossed actual delete transaction");}
+        HologramClientLibrary cold=new HologramClientLibrary(game);
+        require(cold.list().size()==1&&cold.listLegacy().size()==1&&Arrays.equals(Files.readAllBytes(collection),both),"rollback preserves active pair, conflict and exact archive");
+        cold.delete(id);
+        cold=new HologramClientLibrary(game);
+        require(cold.list().isEmpty()&&cold.listLegacy().size()==1,"cold delete never resurrects mirror or hides conflict");
+        require(new String(cold.readLegacyDocument(entry),StandardCharsets.UTF_8).contains("minecraft:dirt"),"visible conflict survives native delete");
+        require(Arrays.equals(Files.readAllBytes(source),original)&&Arrays.equals(Files.readAllBytes(png),originalPng)
+            &&Arrays.equals(Files.readAllBytes(collection),both),"native delete never mutates loose or collection bytes");
+        cold.delete(entry); // Existing explicit delete of the visible collection row must not remove the hidden first row.
+        require(cold.listLegacy().isEmpty()&&new String(Files.readAllBytes(collection),StandardCharsets.UTF_8).contains("minecraft:stone"),"explicit conflict delete targets visible row only");
+        Files.write(collection,cloneOnly);
+        require(cold.listLegacy().isEmpty(),"copy reimported verbatim as retained mirror remains hidden");
+        try{cold.readLegacyDocument(entry);throw new AssertionError("hidden mirror reopens by stale ID");}
+        catch(java.io.IOException expected){require(expected.getMessage().contains("不存在"),"stale exact mirror private open refuses");}
+        byte[] compactCollection=com.miaokatze.gtmb.hologram.HologramBlueprintCompactCodec.recompress(
+            cloneOnly,HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES);
+        Files.write(collection,compactCollection);
+        require(cold.listLegacy().isEmpty()&&Arrays.equals(Files.readAllBytes(collection),compactCollection),
+            "dictionary-encoded historic clone matches expanded original without changing file");
+        byte[] differentEnvelope=("{\"opaqueArchivePolicy\":\"independent\",\"presets\":["+clone+"]}").getBytes(StandardCharsets.UTF_8);
+        Files.write(collection,differentEnvelope);
+        require(cold.listLegacy().size()==1&&Arrays.equals(Files.readAllBytes(collection),differentEnvelope),
+            "same geometry with an unknown differing envelope is preserved, not guessed to be a mirror");
+
+        // Simulate a catalog entry from the last checkpoint: previous source SHA recorded, mirror receipt absent.
+        Path oldGame=parent.resolve("collection-checkpoint");HologramClientLibrary old=new HologramClientLibrary(oldGame);
+        Path oldDir=old.directory();Files.createDirectories(oldDir);Path oldSource=oldDir.resolve(id+".json");
+        HologramBlueprintArtifact.writePair(oldSource,json,image);
+        byte[] oldExact=Files.readAllBytes(oldSource);
+        var oldStaged=old.prepareNativeUpgrade(id,()->true);
+        NativeBlueprintPairStore.publish(oldDir,id,Files.readAllBytes(oldStaged.source),image,oldSource,oldExact,()->true);
+        Path oldCollection=oldDir.resolve("hologram-presets.json");Files.write(oldCollection,cloneOnly);
+        require(old.listLegacy().isEmpty(),"checkpoint exact loose origin recovers mirror proof without catalog rewrite");
+        old.delete(id,stage->{if(stage.equals("after-catalog"))throw new java.io.IOException("mirror journal crash");});
+        var oldCold=new HologramClientLibrary(oldGame);
+        require(oldCold.list().isEmpty()&&oldCold.listLegacy().isEmpty()&&Arrays.equals(Files.readAllBytes(oldCollection),cloneOnly)
+            &&Arrays.equals(Files.readAllBytes(oldSource),oldExact),"old native catalog can delete and recover exact mirror tombstone on ordinary cold open");
+        System.out.println("[GTMB-NATIVE-COLLECTION] exact clone retained/invisible; distinct same-UUID cell survives; native rollback, cold recovery and explicit conflict delete verified");
+    }
+
     private static void realMixedFixture(Path game)throws Exception {
         String metadata=System.getProperty("gtmb.reviewedMetadata.fixture","");
         if(metadata.isEmpty())return;

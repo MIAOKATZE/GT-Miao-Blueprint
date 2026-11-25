@@ -165,11 +165,15 @@ public final class HologramBlueprintFiles {
     }
 
     /** Remove only the selected row, preserving every other field and member of the historic file. */
-    public static void deleteHistoricMember(Path path, String memberId) throws IOException {
-        deleteHistoricMember(path, memberId, read(path, HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES));
+    public static void deleteVisibleHistoricMember(Path path,String id,java.util.Set<String> mirrors)throws IOException {
+        deleteHistoricMember(path,id,read(path,HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES),mirrors);
     }
 
     static void deleteHistoricMember(Path path, String memberId, byte[] original) throws IOException {
+        deleteHistoricMember(path,memberId,original,java.util.Collections.emptySet());
+    }
+
+    private static void deleteHistoricMember(Path path,String memberId,byte[] original,java.util.Set<String> mirrors)throws IOException {
         int limit = HologramBlueprintArtifact.MAX_LIBRARY_JSON_BYTES;
         var source = HologramBlueprintCompactCodec.parseStored(original, limit);
         JsonObject catalog = source.root();
@@ -178,9 +182,8 @@ public final class HologramBlueprintFiles {
         for (com.google.gson.JsonElement row : catalog.getAsJsonArray("presets")) {
             JsonObject member = row.getAsJsonObject();
             if (!removed && member.has("id")
-                && memberId.equals(
-                    member.get("id")
-                        .getAsString()))
+                && memberId.equals(member.get("id").getAsString())
+                && !com.miaokatze.gtmb.hologram.gtnb.LegacyBlueprintMirror.hidden(catalog,member,memberId,mirrors))
                 removed = true;
             else remaining.add(row);
         }
@@ -500,7 +503,7 @@ public final class HologramBlueprintFiles {
                     ? null : NativeBlueprintPairStore.receipt(root,id);
                 if(owned!=null){
                     if(legacySelection!=null)throw new IOException("删除前蓝图格式已变化，请刷新");
-                    NativeBlueprintPairStore.delete(root,owned,stage -> {});
+                    HologramNativeBlueprintStorage.delete(root,owned,stage -> {});
                     return;
                 }
                 Path file = resolve(root, id);
