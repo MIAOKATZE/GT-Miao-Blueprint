@@ -39,8 +39,8 @@ final class HologramArchiveTileGl {
 
     private static final int[][] FACES = { { 0, 1, 5, 4 }, { 3, 7, 6, 2 }, { 0, 3, 2, 1 }, { 4, 5, 6, 7 },
         { 0, 4, 7, 3 }, { 1, 2, 6, 5 } };
-    private static final double[][] VERTICES = { { -.5, -.5, -.5 }, { .5, -.5, -.5 }, { .5, .5, -.5 },
-        { -.5, .5, -.5 }, { -.5, -.5, .5 }, { .5, -.5, .5 }, { .5, .5, .5 }, { -.5, .5, .5 } };
+    private static final double[][] VERTICES = { { -.5, -.5, -.5 }, { .5, -.5, -.5 }, { .5, .5, -.5 }, { -.5, .5, -.5 },
+        { -.5, -.5, .5 }, { .5, -.5, .5 }, { .5, .5, .5 }, { -.5, .5, .5 } };
 
     private final Thread render = Thread.currentThread();
     private final AtomicBoolean retiring = new AtomicBoolean();
@@ -91,9 +91,12 @@ final class HologramArchiveTileGl {
     Result draw(long physicalFrame, HologramArchiveCameraTiles source, HologramEditorCameraFrame pose,
         List<Region> candidates, int layer, double extent) {
         requireRender();
-        if (!monotonic(physicalFrame) || source == null || pose == null || candidates == null
-            || !Double.isFinite(pose.scale) || pose.scale <= 0 || !validExtent(extent))
-            return new Result(Status.STALE, null, null);
+        if (!monotonic(physicalFrame) || source == null
+            || pose == null
+            || candidates == null
+            || !Double.isFinite(pose.scale)
+            || pose.scale <= 0
+            || !validExtent(extent)) return new Result(Status.STALE, null, null);
         if (lastDraw == physicalFrame) return new Result(Status.FRAME_SPENT, null, null);
         lastDraw = physicalFrame;
         applyRetirement();
@@ -111,7 +114,8 @@ final class HologramArchiveTileGl {
             AtlasPin after = AtlasPin.loaded(phase.token);
             if (resolved == null || !before.same(after)) return unsupported(Refusal.ATLAS_RESIDENCY_UNAVAILABLE);
             // Atlas and block-icon lookups are outside all GL pushes. They may have changed context, FBO or clip.
-            if (retiring.get() || phase.supported() == null || HologramTextures.resourceGeneration() != epoch
+            if (retiring.get() || phase.supported() == null
+                || HologramTextures.resourceGeneration() != epoch
                 || !after.resident(phase.token)) return unsupported(Refusal.RENDER_SCOPE_CHANGED);
             palette = resolved;
             atlas = epoch;
@@ -124,8 +128,8 @@ final class HologramArchiveTileGl {
             Report report = submission.submit(physicalFrame, frame, HologramTextures::resourceGeneration);
             hasHandles = report.handles != 0;
             Ticket enqueue = frame.enqueue;
-            if (enqueue != null && (report.status == Status.UNSUPPORTED || report.status == Status.STALE
-                || retiring.get())) {
+            if (enqueue != null
+                && (report.status == Status.UNSUPPORTED || report.status == Status.STALE || retiring.get())) {
                 source.abandon(enqueue);
                 enqueue = null;
             }
@@ -211,7 +215,8 @@ final class HologramArchiveTileGl {
         GL11.glGetInteger(GL11.GL_SCISSOR_BOX, scopeQuery);
         int sx = scopeQuery.get(0), sy = scopeQuery.get(1), sw = scopeQuery.get(2), sh = scopeQuery.get(3);
         return bound() == token && vw > 0 && vh > 0 && sw > 0 && sh > 0
-            ? new Target(token, drawFramebuffer, vx, vy, vw, vh, sx, sy, sw, sh) : null;
+            ? new Target(token, drawFramebuffer, vx, vy, vw, vh, sx, sy, sw, sh)
+            : null;
     }
 
     /** Snapshot equality, not permission to create/bind a standalone viewport. The caller still owns the scissor. */
@@ -234,9 +239,16 @@ final class HologramArchiveTileGl {
         }
 
         boolean same(Target other) {
-            return other != null && context == other.context && framebuffer == other.framebuffer && vx == other.vx
-                && vy == other.vy && vw == other.vw && vh == other.vh && sx == other.sx && sy == other.sy
-                && sw == other.sw && sh == other.sh;
+            return other != null && context == other.context
+                && framebuffer == other.framebuffer
+                && vx == other.vx
+                && vy == other.vy
+                && vw == other.vw
+                && vh == other.vh
+                && sx == other.sx
+                && sy == other.sy
+                && sw == other.sw
+                && sh == other.sh;
         }
     }
 
@@ -256,7 +268,8 @@ final class HologramArchiveTileGl {
                 Minecraft mc = Minecraft.getMinecraft();
                 TextureMap map = mc.getTextureMapBlocks();
                 if (map == null || map.getClass() != TextureMap.class
-                    || mc.getTextureManager().getTexture(TextureMap.locationBlocksTexture) != map
+                    || mc.getTextureManager()
+                        .getTexture(TextureMap.locationBlocksTexture) != map
                     || bound() != context) return null;
                 // Existing field access only. AbstractTexture.getGlTextureId() may allocate an unbound name.
                 AtlasPin pin = new AtlasPin(map, TextureName.FIELD.getInt(map));
@@ -354,8 +367,11 @@ final class HologramArchiveTileGl {
         public boolean draw(MiaoVisonLiteMesh handle, Slice slice) {
             if (target == null || pose == null || context() == null) return false;
             var exact = supported();
-            if (exact == null || !handle.matches(exact) || HologramTextures.resourceGeneration() != paletteEpoch
-                || texture <= 0 || !GL11.glIsTexture(texture) || bound() != token) return false;
+            if (exact == null || !handle.matches(exact)
+                || HologramTextures.resourceGeneration() != paletteEpoch
+                || texture <= 0
+                || !GL11.glIsTexture(texture)
+                || bound() != token) return false;
             Transform tile = new Transform(pose, slice.tile.region, extent);
             int previousMode = GL11.glGetInteger(GL11.GL_MATRIX_MODE);
             int previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
@@ -454,7 +470,8 @@ final class HologramArchiveTileGl {
         final int color;
 
         Face(double minU, double maxU, double minV, double maxV, int color) {
-            if (!valid(minU, maxU) || !valid(minV, maxV)) throw new IllegalArgumentException("Invalid archive atlas UV");
+            if (!valid(minU, maxU) || !valid(minV, maxV))
+                throw new IllegalArgumentException("Invalid archive atlas UV");
             this.minU = minU;
             this.maxU = maxU;
             this.minV = minV;
@@ -494,7 +511,12 @@ final class HologramArchiveTileGl {
                         String name = icon.getIconName();
                         if (name == null || name.isEmpty() || name.equals("missingno") || name.endsWith(":missingno"))
                             return null;
-                        faces[i][side] = new Face(icon.getMinU(), icon.getMaxU(), icon.getMinV(), icon.getMaxV(), color);
+                        faces[i][side] = new Face(
+                            icon.getMinU(),
+                            icon.getMaxU(),
+                            icon.getMinV(),
+                            icon.getMaxV(),
+                            color);
                     }
                 }
                 return new Palette(faces);
@@ -506,11 +528,13 @@ final class HologramArchiveTileGl {
 
     @FunctionalInterface
     interface Color {
+
         void set(float red, float green, float blue, float alpha);
     }
 
     @FunctionalInterface
     interface Vertex {
+
         void add(double x, double y, double z, double u, double v);
     }
 
@@ -526,14 +550,21 @@ final class HologramArchiveTileGl {
         double x = HologramArchiveTileMesh.x(quad), y = HologramArchiveTileMesh.y(quad),
             z = HologramArchiveTileMesh.z(quad);
         float shade = side == 1 ? 1 : side == 0 ? .65f : .85f;
-        color.set((face.color >>> 16 & 255) / 255f * shade, (face.color >>> 8 & 255) / 255f * shade,
-            (face.color & 255) / 255f * shade, 1);
+        color.set(
+            (face.color >>> 16 & 255) / 255f * shade,
+            (face.color >>> 8 & 255) / 255f * shade,
+            (face.color & 255) / 255f * shade,
+            1);
         for (int index : FACES[side]) {
             double[] p = VERTICES[index];
             double u = side == 4 ? p[2] + .5 : side == 5 ? .5 - p[2] : side == 2 ? .5 - p[0] : p[0] + .5;
             double v = side == 0 ? p[2] + .5 : side == 1 ? .5 - p[2] : .5 - p[1];
-            vertices.add(x + p[0], y + p[1], z + p[2],
-                face.minU + (face.maxU - face.minU) * u, face.minV + (face.maxV - face.minV) * v);
+            vertices.add(
+                x + p[0],
+                y + p[1],
+                z + p[2],
+                face.minU + (face.maxU - face.minU) * u,
+                face.minV + (face.maxV - face.minV) * v);
         }
     }
 }

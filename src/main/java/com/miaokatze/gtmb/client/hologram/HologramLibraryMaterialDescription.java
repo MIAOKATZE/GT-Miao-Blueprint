@@ -16,7 +16,6 @@ import com.github.bsideup.jabel.Desugar;
 /** Captured blueprint descriptions and local inventory observations, not a quote or a material-readiness check. */
 final class HologramLibraryMaterialDescription {
 
-
     private HologramLibraryMaterialDescription() {}
 
     @Desugar
@@ -54,13 +53,17 @@ final class HologramLibraryMaterialDescription {
 
     private static Long visiblePlain(HologramLibraryMaterialForecast.Identity identity, ItemStack[] mainInventory,
         int projectorSlot) {
-        if (mainInventory == null || projectorSlot < 0 || projectorSlot >= InventoryPlayer.getHotbarSize()
+        if (mainInventory == null || projectorSlot < 0
+            || projectorSlot >= InventoryPlayer.getHotbarSize()
             || projectorSlot >= mainInventory.length) return null;
         ItemStack sample;
-        try{
-            sample=com.miaokatze.gtmb.hologram.HologramStaticMaterials.exactRegistryShell(identity.registry(),identity.damage());
-        }catch(java.io.IOException|RuntimeException|LinkageError unknown){return null;}
-        Item item=sample.getItem();
+        try {
+            sample = com.miaokatze.gtmb.hologram.HologramStaticMaterials
+                .exactRegistryShell(identity.registry(), identity.damage());
+        } catch (java.io.IOException | RuntimeException | LinkageError unknown) {
+            return null;
+        }
+        Item item = sample.getItem();
         long count = 0;
         for (int i = 0; i < mainInventory.length; i++) {
             ItemStack stack = mainInventory[i];

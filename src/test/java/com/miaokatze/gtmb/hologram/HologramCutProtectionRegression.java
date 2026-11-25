@@ -80,7 +80,8 @@ public final class HologramCutProtectionRegression {
         if (!MinecraftTestBootstrap.enter(HologramCutProtectionRegression.class, args)) return;
         if (Boolean.getBoolean("gtmb.fixture.packCut")) {
             run(true);
-            com.miaokatze.gtmb.client.hologram.HologramEditorTutorialPlaybackRegression.cutLessonUsesIsolatedDirectory();
+            com.miaokatze.gtmb.client.hologram.HologramEditorTutorialPlaybackRegression
+                .cutLessonUsesIsolatedDirectory();
         } else run();
         System.out.println("HologramCutProtectionRegression PASS");
         // The standalone Gradle worker owns the JVM; Anvil I/O leaves a non-daemon thread.
@@ -115,7 +116,9 @@ public final class HologramCutProtectionRegression {
                 Field index = ChunkProviderServer.class.getDeclaredField("loadedChunkHashMap");
                 index.setAccessible(true);
                 net.minecraft.util.LongHashMap realIndex = (net.minecraft.util.LongHashMap) Class
-                    .forName("com.mitchej123.hodgepodge.util.ServerThreadLongHashMap").getConstructor().newInstance();
+                    .forName("com.mitchej123.hodgepodge.util.ServerThreadLongHashMap")
+                    .getConstructor()
+                    .newInstance();
                 index.set(world.theChunkProviderServer, realIndex);
                 boolean wrongThreadRefused = java.util.concurrent.CompletableFuture.supplyAsync(() -> {
                     try {
@@ -124,7 +127,8 @@ public final class HologramCutProtectionRegression {
                     } catch (java.io.IOException expected) {
                         return true;
                     }
-                }).join();
+                })
+                    .join();
                 SimpleAssert.that(wrongThreadRefused, "an off-thread snapshot cannot authorize a cut");
             }
             Field chunkProvider = World.class.getDeclaredField("chunkProvider");
@@ -216,7 +220,8 @@ public final class HologramCutProtectionRegression {
         HologramWorkspace.publishActionEndpoint(player, false);
         NBTTagCompound first = wireReply(player, passive, capture);
         UUID old = HologramCutProtocol.boundsProof(first);
-        SimpleAssert.that(first.getBoolean("success") && first.hasKey("entries", 9) && old != null,
+        SimpleAssert.that(
+            first.getBoolean("success") && first.hasKey("entries", 9) && old != null,
             "genuine marked passive LIST on the actual handler issues the exact endpoint proof");
 
         HologramSession beforeWorkspace = HologramWorkspace.find(player.getUniqueID());
@@ -230,11 +235,15 @@ public final class HologramCutProtectionRegression {
         } finally {
             world.forbidChunkLookup = false;
         }
-        SimpleAssert.that("workspace_local_only".equals(refusal.getString("code")) && !refusal.getBoolean("success")
-            && !refusal.hasKey("entries") && !refusal.hasKey("preview") && !refusal.hasKey("session")
-            && HologramCutProtocol.boundsProof(refusal) == null
-            && world.saveReads == reads && capture.ordinary == ordinary
-            && HologramWorkspace.find(player.getUniqueID()) == beforeWorkspace,
+        SimpleAssert.that(
+            "workspace_local_only".equals(refusal.getString("code")) && !refusal.getBoolean("success")
+                && !refusal.hasKey("entries")
+                && !refusal.hasKey("preview")
+                && !refusal.hasKey("session")
+                && HologramCutProtocol.boundsProof(refusal) == null
+                && world.saveReads == reads
+                && capture.ordinary == ordinary
+                && HologramWorkspace.find(player.getUniqueID()) == beforeWorkspace,
             "real old remote-manager packet yields only local-only refusal, before storage, capture or ordinary State");
         SimpleAssert.that(beforeDirectory.equals(storage.load()), "remote manager never changes the owner's directory");
 
@@ -242,13 +251,18 @@ public final class HologramCutProtectionRegression {
         wrongType.setInteger("cutMetadataOnly", 1);
         NBTTagCompound wrongTarget = request("list");
         HologramCutProtocol.markPassiveList(wrongTarget);
-        wrongTarget.setString("id", UUID.randomUUID().toString());
+        wrongTarget.setString(
+            "id",
+            UUID.randomUUID()
+                .toString());
         reads = world.saveReads;
         NBTTagCompound wrongTypeReply = wireReply(player, wrongType, capture);
         NBTTagCompound wrongTargetReply = wireReply(player, wrongTarget, capture);
-        SimpleAssert.that(!wrongTypeReply.getBoolean("success") && !wrongTargetReply.getBoolean("success")
-            && !wrongTypeReply.hasKey("entries") && !wrongTargetReply.hasKey("entries")
-            && world.saveReads == reads,
+        SimpleAssert.that(
+            !wrongTypeReply.getBoolean("success") && !wrongTargetReply.getBoolean("success")
+                && !wrongTypeReply.hasKey("entries")
+                && !wrongTargetReply.hasKey("entries")
+                && world.saveReads == reads,
             "passive marker neither coerces numeric types nor authorizes a targeted read; both reject pre-storage");
 
         ObservedChest original = chest(world, 6, Items.redstone, 2);
@@ -256,8 +270,10 @@ public final class HologramCutProtectionRegression {
         NBTTagCompound before = storage.load();
         int events = guard.breaks + guard.places;
         NBTTagCompound retired = wireReply(player, candidate, capture);
-        SimpleAssert.that("bounds_protocol_required".equals(retired.getString("code"))
-            && !retired.hasKey("entries") && !retired.hasKey("preview") && HologramCutProtocol.boundsProof(retired) == null,
+        SimpleAssert.that(
+            "bounds_protocol_required".equals(retired.getString("code")) && !retired.hasKey("entries")
+                && !retired.hasKey("preview")
+                && HologramCutProtocol.boundsProof(retired) == null,
             "old client gets a refusal only, never complete geometry or a capability from a write");
         HologramCutProtocol.writeBoundsProof(candidate, old);
         int count = capture.parts;
@@ -267,7 +283,9 @@ public final class HologramCutProtectionRegression {
         SimpleAssert.eq(count, capture.parts, "old ingress lease dies even after a same-world generation change");
 
         NBTTagCompound buffered = wireReply(player, candidate, capture);
-        SimpleAssert.eq("bounds_protocol_required", buffered.getString("code"),
+        SimpleAssert.eq(
+            "bounds_protocol_required",
+            buffered.getString("code"),
             "an old buffered packet arriving on the new generation cannot reuse its capability");
 
         enqueueCut(player, request("list"));
@@ -276,8 +294,10 @@ public final class HologramCutProtectionRegression {
         HologramWorkspace.publishActionDimension(player);
         cutTransportTick();
         SimpleAssert.eq(count, capture.parts, "late egress cannot emit an old endpoint's LIST fragment");
-        SimpleAssert.that(storage.load().equals(before) && world.getTileEntity(6, 200, 0) == original
-            && events == guard.breaks + guard.places,
+        SimpleAssert.that(
+            storage.load()
+                .equals(before) && world.getTileEntity(6, 200, 0) == original
+                && events == guard.breaks + guard.places,
             "unproved and retired packets do not author a clipboard or run permission events");
         UUID current = HologramCutProtocol.boundsProof(wireReply(player, request("list"), capture));
         SimpleAssert.that(current != null && !current.equals(old), "fresh genuine LIST negotiates a new generation");
@@ -295,14 +315,17 @@ public final class HologramCutProtectionRegression {
         enqueueCut(player, cut);
         player.capabilities.allowEdit = true;
         wireTick();
-        SimpleAssert.that("failed".equals(capture.reply.getString("code")) && guard.breaks == breaks,
+        SimpleAssert.that(
+            "failed".equals(capture.reply.getString("code")) && guard.breaks == breaks,
             "an ingress that lacked edit authority cannot borrow it before its queued write");
-        player.inventory.mainInventory[1] = player.getHeldItem().copy();
+        player.inventory.mainInventory[1] = player.getHeldItem()
+            .copy();
         try {
             enqueueCut(player, cut);
             player.inventory.currentItem = 1;
             wireTick();
-            SimpleAssert.eq("failed", capture.reply.getString("code"), "queued Cut cannot adopt another held stack/slot");
+            SimpleAssert
+                .eq("failed", capture.reply.getString("code"), "queued Cut cannot adopt another held stack/slot");
             SimpleAssert.eq(breaks, guard.breaks, "a replacement projector never reaches Cut callbacks");
         } finally {
             player.inventory.currentItem = 0;
@@ -315,16 +338,20 @@ public final class HologramCutProtectionRegression {
         } finally {
             guard.breakHook = null;
         }
-        SimpleAssert.that(guard.breaks == breaks + 1 && capture.parts == replies
-            && world.getTileEntity(6, 200, 0) == original && storage.load().equals(before),
+        SimpleAssert.that(
+            guard.breaks == breaks + 1 && capture.parts == replies
+                && world.getTileEntity(6, 200, 0) == original
+                && storage.load()
+                    .equals(before),
             "expiry during a real BreakEvent cannot save a redo, clear the source, or emit stale egress");
         UUID current = HologramCutProtocol.boundsProof(wireReply(player, request("list"), capture));
-        SimpleAssert.that(current != null && !current.equals(proof), "the next genuine LIST binds the new endpoint only");
+        SimpleAssert
+            .that(current != null && !current.equals(proof), "the next genuine LIST binds the new endpoint only");
         return current;
     }
 
-    private static void lateLoadedSlotReplacement(Scene world, Actor player, Guard guard,
-        HologramCutStorage storage, CutCapture capture, UUID proof) throws Exception {
+    private static void lateLoadedSlotReplacement(Scene world, Actor player, Guard guard, HologramCutStorage storage,
+        CutCapture capture, UUID proof) throws Exception {
         // Two actual occupied cells and callbacks, each on a different loaded chunk.
         int left = 47, right = 48;
         world.put(left, 200, 0, Blocks.stone, 0);
@@ -347,14 +374,20 @@ public final class HologramCutProtectionRegression {
         };
         try {
             NBTTagCompound response = wireReply(player, action, capture);
-            SimpleAssert.that(callbacks[0] == 2 && !response.getBoolean("success") && !response.hasKey("preview")
-                && storage.load().equals(before) && !storage.load().hasKey("pending"),
+            SimpleAssert.that(
+                callbacks[0] == 2 && !response.getBoolean("success")
+                    && !response.hasKey("preview")
+                    && storage.load()
+                        .equals(before)
+                    && !storage.load()
+                        .hasKey("pending"),
                 "a later native protection callback replacing an earlier loaded slot cannot author rollback/redo");
-            SimpleAssert.that(world.getChunkFromChunkCoords(left >> 4, 0) == original
-                && world.fixtureLoaded(left >> 4, 0) == foreign && original.isChunkLoaded
-                && original.getBlock(left & 15, 200, 0) == Blocks.stone
-                && foreign.getBlock(left & 15, 200, 0) == Blocks.gold_block
-                && later.getBlock(right & 15, 200, 0) == Blocks.stone,
+            SimpleAssert.that(
+                world.getChunkFromChunkCoords(left >> 4, 0) == original && world.fixtureLoaded(left >> 4, 0) == foreign
+                    && original.isChunkLoaded
+                    && original.getBlock(left & 15, 200, 0) == Blocks.stone
+                    && foreign.getBlock(left & 15, 200, 0) == Blocks.gold_block
+                    && later.getBlock(right & 15, 200, 0) == Blocks.stone,
                 "do not touch the detached original, the extant replacement, or the later selected chunk");
         } finally {
             guard.breakHook = null;
@@ -408,8 +441,9 @@ public final class HologramCutProtectionRegression {
             "protected selected air cannot consume a nonce");
         world.deniedX = Integer.MIN_VALUE;
         NBTTagCompound cutAccepted = wireReply(player, cut, capture);
-        SimpleAssert.that(cutAccepted.getBoolean("success") && !cutAccepted.hasKey("preview")
-            && !cutAccepted.hasKey("cells"), "current new-client Cut keeps only a bounded reply");
+        SimpleAssert.that(
+            cutAccepted.getBoolean("success") && !cutAccepted.hasKey("preview") && !cutAccepted.hasKey("cells"),
+            "current new-client Cut keeps only a bounded reply");
         SimpleAssert
             .eq(Blocks.air, world.getBlock(0, 200, 0), "ordinary non-OP wire cut removes its authorized source");
         SimpleAssert.eq(
@@ -419,7 +453,9 @@ public final class HologramCutProtectionRegression {
                 .tagCount(),
             "one successful cut produces one entry");
         SimpleAssert.eq(1, source.invalidations, "native teardown occurs only for the approved cut");
-        NBTTagCompound retained = storage.load().getTagList("entries", 10).getCompoundTagAt(0);
+        NBTTagCompound retained = storage.load()
+            .getTagList("entries", 10)
+            .getCompoundTagAt(0);
         exactShape(retained, 2, 2, "ordinary dense cut");
         int events = guard.breaks;
         SimpleAssert.eq(
@@ -439,24 +475,34 @@ public final class HologramCutProtectionRegression {
         NBTTagCompound before = storage.load();
         NBTTagCompound directory = HologramCutService.execute(player, request("list"));
         SimpleAssert.that(directory.getBoolean("success"), "completed clipboard entries remain readable");
-        NBTTagCompound row = directory.getTagList("entries", 10).getCompoundTagAt(0);
+        NBTTagCompound row = directory.getTagList("entries", 10)
+            .getCompoundTagAt(0);
         SimpleAssert.eq(cut.getString("requestId"), row.getString("id"), "metadata refers to the exact retained entry");
-        SimpleAssert.that(row.hasKey("sequence", 4) && row.getLong("sequence") > 0
-            && !row.hasKey("cells") && !row.hasKey("preview"), "directory exposes typed revision, not raw cells");
+        SimpleAssert.that(
+            row.hasKey("sequence", 4) && row.getLong("sequence") > 0 && !row.hasKey("cells") && !row.hasKey("preview"),
+            "directory exposes typed revision, not raw cells");
         NBTTagCompound preview = request("preview");
         preview.setString("id", cut.getString("requestId"));
         NBTTagCompound refused = HologramCutService.execute(player, preview);
-        SimpleAssert.eq("preview_metadata_only", refused.getString("code"), "legacy full preview has a truthful refusal");
-        SimpleAssert.that(!refused.getBoolean("success") && !refused.hasKey("preview")
-            && !refused.hasKey("entries"), "legacy preview cannot fall back to raw output or another query");
+        SimpleAssert
+            .eq("preview_metadata_only", refused.getString("code"), "legacy full preview has a truthful refusal");
+        SimpleAssert.that(
+            !refused.getBoolean("success") && !refused.hasKey("preview") && !refused.hasKey("entries"),
+            "legacy preview cannot fall back to raw output or another query");
         int breaksBeforeProof = guard.breaks;
-        SimpleAssert.that(!HologramCutService.execute(player, paste).getBoolean("success"),
+        SimpleAssert.that(
+            !HologramCutService.execute(player, paste)
+                .getBoolean("success"),
             "missing sequence cannot place a retained entry");
         paste.setInteger("entrySequence", (int) row.getLong("sequence"));
-        SimpleAssert.that(!HologramCutService.execute(player, paste).getBoolean("success"),
+        SimpleAssert.that(
+            !HologramCutService.execute(player, paste)
+                .getBoolean("success"),
             "same numeric sequence with the wrong tag type cannot place");
         paste.setLong("entrySequence", row.getLong("sequence") + 1);
-        SimpleAssert.that(!HologramCutService.execute(player, paste).getBoolean("success"),
+        SimpleAssert.that(
+            !HologramCutService.execute(player, paste)
+                .getBoolean("success"),
             "stale sequence cannot place a retained entry");
         SimpleAssert.eq(breaksBeforeProof, guard.breaks, "wrong source proof fails before target permission events");
         unchanged(world, target, storage, before);
@@ -470,7 +516,8 @@ public final class HologramCutProtectionRegression {
         } finally {
             guard.placeHook = null;
         }
-        SimpleAssert.that(guard.places == oldPlaces + 1 && capture.parts == oldReplies,
+        SimpleAssert.that(
+            guard.places == oldPlaces + 1 && capture.parts == oldReplies,
             "owned stale PlaceEvent rolls back, but cannot authorize redo or reply on another generation");
         unchanged(world, target, storage, before);
         proof = HologramCutProtocol.boundsProof(wireReply(player, request("list"), capture));
@@ -517,7 +564,11 @@ public final class HologramCutProtectionRegression {
             "PlaceEvent exception rejects paste");
         unchanged(world, target, storage, before);
         guard.throwPlace = false;
-        exactStageChunks(world, before.getTagList("entries", 10).getCompoundTagAt(0), target);
+        exactStageChunks(
+            world,
+            before.getTagList("entries", 10)
+                .getCompoundTagAt(0),
+            target);
 
         int[] revoked = { 0 };
         guard.placeHook = () -> player.editHook = () -> {
@@ -528,7 +579,8 @@ public final class HologramCutProtectionRegression {
         };
         try {
             NBTTagCompound lost = wireReply(player, paste, capture);
-            SimpleAssert.that(revoked[0] == 1 && !lost.getBoolean("success"),
+            SimpleAssert.that(
+                revoked[0] == 1 && !lost.getBoolean("success"),
                 "the last virtual canPlayerEdit may return true after revoking allowEdit; the pure tail refuses redo");
         } finally {
             guard.placeHook = null;
@@ -550,17 +602,23 @@ public final class HologramCutProtectionRegression {
             .toPath()
             .resolve("gtmb-cut")
             .resolve(player.getUniqueID() + ".nbt");
-        NBTTagCompound retainedRollback = storage.load().getCompoundTag("pending");
+        NBTTagCompound retainedRollback = storage.load()
+            .getCompoundTag("pending");
         exactShape(retainedRollback.getCompoundTag("entry"), 2, 2, "durable dense rollback before-image");
         exactShape(retainedRollback.getCompoundTag("candidate"), 2, 2, "durable dense rollback candidate");
         byte[] blockedJournal = Files.readAllBytes(journalFile);
         NBTTagCompound passive = wireReply(player, request("list"), capture);
         NBTTagCompound wrong = request("list");
-        wrong.setString("id", UUID.randomUUID().toString());
+        wrong.setString(
+            "id",
+            UUID.randomUUID()
+                .toString());
         NBTTagCompound wrongReply = wireReply(player, wrong, capture);
-        SimpleAssert.that("recovery_pending".equals(passive.getString("code")) && !passive.hasKey("entries")
-            && "recovery_pending".equals(wrongReply.getString("code")) && !wrongReply.hasKey("entries")
-            && Arrays.equals(blockedJournal, Files.readAllBytes(journalFile)),
+        SimpleAssert.that(
+            "recovery_pending".equals(passive.getString("code")) && !passive.hasKey("entries")
+                && "recovery_pending".equals(wrongReply.getString("code"))
+                && !wrongReply.hasKey("entries")
+                && Arrays.equals(blockedJournal, Files.readAllBytes(journalFile)),
             "passive LIST and mismatched target do not recover or disclose a pending journal");
         target.getStackInSlot(0).stackSize = 10; // The restored live inventory changes on a later ordinary tick.
         boolean blocked = false;
@@ -582,9 +640,12 @@ public final class HologramCutProtectionRegression {
         NBTTagCompound exact = request("list");
         exact.setString("id", paste.getString("requestId"));
         NBTTagCompound checked = wireReply(player, exact, capture);
-        SimpleAssert.that(checked.getBoolean("success") && !checked.getBoolean("requestCompleted")
-            && paste.getString("requestId").equals(checked.getString("reconciledRequestId"))
-            && !checked.hasKey("preview"), "current same-endpoint targeted LIST reconciles only its authorized rollback");
+        SimpleAssert.that(
+            checked.getBoolean("success") && !checked.getBoolean("requestCompleted")
+                && paste.getString("requestId")
+                    .equals(checked.getString("reconciledRequestId"))
+                && !checked.hasKey("preview"),
+            "current same-endpoint targeted LIST reconciles only its authorized rollback");
         unchanged(world, target, storage, before);
 
         NBTTagCompound entry = before.getTagList("entries", 10)
@@ -630,25 +691,39 @@ public final class HologramCutProtectionRegression {
 
         NBTTagCompound recut = HologramCutService.execute(player, denseCut(8, 9));
         SimpleAssert.that(recut.getBoolean("success"), "dense recut produces an undoable journal");
-        exactShape(storage.load().getTagList("entries", 10).getCompoundTagAt(0), 2, 2, "dense undo input");
+        exactShape(
+            storage.load()
+                .getTagList("entries", 10)
+                .getCompoundTagAt(0),
+            2,
+            2,
+            "dense undo input");
         NBTTagCompound restore = request("undo");
         HologramCutProtocol.writeBoundsProof(restore, proof);
         NBTTagCompound undoBefore = storage.load();
         int undoBreaks = guard.breaks, undoPlaces = guard.places;
-        SimpleAssert.that(!wireReply(player, restore, capture).getBoolean("success"),
+        SimpleAssert.that(
+            !wireReply(player, restore, capture).getBoolean("success"),
             "real Undo never defaults to the first clipboard row");
         restore.setString("id", recut.getString("id"));
-        long sequence = recut.getTagList("entries", 10).getCompoundTagAt(0).getLong("sequence");
+        long sequence = recut.getTagList("entries", 10)
+            .getCompoundTagAt(0)
+            .getLong("sequence");
         restore.setInteger("entrySequence", (int) sequence);
-        SimpleAssert.that(!wireReply(player, restore, capture).getBoolean("success"),
+        SimpleAssert.that(
+            !wireReply(player, restore, capture).getBoolean("success"),
             "real Undo refuses a coercible integer sequence");
         restore.setLong("entrySequence", sequence + 1);
-        SimpleAssert.that(!wireReply(player, restore, capture).getBoolean("success") && undoBefore.equals(storage.load())
-            && guard.breaks == undoBreaks && guard.places == undoPlaces,
+        SimpleAssert.that(
+            !wireReply(player, restore, capture).getBoolean("success") && undoBefore.equals(storage.load())
+                && guard.breaks == undoBreaks
+                && guard.places == undoPlaces,
             "stale Undo proof runs no permission callbacks and leaves the complete durable clipboard");
         restore.setLong("entrySequence", sequence);
         SimpleAssert.that(wireReply(player, restore, capture).getBoolean("success"), "current exact Undo still works");
-        SimpleAssert.eq(3, ((ObservedChest) world.getTileEntity(8, 200, 0)).getStackInSlot(0).stackSize,
+        SimpleAssert.eq(
+            3,
+            ((ObservedChest) world.getTileEntity(8, 200, 0)).getStackInSlot(0).stackSize,
             "dense undo restores the original inventory");
         return proof;
     }
@@ -669,8 +744,8 @@ public final class HologramCutProtectionRegression {
         var rows = captured.getTagList("entries", 10);
         for (int i = 0; i < rows.tagCount(); i++) {
             NBTTagCompound row = rows.getCompoundTagAt(i);
-            if (row.getString("id").equals(id) && row.hasKey("sequence", 4))
-                paste.setLong("entrySequence", row.getLong("sequence"));
+            if (row.getString("id")
+                .equals(id) && row.hasKey("sequence", 4)) paste.setLong("entrySequence", row.getLong("sequence"));
         }
         SimpleAssert.that(paste.getLong("entrySequence") > 0, "Paste uses the genuine selected row proof");
         paste.setInteger("originX", targetX);
@@ -678,7 +753,10 @@ public final class HologramCutProtectionRegression {
         paste.setInteger("originZ", 0);
         new com.miaokatze.gtmb.api.CutTransforms.Transform(0, 1, 0, 0).write(paste);
 
-        Path file = world.save.getWorldDirectory().toPath().resolve("gtmb-cut").resolve(player.getUniqueID() + ".nbt");
+        Path file = world.save.getWorldDirectory()
+            .toPath()
+            .resolve("gtmb-cut")
+            .resolve(player.getUniqueID() + ".nbt");
         byte[] retained = Files.readAllBytes(file);
         NBTTagCompound before = storage.load();
         int mine = world.mineChecks, breaks = guard.breaks, places = guard.places;
@@ -692,21 +770,33 @@ public final class HologramCutProtectionRegression {
             player.editHook = null;
             world.forbidChunkLookup = false;
         }
-        SimpleAssert.that(!refused.getBoolean("success") && refused.getString("message").contains("minecraft:chest")
-            && world.mineChecks == mine && playerPermission[0] == 0 && guard.breaks == breaks
-            && guard.places == places,
+        SimpleAssert.that(
+            !refused.getBoolean("success") && refused.getString("message")
+                .contains("minecraft:chest")
+                && world.mineChecks == mine
+                && playerPermission[0] == 0
+                && guard.breaks == breaks
+                && guard.places == places,
             "known impossible tilt gives an honest real refusal before permissions, world lookup or Forge events");
-        SimpleAssert.that(world.getTileEntity(targetX, 200, 0) == target && target.getStackInSlot(0).stackSize == 9
-            && world.getBlockMetadata(targetX, 200, 0) == 3 && before.equals(storage.load())
-            && Arrays.equals(retained, Files.readAllBytes(file)), "refused tilt is byte-exact and nonce-neutral");
+        SimpleAssert.that(
+            world.getTileEntity(targetX, 200, 0) == target && target.getStackInSlot(0).stackSize == 9
+                && world.getBlockMetadata(targetX, 200, 0) == 3
+                && before.equals(storage.load())
+                && Arrays.equals(retained, Files.readAllBytes(file)),
+            "refused tilt is byte-exact and nonce-neutral");
 
         // Same request id is still unused. SOUTH reflected in Z and yawed once is EAST (metadata 5).
         new com.miaokatze.gtmb.api.CutTransforms.Transform(1, 0, 0, 4).write(paste);
         NBTTagCompound placed = wireReply(player, paste, capture);
-        SimpleAssert.that(placed.getBoolean("success") && world.getBlockMetadata(targetX, 200, 0) == 5
-            && ((ObservedChest) world.getTileEntity(targetX, 200, 0)).getStackInSlot(0).stackSize == 3,
+        SimpleAssert.that(
+            placed.getBoolean("success") && world.getBlockMetadata(targetX, 200, 0) == 5
+                && ((ObservedChest) world.getTileEntity(targetX, 200, 0)).getStackInSlot(0).stackSize == 3,
             "a legal yaw and mirror can use the original nonce and commit the exact native heading and contents");
-        SimpleAssert.eq(0, storage.load().getTagList("entries", 10).tagCount(),
+        SimpleAssert.eq(
+            0,
+            storage.load()
+                .getTagList("entries", 10)
+                .tagCount(),
             "only the admitted pose consumes its untouched source row");
     }
 
@@ -734,11 +824,16 @@ public final class HologramCutProtectionRegression {
 
     private static void exactShape(NBTTagCompound entry, int width, int selected, String phase) throws IOException {
         HologramCutEntry.validate(entry);
-        SimpleAssert.that(entry.hasKey("selectionVersion", 3) && entry.getInteger("selectionVersion") == 1,
+        SimpleAssert.that(
+            entry.hasKey("selectionVersion", 3) && entry.getInteger("selectionVersion") == 1,
             phase + " retains typed selection version");
         SimpleAssert.eq(width, entry.getInteger("sizeX"), phase + " retains envelope");
         SimpleAssert.eq(selected, entry.getInteger("selectedCells"), phase + " retains selected cardinality");
-        SimpleAssert.eq(selected, entry.getTagList("cells", 10).tagCount(), phase + " retains exact cells");
+        SimpleAssert.eq(
+            selected,
+            entry.getTagList("cells", 10)
+                .tagCount(),
+            phase + " retains exact cells");
     }
 
     private static void compoundJournal(Scene world, Actor player, Guard guard, HologramCutStorage storage,
@@ -753,11 +848,14 @@ public final class HologramCutProtectionRegression {
         SimpleAssert.that(cut.getBoolean("success"), "real compound cut succeeds with a subtracted hole");
         SimpleAssert.eq(Blocks.stone, world.getBlock(3, 200, 0), "compound cut leaves the subtracted source");
         NBTTagCompound before = storage.load();
-        NBTTagCompound source = before.getTagList("entries", 10).getCompoundTagAt(0);
+        NBTTagCompound source = before.getTagList("entries", 10)
+            .getCompoundTagAt(0);
         exactShape(source, 3, 2, "compound cut journal");
-        NBTTagCompound row = cut.getTagList("entries", 10).getCompoundTagAt(0);
+        NBTTagCompound row = cut.getTagList("entries", 10)
+            .getCompoundTagAt(0);
         SimpleAssert.eq(source.getString("id"), row.getString("id"), "compound wire summary refers to the journal");
-        SimpleAssert.that(row.hasKey("sequence", 4) && !row.hasKey("selectionVersion") && !row.hasKey("cells"),
+        SimpleAssert.that(
+            row.hasKey("sequence", 4) && !row.hasKey("selectionVersion") && !row.hasKey("cells"),
             "compound wire summary does not expose journal fields or raw cells");
 
         NBTTagCompound paste = request("paste");
@@ -770,7 +868,9 @@ public final class HologramCutProtectionRegression {
         guard.cancelPlace = true;
         guard.failCleanup = true;
         try {
-            SimpleAssert.eq("recovery_pending", wireReply(player, paste, capture).getString("code"),
+            SimpleAssert.eq(
+                "recovery_pending",
+                wireReply(player, paste, capture).getString("code"),
                 "compound PlaceEvent veto and interrupted cleanup leave an actual rollback journal");
         } finally {
             guard.failCleanup = false;
@@ -784,24 +884,41 @@ public final class HologramCutProtectionRegression {
         HologramWorkspace.publishActionDimension(player);
         NBTTagCompound exact = request("list");
         exact.setString("id", paste.getString("requestId"));
-        SimpleAssert.that("recovery_pending".equals(wireReply(player, exact, capture).getString("code"))
-            && rollbackState.equals(storage.load()), "even the exact old receipt cannot recover on a new endpoint");
+        SimpleAssert.that(
+            "recovery_pending".equals(wireReply(player, exact, capture).getString("code"))
+                && rollbackState.equals(storage.load()),
+            "even the exact old receipt cannot recover on a new endpoint");
         HologramCutService.recover(storage, rollbackState);
-        SimpleAssert.that(world.getTileEntity(12, 200, 0) == target && target.getStackInSlot(0).stackSize == 7
-            && Blocks.stone == world.getBlock(14, 200, 0) && before.equals(storage.load()),
+        SimpleAssert.that(
+            world.getTileEntity(12, 200, 0) == target && target.getStackInSlot(0).stackSize == 7
+                && Blocks.stone == world.getBlock(14, 200, 0)
+                && before.equals(storage.load()),
             "compound paste veto restores selected preimage, inventory, and exact journal");
-        SimpleAssert.that(HologramCutService.execute(player, paste).getBoolean("success"),
+        SimpleAssert.that(
+            HologramCutService.execute(player, paste)
+                .getBoolean("success"),
             "authorized compound paste still works");
         SimpleAssert.eq(Blocks.stone, world.getBlock(13, 200, 0), "compound paste does not fill a subtracted cell");
         SimpleAssert.eq(Blocks.air, world.getBlock(14, 200, 0), "compound paste still overwrites selected air");
 
         NBTTagCompound recut = HologramCutService.execute(player, compoundCut(12));
         SimpleAssert.that(recut.getBoolean("success"), "compound recut provides the original undo coordinates");
-        exactShape(storage.load().getTagList("entries", 10).getCompoundTagAt(0), 3, 2, "compound undo journal");
+        exactShape(
+            storage.load()
+                .getTagList("entries", 10)
+                .getCompoundTagAt(0),
+            3,
+            2,
+            "compound undo journal");
         NBTTagCompound undo = request("undo");
         undo.setString("id", recut.getString("id"));
-        SimpleAssert.that(HologramCutService.execute(player, undo).getBoolean("success"), "compound undo succeeds");
-        SimpleAssert.eq(4, ((ObservedChest) world.getTileEntity(12, 200, 0)).getStackInSlot(0).stackSize,
+        SimpleAssert.that(
+            HologramCutService.execute(player, undo)
+                .getBoolean("success"),
+            "compound undo succeeds");
+        SimpleAssert.eq(
+            4,
+            ((ObservedChest) world.getTileEntity(12, 200, 0)).getStackInSlot(0).stackSize,
             "compound undo restores exact original inventory");
         SimpleAssert.eq(Blocks.stone, world.getBlock(13, 200, 0), "compound undo leaves the subtracted cell");
     }
@@ -812,33 +929,42 @@ public final class HologramCutProtectionRegression {
         HologramCutWorld.Edit edit = new HologramCutWorld.Edit(world, shape, 8, 200, 0);
         try {
             edit.stage(shape, () -> {}, () -> world.forbidChunkLookup = true);
-            SimpleAssert.that(chunk.chunkTileEntityMap.get(pos) instanceof ObservedChest candidate
-                && candidate != original && candidate.getStackInSlot(0).stackSize == 3,
+            SimpleAssert.that(
+                chunk.chunkTileEntityMap.get(pos) instanceof ObservedChest candidate && candidate != original
+                    && candidate.getStackInSlot(0).stackSize == 3,
                 "physical staging uses only the already bound original chunk after the last fence");
         } finally {
             world.forbidChunkLookup = false;
             edit.restoreOwned(shape);
         }
-        SimpleAssert.that(chunk.chunkTileEntityMap.get(pos) == original,
+        SimpleAssert.that(
+            chunk.chunkTileEntityMap.get(pos) == original,
             "owned restoration uses the exact original chunk and tile");
         HologramCutWorld.Edit swapped = new HologramCutWorld.Edit(world, shape, 8, 200, 0);
         Chunk foreign = new Chunk(world, 0, 0);
         world.fixtureMount(foreign);
         boolean refused = false;
         try {
-            swapped.stage(shape, () -> {}, () -> { throw new AssertionError("foreign chunk reached the final fence"); });
+            swapped
+                .stage(shape, () -> {}, () -> { throw new AssertionError("foreign chunk reached the final fence"); });
         } catch (IOException expected) {
-            refused = expected.getMessage().contains("原区块");
+            refused = expected.getMessage()
+                .contains("原区块");
         } finally {
             world.fixtureMount(chunk);
         }
-        SimpleAssert.that(refused && chunk.chunkTileEntityMap.get(pos) == original
-            && foreign.getBlock(8, 200, 0) == Blocks.air && foreign.chunkTileEntityMap.isEmpty(),
+        SimpleAssert.that(
+            refused && chunk.chunkTileEntityMap.get(pos) == original
+                && foreign.getBlock(8, 200, 0) == Blocks.air
+                && foreign.chunkTileEntityMap.isEmpty(),
             "a changed chunk identity is rejected before the final fence or mutation of either chunk");
     }
 
     private enum Contest {
-        EXPIRED_FOREIGN, CURRENT_FOREIGN, CANDIDATE_NBT, PARKED_NBT
+        EXPIRED_FOREIGN,
+        CURRENT_FOREIGN,
+        CANDIDATE_NBT,
+        PARKED_NBT
     }
 
     private static void contestedStages(sun.misc.Unsafe unsafe, Scene world, Guard guard, Field channel,
@@ -850,12 +976,21 @@ public final class HologramCutProtectionRegression {
             channel.set(null, wire);
             try {
                 HologramWorkspace.publishActionEndpoint(other, false);
-                contestedPlace(world, other, guard,
-                    new HologramCutStorage(world.save.getWorldDirectory().toPath(), other.getUniqueID()), wire, contest);
+                contestedPlace(
+                    world,
+                    other,
+                    guard,
+                    new HologramCutStorage(
+                        world.save.getWorldDirectory()
+                            .toPath(),
+                        other.getUniqueID()),
+                    wire,
+                    contest);
             } finally {
                 HologramWorkspace.revokeActionEndpoint(other);
                 HologramCutService.disconnected(other);
-                other.playerNetServerHandler.netManager.channel().close();
+                other.playerNetServerHandler.netManager.channel()
+                    .close();
                 channel.set(null, originalCapture);
             }
         }
@@ -877,14 +1012,20 @@ public final class HologramCutProtectionRegression {
         paste.setString("id", selected);
         HologramCutProtocol.writeBoundsProof(paste, proof);
         var rows = captured.getTagList("entries", 10);
-        for (int i = 0; i < rows.tagCount(); i++)
-            if (selected.equals(rows.getCompoundTagAt(i).getString("id")))
-                paste.setLong("entrySequence", rows.getCompoundTagAt(i).getLong("sequence"));
+        for (int i = 0; i < rows.tagCount(); i++) if (selected.equals(
+            rows.getCompoundTagAt(i)
+                .getString("id")))
+            paste.setLong(
+                "entrySequence",
+                rows.getCompoundTagAt(i)
+                    .getLong("sequence"));
         SimpleAssert.that(paste.getLong("entrySequence") > 0, "proof uses the actual captured clipboard row");
         paste.setInteger("originX", targetX);
         paste.setInteger("originY", 200);
         paste.setInteger("originZ", 0);
-        Path file = world.save.getWorldDirectory().toPath().resolve("gtmb-cut")
+        Path file = world.save.getWorldDirectory()
+            .toPath()
+            .resolve("gtmb-cut")
             .resolve(player.getUniqueID() + ".nbt");
         byte[][] durable = { null };
         ObservedChest[] observed = { null };
@@ -912,23 +1053,30 @@ public final class HologramCutProtectionRegression {
             guard.changeOriginal = false;
         }
         int expected = contest == Contest.CANDIDATE_NBT ? 4 : contest == Contest.PARKED_NBT ? 3 : 11;
-        SimpleAssert.that(durable[0] != null && observed[0] != null
-            && world.getTileEntity(targetX, 200, 0) == observed[0]
-            && observed[0].getStackInSlot(0).stackSize == expected
-            && original.getStackInSlot(0).stackSize == (contest == Contest.PARKED_NBT ? 9 : 8)
-            && Arrays.equals(durable[0], Files.readAllBytes(file)),
+        SimpleAssert.that(
+            durable[0] != null && observed[0] != null
+                && world.getTileEntity(targetX, 200, 0) == observed[0]
+                && observed[0].getStackInSlot(0).stackSize == expected
+                && original.getStackInSlot(0).stackSize == (contest == Contest.PARKED_NBT ? 9 : 8)
+                && Arrays.equals(durable[0], Files.readAllBytes(file)),
             contest + ": preserve live/parked evidence and the exact original rollback bytes");
         if (contest == Contest.EXPIRED_FOREIGN) {
             SimpleAssert.eq(replies, capture.parts, "expired endpoint never receives the refusal");
         } else {
-            SimpleAssert.that(capture.parts == replies + 1 && "recovery_pending".equals(capture.reply.getString("code"))
-                && paste.getString("requestId").equals(capture.reply.getString("requestId"))
-                && !capture.reply.hasKey("entries") && !capture.reply.hasKey("preview"),
+            SimpleAssert.that(
+                capture.parts == replies + 1 && "recovery_pending".equals(capture.reply.getString("code"))
+                    && paste.getString("requestId")
+                        .equals(capture.reply.getString("requestId"))
+                    && !capture.reply.hasKey("entries")
+                    && !capture.reply.hasKey("preview"),
                 contest + ": current peer gets only the honest pending result, never raw or success");
         }
         NBTTagCompound state = storage.load();
-        SimpleAssert.that(!storage.approvedPending(state.getCompoundTag("pending"))
-            && state.getTagList("entries", 10).tagCount() == 1 && state.getTagList("requests", 10).tagCount() == 1,
+        SimpleAssert.that(
+            !storage.approvedPending(state.getCompoundTag("pending")) && state.getTagList("entries", 10)
+                .tagCount() == 1
+                && state.getTagList("requests", 10)
+                    .tagCount() == 1,
             contest + ": never promote to redo or consume the source row/operation receipt");
     }
 
@@ -1036,8 +1184,10 @@ public final class HologramCutProtectionRegression {
     private static NBTTagCompound wireReply(Actor player, NBTTagCompound request, CutCapture capture) throws Exception {
         int parts = capture.parts;
         wire(player, request);
-        SimpleAssert.that(capture.parts == parts + 1 && capture.reply != null
-            && request.getString("requestId").equals(capture.reply.getString("requestId")),
+        SimpleAssert.that(
+            capture.parts == parts + 1 && capture.reply != null
+                && request.getString("requestId")
+                    .equals(capture.reply.getString("requestId")),
             "one actual matching bounded Cut fragment per fixture reply");
         return capture.reply;
     }
@@ -1078,15 +1228,19 @@ public final class HologramCutProtectionRegression {
         NBTTagCompound reply;
 
         CutCapture(EntityPlayerMP owner) {
-            super("gtmb_cut_" + owner.getUniqueID().toString().substring(0, 8));
+            super(
+                "gtmb_cut_" + owner.getUniqueID()
+                    .toString()
+                    .substring(0, 8));
             this.owner = owner;
         }
 
         @Override
         public void sendTo(IMessage message, EntityPlayerMP player) {
             if (!(message instanceof HologramNetwork.CutFragment)) {
-                if (player == owner && (message instanceof HologramNetwork.State
-                    || message instanceof HologramNetwork.Fragment)) ordinary++;
+                if (player == owner
+                    && (message instanceof HologramNetwork.State || message instanceof HologramNetwork.Fragment))
+                    ordinary++;
                 return;
             }
             SimpleAssert.that(player == owner, "Cut fragment has the exact endpoint's actor");
@@ -1095,11 +1249,13 @@ public final class HologramCutProtectionRegression {
                 message.toBytes(wire);
                 int bytes = wire.readableBytes();
                 long sequence = wire.getLong(wire.readerIndex());
-                SimpleAssert.that(HologramCutReplyCodec.marked(sequence) && bytes + 1 <= HologramCutReplyCodec.MAX_PACKET_BYTES,
+                SimpleAssert.that(
+                    HologramCutReplyCodec.marked(sequence) && bytes + 1 <= HologramCutReplyCodec.MAX_PACKET_BYTES,
                     "registered Cut replies always advertise the same bounded single-frame metadata version");
                 HologramNetwork.CutFragment received = new HologramNetwork.CutFragment();
                 received.fromBytes(wire);
-                SimpleAssert.that(received.admitted() && wire.readableBytes() == 0 && bytes < 4096,
+                SimpleAssert.that(
+                    received.admitted() && wire.readableBytes() == 0 && bytes < 4096,
                     "the real Cut reader admits and consumes these normal tiny replies");
                 reply = received.decodeReply();
                 parts++;
@@ -1343,8 +1499,8 @@ public final class HologramCutProtectionRegression {
         void fixtureMount(Chunk chunk) {
             // Standalone fixture only: stand in for vanilla loadChunk's backing registration/onChunkLoad.
             chunk.isChunkLoaded = true;
-            theChunkProviderServer.loadedChunkHashMap.add(ChunkCoordIntPair.chunkXZ2Int(chunk.xPosition, chunk.zPosition),
-                chunk);
+            theChunkProviderServer.loadedChunkHashMap
+                .add(ChunkCoordIntPair.chunkXZ2Int(chunk.xPosition, chunk.zPosition), chunk);
         }
 
         @Override

@@ -37,22 +37,26 @@ public final class HologramRegressionTest {
         if (!MinecraftTestBootstrap.enter(HologramRegressionTest.class, args)) return;
         HologramConstructionJournal.STORAGE_ROOT
             .set(java.nio.file.Files.createTempDirectory("gtmb-construction-contracts-"));
-        if (java.util.Arrays.asList(args).contains("--littletiles-material-alias")) {
+        if (java.util.Arrays.asList(args)
+            .contains("--littletiles-material-alias")) {
             HologramLittleTilesMaterialAliasesRegression.run();
             return;
         }
-        if (java.util.Arrays.asList(args).contains("--saved-creative-placement")) {
+        if (java.util.Arrays.asList(args)
+            .contains("--saved-creative-placement")) {
             HologramNativeSavedWorldRegression.runNativeLocalPlacement();
             com.miaokatze.gtmb.client.hologram.HologramClientSavedPlacementRegression.runNativeRemoteConnected();
             return;
         }
-        if (java.util.Arrays.asList(args).contains("--saved-material-identities")) {
+        if (java.util.Arrays.asList(args)
+            .contains("--saved-material-identities")) {
             HologramNativeItemIdsRegression.run();
             HologramSavedPlacementAdapterRegression.unboundMaterial();
             System.out.println("PASS portable saved blueprint materials, display and no-debit refusal");
             return;
         }
-        if (java.util.Arrays.asList(args).contains("--blueprint-preview-input")) {
+        if (java.util.Arrays.asList(args)
+            .contains("--blueprint-preview-input")) {
             com.miaokatze.gtmb.client.hologram.HologramLocalPreviewRegression.run();
             System.out.println("PASS blueprint preview input and detached display");
             return;
@@ -303,7 +307,8 @@ public final class HologramRegressionTest {
             try {
                 HologramConstructionTaskGateRegression.run();
             } catch (InterruptedException failure) {
-                Thread.currentThread().interrupt();
+                Thread.currentThread()
+                    .interrupt();
                 throw new RuntimeException(failure);
             }
         });
@@ -311,15 +316,21 @@ public final class HologramRegressionTest {
             "isolated_owned_placement_progress",
             com.miaokatze.gtmb.client.hologram.HologramOwnedPlacementProgressRegression::run);
         cases.put("isolated_scoped_world_transactions", HologramWorldTransactionsScopedRegression::run);
-        cases.put("native_saved_submission_to_world_stock_hud",()->{
-            try {com.miaokatze.gtmb.client.hologram.HologramClientSavedPlacementRegression.runNativeConnected();
+        cases.put("native_saved_submission_to_world_stock_hud", () -> {
+            try {
+                com.miaokatze.gtmb.client.hologram.HologramClientSavedPlacementRegression.runNativeConnected();
                 com.miaokatze.gtmb.client.hologram.HologramClientSavedPlacementRegression.runNativeRemoteConnected();
-                HologramPrivateNativeCacheRegression.exercise();}
-            catch(Exception e){throw new RuntimeException(e);}
+                HologramPrivateNativeCacheRegression.exercise();
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
         });
-        cases.put("saved_native_registered_adapters_committed_world_stock_and_refunds",()->{
-            try{HologramSavedPlacementAdapterRegression.run();}
-            catch(Exception failure){throw new RuntimeException(failure);}
+        cases.put("saved_native_registered_adapters_committed_world_stock_and_refunds", () -> {
+            try {
+                HologramSavedPlacementAdapterRegression.run();
+            } catch (Exception failure) {
+                throw new RuntimeException(failure);
+            }
         });
         cases.put("isolated_archive_region_source", () -> {
             try {
@@ -365,7 +376,8 @@ public final class HologramRegressionTest {
             } catch (java.io.IOException failure) {
                 throw new RuntimeException(failure);
             } catch (InterruptedException failure) {
-                Thread.currentThread().interrupt();
+                Thread.currentThread()
+                    .interrupt();
                 throw new RuntimeException(failure);
             }
         });
@@ -386,7 +398,8 @@ public final class HologramRegressionTest {
             } catch (java.io.IOException failure) {
                 throw new RuntimeException(failure);
             } catch (InterruptedException failure) {
-                Thread.currentThread().interrupt();
+                Thread.currentThread()
+                    .interrupt();
                 throw new RuntimeException(failure);
             }
         });
@@ -519,7 +532,8 @@ public final class HologramRegressionTest {
         cases.put(
             "local_material_estimates_never_grant_payment_or_inventory_authority",
             HologramStaticMaterialsRegression::run);
-        cases.put("large_local_material_planning_and_stale_scope",
+        cases.put(
+            "large_local_material_planning_and_stale_scope",
             com.miaokatze.gtmb.client.hologram.HologramLocalMaterialPlannerRegression::run);
         cases.put("rotation_cycles_all_six_legal_fronts", HologramRegressionTest::faceRotation);
         cases.put("hatch_direction_policy_keeps_built_snapshot", HologramRegressionTest::hatchDirectionSnapshot);
@@ -611,21 +625,33 @@ public final class HologramRegressionTest {
             "website_accent_cycles_smoothly_and_preserves_disabled_and_warning_colors",
             com.miaokatze.gtmb.client.hologram.HologramUiSpectrumRegression::run);
         cases.put("native_blueprint_v1_codec_cli_and_atomic_pair", () -> {
-            try { com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintCodecRegression.run(); }
-            catch (Exception e) { throw new IllegalStateException("native blueprint codec", e); }
+            try {
+                com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintCodecRegression.run();
+            } catch (Exception e) {
+                throw new IllegalStateException("native blueprint codec", e);
+            }
         });
-        cases.put("native_blueprint_game_staging_keeps_original_active",
+        cases.put(
+            "native_blueprint_game_staging_keeps_original_active",
             com.miaokatze.gtmb.client.hologram.HologramNativeBlueprintStorageRegression::run);
-        cases.put("native_blueprint_local_consumers_share_the_accepted_definition",com.miaokatze.gtmb.client.hologram.HologramNativeViewportRegression::run);
-        cases.put("native_blueprint_revision_and_formal_placement_boundary",
+        cases.put(
+            "native_blueprint_local_consumers_share_the_accepted_definition",
+            com.miaokatze.gtmb.client.hologram.HologramNativeViewportRegression::run);
+        cases.put(
+            "native_blueprint_revision_and_formal_placement_boundary",
             com.miaokatze.gtmb.client.hologram.HologramNativeViewportRegression::runRevisionBoundary);
-        cases.put("native_blueprint_formal_first_save_retains_capture_and_bound_cover",
+        cases.put(
+            "native_blueprint_formal_first_save_retains_capture_and_bound_cover",
             com.miaokatze.gtmb.client.hologram.HologramNativeViewportRegression::runAuthoredCapture);
-        cases.put("littletiles_legacy_concrete_preview_and_payment_identity",
+        cases.put(
+            "littletiles_legacy_concrete_preview_and_payment_identity",
             HologramLittleTilesMaterialAliasesRegression::run);
         cases.put("native_blueprint_singleplayer_settlement_without_execution_frames", () -> {
-            try { HologramNativeSavedWorldRegression.runNativeLocalPlacement(); }
-            catch (Exception e) { throw new IllegalStateException(e); }
+            try {
+                HologramNativeSavedWorldRegression.runNativeLocalPlacement();
+            } catch (Exception e) {
+                throw new IllegalStateException(e);
+            }
         });
         TestRunner.run(HologramRegressionTest.class, cases);
         net.minecraft.world.storage.ThreadedFileIOBase.threadedIOInstance.waitForFinish();

@@ -56,9 +56,9 @@ final class HologramConstructionJournal {
                         throw new IOException("Construction recovery owner mismatch");
                     // A different save root cannot erase or replace this player's exact scoped evidence.
                     if (attached.hasKey(SCOPED_UNCERTAINTY, 8)
-                        && (attached.getBoolean(SCOPED_PUBLICATION_FAILED)
-                            || !saved.hasKey(SCOPED_UNCERTAINTY, 8)
-                            || !attached.getString("id").equals(saved.getString("id"))
+                        && (attached.getBoolean(SCOPED_PUBLICATION_FAILED) || !saved.hasKey(SCOPED_UNCERTAINTY, 8)
+                            || !attached.getString("id")
+                                .equals(saved.getString("id"))
                             || saved.getLong("revision") < attached.getLong("revision"))) {
                         LOADED.add(player);
                         return true;
@@ -161,7 +161,8 @@ final class HologramConstructionJournal {
 
     private static boolean atOriginalScopedReceipt(EntityPlayerMP player, NBTTagCompound journal) {
         if (player.worldObj.provider.dimensionId != journal.getInteger("dimension")
-            || journal.getBoolean(SCOPED_PUBLICATION_FAILED) || !journal.getBoolean("durable")) return false;
+            || journal.getBoolean(SCOPED_PUBLICATION_FAILED)
+            || !journal.getBoolean("durable")) return false;
         try {
             Path file = path(player);
             if (Files.isSymbolicLink(file) || !Files.isRegularFile(file) || Files.size(file) > 32L * 1024 * 1024)
@@ -295,8 +296,7 @@ final class HologramConstructionJournal {
                 .equals(journal.getString("player")))
             throw new IllegalStateException("凭据版本、玩家或编号不匹配");
         if (journal.hasKey(SCOPED_UNCERTAINTY, 8)) {
-            if (!"accept".equals(action))
-                throw new IllegalStateException("施工绑定或候选结果已变化，禁止自动补偿；请在原存档人工核定后 accept");
+            if (!"accept".equals(action)) throw new IllegalStateException("施工绑定或候选结果已变化，禁止自动补偿；请在原存档人工核定后 accept");
             if (!atOriginalScopedReceipt(player, journal))
                 throw new IllegalStateException("请返回原存档与维度并核对同一份持久施工凭据；未解除冻结");
         }

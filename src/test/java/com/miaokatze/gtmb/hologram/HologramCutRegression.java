@@ -173,14 +173,18 @@ public final class HologramCutRegression {
                 .setString("owner", "detached");
             SimpleAssert.eq("native-original-owner", tile.getString("owner"), "preview is a detached copy");
             NBTTagCompound localHeader = HologramCutEntry.directory(entry);
-            SimpleAssert.that(localHeader.hasKey("selectionVersion", 3) && localHeader.hasKey("selectedCells", 3)
-                && localHeader.hasKey("unrecognizedPayload", 10) && !localHeader.hasKey("cells"),
+            SimpleAssert.that(
+                localHeader.hasKey("selectionVersion", 3) && localHeader.hasKey("selectedCells", 3)
+                    && localHeader.hasKey("unrecognizedPayload", 10)
+                    && !localHeader.hasKey("cells"),
                 "local journal header preserves exact format and bookkeeping independently of wire");
             NBTTagCompound bounded = HologramCutEntry.wireSummary(entry);
             SimpleAssert.eq(entry.getString("id"), bounded.getString("id"), "directory preserves exact entry identity");
-            SimpleAssert.that(bounded.hasKey("sequence", 4) && bounded.getLong("sequence") == 19
-                && !bounded.hasKey("cells") && !bounded.hasKey("unrecognizedPayload")
-                && !bounded.hasKey("selectionVersion"),
+            SimpleAssert.that(
+                bounded.hasKey("sequence", 4) && bounded.getLong("sequence") == 19
+                    && !bounded.hasKey("cells")
+                    && !bounded.hasKey("unrecognizedPayload")
+                    && !bounded.hasKey("selectionVersion"),
                 "directory copies only named primitive metadata, never nested payloads");
             Path directory = Files.createTempDirectory("gtmb-cut-regression");
             UUID owner = UUID.randomUUID();
@@ -345,24 +349,28 @@ public final class HologramCutRegression {
         try (java.io.DataOutputStream out = new java.io.DataOutputStream(plain)) {
             net.minecraft.nbt.CompressedStreamTools.write(directory, out);
         }
-        SimpleAssert.that(plain.size() <= 25_820 && plain.size() <= HologramCutReplyCodec.MAX_RAW_BYTES,
+        SimpleAssert.that(
+            plain.size() <= 25_820 && plain.size() <= HologramCutReplyCodec.MAX_RAW_BYTES,
             "maximal normal directory with full names, exact Retry receipt and notice fits raw ceiling");
         byte[] encoded = HologramCutReplyCodec.encode(directory);
         ByteBuf packet = Unpooled.buffer(), old = Unpooled.buffer();
         try {
             new HologramNetwork.CutFragment(42, encoded.length, 0, encoded).toBytes(packet);
-            SimpleAssert.that(packet.readableBytes() + 1 <= HologramCutReplyCodec.MAX_PACKET_BYTES
-                && HologramCutReplyCodec.MAX_PACKET_BYTES == 28_693,
+            SimpleAssert.that(
+                packet.readableBytes() + 1 <= HologramCutReplyCodec.MAX_PACKET_BYTES
+                    && HologramCutReplyCodec.MAX_PACKET_BYTES == 28_693,
                 "one normal directory fits including the original 20-byte header and FML discriminator");
             HologramNetwork.CutFragment current = new HologramNetwork.CutFragment();
             current.fromBytes(packet);
-            SimpleAssert.that(current.admitted() && !packet.isReadable() && directory.equals(current.decodeReply()),
+            SimpleAssert.that(
+                current.admitted() && !packet.isReadable() && directory.equals(current.decodeReply()),
                 "real marked frame and strict codec roundtrip every admitted field unchanged");
 
             new HologramNetwork.Fragment(43, encoded.length, 0, encoded).toBytes(old);
             HologramNetwork.CutFragment legacy = new HologramNetwork.CutFragment();
             legacy.fromBytes(old);
-            SimpleAssert.that(!legacy.admitted() && !old.isReadable(),
+            SimpleAssert.that(
+                !legacy.admitted() && !old.isReadable(),
                 "an ordinary old frame carrying this normal metadata is not adopted as a current Cut response");
         } finally {
             packet.release();
@@ -375,7 +383,8 @@ public final class HologramCutRegression {
         notice.setBoolean("success", false);
         notice.setString("code", "recovery_pending");
         notice.setString("message", "原操作仍待核定；暂存未改动。");
-        SimpleAssert.that(notice.equals(HologramCutReplyCodec.decode(HologramCutReplyCodec.encode(notice))),
+        SimpleAssert.that(
+            notice.equals(HologramCutReplyCodec.decode(HologramCutReplyCodec.encode(notice))),
             "normal pending notice stays exact without arming a directory");
         NBTTagCompound newer = (NBTTagCompound) notice.copy();
         newer.setString("otherNotice", "a separate feature's ordinary message");

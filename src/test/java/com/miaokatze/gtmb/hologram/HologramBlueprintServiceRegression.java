@@ -858,8 +858,8 @@ final class HologramBlueprintServiceRegression {
             exported.id = "local_saved_fixture";
             HologramBlueprintVersions.stamp(exported);
             byte[] exactJson = HologramServerLibrary.encodeShare(exported);
-            HologramBlueprintArtifact.Artifact proof = HologramBlueprintArtifact.prepareSave(
-                exactJson, com.miaokatze.gtmb.testutil.BlueprintArtifactTestData.previewPng());
+            HologramBlueprintArtifact.Artifact proof = HologramBlueprintArtifact
+                .prepareSave(exactJson, com.miaokatze.gtmb.testutil.BlueprintArtifactTestData.previewPng());
             String sourceDigest = HologramBlueprintArtifact.hash(exactJson);
             NBTTagCompound acknowledgement = new NBTTagCompound();
             acknowledgement.setString("session", (String) get(session, "id"));
@@ -891,8 +891,8 @@ final class HologramBlueprintServiceRegression {
             issued.setString("jsonSha256", sourceDigest);
             issued.setString("previewSha256", "");
             issued.removeTag("reviewedJsonSha256");
-            Method remember = HologramLibraryFacade.class.getDeclaredMethod(
-                "rememberSavedResult", EntityPlayerMP.class, NBTTagCompound.class, byte[].class);
+            Method remember = HologramLibraryFacade.class
+                .getDeclaredMethod("rememberSavedResult", EntityPlayerMP.class, NBTTagCompound.class, byte[].class);
             remember.setAccessible(true);
             remember.invoke(null, actor, issued, exactJson);
             acknowledgement.setString("jsonSha256", proof.pngSha256);

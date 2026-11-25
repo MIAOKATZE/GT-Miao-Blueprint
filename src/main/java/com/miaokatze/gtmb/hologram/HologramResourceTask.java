@@ -4,13 +4,10 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.io.IOException;
-import java.math.BigInteger;
-import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -427,8 +424,6 @@ final class HologramResourceTask {
             counts.put(key, 1);
         } else counts.replace(key, previous + 1);
     }
-
-
 
     /** Fuzzy shells ignore unsealed NBT, but sealed resources require exact payload equality. */
     private static final class ShellKey {

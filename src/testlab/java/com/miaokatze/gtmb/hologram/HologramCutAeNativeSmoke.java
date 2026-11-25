@@ -136,7 +136,8 @@ final class HologramCutAeNativeSmoke {
         NBTTagList summaries = captured.getTagList("entries", 10);
         for (int i = 0; i < summaries.tagCount(); i++) {
             NBTTagCompound row = summaries.getCompoundTagAt(i);
-            if (paste.getString("id").equals(row.getString("id")) && row.hasKey("sequence", 4))
+            if (paste.getString("id")
+                .equals(row.getString("id")) && row.hasKey("sequence", 4))
                 paste.setLong("entrySequence", row.getLong("sequence"));
         }
         require(paste.getLong("entrySequence") > 0, "exact ordinary AE clipboard sequence");

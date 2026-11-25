@@ -7,14 +7,16 @@ import java.io.IOException;
 import java.util.HashSet;
 import java.util.Set;
 
-import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import net.minecraft.block.Block;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.tileentity.TileEntity;
 
+import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
+
 /** One selected physical cell in, one literal blueprint cell out. Selection never calls a machine definition. */
 final class HologramLiteralAreaWriter {
+
     private final Set<String> paletteKeys = new HashSet<>();
     private long expandedNbt;
 

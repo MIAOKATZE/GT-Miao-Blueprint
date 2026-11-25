@@ -180,13 +180,10 @@ public final class HologramLibraryFacade {
 
     /** Only the save receipt transport is available inside an integrated server. */
     static boolean integratedOperation(String operation) {
-        return "cancel".equals(operation)
-            || "saveStatus".equals(operation)
-            || "saveResultConsumed".equals(operation);
+        return "cancel".equals(operation) || "saveStatus".equals(operation) || "saveResultConsumed".equals(operation);
     }
 
-    private static final String SERVER_DRAFT_LOCAL_ONLY =
-        "当前来源没有可在客户端保存的原件；未下载、未保存。请在本机捕获，或打开客户端蓝图库中的副本。";
+    private static final String SERVER_DRAFT_LOCAL_ONLY = "当前来源没有可在客户端保存的原件；未下载、未保存。请在本机捕获，或打开客户端蓝图库中的副本。";
 
     static void exportDraft(EntityPlayerMP player, NBTTagCompound ignored) {
         if (!enabled()) return;
@@ -204,7 +201,8 @@ public final class HologramLibraryFacade {
     private static void flushRetiredDraftNotices() {
         ArrayList<SavePeerEndpoint> ready = new ArrayList<>(RETIRED_DRAFT_NOTICES_PER_TICK);
         synchronized (retiredDraftNotices) {
-            var pendingNotices = retiredDraftNotices.values().iterator();
+            var pendingNotices = retiredDraftNotices.values()
+                .iterator();
             while (ready.size() < RETIRED_DRAFT_NOTICES_PER_TICK && pendingNotices.hasNext()) {
                 ready.add(pendingNotices.next());
                 pendingNotices.remove();
@@ -229,7 +227,8 @@ public final class HologramLibraryFacade {
         HologramSession owner = HologramWorkspace.find(player.getUniqueID());
         SavedResult receipt = savedResults.get(actorId(player));
         // A repeated save action must not deliver an error that looks like the terminal for an existing disk ACK.
-        boolean ownedReceipt = owner != null && owner.player == player && !owner.blueprintSaveReceipt.isEmpty()
+        boolean ownedReceipt = owner != null && owner.player == player
+            && !owner.blueprintSaveReceipt.isEmpty()
             && owner.blueprintClientTaskToken == task;
         boolean resolvedReceipt = receipt != null && receipt.actor == player
             && receipt.proof.getLong("clientTaskToken") == task;
@@ -352,12 +351,19 @@ public final class HologramLibraryFacade {
 
     /** Owner-thread lookup: only the exact stored pending proof can supersede a mutable UI task observation. */
     static Long stagedSaveTask(EntityPlayerMP player, String session, String exactReceipt) {
-        if (player == null || !new SavePeerEndpoint(player).current() || player.getGameProfile() == null
-            || player.getGameProfile().getId() == null || session == null || session.isEmpty()
-            || exactReceipt == null || exactReceipt.isEmpty()) return null;
+        if (player == null || !new SavePeerEndpoint(player).current()
+            || player.getGameProfile() == null
+            || player.getGameProfile()
+                .getId() == null
+            || session == null
+            || session.isEmpty()
+            || exactReceipt == null
+            || exactReceipt.isEmpty()) return null;
         SavedResult stored = savedResults.get(actorId(player));
-        if (stored == null || stored.actor != player || !"pending".equals(stored.outcome)
-            || !session.equals(stored.proof.getString("session")) || !exactReceipt.equals(stored.proof.getString("saveReceipt"))
+        if (stored == null || stored.actor != player
+            || !"pending".equals(stored.outcome)
+            || !session.equals(stored.proof.getString("session"))
+            || !exactReceipt.equals(stored.proof.getString("saveReceipt"))
             || !stored.proof.hasKey("clientTaskToken", 4)) return null;
         long task = stored.proof.getLong("clientTaskToken");
         return task >= 0 ? task : null;
@@ -664,9 +670,13 @@ public final class HologramLibraryFacade {
         }
 
         boolean current() {
-            return channel != null && channel.isOpen() && player.worldObj == world
-                && player.playerNetServerHandler == handler && handler.playerEntity == player
-                && handler.netManager == network && network.getNetHandler() == handler && network.channel() == channel;
+            return channel != null && channel.isOpen()
+                && player.worldObj == world
+                && player.playerNetServerHandler == handler
+                && handler.playerEntity == player
+                && handler.netManager == network
+                && network.getNetHandler() == handler
+                && network.channel() == channel;
         }
     }
 

@@ -37,9 +37,13 @@ final class HologramUiLibrary {
         localWorkspace = new HologramLocalBlueprintWorkspace(ui);
     }
 
-    boolean savedNativePlacementReady(){return localWorkspace.savedNativePlacementReady();}
+    boolean savedNativePlacementReady() {
+        return localWorkspace.savedNativePlacementReady();
+    }
 
-    boolean placeNativeSaved(){return localWorkspace.placeNativeSaved();}
+    boolean placeNativeSaved() {
+        return localWorkspace.placeNativeSaved();
+    }
 
     boolean localBusy() {
         return localWorkspace.busy();
@@ -536,7 +540,8 @@ final class HologramUiLibrary {
             return;
         }
         NBTTagCompound selected = nativeSelectedRow();
-        if (!selected.getBoolean("nativeFile") && currentActivationRow((NBTTagCompound) selected.copy()).getBoolean("nativeFile")) {
+        if (!selected.getBoolean("nativeFile")
+            && currentActivationRow((NBTTagCompound) selected.copy()).getBoolean("nativeFile")) {
             ui.session.notice(projector("library.historical_native_help"));
             return;
         }
@@ -559,9 +564,10 @@ final class HologramUiLibrary {
         if (publicLibrary) return projector("library.convert_private_only");
         NBTTagCompound row = nativeSelectedRow();
         if (row.getBoolean("nativeFile")) return projector("library.convert_already_native");
-        if (!row.getString("nativeCounterpart").isEmpty()) return projector("library.historical_native_help");
-        if (!row.getString("id").isEmpty() && !row.getBoolean("convertiblePair"))
-            return projector("library.convert_unpaired");
+        if (!row.getString("nativeCounterpart")
+            .isEmpty()) return projector("library.historical_native_help");
+        if (!row.getString("id")
+            .isEmpty() && !row.getBoolean("convertiblePair")) return projector("library.convert_unpaired");
         return projector("library.convert_selected_help");
     }
 
@@ -569,13 +575,16 @@ final class HologramUiLibrary {
 
     boolean conversionRequired(NBTTagCompound row) {
         String id = row.getString("id");
-        return !ui.session.isTutorial() && !publicLibrary && (id.startsWith("local_") || id.startsWith("legacy:"))
-            && !row.getBoolean("nativeFile") && row.getString("nativeCounterpart").isEmpty();
+        return !ui.session.isTutorial() && !publicLibrary
+            && (id.startsWith("local_") || id.startsWith("legacy:"))
+            && !row.getBoolean("nativeFile")
+            && row.getString("nativeCounterpart")
+                .isEmpty();
     }
 
     String libraryRowTitle(NBTTagCompound row) {
-        return row.getString("nativeCounterpart").isEmpty() ? row.getString("name")
-            : projector("library.historical_native_row", row.getString("name"));
+        return row.getString("nativeCounterpart")
+            .isEmpty() ? row.getString("name") : projector("library.historical_native_row", row.getString("name"));
     }
 
     private NBTTagCompound currentActivationRow(NBTTagCompound captured) {
@@ -588,15 +597,28 @@ final class HologramUiLibrary {
         return captured;
     }
 
-    boolean conversionPromptOpen() { return conversionPrompt != null; }
-    String conversionPromptName() { return conversionPrompt == null ? "" : conversionPrompt.getString("name"); }
-    boolean promptCanConvert() { return conversionPrompt != null && conversionPrompt.getBoolean("convertiblePair") && nativeCanUpgrade(); }
-    void cancelConversionPrompt() { conversionPrompt = null; }
+    boolean conversionPromptOpen() {
+        return conversionPrompt != null;
+    }
+
+    String conversionPromptName() {
+        return conversionPrompt == null ? "" : conversionPrompt.getString("name");
+    }
+
+    boolean promptCanConvert() {
+        return conversionPrompt != null && conversionPrompt.getBoolean("convertiblePair") && nativeCanUpgrade();
+    }
+
+    void cancelConversionPrompt() {
+        conversionPrompt = null;
+    }
+
     void confirmConversionPrompt(boolean all) {
         if (conversionPrompt == null || !nativeCanUpgrade() || !all && !promptCanConvert()) return;
         String id = conversionPrompt.getString("id");
         cancelConversionPrompt();
-        if (all) convertAllLocal(); else convertLocalId(id);
+        if (all) convertAllLocal();
+        else convertLocalId(id);
     }
 
     void convertAllLocal() {
@@ -611,7 +633,8 @@ final class HologramUiLibrary {
     private boolean requestConversion(NBTTagCompound row) {
         row = currentActivationRow(row);
         if (!conversionRequired(row)) return false;
-        conversionPrompt = (NBTTagCompound) row.copy(); // freeze the clicked identity, not the writable name/search field
+        conversionPrompt = (NBTTagCompound) row.copy(); // freeze the clicked identity, not the writable name/search
+                                                        // field
         return true; // do not select, open, parse or render a legacy source
     }
 
@@ -627,8 +650,12 @@ final class HologramUiLibrary {
             conversionFinished();
             // A converted file keeps its logical ID. Do not leave its clean legacy editor attached,
             // or replace another tab or in-flight edits merely because a worker finished.
-            if (ui.session.localDocument() && id.equals(ui.session.document().fileId())
-                && id.equals(nativeSelectedRow().getString("id")) && !ui.session.document().dirty())
+            if (ui.session.localDocument() && id.equals(
+                ui.session.document()
+                    .fileId())
+                && id.equals(nativeSelectedRow().getString("id"))
+                && !ui.session.document()
+                    .dirty())
                 localWorkspace.openPreset(id);
         });
     }
@@ -1085,7 +1112,8 @@ final class HologramUiLibrary {
     String nativeUpgradeHelp() {
         StringBuilder help = new StringBuilder(projector("library.upgrade_help"));
         java.util.List<String> details = HologramLibraryClient.INSTANCE.upgradeDetails();
-        for (int i = 0; i < Math.min(8, details.size()); i++) help.append('\n').append(details.get(i));
+        for (int i = 0; i < Math.min(8, details.size()); i++) help.append('\n')
+            .append(details.get(i));
         return help.toString();
     }
 
@@ -1453,14 +1481,15 @@ final class HologramUiLibrary {
         options.setBoolean("saveCurrent", current);
         localWorkspace.save(
             options,
-            current ? ui.session.document().fileId() : "",
+            current ? ui.session.document()
+                .fileId() : "",
             current ? LocalSaveIntent.SAVE_CURRENT : LocalSaveIntent.SAVE_AS_NEW);
     }
 
     private void refuseServerDraftSave() {
-        ui.session.notice(ui.session.state().data.getBoolean("localStandardController")
-            ? "请先打开该本地结构的蓝图编辑，再保存。当前内容未修改。"
-            : "当前没有可在本地保存的蓝图原件；未下载、未保存。请先在本机捕获，或打开客户端蓝图库中的副本。");
+        ui.session.notice(
+            ui.session.state().data.getBoolean("localStandardController") ? "请先打开该本地结构的蓝图编辑，再保存。当前内容未修改。"
+                : "当前没有可在本地保存的蓝图原件；未下载、未保存。请先在本机捕获，或打开客户端蓝图库中的副本。");
     }
 
     void drawDeleteReview(int mx, int my) {
@@ -1749,13 +1778,17 @@ final class HologramUiLibrary {
 
     private boolean refuseNamedArchive() {
         if (presetNameField == null) return false;
-        String name = presetNameField.getText().trim();
+        String name = presetNameField.getText()
+            .trim();
         if (!HologramArchiveNamedImport.archiveName(name)) return false;
         // No production provider can prove regular-file identity on the exact opened descriptor yet.
         // Consume in every routing path, but only the active Save page owns the immediate notice.
         HologramScreen screen = ui.host.parent();
-        if (screen != null && ui.host.minecraft().currentScreen == screen && screen.ui == ui
-            && ui.shell.built() && ui.shell.dockExpanded() && ui.shell.dockPage() == 7) {
+        if (screen != null && ui.host.minecraft().currentScreen == screen
+            && screen.ui == ui
+            && ui.shell.built()
+            && ui.shell.dockExpanded()
+            && ui.shell.dockPage() == 7) {
             ui.session.notice(HologramArchiveNamedImport.refusal(name));
         }
         return true; // Never open a path, start an editor/discard or use the ordinary JSON fallback.

@@ -45,7 +45,12 @@ final class HologramStockCokeOvenProfile {
     private static final Class<?> STEP_C = ((Object) StructureUtility.step(0, 0, 1)).getClass();
 
     enum Shell {
-        UNPROVED, READY_CASING, MATCHED_CASING, MATCHED_HATCH, BLOCKED, EXPLICIT_HATCH_UNSATISFIED
+        UNPROVED,
+        READY_CASING,
+        MATCHED_CASING,
+        MATCHED_HATCH,
+        BLOCKED,
+        EXPLICIT_HATCH_UNSATISFIED
     }
 
     final IStructureDefinition<MTECokeOven> definition;
@@ -78,8 +83,11 @@ final class HologramStockCokeOvenProfile {
         IMetaTileEntity hatch = GregTechAPI.METATILEENTITIES[HATCH];
         Block casing = GregTechAPI.sBlockCasings12, machineBlock = GregTechAPI.sBlockMachines;
         long version = StructureSources.revision();
-        if (controller == null || controller.getClass() != MTECokeOven.class || !stockHatch(hatch)
-            || machineBlock == null || casing == null || casing.getClass() != BlockCasings12.class
+        if (controller == null || controller.getClass() != MTECokeOven.class
+            || !stockHatch(hatch)
+            || machineBlock == null
+            || casing == null
+            || casing.getClass() != BlockCasings12.class
             || casing.hasTileEntity(0)
             || StructureSources.hasSource(MTECokeOven.class)) return null;
         IStructureDefinition<MTECokeOven> definition = ((MTECokeOven) controller).getStructureDefinition();
@@ -98,8 +106,7 @@ final class HologramStockCokeOvenProfile {
                 c = (element.resetC() ? -C : c) + element.getStepC();
                 continue;
             }
-            if (a < -1 || a > 1 || b < -1 || b > 1 || c < 0 || c > 2 || a == 0 && b == 0 && c == 0)
-                return null;
+            if (a < -1 || a > 1 || b < -1 || b > 1 || c < 0 || c > 2 || a == 0 && b == 0 && c == 0) return null;
             int position = 1 << ((a + 1) + (b + 1) * 3 + c * 9);
             if ((seen & position) != 0) return null;
             seen |= position;
@@ -119,11 +126,21 @@ final class HologramStockCokeOvenProfile {
         try {
             IStructureElement<?>[] branches = HologramDeclarationWrappers
                 .nativeChainChildren((IStructureElementChain<?>) chain);
-            if (branches == null || branches.length != 2 || !factory(branches[0], HatchElementBuilder.class, "build")
+            if (branches == null || branches.length != 2
+                || !factory(branches[0], HatchElementBuilder.class, "build")
                 || fixedBlockData(branches[1]) != casing) return null;
             var profile = new HologramStockCokeOvenProfile(
-                definition, controller, hatch, casing, machineBlock, chain, branches[0], branches[1], version,
-                elements, sealed);
+                definition,
+                controller,
+                hatch,
+                casing,
+                machineBlock,
+                chain,
+                branches[0],
+                branches[1],
+                version,
+                elements,
+                sealed);
             return profile.declarationCurrent() ? profile : null;
         } catch (ReflectiveOperationException | RuntimeException | LinkageError unsupported) {
             return null;
@@ -141,8 +158,7 @@ final class HologramStockCokeOvenProfile {
     /** Constant sized proof; no tile/world/provider callbacks in a mutation authority check. */
     boolean declarationCurrent() {
         if (!current() || definition.getStructureFor(PIECE) != nativeElements) return false;
-        for (int i = 0; i < sealedElements.length; i++)
-            if (nativeElements[i] != sealedElements[i]) return false;
+        for (int i = 0; i < sealedElements.length; i++) if (nativeElements[i] != sealedElements[i]) return false;
         return casingLeaf(shell) == leaf;
     }
 
@@ -153,16 +169,14 @@ final class HologramStockCokeOvenProfile {
     boolean shellAt(ExtendedFacing facing, int dx, int dy, int dz) {
         if (Math.abs((long) dx) > 2 || Math.abs((long) dy) > 2 || Math.abs((long) dz) > 2) return false;
         int[] abc = new int[3], xyz = new int[3];
-        for (int c = 0; c < 3; c++)
-            for (int b = -1; b <= 1; b++)
-                for (int a = -1; a <= 1; a++) {
-                    if (a == 0 && b == 0 && c < 2) continue;
-                    abc[0] = a;
-                    abc[1] = b;
-                    abc[2] = c;
-                    facing.getWorldOffset(abc, xyz);
-                    if (xyz[0] == dx && xyz[1] == dy && xyz[2] == dz) return true;
-                }
+        for (int c = 0; c < 3; c++) for (int b = -1; b <= 1; b++) for (int a = -1; a <= 1; a++) {
+            if (a == 0 && b == 0 && c < 2) continue;
+            abc[0] = a;
+            abc[1] = b;
+            abc[2] = c;
+            facing.getWorldOffset(abc, xyz);
+            if (xyz[0] == dx && xyz[1] == dy && xyz[2] == dz) return true;
+        }
         return false;
     }
 
@@ -171,10 +185,15 @@ final class HologramStockCokeOvenProfile {
         if (!current()) return null;
         Item item = Item.getItemFromBlock(casing);
         String name = Block.blockRegistry.getNameForObject(casing);
-        if (item == null || item.getClass() != ItemCasings.class || ((ItemCasings) item).blockCasings != casing
-            || name == null || Block.blockRegistry.getObject(name) != casing || Item.itemRegistry.getObject(name) != item
-            || Block.getBlockFromItem(item) != casing || item.getMetadata(0) != 0
-            || HologramNativePlacement.supported(casing, null) || HologramMaterialDescriptor.hasExact(casing)
+        if (item == null || item.getClass() != ItemCasings.class
+            || ((ItemCasings) item).blockCasings != casing
+            || name == null
+            || Block.blockRegistry.getObject(name) != casing
+            || Item.itemRegistry.getObject(name) != item
+            || Block.getBlockFromItem(item) != casing
+            || item.getMetadata(0) != 0
+            || HologramNativePlacement.supported(casing, null)
+            || HologramMaterialDescriptor.hasExact(casing)
             || HologramDecorMaterials.supports(casing)) return null;
         var sample = new ItemStack(item, 1, 0);
         return HologramGtswnPlacementMaterials.supplyKind(sample) < 0
@@ -197,8 +216,8 @@ final class HologramStockCokeOvenProfile {
         try {
             IStructureElement<?>[] branches = HologramDeclarationWrappers
                 .nativeChainChildren((IStructureElementChain<?>) shell);
-            return branches != null && branches.length == 2 && branches[0] == hatch && branches[1] == leaf
-                ? leaf : null;
+            return branches != null && branches.length == 2 && branches[0] == hatch && branches[1] == leaf ? leaf
+                : null;
         } catch (ReflectiveOperationException | RuntimeException | LinkageError unsupported) {
             return null;
         }
@@ -213,9 +232,9 @@ final class HologramStockCokeOvenProfile {
         int desiredTier, int desiredFacing) {
         if (casingLeaf(element) == null) return Shell.UNPROVED;
         if (desiredHatch != -1 || desiredTier != -1 || desiredFacing != -1) {
-            if (desiredHatch != HATCH || desiredTier != HATCH_TIER || desiredFacing < -1
-                || desiredFacing >= ForgeDirection.VALID_DIRECTIONS.length)
-                return Shell.EXPLICIT_HATCH_UNSATISFIED;
+            if (desiredHatch != HATCH || desiredTier != HATCH_TIER
+                || desiredFacing < -1
+                || desiredFacing >= ForgeDirection.VALID_DIRECTIONS.length) return Shell.EXPLICIT_HATCH_UNSATISFIED;
             return matchesHatch(live, tile, desiredFacing) ? Shell.MATCHED_HATCH : Shell.EXPLICIT_HATCH_UNSATISFIED;
         }
         if (matchesHatch(live, tile, -1)) return Shell.MATCHED_HATCH;
@@ -227,13 +246,13 @@ final class HologramStockCokeOvenProfile {
     private boolean current() {
         return sourceRevision == StructureSources.revision()
             && GregTechAPI.METATILEENTITIES[CONTROLLER] == controllerPrototype
-            && GregTechAPI.METATILEENTITIES[HATCH] == hatchPrototype && GregTechAPI.sBlockCasings12 == casing
+            && GregTechAPI.METATILEENTITIES[HATCH] == hatchPrototype
+            && GregTechAPI.sBlockCasings12 == casing
             && GregTechAPI.sBlockMachines == machineBlock;
     }
 
     boolean matchesHatch(Block live, TileEntity tile, int desiredFacing) {
-        if (live != machineBlock || !(tile instanceof IGregTechTileEntity) || tile.isInvalid())
-            return false;
+        if (live != machineBlock || !(tile instanceof IGregTechTileEntity) || tile.isInvalid()) return false;
         IGregTechTileEntity gt = (IGregTechTileEntity) tile;
         if (gt.getMetaTileID() != HATCH || !stockHatch(gt.getMetaTileEntity())) return false;
         ForgeDirection facing = gt.getFrontFacing();
@@ -242,7 +261,8 @@ final class HologramStockCokeOvenProfile {
     }
 
     private static boolean stockHatch(IMetaTileEntity hatch) {
-        return hatch != null && hatch.getClass() == MTEHatchCokeOven.class && ((MTEHatchCokeOven) hatch).mTier == HATCH_TIER;
+        return hatch != null && hatch.getClass() == MTEHatchCokeOven.class
+            && ((MTEHatchCokeOven) hatch).mTier == HATCH_TIER;
     }
 
     /** The native builder has three different navigation classes for A steps and B/C resets. */
@@ -256,20 +276,25 @@ final class HologramStockCokeOvenProfile {
         Method factory = element == null ? null : HologramDeclarationWrappers.factory(element.getClass());
         return factory != null && factory.getDeclaringClass() == owner && name.equals(factory.getName());
     }
+
     /** Read only the audited native factory's captured constants; the generic fallback may call into the block. */
     static Block fixedBlockData(IStructureElement<?> element) {
         Method factory = HologramDeclarationWrappers.factory(element.getClass());
         if (factory == null || factory.getDeclaringClass() != StructureUtility.class
             || !"ofBlock".equals(factory.getName())) return null;
         Class<?>[] types = factory.getParameterTypes();
-        if (types.length != 4 || types[0] != Block.class || types[1] != int.class || types[2] != Block.class
+        if (types.length != 4 || types[0] != Block.class
+            || types[1] != int.class
+            || types[2] != Block.class
             || types[3] != int.class) return null;
         try {
             Object accepted = HologramDeclarationWrappers.captured(element, "val$block");
-            return accepted instanceof Block && accepted == HologramDeclarationWrappers.captured(element, "val$defaultBlock")
-                && Integer.valueOf(0).equals(HologramDeclarationWrappers.captured(element, "val$meta"))
-                && Integer.valueOf(0).equals(HologramDeclarationWrappers.captured(element, "val$defaultMeta"))
-                    ? (Block) accepted : null;
+            return accepted instanceof Block
+                && accepted == HologramDeclarationWrappers.captured(element, "val$defaultBlock")
+                && Integer.valueOf(0)
+                    .equals(HologramDeclarationWrappers.captured(element, "val$meta"))
+                && Integer.valueOf(0)
+                    .equals(HologramDeclarationWrappers.captured(element, "val$defaultMeta")) ? (Block) accepted : null;
         } catch (ReflectiveOperationException unknownNativeVersion) {
             return null;
         }

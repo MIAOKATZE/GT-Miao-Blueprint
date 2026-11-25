@@ -152,7 +152,8 @@ final class TestLabMinimalTask implements TestLabTasks.Task {
             NBTTagCompound request = region("cut", "", x, y, z, x + 1, y, z);
             NBTTagCompound cutReply = backend.call(request);
             id = cutReply.getString("id");
-            TestLabTasks.require(!cutReply.hasKey("preview") && !cutReply.hasKey("cells"),
+            TestLabTasks.require(
+                !cutReply.hasKey("preview") && !cutReply.hasKey("cells"),
                 "Cut success emitted a complete raw preimage");
             NBTTagList rows = cutReply.getTagList("entries", 10);
             for (int i = 0; i < rows.tagCount(); i++) {
@@ -175,9 +176,15 @@ final class TestLabMinimalTask implements TestLabTasks.Task {
             NBTTagCompound request = backend.action("preview", id);
             request.setInteger("rotation", 1);
             NBTTagCompound wire = backend.retiredPreview(request);
-            TestLabTasks.require(!wire.getBoolean("success") && "preview_metadata_only".equals(wire.getString("code"))
-                && !wire.hasKey("preview") && !wire.hasKey("entries"), "Retired wire preview must be payload-free");
-            report.check("retired_wire_preview", "PASS", "Real production Cut service refuses raw preview without geometry");
+            TestLabTasks.require(
+                !wire.getBoolean("success") && "preview_metadata_only".equals(wire.getString("code"))
+                    && !wire.hasKey("preview")
+                    && !wire.hasKey("entries"),
+                "Retired wire preview must be payload-free");
+            report.check(
+                "retired_wire_preview",
+                "PASS",
+                "Real production Cut service refuses raw preview without geometry");
             NBTTagCompound selected = backend.localClipboardPose(id, entrySequence, Transform.read(request), x, y, z);
             TestLabTasks.require(
                 selected.getInteger("sizeX") == 1 && selected.getInteger("sizeZ") == 2

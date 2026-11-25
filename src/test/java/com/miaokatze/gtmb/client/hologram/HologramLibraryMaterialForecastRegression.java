@@ -48,14 +48,25 @@ final class HologramLibraryMaterialForecastRegression {
             located.addProperty("y", 2);
             located.addProperty("z", 3);
             expanded.includeExpanded(located);
-            frozen.includeFrozen("minecraft:stone", 0, "minecraft:stone", 0, -1,
-                i == 2 ? 2 : 1, i == 1, i == 3 ? "opaque retained quantum/fluid payload" : "", "");
+            frozen.includeFrozen(
+                "minecraft:stone",
+                0,
+                "minecraft:stone",
+                0,
+                -1,
+                i == 2 ? 2 : 1,
+                i == 1,
+                i == 3 ? "opaque retained quantum/fluid payload" : "",
+                "");
         }
         var reference = compact.snapshot();
-        for (var source : new HologramSavedMaterialSource[] {expanded.snapshot(), frozen.snapshot()}) {
-            SimpleAssert.eq(reference.variants(), source.variants(),
+        for (var source : new HologramSavedMaterialSource[] { expanded.snapshot(), frozen.snapshot() }) {
+            SimpleAssert.eq(
+                reference.variants(),
+                source.variants(),
                 "compact, expanded and frozen capture keep equal exact descriptive variants");
-            SimpleAssert.that(source.payloadCells() == 1 && source.unsupportedCells() == 1,
+            SimpleAssert.that(
+                source.payloadCells() == 1 && source.unsupportedCells() == 1,
                 "special retained payload and unsupported scalar remain explicit unknowns, never shell aliases");
         }
         var bounded = new HologramSavedMaterialSource.Tally(10_000, true, false);
@@ -64,8 +75,13 @@ final class HologramLibraryMaterialForecastRegression {
             bounded.includeFrozen(id, 0, id, 0, -1, 1, false, "", "");
         }
         bounded.includeFrozen("fixture:item_0", 0, "fixture:item_0", 0, -1, 1, false, "", "");
-        SimpleAssert.that(bounded.snapshot().limitCells() == 1
-            && bounded.snapshot().variants().get(0).cells() == 2,
+        SimpleAssert.that(
+            bounded.snapshot()
+                .limitCells() == 1
+                && bounded.snapshot()
+                    .variants()
+                    .get(0)
+                    .cells() == 2,
             "wide frozen palettes stay bounded without dropping counts of already-tracked identities");
     }
 
@@ -143,7 +159,8 @@ final class HologramLibraryMaterialForecastRegression {
             if ("minecraft:stonebrick".equals(name)) return proved("minecraft:stone", new ItemStack(Blocks.stone));
             if ("minecraft:planks".equals(name)) return proved(name, taggedResult);
             if ("minecraft:glass".equals(name)) return null; // No proof this runtime kept ordinary provider semantics.
-            if("minecraft:log".equals(name)||"minecraft:quartz_block".equals(name)||"detached:provider".equals(name))return null;
+            if ("minecraft:log".equals(name) || "minecraft:quartz_block".equals(name)
+                || "detached:provider".equals(name)) return null;
             throw new AssertionError("nonordinary, tagged and extension source descriptors cannot reach the resolver");
         },
             new ItemStack[] { new ItemStack(Blocks.stone, 60, 0), stone, fakeStock,
@@ -270,7 +287,8 @@ final class HologramLibraryMaterialForecastRegression {
                     stonebrick.identity()
                         .registry())
                     && stonebrick.blueprintCells() == 1
-                    && Long.valueOf(64).equals(stonebrick.visibleBackpackCount()),
+                    && Long.valueOf(64)
+                        .equals(stonebrick.visibleBackpackCount()),
                 "registered plain metadata counts only the exact inventory damage");
             SimpleAssert.that(
                 HologramLibraryMaterialDescription.describe(null, inventory, 0) == null

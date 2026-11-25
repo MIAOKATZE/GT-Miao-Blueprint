@@ -945,8 +945,6 @@ public final class HologramClientLibraryRegression {
         }
     }
 
-
-
     private interface Operation {
 
         void run() throws Exception;

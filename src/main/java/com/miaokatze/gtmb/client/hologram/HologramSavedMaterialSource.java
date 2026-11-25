@@ -114,9 +114,10 @@ final class HologramSavedMaterialSource {
         private int airCells, payloadCells, unsupportedCells, limitCells;
 
         Tally(JsonObject blueprint, int dictionarySize) {
-            this(dictionarySize, integer(blueprint.get("schema"), 1, 1, 2) == 2,
-                nonemptyPolicy(blueprint, "retainedNbtKeys")
-                    || nonemptyPolicy(blueprint, "processingNbt")
+            this(
+                dictionarySize,
+                integer(blueprint.get("schema"), 1, 1, 2) == 2,
+                nonemptyPolicy(blueprint, "retainedNbtKeys") || nonemptyPolicy(blueprint, "processingNbt")
                     || nonemptyPolicy(blueprint, "semanticNbt")
                     || nonemptyPolicy(blueprint, "quantumGroupingNbt")
                     || !optionalBoolean(blueprint.get("retainNbt"))
@@ -151,17 +152,25 @@ final class HologramSavedMaterialSource {
         }
 
         /** Folded into expanded-source decoding, never called when the material page opens. */
-        void includeExpanded(JsonObject row) { count(classify(row, true)); }
+        void includeExpanded(JsonObject row) {
+            count(classify(row, true));
+        }
 
         /** Frozen drafts already validated their scalar representation; no retained payload is decoded here. */
-        void includeFrozen(String block, int metadata, String item, int damage, int facing,
-            int count, boolean controller, String tileNbt, String itemNbt) {
+        void includeFrozen(String block, int metadata, String item, int damage, int facing, int count,
+            boolean controller, String tileNbt, String itemNbt) {
             if (!tileNbt.isEmpty() || !itemNbt.isEmpty()) count(PAYLOAD);
-            else if (!knownSchema || metadata < 0 || metadata > 15 || damage < 0 || damage > Short.MAX_VALUE
-                || facing < -1 || facing > 5 || count != 1) count(UNSUPPORTED);
-            else if ("minecraft:air".equals(block) && !controller
-                && (item.isEmpty() || "minecraft:air".equals(item))) count(AIR);
-            else if (!validRegistry(block) || !validRegistry(item) || "minecraft:air".equals(block)
+            else if (!knownSchema || metadata < 0
+                || metadata > 15
+                || damage < 0
+                || damage > Short.MAX_VALUE
+                || facing < -1
+                || facing > 5
+                || count != 1) count(UNSUPPORTED);
+            else if ("minecraft:air".equals(block) && !controller && (item.isEmpty() || "minecraft:air".equals(item)))
+                count(AIR);
+            else if (!validRegistry(block) || !validRegistry(item)
+                || "minecraft:air".equals(block)
                 || "minecraft:air".equals(item)) count(UNSUPPORTED);
             else count(variant(new Variant(block, metadata, item, damage, facing, controller)));
         }
@@ -247,7 +256,9 @@ final class HologramSavedMaterialSource {
     }
 
     private static boolean validRegistry(String id) {
-        return id != null && id.length() <= MAX_ID_CHARS && ID.matcher(id).matches();
+        return id != null && id.length() <= MAX_ID_CHARS
+            && ID.matcher(id)
+                .matches();
     }
 
     private static int integer(JsonElement value, int absent, int min, int max) {

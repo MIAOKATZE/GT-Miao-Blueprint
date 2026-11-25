@@ -17,13 +17,13 @@ public final class HologramProductionTestlabIsolation {
             Class.forName("com.miaokatze.gtmb.client.hologram.HologramIdentityNativeProbe");
             throw new AssertionError("native identity fixture leaked onto the normal runtime classpath");
         } catch (ClassNotFoundException expected) {}
-        for(String helper:new String[]{
-                "com.miaokatze.gtmb.hologram.HologramCompositeLabBank",
-                "com.miaokatze.gtmb.client.hologram.HologramActualUsePress",
-                "com.miaokatze.gtmb.hologram.HologramCutNativeReceipt",
-                "com.miaokatze.gtmb.hologram.HologramV011Evidence"}) {
-            if(HologramProductionTestlabIsolation.class.getClassLoader().getResource(helper.replace('.','/')+".class")!=null)
-                throw new AssertionError("ordinary runtime includes optional TestLab helper: "+helper);
+        for (String helper : new String[] { "com.miaokatze.gtmb.hologram.HologramCompositeLabBank",
+            "com.miaokatze.gtmb.client.hologram.HologramActualUsePress",
+            "com.miaokatze.gtmb.hologram.HologramCutNativeReceipt",
+            "com.miaokatze.gtmb.hologram.HologramV011Evidence" }) {
+            if (HologramProductionTestlabIsolation.class.getClassLoader()
+                .getResource(helper.replace('.', '/') + ".class") != null)
+                throw new AssertionError("ordinary runtime includes optional TestLab helper: " + helper);
         }
         System.setProperty("gtmb.hologram.smoketest", "true");
         System.setProperty("gtmb.hologram.realInteractionSmoke", "true");

@@ -35,22 +35,29 @@ final class HologramLittleTilesMaterialAliasesRegression {
         original.setTag("t17", cut(legacy, 7, "unreviewed"));
         original.setTag("t18", cut(legacy, 16, "BlockTileBlock"));
         original.setTag("t19", cut(legacy, 2, "BlockTileBlock"));
-        original.getCompoundTag("t19").setTag("tileEntity", new NBTTagCompound());
+        original.getCompoundTag("t19")
+            .setTag("tileEntity", new NBTTagCompound());
         var visual = (NBTTagCompound) original.copy();
-        SimpleAssert.that(!HologramLittleTilesMaterialAliases.applyTile(Blocks.stone, visual) && visual.equals(original),
+        SimpleAssert.that(
+            !HologramLittleTilesMaterialAliases.applyTile(Blocks.stone, visual) && visual.equals(original),
             "non-LittleTiles registry host is untouched");
-        SimpleAssert.that(!HologramLittleTilesMaterialAliases.rewriteTile(visual, false) && visual.equals(original),
+        SimpleAssert.that(
+            !HologramLittleTilesMaterialAliases.rewriteTile(visual, false) && visual.equals(original),
             "no mapping while original exists or the replacement is absent");
-        SimpleAssert.that(HologramLittleTilesMaterialAliases.rewriteTile(visual, true),
+        SimpleAssert.that(
+            HologramLittleTilesMaterialAliases.rewriteTile(visual, true),
             "detached exact LittleTiles template gets the registered replacement");
         for (int i = 0; i < 20; i++) {
             var old = original.getCompoundTag("t" + i);
             var converted = visual.getCompoundTag("t" + i);
             if (i < 16) {
                 var matchingPayment = (NBTTagCompound) old.copy();
-                SimpleAssert.that(HologramLittleTilesMaterialAliases.rewriteChild(matchingPayment, true)
-                    && canonical.equals(converted.getString("block")) && converted.getInteger("meta") == i
-                    && converted.equals(matchingPayment) && legacy.equals(old.getString("block")),
+                SimpleAssert.that(
+                    HologramLittleTilesMaterialAliases.rewriteChild(matchingPayment, true)
+                        && canonical.equals(converted.getString("block"))
+                        && converted.getInteger("meta") == i
+                        && converted.equals(matchingPayment)
+                        && legacy.equals(old.getString("block")),
                     "written cut and exact debit sample match all 16 dye metadata without mutating source");
                 var geometry = (NBTTagCompound) converted.copy();
                 geometry.setString("block", legacy);
@@ -58,6 +65,7 @@ final class HologramLittleTilesMaterialAliasesRegression {
             } else SimpleAssert.that(converted.equals(old), "unknown, malformed and nested payloads stay untouched");
         }
         SimpleAssert.that(!HologramLittleTilesMaterialAliases.rewriteTile(visual, true), "alias is idempotent");
-        System.out.println("[GTMB-LITTLE-TILES] exact legacy concrete: all 16 dye metadata preserved; geometry, unrelated and original payloads unchanged");
+        System.out.println(
+            "[GTMB-LITTLE-TILES] exact legacy concrete: all 16 dye metadata preserved; geometry, unrelated and original payloads unchanged");
     }
 }

@@ -15,7 +15,9 @@ import com.miaokatze.gtmb.client.hologram.HologramArchiveRegionSource.View;
 import com.miaokatze.gtmb.client.hologram.HologramArchiveRegionSource.Views;
 import com.miaokatze.gtmb.client.hologram.HologramArchiveRegionSource.Window;
 
-/** Main-thread bounded render plan for one exclusive trusted archive owner. Only Ticket crosses to the single worker. */
+/**
+ * Main-thread bounded render plan for one exclusive trusted archive owner. Only Ticket crosses to the single worker.
+ */
 final class HologramArchiveCameraTiles implements AutoCloseable {
 
     static final int MAX_CANDIDATES = 24, MAX_RESIDENT = 8;
@@ -76,7 +78,15 @@ final class HologramArchiveCameraTiles implements AutoCloseable {
                 pending = enqueue = new Ticket(this, request, visibleLayer, fullOpaqueProofBits);
             }
         }
-        return lastFrame = new Frame(this, pose, textures, ready, readyCount, selected, ranked.size() > selected, enqueue);
+        return lastFrame = new Frame(
+            this,
+            pose,
+            textures,
+            ready,
+            readyCount,
+            selected,
+            ranked.size() > selected,
+            enqueue);
     }
 
     private static List<Projected> ranked(HologramEditorCameraFrame pose, List<Region> candidates, int layer) {
@@ -96,16 +106,18 @@ final class HologramArchiveCameraTiles implements AutoCloseable {
             if (!all && (layer < baseY || layer >= baseY + 16)) continue;
             pose.project(16.0 * tile.x + 7.5, all ? baseY + 7.5 : layer, 16.0 * tile.z + 7.5, point);
             if (point[0] + spreadX < left || point[0] - spreadX > right
-                || point[1] + spreadY < top || point[1] - spreadY > bottom || selected(ranked, ranked.size(), tile))
-                continue;
+                || point[1] + spreadY < top
+                || point[1] - spreadY > bottom
+                || selected(ranked, ranked.size(), tile)) continue;
             double dx = point[0] - cx, dy = point[1] - cy;
             ranked.add(new Projected(tile, dx * dx + dy * dy, point[2]));
         }
-        ranked.sort(Comparator.comparingDouble((Projected p) -> p.distance)
-            .thenComparingDouble(p -> p.depth)
-            .thenComparingInt(p -> p.region.y)
-            .thenComparingInt(p -> p.region.z)
-            .thenComparingInt(p -> p.region.x));
+        ranked.sort(
+            Comparator.comparingDouble((Projected p) -> p.distance)
+                .thenComparingDouble(p -> p.depth)
+                .thenComparingInt(p -> p.region.y)
+                .thenComparingInt(p -> p.region.z)
+                .thenComparingInt(p -> p.region.x));
         return ranked;
     }
 
@@ -120,7 +132,10 @@ final class HologramArchiveCameraTiles implements AutoCloseable {
         if (result == null || !current(result.ticket)) return false;
         Ticket ticket = result.ticket;
         pending = null;
-        if (resident.size() == MAX_RESIDENT) resident.remove(resident.keySet().iterator().next());
+        if (resident.size() == MAX_RESIDENT) resident.remove(
+            resident.keySet()
+                .iterator()
+                .next());
         resident.put(ticket.view.region, new Tile(ticket.view.region, result.mesh));
         return true;
     }
@@ -154,7 +169,8 @@ final class HologramArchiveCameraTiles implements AutoCloseable {
     }
 
     private void requireMain() {
-        if (Thread.currentThread() != main) throw new IllegalStateException("Archive camera belongs to its main thread");
+        if (Thread.currentThread() != main)
+            throw new IllegalStateException("Archive camera belongs to its main thread");
     }
 
     private static final class Projected {
@@ -184,8 +200,8 @@ final class HologramArchiveCameraTiles implements AutoCloseable {
 
         Built build(Window window) {
             if (window == null || window.view != view || !planner.current(this)) return null;
-            HologramArchiveTileMesh mesh = HologramArchiveTileMesh.build(
-                window, layer, opaqueBits, () -> planner.current(this));
+            HologramArchiveTileMesh mesh = HologramArchiveTileMesh
+                .build(window, layer, opaqueBits, () -> planner.current(this));
             return mesh == null ? null : new Built(this, mesh);
         }
     }
@@ -229,8 +245,8 @@ final class HologramArchiveCameraTiles implements AutoCloseable {
         final boolean capacityLimited;
         final Ticket enqueue;
 
-        private Frame(HologramArchiveCameraTiles planner, HologramEditorCameraFrame pose, long textures,
-            Tile[] tiles, int ready, int requested, boolean capacityLimited, Ticket enqueue) {
+        private Frame(HologramArchiveCameraTiles planner, HologramEditorCameraFrame pose, long textures, Tile[] tiles,
+            int ready, int requested, boolean capacityLimited, Ticket enqueue) {
             this.planner = planner;
             this.pose = pose;
             this.textures = textures;

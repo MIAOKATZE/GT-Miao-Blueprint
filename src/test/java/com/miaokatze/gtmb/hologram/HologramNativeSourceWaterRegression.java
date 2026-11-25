@@ -8,7 +8,6 @@ import java.nio.charset.StandardCharsets;
 
 import net.minecraft.block.Block;
 import net.minecraft.init.Blocks;
-import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
 
@@ -78,22 +77,28 @@ final class HologramNativeSourceWaterRegression {
 
     private static void placementAndMaterialQuote() {
         HologramControllerTarget.Cell captured = waterTarget(
-            Blocks.stone, HologramControllerTarget.TargetKind.MACHINE_SOURCE_WATER);
+            Blocks.stone,
+            HologramControllerTarget.TargetKind.MACHINE_SOURCE_WATER);
         NBTTagCompound row = captured.tag();
-        SimpleAssert.that(HologramNativeSourceWater.matches(captured, row),
+        SimpleAssert.that(
+            HologramNativeSourceWater.matches(captured, row),
             "typed native source-water proof retains an occupied generated position without demanding an item");
         SimpleAssert.that(captured.targetStack() == null, "native generated water never mints a bucket or item");
-        SimpleAssert.that(!HologramNativeSourceWater.matches(null, row),
+        SimpleAssert.that(
+            !HologramNativeSourceWater.matches(null, row),
             "a presentation tag alone cannot authorize generated water");
-        SimpleAssert.that(!HologramNativeSourceWater.matches(
-            waterTarget(Blocks.water, HologramControllerTarget.TargetKind.MATERIAL), row),
+        SimpleAssert.that(
+            !HologramNativeSourceWater
+                .matches(waterTarget(Blocks.water, HologramControllerTarget.TargetKind.MATERIAL), row),
             "an ordinary target with water appearance does not acquire a source exemption");
         row.setInteger("x", row.getInteger("x") + 1);
-        SimpleAssert.that(!HologramNativeSourceWater.matches(captured, row),
+        SimpleAssert.that(
+            !HologramNativeSourceWater.matches(captured, row),
             "typed source proof is bound to the exact position");
         row = captured.tag();
         row.setString("wantId", "minecraft:flowing_water");
-        SimpleAssert.that(!HologramNativeSourceWater.matches(captured, row),
+        SimpleAssert.that(
+            !HologramNativeSourceWater.matches(captured, row),
             "flowing water does not acquire an automatic-generation exemption");
     }
 

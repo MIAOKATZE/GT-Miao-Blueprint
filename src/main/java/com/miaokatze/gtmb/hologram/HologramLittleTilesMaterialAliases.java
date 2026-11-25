@@ -17,7 +17,9 @@ public final class HologramLittleTilesMaterialAliases {
     private HologramLittleTilesMaterialAliases() {}
 
     private static boolean applies(Block host, NBTTagCompound tag) {
-        return host != null && host.getClass().getName().equals(HOST) && tag != null;
+        return host != null && host.getClass()
+            .getName()
+            .equals(HOST) && tag != null;
     }
 
     // VillageNames ModObjects.chooseModConcrete(int) prefers the Et Futurum substitute and returns unchanged dye meta.
@@ -51,9 +53,12 @@ public final class HologramLittleTilesMaterialAliases {
     }
 
     static boolean rewriteChild(NBTTagCompound child, boolean concreteAliasAvailable) {
-        if (!concreteAliasAvailable || !OLD_CONCRETE.equals(child.getString("block")) || !child.hasKey("meta", 3)
-            || child.getInteger("meta") < 0 || child.getInteger("meta") > 15
-            || child.hasKey("tileEntity") || child.hasKey("tileentity")) return false;
+        if (!concreteAliasAvailable || !OLD_CONCRETE.equals(child.getString("block"))
+            || !child.hasKey("meta", 3)
+            || child.getInteger("meta") < 0
+            || child.getInteger("meta") > 15
+            || child.hasKey("tileEntity")
+            || child.hasKey("tileentity")) return false;
         String type = child.getString("tID");
         if (!"BlockTileBlock".equals(type) && !"BlockTileColored".equals(type)) return false;
         child.setString("block", CURRENT_CONCRETE);

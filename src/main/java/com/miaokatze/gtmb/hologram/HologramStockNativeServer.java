@@ -30,6 +30,7 @@ final class HologramStockNativeServer {
 
     @FunctionalInterface
     interface ReplySink {
+
         void send(ActionEndpoint endpoint, Reply reply);
     }
 
@@ -74,8 +75,8 @@ final class HologramStockNativeServer {
         }
     }
 
-    private static final AttributeKey<ProofHistory> NATIVE_PROOF_HISTORY =
-        new AttributeKey<>("gtmb.hologram.stockNativeProofHistory");
+    private static final AttributeKey<ProofHistory> NATIVE_PROOF_HISTORY = new AttributeKey<>(
+        "gtmb.hologram.stockNativeProofHistory");
 
     private static final class Owned {
 
@@ -113,12 +114,19 @@ final class HologramStockNativeServer {
 
     /** Any Netty thread. Endpoint is from MessageContext, never packet identity or an editor workspace. */
     boolean enqueue(ActionEndpoint endpoint, Request request) {
-        if (request == null || request.key() == null || endpoint == null || endpoint.constructionScope == null
+        if (request == null || request.key() == null
+            || endpoint == null
+            || endpoint.constructionScope == null
             || !HologramWorkspace.currentActionEndpoint(endpoint)) return false;
         boolean probe = request.command() == Command.PROBE;
         long generation = endpoint.constructionScope.generation;
-        if (probe ? request.key().generation() != 0 : request.key().generation() != generation) return false;
-        boolean begin = request.command().begins();
+        if (probe ? request.key()
+            .generation() != 0
+            : request.key()
+                .generation() != generation)
+            return false;
+        boolean begin = request.command()
+            .begins();
         boolean stop = request.command() == Command.STOP;
         var gate = probe ? probeSlots : begin ? beginSlots : stop ? stopSlots : statusSlots;
         var slot = gate.acquire(endpoint.connection);
@@ -129,23 +137,36 @@ final class HologramStockNativeServer {
             ProofHistory reservation = null;
             if (probe) {
                 reservation = channelProofHistory(endpoint);
-                if (reservation == null || confirm == null || request.key().sequence() <= reservation.seenThrough.get())
+                if (reservation == null || confirm == null
+                    || request.key()
+                        .sequence() <= reservation.seenThrough.get())
                     return false;
                 confirm = confirm.forGeneration(generation);
                 request = new Request(Command.PROBE, confirm.key(), confirm);
             }
             var ingress = probe || begin ? HologramStockNativeEntry.inspect(endpoint, confirm) : null;
-            var waiting = new Waiting(endpoint, request, ingress == null ? null : ingress.submission(),
-                ingress == null ? null : ingress.refusal(), slot);
+            var waiting = new Waiting(
+                endpoint,
+                request,
+                ingress == null ? null : ingress.submission(),
+                ingress == null ? null : ingress.refusal(),
+                slot);
             synchronized (inbound) {
                 if (!slot.active() || (!stop && inbound.size() >= INGRESS_CAP)) return false;
                 // Burn a bounded authenticated PROBE when queued, even if its endpoint/reset drops it before dispatch.
-                if (reservation != null && !reservation.advance(request.key().sequence())) return false;
+                if (reservation != null && !reservation.advance(
+                    request.key()
+                        .sequence()))
+                    return false;
                 if (stop && !stopQueued.add(waiting.identity())) return false;
                 (stop ? stops : inbound).addLast(waiting);
                 enqueued = true;
             }
-            if (probe || begin) HologramStockActionTrace.event("server.queued", request.key(), request.command().name());
+            if (probe || begin) HologramStockActionTrace.event(
+                "server.queued",
+                request.key(),
+                request.command()
+                    .name());
             return true;
         } finally {
             if (!enqueued) slot.close();
@@ -223,12 +244,11 @@ final class HologramStockNativeServer {
         if (known.phase == HologramConstructionTaskGate.Phase.TERMINAL) {
             var outcome = known.outcome;
             Phase phase = outcome.end == HologramConstructionTaskGate.End.COMPLETE ? Phase.COMPLETE : Phase.STOPPED;
-            emit(endpoint, new Reply(identity.request, phase, (int) outcome.committedTransactions,
-                "施工结果已定；详细回执已过期。"));
+            emit(endpoint, new Reply(identity.request, phase, (int) outcome.committedTransactions, "施工结果已定；详细回执已过期。"));
             return;
         }
-        if (known.phase == HologramConstructionTaskGate.Phase.RETIRED_UNKNOWN || !match
-            && known.phase != HologramConstructionTaskGate.Phase.UNSEEN) {
+        if (known.phase == HologramConstructionTaskGate.Phase.RETIRED_UNKNOWN
+            || !match && known.phase != HologramConstructionTaskGate.Phase.UNSEEN) {
             unknown(endpoint, identity);
             return;
         }
@@ -275,7 +295,8 @@ final class HologramStockNativeServer {
 
     private void expireColdProofs(long now) {
         // Proofs are inserted in deadline order; completed or replaced entries are explicitly removed.
-        for (var iterator = coldProofs.values().iterator(); iterator.hasNext();) {
+        for (var iterator = coldProofs.values()
+            .iterator(); iterator.hasNext();) {
             if (iterator.next().expires > now) break;
             iterator.remove();
         }
@@ -299,7 +320,8 @@ final class HologramStockNativeServer {
         long now = System.nanoTime();
         expireColdProofs(now);
         if (coldProofs.size() >= PROOF_CAP || !HologramWorkspace.currentActionEndpoint(endpoint)) return;
-        coldProofs.put(endpoint.actor,
+        coldProofs.put(
+            endpoint.actor,
             new ColdProof(endpoint, waiting.request.confirmation(), waiting.submission, now + COLD_NANOS));
         emit(endpoint, new Reply(key, Phase.CAPABLE, 0, ""));
     }
@@ -310,8 +332,11 @@ final class HologramStockNativeServer {
         synchronized (inbound) {
             for (var iterator = inbound.iterator(); iterator.hasNext();) {
                 Waiting queued = iterator.next();
-                if (queued.endpoint == stop.endpoint && queued.request.command().begins()
-                    && queued.submission != null && queued.identity().equals(stop.identity())) {
+                if (queued.endpoint == stop.endpoint && queued.request.command()
+                    .begins()
+                    && queued.submission != null
+                    && queued.identity()
+                        .equals(stop.identity())) {
                     iterator.remove();
                     removed = queued;
                     break;
@@ -334,7 +359,9 @@ final class HologramStockNativeServer {
         if (history == null || gate == null) return;
         history.advance(key.request.sequence());
         ColdProof proof = coldProofs.get(endpoint.actor);
-        if (proof != null && proof.endpoint == endpoint && proof.confirmation.key().sequence() <= key.request.sequence())
+        if (proof != null && proof.endpoint == endpoint
+            && proof.confirmation.key()
+                .sequence() <= key.request.sequence())
             coldProofs.remove(endpoint.actor, proof);
         gate.acquire(endpoint.constructionScope, key.request.gateRequest(), true, false);
         remember(endpoint, key, new Reply(key.request, phase, 0, reason));
@@ -360,8 +387,10 @@ final class HologramStockNativeServer {
         }
         if (cold) {
             ColdProof proof = coldProofs.get(waiting.endpoint.actor);
-            if (sequence != seen || proof == null || proof.endpoint != waiting.endpoint
-                || proof.expires <= System.nanoTime() || !proof.confirmation.equals(waiting.request.confirmation())) {
+            if (sequence != seen || proof == null
+                || proof.endpoint != waiting.endpoint
+                || proof.expires <= System.nanoTime()
+                || !proof.confirmation.equals(waiting.request.confirmation())) {
                 tombstone(waiting.endpoint, key, Phase.REFUSED, "首次短请求回执已失效；未开始施工。");
                 return;
             }
@@ -421,7 +450,9 @@ final class HologramStockNativeServer {
             emit(job.endpoint, reply(job, Phase.RECOVERY_PENDING));
             return;
         }
-        remember(job.endpoint, job.key,
+        remember(
+            job.endpoint,
+            job.key,
             reply(job, state == HologramStockNativeConstruction.State.COMPLETE ? Phase.COMPLETE : Phase.STOPPED));
     }
 
@@ -431,7 +462,10 @@ final class HologramStockNativeServer {
 
     private void remember(ActionEndpoint endpoint, Identity key, Reply reply) {
         settled.put(key, reply);
-        while (settled.size() > RESULT_CAP) settled.remove(settled.keySet().iterator().next());
+        while (settled.size() > RESULT_CAP) settled.remove(
+            settled.keySet()
+                .iterator()
+                .next());
         emit(endpoint, reply);
     }
 
@@ -439,7 +473,11 @@ final class HologramStockNativeServer {
         if (!HologramWorkspace.currentActionEndpoint(endpoint)) return;
         try {
             sink.send(endpoint, reply);
-            if (reply.phase() != Phase.ACTIVE) HologramStockActionTrace.event("server.reply", reply.key(), reply.phase().name());
+            if (reply.phase() != Phase.ACTIVE) HologramStockActionTrace.event(
+                "server.reply",
+                reply.key(),
+                reply.phase()
+                    .name());
         } catch (RuntimeException | LinkageError unavailable) {
             // Status is not transaction authority. The same owner can query a settled/active result.
         }

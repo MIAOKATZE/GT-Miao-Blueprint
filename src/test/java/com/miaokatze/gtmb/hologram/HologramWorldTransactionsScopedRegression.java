@@ -66,16 +66,20 @@ final class HologramWorldTransactionsScopedRegression {
             session.materialSettings.containers = session.materialSettings.me = false;
             var unrelated = new HologramMaterials.Context(player, session.materialSettings, session.slot);
             unrelated.recoverWorld(Collections.singletonList(new ItemStack(Blocks.cobblestone, 2)));
-            NBTTagCompound dormant = (NBTTagCompound) HologramConstructionJournal.owner(player).copy();
+            NBTTagCompound dormant = (NBTTagCompound) HologramConstructionJournal.owner(player)
+                .copy();
             SimpleAssert.eq(0, stock(player, Blocks.cobblestone), "recovery is staged, not already delivered");
             world.arm();
             movedWorld.arm();
 
-            SimpleAssert.that(HologramWorldTransactions.operateScoped(session, select(session, 1), 0, () -> true),
+            SimpleAssert.that(
+                HologramWorldTransactions.operateScoped(session, select(session, 1), 0, () -> true),
                 "the scoped authority uses the real placement/deduction transaction");
-            SimpleAssert.that(world.getBlock(1, 64, 0) == Blocks.stone && stock(player, Blocks.stone) == 7
-                && !HologramConstructionJournal.pending(player) && session.materialContext == null
-                && HologramConstructionJournal.publications == publications,
+            SimpleAssert.that(
+                world.getBlock(1, 64, 0) == Blocks.stone && stock(player, Blocks.stone) == 7
+                    && !HologramConstructionJournal.pending(player)
+                    && session.materialContext == null
+                    && HologramConstructionJournal.publications == publications,
                 "a settled scoped placement writes the exact block and charges once without retaining scratch stock");
             dormantUnchanged(dormant, player, "a scoped commit never flushes unrelated recovery");
 
@@ -87,10 +91,13 @@ final class HologramWorldTransactionsScopedRegression {
             var actor = player;
             int[] observed = { 0 };
             EventBus fence = new EventBus() {
+
                 @Override
                 public boolean post(Event event) {
-                    if (event instanceof BlockEvent.PlaceEvent place && place.player == actor && place.world == world
-                        && place.x == 2 && world.getBlock(2, 64, 0) == Blocks.stone) {
+                    if (event instanceof BlockEvent.PlaceEvent place && place.player == actor
+                        && place.world == world
+                        && place.x == 2
+                        && world.getBlock(2, 64, 0) == Blocks.stone) {
                         observed[0]++;
                         SimpleAssert.eq(7, stock(actor, Blocks.stone), "Forge sees no speculative live debit");
                         actor.inventory.mainInventory[10] = new ItemStack(Blocks.gravel, 5);
@@ -107,18 +114,23 @@ final class HologramWorldTransactionsScopedRegression {
             } finally {
                 unsafe.putObjectVolatile(busBase, busOffset, previousBus);
             }
-            SimpleAssert.that(observed[0] > 0 && world.getBlock(2, 64, 0) == Blocks.air
-                && stock(player, Blocks.stone) == 7 && stock(player, Blocks.gravel) == 5
-                && !HologramConstructionJournal.pending(player)
-                && HologramConstructionJournal.publications == publications,
+            SimpleAssert.that(
+                observed[0] > 0 && world.getBlock(2, 64, 0) == Blocks.air
+                    && stock(player, Blocks.stone) == 7
+                    && stock(player, Blocks.gravel) == 5
+                    && !HologramConstructionJournal.pending(player)
+                    && HologramConstructionJournal.publications == publications,
                 "the real candidate was present in the event, no debit committed, unrelated live slot edit survives");
             dormantUnchanged(dormant, player, "a scoped rollback also never flushes unrelated recovery");
 
-            SimpleAssert.that(HologramWorldTransactions.operate(session, select(session, 3), 0),
+            SimpleAssert.that(
+                HologramWorldTransactions.operate(session, select(session, 3), 0),
                 "ordinary unscoped placement keeps its existing settlement path");
-            SimpleAssert.that(world.getBlock(3, 64, 0) == Blocks.stone && stock(player, Blocks.stone) == 6
-                && stock(player, Blocks.cobblestone) == 2 && !HologramConstructionJournal.pending(player)
-                && HologramConstructionJournal.publications == publications,
+            SimpleAssert.that(
+                world.getBlock(3, 64, 0) == Blocks.stone && stock(player, Blocks.stone) == 6
+                    && stock(player, Blocks.cobblestone) == 2
+                    && !HologramConstructionJournal.pending(player)
+                    && HologramConstructionJournal.publications == publications,
                 "the same dormant recovery remains deliverable by the original unscoped path");
 
             checkInventorySwaps(unsafe, world, player, session, publications);
@@ -135,19 +147,25 @@ final class HologramWorldTransactionsScopedRegression {
             });
             try (var oldMutations = new PositionWatch(world, 4, null);
                 var replacementMutations = new PositionWatch(movedWorld, 4, null)) {
-                SimpleAssert.that(!HologramWorldTransactions.operateScoped(session, select(session, 4), 0, () -> true)
-                    && HologramConstructionJournal.pending(player) && session.job == 4,
+                SimpleAssert.that(
+                    !HologramWorldTransactions.operateScoped(session, select(session, 4), 0, () -> true)
+                        && HologramConstructionJournal.pending(player)
+                        && session.job == 4,
                     "a changed physical world can neither commit nor clear the original receipt");
                 var receipt = pendingReceipt(player);
-                SimpleAssert.that(HologramConstructionJournal.publications == publications + 1
-                    && Files.isRegularFile(originReceipt) && !Files.exists(replacementReceipt),
+                SimpleAssert.that(
+                    HologramConstructionJournal.publications == publications + 1 && Files.isRegularFile(originReceipt)
+                        && !Files.exists(replacementReceipt),
                     "only the observed abnormal cell publishes, and only in its original save root");
                 assertPersisted(originReceipt, receipt, world);
                 expectResolutionRefusal(player, receipt, "accept");
                 expectResolutionRefusal(player, receipt, "rollback");
-                SimpleAssert.that(world.getBlock(4, 64, 0) == Blocks.stone && world.getBlockMetadata(4, 64, 0) == 0
-                    && movedWorld.getBlock(4, 64, 0) == Blocks.air && oldMutations.puts == 1
-                    && replacementMutations.puts == 0 && stock(player, Blocks.stone) == 5,
+                SimpleAssert.that(
+                    world.getBlock(4, 64, 0) == Blocks.stone && world.getBlockMetadata(4, 64, 0) == 0
+                        && movedWorld.getBlock(4, 64, 0) == Blocks.air
+                        && oldMutations.puts == 1
+                        && replacementMutations.puts == 0
+                        && stock(player, Blocks.stone) == 5,
                     "virtual schema 2 loss inside the setter leaves one original attempted write, no metadata fixup,"
                         + " no replacement-world change and no debit");
             } finally {
@@ -159,25 +177,32 @@ final class HologramWorldTransactionsScopedRegression {
             var receipt = pendingReceipt(player);
             expectResolutionRefusal(player, receipt, "rollback");
             HologramConstructionJournal.resolve(player, receipt.getString("id"), "accept");
-            SimpleAssert.that(!HologramConstructionJournal.pending(player),
+            SimpleAssert.that(
+                !HologramConstructionJournal.pending(player),
                 "explicit adjudication in the original root releases exactly that durable receipt");
             publications = HologramConstructionJournal.publications;
             session.job = 0;
             session.stopTick = false;
 
             try {
-                unsafe.putObjectVolatile(busBase, busOffset, observing(world, actor, 5,
-                    () -> world.setBlock(5, 64, 0, Blocks.cobblestone, 0, 3)));
-                SimpleAssert.that(!HologramWorldTransactions.operateScoped(session, select(session, 5), 0, () -> true)
-                    && HologramConstructionJournal.pending(player) && session.job == 4
-                    && world.getBlock(5, 64, 0) == Blocks.cobblestone
-                    && HologramConstructionJournal.publications == publications + 1,
+                unsafe.putObjectVolatile(
+                    busBase,
+                    busOffset,
+                    observing(world, actor, 5, () -> world.setBlock(5, 64, 0, Blocks.cobblestone, 0, 3)));
+                SimpleAssert.that(
+                    !HologramWorldTransactions.operateScoped(session, select(session, 5), 0, () -> true)
+                        && HologramConstructionJournal.pending(player)
+                        && session.job == 4
+                        && world.getBlock(5, 64, 0) == Blocks.cobblestone
+                        && HologramConstructionJournal.publications == publications + 1,
                     "even active authority cannot claim a different Forge-written candidate as its committed cell");
             } finally {
                 unsafe.putObjectVolatile(busBase, busOffset, previousBus);
             }
             receipt = pendingReceipt(player);
-            SimpleAssert.eq("candidate-changed-before-commit", receipt.getString("scopeUncertainReason"),
+            SimpleAssert.eq(
+                "candidate-changed-before-commit",
+                receipt.getString("scopeUncertainReason"),
                 "the contested physical result is distinguishable from a moved owner");
             HologramConstructionJournal.resolve(player, receipt.getString("id"), "accept");
             publications = HologramConstructionJournal.publications;
@@ -185,25 +210,36 @@ final class HologramWorldTransactionsScopedRegression {
             session.stopTick = false;
 
             AtomicBoolean restoreAuthority = new AtomicBoolean(true);
-            int writesBeforeResidue = world.writes().size();
+            int writesBeforeResidue = world.writes()
+                .size();
             Runnable restoreResidualSetter = afterSetter(
-                world, HologramPlacementFixtureWorld.position(11, 64, 0), 2,
+                world,
+                HologramPlacementFixtureWorld.position(11, 64, 0),
+                2,
                 () -> world.setBlock(11, 64, 0, Blocks.cobblestone, 0, 3));
             try {
-                unsafe.putObjectVolatile(busBase, busOffset,
+                unsafe.putObjectVolatile(
+                    busBase,
+                    busOffset,
                     observing(world, actor, 11, () -> restoreAuthority.set(false)));
-                SimpleAssert.that(!HologramWorldTransactions.operateScoped(
-                    session, select(session, 11), 0, restoreAuthority::get)
-                    && session.job == 4 && HologramConstructionJournal.pending(player)
-                    && world.writes().size() == writesBeforeResidue + 3 && world.getBlock(11, 64, 0) == Blocks.cobblestone
-                    && stock(player, Blocks.stone) == 5 && HologramConstructionJournal.publications == publications + 1,
+                SimpleAssert.that(
+                    !HologramWorldTransactions.operateScoped(session, select(session, 11), 0, restoreAuthority::get)
+                        && session.job == 4
+                        && HologramConstructionJournal.pending(player)
+                        && world.writes()
+                            .size() == writesBeforeResidue + 3
+                        && world.getBlock(11, 64, 0) == Blocks.cobblestone
+                        && stock(player, Blocks.stone) == 5
+                        && HologramConstructionJournal.publications == publications + 1,
                     "a true air-setter result with third-party residual state cannot settle or issue a second restore");
             } finally {
                 unsafe.putObjectVolatile(busBase, busOffset, previousBus);
                 restoreResidualSetter.run();
             }
             receipt = pendingReceipt(player);
-            SimpleAssert.eq("scoped-world-restore-not-exact", receipt.getString("scopeUncertainReason"),
+            SimpleAssert.eq(
+                "scoped-world-restore-not-exact",
+                receipt.getString("scopeUncertainReason"),
                 "a rollback postcondition failure retains the exact evidence without a debit");
             expectResolutionRefusal(player, receipt, "rollback");
             HologramConstructionJournal.resolve(player, receipt.getString("id"), "accept");
@@ -218,15 +254,19 @@ final class HologramWorldTransactionsScopedRegression {
                     actor.worldObj = movedWorld;
                     actor.dimension = 7;
                 }));
-                SimpleAssert.that(!HologramWorldTransactions.operateScoped(session, select(session, 6), 0, () -> true)
-                    && HologramConstructionJournal.pending(player) && session.job == 4
-                    && pendingReceipt(player).getBoolean("scopePublicationFailed")
-                    && HologramConstructionJournal.publications == publications
-                    && Files.isDirectory(originReceipt) && !Files.exists(replacementReceipt),
+                SimpleAssert.that(
+                    !HologramWorldTransactions.operateScoped(session, select(session, 6), 0, () -> true)
+                        && HologramConstructionJournal.pending(player)
+                        && session.job == 4
+                        && pendingReceipt(player).getBoolean("scopePublicationFailed")
+                        && HologramConstructionJournal.publications == publications
+                        && Files.isDirectory(originReceipt)
+                        && !Files.exists(replacementReceipt),
                     "original-root storage failure leaves pending exact authority, with no false publication or reroute");
                 var pending = pendingReceipt(player);
                 HologramConstructionJournal.reload(player);
-                SimpleAssert.that(pending == pendingReceipt(player) && HologramConstructionJournal.pending(player),
+                SimpleAssert.that(
+                    pending == pendingReceipt(player) && HologramConstructionJournal.pending(player),
                     "loading the replacement root cannot erase the retained original uncertainty");
                 expectResolutionRefusal(player, pending, "accept");
             } finally {
@@ -237,11 +277,13 @@ final class HologramWorldTransactionsScopedRegression {
         } catch (ReflectiveOperationException | IOException failure) {
             throw new AssertionError("scoped world transaction fixture", failure);
         } finally {
-            if (player != null) player.playerNetServerHandler.netManager.channel().close();
+            if (player != null) player.playerNetServerHandler.netManager.channel()
+                .close();
             if (previousRoot == null) HologramConstructionJournal.STORAGE_ROOT.remove();
             else HologramConstructionJournal.STORAGE_ROOT.set(previousRoot);
             if (scratch != null) try (var files = Files.walk(scratch)) {
-                var paths = files.sorted(Comparator.reverseOrder()).iterator();
+                var paths = files.sorted(Comparator.reverseOrder())
+                    .iterator();
                 while (paths.hasNext()) Files.deleteIfExists(paths.next());
             } catch (IOException failure) {
                 throw new AssertionError("delete scoped world transaction fixture", failure);
@@ -255,16 +297,21 @@ final class HologramWorldTransactionsScopedRegression {
         try {
             try (var state = new PositionWatch(world, 9, null)) {
                 var cell = select(session, 9);
-                SimpleAssert.that(HologramWorldTransactions.operateScoped(session, cell, 0, () -> true)
-                    && "placed".equals(cell.status) && state.puts == 1 && world.getBlock(9, 64, 0) == Blocks.stone
-                    && world.getBlockMetadata(9, 64, 0) == 0 && stock(player, Blocks.stone) == 5,
+                SimpleAssert.that(
+                    HologramWorldTransactions.operateScoped(session, cell, 0, () -> true)
+                        && "placed".equals(cell.status)
+                        && state.puts == 1
+                        && world.getBlock(9, 64, 0) == Blocks.stone
+                        && world.getBlockMetadata(9, 64, 0) == 0
+                        && stock(player, Blocks.stone) == 5,
                     "virtual schema 2 positively commits its exact authored block and one debit, without metadata rewrite");
             }
             AtomicBoolean authority = new AtomicBoolean(true);
             AtomicBoolean inReplaceability = new AtomicBoolean();
             try (var state = new PositionWatch(world, 10, () -> {
                 if (!"world-pending".equals(pendingReceipt(player).getString("phase"))) return;
-                for (var frame : Thread.currentThread().getStackTrace()) {
+                for (var frame : Thread.currentThread()
+                    .getStackTrace()) {
                     if ("com.gtnewhorizon.structurelib.StructureLibAPI".equals(frame.getClassName())
                         && "isBlockTriviallyReplaceable".equals(frame.getMethodName())) {
                         inReplaceability.set(true);
@@ -273,11 +320,14 @@ final class HologramWorldTransactionsScopedRegression {
                     }
                 }
             })) {
-                SimpleAssert.that(!HologramWorldTransactions.operateScoped(
-                    session, select(session, 10), 0, authority::get)
-                    && inReplaceability.get() && state.puts == 0 && world.getBlock(10, 64, 0) == Blocks.air
-                    && stock(player, Blocks.stone) == 5 && !HologramConstructionJournal.pending(player)
-                    && HologramConstructionJournal.publications == publications,
+                SimpleAssert.that(
+                    !HologramWorldTransactions.operateScoped(session, select(session, 10), 0, authority::get)
+                        && inReplaceability.get()
+                        && state.puts == 0
+                        && world.getBlock(10, 64, 0) == Blocks.air
+                        && stock(player, Blocks.stone) == 5
+                        && !HologramConstructionJournal.pending(player)
+                        && HologramConstructionJournal.publications == publications,
                     "authority revoked in the real StructureLib replaceability callback fences the simulated token"
                         + " and never reaches the setter or a debit");
             }
@@ -350,14 +400,17 @@ final class HologramWorldTransactionsScopedRegression {
         replacement.mainInventory[1] = new ItemStack(Blocks.stone, 13);
         replacement.mainInventory[10] = new ItemStack(Blocks.dirt, 2);
         int originalStock = stock(player, Blocks.stone);
-        int writesBefore = world.writes().size();
+        int writesBefore = world.writes()
+            .size();
         String beforePosition = HologramPlacementFixtureWorld.position(7, 64, 0);
         var previousTiles = world.occupants;
         AtomicBoolean beforeWrite = new AtomicBoolean();
         world.occupants = new HashMap<String, TileEntity>() {
+
             @Override
             public TileEntity get(Object key) {
-                if (beforePosition.equals(key) && world.writes().size() == writesBefore
+                if (beforePosition.equals(key) && world.writes()
+                    .size() == writesBefore
                     && "world-pending".equals(pendingReceipt(player).getString("phase"))
                     && beforeWrite.compareAndSet(false, true)) {
                     unsafe.putObject(player, inventoryOffset, replacement);
@@ -366,9 +419,13 @@ final class HologramWorldTransactionsScopedRegression {
             }
         };
         try {
-            SimpleAssert.that(!HologramWorldTransactions.operateScoped(session, select(session, 7), 0, () -> true)
-                && beforeWrite.get() && player.inventory == replacement
-                && stock(player, Blocks.stone) == 13 && world.writes().size() == writesBefore,
+            SimpleAssert.that(
+                !HologramWorldTransactions.operateScoped(session, select(session, 7), 0, () -> true)
+                    && beforeWrite.get()
+                    && player.inventory == replacement
+                    && stock(player, Blocks.stone) == 13
+                    && world.writes()
+                        .size() == writesBefore,
                 "real final World read swaps inventory after the claim: no setter and no replacement charge");
         } finally {
             world.occupants = previousTiles;
@@ -379,23 +436,30 @@ final class HologramWorldTransactionsScopedRegression {
         String setPosition = HologramPlacementFixtureWorld.position(8, 64, 0);
         AtomicBoolean insideSetter = new AtomicBoolean();
         Runnable restoreWrites = afterSetter(world, setPosition, () -> {
-            SimpleAssert.eq(originalStock, stock(player, Blocks.stone),
-                "native setter runs before the final real debit");
+            SimpleAssert
+                .eq(originalStock, stock(player, Blocks.stone), "native setter runs before the final real debit");
             unsafe.putObject(player, inventoryOffset, replacement);
             insideSetter.set(true);
         });
         try {
-            SimpleAssert.that(!HologramWorldTransactions.operateScoped(session, select(session, 8), 0, () -> true)
-                && insideSetter.get() && player.inventory == replacement && stock(player, Blocks.stone) == 13
-                && stock(player, Blocks.dirt) == 2 && world.getBlock(8, 64, 0) == Blocks.air
-                && world.writes().size() == writesBefore + 2,
+            SimpleAssert.that(
+                !HologramWorldTransactions.operateScoped(session, select(session, 8), 0, () -> true)
+                    && insideSetter.get()
+                    && player.inventory == replacement
+                    && stock(player, Blocks.stone) == 13
+                    && stock(player, Blocks.dirt) == 2
+                    && world.getBlock(8, 64, 0) == Blocks.air
+                    && world.writes()
+                        .size() == writesBefore + 2,
                 "swap during actual setter: tentative place and exact restore, never charged replacement stock");
         } finally {
             restoreWrites.run();
             unsafe.putObject(player, inventoryOffset, original);
         }
-        SimpleAssert.that(stock(player, Blocks.stone) == originalStock && stock(player, Blocks.gravel) == 5
-            && !HologramConstructionJournal.pending(player) && HologramConstructionJournal.publications == publications,
+        SimpleAssert.that(
+            stock(player, Blocks.stone) == originalStock && stock(player, Blocks.gravel) == 5
+                && !HologramConstructionJournal.pending(player)
+                && HologramConstructionJournal.publications == publications,
             "same-world escrow abort preserves both inventories, unrelated slot and journal publication count");
     }
 
@@ -405,12 +469,13 @@ final class HologramWorldTransactionsScopedRegression {
     }
 
     @SuppressWarnings("unchecked")
-    private static Runnable afterSetter(HologramPlacementFixtureWorld world, String target, int ordinal, Runnable action)
-        throws ReflectiveOperationException {
+    private static Runnable afterSetter(HologramPlacementFixtureWorld world, String target, int ordinal,
+        Runnable action) throws ReflectiveOperationException {
         var field = HologramPlacementFixtureWorld.class.getDeclaredField("writes");
         field.setAccessible(true);
         var previous = (List<String>) field.get(world);
         var watched = new ArrayList<String>(previous) {
+
             private int seen;
 
             @Override
@@ -436,7 +501,9 @@ final class HologramWorldTransactionsScopedRegression {
         throws ReflectiveOperationException {
         var field = World.class.getDeclaredField("saveHandler");
         var handler = (ISaveHandler) Proxy.newProxyInstance(
-            ISaveHandler.class.getClassLoader(), new Class<?>[] { ISaveHandler.class }, (proxy, method, args) -> {
+            ISaveHandler.class.getClassLoader(),
+            new Class<?>[] { ISaveHandler.class },
+            (proxy, method, args) -> {
                 if ("getWorldDirectory".equals(method.getName())) return root.toFile();
                 throw new UnsupportedOperationException("Unexpected fixture save handler method: " + method.getName());
             });
@@ -444,18 +511,21 @@ final class HologramWorldTransactionsScopedRegression {
     }
 
     private static Path constructionFile(Path root, EntityPlayerMP player) {
-        return root.resolve("gtmb-construction-recovery").resolve(player.getUniqueID() + ".nbt");
+        return root.resolve("gtmb-construction-recovery")
+            .resolve(player.getUniqueID() + ".nbt");
     }
 
     private static NBTTagCompound pendingReceipt(EntityPlayerMP player) {
-        return HologramConstructionJournal.owner(player).getCompoundTag(HologramConstructionJournal.KEY);
+        return HologramConstructionJournal.owner(player)
+            .getCompoundTag(HologramConstructionJournal.KEY);
     }
 
     private static void assertPersisted(Path path, NBTTagCompound exact, World world) throws IOException {
         var saved = HologramSnapshotCodec.decode(Files.readAllBytes(path));
-        SimpleAssert.that(saved.equals(exact) && saved.getBoolean("durable")
-            && saved.getInteger("dimension") == world.provider.dimensionId
-            && "world-or-inventory-binding-changed".equals(saved.getString("scopeUncertainReason")),
+        SimpleAssert.that(
+            saved.equals(exact) && saved.getBoolean("durable")
+                && saved.getInteger("dimension") == world.provider.dimensionId
+                && "world-or-inventory-binding-changed".equals(saved.getString("scopeUncertainReason")),
             "exact original journal, revision, dimension and reason persisted");
     }
 
@@ -469,12 +539,16 @@ final class HologramWorldTransactionsScopedRegression {
     private static EventBus observing(HologramPlacementFixtureWorld world, EntityPlayerMP actor, int x,
         Runnable action) {
         return new EventBus() {
+
             private boolean fired;
 
             @Override
             public boolean post(Event event) {
-                if (!fired && event instanceof BlockEvent.PlaceEvent place && place.player == actor
-                    && place.world == world && place.x == x && world.getBlock(x, 64, 0) == Blocks.stone) {
+                if (!fired && event instanceof BlockEvent.PlaceEvent place
+                    && place.player == actor
+                    && place.world == world
+                    && place.x == x
+                    && world.getBlock(x, 64, 0) == Blocks.stone) {
                     fired = true;
                     action.run();
                 }
@@ -484,8 +558,9 @@ final class HologramWorldTransactionsScopedRegression {
     }
 
     private static void dormantUnchanged(NBTTagCompound expected, EntityPlayerMP player, String detail) {
-        SimpleAssert.that(expected.equals(HologramConstructionJournal.owner(player))
-            && stock(player, Blocks.cobblestone) == 0, detail);
+        SimpleAssert.that(
+            expected.equals(HologramConstructionJournal.owner(player)) && stock(player, Blocks.cobblestone) == 0,
+            detail);
     }
 
     private static int stock(EntityPlayerMP player, Block block) {

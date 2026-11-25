@@ -461,8 +461,11 @@ public final class HologramDemolition {
         }
 
         boolean atSource(EntityItem item) {
-            return !scoped || item.posX >= x && item.posX < x + 1 && item.posY >= y && item.posY < y + 1
-                && item.posZ >= z && item.posZ < z + 1;
+            return !scoped || item.posX >= x && item.posX < x + 1
+                && item.posY >= y
+                && item.posY < y + 1
+                && item.posZ >= z
+                && item.posZ < z + 1;
         }
 
         @Override

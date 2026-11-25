@@ -18,8 +18,7 @@ final class HologramActionDispatcher {
         if (HologramWorkspace.stockNativePrivate(player)) return;
         String requested = action.getString("op");
         if (switch (requested) {
-            case "savePreset", "updatePreset", "saveBlueprint", "saveBlueprintAs", "saveBlueprintReplace",
-                "exportDraft", "confirmAeSave" -> true;
+            case "savePreset", "updatePreset", "saveBlueprint", "saveBlueprintAs", "saveBlueprintReplace", "exportDraft", "confirmAeSave" -> true;
             case "exportBlueprint" -> HologramLibraryFacade.enabled();
             default -> false;
         }) {
@@ -28,20 +27,21 @@ final class HologramActionDispatcher {
             return;
         }
         if (switch (requested) {
-            case "build", "start", "native", "confirmBlueprintPlacement", "placeCurrentBlueprint",
-                "orderMissingMaterials" -> true;
+            case "build", "start", "native", "confirmBlueprintPlacement", "placeCurrentBlueprint", "orderMissingMaterials" -> true;
             default -> false;
         }) {
             HologramSession owner = HologramWorkspace.find(player.getUniqueID());
-            if (owner != null && owner.player == player && !owner.cancelled && owner.id.equals(action.getString("session"))
+            if (owner != null && owner.player == player
+                && !owner.cancelled
+                && owner.id.equals(action.getString("session"))
                 && (!action.hasKey("editorWorkspaceEpoch") || action.hasKey("editorWorkspaceEpoch", 4)
                     && action.getLong("editorWorkspaceEpoch") == owner.editorWorkspaceEpoch)
                 && HologramWorkspace.refuseLegacyConstruction(owner, action)) return;
         }
         if (HologramLibraryFacade.enabled()) {
             boolean publicSwitch = switch (requested) {
-                case "previewPreset", "editPreset", "choosePlacementPreset" ->
-                    HologramPresetWorkflow.publicLibraryId(action.getString("presetId"));
+                case "previewPreset", "editPreset", "choosePlacementPreset" -> HologramPresetWorkflow
+                    .publicLibraryId(action.getString("presetId"));
                 default -> false;
             };
             boolean resync = "requestFullSnapshot".equals(requested);
@@ -286,8 +286,8 @@ final class HologramActionDispatcher {
             HologramSnapshots.send(s);
             return;
         }
-        if("placeCurrentBlueprint".equals(op)||"choosePlacementPreset".equals(op)){
-            s.status="请先保存为原生蓝图，再从客户端蓝图库选择施工";
+        if ("placeCurrentBlueprint".equals(op) || "choosePlacementPreset".equals(op)) {
+            s.status = "请先保存为原生蓝图，再从客户端蓝图库选择施工";
             HologramSnapshots.sendUi(s);
             return;
         }
@@ -390,9 +390,9 @@ final class HologramActionDispatcher {
         boolean construction = "build".equals(op) || "start".equals(op)
             || "native".equals(op)
             || "confirmBlueprintPlacement".equals(op);
-        if(construction&&s.virtual&&s.virtualPreset!=null){
-            s.forcePlacementReady=false;
-            s.status="此旧蓝图只保留预览和编辑；请在客户端保存原生版本后施工";
+        if (construction && s.virtual && s.virtualPreset != null) {
+            s.forcePlacementReady = false;
+            s.status = "此旧蓝图只保留预览和编辑；请在客户端保存原生版本后施工";
             HologramSnapshots.sendUi(s);
             return;
         }
@@ -803,7 +803,9 @@ final class HologramActionDispatcher {
     }
 
     private static boolean ownsAction(HologramSession s, EntityPlayerMP player, NBTTagCompound action) {
-        return s != null && s.player == player && !s.cancelled && s.id.equals(action.getString("session"))
+        return s != null && s.player == player
+            && !s.cancelled
+            && s.id.equals(action.getString("session"))
             && (!action.hasKey("editorWorkspaceEpoch") || action.hasKey("editorWorkspaceEpoch", 4)
                 && action.getLong("editorWorkspaceEpoch") == s.editorWorkspaceEpoch);
     }

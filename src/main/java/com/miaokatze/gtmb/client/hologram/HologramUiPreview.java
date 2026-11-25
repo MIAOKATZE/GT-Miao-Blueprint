@@ -45,7 +45,8 @@ final class HologramUiPreview {
 
     /** Apply the first settled right-click observation once; never overwrite a player's view choice. */
     void chooseControllerSiteView(NBTTagCompound metadata) {
-        if (controllerViewChosen || !metadata.getBoolean("localStandardController") || !metadata.hasKey("siteOccupied", 3)) return;
+        if (controllerViewChosen || !metadata.getBoolean("localStandardController")
+            || !metadata.hasKey("siteOccupied", 3)) return;
         controllerViewChosen = true;
         // Terrain crossing a declared cell is a conflict, not evidence of an installed machine.
         view = metadata.getInteger("siteMatchingSolid") > 0 || metadata.getInteger("siteHatches") > 0
@@ -273,8 +274,10 @@ final class HologramUiPreview {
         }
         return switch (id) {
             case 10, 11, 14, 15 -> true;
-            case 12 -> layer > ui.session.state().controllerView(view).minY;
-            case 13 -> layer < ui.session.state().controllerView(view).maxY;
+            case 12 -> layer > ui.session.state()
+                .controllerView(view).minY;
+            case 13 -> layer < ui.session.state()
+                .controllerView(view).maxY;
             default -> false;
         };
     }
@@ -345,8 +348,28 @@ final class HologramUiPreview {
         }
         ui.canvas.button(10, 38, 55, 44, 17, new String[] { "目标", "现场", "差分" }[this.view], true, mx, my);
         ui.canvas.button(11, 84, 55, 50, 17, this.allLayers ? "全部层" : "层 " + this.layer, true, mx, my);
-        ui.canvas.button(12, 136, 55, 20, 17, "−", this.layer > ui.session.state().controllerView(view).minY, mx, my);
-        ui.canvas.button(13, 158, 55, 22, 17, "+", this.layer < ui.session.state().controllerView(view).maxY, mx, my);
+        ui.canvas.button(
+            12,
+            136,
+            55,
+            20,
+            17,
+            "−",
+            this.layer > ui.session.state()
+                .controllerView(view).minY,
+            mx,
+            my);
+        ui.canvas.button(
+            13,
+            158,
+            55,
+            22,
+            17,
+            "+",
+            this.layer < ui.session.state()
+                .controllerView(view).maxY,
+            mx,
+            my);
         if (this.selection.size() > 0)
             ui.canvas.text("选中 " + this.selection.size() + " 格 · G 移动轴", 186, 61, 122, 0xffe59b);
         if (this.selection.canSelectRelated(ui.session.state())) ui.canvas.text("全选 T", 264, 61, 42, 0xc99bff);
@@ -592,9 +615,11 @@ final class HologramUiPreview {
             for (Control control : ui.canvas.controls()) if (control.contains(mx, my)) return null;
         HologramState.Cell cell = ui.session.selectedCell();
         int planeY = !this.allLayers ? ui.session.state().data.getInteger("y") + this.layer
-            : cell == null
-                ? ui.session.state().data.getInteger("y") + (ui.session.state().controllerView(view).minY + ui.session.state().controllerView(view).maxY) / 2
-                : cell.y;
+            : cell == null ? ui.session.state().data.getInteger("y") + (ui.session.state()
+                .controllerView(view).minY
+                + ui.session.state()
+                    .controllerView(view).maxY)
+                / 2 : cell.y;
         int[] voxel = HologramRenderer.editor()
             .pickEmptyVoxel(ui.session.state(), mx, my, planeY);
         if (voxel == null) return null;
@@ -870,7 +895,8 @@ final class HologramUiPreview {
         boolean renderedEmpty = HologramRenderer.editor().showEmptyCells;
         return HologramRenderer.editor()
             .previewPresented(
-                ui.session.state().controllerView(view),
+                ui.session.state()
+                    .controllerView(view),
                 x,
                 y,
                 width,
@@ -891,7 +917,8 @@ final class HologramUiPreview {
         if (ui.library.openingLocalSource()) return navigableOpening() != null;
         HologramState displayed = HologramRenderer.previewDisplayState();
         return previewInputOpen() && displayed != null
-            && displayed.identity == ui.session.state().controllerView(view).identity;
+            && displayed.identity == ui.session.state()
+                .controllerView(view).identity;
     }
 
     private ViewportCoordinates openingViewport() {
@@ -908,14 +935,16 @@ final class HologramUiPreview {
 
     private HologramOpeningPreview navigableOpening() {
         HologramOpeningPreview opening = ui.library.openingCamera();
-        return opening != null && previewContextOpen() && !ui.library.browsePreviewActive()
+        return opening != null && previewContextOpen()
+            && !ui.library.browsePreviewActive()
             && !HologramBackgroundTasks.busy()
             && !ui.tools.modalOpen()
             && !ui.tools.pointerCaptured()
             && !ui.shell.hasModalPanel()
             && opening.navigable(
-                HologramRenderer.previewDisplayState(), openingViewport(), HologramTextures.resourceGeneration())
-                    ? opening : null;
+                HologramRenderer.previewDisplayState(),
+                openingViewport(),
+                HologramTextures.resourceGeneration()) ? opening : null;
     }
 
     private boolean previewInputOpen() {
@@ -923,8 +952,7 @@ final class HologramUiPreview {
     }
 
     private boolean previewContextOpen() {
-        return !ui.session.areaImporting()
-            && ui.ae.aeReviewNavigation() == null
+        return !ui.session.areaImporting() && ui.ae.aeReviewNavigation() == null
             && ui.ae.aeReview() == null
             && !ui.config.drawer()
             && !ui.position.positionDrawer()
@@ -1177,7 +1205,8 @@ final class HologramUiPreview {
             HologramOpeningPreview opening = navigableOpening();
             if (opening != null) opening.move(seconds, right, forward);
         } else {
-            double extent = HologramRenderer.editor().previewExtent();
+            double extent = HologramRenderer.editor()
+                .previewExtent();
             camera.move(yaw, seconds, right, forward, Math.max(2, extent * .6) / zoom);
         }
     }
@@ -1547,7 +1576,8 @@ final class HologramUiPreview {
                 }
                 return true;
             }
-            if (blueprintCameraControls() && previewNavigable() && ui.canvas.inViewport(mx, my)
+            if (blueprintCameraControls() && previewNavigable()
+                && ui.canvas.inViewport(mx, my)
                 && !previewNavigationBlockedAt(mx, my)) {
                 beginNavigation(mx, my, button);
                 return true;
@@ -1775,8 +1805,7 @@ final class HologramUiPreview {
             return;
         }
         if (button == 0 && this.dragging) {
-            if (blueprintCameraControls() && !moved)
-                dragBlueprint(ui.canvas.localX(x), ui.canvas.localY(y));
+            if (blueprintCameraControls() && !moved) dragBlueprint(ui.canvas.localX(x), ui.canvas.localY(y));
             int target = HologramRenderer.pick(ui.canvas.localX(x), ui.canvas.localY(y));
             if (!this.moved && ui.canvas.inViewport(ui.canvas.localX(x), ui.canvas.localY(y))
                 && !ui.preview.previewBlockedAt(ui.canvas.localX(x), ui.canvas.localY(y))
@@ -2106,8 +2135,15 @@ final class HologramUiPreview {
         selection.load(indices, -1, ui.session.state().cells.size());
         selected = selection.first();
         allLayers = state.getBoolean("allLayers");
-        layer = allLayers ? ui.session.state().controllerView(view).maxY
-            : Math.max(ui.session.state().controllerView(view).minY, Math.min(ui.session.state().controllerView(view).maxY, state.getInteger("layer")));
+        layer = allLayers ? ui.session.state()
+            .controllerView(view).maxY
+            : Math.max(
+                ui.session.state()
+                    .controllerView(view).minY,
+                Math.min(
+                    ui.session.state()
+                        .controllerView(view).maxY,
+                    state.getInteger("layer")));
         controllerViewChosen = true;
         view = state.getInteger("view");
         yaw = state.getDouble("yaw");

@@ -40,8 +40,11 @@ final class HologramCutTransformMetadata {
         int up = pose.direction(UP);
         boolean verticalAxis = up == UP || up == DOWN;
         boolean nibble = meta >= 0 && meta <= 15;
-        if (block == Blocks.chest || block == Blocks.trapped_chest || block == Blocks.furnace
-            || block == Blocks.lit_furnace || block == Blocks.ender_chest || block == Blocks.wall_sign) {
+        if (block == Blocks.chest || block == Blocks.trapped_chest
+            || block == Blocks.furnace
+            || block == Blocks.lit_furnace
+            || block == Blocks.ender_chest
+            || block == Blocks.wall_sign) {
             // Their top/lid/presentation is always upright and only four headings are encoded.
             return up == UP && horizontalFace(meta) ? pose.direction(meta) : UNREPRESENTABLE;
         }
@@ -66,8 +69,10 @@ final class HologramCutTransformMetadata {
             if (!nibble || up != UP || face == UP || face > 5) return UNREPRESENTABLE;
             return (meta & 8) | pose.direction(face);
         }
-        if (block == Blocks.dispenser || block == Blocks.dropper || block == Blocks.piston
-            || block == Blocks.sticky_piston || block == Blocks.piston_head) {
+        if (block == Blocks.dispenser || block == Blocks.dropper
+            || block == Blocks.piston
+            || block == Blocks.sticky_piston
+            || block == Blocks.piston_head) {
             int face = meta & 7;
             return nibble && face < 6 ? (meta & 8) | pose.direction(face) : UNREPRESENTABLE;
         }

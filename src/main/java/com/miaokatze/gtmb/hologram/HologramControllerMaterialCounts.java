@@ -86,8 +86,11 @@ public final class HologramControllerMaterialCounts {
 
     public static boolean sourceWater(HologramControllerTarget.Cell cell, int x, int y, int z) {
         return cell != null && cell.kind() == HologramControllerTarget.TargetKind.MACHINE_SOURCE_WATER
-            && cell.targetBlock() == Blocks.water && cell.wantMeta() == 0
-            && cell.x() - x == cell.dx() && cell.y() - y == cell.dy() && cell.z() - z == cell.dz();
+            && cell.targetBlock() == Blocks.water
+            && cell.wantMeta() == 0
+            && cell.x() - x == cell.dx()
+            && cell.y() - y == cell.dy()
+            && cell.z() - z == cell.dz();
     }
 
     /** Owner-thread builder adds one contribution in the capture's existing settled target loop. */
@@ -98,7 +101,8 @@ public final class HologramControllerMaterialCounts {
 
         public void add(HologramControllerTarget.Cell cell, int x, int y, int z) {
             if (cell.anchor() || "minecraft:air".equals(cell.wantId())
-                || cell.x() == x && cell.y() == y && cell.z() == z || sourceWater(cell, x, y, z)) return;
+                || cell.x() == x && cell.y() == y && cell.z() == z
+                || sourceWater(cell, x, y, z)) return;
             add(material(cell.targetStack(), cell.targetBlock() == null || cell.missingBlock() || cell.iconOnly()));
         }
 

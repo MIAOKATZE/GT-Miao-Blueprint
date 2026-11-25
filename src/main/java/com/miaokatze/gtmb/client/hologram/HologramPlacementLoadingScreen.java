@@ -16,7 +16,6 @@ final class HologramPlacementLoadingScreen extends HologramMuiScreen {
 
     private final HologramOwnedPlacementProgress.Ticket owned;
 
-
     HologramPlacementLoadingScreen(HologramOwnedPlacementProgress.Ticket owned) {
         super("placement_validation", 430, 164);
         this.owned = java.util.Objects.requireNonNull(owned);
@@ -41,25 +40,23 @@ final class HologramPlacementLoadingScreen extends HologramMuiScreen {
     @Override
     protected void buildPanel() {
         HologramMuiTheme.header(panel(), () -> HologramUiText.projector("library.placement_title"), 430);
-        panel().child(
-            HologramMuiTheme
-                .label(
-                    this::placementStatus,
-                    14, 42, 402, 32, HologramMuiTheme.TEXT));
+        panel().child(HologramMuiTheme.label(this::placementStatus, 14, 42, 402, 32, HologramMuiTheme.TEXT));
         panel().child(
             new Progress().pos(14, 82)
                 .size(402, 38));
         panel().child(
             HologramMuiTheme.button(
-                () -> HologramUiText.projector(HologramBackgroundTasks.ownedPlacementContinuing(owned)
-                    ? "library.placement_background" : "library.placement_return"),
+                () -> HologramUiText.projector(
+                    HologramBackgroundTasks.ownedPlacementContinuing(owned) ? "library.placement_background"
+                        : "library.placement_return"),
                 112,
                 128,
                 206,
                 20,
                 () -> {
                     HologramBackgroundTasks.leaveOwnedPlacement(owned);
-                    Minecraft.getMinecraft().displayGuiScreen(null);
+                    Minecraft.getMinecraft()
+                        .displayGuiScreen(null);
                 }));
     }
 

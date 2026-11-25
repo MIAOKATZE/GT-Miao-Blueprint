@@ -10,6 +10,7 @@ import java.util.function.BooleanSupplier;
 public final class HologramOwnedPlacementProgress {
 
     public enum Phase {
+
         PREPARING("placement.prepare"),
         PREFLIGHT("placement.plan"),
         ADMISSION("placement.admission"),
@@ -23,7 +24,10 @@ public final class HologramOwnedPlacementProgress {
     }
 
     public enum Outcome {
-        SUCCESS, NO_WORK, FAILED, CANCELLED
+        SUCCESS,
+        NO_WORK,
+        FAILED,
+        CANCELLED
     }
 
     /** Construct only from the authenticated committed-result protocol, never a prepare, ready, or slice ACK. */
@@ -97,7 +101,9 @@ public final class HologramOwnedPlacementProgress {
     }
 
     boolean observe(Ticket expected, Binding binding, Phase next, long serial, long done, long total, long now) {
-        if (!active(expected, binding) || next == null || serial < 0 || !counts(done, total)
+        if (!active(expected, binding) || next == null
+            || serial < 0
+            || !counts(done, total)
             || next.ordinal() < phase.ordinal()
             || next == phase && !advance(serial, done, total)) return false;
         phase = next;
@@ -106,28 +112,40 @@ public final class HologramOwnedPlacementProgress {
         return true;
     }
 
-    boolean finish(Ticket expected, Binding binding, long serial, Outcome outcome, long placed,
-        long alreadySatisfied, long total, long now) {
+    boolean finish(Ticket expected, Binding binding, long serial, Outcome outcome, long placed, long alreadySatisfied,
+        long total, long now) {
         if (outcome != Outcome.FAILED && outcome != Outcome.CANCELLED) return false;
         return finishResult(expected, binding, serial, outcome, placed, alreadySatisfied, total, now);
     }
 
     boolean acceptCommit(Ticket expected, Binding binding, CommitReceipt receipt, long now) {
-        if (receipt == null || expected == null || !expected.request.equals(receipt.request())
+        if (receipt == null || expected == null
+            || !expected.request.equals(receipt.request())
             || receipt.outcome() != Outcome.SUCCESS && receipt.outcome() != Outcome.NO_WORK) return false;
-        return finishResult(expected, binding, receipt.sequence(), receipt.outcome(), receipt.placed(),
-            receipt.alreadySatisfied(), receipt.total(), now);
+        return finishResult(
+            expected,
+            binding,
+            receipt.sequence(),
+            receipt.outcome(),
+            receipt.placed(),
+            receipt.alreadySatisfied(),
+            receipt.total(),
+            now);
     }
 
     private boolean finishResult(Ticket expected, Binding binding, long serial, Outcome outcome, long placed,
         long alreadySatisfied, long total, long now) {
-        if (!active(expected, binding) || serial < 0 || outcome == null
-            || placed < 0 || alreadySatisfied < 0 || total < placed
+        if (!active(expected, binding) || serial < 0
+            || outcome == null
+            || placed < 0
+            || alreadySatisfied < 0
+            || total < placed
             || alreadySatisfied > total - placed) return false;
         long done = placed + alreadySatisfied;
         boolean successfulResult = outcome == Outcome.SUCCESS || outcome == Outcome.NO_WORK;
-        if (phase == Phase.EXECUTING && (serial <= sequence
-            || (successfulResult || done != 0 || total != 0) && !advance(serial, done, total))) return false;
+        if (phase == Phase.EXECUTING
+            && (serial <= sequence || (successfulResult || done != 0 || total != 0) && !advance(serial, done, total)))
+            return false;
         // The authoritative terminal can arrive before executing progress. Earlier phase-local sequences are unrelated.
         if (outcome == Outcome.SUCCESS && (placed == 0 || done != total)) return false;
         if (outcome == Outcome.NO_WORK && (placed != 0 || done != total)) return false;

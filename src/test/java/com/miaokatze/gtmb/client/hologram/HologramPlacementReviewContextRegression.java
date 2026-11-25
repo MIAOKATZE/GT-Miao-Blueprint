@@ -14,7 +14,8 @@ public final class HologramPlacementReviewContextRegression {
     private HologramPlacementReviewContextRegression() {}
 
     public static void main(String[] args) throws Exception {
-        if (!com.miaokatze.gtmb.testutil.MinecraftTestBootstrap.enter(HologramPlacementReviewContextRegression.class, args)) return;
+        if (!com.miaokatze.gtmb.testutil.MinecraftTestBootstrap
+            .enter(HologramPlacementReviewContextRegression.class, args)) return;
         run();
     }
 

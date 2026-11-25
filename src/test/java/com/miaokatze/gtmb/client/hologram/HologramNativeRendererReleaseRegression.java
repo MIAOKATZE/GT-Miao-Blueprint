@@ -55,11 +55,13 @@ public final class HologramNativeRendererReleaseRegression {
                     HologramClient.clearProjection();
                     verify(a, "groupA", aBounds);
                     verify(b, "groupB", bBounds);
-                    if (field("structureBoundsState").get(editor) != null || field("structureBoundsState").get(browse) != null
+                    if (field("structureBoundsState").get(editor) != null
+                        || field("structureBoundsState").get(browse) != null
                         || field("cachedStructureBounds").get(editor) == b.nativeViewport.structureBounds
                         || field("cachedStructureBounds").get(browse) == b.nativeViewport.structureBounds)
                         throw new AssertionError("released renderer retained its previous blueprint");
-                    System.out.println("GTMB_NATIVE_RENDERER_RELEASE_PASS 2 snapshots, editor+browse, replacement, repeated world cleanup");
+                    System.out.println(
+                        "GTMB_NATIVE_RENDERER_RELEASE_PASS 2 snapshots, editor+browse, replacement, repeated world cleanup");
                 } finally {
                     second.closeNative();
                 }
@@ -68,7 +70,7 @@ public final class HologramNativeRendererReleaseRegression {
             }
         } finally {
             try (Stream<Path> paths = Files.walk(root)) {
-                for (Path path : (Iterable<Path>)paths.sorted(Comparator.reverseOrder())::iterator) Files.delete(path);
+                for (Path path : (Iterable<Path>) paths.sorted(Comparator.reverseOrder())::iterator) Files.delete(path);
             }
         }
     }
@@ -77,19 +79,37 @@ public final class HologramNativeRendererReleaseRegression {
         var lib = new HologramClientLibrary(root);
         Files.createDirectories(lib.directory());
         String cell = "{\"block\":\"minecraft:stone\",\"item\":\"minecraft:stone\",\"count\":1,"
-            + "\"y\":0,\"z\":0,\"structureIds\":[\"" + group + "\"],\"x\":";
-        String json = "{\"schema\":2,\"blueprint\":{\"id\":\"" + ID + "\",\"name\":\"Preview fixture\","
-            + "\"cells\":[" + cell + "-1}," + cell + x + "}]}}";
-        HologramBlueprintArtifact.writePair(lib.directory().resolve(ID + ".json"), json.getBytes(StandardCharsets.UTF_8),
+            + "\"y\":0,\"z\":0,\"structureIds\":[\""
+            + group
+            + "\"],\"x\":";
+        String json = "{\"schema\":2,\"blueprint\":{\"id\":\"" + ID
+            + "\",\"name\":\"Preview fixture\","
+            + "\"cells\":["
+            + cell
+            + "-1},"
+            + cell
+            + x
+            + "}]}}";
+        HologramBlueprintArtifact.writePair(
+            lib.directory()
+                .resolve(ID + ".json"),
+            json.getBytes(StandardCharsets.UTF_8),
             NativeBlueprintCodecRegression.png());
         var prepared = lib.prepareNativeUpgrade(ID, () -> true);
         HologramNativeBlueprintStorage.activate(lib.directory(), prepared, prepared.revision, () -> true);
-        return HologramLocalBlueprintWorkspace.openNativeEditorSource(new HologramClientLibrary(root).readPrivateEditorSource(ID), ID);
+        return HologramLocalBlueprintWorkspace
+            .openNativeEditorSource(new HologramClientLibrary(root).readPrivateEditorSource(ID), ID);
     }
 
     private static HologramState view(HologramLocalBlueprintDocument doc) throws Exception {
-        return HologramLocalBlueprintWorkspace.nativeView(doc.nativeEditorMetadata(), doc.nativeDraft(),
-            new HologramNativeViewport.Index(doc.nativeDraft().space(), () -> true), null);
+        return HologramLocalBlueprintWorkspace.nativeView(
+            doc.nativeEditorMetadata(),
+            doc.nativeDraft(),
+            new HologramNativeViewport.Index(
+                doc.nativeDraft()
+                    .space(),
+                () -> true),
+            null);
     }
 
     private static int[] expected(HologramState state, String group) {
@@ -115,7 +135,8 @@ public final class HologramNativeRendererReleaseRegression {
         Method build = MiaoVisonLiteRenderer.class.getDeclaredMethod("buildStructureBoxes", HologramState.class);
         build.setAccessible(true);
         build.invoke(renderer, state);
-        if (!((Map<?, ?>)field("structureBoxes").get(renderer)).keySet().equals(state.nativeViewport.structureBounds.keySet())
+        if (!((Map<?, ?>) field("structureBoxes").get(renderer)).keySet()
+            .equals(state.nativeViewport.structureBounds.keySet())
             || field("cachedStructureBounds").get(renderer) != state.nativeViewport.structureBounds)
             throw new AssertionError("fixture did not exercise the renderer's real native snapshot bounds");
     }

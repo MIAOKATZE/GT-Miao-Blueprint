@@ -188,7 +188,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     private static final Set<Coordinate> worldOutlineCells = new HashSet<>();
     private static int worldIndex;
     private static boolean localWorldRegions;
-    private static java.util.Iterator<Map.Entry<HologramRegionCache.Key,List<HologramState.Cell>>> pendingRegions;
+    private static java.util.Iterator<Map.Entry<HologramRegionCache.Key, List<HologramState.Cell>>> pendingRegions;
     private static long registryGeneration;
 
     private HologramState boundsState;
@@ -234,10 +234,11 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         if (state == owner) return true;
         if (state.data.getBoolean("localPreview") || owner.data.getBoolean("localPreview")
             || !state.session.equals(owner.session)
-            || !state.data.getString("generation").equals(owner.data.getString("generation"))) return false;
+            || !state.data.getString("generation")
+                .equals(owner.data.getString("generation")))
+            return false;
         for (String key : new String[] { "planRevision", "placementReviewNonce", "editorWorkspaceEpoch", "dimension",
-            "x", "y", "z" })
-            if (state.data.getLong(key) != owner.data.getLong(key)) return false;
+            "x", "y", "z" }) if (state.data.getLong(key) != owner.data.getLong(key)) return false;
         return true;
     }
 
@@ -279,8 +280,12 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         if (released != null && com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.isDebugEnabled()) {
             com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.debug(
                 "GTMB preview.release view={} native={} revision={} request={} cells={} groups={}",
-                browseViewport ? "library" : cleanCapture ? "capture" : "editor", released.nativeViewport != null,
-                released.data.getLong("planRevision"), released.data.getLong("uiSequence"), released.cells.size(), groups);
+                browseViewport ? "library" : cleanCapture ? "capture" : "editor",
+                released.nativeViewport != null,
+                released.data.getLong("planRevision"),
+                released.data.getLong("uiSequence"),
+                released.cells.size(),
+                groups);
         }
     }
 
@@ -318,10 +323,12 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             if (localWorldRegions) {
                 // A validated patch owns a new authoritative region directory; a mere status
                 // update usually shares the exact old one. Never restart an all-cell world index.
-                boolean follows=next.follows(previous) && !localRenderMetadataChanged(previous,next);
-                if(!follows || previous.regions!=next.regions || next.changedIndices.length!=0 || !next.changedPreviousCells.isEmpty()){
+                boolean follows = next.follows(previous) && !localRenderMetadataChanged(previous, next);
+                if (!follows || previous.regions != next.regions
+                    || next.changedIndices.length != 0
+                    || !next.changedPreviousCells.isEmpty()) {
                     clearWorldGroups();
-                    if(follows) localWorldRegions=seedLocalWorldRegions(next,worldLayer,true);
+                    if (follows) localWorldRegions = seedLocalWorldRegions(next, worldLayer, true);
                 }
             } else if (worldIndex != previous.cells.size()) {
                 // A metadata-only publication shares the unfinished occupancy index, including its cursor.
@@ -1214,11 +1221,16 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             if (!browseViewport && state.data.getBoolean("localStandardController") && !state.cells.isEmpty())
                 com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.info(
                     "Controller preview stage=render-ready generation={} view={} scope={} cells={} prepared={} published={} visible={} faces={} nativeModels={} elapsedMs={}",
-                    state.data.getString("generation"), view,
+                    state.data.getString("generation"),
+                    view,
                     state.data.getBoolean("controllerSiteDisplay") ? "installed" : "target",
-                    state.cells.size(), previewPreparation.completed,
-                    previewPreparation.projection.published, visibleCellCount, cachedFaces.size(),
-                    nativePreviewCells.size(), (System.nanoTime() - previewPreparation.startedAt) / 1_000_000L);
+                    state.cells.size(),
+                    previewPreparation.completed,
+                    previewPreparation.projection.published,
+                    visibleCellCount,
+                    cachedFaces.size(),
+                    nativePreviewCells.size(),
+                    (System.nanoTime() - previewPreparation.startedAt) / 1_000_000L);
             com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.loadStage(
                 com.miaokatze.gtmb.hologram.HologramRuntimeMetrics.LoadStage.CLIENT_RENDER_READY,
                 state.data,
@@ -1558,7 +1570,6 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             cell.dz - frame.pose.anchorZ() - .5);
     }
 
-
     double[] project(double dx, double dy, double dz) {
         return presentedFrame == null ? new double[] { 0, 0 } : presentedFrame.projectScreen(dx, dy, dz);
     }
@@ -1598,7 +1609,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             structureBoundsState = state;
             cachedStructureBounds = structureBounds(state);
             missingStructures.clear();
-            if(state.nativeViewport!=null)missingStructures.addAll(state.nativeViewport.missingStructures);
+            if (state.nativeViewport != null) missingStructures.addAll(state.nativeViewport.missingStructures);
             else if (!cachedStructureBounds.isEmpty()) for (HologramState.Cell cell : state.cells)
                 if (cell.sourceMissing) missingStructures.addAll(cell.structureIds);
         }
@@ -1628,7 +1639,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
 
     /** Pure shared-wall bounds calculation; one cell can extend several structures without duplicate mesh cells. */
     Map<String, int[]> structureBounds(HologramState state) {
-        if (state.nativeViewport!=null) return state.nativeViewport.structureBounds;
+        if (state.nativeViewport != null) return state.nativeViewport.structureBounds;
         if (state.structureMembers.isEmpty()
             || (state.structureMembers.size() == 1 && state.structureMembers.containsKey("")))
             return java.util.Collections.emptyMap();
@@ -1713,7 +1724,9 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
     private int pickTargetIndex(int index) {
         if (!presentedState.data.getBoolean("controllerSiteDisplay")) return index;
         HologramState target = controllerSitePickTarget;
-        return target != null && target.controllerView(1) == presentedState ? presentedState.matchingIndex(target, index) : -1;
+        return target != null && target.controllerView(1) == presentedState
+            ? presentedState.matchingIndex(target, index)
+            : -1;
     }
 
     private static Face nearestFace(List<Face> faces, int x, int y, boolean includeEmpty) {
@@ -2743,10 +2756,14 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         double px = camera.lastTickPosX + (camera.posX - camera.lastTickPosX) * partialTicks;
         double py = camera.lastTickPosY + (camera.posY - camera.lastTickPosY) * partialTicks;
         double pz = camera.lastTickPosZ + (camera.posZ - camera.lastTickPosZ) * partialTicks;
-        long registry=HologramNativeRenderRegistry.generation();
-        if (worldState != state || worldLayer != projectionLayer || registryGeneration!=registry) {
-            if(registryGeneration!=registry){HologramPreviewAssets.active().clear();HologramTextures.begin(state);}
-            registryGeneration=registry;
+        long registry = HologramNativeRenderRegistry.generation();
+        if (worldState != state || worldLayer != projectionLayer || registryGeneration != registry) {
+            if (registryGeneration != registry) {
+                HologramPreviewAssets.active()
+                    .clear();
+                HologramTextures.begin(state);
+            }
+            registryGeneration = registry;
             clearWorldGroups();
             worldState = state;
             worldLayer = projectionLayer;
@@ -2778,7 +2795,7 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
             sy = unrotated[1] + .5 + pivot[1];
             sz = unrotated[2] + .5 + pivot[2];
         }
-        if(localWorldRegions&&pendingRegions!=null)discoverWorldRegions(state,sx,sy,sz,deadline);
+        if (localWorldRegions && pendingRegions != null) discoverWorldRegions(state, sx, sy, sz, deadline);
         List<WorldGroup> candidates = worldSpatialIndex.select(sx, sy, sz, range);
         GL11.glPushAttrib(GL11.GL_ALL_ATTRIB_BITS);
         GL11.glPushMatrix();
@@ -2895,7 +2912,8 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         worldOccluders.clear();
         worldOutlineCells.clear();
         worldIndex = 0;
-        localWorldRegions = false;pendingRegions=null;
+        localWorldRegions = false;
+        pendingRegions = null;
     }
 
     /** Cached geometry calls this tiny list, so a local lock changes color without rebuilding the blueprint. */
@@ -2978,45 +2996,60 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
 
     /** Seed the small authoritative region directory, not the contents of all regions. */
     private static boolean seedLocalWorldRegions(HologramState state, int layer) {
-        return seedLocalWorldRegions(state,layer,false);
+        return seedLocalWorldRegions(state, layer, false);
     }
-    private static boolean seedLocalWorldRegions(HologramState state,int layer,boolean validatedDirectory) {
-        if ((!state.completeBaseline() && !validatedDirectory)
-            || state.data.getBoolean("displayPartial")
-            || state.nativeViewport == null && state.cells.size() < LOCAL_WORLD_MIN_CELLS && state.regions.regions.size()<=EAGER_REGION_DIRECTORY
+
+    private static boolean seedLocalWorldRegions(HologramState state, int layer, boolean validatedDirectory) {
+        if ((!state.completeBaseline() && !validatedDirectory) || state.data.getBoolean("displayPartial")
+            || state.nativeViewport == null && state.cells.size() < LOCAL_WORLD_MIN_CELLS
+                && state.regions.regions.size() <= EAGER_REGION_DIRECTORY
             || !"local-preview".equals(state.data.getString("session"))
             || !state.data.getBoolean("localPreview")
             || !state.data.getBoolean("virtual")
             || !state.data.getBoolean("virtualPlacement")
             || state.data.getInteger("mode") == 2) return false;
-        if(state.regions.regions.size()>EAGER_REGION_DIRECTORY){
-            pendingRegions=state.regions.regions.entrySet().iterator();return true;
+        if (state.regions.regions.size() > EAGER_REGION_DIRECTORY) {
+            pendingRegions = state.regions.regions.entrySet()
+                .iterator();
+            return true;
         }
-        for(var entry:state.regions.regions.entrySet()) materializeRegion(entry.getKey(),entry.getValue());
+        for (var entry : state.regions.regions.entrySet()) materializeRegion(entry.getKey(), entry.getValue());
         return true;
     }
 
-    private static WorldGroup materializeRegion(HologramRegionCache.Key key,List<HologramState.Cell> cells){
-        if(cells==null)return null;
-        Coordinate id=coordinate(key.x,key.y,key.z);WorldGroup group=worldGroups.get(id);if(group!=null)return group;
-        group=new WorldGroup(key.x<<4,key.y<<4,key.z<<4);group.localSource=cells;
-        worldGroups.put(id,group);worldSpatialIndex.add(group.x,group.y,group.z,group);return group;
+    private static WorldGroup materializeRegion(HologramRegionCache.Key key, List<HologramState.Cell> cells) {
+        if (cells == null) return null;
+        Coordinate id = coordinate(key.x, key.y, key.z);
+        WorldGroup group = worldGroups.get(id);
+        if (group != null) return group;
+        group = new WorldGroup(key.x << 4, key.y << 4, key.z << 4);
+        group.localSource = cells;
+        worldGroups.put(id, group);
+        worldSpatialIndex.add(group.x, group.y, group.z, group);
+        return group;
     }
 
-    /** Prioritize the camera's neighborhood, not the first file row. Drain only a bounded
-     * number of remaining directory records per frame, leaving time for actual visible geometry. */
-    private static void discoverWorldRegions(HologramState state,double sx,double sy,double sz,long deadline){
-        var bounds=state.regions.bounds();
-        int x=(int)Math.floor(Math.max(bounds[0],Math.min(bounds[3],sx)))>>4;
-        int y=(int)Math.floor(Math.max(bounds[1],Math.min(bounds[4],sy)))>>4;
-        int z=(int)Math.floor(Math.max(bounds[2],Math.min(bounds[5],sz)))>>4;
-        for(int dx=-1;dx<=1;dx++)for(int dy=-1;dy<=1;dy++)for(int dz=-1;dz<=1;dz++){
-            var k=new HologramRegionCache.Key(x+dx,y+dy,z+dz);materializeRegion(k,state.regions.regions.get(k));
+    /**
+     * Prioritize the camera's neighborhood, not the first file row. Drain only a bounded
+     * number of remaining directory records per frame, leaving time for actual visible geometry.
+     */
+    private static void discoverWorldRegions(HologramState state, double sx, double sy, double sz, long deadline) {
+        var bounds = state.regions.bounds();
+        int x = (int) Math.floor(Math.max(bounds[0], Math.min(bounds[3], sx))) >> 4;
+        int y = (int) Math.floor(Math.max(bounds[1], Math.min(bounds[4], sy))) >> 4;
+        int z = (int) Math.floor(Math.max(bounds[2], Math.min(bounds[5], sz))) >> 4;
+        for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++) {
+            var k = new HologramRegionCache.Key(x + dx, y + dy, z + dz);
+            materializeRegion(k, state.regions.regions.get(k));
         }
-        long end=Math.min(deadline,System.nanoTime()+300_000L);
-        for(int count=0;pendingRegions!=null&&count<128&&System.nanoTime()<end;count++){
-            if(!pendingRegions.hasNext()){pendingRegions=null;break;}
-            var entry=pendingRegions.next();materializeRegion(entry.getKey(),entry.getValue());
+        long end = Math.min(deadline, System.nanoTime() + 300_000L);
+        for (int count = 0; pendingRegions != null && count < 128 && System.nanoTime() < end; count++) {
+            if (!pendingRegions.hasNext()) {
+                pendingRegions = null;
+                break;
+            }
+            var entry = pendingRegions.next();
+            materializeRegion(entry.getKey(), entry.getValue());
         }
     }
 
@@ -3029,8 +3062,10 @@ final class MiaoVisonLiteRenderer implements AutoCloseable {
         for (int dx = -1; dx <= 1; dx++) for (int dy = -1; dy <= 1; dy++) for (int dz = -1; dz <= 1; dz++) {
             if (dx != 0 && dy != 0 && dz != 0) continue;
             WorldGroup region = worldGroups.get(coordinate(gx + dx, gy + dy, gz + dz));
-            if(region==null&&pendingRegions!=null){var k=new HologramRegionCache.Key(gx+dx,gy+dy,gz+dz);
-                region=materializeRegion(k,state.regions.regions.get(k));}
+            if (region == null && pendingRegions != null) {
+                var k = new HologramRegionCache.Key(gx + dx, gy + dy, gz + dz);
+                region = materializeRegion(k, state.regions.regions.get(k));
+            }
             if (region == null) continue; // Absent in the authoritative directory, not merely unindexed.
             while (region.localCursor < region.localSource.size()) {
                 if (System.nanoTime() >= deadline) return false;

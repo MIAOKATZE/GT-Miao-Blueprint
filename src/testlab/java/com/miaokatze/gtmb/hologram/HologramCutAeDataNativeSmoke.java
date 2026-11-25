@@ -299,8 +299,11 @@ public final class HologramCutAeDataNativeSmoke {
         oracle.setTag("entry", entry.copy());
         NBTTagCompound paste = request("paste");
         paste.setString("id", captured.getString("id"));
-        require(paste.getString("id").equals(entry.getString("id")) && entry.hasKey("sequence", 4)
-            && entry.getLong("sequence") > 0, "exact ordinary AE data clipboard sequence");
+        require(
+            paste.getString("id")
+                .equals(entry.getString("id")) && entry.hasKey("sequence", 4)
+                && entry.getLong("sequence") > 0,
+            "exact ordinary AE data clipboard sequence");
         paste.setLong("entrySequence", entry.getLong("sequence"));
         paste.setInteger("originX", TARGET_X);
         paste.setInteger("originY", Y);

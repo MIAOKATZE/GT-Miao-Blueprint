@@ -4,12 +4,8 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.lang.reflect.Field;
-import java.nio.file.Files;
-import java.nio.file.Path;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.Collections;
 import java.util.List;
 import java.util.Queue;
 import java.util.UUID;
@@ -20,20 +16,14 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import net.minecraft.entity.player.EntityPlayerMP;
-import net.minecraft.init.Blocks;
-import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.nbt.NBTTagList;
-import net.minecraft.network.INetHandler;
 
 import com.miaokatze.gtmb.testutil.SimpleAssert;
-import com.miaokatze.gtmb.util.ServerTaskScheduler;
 
 import cpw.mods.fml.common.gameevent.TickEvent;
 import cpw.mods.fml.common.network.simpleimpl.IMessage;
-import cpw.mods.fml.common.network.simpleimpl.MessageContext;
 import cpw.mods.fml.common.network.simpleimpl.SimpleNetworkWrapper;
-import cpw.mods.fml.relauncher.Side;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 
@@ -349,18 +339,22 @@ public final class HologramSnapshotPublishRegression {
         s.batchSeq = 1;
         SimpleAssert.that(HologramSnapshots.deferDirectOpening(s), "one unsuccessful batch can still yield");
         s.batchSeq = 2;
-        SimpleAssert.that(!HologramSnapshots.deferDirectOpening(s) && !s.directOpeningPending,
+        SimpleAssert.that(
+            !HologramSnapshots.deferDirectOpening(s) && !s.directOpeningPending,
             "second unsuccessful batch releases pending opening");
         s.directOpeningPending = true;
         s.completed = 1;
-        SimpleAssert.that(!HologramSnapshots.deferDirectOpening(s) && !s.directOpeningPending,
+        SimpleAssert.that(
+            !HologramSnapshots.deferDirectOpening(s) && !s.directOpeningPending,
             "successful work releases pending opening immediately");
         s.directOpeningPending = true;
         s.completed = 0;
         s.job = 5;
-        SimpleAssert.that(!HologramSnapshots.deferDirectOpening(s) && !s.directOpeningPending,
+        SimpleAssert.that(
+            !HologramSnapshots.deferDirectOpening(s) && !s.directOpeningPending,
             "terminal work does not wait for a successful write");
-        player.playerNetServerHandler.netManager.channel().close();
+        player.playerNetServerHandler.netManager.channel()
+            .close();
     }
 
     private static void rejectedActionsPreserveSnapshotOwner(EntityPlayerMP player, Queue<Runnable> work)

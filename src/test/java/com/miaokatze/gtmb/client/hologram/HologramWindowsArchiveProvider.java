@@ -58,7 +58,8 @@ final class HologramWindowsArchiveProvider {
     }
 
     /** The driver uses one stable Java reference per actual acquired OS handle. */
-    interface Handle {}
+    interface Handle {
+    }
 
     /**
      * A vetted implementation must issue only a single exact-component RootDirectory-relative FILE_OPEN with
@@ -124,8 +125,8 @@ final class HologramWindowsArchiveProvider {
         final int links;
         final long size;
 
-        Info(Handle handle, Identity identity, Kind kind, boolean localDisk, boolean reparse,
-            boolean unavailableData, int links, long size) {
+        Info(Handle handle, Identity identity, Kind kind, boolean localDisk, boolean reparse, boolean unavailableData,
+            int links, long size) {
             this.handle = handle;
             this.identity = identity;
             this.kind = kind;
@@ -177,8 +178,7 @@ final class HologramWindowsArchiveProvider {
      * live until borrowers return and signals retirement via current. Owner queries should be side-effect-free.
      * This provider never closes the borrowed root.
      */
-    static BorrowedRoot borrow(Driver driver, Handle exactVettedDirectory, Identity expected,
-        BooleanSupplier current) {
+    static BorrowedRoot borrow(Driver driver, Handle exactVettedDirectory, Identity expected, BooleanSupplier current) {
         return new BorrowedRoot(driver, exactVettedDirectory, expected, current);
     }
 
@@ -187,7 +187,8 @@ final class HologramWindowsArchiveProvider {
     }
 
     /** An independent file ID may further restrict the loan. Local selection need not reopen a path to invent one. */
-    static Held open(BorrowedRoot root, String leaf, Identity expectedFile, BooleanSupplier current) throws IOException {
+    static Held open(BorrowedRoot root, String leaf, Identity expectedFile, BooleanSupplier current)
+        throws IOException {
         if (!validLeaf(leaf)) throw new Rejected(Refusal.INVALID_LEAF);
         if (root == null || root.driver == null) throw new Rejected(Refusal.NO_PROVIDER);
         if (current == null) throw new Rejected(Refusal.STALE_OWNER);
@@ -239,14 +240,18 @@ final class HologramWindowsArchiveProvider {
 
     private static boolean validLeaf(String leaf) {
         if (!HologramArchiveNamedImport.validLeaf(leaf)) return false;
-        String stem = leaf.substring(0, leaf.indexOf('.')).trim().toUpperCase(Locale.ROOT);
+        String stem = leaf.substring(0, leaf.indexOf('.'))
+            .trim()
+            .toUpperCase(Locale.ROOT);
         if ("CON".equals(stem) || "PRN".equals(stem) || "AUX".equals(stem) || "NUL".equals(stem)) return false;
         return stem.length() != 4 || !(stem.startsWith("COM") || stem.startsWith("LPT"))
             || "0123456789¹²³".indexOf(stem.charAt(3)) < 0;
     }
 
     private static void checkRelation(Opened proof, Handle parent, String component, OpenMode mode) throws IOException {
-        if (proof == null || proof.child == null || proof.parent != parent || !component.equals(proof.component)
+        if (proof == null || proof.child == null
+            || proof.parent != parent
+            || !component.equals(proof.component)
             || proof.mode != mode) throw new Rejected(Refusal.WRONG_HANDLE);
     }
 
@@ -459,13 +464,19 @@ final class HologramWindowsArchiveProvider {
         }
 
         @Override
-        public int write(ByteBuffer ignored) { throw new NonWritableChannelException(); }
+        public int write(ByteBuffer ignored) {
+            throw new NonWritableChannelException();
+        }
 
         @Override
-        public SeekableByteChannel truncate(long ignored) { throw new NonWritableChannelException(); }
+        public SeekableByteChannel truncate(long ignored) {
+            throw new NonWritableChannelException();
+        }
 
         @Override
-        public boolean isOpen() { return open; }
+        public boolean isOpen() {
+            return open;
+        }
 
         @Override
         public void close() throws IOException {
@@ -526,7 +537,8 @@ final class HologramWindowsArchiveProvider {
 
         private IOException closeAfter(Exception problem) {
             IOException failure = problem instanceof Rejected || problem instanceof ClosedChannelException
-                ? (IOException) problem : new Rejected(Refusal.IO, problem);
+                ? (IOException) problem
+                : new Rejected(Refusal.IO, problem);
             retire(failure);
             return failure;
         }

@@ -174,8 +174,6 @@ final class HologramResourcePlanner {
         return new PlanTask(staging, false);
     }
 
-
-
     /** Native capture finalization reuses the same bounded planner on the owning server thread. */
     static PlanTask beginCapturePlan(HologramSession staging) {
         return beginCapturePlan(staging, false);
@@ -206,8 +204,6 @@ final class HologramResourcePlanner {
             this.observeNativeItems = observeNativeItems;
             capture = s.capture;
         }
-
-
 
         HologramNativeItemBill nativeItemBill() {
             return done() && resources != null ? resources.nativeItemBill() : null;
@@ -293,7 +289,8 @@ final class HologramResourcePlanner {
                 if (!HologramSessionPolicy.authoring(s)) classifier = new HologramPlanClassifier(s);
                 s.cellIndices.clear();
                 // The ordinary native lane cannot replace blocks; its admission independently checks exact empty cells.
-                stage = !HologramNativeCompactStart.ordinary(s) && (!capture.projectionOnly || s.mode == 1) && !s.virtual
+                stage = !HologramNativeCompactStart.ordinary(s) && (!capture.projectionOnly || s.mode == 1)
+                    && !s.virtual
                     && s.machine != null
                     && s.target != null
                     && !capture.pending

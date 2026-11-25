@@ -6,8 +6,6 @@ package com.miaokatze.gtmb.hologram;
 import java.io.IOException;
 import java.lang.reflect.Field;
 import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.UUID;
 
@@ -17,7 +15,6 @@ import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.entity.player.InventoryPlayer;
 import net.minecraft.entity.player.PlayerCapabilities;
-import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.NBTTagCompound;
 
@@ -33,19 +30,24 @@ public final class HologramUnsavedPlacementRegression {
 
     public static void main(String[] args) throws Exception {
         if (!MinecraftTestBootstrap.enter(HologramUnsavedPlacementRegression.class, args)) return;
-        try(Fixture fixture=new Fixture()){
-            for(boolean attached:new boolean[]{false,true}){
-                if(attached)fixture.attach(false,0);
-                HologramSession source=fixture.session;
-                long before=source.planRevision;
-                var request=fixture.request();
-                request.setString("op","placeCurrentBlueprint");
-                HologramActionDispatcher.handle(fixture.player,request);
-                SimpleAssert.that(HologramWorkspace.find(fixture.player.getUniqueID())==source
-                    && !source.virtualPlacement && source.job==0&&source.planRevision==before
-                    && source.status.contains("保存为原生"),"retired formal draft button does not create a job");
+        try (Fixture fixture = new Fixture()) {
+            for (boolean attached : new boolean[] { false, true }) {
+                if (attached) fixture.attach(false, 0);
+                HologramSession source = fixture.session;
+                long before = source.planRevision;
+                var request = fixture.request();
+                request.setString("op", "placeCurrentBlueprint");
+                HologramActionDispatcher.handle(fixture.player, request);
+                SimpleAssert.that(
+                    HologramWorkspace.find(fixture.player.getUniqueID()) == source && !source.virtualPlacement
+                        && source.job == 0
+                        && source.planRevision == before
+                        && source.status.contains("保存为原生"),
+                    "retired formal draft button does not create a job");
             }
-        }finally{HologramWorkspace.clear();}
+        } finally {
+            HologramWorkspace.clear();
+        }
     }
 
     private static final class Fixture implements AutoCloseable {

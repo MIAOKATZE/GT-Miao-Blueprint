@@ -264,8 +264,8 @@ final class HologramExecutionReview {
             }
             if (!work.drain(slice, s.work::add)) return false;
             if (!HologramBuildPreparation.aeReady(s)) return true;
-            HologramMaterialWorkflow.validateConfirmation(s,approval);
-            if (HologramPlacementJobs.approvedMaterials(s,approval)) {
+            HologramMaterialWorkflow.validateConfirmation(s, approval);
+            if (HologramPlacementJobs.approvedMaterials(s, approval)) {
                 HologramPlacementJobs.begin(s, approval);
                 if (s.job == 1) s.blueprintAwaitingConfirmation = false;
             }

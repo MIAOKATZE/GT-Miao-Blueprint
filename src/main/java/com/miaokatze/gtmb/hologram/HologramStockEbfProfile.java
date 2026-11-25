@@ -69,20 +69,41 @@ final class HologramStockEbfProfile {
     private static final String COIL_CHANNEL = "coil";
 
     enum Part {
-        CONTROLLER, TOP, BOTTOM, MUFFLER, COIL, AIR
+        CONTROLLER,
+        TOP,
+        BOTTOM,
+        MUFFLER,
+        COIL,
+        AIR
     }
 
-    enum CellState { MATCH, EMPTY, BLOCKED }
+    enum CellState {
+        MATCH,
+        EMPTY,
+        BLOCKED
+    }
 
-    enum FinalSeal { EXACT, DEPENDENCY_CHANGED, CANDIDATE_UNCERTAIN }
+    enum FinalSeal {
+        EXACT,
+        DEPENDENCY_CHANGED,
+        CANDIDATE_UNCERTAIN
+    }
 
-    enum CandidateState { ORIGINAL_AIR, OWNED, UNCERTAIN }
+    enum CandidateState {
+        ORIGINAL_AIR,
+        OWNED,
+        UNCERTAIN
+    }
 
     @Desugar
     private record Row(Part part, int a, int b, int c, IStructureElement<?> root) {}
 
     private enum Role {
-        ENERGY, INPUT, OUTPUT, MAINTENANCE, MUFFLER
+        ENERGY,
+        INPUT,
+        OUTPUT,
+        MAINTENANCE,
+        MUFFLER
     }
 
     /** The first profile only preserves exact already-installed roles. This does not authorize installing a hatch. */
@@ -108,8 +129,11 @@ final class HologramStockEbfProfile {
         IStructureElement<?> leaf, HatchElementBuilder<?> builder, int hint) {
 
         boolean current() {
-            return branches.length == 2 && branches[0] == adder && branches[1] == leaf
-                && builder.getCasingIndex() == CASING_META && builder.getHint() == hint && !builder.isExclusive();
+            return branches.length == 2 && branches[0] == adder
+                && branches[1] == leaf
+                && builder.getCasingIndex() == CASING_META
+                && builder.getHint() == hint
+                && !builder.isExclusive();
         }
     }
 
@@ -119,7 +143,8 @@ final class HologramStockEbfProfile {
 
         boolean fields(World world) {
             return linked(tile, machine, selection.id, world, x, y, z) && type.matches(machine)
-                && GregTechAPI.METATILEENTITIES[selection.id] == prototype && type.matches(prototype)
+                && GregTechAPI.METATILEENTITIES[selection.id] == prototype
+                && type.matches(prototype)
                 && tile.getFrontFacing() == ForgeDirection.getOrientation(selection.facing);
         }
     }
@@ -165,8 +190,12 @@ final class HologramStockEbfProfile {
         }
 
         boolean boundSession(HologramSession session) {
-            return session.target == controller && session.machine == machine && session.libraryWorld == world
-                && session.player.worldObj == world && session.x == x && session.y == y && session.z == z
+            return session.target == controller && session.machine == machine
+                && session.libraryWorld == world
+                && session.player.worldObj == world
+                && session.x == x
+                && session.y == y
+                && session.z == z
                 && session.facing == facing.ordinal()
                 && coilMetadata(session.main, session.channels) == coilMeta();
         }
@@ -197,14 +226,15 @@ final class HologramStockEbfProfile {
 
         CellState classify(int index, int cx, int cy, int cz) {
             Row row = row(index, cx, cy, cz);
-            if (row == null || !linksCurrent() || !HologramWorldFlow.worldPosition(cx, cy, cz, world.getHeight())
+            if (row == null || !linksCurrent()
+                || !HologramWorldFlow.worldPosition(cx, cy, cz, world.getHeight())
                 || !world.blockExists(cx, cy, cz)) return CellState.BLOCKED;
             Block block = world.getBlock(cx, cy, cz);
             var tile = world.getTileEntity(cx, cy, cz);
             for (HatchPin hatch : hatches) {
                 if (cx == hatch.x && cy == hatch.y && cz == hatch.z)
-                    return block == profile.machines && tile == hatch.tile && hatch.fields(world)
-                        ? CellState.MATCH : CellState.BLOCKED;
+                    return block == profile.machines && tile == hatch.tile && hatch.fields(world) ? CellState.MATCH
+                        : CellState.BLOCKED;
             }
             if (tile != null || row.part == Part.MUFFLER) return CellState.BLOCKED;
             if (row.part == Part.AIR) return block == Blocks.air ? CellState.MATCH : CellState.BLOCKED;
@@ -240,7 +270,8 @@ final class HologramStockEbfProfile {
         /** Repeat this pure half after any callback-capable world reads; a task must also recheck its own lease. */
         boolean linksCurrent() {
             if (!profile.declarationCurrent() || !linked(controller, machine, CONTROLLER, world, x, y, z)
-                || machine.mMachine || machine.getExtendedFacing() != facing) return false;
+                || machine.mMachine
+                || machine.getExtendedFacing() != facing) return false;
             for (HatchPin hatch : hatches) if (!hatch.fields(world)) return false;
             return true;
         }
@@ -266,25 +297,33 @@ final class HologramStockEbfProfile {
                 if (!HologramWorldFlow.worldPosition(cx, cy, cz, world.getHeight()) || !world.blockExists(cx, cy, cz)
                     || world.getTileEntity(cx, cy, cz) != null) return false;
                 Block existing = world.getBlock(cx, cy, cz);
-                if (existing != Blocks.air && (existing != profile.coils
-                    || world.getBlockMetadata(cx, cy, cz) != coilMeta())) return false;
+                if (existing != Blocks.air
+                    && (existing != profile.coils || world.getBlockMetadata(cx, cy, cz) != coilMeta())) return false;
             }
             return true;
         }
 
         /** One capped backpack pass. Stock is an upper-bound admission proof, never a reservation or a debit. */
         boolean fullyFunded(InventoryPlayer inventory, int toolSlot, HologramMaterials.Settings settings) {
-            if (inventory == null || inventory.player == null || inventory.player.inventory != inventory
+            if (inventory == null || inventory.player == null
+                || inventory.player.inventory != inventory
                 || inventory.currentItem != toolSlot
-                || toolSlot < 0 || toolSlot >= 9 || settings == null
-                || !HologramProjectedMainPolicy.eligibleSelected(settings) || !linksCurrent()) return false;
+                || toolSlot < 0
+                || toolSlot >= 9
+                || settings == null
+                || !HologramProjectedMainPolicy.eligibleSelected(settings)
+                || !linksCurrent()) return false;
             var main = inventory.mainInventory;
             if (main == null || main.length != 36) return false;
-            if(settings.containers || settings.me) {
+            if (settings.containers || settings.me) {
                 if (!(inventory.player instanceof net.minecraft.entity.player.EntityPlayerMP actor)) return false;
-                var available=new HologramMaterials.Context(actor,settings,toolSlot);
-                return available.count(casing,CASING_BOUND)>=CASING_BOUND && available.count(coil,COIL_BOUND)>=COIL_BOUND
-                    && inventory.player.inventory==inventory && inventory.mainInventory==main && inventory.currentItem==toolSlot && linksCurrent();
+                var available = new HologramMaterials.Context(actor, settings, toolSlot);
+                return available.count(casing, CASING_BOUND) >= CASING_BOUND
+                    && available.count(coil, COIL_BOUND) >= COIL_BOUND
+                    && inventory.player.inventory == inventory
+                    && inventory.mainInventory == main
+                    && inventory.currentItem == toolSlot
+                    && linksCurrent();
             }
             int casingLeft = CASING_BOUND, coilLeft = COIL_BOUND;
             for (int i = 0; i < main.length; i++) {
@@ -293,8 +332,11 @@ final class HologramStockEbfProfile {
                 if (HologramValues.same(stack, casing)) casingLeft -= Math.min(casingLeft, stack.stackSize);
                 else if (HologramValues.same(stack, coil)) coilLeft -= Math.min(coilLeft, stack.stackSize);
             }
-            return casingLeft == 0 && coilLeft == 0 && inventory.player.inventory == inventory
-                && inventory.mainInventory == main && inventory.currentItem == toolSlot && linksCurrent();
+            return casingLeft == 0 && coilLeft == 0
+                && inventory.player.inventory == inventory
+                && inventory.mainInventory == main
+                && inventory.currentItem == toolSlot
+                && linksCurrent();
         }
     }
 
@@ -324,8 +366,8 @@ final class HologramStockEbfProfile {
         static RawFence capture(Qualified site, WorldServer world) {
             var provider = world.theChunkProviderServer;
             if (provider == null || provider.getClass() != ChunkProviderServer.class
-                || provider.loadedChunkHashMap == null || provider.loadedChunkHashMap.getClass() != LongHashMap.class)
-                return null;
+                || provider.loadedChunkHashMap == null
+                || provider.loadedChunkHashMap.getClass() != LongHashMap.class) return null;
             var fence = new RawFence(site, world, provider);
             fence.tiles[0] = fence.position(site.x, site.y, site.z);
             for (int i = 0; i < site.hatches.length; i++) {
@@ -343,14 +385,19 @@ final class HologramStockEbfProfile {
         }
 
         boolean backingCurrent() {
-            return worldProvider != null && world.theChunkProviderServer == provider && world.provider == worldProvider
-                && provider.worldObj == world && provider.loadedChunkHashMap == loaded;
+            return worldProvider != null && world.theChunkProviderServer == provider
+                && world.provider == worldProvider
+                && provider.worldObj == world
+                && provider.loadedChunkHashMap == loaded;
         }
 
         boolean identityCurrent() {
-            return machineId != 0 && casingId != 0 && coilId != 0 && Block.getBlockById(0) == Blocks.air
+            return machineId != 0 && casingId != 0
+                && coilId != 0
+                && Block.getBlockById(0) == Blocks.air
                 && Block.getBlockById(machineId) == site.profile.machines
-                && Block.getBlockById(casingId) == site.profile.casing && Block.getBlockById(coilId) == site.profile.coils;
+                && Block.getBlockById(casingId) == site.profile.casing
+                && Block.getBlockById(coilId) == site.profile.coils;
         }
 
         RawPosition position(int x, int y, int z) {
@@ -360,9 +407,13 @@ final class HologramStockEbfProfile {
             RawChunk bound = chunks.get(key);
             if (bound == null) {
                 Object value = loaded.getValueByKey(key);
-                if (!(value instanceof Chunk chunk) || chunk.getClass() != Chunk.class || !chunk.isChunkLoaded
-                    || chunk.worldObj != world || chunk.xPosition != cx || chunk.zPosition != cz
-                    || chunk.chunkTileEntityMap == null || chunk.chunkTileEntityMap.getClass() != HashMap.class) return null;
+                if (!(value instanceof Chunk chunk) || chunk.getClass() != Chunk.class
+                    || !chunk.isChunkLoaded
+                    || chunk.worldObj != world
+                    || chunk.xPosition != cx
+                    || chunk.zPosition != cz
+                    || chunk.chunkTileEntityMap == null
+                    || chunk.chunkTileEntityMap.getClass() != HashMap.class) return null;
                 var sections = chunk.getBlockStorageArray();
                 if (sections == null || sections.length != 16) return null;
                 bound = new RawChunk(key, chunk, sections, chunk.chunkTileEntityMap);
@@ -388,8 +439,8 @@ final class HologramStockEbfProfile {
     }
 
     @Desugar
-    private record RawChunk(long key, Chunk chunk, ExtendedBlockStorage[] sections, Map<ChunkPosition,
-        net.minecraft.tileentity.TileEntity> tiles) {}
+    private record RawChunk(long key, Chunk chunk, ExtendedBlockStorage[] sections,
+        Map<ChunkPosition, net.minecraft.tileentity.TileEntity> tiles) {}
 
     @Desugar
     private record RawCell(int block, int meta, net.minecraft.tileentity.TileEntity tile) {}
@@ -399,8 +450,10 @@ final class HologramStockEbfProfile {
 
         RawCell read(RawFence fence) {
             var chunk = bound.chunk;
-            if (!fence.backingCurrent() || fence.loaded.getValueByKey(bound.key) != chunk || !chunk.isChunkLoaded
-                || chunk.worldObj != fence.world || chunk.getBlockStorageArray() != bound.sections
+            if (!fence.backingCurrent() || fence.loaded.getValueByKey(bound.key) != chunk
+                || !chunk.isChunkLoaded
+                || chunk.worldObj != fence.world
+                || chunk.getBlockStorageArray() != bound.sections
                 || chunk.chunkTileEntityMap != bound.tiles) return null;
             var section = bound.sections[y >> 4];
             var tile = bound.tiles.get(new ChunkPosition(x, y, z));
@@ -409,8 +462,8 @@ final class HologramStockEbfProfile {
             var low = section.getBlockLSBArray();
             var high = section.getBlockMSBArray();
             var metadata = section.getMetadataArray();
-            if (low == null || low.length != 4096 || !sectionNibbles(metadata)
-                || high != null && !sectionNibbles(high)) return null;
+            if (low == null || low.length != 4096 || !sectionNibbles(metadata) || high != null && !sectionNibbles(high))
+                return null;
             int offset = ((y & 15) << 8) | (z << 4) | x;
             int id = low[offset] & 255;
             if (high != null) id |= nibble(high, offset) << 8;
@@ -418,7 +471,9 @@ final class HologramStockEbfProfile {
         }
 
         private static boolean sectionNibbles(NibbleArray data) {
-            return data != null && data.getClass() == NibbleArray.class && data.data != null && data.data.length == 2048;
+            return data != null && data.getClass() == NibbleArray.class
+                && data.data != null
+                && data.data.length == 2048;
         }
 
         private static int nibble(NibbleArray data, int offset) {
@@ -470,19 +525,43 @@ final class HologramStockEbfProfile {
         }
 
         boolean matches(HologramSession s, HologramCapture.Cell candidate, int index, ItemStack selected) {
-            return index == 0 && candidate == cell && candidate.block == block && candidate.meta == meta
-                && candidate.itemNbt.isEmpty() && candidate.tileNbt.isEmpty() && !candidate.userPosition
-                && !candidate.unknown && !candidate.anchor && s.stockNativePrivate && s.mode == 0 && s.scope == 0
-                && !s.virtual && s.target == site.controller && s.machine == site.machine && s.libraryWorld == site.world
-                && s.player.worldObj == site.world && s.x == site.x && s.y == site.y && s.z == site.z
-                && s.facing == site.facing.ordinal() && s.capture != null && s.capture.cells.size() == 1
-                && s.capture.cells.get(0) == cell && s.pins.get(0) == material && s.planTargets.size() == 1
-                && s.planTargets.get(0) == material && s.facingPins.isEmpty()
+            return index == 0 && candidate == cell
+                && candidate.block == block
+                && candidate.meta == meta
+                && candidate.itemNbt.isEmpty()
+                && candidate.tileNbt.isEmpty()
+                && !candidate.userPosition
+                && !candidate.unknown
+                && !candidate.anchor
+                && s.stockNativePrivate
+                && s.mode == 0
+                && s.scope == 0
+                && !s.virtual
+                && s.target == site.controller
+                && s.machine == site.machine
+                && s.libraryWorld == site.world
+                && s.player.worldObj == site.world
+                && s.x == site.x
+                && s.y == site.y
+                && s.z == site.z
+                && s.facing == site.facing.ordinal()
+                && s.capture != null
+                && s.capture.cells.size() == 1
+                && s.capture.cells.get(0) == cell
+                && s.pins.get(0) == material
+                && s.planTargets.size() == 1
+                && s.planTargets.get(0) == material
+                && s.facingPins.isEmpty()
                 && site.row(rowIndex, cell.x, cell.y, cell.z) == row
-                && site.profile.sealed[rowIndex] == row.root && site.linksCurrent()
-                && selected != null && !selected.hasTagCompound() && selected.stackSize == 1
+                && site.profile.sealed[rowIndex] == row.root
+                && site.linksCurrent()
+                && selected != null
+                && !selected.hasTagCompound()
+                && selected.stackSize == 1
                 && selected.getItem() == (row.part == Part.COIL ? site.profile.coilItem : site.profile.casingItem)
-                && selected.getItemDamage() == meta && material.stackSize == 1 && HologramValues.same(material, selected);
+                && selected.getItemDamage() == meta
+                && material.stackSize == 1
+                && HologramValues.same(material, selected);
         }
     }
 
@@ -522,9 +601,12 @@ final class HologramStockEbfProfile {
         var coils = GregTechAPI.sBlockCasings5;
         var machines = GregTechAPI.sBlockMachines;
         long revision = StructureSources.revision();
-        if (registered == null || registered.getClass() != MTEElectricBlastFurnace.class || machines == null
-            || casing == null || casing.getClass() != BlockCasings1.class
-            || coils == null || coils.getClass() != BlockCasings5.class
+        if (registered == null || registered.getClass() != MTEElectricBlastFurnace.class
+            || machines == null
+            || casing == null
+            || casing.getClass() != BlockCasings1.class
+            || coils == null
+            || coils.getClass() != BlockCasings5.class
             || StructureSources.hasSource(MTEElectricBlastFurnace.class)
             || BlueprintSnapshots.hasProcessors(BlueprintSnapshots.Stage.CAPTURE_COMPLETE)) return null;
         var prototype = (MTEElectricBlastFurnace) registered;
@@ -561,12 +643,27 @@ final class HologramStockEbfProfile {
             Chain top = chain(roles[Part.TOP.ordinal()], casing, 3);
             Chain bottom = chain(roles[Part.BOTTOM.ordinal()], casing, 1);
             HatchElementBuilder<?> muffler = hatchBuilder(roles[Part.MUFFLER.ordinal()], 2, true);
-            if (top == null || bottom == null || top.root == bottom.root || muffler == null
+            if (top == null || bottom == null
+                || top.root == bottom.root
+                || muffler == null
                 || !coilElement(roles[Part.COIL.ordinal()])) return null;
             Item casingItem = exactItem(casing, CASING_META), coilItem = exactItem(coils, 0);
             if (casingItem == null || coilItem == null || casingItem == coilItem) return null;
-            var result = new HologramStockEbfProfile(definition, prototype, casing, coils, machines, casingItem, coilItem,
-                elements, sealed, rows, top, bottom, muffler, revision);
+            var result = new HologramStockEbfProfile(
+                definition,
+                prototype,
+                casing,
+                coils,
+                machines,
+                casingItem,
+                coilItem,
+                elements,
+                sealed,
+                rows,
+                top,
+                bottom,
+                muffler,
+                revision);
             return result.declarationCurrent() ? result : null;
         } catch (ReflectiveOperationException | RuntimeException | LinkageError unsupported) {
             return null;
@@ -574,12 +671,17 @@ final class HologramStockEbfProfile {
     }
 
     /** No position/target DTO is consumed, and nothing outside the four roles plus exclusive muffler is opened. */
-    Qualified qualify(World world, BaseMetaTileEntity anchor, ExtendedFacing facing, int master, NBTTagCompound channels,
-        List<Installed> declaredHatches) {
-        if (world == null || anchor == null || anchor.getClass() != BaseMetaTileEntity.class || facing == null
-            || declaredHatches == null || declaredHatches.size() != REQUIRED_HATCHES || !declarationCurrent()
+    Qualified qualify(World world, BaseMetaTileEntity anchor, ExtendedFacing facing, int master,
+        NBTTagCompound channels, List<Installed> declaredHatches) {
+        if (world == null || anchor == null
+            || anchor.getClass() != BaseMetaTileEntity.class
+            || facing == null
+            || declaredHatches == null
+            || declaredHatches.size() != REQUIRED_HATCHES
+            || !declarationCurrent()
             || !(anchor.getMetaTileEntity() instanceof MTEElectricBlastFurnace machine)
-            || machine.getClass() != MTEElectricBlastFurnace.class || machine.mMachine
+            || machine.getClass() != MTEElectricBlastFurnace.class
+            || machine.mMachine
             || machine.getExtendedFacing() != facing) return null;
         int meta = coilMetadata(master, channels);
         if (meta < 0 || exactItem(coils, meta) != coilItem || exactItem(casing, CASING_META) != casingItem) return null;
@@ -607,21 +709,35 @@ final class HologramStockEbfProfile {
             if (!hatch.fields(world)) return null;
             pinned[type.role.ordinal()] = hatch;
         }
-        var result = new Qualified(this, world, anchor, machine, facing, x, y, z, pinned,
-            new ItemStack(casingItem, 1, CASING_META), new ItemStack(coilItem, 1, meta));
+        var result = new Qualified(
+            this,
+            world,
+            anchor,
+            machine,
+            facing,
+            x,
+            y,
+            z,
+            pinned,
+            new ItemStack(casingItem, 1, CASING_META),
+            new ItemStack(coilItem, 1, meta));
         return result.physicalCurrent() ? result : null;
     }
 
     boolean declarationCurrent() {
         if (sourceRevision != StructureSources.revision()
             || BlueprintSnapshots.hasProcessors(BlueprintSnapshots.Stage.CAPTURE_COMPLETE)
-            || GregTechAPI.METATILEENTITIES[CONTROLLER] != prototype || GregTechAPI.sBlockCasings1 != casing
-            || GregTechAPI.sBlockCasings5 != coils || GregTechAPI.sBlockMachines != machines
+            || GregTechAPI.METATILEENTITIES[CONTROLLER] != prototype
+            || GregTechAPI.sBlockCasings1 != casing
+            || GregTechAPI.sBlockCasings5 != coils
+            || GregTechAPI.sBlockMachines != machines
             || definition.getStructureFor(PIECE) != elements) return false;
         // Identity only: a substituted StructureLib element must not get equals() or any other callback.
         for (int i = 0; i < sealed.length; i++) if (elements[i] != sealed[i]) return false;
-        return top.current() && bottom.current() && muffler.getCasingIndex() == CASING_META
-            && muffler.getHint() == 2 && muffler.isExclusive();
+        return top.current() && bottom.current()
+            && muffler.getCasingIndex() == CASING_META
+            && muffler.getHint() == 2
+            && muffler.isExclusive();
     }
 
     static boolean validInstalled(List<Installed> choices) {
@@ -643,10 +759,14 @@ final class HologramStockEbfProfile {
 
     /** MUI chooses only unique already installed hatches on the pinned 3x4x3 EBF. It never scans the coil body. */
     static List<HologramStockNativeWire.EbfHatch> observedHatches(World world, TileEntity tile) {
-        if (world == null || !(tile instanceof BaseMetaTileEntity base) || tile.getClass() != BaseMetaTileEntity.class
-            || tile.isInvalid() || tile.getWorldObj() != world || base.getMetaTileID() != CONTROLLER
+        if (world == null || !(tile instanceof BaseMetaTileEntity base)
+            || tile.getClass() != BaseMetaTileEntity.class
+            || tile.isInvalid()
+            || tile.getWorldObj() != world
+            || base.getMetaTileID() != CONTROLLER
             || !(base.getMetaTileEntity() instanceof MTEElectricBlastFurnace machine)
-            || machine.getClass() != MTEElectricBlastFurnace.class || machine.mMachine
+            || machine.getClass() != MTEElectricBlastFurnace.class
+            || machine.mMachine
             || GregTechAPI.sBlockMachines == null
             || liveTile(world, base.xCoord, base.yCoord, base.zCoord, GregTechAPI.sBlockMachines) != base)
             return Collections.emptyList();
@@ -668,10 +788,21 @@ final class HologramStockEbfProfile {
             if (physical == null) continue;
             int id = physical.getMetaTileID();
             var type = hatchType(id);
-            if (type == null || !type.admits(part) || !type.matches(physical.getMetaTileEntity())
-                || found[type.role.ordinal()] != null || physical.isInvalid() || physical.getFrontFacing() == null
-                || physical.getFrontFacing().ordinal() >= 6) return Collections.emptyList();
-            found[type.role.ordinal()] = new HologramStockNativeWire.EbfHatch(a, b, c, id, physical.getFrontFacing().ordinal());
+            if (type == null || !type.admits(part)
+                || !type.matches(physical.getMetaTileEntity())
+                || found[type.role.ordinal()] != null
+                || physical.isInvalid()
+                || physical.getFrontFacing() == null
+                || physical.getFrontFacing()
+                    .ordinal() >= 6)
+                return Collections.emptyList();
+            found[type.role.ordinal()] = new HologramStockNativeWire.EbfHatch(
+                a,
+                b,
+                c,
+                id,
+                physical.getFrontFacing()
+                    .ordinal());
         }
         for (var hatch : found) if (hatch == null) return Collections.emptyList();
         return Collections.unmodifiableList(Arrays.asList(found));
@@ -681,7 +812,8 @@ final class HologramStockEbfProfile {
         if (master < 1 || master > 64 || channels == null) return -1;
         int signal = master;
         if (!channels.hasNoTags()) {
-            if (channels.func_150296_c().size() != 1 || !channels.hasKey(COIL_CHANNEL, 3)) return -1;
+            if (channels.func_150296_c()
+                .size() != 1 || !channels.hasKey(COIL_CHANNEL, 3)) return -1;
             signal = channels.getInteger(COIL_CHANNEL);
             if (signal < 1 || signal > 64) return -1;
         }
@@ -711,9 +843,15 @@ final class HologramStockEbfProfile {
         return null;
     }
 
-    private static boolean linked(BaseMetaTileEntity tile, IMetaTileEntity machine, int id, World world, int x, int y, int z) {
-        return !tile.isInvalid() && tile.getWorldObj() == world && tile.xCoord == x && tile.yCoord == y && tile.zCoord == z
-            && tile.getMetaTileID() == id && tile.getMetaTileEntity() == machine && machine.getBaseMetaTileEntity() == tile;
+    private static boolean linked(BaseMetaTileEntity tile, IMetaTileEntity machine, int id, World world, int x, int y,
+        int z) {
+        return !tile.isInvalid() && tile.getWorldObj() == world
+            && tile.xCoord == x
+            && tile.yCoord == y
+            && tile.zCoord == z
+            && tile.getMetaTileID() == id
+            && tile.getMetaTileEntity() == machine
+            && machine.getBaseMetaTileEntity() == tile;
     }
 
     private static BaseMetaTileEntity liveTile(World world, int x, int y, int z, Block machines) {
@@ -727,29 +865,39 @@ final class HologramStockEbfProfile {
         // Exact built-in shell classes/registry identities are the evidence. Do not ask the public adapter registry
         // whether it supports them: unrelated extensions may run code or mutate authority during that lookup.
         if (block == null || block.getClass() != BlockCasings1.class && block.getClass() != BlockCasings5.class
-            || block instanceof ICustomBlockSetting || block.hasTileEntity(meta)) return null;
+            || block instanceof ICustomBlockSetting
+            || block.hasTileEntity(meta)) return null;
         var item = Item.getItemFromBlock(block);
         String name = Block.blockRegistry.getNameForObject(block);
-        if (item == null || item.getClass() != ItemCasings.class || ((ItemCasings) item).blockCasings != block
-            || name == null || Block.blockRegistry.getObject(name) != block || Item.itemRegistry.getObject(name) != item
-            || Block.getBlockFromItem(item) != block || item.getMetadata(meta) != meta
-            || HologramMaterialDescriptor.hasExact(block) || HologramDecorMaterials.supports(block)) return null;
+        if (item == null || item.getClass() != ItemCasings.class
+            || ((ItemCasings) item).blockCasings != block
+            || name == null
+            || Block.blockRegistry.getObject(name) != block
+            || Item.itemRegistry.getObject(name) != item
+            || Block.getBlockFromItem(item) != block
+            || item.getMetadata(meta) != meta
+            || HologramMaterialDescriptor.hasExact(block)
+            || HologramDecorMaterials.supports(block)) return null;
         var sample = new ItemStack(item, 1, meta);
         return HologramGtswnPlacementMaterials.supplyKind(sample) < 0
             && !HologramGtswnPlacementMaterials.freeShell(block, sample) ? item : null;
     }
 
     private static Chain chain(IStructureElement<?> root, Block casing, int hint) throws ReflectiveOperationException {
-        if (!(root instanceof IStructureElementChain<?> stock)) return null;
+        if (!(root instanceof IStructureElementChain<?>stock)) return null;
         var branches = HologramDeclarationWrappers.nativeChainChildren(stock);
         if (branches == null || branches.length != 2) return null;
         var builder = hatchBuilder(branches[0], hint, false);
         var leaf = branches[1];
-        if (builder == null || leaf == null || leaf.getClass() != ((Object) StructureUtility.ofBlock(casing, CASING_META)).getClass()
+        if (builder == null || leaf == null
+            || leaf.getClass() != ((Object) StructureUtility.ofBlock(casing, CASING_META)).getClass()
             || HologramDeclarationWrappers.captured(leaf, "val$block") != casing
             || HologramDeclarationWrappers.captured(leaf, "val$defaultBlock") != casing
-            || !Integer.valueOf(CASING_META).equals(HologramDeclarationWrappers.captured(leaf, "val$meta"))
-            || !Integer.valueOf(CASING_META).equals(HologramDeclarationWrappers.captured(leaf, "val$defaultMeta"))) return null;
+            || !Integer.valueOf(CASING_META)
+                .equals(HologramDeclarationWrappers.captured(leaf, "val$meta"))
+            || !Integer.valueOf(CASING_META)
+                .equals(HologramDeclarationWrappers.captured(leaf, "val$defaultMeta")))
+            return null;
         return new Chain(root, branches, branches[0], leaf, builder, hint);
     }
 
@@ -757,9 +905,10 @@ final class HologramStockEbfProfile {
         throws ReflectiveOperationException {
         if (!from(element, HatchElementBuilder.class, "build")) return null;
         Object enclosing = HologramDeclarationWrappers.captured(element, "this$0");
-        if (!(enclosing instanceof HatchElementBuilder<?> builder) || enclosing.getClass() != HatchElementBuilder.class
-            || builder.getHint() != hint || builder.getCasingIndex() != CASING_META || builder.isExclusive() != exclusive)
-            return null;
+        if (!(enclosing instanceof HatchElementBuilder<?>builder) || enclosing.getClass() != HatchElementBuilder.class
+            || builder.getHint() != hint
+            || builder.getCasingIndex() != CASING_META
+            || builder.isExclusive() != exclusive) return null;
         return builder;
     }
 
@@ -768,7 +917,7 @@ final class HologramStockEbfProfile {
             || !COIL_CHANNEL.equals(HologramDeclarationWrappers.captured(element, "val$channel"))) return false;
         var active = HologramDeclarationWrappers.nativeBacking(element);
         return from(active, GTStructureUtility.class, "activeCoils")
-            && active instanceof GTStructureUtility.ProxyStructureElement<?, ?> stock
+            && active instanceof GTStructureUtility.ProxyStructureElement<?, ?>stock
             && from(stock.proxiedElement, GTStructureUtility.class, "ofCoil");
     }
 

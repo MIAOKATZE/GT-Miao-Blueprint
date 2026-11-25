@@ -1059,13 +1059,17 @@ final class HologramMaterialQuoteRegression {
     private static void indexedCoordinateQuotesMatchPriorAllocator(Item item) throws Exception {
         ItemStack nativeA = card(item, 10, ""), nativeB = card(item, 11, "");
         ItemStack opaque = card(item, 12, "");
-        opaque.getTagCompound().setString("privateConfig", "ab");
+        opaque.getTagCompound()
+            .setString("privateConfig", "ab");
         ItemStack otherOpaque = card(item, 12, "relative");
-        otherOpaque.getTagCompound().setString("privateConfig", "cd");
+        otherOpaque.getTagCompound()
+            .setString("privateConfig", "cd");
         ItemStack typed = card(item, 13, "absolute");
-        typed.getTagCompound().setString("x", "13");
+        typed.getTagCompound()
+            .setString("x", "13");
         ItemStack legacyMarker = card(item, 20, "");
-        legacyMarker.getTagCompound().setBoolean(HologramCoordinatePolicies.PAYMENT, true);
+        legacyMarker.getTagCompound()
+            .setBoolean(HologramCoordinatePolicies.PAYMENT, true);
         ItemStack unknown = card(item, 10, "unreviewed");
         var physical = Arrays.asList(nativeA, nativeA.copy(), nativeB, opaque);
         var repeated = legacy(card(item, 10, "absolute"), 1, 0, 0);
@@ -1085,7 +1089,9 @@ final class HologramMaterialQuoteRegression {
             Collections.shuffle(rows, new Random(seed));
             List<NBTTagCompound> priorCalls = new ArrayList<>(), indexedCalls = new ArrayList<>();
             var expected = priorCoordinateAllocation(rows, coordinateStock(physical, priorCalls));
-            var counter = new HologramMaterialQuote.QuoteCounter(rows, coordinateStock(physical, indexedCalls),
+            var counter = new HologramMaterialQuote.QuoteCounter(
+                rows,
+                coordinateStock(physical, indexedCalls),
                 ignored -> false);
             for (NBTTagCompound row : rows) require(
                 counter.count(row) == expected.get(row),
@@ -1104,8 +1110,8 @@ final class HologramMaterialQuoteRegression {
                 call.setLong("limit", limit);
                 calls.add(call);
                 long stock = 0;
-                for (ItemStack actual : physical) if (HologramCoordinatePolicies.paymentEquivalent(expected, actual))
-                    stock++;
+                for (ItemStack actual : physical)
+                    if (HologramCoordinatePolicies.paymentEquivalent(expected, actual)) stock++;
                 return Math.min(stock, limit);
             }
 
@@ -1130,9 +1136,9 @@ final class HologramMaterialQuoteRegression {
             Map<HologramBlueprintResources.ExactKey, List<NBTTagCompound>> pools = new LinkedHashMap<>();
             for (NBTTagCompound row : rows) {
                 ItemStack item = ItemStack.loadItemStackFromNBT(row);
-                if (HologramMaterialReservations.priority(item) == priority)
-                    pools.computeIfAbsent(HologramMaterialReservations.key(item, priority), ignored -> new ArrayList<>())
-                        .add(row);
+                if (HologramMaterialReservations.priority(item) == priority) pools
+                    .computeIfAbsent(HologramMaterialReservations.key(item, priority), ignored -> new ArrayList<>())
+                    .add(row);
             }
             for (List<NBTTagCompound> pool : pools.values()) {
                 ItemStack first = ItemStack.loadItemStackFromNBT(pool.get(0));
@@ -1145,7 +1151,8 @@ final class HologramMaterialQuoteRegression {
                         && HologramCoordinatePolicies.paymentEquivalent(first, ItemStack.loadItemStackFromNBT(row)))
                         protectedStock = Math.addExact(protectedStock, paid);
                 }
-                long remaining = Math.max(0L, stock.exact(first, Math.addExact(demand, protectedStock)) - protectedStock);
+                long remaining = Math
+                    .max(0L, stock.exact(first, Math.addExact(demand, protectedStock)) - protectedStock);
                 for (NBTTagCompound row : pool) {
                     long paid = Math.min(remaining, HologramMaterialQuote.quantity(row, "required"));
                     result.put(row, paid);
@@ -1198,7 +1205,8 @@ final class HologramMaterialQuoteRegression {
         NBTTagCompound strictB = legacy(card(item, 11, ""), Long.MAX_VALUE, 0, 0);
         NBTTagCompound matching = legacy(card(item, 12, "relative"), 1, 0, 0);
         ItemStack unrelated = card(item, 12, "relative");
-        unrelated.getTagCompound().setString("title", "Other configuration");
+        unrelated.getTagCompound()
+            .setString("title", "Other configuration");
         NBTTagCompound other = legacy(unrelated, 1, 0, 0);
         HologramMaterialQuote.ItemStock full = new HologramMaterialQuote.ItemStock() {
 
@@ -1212,10 +1220,14 @@ final class HologramMaterialQuoteRegression {
                 throw new AssertionError("Coordinate payments use exact stock");
             }
         };
-        var safe = new HologramMaterialQuote.QuoteCounter(Arrays.asList(strictA, strictB, other), full,
+        var safe = new HologramMaterialQuote.QuoteCounter(
+            Arrays.asList(strictA, strictB, other),
+            full,
             ignored -> false);
         require(safe.count(other) == 1, "overflow for an unused normalized key must not reject another pool");
-        var overflow = new HologramMaterialQuote.QuoteCounter(Arrays.asList(strictA, strictB, matching), full,
+        var overflow = new HologramMaterialQuote.QuoteCounter(
+            Arrays.asList(strictA, strictB, matching),
+            full,
             ignored -> false);
         try {
             overflow.count(matching);

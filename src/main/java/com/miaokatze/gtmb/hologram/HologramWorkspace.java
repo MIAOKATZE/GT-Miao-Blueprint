@@ -71,8 +71,10 @@ final class HologramWorkspace {
 
         private boolean transportCurrent() {
             return connection.playerEntity == player && player.playerNetServerHandler == connection
-                && connection.netManager == network && network.getNetHandler() == connection
-                && network.channel() == channel && channel.isOpen();
+                && connection.netManager == network
+                && network.getNetHandler() == connection
+                && network.channel() == channel
+                && channel.isOpen();
         }
     }
 
@@ -95,7 +97,8 @@ final class HologramWorkspace {
         if (channel == null || !channel.isOpen() || network.getNetHandler() != connection) return;
         UUID actor = player.getUniqueID();
         ActionEndpoint previous = ACTION_ENDPOINTS.get(actor);
-        boolean sameTransport = previous != null && previous.connection == connection && previous.network == network
+        boolean sameTransport = previous != null && previous.connection == connection
+            && previous.network == network
             && previous.channel == channel;
         WeakReference<EntityPlayerMP> predecessor = sameTransport ? previous.provisionalPredecessor : null;
         EntityPlayerMP installed = connection.playerEntity;
@@ -104,32 +107,38 @@ final class HologramWorkspace {
         if (installed != player) {
             if (respawn && installed != null && sameTransport && previous.player == installed)
                 provisional = new WeakReference<>(installed);
-            else if (dimensionChange && transferPending && previous.player == player)
-                provisional = predecessor;
+            else if (dimensionChange && transferPending && previous.player == player) provisional = predecessor;
             else return;
         } else if (transferPending && previous.player != player) {
             // An event for the old installed entity cannot overwrite the already-published successor.
             return;
         }
-        if (!dimensionChange && sameTransport && previous.player == player && previous.world == world
+        if (!dimensionChange && sameTransport
+            && previous.player == player
+            && previous.world == world
             && previous.dimension == player.dimension) return;
         HologramConstructionTaskGate gate = openConstructionRuntime();
         HologramConstructionTaskGate.Scope expected = previous != null && previous.constructionGate == gate
-            ? previous.constructionScope : null;
+            ? previous.constructionScope
+            : null;
         // Do not use the bare handler as the generation: all transport/world references can match after a round trip.
         HologramConstructionTaskGate.Scope scope = gate == null ? null
             : gate.bind(expected, actor, player, world, new Object());
         if (expected != null && scope == null) gate.revoke(expected);
         ACTION_ENDPOINTS.put(
-            actor, new ActionEndpoint(actor, player, world, connection, network, channel, provisional, gate, scope));
+            actor,
+            new ActionEndpoint(actor, player, world, connection, network, channel, provisional, gate, scope));
     }
 
     static void revokeActionEndpoint(EntityPlayerMP player) {
         UUID actor = player.getUniqueID();
         ActionEndpoint previous = ACTION_ENDPOINTS.get(actor);
-        if (previous != null && previous.player == player && previous.connection == player.playerNetServerHandler
-            && previous.network == previous.connection.netManager && previous.channel == previous.network.channel()
-            && ACTION_ENDPOINTS.remove(actor, previous) && previous.constructionScope != null
+        if (previous != null && previous.player == player
+            && previous.connection == player.playerNetServerHandler
+            && previous.network == previous.connection.netManager
+            && previous.channel == previous.network.channel()
+            && ACTION_ENDPOINTS.remove(actor, previous)
+            && previous.constructionScope != null
             && previous.constructionGate.onOwnerThread()) previous.constructionGate.revoke(previous.constructionScope);
     }
 
@@ -154,9 +163,10 @@ final class HologramWorkspace {
      * or grants authority to a stale endpoint. Keep the original gate and permit for later exact settlement.
      */
     static HologramConstructionTaskGate constructionGate(ActionEndpoint endpoint) {
-        if (endpoint == null || endpoint.constructionScope == null || !endpoint.constructionGate.onOwnerThread()
-            || !currentActionEndpoint(endpoint) || !endpoint.constructionGate.scopeCurrent(endpoint.constructionScope))
-            return null;
+        if (endpoint == null || endpoint.constructionScope == null
+            || !endpoint.constructionGate.onOwnerThread()
+            || !currentActionEndpoint(endpoint)
+            || !endpoint.constructionGate.scopeCurrent(endpoint.constructionScope)) return null;
         return endpoint.constructionGate;
     }
 
@@ -174,7 +184,8 @@ final class HologramWorkspace {
         if (reason != null) return reason;
         ActionEndpoint exact = ACTION_ENDPOINTS.get(actor);
         // Detached test/offline callers do not create a scope. Live requests check the existing authoritative journal.
-        return exact != null && exact.player == player && currentActionEndpoint(exact)
+        return exact != null && exact.player == player
+            && currentActionEndpoint(exact)
             && HologramConstructionJournal.pending(player) ? "有施工凭据待核定，未开始新操作" : null;
     }
 
@@ -204,23 +215,27 @@ final class HologramWorkspace {
         EntityPlayerMP player = sender.playerEntity;
         if (player == null) return null;
         ActionEndpoint endpoint = ACTION_ENDPOINTS.get(player.getUniqueID());
-        return endpoint != null && endpoint.player == player && endpoint.connection == sender
+        return endpoint != null && endpoint.player == player
+            && endpoint.connection == sender
             && endpoint.transportCurrent() ? endpoint : null;
     }
 
     static boolean currentActionEndpoint(ActionEndpoint endpoint) {
         return endpoint != null && ACTION_ENDPOINTS.get(endpoint.actor) == endpoint
-            && endpoint.player.worldObj == endpoint.world && endpoint.player.dimension == endpoint.dimension
+            && endpoint.player.worldObj == endpoint.world
+            && endpoint.player.dimension == endpoint.dimension
             && endpoint.transportCurrent();
     }
 
     private static final ClassValue<Boolean> EBF_RECEIPT_GETTER = new ClassValue<>() {
+
         @Override
         protected Boolean computeValue(Class<?> player) {
             try {
                 // The existing scoped ledger calls getEntityData when retiring its receipt. In EBF's
                 // final pure phase this must remain Forge Entity's normal stored-compound accessor.
-                return player.getMethod("getEntityData").getDeclaringClass() == Entity.class;
+                return player.getMethod("getEntityData")
+                    .getDeclaringClass() == Entity.class;
             } catch (NoSuchMethodException | SecurityException | LinkageError unknown) {
                 return false;
             }
@@ -230,26 +245,36 @@ final class HologramWorkspace {
     /** EBF's callback-free tail after live transport. Exact NetworkManager getters are just field reads. */
     static boolean ebfActionCurrentPure(ActionEndpoint endpoint, HologramConstructionTaskGate gate) {
         return endpoint != null && ACTION_ENDPOINTS.get(endpoint.actor) == endpoint
-            && endpoint.player.worldObj == endpoint.world && endpoint.player.dimension == endpoint.dimension
+            && endpoint.player.worldObj == endpoint.world
+            && endpoint.player.dimension == endpoint.dimension
             && endpoint.player.playerNetServerHandler == endpoint.connection
-            && endpoint.connection.playerEntity == endpoint.player && endpoint.connection.netManager == endpoint.network
-            && endpoint.network.getClass() == NetworkManager.class && endpoint.network.getNetHandler() == endpoint.connection
-            && endpoint.network.channel() == endpoint.channel && EBF_RECEIPT_GETTER.get(endpoint.player.getClass())
-            && gate != null && gate == endpoint.constructionGate
-            && gate == constructionRuntime && gate.onOwnerThread() && endpoint.constructionScope != null
+            && endpoint.connection.playerEntity == endpoint.player
+            && endpoint.connection.netManager == endpoint.network
+            && endpoint.network.getClass() == NetworkManager.class
+            && endpoint.network.getNetHandler() == endpoint.connection
+            && endpoint.network.channel() == endpoint.channel
+            && EBF_RECEIPT_GETTER.get(endpoint.player.getClass())
+            && gate != null
+            && gate == endpoint.constructionGate
+            && gate == constructionRuntime
+            && gate.onOwnerThread()
+            && endpoint.constructionScope != null
             && gate.scopeCurrent(endpoint.constructionScope);
     }
 
     /** Cut precommit tail: only owned fields and in-memory gate state, never transport or journal callbacks. */
     static boolean cutActionCurrentPure(ActionEndpoint endpoint) {
         if (endpoint == null || ACTION_ENDPOINTS.get(endpoint.actor) != endpoint
-            || endpoint.player.worldObj != endpoint.world || endpoint.player.dimension != endpoint.dimension
+            || endpoint.player.worldObj != endpoint.world
+            || endpoint.player.dimension != endpoint.dimension
             || endpoint.player.playerNetServerHandler != endpoint.connection
-            || endpoint.connection.playerEntity != endpoint.player || endpoint.connection.netManager != endpoint.network)
-            return false;
+            || endpoint.connection.playerEntity != endpoint.player
+            || endpoint.connection.netManager != endpoint.network) return false;
         HologramConstructionTaskGate gate = endpoint.constructionGate;
-        return gate != null && gate == constructionRuntime && gate.onOwnerThread()
-            && endpoint.constructionScope != null && gate.scopeCurrent(endpoint.constructionScope)
+        return gate != null && gate == constructionRuntime
+            && gate.onOwnerThread()
+            && endpoint.constructionScope != null
+            && gate.scopeCurrent(endpoint.constructionScope)
             && !gate.busy(endpoint.actor);
     }
 
@@ -369,8 +394,10 @@ final class HologramWorkspace {
         return true;
     }
 
-    /** Atomic on the existing server owner thread. Do not use callback-capable held/world getters between
-     * verifying the exact former seat (including revisions) and replacing it. This is not a presentation switch. */
+    /**
+     * Atomic on the existing server owner thread. Do not use callback-capable held/world getters between
+     * verifying the exact former seat (including revisions) and replacing it. This is not a presentation switch.
+     */
     static boolean stockNativePrivate(EntityPlayerMP player) {
         HologramSession current = find(player.getUniqueID());
         return current != null && current.player == player && current.stockNativePrivate;
@@ -378,16 +405,23 @@ final class HologramWorkspace {
 
     static boolean reserveStockNative(ActionEndpoint endpoint, HologramSession previous, long epoch, long plan,
         HologramSession target) {
-        if (constructionGate(endpoint) == null || target == null || !target.stockNativePrivate
+        if (constructionGate(endpoint) == null || target == null
+            || !target.stockNativePrivate
             || target.player != endpoint.player
-            || target.libraryWorld != endpoint.world || target.player.isDead || !target.player.capabilities.allowEdit)
-            return false;
+            || target.libraryWorld != endpoint.world
+            || target.player.isDead
+            || !target.player.capabilities.allowEdit) return false;
         var inventory = target.player.inventory;
         var slots = inventory.mainInventory;
         int slot = target.slot;
-        if (slot != inventory.currentItem || slot < 0 || slot >= slots.length || slots[slot] != target.boundTool
-            || target.boundTool == null || !target.boundTool.hasTagCompound()
-            || !target.toolId.equals(target.boundTool.getTagCompound().getString(HologramSessionKeys.TOOL_ID)))
+        if (slot != inventory.currentItem || slot < 0
+            || slot >= slots.length
+            || slots[slot] != target.boundTool
+            || target.boundTool == null
+            || !target.boundTool.hasTagCompound()
+            || !target.toolId.equals(
+                target.boundTool.getTagCompound()
+                    .getString(HologramSessionKeys.TOOL_ID)))
             return false;
         if (SESSIONS.get(endpoint.actor) != previous
             || previous != null && (previous.editorWorkspaceEpoch != epoch || previous.planRevision != plan))

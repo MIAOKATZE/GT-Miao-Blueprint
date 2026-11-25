@@ -73,9 +73,14 @@ public final class HologramLocalViewDisposalRegression {
             prepare.setAccessible(true);
             prepare.invoke(old, staleOpen, null, "", "");
 
-            int queued = worker.getQueue().size();
+            int queued = worker.getQueue()
+                .size();
             enqueue.invoke(old, staleOpen, fileWork(fileWorkType, oldCalls));
-            SimpleAssert.eq(queued, worker.getQueue().size(), "a late open callback cannot requeue old work");
+            SimpleAssert.eq(
+                queued,
+                worker.getQueue()
+                    .size(),
+                "a late open callback cannot requeue old work");
             enqueue.invoke(next, nextOpen, fileWork(fileWorkType, newCalls));
             enqueue.invoke(saving, durableSave, fileWork(fileWorkType, saveCalls));
             saveLibrary.retireLocalView();
@@ -104,7 +109,8 @@ public final class HologramLocalViewDisposalRegression {
         try {
             SimpleAssert.that(gate.await(5, TimeUnit.SECONDS), "local file worker rendezvous");
         } catch (InterruptedException interrupted) {
-            Thread.currentThread().interrupt();
+            Thread.currentThread()
+                .interrupt();
             throw new AssertionError("Interrupted local file worker rendezvous", interrupted);
         }
     }

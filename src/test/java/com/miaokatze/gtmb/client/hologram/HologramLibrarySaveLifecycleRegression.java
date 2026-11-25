@@ -728,23 +728,37 @@ public final class HologramLibrarySaveLifecycleRegression {
             receive.setAccessible(true);
             String id = "public_" + java.util.UUID.randomUUID();
             client.previewPublic(id, false);
-            SimpleAssert.that(client.browsePreviewStatus().contains("下载按钮"),
+            SimpleAssert.that(
+                client.browsePreviewStatus()
+                    .contains("下载按钮"),
                 "cold public browse shows the original explicit-download affordance");
             client.previewPublic(id, true);
-            SimpleAssert.that(client.status().contains("请手动下载"), "cold place asks for a deliberate local copy");
+            SimpleAssert.that(
+                client.status()
+                    .contains("请手动下载"),
+                "cold place asks for a deliberate local copy");
             java.util.concurrent.atomic.AtomicReference<String> coldEdit = new java.util.concurrent.atomic.AtomicReference<>();
-            client.openPublic(id, ignored -> { throw new AssertionError("no cold public editor bytes"); }, coldEdit::set);
-            SimpleAssert.that(coldEdit.get() != null && coldEdit.get().contains("客户端蓝图库"),
+            client
+                .openPublic(id, ignored -> { throw new AssertionError("no cold public editor bytes"); }, coldEdit::set);
+            SimpleAssert.that(
+                coldEdit.get() != null && coldEdit.get()
+                    .contains("客户端蓝图库"),
                 "cold public edit reports the real local-copy requirement");
-            SimpleAssert.that(wire.requests.isEmpty() && worker.getQueue().isEmpty() && client.backgroundTaskToken() == 0,
+            SimpleAssert.that(
+                wire.requests.isEmpty() && worker.getQueue()
+                    .isEmpty() && client.backgroundTaskToken() == 0,
                 "cold browse/place/edit literally send zero packets and acquire no transfer owner");
             library.rememberPublic("", id); // A legacy remembered public ID, not a downloaded local pair.
             Method recent = HologramLibraryClient.class.getDeclaredMethod("previewLastLocal");
             recent.setAccessible(true);
             recent.invoke(client);
-            worker.getQueue().remove().run();
+            worker.getQueue()
+                .remove()
+                .run();
             drainPublicCopyCallbacks(clientQueue);
-            SimpleAssert.that(wire.requests.isEmpty() && worker.getQueue().isEmpty() && client.backgroundTaskToken() == 0,
+            SimpleAssert.that(
+                wire.requests.isEmpty() && worker.getQueue()
+                    .isEmpty() && client.backgroundTaskToken() == 0,
                 "cold remembered public ID sends zero packets and never falls back to a different local source");
 
             byte[] json = ("{\"schema\":2,\"blueprint\":{\"schema\":2,\"id\":\"" + id
@@ -776,21 +790,27 @@ public final class HologramLibrarySaveLifecycleRegression {
                 set(client, "server", catalog);
                 client.downloadSelected();
                 long task = client.backgroundTaskToken();
-                SimpleAssert.that(task > 0 && wire.requests.size() == 1,
+                SimpleAssert.that(
+                    task > 0 && wire.requests.size() == 1,
                     "deliberate Download starts exactly one owned transfer");
                 NBTTagCompound request = wire.requests.remove(0);
                 SimpleAssert.that(
                     request.getLong("clientTaskToken") == task && id.equals(request.getString("id"))
-                        && HologramBusinessWirePolicy.PUBLIC_COPY.equals(
-                            request.getString(HologramBusinessWirePolicy.DOWNLOAD_INTENT_KEY))
-                        && HologramBusinessWirePolicy.libraryRequest(request, HologramBusinessWirePolicy.Owner.NONE,
+                        && HologramBusinessWirePolicy.PUBLIC_COPY
+                            .equals(request.getString(HologramBusinessWirePolicy.DOWNLOAD_INTENT_KEY))
+                        && HologramBusinessWirePolicy.libraryRequest(
+                            request,
+                            HologramBusinessWirePolicy.Owner.NONE,
                             HologramBusinessWirePolicy.Origin.EXPLICIT_LIBRARY_DOWNLOAD)
                             == HologramBusinessWirePolicy.Intent.LIBRARY_DOWNLOAD,
                     "actual explicit download carries the canonical id, owned token, and required copy intent");
-                SimpleAssert.that(phase == 0
-                    ? sourceHash.equals(request.getString("sourceHash")) && request.getLong("sourceRevision") == 1L
-                    : !request.hasKey("sourceHash") && !request.hasKey("sourceRevision"),
-                    "source revision and hash are always exact or both absent");
+                SimpleAssert
+                    .that(
+                        phase == 0
+                            ? sourceHash.equals(request.getString("sourceHash"))
+                                && request.getLong("sourceRevision") == 1L
+                            : !request.hasKey("sourceHash") && !request.hasKey("sourceRevision"),
+                        "source revision and hash are always exact or both absent");
                 String transfer = java.util.UUID.randomUUID()
                     .toString();
                 NBTTagCompound packet = new NBTTagCompound();
@@ -880,15 +900,24 @@ public final class HologramLibrarySaveLifecycleRegression {
                         drainPublicCopyCallbacks(clientQueue);
                         SimpleAssert.eq(0, wire.requests.size(), "refreshing the verified local copy sends no request");
                         java.util.concurrent.atomic.AtomicReference<byte[]> opened = new java.util.concurrent.atomic.AtomicReference<>();
-                        client.openPublic(id, source -> opened.set(source.legacyBytes()), reason -> { throw new AssertionError(reason); });
-                        worker.getQueue().remove().run();
+                        client.openPublic(
+                            id,
+                            source -> opened.set(source.legacyBytes()),
+                            reason -> { throw new AssertionError(reason); });
+                        worker.getQueue()
+                            .remove()
+                            .run();
                         drainPublicCopyCallbacks(clientQueue);
-                        SimpleAssert.that(java.util.Arrays.equals(expected.json, opened.get()) && wire.requests.isEmpty(),
+                        SimpleAssert.that(
+                            java.util.Arrays.equals(expected.json, opened.get()) && wire.requests.isEmpty(),
                             "warm public edit reads the committed deliberate copy, with no transfer");
                         client.previewPublic(id, true);
-                        worker.getQueue().remove().run();
+                        worker.getQueue()
+                            .remove()
+                            .run();
                         drainPublicCopyCallbacks(clientQueue);
-                        SimpleAssert.that(get(client,"displayPreparing")==null&&wire.requests.isEmpty(),
+                        SimpleAssert.that(
+                            get(client, "displayPreparing") == null && wire.requests.isEmpty(),
                             "a warm downloaded legacy copy still cannot create a placement before explicit conversion");
                         client.cancel();
                         drainPublicCopyCallbacks(clientQueue);
@@ -989,7 +1018,8 @@ public final class HologramLibrarySaveLifecycleRegression {
             java.io.ByteArrayOutputStream png = new java.io.ByteArrayOutputStream();
             javax.imageio.ImageIO.write(cover, "png", png);
             String localId = store.save(json, png.toByteArray(), "");
-            byte[] pair = store.publicationArtifact(localId).bytes();
+            byte[] pair = store.publicationArtifact(localId)
+                .bytes();
             String other = "local_33333333-3333-3333-3333-333333333333";
             String unrelatedPublic = "public_aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
             store.uploadedId("other-server", localId, unrelatedPublic);

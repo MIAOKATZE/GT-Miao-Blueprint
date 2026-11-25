@@ -82,7 +82,8 @@ final class HologramLocalPlacement {
     /** Pixel centers and spatial tests share the exact authored pivot the server subtracts. */
     static int[] localPivot(HologramState state) {
         if (state == null || state.nativeViewport == null) return new int[3];
-        var frame = state.nativeViewport.geometry.definition().frame();
+        var frame = state.nativeViewport.geometry.definition()
+            .frame();
         return new int[] { frame.anchorX, frame.anchorY, frame.anchorZ };
     }
 
@@ -108,8 +109,8 @@ final class HologramLocalPlacement {
             Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY, Double.NEGATIVE_INFINITY };
         int[] origin = pivot();
         for (int dx = 0; dx <= 16; dx += 16) for (int dy = 0; dy <= 16; dy += 16) for (int dz = 0; dz <= 16; dz += 16) {
-            int[] turned = pose.apply(2 * (x + dx - origin[0]) - 1, 2 * (y + dy - origin[1]) - 1,
-                2 * (z + dz - origin[2]) - 1);
+            int[] turned = pose
+                .apply(2 * (x + dx - origin[0]) - 1, 2 * (y + dy - origin[1]) - 1, 2 * (z + dz - origin[2]) - 1);
             for (int axis = 0; axis < 3; axis++) {
                 double value = (turned[axis] + 1) * .5;
                 bounds[axis] = Math.min(bounds[axis], value);
@@ -123,7 +124,7 @@ final class HologramLocalPlacement {
         clear();
         Minecraft mc = Minecraft.getMinecraft();
         if (mc.theWorld == null || mc.thePlayer == null) return;
-        nativeLease=prepared.pinNative();
+        nativeLease = prepared.pinNative();
         source = prepared;
         world = mc.theWorld;
         connection = mc.getNetHandler();
@@ -198,9 +199,9 @@ final class HologramLocalPlacement {
     boolean submitFrozen(Submission submission, boolean direct) {
         if (submitting || !submission.current()) return false;
         submitting = HologramLibraryClient.INSTANCE.prepareLocalPlacement(submission, direct);
-        if(submitting){
-            var client=Minecraft.getMinecraft();
-            if(client!=null&&client.isIntegratedServerRunning())HologramClientNativePlacement.showCurrent();
+        if (submitting) {
+            var client = Minecraft.getMinecraft();
+            if (client != null && client.isIntegratedServerRunning()) HologramClientNativePlacement.showCurrent();
             else HologramClientRemoteNativePlacement.show();
         }
         return submitting;
@@ -231,8 +232,11 @@ final class HologramLocalPlacement {
         request.setIntArray("previewPose", pose.recipe());
         if (source != null && source.nativeReceipt != null) {
             var held = Minecraft.getMinecraft().thePlayer.getHeldItem();
-            request.setInteger("reviewedSources", com.miaokatze.gtmb.hologram.HologramProjectedMainPolicy.savedPlacementKey(
-                com.miaokatze.gtmb.hologram.HologramMaterials.read(held), Minecraft.getMinecraft().thePlayer.capabilities.isCreativeMode));
+            request.setInteger(
+                "reviewedSources",
+                com.miaokatze.gtmb.hologram.HologramProjectedMainPolicy.savedPlacementKey(
+                    com.miaokatze.gtmb.hologram.HologramMaterials.read(held),
+                    Minecraft.getMinecraft().thePlayer.capabilities.isCreativeMode));
         }
         if (!options.hasKey("openReview", 1)) request.setBoolean("openReview", true);
         return new Submission(source, display, lockGeneration, request);
@@ -265,7 +269,10 @@ final class HologramLocalPlacement {
         if (display != null) HologramRenderer.nativeSnapshotChanged();
         display = null;
         source = null;
-        if(nativeLease!=null){nativeLease.close();nativeLease=null;}
+        if (nativeLease != null) {
+            nativeLease.close();
+            nativeLease = null;
+        }
         world = connection = player = null;
         locked = submitting = false;
         lockGeneration++;

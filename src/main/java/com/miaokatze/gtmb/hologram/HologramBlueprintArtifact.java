@@ -223,8 +223,8 @@ public final class HologramBlueprintArtifact {
     }
 
     public static Artifact transferLocal(byte[] json, Artifact original) throws IOException {
-        if (!HologramBlueprintPreviewBinding.localPngSha256(original.json).isEmpty())
-            return prepareLocalSave(json, original.png);
+        if (!HologramBlueprintPreviewBinding.localPngSha256(original.json)
+            .isEmpty()) return prepareLocalSave(json, original.png);
         return new Artifact(json.clone(), bindPreview(json, original.png, HologramBlueprintLimits.LOCAL_FILE_BYTES));
     }
 
@@ -327,7 +327,11 @@ public final class HologramBlueprintArtifact {
         if (jsonPath == null || jsonPath.getFileName() == null) throw new IOException("Missing blueprint JSON path");
         String name = jsonPath.getFileName()
             .toString();
-        if (name.length() <= 5 || !(name.toLowerCase(Locale.ROOT).endsWith(".json") || name.toLowerCase(Locale.ROOT).endsWith(".gtnb"))) throw new IOException("Blueprint artifact path must end in .json");
+        if (name.length() <= 5 || !(name.toLowerCase(Locale.ROOT)
+            .endsWith(".json")
+            || name.toLowerCase(Locale.ROOT)
+                .endsWith(".gtnb")))
+            throw new IOException("Blueprint artifact path must end in .json");
         return jsonPath.resolveSibling(name.substring(0, name.length() - 5) + ".png");
     }
 
@@ -392,15 +396,27 @@ public final class HologramBlueprintArtifact {
         return writePair(jsonPath, json, png, stillCurrent, HologramBlueprintArtifact::atomicReplace, true);
     }
 
-    public static synchronized void writeLocalPair(Path jsonPath, byte[] json, byte[] png,
-        BooleanSupplier stillCurrent) throws IOException {
-        writePair(jsonPath, json, png, stillCurrent, HologramBlueprintArtifact::atomicReplace, false,
+    public static synchronized void writeLocalPair(Path jsonPath, byte[] json, byte[] png, BooleanSupplier stillCurrent)
+        throws IOException {
+        writePair(
+            jsonPath,
+            json,
+            png,
+            stillCurrent,
+            HologramBlueprintArtifact::atomicReplace,
+            false,
             HologramBlueprintLimits.LOCAL_FILE_BYTES);
     }
 
     public static synchronized PairWrite writeLocalPairPending(Path jsonPath, byte[] json, byte[] png,
         BooleanSupplier stillCurrent) throws IOException {
-        return writePair(jsonPath, json, png, stillCurrent, HologramBlueprintArtifact::atomicReplace, true,
+        return writePair(
+            jsonPath,
+            json,
+            png,
+            stillCurrent,
+            HologramBlueprintArtifact::atomicReplace,
+            true,
             HologramBlueprintLimits.LOCAL_FILE_BYTES);
     }
 
@@ -523,8 +539,8 @@ public final class HologramBlueprintArtifact {
     }
 
     private static void jsonBounds(byte[] json, int limit) throws IOException {
-        if (json == null || json.length == 0 || json.length > limit) throw new IOException(
-            "Blueprint JSON must contain 1 byte through " + limit / (1024 * 1024) + " MiB");
+        if (json == null || json.length == 0 || json.length > limit)
+            throw new IOException("Blueprint JSON must contain 1 byte through " + limit / (1024 * 1024) + " MiB");
     }
 
     private static void requireCurrent(BooleanSupplier stillCurrent) throws IOException {

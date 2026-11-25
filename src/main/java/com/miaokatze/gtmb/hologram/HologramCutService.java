@@ -51,6 +51,7 @@ public final class HologramCutService {
     private static final java.util.Map<UUID, CutCapability> boundsPeers = new java.util.HashMap<>();
 
     private static final class CutCapability {
+
         final HologramWorkspace.ActionEndpoint endpoint;
         final UUID token = UUID.randomUUID();
         String lastOperation = "";
@@ -65,7 +66,8 @@ public final class HologramCutService {
         CutCapability existing = boundsPeers.get(endpoint.actor);
         if (existing != null && existing.endpoint == endpoint) return existing;
         if (!issue) return null;
-        boundsPeers.values().removeIf(peer -> !HologramWorkspace.currentActionEndpoint(peer.endpoint));
+        boundsPeers.values()
+            .removeIf(peer -> !HologramWorkspace.currentActionEndpoint(peer.endpoint));
         if (boundsPeers.size() >= MAX_CAPABILITY_PEERS) return null;
         CutCapability fresh = new CutCapability(endpoint);
         boundsPeers.put(endpoint.actor, fresh);
@@ -74,6 +76,7 @@ public final class HologramCutService {
 
     /** Captured before any native or permission callback for one exact new clipboard write. */
     private static final class CutPermit {
+
         final EntityPlayerMP player;
         final HologramWorkspace.ActionEndpoint endpoint;
         final WorldServer world;
@@ -93,18 +96,27 @@ public final class HologramCutService {
             inventory = player.inventory;
             backing = inventory == null ? null : inventory.mainInventory;
             permissions = player.capabilities;
-            initiallyAllowed = permissions != null && permissions.allowEdit && !player.isDead && player.worldObj == world;
+            initiallyAllowed = permissions != null && permissions.allowEdit
+                && !player.isDead
+                && player.worldObj == world;
             slot = inventory == null ? -1 : inventory.currentItem;
             tool = slot < 0 || slot >= 9 || backing == null || slot >= backing.length ? null : backing[slot];
             item = tool == null ? null : tool.getItem();
         }
 
         private boolean currentPure() {
-            return initiallyAllowed && item instanceof ItemNekoHologramProjector && item == tool.getItem()
-                && player.worldObj == world && player.dimension == dimension && !player.isDead
-                && player.inventory == inventory && inventory.mainInventory == backing
-                && inventory.currentItem == slot && backing[slot] == tool
-                && permissions != null && player.capabilities == permissions && permissions.allowEdit
+            return initiallyAllowed && item instanceof ItemNekoHologramProjector
+                && item == tool.getItem()
+                && player.worldObj == world
+                && player.dimension == dimension
+                && !player.isDead
+                && player.inventory == inventory
+                && inventory.mainInventory == backing
+                && inventory.currentItem == slot
+                && backing[slot] == tool
+                && permissions != null
+                && player.capabilities == permissions
+                && permissions.allowEdit
                 && (endpoint == null || HologramWorkspace.cutActionCurrentPure(endpoint));
         }
 
@@ -166,7 +178,8 @@ public final class HologramCutService {
     }
 
     static void receive(HologramWorkspace.ActionEndpoint endpoint, NBTTagCompound request) {
-        if (endpoint == null || request == null || !HologramCutEntry.canonicalId(request.getString("requestId"))) return;
+        if (endpoint == null || request == null || !HologramCutEntry.canonicalId(request.getString("requestId")))
+            return;
         HologramRequestGate.Lease lease = queued.acquire(endpoint.player);
         if (lease == null) {
             // No deferred, unscoped response on saturated ingress. The client reconciles by request ID.
@@ -176,7 +189,8 @@ public final class HologramCutService {
         NBTTagCompound copy = (NBTTagCompound) request.copy();
         // Capture (never adopt) the holder seen by the same authenticated queued request.
         CutPermit ingress = writesClipboard(copy.getString("action")) && endpoint.world instanceof WorldServer world
-            ? new CutPermit(endpoint.player, endpoint, world) : null;
+            ? new CutPermit(endpoint.player, endpoint, world)
+            : null;
         ServerTaskScheduler.scheduleServerTask(() -> {
             try {
                 if (!lease.active() || !HologramWorkspace.currentActionEndpoint(endpoint)) return;
@@ -186,9 +200,11 @@ public final class HologramCutService {
                 if (HologramAeCraftingOrders.active(player) && !"list".equals(action) && !demolitionControl
                     || HologramDemolition.active(player) && !HologramDemolitionProtocol.handles(action)) {
                     NBTTagCompound busy = reply(copy);
-                    busy.setString("code",
+                    busy.setString(
+                        "code",
                         HologramDemolition.active(player) ? "demolition_busy" : "material_order_busy");
-                    busy.setString("message",
+                    busy.setString(
+                        "message",
                         HologramDemolition.active(player) ? "拆除正在进行，请等待完成或按 Esc 取消" : "AE 缺料订单正在后台处理；请先等待完成或取消订单");
                     HologramNetwork.sendCutState(endpoint, busy);
                     return;
@@ -244,8 +260,8 @@ public final class HologramCutService {
                     continue;
                 }
                 if (HologramCutProtocol.boundsKey(name)) {
-                    if (!writesClipboard(request.getString("action")) || HologramCutProtocol.boundsProof(request) == null)
-                        throw new IOException("无效的剪切范围协议");
+                    if (!writesClipboard(request.getString("action"))
+                        || HologramCutProtocol.boundsProof(request) == null) throw new IOException("无效的剪切范围协议");
                     continue;
                 }
                 if (!java.util.Arrays
@@ -299,15 +315,15 @@ public final class HologramCutService {
             boolean paste = "paste".equals(action);
             boolean undo = "undo".equals(action);
             boolean exactEntry = paste || undo && (endpoint != null || request.hasKey("entrySequence"));
-            if (exactEntry && (!HologramCutEntry.canonicalId(request.getString("id"))
-                || !request.hasKey("entrySequence", 4) || request.getLong("entrySequence") <= 0))
+            if (exactEntry
+                && (!HologramCutEntry.canonicalId(request.getString("id")) || !request.hasKey("entrySequence", 4)
+                    || request.getLong("entrySequence") <= 0))
                 throw new IOException("操作缺少已确认的剪切条目版本；暂存未改动。");
             if (paste) {
                 for (String key : new String[] { "originX", "originY", "originZ" })
                     if (!request.hasKey(key, 3)) throw new IOException("放置目标坐标无效；暂存未改动。");
                 for (String key : new String[] { "rotation", "turnX", "turnZ", "mirror" })
-                    if (request.hasKey(key) && !request.hasKey(key, 3))
-                        throw new IOException("放置方向无效；暂存未改动。");
+                    if (request.hasKey(key) && !request.hasKey(key, 3)) throw new IOException("放置方向无效；暂存未改动。");
             } else if (!undo && request.hasKey("entrySequence")) {
                 throw new IOException("只有放置或撤回请求可以提交条目版本");
             }
@@ -322,11 +338,10 @@ public final class HologramCutService {
             boolean list = "list".equals(action);
             boolean write = writesClipboard(action);
             String reconcile = list ? request.getString("id") : "";
-            if (!reconcile.isEmpty() && !HologramCutEntry.canonicalId(reconcile))
-                throw new IOException("无效剪切请求编号");
+            if (!reconcile.isEmpty() && !HologramCutEntry.canonicalId(reconcile)) throw new IOException("无效剪切请求编号");
             CutCapability capability = boundsPeer(endpoint, false);
-            if (write && endpoint != null && (capability == null
-                || !capability.token.equals(HologramCutProtocol.boundsProof(request)))) {
+            if (write && endpoint != null
+                && (capability == null || !capability.token.equals(HologramCutProtocol.boundsProof(request)))) {
                 response.setString("code", "bounds_protocol_required");
                 response.setString("message", "剪切未执行：请同步支持范围确认的暂存列表；原方块与暂存已保留。");
                 return response;
@@ -343,9 +358,13 @@ public final class HologramCutService {
             if (state.hasKey("pending", 10)) {
                 NBTTagCompound pending = state.getCompoundTag("pending");
                 NBTTagCompound authorization = pending.getCompoundTag("authorization");
-                if (!list || reconcile.isEmpty() || capability == null || !reconcile.equals(capability.lastOperation)
-                    || !HologramWorkspace.currentActionEndpoint(endpoint) || !pending.hasKey("authorization", 10)
-                    || !authorization.hasKey("requestId", 8) || !reconcile.equals(authorization.getString("requestId")))
+                if (!list || reconcile.isEmpty()
+                    || capability == null
+                    || !reconcile.equals(capability.lastOperation)
+                    || !HologramWorkspace.currentActionEndpoint(endpoint)
+                    || !pending.hasKey("authorization", 10)
+                    || !authorization.hasKey("requestId", 8)
+                    || !reconcile.equals(authorization.getString("requestId")))
                     return pendingStatus(response, pending, null);
                 scopedRefusal = HologramWorkspace.legacyConstructionRefusal(player);
                 if (scopedRefusal != null) return rejectScopedMutation(response, scopedRefusal);
@@ -406,8 +425,8 @@ public final class HologramCutService {
                             var pose = com.miaokatze.gtmb.api.CutTransforms.Transform.read(request);
                             entry = HologramCutTransforms.applyForPlacement(entry, pose, x, y, z);
                             permit.require();
-                            if (!pose.identity() && entry.getTagList("transformUnknown", 8).tagCount() > 0)
-                                throw new IOException("此旋转或镜像含未验证的方块方向；未放置，暂存仍保留。");
+                            if (!pose.identity() && entry.getTagList("transformUnknown", 8)
+                                .tagCount() > 0) throw new IOException("此旋转或镜像含未验证的方块方向；未放置，暂存仍保留。");
                         }
                         HologramCutEntry.bounds(
                             x,
@@ -473,13 +492,16 @@ public final class HologramCutService {
             // Never expose an entry that might still exist in its original world or a partially placed target.
             if (storage != null) try {
                 NBTTagCompound durable = storage.load();
-                if (durable.hasKey("pending", 10)) pendingStatus(
-                    response, durable.getCompoundTag("pending"), failure.getMessage());
+                if (durable.hasKey("pending", 10))
+                    pendingStatus(response, durable.getCompoundTag("pending"), failure.getMessage());
                 else directory(response, durable);
             } catch (IOException ignored) {}
             com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn(
-                "Cut clipboard request failed: operation={} phase={} code={}", loggedAction, phase,
-                response.getString("code"), failure);
+                "Cut clipboard request failed: operation={} phase={} code={}",
+                loggedAction,
+                phase,
+                response.getString("code"),
+                failure);
         }
         return response;
     }
@@ -487,9 +509,10 @@ public final class HologramCutService {
     private static NBTTagCompound pendingStatus(NBTTagCompound response, NBTTagCompound pending, String detail) {
         response.setBoolean("success", false);
         response.setString("code", "recovery_pending");
-        response.setString("message", pending.hasKey("authorization", 10)
-            ? "剪切操作待恢复，原件记录已保留：" + (detail == null ? "请核对原操作回执或联系管理员" : detail)
-            : "旧剪切日志缺少权限记录，已保留原记录并阻止自动恢复；请管理员核对存档");
+        response.setString(
+            "message",
+            pending.hasKey("authorization", 10) ? "剪切操作待恢复，原件记录已保留：" + (detail == null ? "请核对原操作回执或联系管理员" : detail)
+                : "旧剪切日志缺少权限记录，已保留原记录并阻止自动恢复；请管理员核对存档");
         return response;
     }
 
@@ -563,8 +586,15 @@ public final class HologramCutService {
         for (BlockSnapshot snapshot : edit.snapshots) {
             Block block = snapshot.getReplacedBlock();
             if (block == Blocks.air) continue;
-            boolean cancelled = MinecraftForge.EVENT_BUS.post(new BlockEvent.BreakEvent(
-                snapshot.x, snapshot.y, snapshot.z, edit.world, block, snapshot.meta, permit.player));
+            boolean cancelled = MinecraftForge.EVENT_BUS.post(
+                new BlockEvent.BreakEvent(
+                    snapshot.x,
+                    snapshot.y,
+                    snapshot.z,
+                    edit.world,
+                    block,
+                    snapshot.meta,
+                    permit.player));
             permit.require();
             if (cancelled) throw new IOException("保护取消了方块移除，原方块与暂存已保留");
         }
@@ -601,7 +631,10 @@ public final class HologramCutService {
                 edit.stage(entry, permit::require, permit::requirePure);
                 NBTTagList cells = entry.getTagList("cells", 10);
                 for (int i = 0; i < cells.tagCount(); i++) {
-                    if (Block.getBlockFromName(cells.getCompoundTagAt(i).getString("block")) == Blocks.air) continue;
+                    if (Block.getBlockFromName(
+                        cells.getCompoundTagAt(i)
+                            .getString("block"))
+                        == Blocks.air) continue;
                     BlockEvent.PlaceEvent event = ForgeEventFactory
                         .onPlayerBlockPlace(permit.player, edit.snapshots.get(i), ForgeDirection.UP);
                     permit.require();
@@ -715,8 +748,7 @@ public final class HologramCutService {
             throw new IOException("剪切恢复缺少对应请求记录，原记录已保留");
         int dimension = pending.getInteger("dimension");
         WorldServer world = DimensionManager.getWorld(dimension);
-        if (admittedWorld != null && world != admittedWorld)
-            throw new IOException("待结算的剪切原世界已更换，原日志已保留");
+        if (admittedWorld != null && world != admittedWorld) throw new IOException("待结算的剪切原世界已更换，原日志已保留");
         if (world == null) {
             DimensionManager.initDimension(dimension);
             world = DimensionManager.getWorld(dimension);

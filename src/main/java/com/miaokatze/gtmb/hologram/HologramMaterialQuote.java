@@ -246,8 +246,6 @@ public final class HologramMaterialQuote {
             s.blueprintResourceMissing = s.materialQuote.getString("firstMissing");
     }
 
-
-
     private static void stamp(HologramSession s, NBTTagCompound quote) {
         quote.setLong("voucherRulesRevision", DecorationVoucherConfig.revision());
         quote.setBoolean("decorationVoucherEnabled", HologramDecorationVoucher.enabled());
@@ -370,7 +368,9 @@ public final class HologramMaterialQuote {
                     available.put(member, Math.max(0L, Math.min(demand, stock.exact(identity, demand))));
                 } else {
                     (priority == 1 ? absolute : broad)
-                        .computeIfAbsent(HologramMaterialReservations.key(identity, priority), ignored -> new ArrayList<>())
+                        .computeIfAbsent(
+                            HologramMaterialReservations.key(identity, priority),
+                            ignored -> new ArrayList<>())
                         .add(member);
                 }
             }
@@ -413,9 +413,10 @@ public final class HologramMaterialQuote {
             }
         }
 
-        private static void credit(Map<HologramBlueprintResources.ExactKey, Long> ledger, ItemStack item,
-            int priority, long paid) {
-            // Only a requested pool can overflow the former checked sum. An overflow marker leaves unused keys harmless.
+        private static void credit(Map<HologramBlueprintResources.ExactKey, Long> ledger, ItemStack item, int priority,
+            long paid) {
+            // Only a requested pool can overflow the former checked sum. An overflow marker leaves unused keys
+            // harmless.
             ledger.merge(
                 HologramMaterialReservations.key(item, priority),
                 paid,

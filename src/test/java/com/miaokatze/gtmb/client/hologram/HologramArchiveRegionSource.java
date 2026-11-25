@@ -16,8 +16,8 @@ import com.miaokatze.gtmb.hologram.HologramArchiveGeometryReader.Page;
 final class HologramArchiveRegionSource implements AutoCloseable {
 
     private static final int EDGE = HologramArchiveGeometryReader.EDGE, PLANE = EDGE * EDGE;
-    private static final int[][] FACE_DELTAS = { { -1, 0, 0 }, { 1, 0, 0 }, { 0, -1, 0 }, { 0, 1, 0 },
-        { 0, 0, -1 }, { 0, 0, 1 } };
+    private static final int[][] FACE_DELTAS = { { -1, 0, 0 }, { 1, 0, 0 }, { 0, -1, 0 }, { 0, 1, 0 }, { 0, 0, -1 },
+        { 0, 0, 1 } };
     static final int MAX_PAGE_READS = 1 + FACE_DELTAS.length;
     static final int MAX_ROW_VISITS = MAX_PAGE_READS * HologramArchiveGeometryReader.MAX_PAGE_ROWS;
     private static final int CACHE_PAGES = MAX_PAGE_READS * 2;
@@ -272,7 +272,8 @@ final class HologramArchiveRegionSource implements AutoCloseable {
         if (decoded == null || decoded.rows != count) throw new IOException("Archive directory changed");
         cache.put(key, decoded);
         if (cache.size() > CACHE_PAGES) {
-            java.util.Iterator<Map.Entry<Region, Page>> oldest = cache.entrySet().iterator();
+            java.util.Iterator<Map.Entry<Region, Page>> oldest = cache.entrySet()
+                .iterator();
             oldest.next();
             oldest.remove();
         }

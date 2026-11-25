@@ -140,7 +140,9 @@ public final class HologramBlueprintCompactCodec {
         if (bytes == null || bytes.length == 0 || bytes.length > HologramBlueprintLimits.LOCAL_FILE_BYTES)
             throw new IOException("Local blueprint file byte budget");
         // A strict decode is part of the exact syntax proof, not a lossy replacement-character view.
-        String text = StandardCharsets.UTF_8.newDecoder().decode(java.nio.ByteBuffer.wrap(bytes)).toString();
+        String text = StandardCharsets.UTF_8.newDecoder()
+            .decode(java.nio.ByteBuffer.wrap(bytes))
+            .toString();
         LocalDocument doc = localDocument(text, () -> true, false, wantExactSyntax);
         if (doc.packed() != null) return doc.packed();
         return new DisplayRows(doc.root(), null);
@@ -186,37 +188,60 @@ public final class HologramBlueprintCompactCodec {
             palette.add(pair);
         }
         Gson serializer = new GsonBuilder().registerTypeAdapter(Encoded.class, new TypeAdapter<Encoded>() {
+
             @Override
-            public Encoded read(JsonReader reader) { throw new UnsupportedOperationException(); }
+            public Encoded read(JsonReader reader) {
+                throw new UnsupportedOperationException();
+            }
 
             @Override
             public void write(JsonWriter out, Encoded unused) throws IOException {
                 out.beginObject();
                 for (Map.Entry<String, JsonElement> field : envelope.entrySet()) {
-                    out.name(field.getKey()); GSON.toJson(field.getValue(), out);
+                    out.name(field.getKey());
+                    GSON.toJson(field.getValue(), out);
                 }
-                out.name("schema").value(2).name("encoding").value(ENCODING).name("blueprint").beginObject();
+                out.name("schema")
+                    .value(2)
+                    .name("encoding")
+                    .value(ENCODING)
+                    .name("blueprint")
+                    .beginObject();
                 for (Map.Entry<String, JsonElement> field : blueprint.entrySet()) {
-                    out.name(field.getKey()); GSON.toJson(field.getValue(), out);
+                    out.name(field.getKey());
+                    GSON.toJson(field.getValue(), out);
                 }
-                out.name("cells").beginArray();
+                out.name("cells")
+                    .beginArray();
                 for (int row = 0; row < geometry.cells(); row++) {
-                    out.beginArray().value(geometry.materialIndex(row)).beginObject();
+                    out.beginArray()
+                        .value(geometry.materialIndex(row))
+                        .beginObject();
                     int mask = geometry.packed == null ? -1 : geometry.packed.get(row, 4) & 7;
                     for (int axis = 0; axis < 3; axis++) {
                         String key = axis == 0 ? "x" : axis == 1 ? "y" : "z";
-                        if (mask == -1 ? geometry.position(row).has(key) : (mask & (1 << axis)) != 0)
-                            out.name(key).value(geometry.coordinate(row, axis));
+                        if (mask == -1 ? geometry.position(row)
+                            .has(key) : (mask & (1 << axis)) != 0)
+                            out.name(key)
+                                .value(geometry.coordinate(row, axis));
                     }
-                    out.endObject().endArray();
+                    out.endObject()
+                        .endArray();
                 }
-                out.endArray().name("palette"); GSON.toJson(palette, out);
-                out.endObject().name("materials"); GSON.toJson(materials, out);
-                out.name("nbt"); GSON.toJson(nbt, out);
+                out.endArray()
+                    .name("palette");
+                GSON.toJson(palette, out);
+                out.endObject()
+                    .name("materials");
+                GSON.toJson(materials, out);
+                out.name("nbt");
+                GSON.toJson(nbt, out);
                 out.endObject();
             }
-        }).create();
-        return HologramBlueprintSharing.encodeBounded(serializer, new Encoded(), HologramBlueprintLimits.LOCAL_FILE_BYTES);
+        })
+            .create();
+        return HologramBlueprintSharing
+            .encodeBounded(serializer, new Encoded(), HologramBlueprintLimits.LOCAL_FILE_BYTES);
     }
 
     /** A validated local display view retaining material references and their separate coordinates. */
@@ -284,14 +309,22 @@ public final class HologramBlueprintCompactCodec {
         PackedSlice fast = PackedGeometryScanner.scan(json, current, cellLimit, wantExactSyntax);
         if (fast != null) {
             HologramBlueprintSharing.boundedJson(fast.projected(), HologramBlueprintArtifact.MAX_JSON_BYTES);
-            DisplayRows parsed = tryPackedDisplay(fast.projected(), limit, fast.rows(), current, local, wantExactSyntax);
+            DisplayRows parsed = tryPackedDisplay(
+                fast.projected(),
+                limit,
+                fast.rows(),
+                current,
+                local,
+                wantExactSyntax);
             if (parsed != null) return parsed;
         }
         return strictPacked ? null : tryPackedDisplay(json, limit, null, current, local, false);
     }
 
     enum StoredSyntax {
-        UNCHECKED, VALID, INVALID
+        UNCHECKED,
+        VALID,
+        INVALID
     }
 
     private static DisplayRows tryPackedDisplay(String json, int limit, PackedRows prepared, BooleanSupplier current,
@@ -299,7 +332,8 @@ public final class HologramBlueprintCompactCodec {
         try (JsonReader reader = new JsonReader(new StringReader(json))) {
             TypeAdapter<JsonElement> values = GSON.getAdapter(JsonElement.class);
             JsonObject root = new JsonObject();
-            PackedRows rows = prepared == null ? new PackedRows(local ? HologramBlueprintLimits.LOCAL_CELLS : MAX_CELLS) : prepared;
+            PackedRows rows = prepared == null ? new PackedRows(local ? HologramBlueprintLimits.LOCAL_CELLS : MAX_CELLS)
+                : prepared;
             reader.beginObject();
             while (reader.hasNext()) {
                 String key = reader.nextName();
@@ -334,7 +368,8 @@ public final class HologramBlueprintCompactCodec {
             validateCompact(root, limit, false, rows);
             // The literal scanner has already parsed every removed token of blueprint.cells, including unique
             // coordinate keys. Validate the retained exact metadata/key syntax without visiting those rows again.
-            StoredSyntax syntax = wantExactSyntax && prepared != null ? packedStoredSyntax(json) : StoredSyntax.UNCHECKED;
+            StoredSyntax syntax = wantExactSyntax && prepared != null ? packedStoredSyntax(json)
+                : StoredSyntax.UNCHECKED;
             return new DisplayRows(root, array(root.get("materials")), rows, syntax);
         } catch (InterruptedIOException cancelled) {
             throw cancelled;
@@ -416,7 +451,8 @@ public final class HologramBlueprintCompactCodec {
             return null;
         }
 
-        private PackedRows read(BooleanSupplier current, int cellLimit) throws InterruptedIOException, UnsupportedPackedGeometry {
+        private PackedRows read(BooleanSupplier current, int cellLimit)
+            throws InterruptedIOException, UnsupportedPackedGeometry {
             PackedRows rows = new PackedRows(cellLimit);
             expect('[');
             if (take(']')) return rows;
@@ -592,8 +628,7 @@ public final class HologramBlueprintCompactCodec {
                 if (ref >= sizes.length) throw new IOException("Blueprint dictionary reference out of range");
                 boolean empty = coordinates == 2 || sizes[ref] == 2;
                 bytes += sizes[ref] + coordinates - (empty ? 2 : 1);
-                if (bytes > logicalLimit())
-                    throw new IOException("Expanded blueprint byte budget");
+                if (bytes > logicalLimit()) throw new IOException("Expanded blueprint byte budget");
             }
             return bytes;
         }
@@ -970,7 +1005,8 @@ public final class HologramBlueprintCompactCodec {
             long memberLimit = packed == null ? HologramBlueprintArtifact.MAX_JSON_BYTES : packed.logicalLimit();
             if (size > memberLimit) throw new IOException("Expanded blueprint byte budget");
             total += size;
-            if (total > (packed == null ? limit : memberLimit)) throw new IOException("Expanded blueprint collection byte budget");
+            if (total > (packed == null ? limit : memberLimit))
+                throw new IOException("Expanded blueprint collection byte budget");
         }
         if (!expand) return root;
         for (JsonObject blueprint : blueprints) {

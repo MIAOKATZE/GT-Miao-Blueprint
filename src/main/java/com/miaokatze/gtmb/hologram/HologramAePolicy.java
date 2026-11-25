@@ -167,10 +167,10 @@ final class HologramAePolicy {
         if (result.aeIssues != null && !result.aeIssues.isEmpty()) {
             // A literal capture usually has no outstanding issue coordinates at all.
             Set<String> needed = new HashSet<>();
-            for (Issue issue : result.aeIssues) if ("blocker".equals(issue.severity))
-                needed.add(issue.x + "," + issue.y + "," + issue.z);
+            for (Issue issue : result.aeIssues)
+                if ("blocker".equals(issue.severity)) needed.add(issue.x + "," + issue.y + "," + issue.z);
             if (!needed.isEmpty()) for (HologramPresets.Cell cell : result.cells) {
-                String key=cell.x + "," + cell.y + "," + cell.z;
+                String key = cell.x + "," + cell.y + "," + cell.z;
                 if (needed.remove(key)) positions.add(key);
                 if (needed.isEmpty()) break;
             }

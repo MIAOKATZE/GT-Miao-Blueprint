@@ -29,6 +29,7 @@ public record HologramDeclaredNativeSelection(int controller, Map<String, Intege
 
     @Desugar
     public record Offset(int x, int y, int z) {
+
         boolean valid() {
             return coordinate(x) && coordinate(y) && coordinate(z);
         }
@@ -58,22 +59,32 @@ public record HologramDeclaredNativeSelection(int controller, Map<String, Intege
     }
 
     public boolean valid() {
-        if (operation < 0 || operation > 2 || (operation == 2 ? destination < 0 || destination > 1
-            || scope != 2 || !hatches.isEmpty() : destination != -1)
+        if (operation < 0 || operation > 2
+            || (operation == 2 ? destination < 0 || destination > 1 || scope != 2 || !hatches.isEmpty()
+                : destination != -1)
             || operation == 1 && (hatches.isEmpty() || scope != 2)) return false;
-        if (controller <= 0 || controller > Short.MAX_VALUE || channels.size() > 64
-            || scope < 0 || scope > 3 || !coordinate(layer) || scope != 1 && layer != 0
+        if (controller <= 0 || controller > Short.MAX_VALUE
+            || channels.size() > 64
+            || scope < 0
+            || scope > 3
+            || !coordinate(layer)
+            || scope != 1 && layer != 0
             || (scope == 2 ? selected.isEmpty() || selected.size() > MAX_POINTS
                 : selected.size() != (scope == 3 ? 1 : 0))
             || hatches.size() > MAX_POINTS) return false;
         if (!HologramSessionPolicy.validChannels(channelTag())) return false;
         // Main/auxiliary channels are selection levels, not client-defined dimensions.
-        if (channels.values().stream().anyMatch(tier -> tier > 64)) return false;
+        if (channels.values()
+            .stream()
+            .anyMatch(tier -> tier > 64)) return false;
         var points = new HashSet<Offset>();
         for (Offset offset : selected) if (!offset.valid() || !points.add(offset)) return false;
         var edited = new HashSet<Offset>();
         for (Hatch hatch : hatches) if (!hatch.position.valid() || !edited.add(hatch.position)
-            || hatch.id <= 0 || hatch.id > Short.MAX_VALUE || hatch.facing < -1 || hatch.facing > 5) return false;
+            || hatch.id <= 0
+            || hatch.id > Short.MAX_VALUE
+            || hatch.facing < -1
+            || hatch.facing > 5) return false;
         return operation != 1 || edited.equals(points);
     }
 

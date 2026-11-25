@@ -214,7 +214,7 @@ final class HologramLibraryWorkflow {
         String action = request.getString("action");
         String operation;
         if ("preview".equals(action)) operation = "previewPreset";
-        else if("place".equals(action))throw new java.io.IOException("旧蓝图库只能查看或编辑；施工须在客户端保存为原生版本");
+        else if ("place".equals(action)) throw new java.io.IOException("旧蓝图库只能查看或编辑；施工须在客户端保存为原生版本");
         else if ("edit".equals(action)) operation = "editPreset";
         else throw new java.io.IOException("未知私库蓝图操作");
         // Reject malformed small pose controls before changing any session state.

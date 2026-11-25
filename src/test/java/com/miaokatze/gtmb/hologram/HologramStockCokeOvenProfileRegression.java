@@ -15,8 +15,8 @@ import net.minecraft.entity.player.InventoryPlayer;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
-import net.minecraft.tileentity.TileEntity;
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.tileentity.TileEntity;
 import net.minecraftforge.common.MinecraftForge;
 import net.minecraftforge.common.util.ForgeDirection;
 import net.minecraftforge.event.world.BlockEvent;
@@ -49,33 +49,40 @@ final class HologramStockCokeOvenProfileRegression {
             var access = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
             access.setAccessible(true);
             var unsafe = (sun.misc.Unsafe) access.get(null);
-            // Standalone harness lacks the GT mod preload; use its exact casing/block class without registry side effects.
-            if (previousCasing == null) GregTechAPI.sBlockCasings12 = (BlockCasings12) unsafe
-                .allocateInstance(BlockCasings12.class);
+            // Standalone harness lacks the GT mod preload; use its exact casing/block class without registry side
+            // effects.
+            if (previousCasing == null)
+                GregTechAPI.sBlockCasings12 = (BlockCasings12) unsafe.allocateInstance(BlockCasings12.class);
             if (previousMachineBlock == null) GregTechAPI.sBlockMachines = Blocks.iron_block;
             var controller = new MTECokeOven("gtmb_basic_coke_profile_fixture");
             var hatch = (MTEHatchCokeOven) unsafe.allocateInstance(MTEHatchCokeOven.class);
             GregTechAPI.METATILEENTITIES[id] = controller;
             GregTechAPI.METATILEENTITIES[hatchId] = hatch;
             var profile = HologramStockCokeOvenProfile.inspectRegistered();
-            SimpleAssert.that(profile != null && profile.definition == controller.getStructureDefinition()
-                && id == 236 && hatchId == 237, "exact #236 static native Coke Oven, not industrial or a synthetic shape");
+            SimpleAssert.that(
+                profile != null && profile.definition == controller.getStructureDefinition()
+                    && id == 236
+                    && hatchId == 237,
+                "exact #236 static native Coke Oven, not industrial or a synthetic shape");
 
             IStructureElement<?> shell = null;
             int shells = 0;
-            for (IStructureElement<?> element : profile.definition.getStructureFor(HologramStockCokeOvenProfile.PIECE)) {
+            for (IStructureElement<?> element : profile.definition
+                .getStructureFor(HologramStockCokeOvenProfile.PIECE)) {
                 IStructureElement<?> leaf = profile.casingLeaf(element);
                 if (leaf != null) {
                     if (shell == null) shell = element;
-                    SimpleAssert.that(shell == element && HologramCasingFallback.resolve(leaf).block
-                        == GregTechAPI.sBlockCasings12 && HologramCasingFallback.resolve(leaf).meta == 0,
+                    SimpleAssert.that(
+                        shell == element && HologramCasingFallback.resolve(leaf).block == GregTechAPI.sBlockCasings12
+                            && HologramCasingFallback.resolve(leaf).meta == 0,
                         "every declared Coke shell comes from this exact native chain and brick metadata");
                     shells++;
                 }
             }
             SimpleAssert.eq(25, shells, "25 actual native shell declarations, excluding center air and the controller");
-            SimpleAssert.that(profile.acceptsSettings(1, new NBTTagCompound())
-                && profile.acceptsSettings(3, new NBTTagCompound()), "main stack size does not change this native shape");
+            SimpleAssert.that(
+                profile.acceptsSettings(1, new NBTTagCompound()) && profile.acceptsSettings(3, new NBTTagCompound()),
+                "main stack size does not change this native shape");
             var configured = new NBTTagCompound();
             configured.setInteger("gt_hatch", 2);
             SimpleAssert.that(!profile.acceptsSettings(1, configured), "never suppress an explicit hatch tier channel");
@@ -88,25 +95,40 @@ final class HologramStockCokeOvenProfileRegression {
             var ready = HologramStockCokeOvenProfile.Shell.READY_CASING;
             var matched = HologramStockCokeOvenProfile.Shell.MATCHED_HATCH;
             var unsatisfied = HologramStockCokeOvenProfile.Shell.EXPLICIT_HATCH_UNSATISFIED;
-            SimpleAssert.eq(ready, profile.classify(shell, Blocks.air, 0, null, -1, -1, -1),
+            SimpleAssert.eq(
+                ready,
+                profile.classify(shell, Blocks.air, 0, null, -1, -1, -1),
                 "only the unedited empty shell may choose its original native casing fallback");
-            SimpleAssert.eq(HologramStockCokeOvenProfile.Shell.MATCHED_CASING,
+            SimpleAssert.eq(
+                HologramStockCokeOvenProfile.Shell.MATCHED_CASING,
                 profile.classify(shell, GregTechAPI.sBlockCasings12, 0, null, -1, -1, -1),
                 "own exact installed casing is not deducted or overwritten");
-            SimpleAssert.eq(HologramStockCokeOvenProfile.Shell.BLOCKED,
+            SimpleAssert.eq(
+                HologramStockCokeOvenProfile.Shell.BLOCKED,
                 profile.classify(shell, GregTechAPI.sBlockCasings12, 1, null, -1, -1, -1),
                 "same block, wrong real metadata is not classified as the native Coke brick or replaced");
-            SimpleAssert.eq(matched, profile.classify(shell, GregTechAPI.sBlockMachines, 0, tile, -1, -1, -1),
+            SimpleAssert.eq(
+                matched,
+                profile.classify(shell, GregTechAPI.sBlockMachines, 0, tile, -1, -1, -1),
                 "actual installed #237 Coke Oven hatch is recognized without mutating addHatch");
-            SimpleAssert.eq(matched, profile.classify(shell, GregTechAPI.sBlockMachines, 0, tile, hatchId, 0, west),
+            SimpleAssert.eq(
+                matched,
+                profile.classify(shell, GregTechAPI.sBlockMachines, 0, tile, hatchId, 0, west),
                 "only an exact chosen hatch ID, stock tier and requested facing is satisfied");
-            SimpleAssert.eq(unsatisfied, profile.classify(shell, GregTechAPI.sBlockMachines, 0, tile, hatchId, 0, east),
+            SimpleAssert.eq(
+                unsatisfied,
+                profile.classify(shell, GregTechAPI.sBlockMachines, 0, tile, hatchId, 0, east),
                 "installed hatch in a different required facing is not skipped as satisfied");
-            SimpleAssert.eq(unsatisfied, profile.classify(shell, GregTechAPI.sBlockMachines, 0, tile, hatchId, 1, west),
+            SimpleAssert.eq(
+                unsatisfied,
+                profile.classify(shell, GregTechAPI.sBlockMachines, 0, tile, hatchId, 1, west),
                 "unknown stock tier is refused rather than treating ULV as the requested tier");
-            SimpleAssert.eq(unsatisfied, profile.classify(shell, Blocks.air, 0, null, hatchId, 0, west),
+            SimpleAssert.eq(
+                unsatisfied,
+                profile.classify(shell, Blocks.air, 0, null, hatchId, 0, west),
                 "missing explicit hatch never causes an automatic casing or other hatch to be placed");
-            SimpleAssert.eq(HologramStockCokeOvenProfile.Shell.UNPROVED,
+            SimpleAssert.eq(
+                HologramStockCokeOvenProfile.Shell.UNPROVED,
                 profile.classify(StructureUtility.ofBlock(Blocks.iron_block, 0), Blocks.air, 0, null, -1, -1, -1),
                 "unrelated element cannot borrow the approved Coke Oven casing proof");
             GregTechAPI.METATILEENTITIES[hatchId] = null;
@@ -150,22 +172,28 @@ final class HologramStockCokeOvenProfileRegression {
                 while (slot >= 3776 && (Block.getBlockById(slot) != Blocks.air || Item.getItemById(slot) != null))
                     slot--;
                 Object existing = Block.blockRegistry.getObject(fixtureName);
-                SimpleAssert.that(slot >= 3776 && Block.getBlockById(slot) == Blocks.air
-                    && Item.getItemById(slot) == null && (existing == null || existing == Blocks.air)
-                    && Item.itemRegistry.getObject(fixtureName) == null, "unused matching fixture id and name");
+                SimpleAssert.that(
+                    slot >= 3776 && Block.getBlockById(slot) == Blocks.air
+                        && Item.getItemById(slot) == null
+                        && (existing == null || existing == Blocks.air)
+                        && Item.itemRegistry.getObject(fixtureName) == null,
+                    "unused matching fixture id and name");
                 // As in the existing native casing/coil fixtures: Unsafe skips Block's initializer.
                 // Use the registry's real Forge delegate for this exact casing, never a substitute block.
                 var delegate = Block.class.getDeclaredField("delegate");
                 delegate.setAccessible(true);
                 if (delegate.get(casing) == null) delegate.set(
-                    casing, ((FMLControlledNamespacedRegistry) Block.blockRegistry).getDelegate(casing, Block.class));
+                    casing,
+                    ((FMLControlledNamespacedRegistry) Block.blockRegistry).getDelegate(casing, Block.class));
                 SimpleAssert.that(delegate.get(casing) != null, "stock fixture has its real Forge registry delegate");
                 casing.stepSound = Blocks.iron_block.stepSound;
                 Block.blockRegistry.addObject(slot, fixtureName, casing);
                 item = new ItemCasings(casing);
                 Item.itemRegistry.addObject(slot, fixtureName, item);
-                SimpleAssert.that(Block.getBlockById(slot) == casing && Item.getItemById(slot) == item
-                    && Item.getItemFromBlock(casing) == item, "registered exact stock fixture block and item pair");
+                SimpleAssert.that(
+                    Block.getBlockById(slot) == casing && Item.getItemById(slot) == item
+                        && Item.getItemFromBlock(casing) == item,
+                    "registered exact stock fixture block and item pair");
             }
             var front = BaseMetaTileEntity.class.getDeclaredField("mFacing");
             front.setAccessible(true);
@@ -189,7 +217,8 @@ final class HologramStockCokeOvenProfileRegression {
             liveHatch.xCoord = chosen[0];
             liveHatch.yCoord = 64 + chosen[1];
             liveHatch.zCoord = chosen[2];
-            String hatchPos = HologramPlacementFixtureWorld.position(liveHatch.xCoord, liveHatch.yCoord, liveHatch.zCoord);
+            String hatchPos = HologramPlacementFixtureWorld
+                .position(liveHatch.xCoord, liveHatch.yCoord, liveHatch.zCoord);
             String firstPos = HologramPlacementFixtureWorld.position(first[0], 64 + first[1], first[2]);
             world.occupants = new HashMap<String, TileEntity>();
             world.occupants.put("0,64,0", control);
@@ -201,75 +230,128 @@ final class HologramStockCokeOvenProfileRegression {
             var session = new HologramSession(player, 0, 64, 0);
             session.materialSettings.main = true;
             session.materialSettings.containers = session.materialSettings.me = false;
-            HologramMaterials.write(player.getHeldItem(),session.materialSettings);
+            HologramMaterials.write(player.getHeldItem(), session.materialSettings);
             HologramWorkspace.activate(player.getUniqueID(), session);
             HologramWorkspace.publishActionEndpoint(player, false);
             var endpoint = HologramWorkspace.captureActionEndpoint(player.playerNetServerHandler);
             var gate = HologramWorkspace.constructionGate(endpoint);
-            SimpleAssert.that(gate != null && control.getMetaTileEntity() == machine
-                && liveHatch.getMetaTileEntity() == hatchMeta, "real #236/237 native ownership and exact live play endpoint");
-            var selected = new HologramStockNativeConstruction.HatchChoice(chosen[0], chosen[1], chosen[2],
-                HologramStockCokeOvenProfile.HATCH, 0, ForgeDirection.WEST.ordinal());
-            var wrongFacing = new HologramStockNativeConstruction.HatchChoice(chosen[0], chosen[1], chosen[2],
-                HologramStockCokeOvenProfile.HATCH, 0, ForgeDirection.EAST.ordinal());
+            SimpleAssert.that(
+                gate != null && control.getMetaTileEntity() == machine && liveHatch.getMetaTileEntity() == hatchMeta,
+                "real #236/237 native ownership and exact live play endpoint");
+            var selected = new HologramStockNativeConstruction.HatchChoice(
+                chosen[0],
+                chosen[1],
+                chosen[2],
+                HologramStockCokeOvenProfile.HATCH,
+                0,
+                ForgeDirection.WEST.ordinal());
+            var wrongFacing = new HologramStockNativeConstruction.HatchChoice(
+                chosen[0],
+                chosen[1],
+                chosen[2],
+                HologramStockCokeOvenProfile.HATCH,
+                0,
+                ForgeDirection.EAST.ordinal());
             var consent = HologramStockNativeConstruction.Consent.PLACE_SAFE_CELLS_WITH_AVAILABLE_STOCK;
             refuse(endpoint, session, request(1), HologramStockCokeOvenProfile.SOURCE_ID, consent, wrongFacing);
             refuse(endpoint, session, request(2), "gregtech:ebf", consent, selected);
             refuse(endpoint, session, request(3), HologramStockCokeOvenProfile.SOURCE_ID, null, selected);
-            SimpleAssert.that(world.writes().isEmpty() && player.inventory.mainInventory[1].stackSize == 2,
+            SimpleAssert.that(
+                world.writes()
+                    .isEmpty() && player.inventory.mainInventory[1].stackSize == 2,
                 "wrong pose, unsupported source or absent explicit prefix consent have no effects");
 
             var initial = request(4);
-            var job = HologramStockNativeConstruction.begin(
-                endpoint, session, initial, HologramStockCokeOvenProfile.SOURCE_ID, 1, consent, selected);
-            SimpleAssert.that(session.capture == null && job.visited() == 0 && world.writes().isEmpty()
-                && HologramWorkspace.legacyConstructionRefusal(player) != null,
+            var job = HologramStockNativeConstruction
+                .begin(endpoint, session, initial, HologramStockCokeOvenProfile.SOURCE_ID, 1, consent, selected);
+            SimpleAssert.that(
+                session.capture == null && job.visited() == 0
+                    && world.writes()
+                        .isEmpty()
+                    && HologramWorkspace.legacyConstructionRefusal(player) != null,
                 "admission uses shared authority and walks no live shape or quote before first work");
             refuse(endpoint, session, initial, HologramStockCokeOvenProfile.SOURCE_ID, consent, selected);
             world.arm();
-            SimpleAssert.eq(HologramStockNativeConstruction.State.ACTIVE, drainPrefix(job, 1),
+            SimpleAssert.eq(
+                HologramStockNativeConstruction.State.ACTIVE,
+                drainPrefix(job, 1),
                 "first stock checkpoint stays active after exactly one committed write");
-            SimpleAssert.that(job.placed() == 1 && job.visited() <= 2 && world.writes().size() == 1
-                && firstPos.equals(world.writes().get(0)) && world.getBlock(first[0], 64 + first[1], first[2]) == casing
-                && player.inventory.mainInventory[1].stackSize == 1 && session.capture == null
-                && !HologramConstructionJournal.pending(player),
+            SimpleAssert.that(
+                job.placed() == 1 && job.visited() <= 2
+                    && world.writes()
+                        .size() == 1
+                    && firstPos.equals(
+                        world.writes()
+                            .get(0))
+                    && world.getBlock(first[0], 64 + first[1], first[2]) == casing
+                    && player.inventory.mainInventory[1].stackSize == 1
+                    && session.capture == null
+                    && !HologramConstructionJournal.pending(player),
                 "real stock first casing and one real debit before a second transaction permit");
-            SimpleAssert.eq(HologramStockNativeConstruction.State.STOPPED, job.drain(Long.MAX_VALUE),
+            SimpleAssert.eq(
+                HologramStockNativeConstruction.State.STOPPED,
+                job.drain(Long.MAX_VALUE),
                 "exhausted exact backpack stops with the already placed prefix, not completed");
-            SimpleAssert.that(job.placed() == 2 && world.writes().size() == 2
-                && player.inventory.mainInventory[1] == null && !job.reason().isEmpty()
-                && gate.query(endpoint.constructionScope, initial).outcome.committedTransactions == 2,
+            SimpleAssert.that(
+                job.placed() == 2 && world.writes()
+                    .size() == 2
+                    && player.inventory.mainInventory[1] == null
+                    && !job.reason()
+                        .isEmpty()
+                    && gate.query(endpoint.constructionScope, initial).outcome.committedTransactions == 2,
                 "two actual world writes and two exact original-slot debits, no duplicate work");
             refuse(endpoint, session, initial, HologramStockCokeOvenProfile.SOURCE_ID, consent, selected);
 
             player.inventory.mainInventory[1] = new ItemStack(item, 23, 0);
             var resume = request(5);
-            job = HologramStockNativeConstruction.begin(
-                endpoint, session, resume, HologramStockCokeOvenProfile.SOURCE_ID, 1, consent, selected);
+            job = HologramStockNativeConstruction
+                .begin(endpoint, session, resume, HologramStockCokeOvenProfile.SOURCE_ID, 1, consent, selected);
             HologramStockNativeConstruction.State result = job.drain(Long.MAX_VALUE);
-            SimpleAssert.eq(HologramStockNativeConstruction.State.COMPLETE, result,
+            SimpleAssert.eq(
+                HologramStockNativeConstruction.State.COMPLETE,
+                result,
                 "actual native driver completes remaining 22 placements in one uninterrupted drain, no count quota");
-            SimpleAssert.that(job.placed() == 22 && world.writes().size() == 24
-                && player.inventory.mainInventory[1].stackSize == 1 && !world.writes().contains(hatchPos)
-                && world.getTileEntity(liveHatch.xCoord, liveHatch.yCoord, liveHatch.zCoord) == liveHatch
-                && liveHatch.getFrontFacing() == ForgeDirection.WEST && session.capture == null
-                && !HologramConstructionJournal.pending(player),
+            SimpleAssert.that(
+                job.placed() == 22 && world.writes()
+                    .size() == 24
+                    && player.inventory.mainInventory[1].stackSize == 1
+                    && !world.writes()
+                        .contains(hatchPos)
+                    && world.getTileEntity(liveHatch.xCoord, liveHatch.yCoord, liveHatch.zCoord) == liveHatch
+                    && liveHatch.getFrontFacing() == ForgeDirection.WEST
+                    && session.capture == null
+                    && !HologramConstructionJournal.pending(player),
                 "native 25 shells minus one installed matching hatch: exact 24 casing debits across two confirmations");
-            var stale = HologramStockNativeConstruction.begin(
-                endpoint, session, request(6), HologramStockCokeOvenProfile.SOURCE_ID, 1, consent, selected);
+            var stale = HologramStockNativeConstruction
+                .begin(endpoint, session, request(6), HologramStockCokeOvenProfile.SOURCE_ID, 1, consent, selected);
             front.set(liveHatch, ForgeDirection.EAST);
-            SimpleAssert.eq(HologramStockNativeConstruction.State.STOPPED, stale.drain(Long.MAX_VALUE),
+            SimpleAssert.eq(
+                HologramStockNativeConstruction.State.STOPPED,
+                stale.drain(Long.MAX_VALUE),
                 "installed hatch turned after authorization cannot complete, recapture or start placement");
-            SimpleAssert.that(stale.placed() == 0 && stale.visited() == 0 && world.writes().size() == 24
-                && player.inventory.mainInventory[1].stackSize == 1, "stale selected hatch has no world or stock effect");
+            SimpleAssert.that(
+                stale.placed() == 0 && stale.visited() == 0
+                    && world.writes()
+                        .size() == 24
+                    && player.inventory.mainInventory[1].stackSize == 1,
+                "stale selected hatch has no world or stock effect");
             // Reopen one known casing cell; physically alter the native authority while Forge sees that casing
             // installed, without touching the old base object's cached links/valid bits or vetoing the event.
             front.set(liveHatch, ForgeDirection.WEST);
             world.setBlock(first[0], 64 + first[1], first[2], Blocks.air, 0, 3);
-            verifyForgeRollback(unsafe, world, player, session, endpoint, selected, request(7), first,
+            verifyForgeRollback(
+                unsafe,
+                world,
+                player,
+                session,
+                endpoint,
+                selected,
+                request(7),
+                first,
                 () -> world.occupants.remove(hatchPos));
-            SimpleAssert.that(!liveHatch.isInvalid()
-                && world.getTileEntity(liveHatch.xCoord, liveHatch.yCoord, liveHatch.zCoord) == null,
+            SimpleAssert.that(
+                !liveHatch.isInvalid()
+                    && world.getTileEntity(liveHatch.xCoord, liveHatch.yCoord, liveHatch.zCoord) == null,
                 "rollback does not restore the independently removed physical hatch");
             world.occupants.put(hatchPos, liveHatch);
             var replacement = (BaseMetaTileEntity) unsafe.allocateInstance(BaseMetaTileEntity.class);
@@ -281,36 +363,61 @@ final class HologramStockCokeOvenProfileRegression {
             front.set(replacement, ForgeDirection.NORTH);
             var otherController = new MTECokeOven("gtmb_coke_forge_replacement");
             otherController.setBaseMetaTileEntity(replacement);
-            verifyForgeRollback(unsafe, world, player, session, endpoint, selected, request(8), first,
+            verifyForgeRollback(
+                unsafe,
+                world,
+                player,
+                session,
+                endpoint,
+                selected,
+                request(8),
+                first,
                 () -> world.occupants.put("0,64,0", replacement));
-            SimpleAssert.that(!control.isInvalid() && world.getTileEntity(0, 64, 0) == replacement,
+            SimpleAssert.that(
+                !control.isInvalid() && world.getTileEntity(0, 64, 0) == replacement,
                 "an identical model at the original coordinate does not inherit this job's controller authority");
             world.occupants.put("0,64,0", control);
             double originalX = player.posX;
             var movedActor = player;
             try {
-                verifyForgeRollback(unsafe, world, player, session, endpoint, selected, request(9), first,
+                verifyForgeRollback(
+                    unsafe,
+                    world,
+                    player,
+                    session,
+                    endpoint,
+                    selected,
+                    request(9),
+                    first,
                     () -> movedActor.posX = 8.75);
-                SimpleAssert.that(player.worldObj == world && player.playerNetServerHandler == endpoint.connection
-                    && player.posX == 8.75, "same-world Forge movement survives the casing rollback");
+                SimpleAssert.that(
+                    player.worldObj == world && player.playerNetServerHandler == endpoint.connection
+                        && player.posX == 8.75,
+                    "same-world Forge movement survives the casing rollback");
             } finally {
                 player.posX = originalX;
             }
             verifyConstructorFences(world, player, session, endpoint, selected);
             verifyEntryAdapter(world, player, session, endpoint, selected, item, first);
             HologramStockNativeServerRegression.run(unsafe, world, player, session, endpoint, selected, item, first);
-            try(var files=Files.walk(ledger)){
-                SimpleAssert.eq(0L,files.filter(Files::isRegularFile).count(),"normal scoped writes do not leave durability files per casing");
+            try (var files = Files.walk(ledger)) {
+                SimpleAssert.eq(
+                    0L,
+                    files.filter(Files::isRegularFile)
+                        .count(),
+                    "normal scoped writes do not leave durability files per casing");
             }
             HologramWorkspace.revokeActionEndpoint(player);
         } finally {
             if (player != null && player.playerNetServerHandler != null)
-                player.playerNetServerHandler.netManager.channel().close();
+                player.playerNetServerHandler.netManager.channel()
+                    .close();
             HologramWorkspace.clear();
             if (previousRoot == null) HologramConstructionJournal.STORAGE_ROOT.remove();
             else HologramConstructionJournal.STORAGE_ROOT.set(previousRoot);
-            try(var files=Files.walk(ledger)){
-                for(var path:(Iterable<Path>)files.sorted(java.util.Comparator.reverseOrder())::iterator)Files.deleteIfExists(path);
+            try (var files = Files.walk(ledger)) {
+                for (var path : (Iterable<Path>) files.sorted(java.util.Comparator.reverseOrder())::iterator)
+                    Files.deleteIfExists(path);
             }
         }
     }
@@ -327,7 +434,8 @@ final class HologramStockCokeOvenProfileRegression {
         var tag = projector.getTagCompound();
         final String toolKey = HologramSessionKeys.TOOL_ID;
         String originalId = tag.getString(toolKey);
-        int writes = world.writes().size();
+        int writes = world.writes()
+            .size();
         var partial = HologramStockNativeEntry.Funding.EXPLICIT_AVAILABLE_STOCK;
         try {
             var predecessorIntent = stockIntent(endpoint, previous, choice, request(10), partial);
@@ -339,8 +447,9 @@ final class HologramStockCokeOvenProfileRegression {
                 previous.planRevision++;
             };
             refuseEntry(captured);
-            SimpleAssert.that(HologramWorkspace.find(endpoint.actor) == previous
-                && previous.editorWorkspaceEpoch == epoch + 1 && previous.planRevision == plan + 1,
+            SimpleAssert.that(
+                HologramWorkspace.find(endpoint.actor) == previous && previous.editorWorkspaceEpoch == epoch + 1
+                    && previous.planRevision == plan + 1,
                 "the real session-constructor callback revised the same predecessor; it was not replaced or re-pinned");
 
             var dirtyIntent = stockIntent(endpoint, previous, choice, request(11), partial);
@@ -348,25 +457,32 @@ final class HologramStockCokeOvenProfileRegression {
             long cleanRevision = previous.planRevision, cleanEpoch = previous.editorWorkspaceEpoch;
             hooked.dirty = () -> previous.blueprintDirty = true;
             refuseEntry(captured);
-            SimpleAssert.that(HologramWorkspace.find(endpoint.actor) == previous && previous.blueprintDirty
-                && previous.planRevision == cleanRevision && previous.editorWorkspaceEpoch == cleanEpoch,
+            SimpleAssert.that(
+                HologramWorkspace.find(endpoint.actor) == previous && previous.blueprintDirty
+                    && previous.planRevision == cleanRevision
+                    && previous.editorWorkspaceEpoch == cleanEpoch,
                 "constructor callback creates unsaved work without advancing revision; the old active view survives");
             previous.blueprintDirty = false;
 
             var toolIntent = stockIntent(endpoint, previous, choice, request(12), partial);
             captured = HologramStockNativeEntry.ingress(endpoint, toolIntent);
             SimpleAssert.that(captured != null, "tool reentry test first captures the canonical original id");
-            String otherTool = UUID.randomUUID().toString();
+            String otherTool = UUID.randomUUID()
+                .toString();
             hooked.dirty = () -> tag.setString(toolKey, otherTool);
             refuseEntry(captured);
-            SimpleAssert.that(HologramWorkspace.find(endpoint.actor) == previous
-                && tag.getString(toolKey).equals(otherTool),
+            SimpleAssert.that(
+                HologramWorkspace.find(endpoint.actor) == previous && tag.getString(toolKey)
+                    .equals(otherTool),
                 "constructor may not adopt a substituted canonical id on the same projector reference");
 
             tag.setString(toolKey, "");
             var blank = stockIntent(endpoint, previous, choice, request(13), partial);
-            SimpleAssert.eq(null, HologramStockNativeEntry.ingress(endpoint, blank), "blank tools cannot mint on this path");
-            SimpleAssert.that(tag.getString(toolKey).isEmpty() && HologramWorkspace.find(endpoint.actor) == previous,
+            SimpleAssert
+                .eq(null, HologramStockNativeEntry.ingress(endpoint, blank), "blank tools cannot mint on this path");
+            SimpleAssert.that(
+                tag.getString(toolKey)
+                    .isEmpty() && HologramWorkspace.find(endpoint.actor) == previous,
                 "refused blank tool has not mutated its identity or opened a temporary construction workspace");
             tag.setString(toolKey, originalId);
 
@@ -378,19 +494,26 @@ final class HologramStockCokeOvenProfileRegression {
                 var active = HologramWorkspace.find(endpoint.actor);
                 if (!fired[0] && active != null && active != previous) {
                     fired[0] = true;
-                    SimpleAssert.that(active.stockNativePrivate && !active.open,
+                    SimpleAssert.that(
+                        active.stockNativePrivate && !active.open,
                         "private marker is installed during reservation before the driver is published");
                     HologramService.openSettings(player);
-                    SimpleAssert.that(HologramWorkspace.find(endpoint.actor) == active && !active.open,
+                    SimpleAssert.that(
+                        HologramWorkspace.find(endpoint.actor) == active && !active.open,
                         "an attempted settings open cannot expose the reserved pre-publication scratch");
                     previous.editorWorkspaceEpoch++;
                     previous.planRevision++;
                 }
             };
             refuseEntry(captured);
-            SimpleAssert.that(fired[0] && HologramWorkspace.find(endpoint.actor) == null
-                && previous.editorWorkspaceEpoch == oldEpoch + 1 && previous.planRevision == oldPlan + 1
-                && world.writes().size() == writes && !HologramWorkspace.constructionGate(endpoint).busy(endpoint.actor),
+            SimpleAssert.that(
+                fired[0] && HologramWorkspace.find(endpoint.actor) == null
+                    && previous.editorWorkspaceEpoch == oldEpoch + 1
+                    && previous.planRevision == oldPlan + 1
+                    && world.writes()
+                        .size() == writes
+                    && !HologramWorkspace.constructionGate(endpoint)
+                        .busy(endpoint.actor),
                 "failed post-reserve admission removes its own seat without restoring a revised predecessor or leaking lease");
 
             hooked.heldRead = null;
@@ -407,8 +530,12 @@ final class HologramStockCokeOvenProfileRegression {
                 }
             };
             refuseEntry(captured);
-            SimpleAssert.that(armedReads[0] == -1 && HologramWorkspace.find(endpoint.actor) == newer
-                && world.writes().size() == writes && !HologramWorkspace.constructionGate(endpoint).busy(endpoint.actor),
+            SimpleAssert.that(
+                armedReads[0] == -1 && HologramWorkspace.find(endpoint.actor) == newer
+                    && world.writes()
+                        .size() == writes
+                    && !HologramWorkspace.constructionGate(endpoint)
+                        .busy(endpoint.actor),
                 "real held-slot getter cannot make an already superseded workspace disappear under stock reservation");
         } finally {
             player.inventory = baseInventory;
@@ -448,22 +575,29 @@ final class HologramStockCokeOvenProfileRegression {
         var stock = player.inventory.mainInventory;
         // With no count quota, the test must leave genuine work after the first commit to exercise STOP.
         int[] next = new int[3];
-        previous.machine.getExtendedFacing().getWorldOffset(new int[] { 0, -1, 0 }, next);
+        previous.machine.getExtendedFacing()
+            .getWorldOffset(new int[] { 0, -1, 0 }, next);
         int nextX = previous.x + next[0], nextY = previous.y + next[1], nextZ = previous.z + next[2];
-        SimpleAssert.that(world.getBlock(nextX, nextY, nextZ) == GregTechAPI.sBlockCasings12
-            && world.getBlockMetadata(nextX, nextY, nextZ) == 0, "fixture's second native casing was exactly installed");
+        SimpleAssert.that(
+            world.getBlock(nextX, nextY, nextZ) == GregTechAPI.sBlockCasings12
+                && world.getBlockMetadata(nextX, nextY, nextZ) == 0,
+            "fixture's second native casing was exactly installed");
         world.setBlock(nextX, nextY, nextZ, Blocks.air, 0, 3);
-        int writes = world.writes().size();
+        int writes = world.writes()
+            .size();
         stock[1] = new ItemStack(casingItem, 23, 0);
         stock[2] = new ItemStack(casingItem, 32, 1);
         var insufficient = stockIntent(endpoint, previous, choice, request(16), full);
         refuseEntry(HologramStockNativeEntry.ingress(endpoint, insufficient));
-        SimpleAssert.that(HologramWorkspace.find(endpoint.actor) == previous && world.writes().size() == writes
-            && stock[1].stackSize == 23 && stock[2].stackSize == 32,
+        SimpleAssert.that(
+            HologramWorkspace.find(endpoint.actor) == previous && world.writes()
+                .size() == writes && stock[1].stackSize == 23 && stock[2].stackSize == 32,
             "standard intent only accepts the exact 24-brick bound, never silently switches to partial");
         stock[1] = new ItemStack(casingItem, 24, 0);
         refuseEntry(HologramStockNativeEntry.ingress(endpoint, insufficient));
-        SimpleAssert.that(HologramWorkspace.find(endpoint.actor) == previous && world.writes().size() == writes,
+        SimpleAssert.that(
+            HologramWorkspace.find(endpoint.actor) == previous && world.writes()
+                .size() == writes,
             "a denied request cannot become a later start after restocking");
 
         var changedHeld = stockIntent(endpoint, previous, choice, request(17), partial);
@@ -473,27 +607,42 @@ final class HologramStockCokeOvenProfileRegression {
         stock[previous.slot] = original.copy();
         refuseEntry(queued);
         stock[previous.slot] = original;
-        SimpleAssert.that(HologramWorkspace.find(endpoint.actor) == previous && world.writes().size() == writes,
+        SimpleAssert.that(
+            HologramWorkspace.find(endpoint.actor) == previous && world.writes()
+                .size() == writes,
             "a queued short confirmation cannot transfer to a replacement held stack");
 
         stock[1] = new ItemStack(casingItem, 1, 0);
         var partialIntent = stockIntent(endpoint, previous, choice, request(18), partial);
         var entry = HologramStockNativeEntry.begin(HologramStockNativeEntry.ingress(endpoint, partialIntent));
         var reserved = HologramWorkspace.find(endpoint.actor);
-        SimpleAssert.that(reserved != null && reserved != previous && reserved.capture == null
-            && world.writes().size() == writes && stock[1].stackSize == 1,
+        SimpleAssert.that(
+            reserved != null && reserved != previous
+                && reserved.capture == null
+                && world.writes()
+                    .size() == writes
+                && stock[1].stackSize == 1,
             "confirmed entry reserves an empty exact temporary session without preparing a geometry plan");
-        SimpleAssert.that(!entry.stop(endpoint, request(19)), "different correlated request cannot stop the native entry");
-        SimpleAssert.eq(HologramStockNativeConstruction.State.ACTIVE, tickPrefix(entry, 1),
+        SimpleAssert
+            .that(!entry.stop(endpoint, request(19)), "different correlated request cannot stop the native entry");
+        SimpleAssert.eq(
+            HologramStockNativeConstruction.State.ACTIVE,
+            tickPrefix(entry, 1),
             "the test-only permit boundary leaves a second missing casing in progress");
-        SimpleAssert.that(entry.placed() == 1 && stock[1] == null && world.writes().size() == writes + 1,
+        SimpleAssert.that(
+            entry.placed() == 1 && stock[1] == null
+                && world.writes()
+                    .size() == writes + 1,
             "explicit partial short intent reaches the same actual world and debit transaction");
-        SimpleAssert.that(entry.stop(endpoint, partialIntent.request())
-            && entry.tick(Long.MAX_VALUE) == HologramStockNativeConstruction.State.STOPPED
-            && HologramWorkspace.find(endpoint.actor) == previous
-            && world.getBlock(first[0], 64 + first[1], first[2]) == GregTechAPI.sBlockCasings12
-            && world.getBlock(nextX, nextY, nextZ) == Blocks.air
-            && world.writes().size() == writes + 1 && stock[1] == null,
+        SimpleAssert.that(
+            entry.stop(endpoint, partialIntent.request())
+                && entry.tick(Long.MAX_VALUE) == HologramStockNativeConstruction.State.STOPPED
+                && HologramWorkspace.find(endpoint.actor) == previous
+                && world.getBlock(first[0], 64 + first[1], first[2]) == GregTechAPI.sBlockCasings12
+                && world.getBlock(nextX, nextY, nextZ) == Blocks.air
+                && world.writes()
+                    .size() == writes + 1
+                && stock[1] == null,
             "exact stop preserves only the committed cell/debit and restores the original workspace");
         refuseEntry(HologramStockNativeEntry.ingress(endpoint, partialIntent));
         world.setBlock(nextX, nextY, nextZ, GregTechAPI.sBlockCasings12, 0, 3);
@@ -504,24 +653,40 @@ final class HologramStockCokeOvenProfileRegression {
         stock[1] = new ItemStack(casingItem, 24, 0);
         var exactFull = stockIntent(endpoint, previous, choice, request(20), full);
         entry = HologramStockNativeEntry.begin(HologramStockNativeEntry.ingress(endpoint, exactFull));
-        SimpleAssert.that(HologramWorkspace.find(endpoint.actor) != null && stock[1].stackSize == 24,
+        SimpleAssert.that(
+            HologramWorkspace.find(endpoint.actor) != null && stock[1].stackSize == 24,
             "fresh client-local opening needs no previous editor, quote or geometry capture");
         var result = HologramStockNativeConstruction.State.ACTIVE;
         for (int i = 0; i < 8 && result == HologramStockNativeConstruction.State.ACTIVE; i++)
             result = entry.tick(Long.MAX_VALUE);
-        SimpleAssert.that(result == HologramStockNativeConstruction.State.COMPLETE && entry.placed() == 1
-            && stock[1].stackSize == 23 && stock[2].stackSize == 32
-            && HologramWorkspace.find(endpoint.actor) == null,
+        SimpleAssert.that(
+            result == HologramStockNativeConstruction.State.COMPLETE && entry.placed() == 1
+                && stock[1].stackSize == 23
+                && stock[2].stackSize == 32
+                && HologramWorkspace.find(endpoint.actor) == null,
             "fully-funded exact short confirmation closed its transient scope and charged only the actual missing cell");
     }
 
     private static HologramStockNativeEntry.Intent stockIntent(HologramWorkspace.ActionEndpoint endpoint,
         HologramSession original, HologramStockNativeConstruction.HatchChoice choice,
         HologramConstructionTaskGate.Request request, HologramStockNativeEntry.Funding funding) {
-        return new HologramStockNativeEntry.Intent(request, endpoint.constructionScope.generation,
-            HologramStockCokeOvenProfile.SOURCE_ID, HologramStockCokeOvenProfile.CONTROLLER,
-            original.x, original.y, original.z, original.side, original.slot, original.facing, 1, false, false, 0,
-            funding, choice);
+        return new HologramStockNativeEntry.Intent(
+            request,
+            endpoint.constructionScope.generation,
+            HologramStockCokeOvenProfile.SOURCE_ID,
+            HologramStockCokeOvenProfile.CONTROLLER,
+            original.x,
+            original.y,
+            original.z,
+            original.side,
+            original.slot,
+            original.facing,
+            1,
+            false,
+            false,
+            0,
+            funding,
+            choice);
     }
 
     private static void refuseEntry(HologramStockNativeEntry.Submission submission) {
@@ -535,13 +700,19 @@ final class HologramStockCokeOvenProfileRegression {
 
     private static void verifyForgeRollback(sun.misc.Unsafe unsafe, HologramPlacementFixtureWorld world,
         EntityPlayerMP player, HologramSession session, HologramWorkspace.ActionEndpoint endpoint,
-        HologramStockNativeConstruction.HatchChoice selected, HologramConstructionTaskGate.Request request,
-        int[] first, Runnable changeAuthority) throws IOException, ReflectiveOperationException {
-        var job = HologramStockNativeConstruction.begin(endpoint, session, request,
-            HologramStockCokeOvenProfile.SOURCE_ID, 1,
-            HologramStockNativeConstruction.Consent.PLACE_SAFE_CELLS_WITH_AVAILABLE_STOCK, selected);
+        HologramStockNativeConstruction.HatchChoice selected, HologramConstructionTaskGate.Request request, int[] first,
+        Runnable changeAuthority) throws IOException, ReflectiveOperationException {
+        var job = HologramStockNativeConstruction.begin(
+            endpoint,
+            session,
+            request,
+            HologramStockCokeOvenProfile.SOURCE_ID,
+            1,
+            HologramStockNativeConstruction.Consent.PLACE_SAFE_CELLS_WITH_AVAILABLE_STOCK,
+            selected);
         Block casing = GregTechAPI.sBlockCasings12;
-        int x = first[0], y = 64 + first[1], z = first[2], writes = world.writes().size();
+        int x = first[0], y = 64 + first[1], z = first[2], writes = world.writes()
+            .size();
         var oldStock = player.inventory.mainInventory[1];
         int[] events = { 0 };
         var eventField = MinecraftForge.class.getDeclaredField("EVENT_BUS");
@@ -549,13 +720,19 @@ final class HologramStockCokeOvenProfileRegression {
         long busOffset = unsafe.staticFieldOffset(eventField);
         EventBus previous = MinecraftForge.EVENT_BUS;
         unsafe.putObjectVolatile(busBase, busOffset, new EventBus() {
+
             @Override
             public boolean post(Event event) {
-                if (events[0] == 0 && event instanceof BlockEvent.PlaceEvent place && place.player == player
-                    && place.world == world && place.x == x && place.y == y && place.z == z
+                if (events[0] == 0 && event instanceof BlockEvent.PlaceEvent place
+                    && place.player == player
+                    && place.world == world
+                    && place.x == x
+                    && place.y == y
+                    && place.z == z
                     && world.getBlock(x, y, z) == casing) {
                     events[0]++;
-                    SimpleAssert.that(player.inventory.mainInventory[1] == oldStock && oldStock.stackSize == 1,
+                    SimpleAssert.that(
+                        player.inventory.mainInventory[1] == oldStock && oldStock.stackSize == 1,
                         "the real stock casing was installed in Forge while the original exact inventory is untouched");
                     changeAuthority.run();
                 }
@@ -563,22 +740,32 @@ final class HologramStockCokeOvenProfileRegression {
             }
         });
         try {
-            SimpleAssert.eq(HologramStockNativeConstruction.State.STOPPED, drainPrefix(job, 1),
+            SimpleAssert.eq(
+                HologramStockNativeConstruction.State.STOPPED,
+                drainPrefix(job, 1),
                 "changed native authority cannot commit an otherwise valid casing");
         } finally {
             unsafe.putObjectVolatile(busBase, busOffset, previous);
         }
-        SimpleAssert.that(events[0] == 1 && world.writes().size() == writes + 2 && world.getBlock(x, y, z) == Blocks.air
-            && job.placed() == 0 && player.inventory.mainInventory[1] == oldStock && oldStock.stackSize == 1
-            && !HologramConstructionJournal.pending(player) && session.capture == null
-            && HologramWorkspace.constructionGate(endpoint).query(endpoint.constructionScope, request)
-                .outcome.committedTransactions == 0,
+        SimpleAssert.that(
+            events[0] == 1 && world.writes()
+                .size() == writes + 2
+                && world.getBlock(x, y, z) == Blocks.air
+                && job.placed() == 0
+                && player.inventory.mainInventory[1] == oldStock
+                && oldStock.stackSize == 1
+                && !HologramConstructionJournal.pending(player)
+                && session.capture == null
+                && HologramWorkspace.constructionGate(endpoint)
+                    .query(endpoint.constructionScope, request).outcome.committedTransactions == 0,
             "real world setter then rollback, no debit, no settlement leakage and no false committed prefix");
     }
 
     private static HologramConstructionTaskGate.Request request(long sequence) {
         return new HologramConstructionTaskGate.Request(
-            UUID.randomUUID(), sequence, HologramConstructionTaskGate.Kind.INCREMENTAL_NATIVE);
+            UUID.randomUUID(),
+            sequence,
+            HologramConstructionTaskGate.Kind.INCREMENTAL_NATIVE);
     }
 
     private static void refuse(HologramWorkspace.ActionEndpoint endpoint, HologramSession session,
@@ -603,13 +790,12 @@ final class HologramStockCokeOvenProfileRegression {
     /** Test-only interposition for cancellation/rollback at a committed prefix, not a production speed limit. */
     private static HologramStockNativeConstruction.State tickPrefix(HologramStockNativeEntry entry, int count) {
         int stopAt = entry.placed() + count;
-        return entry.tick(Long.MAX_VALUE,
-            (gate, lease) -> entry.placed() >= stopAt ? null : gate.beginTransaction(lease));
+        return entry
+            .tick(Long.MAX_VALUE, (gate, lease) -> entry.placed() >= stopAt ? null : gate.beginTransaction(lease));
     }
 
     private static HologramStockNativeConstruction.State drainPrefix(HologramStockNativeConstruction job, int count) {
         int stopAt = job.placed() + count;
-        return job.drain(Long.MAX_VALUE,
-            (gate, lease) -> job.placed() >= stopAt ? null : gate.beginTransaction(lease));
+        return job.drain(Long.MAX_VALUE, (gate, lease) -> job.placed() >= stopAt ? null : gate.beginTransaction(lease));
     }
 }

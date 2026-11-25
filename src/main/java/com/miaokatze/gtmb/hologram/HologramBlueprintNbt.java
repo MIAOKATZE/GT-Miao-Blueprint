@@ -269,11 +269,11 @@ public final class HologramBlueprintNbt {
         }
     }
 
-    static NBTTagCompound resolveNativePayload(NBTTagCompound source)throws IOException{
-        if(source==null)return null;
+    static NBTTagCompound resolveNativePayload(NBTTagCompound source) throws IOException {
+        if (source == null) return null;
         checkDepth(source, 0);
         requireItemBindings(source);
-        NBTTagCompound copy=(NBTTagCompound)source.copy();
+        NBTTagCompound copy = (NBTTagCompound) source.copy();
         resolveSavedIdentities(copy);
         return copy;
     }
@@ -287,8 +287,11 @@ public final class HologramBlueprintNbt {
     private static void resolveSavedIdentities(NBTTagCompound payload) throws IOException {
         try {
             stableItems(payload, false);
-            if (hasMissingItems(payload)) throw new IOException("Blueprint payload contains an unavailable item or cover");
-        }        catch(RuntimeException invalid){throw new IOException("原生蓝图 NBT 材料无法解析",invalid);}
+            if (hasMissingItems(payload))
+                throw new IOException("Blueprint payload contains an unavailable item or cover");
+        } catch (RuntimeException invalid) {
+            throw new IOException("原生蓝图 NBT 材料无法解析", invalid);
+        }
     }
 
     /** First admission resolves identities on the owner; later reads use only that task's frozen numeric IDs. */
@@ -337,14 +340,17 @@ public final class HologramBlueprintNbt {
                     if (cover.hasKey(COVER_REGISTRY, 8)) {
                         Item item = stableRegistryItem(cover.getString(COVER_REGISTRY));
                         if (item == null || (Item.getIdFromItem(item) & ~0xFFFF) != 0
-                            || !cover.hasKey(COVER_DAMAGE, 3) || (cover.getInteger(COVER_DAMAGE) & ~0xFFFF) != 0)
+                            || !cover.hasKey(COVER_DAMAGE, 3)
+                            || (cover.getInteger(COVER_DAMAGE) & ~0xFFFF) != 0)
                             throw new IOException("Blueprint has an unavailable or unrepresentable GT cover");
                     }
                 }
             }
             if (itemCompound(compound)) {
                 Item item = stableItem(compound);
-                if (item != null && "appeng.items.parts.ItemFacade".equals(item.getClass().getName()))
+                if (item != null && "appeng.items.parts.ItemFacade".equals(
+                    item.getClass()
+                        .getName()))
                     requireFacadeMaterial(compound.getCompoundTag("tag"));
             }
             for (Object key : compound.func_150296_c()) requireItemBindings(compound.getTag((String) key));

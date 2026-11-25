@@ -3,10 +3,7 @@
 
 package com.miaokatze.gtmb.main;
 
-import java.util.UUID;
-
 import com.miaokatze.gtmb.client.hologram.HologramClient;
-import com.miaokatze.gtmb.hologram.HologramNetwork;
 
 public final class ClientProxy extends CommonProxy {
 

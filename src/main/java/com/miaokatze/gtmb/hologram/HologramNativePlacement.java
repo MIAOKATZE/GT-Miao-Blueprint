@@ -300,11 +300,8 @@ public final class HologramNativePlacement {
         try {
             HologramResourceWorld detached = HologramResourceWorld.create(block, metadata);
             Adapter adapter = adapter(block);
-            TileEntity expected = adapter.create(
-                block,
-                metadata,
-                HologramEnergyPayload.withoutBuffers(targetPayload(block, payload)),
-                detached);
+            TileEntity expected = adapter
+                .create(block, metadata, HologramEnergyPayload.withoutBuffers(targetPayload(block, payload)), detached);
             if (expected == null || !actual.getClass()
                 .equals(expected.getClass())) return false;
             adapter.prepareActor(block, expected, actor);
@@ -623,13 +620,15 @@ public final class HologramNativePlacement {
     /** Check saved appearance by the same registry rules before preview or native tile creation. */
     static void validateSavedAppearance(Block block, NBTTagCompound tag) throws IOException {
         if (block == null || tag == null) return;
-        String type = block.getClass().getName();
+        String type = block.getClass()
+            .getName();
         try {
             if (type.equals("codechicken.multipart.BlockMultipart")) {
                 var parts = tag.getTagList("parts", 10);
                 for (int i = 0; i < parts.tagCount(); i++) {
                     var part = parts.getCompoundTagAt(i);
-                    if (part.getString("id").startsWith("mcr_")
+                    if (part.getString("id")
+                        .startsWith("mcr_")
                         && Class.forName("codechicken.microblock.MicroMaterialRegistry")
                             .getMethod("getMaterial", String.class)
                             .invoke(null, part.getString("material")) == null)
@@ -637,9 +636,12 @@ public final class HologramNativePlacement {
                 }
             } else if (type.equals("gcewing.architecture.common.block.BlockShape")) {
                 Object shape = Class.forName("gcewing.architecture.common.shape.Shape")
-                    .getMethod("forId", int.class).invoke(null, tag.getInteger("Shape"));
+                    .getMethod("forId", int.class)
+                    .invoke(null, tag.getInteger("Shape"));
                 if (!tag.hasKey("Shape", 99) || shape == null
-                    || shape.getClass().getField("id").getInt(shape) != tag.getInteger("Shape"))
+                    || shape.getClass()
+                        .getField("id")
+                        .getInt(shape) != tag.getInteger("Shape"))
                     throw unsupported("unregistered ArchitectureCraft shape");
                 for (String key : new String[] { "BaseName", "Name2" }) {
                     if (key.equals("Name2") && !tag.hasKey(key)) continue;

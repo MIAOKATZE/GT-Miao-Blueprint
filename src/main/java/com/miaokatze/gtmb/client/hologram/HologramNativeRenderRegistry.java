@@ -14,7 +14,6 @@ import net.minecraft.tileentity.TileEntity;
 import net.minecraft.world.IBlockAccess;
 import net.minecraft.world.World;
 
-
 import cpw.mods.fml.client.registry.ISimpleBlockRenderingHandler;
 
 /** Client extension for audited static ISBRH families. Register in client initialization only. */
@@ -102,21 +101,28 @@ public final class HologramNativeRenderRegistry {
 
     public static void register(Adapter adapter) {
         if (adapter == null) throw new IllegalArgumentException("native renderer adapter is required");
-        ADAPTERS.add(adapter);GENERATION.incrementAndGet();
+        ADAPTERS.add(adapter);
+        GENERATION.incrementAndGet();
     }
 
-    private static final java.util.concurrent.atomic.AtomicLong GENERATION=new java.util.concurrent.atomic.AtomicLong();
-    static long generation(){return GENERATION.get();}
+    private static final java.util.concurrent.atomic.AtomicLong GENERATION = new java.util.concurrent.atomic.AtomicLong();
+
+    static long generation() {
+        return GENERATION.get();
+    }
 
     /** Remove an adapter when its client integration is disabled or replaced. */
     public static boolean unregister(Adapter adapter) {
-        boolean removed=ADAPTERS.remove(adapter);if(removed)GENERATION.incrementAndGet();return removed;
+        boolean removed = ADAPTERS.remove(adapter);
+        if (removed) GENERATION.incrementAndGet();
+        return removed;
     }
 
     /** Built-in family modules match by registered block identity and run after community adapters. */
     public static synchronized void registerBuiltin(Adapter adapter) {
         if (adapter == null) throw new IllegalArgumentException("native renderer adapter is required");
-        BUILTINS.add(adapter);GENERATION.incrementAndGet();
+        BUILTINS.add(adapter);
+        GENERATION.incrementAndGet();
         BUILTIN_BY_BLOCK.clear();
     }
 
@@ -162,11 +168,14 @@ public final class HologramNativeRenderRegistry {
 
     public static void registerMultipart(MultipartAdapter adapter) {
         if (adapter == null) throw new IllegalArgumentException("native multipart adapter is required");
-        MULTIPART_ADAPTERS.add(adapter);GENERATION.incrementAndGet();
+        MULTIPART_ADAPTERS.add(adapter);
+        GENERATION.incrementAndGet();
     }
 
     public static boolean unregisterMultipart(MultipartAdapter adapter) {
-        boolean removed=MULTIPART_ADAPTERS.remove(adapter);if(removed)GENERATION.incrementAndGet();return removed;
+        boolean removed = MULTIPART_ADAPTERS.remove(adapter);
+        if (removed) GENERATION.incrementAndGet();
+        return removed;
     }
 
     static MultipartAdapter multipartAdapter(String type, Object part) {
