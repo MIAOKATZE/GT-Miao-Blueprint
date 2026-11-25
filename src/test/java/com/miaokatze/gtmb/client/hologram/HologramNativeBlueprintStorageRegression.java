@@ -26,7 +26,6 @@ public final class HologramNativeBlueprintStorageRegression {
             HologramClientLibrary library=new HologramClientLibrary(game);Path dir=library.directory();Files.createDirectories(dir);String id="local_77777777-7777-7777-7777-777777777777";
             byte[] json=("{\"schema\":2,\"blueprint\":{\"id\":\""+id+"\",\"name\":\"Native Stage\",\"authorName\":\"Fixture\",\"authorUuid\":\"77777777-7777-7777-7777-777777777777\",\"cells\":[{\"x\":-2,\"y\":1,\"z\":3,\"block\":\"minecraft:stone\",\"metadata\":0,\"item\":\"minecraft:stone\",\"damage\":0,\"count\":1}]}}").getBytes(StandardCharsets.UTF_8);
             byte[] image=NativeBlueprintCodecRegression.png();Path original=dir.resolve(id+".json");HologramBlueprintArtifact.writePair(original,json,image);byte[] originalJson=Files.readAllBytes(original),originalPng=Files.readAllBytes(HologramBlueprintArtifact.previewPath(original));
-            require(library.upgradeNamedHistoric(id,()->true).contains("暂存"),"existing named-upgrade worker stages, never activates");
             HologramNativeBlueprintStorage.Prepared prepared=library.prepareNativeUpgrade(id,()->true);
             require(HologramBlueprintFiles.resolve(dir,id).equals(original),"preparation does not activate unconsumable generation");require(library.list().size()==1&&library.list().get(0).id.equals(id),"staging no duplicate visible cards");
             try(NativeBlueprintDefinition d=HologramNativeBlueprintStorage.openPrepared(prepared)){require(d.cells()==1&&d.elementAt(-2,1,3)>0,"game seam owns native definition directly");}
@@ -104,7 +103,6 @@ public final class HologramNativeBlueprintStorageRegression {
         HologramBlueprintArtifact.writePair(old,json,image);
         byte[] exactOld=Files.readAllBytes(old),exactImage=Files.readAllBytes(oldPng);
         require(store.list().size()==1&&store.list().get(0).id.equals(id),"loose named source appears under its preexisting UUID");
-        require(store.upgradeNamedHistoric("FieldReport.json",()->true).contains("暂存"),"formal typed-name upgrade stages");
         HologramNativeBlueprintStorage.Prepared staged=store.prepareNativeUpgrade("FieldReport",()->true);
         require(staged.logicalId.equals(id)&&store.list().size()==1,"input name does not take ownership of the logical ID");
         var first=HologramNativeBlueprintStorage.activate(dir,staged,staged.revision,()->true,
@@ -118,7 +116,7 @@ public final class HologramNativeBlueprintStorageRegression {
         require(journalCount(dir)==0,"ordinary cold open reconciles committed publication");
         require(cold.list().size()==1&&cold.list().get(0).id.equals(id)&&HologramBlueprintFiles.managed(dir).size()==1,
             "active named source + retained original appear exactly once");
-        require(cold.upgradeNamedHistoric("FieldReport",()->true).contains("已使用"),"same named upgrade is idempotent");
+        require(cold.commitSelectedNativeUpgrade(id,()->true).contains("已使用"),"repeated conversion of the selected card is idempotent");
         // Same source revision, newly captured pixels: both files get a different complete-generation name.
         byte[] freshImage=thumbnail(0xff0000ff);
         HologramNativeBlueprintStorage.Prepared thumb;
@@ -243,7 +241,6 @@ public final class HologramNativeBlueprintStorageRegression {
         byte[] original=Files.readAllBytes(source),originalPng=Files.readAllBytes(png);
         Files.write(collection,cloneOnly);
         require(lib.list().size()==1&&lib.listLegacy().isEmpty(),"ordinary legacy merged listing unchanged");
-        require(lib.upgradeNamedHistoric(id,()->true).contains("暂存"),"official named action stages only");
         require(lib.readPrivateEditorSource(id).nativePair()==null&&lib.savedPath(id).equals(source),"default stays legacy after stage");
         var staged=lib.prepareNativeUpgrade(id,()->true);
         HologramNativeBlueprintStorage.activate(dir,staged,staged.revision,()->true);

@@ -523,7 +523,7 @@ final class HologramUiLibrary {
     }
 
     boolean nativeCanUpgrade() {
-        return !ui.session.isTutorial() && (!dedicatedLibrary() || !publicLibrary || nativeAdmin())
+        return !ui.session.isTutorial() && !publicLibrary
             && !localBusy()
             && !HologramLibraryClient.INSTANCE.busy()
             && !HologramBackgroundTasks.busy()
@@ -532,26 +532,83 @@ final class HologramUiLibrary {
 
     void requireCompactUpdate() {
         if (publicLibrary && dedicatedLibrary() && !nativeAdmin()) {
-            ui.session.notice("此公库蓝图必须先由管理员紧凑化");
+            ui.session.notice("请联系管理员处理旧格式公库蓝图；此操作不会修改服务器公库");
             return;
         }
-        ui.session.notice(com.miaokatze.gtmb.hologram.HologramCompactRequiredException.MESSAGE);
+        if (requestConversion(nativeSelectedRow())) return;
+        ui.session.notice(projector("library.convert_before_place"));
         if (ui.shell.built()) ui.shell.showLibraryMaintenance();
     }
 
-    boolean nativeCanUpgradeNamed() {
-        return nativeCanUpgrade() && !publicLibrary
-            && presetNameField != null
-            && !presetNameField.getText()
-                .trim()
-                .isEmpty();
+    private String selectedConversionId() {
+        if (publicLibrary || overwriteMode) return "";
+        NBTTagCompound row = nativeSelectedRow();
+        return row.getBoolean("convertiblePair") ? row.getString("id") : "";
     }
 
-    void nativeUpgradeNamed() {
-        if (!nativeCanUpgradeNamed()) return;
-        String alias = presetNameField.getText()
-            .trim();
-        HologramLibraryClient.INSTANCE.upgradeLocal(alias, this::upgradedLibrary);
+    boolean nativeCanConvertSelected() {
+        return nativeCanUpgrade() && !selectedConversionId().isEmpty();
+    }
+
+    String nativeConvertSelectedHelp() {
+        if (publicLibrary) return projector("library.convert_private_only");
+        NBTTagCompound row = nativeSelectedRow();
+        if (row.getBoolean("nativeFile")) return projector("library.convert_already_native");
+        if (!row.getString("id").isEmpty() && !row.getBoolean("convertiblePair"))
+            return projector("library.convert_unpaired");
+        return projector("library.convert_selected_help");
+    }
+
+    private NBTTagCompound conversionPrompt;
+
+    boolean conversionRequired(NBTTagCompound row) {
+        String id = row.getString("id");
+        return !ui.session.isTutorial() && !publicLibrary && (id.startsWith("local_") || id.startsWith("legacy:"))
+            && !row.getBoolean("nativeFile");
+    }
+
+    boolean conversionPromptOpen() { return conversionPrompt != null; }
+    String conversionPromptName() { return conversionPrompt == null ? "" : conversionPrompt.getString("name"); }
+    boolean promptCanConvert() { return conversionPrompt != null && conversionPrompt.getBoolean("convertiblePair") && nativeCanUpgrade(); }
+    void cancelConversionPrompt() { conversionPrompt = null; }
+    void confirmConversionPrompt(boolean all) {
+        if (conversionPrompt == null || !nativeCanUpgrade() || !all && !promptCanConvert()) return;
+        String id = conversionPrompt.getString("id");
+        cancelConversionPrompt();
+        if (all) convertAllLocal(); else convertLocalId(id);
+    }
+
+    void convertAllLocal() {
+        if (nativeCanUpgrade()) HologramLibraryClient.INSTANCE.convertAllLocal(this::conversionFinished);
+    }
+
+    private void conversionFinished() {
+        libraryResult = HologramLibraryClient.INSTANCE.status();
+        ui.session.notice(libraryResult);
+    }
+
+    private boolean requestConversion(NBTTagCompound row) {
+        if (!conversionRequired(row)) return false;
+        conversionPrompt = (NBTTagCompound) row.copy(); // freeze the clicked identity, not the writable name/search field
+        return true; // do not select, open, parse or render a legacy source
+    }
+
+    void nativeConvertSelected() {
+        if (!nativeCanUpgrade()) return;
+        String id = selectedConversionId();
+        if (id.isEmpty()) return;
+        convertLocalId(id);
+    }
+
+    private void convertLocalId(String id) {
+        HologramLibraryClient.INSTANCE.convertSelectedLocal(id, () -> {
+            conversionFinished();
+            // A converted file keeps its logical ID. Do not leave its clean legacy editor attached,
+            // or replace another tab or in-flight edits merely because a worker finished.
+            if (ui.session.localDocument() && id.equals(ui.session.document().fileId())
+                && id.equals(nativeSelectedRow().getString("id")) && !ui.session.document().dirty())
+                localWorkspace.openPreset(id);
+        });
     }
 
     int nativeServerPage() {
@@ -983,11 +1040,11 @@ final class HologramUiLibrary {
         if (server && !HologramLibraryClient.INSTANCE.config()
             .getBoolean("admin")) return;
         int width = server ? 30 : 66;
-        ui.canvas.button(226, x, 301, width, 13, server ? "紧凑化" : "升级／紧凑化", nativeCanUpgrade(), mx, my);
+        ui.canvas.button(226, x, 301, width, 13, projector("library.upgrade"), nativeCanUpgrade(), mx, my);
         if (mx >= x && mx < x + width && my >= 301 && my < 314) {
             ui.canvas.tooltip(new ArrayList<>());
             ui.canvas.tooltip()
-                .add(server ? "检查服务器公库：更新旧档并紧凑化展开文件。" : "检查本地蓝图库：更新旧档并紧凑化展开文件。");
+                .add(projector("library.upgrade_help"));
             ui.canvas.tooltip()
                 .add("仅更新 GTMB 元数据及兼容存储；保留原整合包、其他 Mod 版本和方块内容。");
             ui.canvas.tooltip()
@@ -1003,11 +1060,11 @@ final class HologramUiLibrary {
         }
     }
 
-    private void upgradedLibrary() {
-        libraryResult = HologramLibraryClient.INSTANCE.status();
-        ui.session.notice(libraryResult);
-        if (dedicatedLibrary() && this.publicLibrary) HologramLibraryClient.INSTANCE.refreshServer(0);
-        else refreshLibrary();
+    String nativeUpgradeHelp() {
+        StringBuilder help = new StringBuilder(projector("library.upgrade_help"));
+        java.util.List<String> details = HologramLibraryClient.INSTANCE.upgradeDetails();
+        for (int i = 0; i < Math.min(8, details.size()); i++) help.append('\n').append(details.get(i));
+        return help.toString();
     }
 
     void openLibraryAdmin() {
@@ -1605,6 +1662,8 @@ final class HologramUiLibrary {
         boolean rowSelection = id >= 14000 && id < 15000;
         if (rowSelection && !ui.session.editable()) return true;
         NBTTagCompound clickedRow = rowSelection ? visibleLibraryRow(id) : null;
+        if (!overwriteMode && rowSelection && requestConversion(clickedRow)) return true;
+        if (!overwriteMode && (id == 139 || id == 141) && requestConversion(nativeSelectedRow())) return true;
         if (rowSelection && (clickedRow.getString("id")
             .isEmpty() || !this.overwriteMode && currentEditablePreset(clickedRow.getString("id")))) return true;
         if (rowSelection && !overwriteMode && clickedRow.getBoolean("needsCompaction")) {
@@ -1711,10 +1770,7 @@ final class HologramUiLibrary {
             }
         }
         if (id == 226) {
-            if (!nativeCanUpgrade()) return true;
-            if (dedicatedLibrary() && this.publicLibrary)
-                HologramLibraryClient.INSTANCE.upgradeServer(this::upgradedLibrary);
-            else HologramLibraryClient.INSTANCE.upgradeLocal(this::upgradedLibrary);
+            convertAllLocal();
             return true;
         }
         if (id == 309 || id == 310) {

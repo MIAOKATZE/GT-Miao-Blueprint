@@ -9,7 +9,7 @@ import java.io.IOException;
 public final class HologramCompactRequiredException extends IOException {
 
     private static final long serialVersionUID = 1L;
-    public static final String MESSAGE = "此蓝图必须先紧凑化，请在蓝图库选择「升级／紧凑化」";
+    public static final String MESSAGE = "此旧格式蓝图需要升级，请在本地蓝图库选择该蓝图并点击「升级」";
 
     public HologramCompactRequiredException() {
         super(MESSAGE);

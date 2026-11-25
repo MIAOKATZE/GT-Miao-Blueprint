@@ -311,7 +311,7 @@ final class HologramDeclarationWrappers {
         }
     }
 
-    private static List<ItemStack> materials(IStructureElement<?> root) throws ReflectiveOperationException {
+    static List<ItemStack> materials(IStructureElement<?> root) throws ReflectiveOperationException {
         return materials(root, false);
     }
 

@@ -41,6 +41,14 @@ final class HologramUiPreview {
     private int layer;
 
     private int view;
+    private boolean controllerViewChosen;
+
+    /** Apply the first settled right-click observation once; never overwrite a player's view choice. */
+    void chooseControllerSiteView(NBTTagCompound metadata) {
+        if (controllerViewChosen || !metadata.getBoolean("localStandardController") || !metadata.hasKey("siteOccupied", 3)) return;
+        controllerViewChosen = true;
+        view = metadata.getInteger("siteOccupied") > 0 ? 1 : 0;
+    }
 
     private int hovered = -1;
 
@@ -1273,6 +1281,7 @@ final class HologramUiPreview {
                 ui.preview.editAction("rotateCell");
                 return true;
             case 10:
+                controllerViewChosen = true;
                 this.view = (this.view + 1) % 3;
                 return true;
             case 11:
@@ -1948,6 +1957,7 @@ final class HologramUiPreview {
     }
 
     int view(int value) {
+        controllerViewChosen = true;
         this.view = value;
         return value;
     }
@@ -2047,6 +2057,7 @@ final class HologramUiPreview {
         allLayers = state.getBoolean("allLayers");
         layer = allLayers ? ui.session.state().maxY
             : Math.max(ui.session.state().minY, Math.min(ui.session.state().maxY, state.getInteger("layer")));
+        controllerViewChosen = true;
         view = state.getInteger("view");
         yaw = state.getDouble("yaw");
         pitch = state.getDouble("pitch");

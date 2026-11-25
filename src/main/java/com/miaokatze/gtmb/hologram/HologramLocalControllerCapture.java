@@ -60,6 +60,7 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
     private NBTTagList detailRows;
     private final Map<Integer, NBTTagCompound> prioritizedDetails = new java.util.LinkedHashMap<>();
     private final Map<IStructureElement<?>, Map<HologramBlueprintResources.ExactKey, Integer>> facingMasks = new IdentityHashMap<>();
+    private final HologramLocalControllerSite site = new HologramLocalControllerSite();
     private final NBTTagCompound settings;
     private final ItemStack trigger;
     private final boolean alreadyDetached;
@@ -267,6 +268,7 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         if (!stepRows(maxRows, maxNanos, true)) return null;
         detailRows = new NBTTagList();
         NBTTagCompound metadata = opening();
+        if (!alreadyDetached) site.publish(metadata);
         if (nativePreview != null) metadata.setTag("structureDescription", nativePreview.description());
         HologramControllerMaterialCounts materials = targetMaterials.seal();
         targetMaterials = null;
@@ -391,6 +393,7 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
 
     private NBTTagCompound finish(NBTTagList resultRows) {
         NBTTagCompound state = header();
+        if (!alreadyDetached) site.publish(state);
         state.setBoolean("projectionDataComplete", true);
         if (detailRows != null) state.setBoolean("capturePending", false);
         state.setTag("cells", resultRows);
@@ -658,6 +661,8 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         NBTTagCompound targetDisplay = !cell.anchor ? cell.targetDisplay
             : actualDisplay == null ? null : (NBTTagCompound) actualDisplay.copy();
         boolean observationMissing = false;
+        boolean hatch = false;
+        boolean gtIdentityMissing = false;
         if (!alreadyDetached && world.isRemote) {
             long observation = HologramRuntimeMetrics.start();
             try {
@@ -667,19 +672,30 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
                     meta = world.getBlockMetadata(bx, by, bz);
                     id = Block.blockRegistry.getNameForObject(actualBlock);
                     TileEntity current = actualBlock.hasTileEntity(meta) ? world.getTileEntity(bx, by, bz) : null;
-                    if (current instanceof IGregTechTileEntity gt && gt.getMetaTileEntity() != null) {
+                    if (current instanceof IGregTechTileEntity gt && !current.isInvalid()
+                        && current.getWorldObj() == world && current.xCoord == bx && current.yCoord == by
+                        && current.zCoord == bz && gt.getMetaTileEntity() != null) {
+                        hatch = gt.getMetaTileEntity() instanceof gregtech.api.metatileentity.implementations.MTEHatch;
                         actual = new ItemStack(actualBlock, 1, gt.getMetaTileID());
                         actualFacing = gt.getFrontFacing()
                             .ordinal();
                         actualDisplay = HologramDisplaySnapshot.projection(current);
+                        if (gt.getMetaTileEntity() instanceof gregtech.api.metatileentity.implementations.MTEHatch installed)
+                            actualDisplay.setInteger("siteHatchTier", installed.mTier);
                     } else {
-                        actual = actualBlock == GregTechAPI.sBlockMachines ? null
+                        gtIdentityMissing = actualBlock == GregTechAPI.sBlockMachines;
+                        actual = gtIdentityMissing ? null
                             : HologramBlockIdentity.materialStack(actualBlock, meta);
                     }
                 }
             } finally {
                 HologramRuntimeMetrics.finish(HologramRuntimeMetrics.Activity.LOCAL_CONTROLLER_WORLD, observation);
             }
+        }
+        String status = cell.anchor ? "protected" : cell.unknown ? "unsupported" : "missing";
+        if (!alreadyDetached && world.isRemote && !cell.anchor) {
+            status = site.observe(cell.element, observationMissing || gtIdentityMissing, actualBlock, meta,
+                actual, actualFacing, block, wantMeta, target, cell.previewFacing, cell.unknown || block == hint, hatch);
         }
         int[] hintTint = null;
         if (cell.hintTint != null) {
@@ -706,7 +722,7 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
             cell.anchor,
             cell.iconOnly,
             cell.unknown || block == hint,
-            cell.anchor ? "protected" : cell.unknown ? "unsupported" : "missing",
+            status,
             cell.role,
             cell.family,
             target != null && target.getItem() instanceof ItemMachines ? "item" : cell.renderKind,
@@ -716,7 +732,7 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
             cell.hintIcons == null ? null : cell.hintIcons.clone(),
             hintTint,
             cell.hintIndex,
-            observationMissing,
+            observationMissing || gtIdentityMissing,
             cell.nativeSourceWater ? HologramControllerTarget.TargetKind.MACHINE_SOURCE_WATER
                 : HologramControllerTarget.TargetKind.MATERIAL);
     }

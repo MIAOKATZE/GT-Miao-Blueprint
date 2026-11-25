@@ -294,7 +294,7 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
     }
 
     HologramCapture.Cell targetCell(HologramNativePreviewWorld.Placement placement) {
-        return previewCell(placement, null);
+        return previewCell(placement, elementAt(placement.x(), placement.y(), placement.z()));
     }
 
     HologramCapture.Cell cell(HologramNativePreviewWorld.Placement placement) {

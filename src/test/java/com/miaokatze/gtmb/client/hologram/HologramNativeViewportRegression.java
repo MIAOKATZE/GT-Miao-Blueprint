@@ -15,6 +15,14 @@ import com.miaokatze.gtmb.hologram.gtnb.NativeBlueprintCodecRegression;
 public final class HologramNativeViewportRegression {
     private HologramNativeViewportRegression(){}
     public static void run(){try{exercise();}catch(Exception e){throw new IllegalStateException(e);}}
+
+    /** Target the default first-save and exact native reopen without launching a Minecraft instance. */
+    public static void main(String[] args) throws Exception {
+        if (!com.miaokatze.gtmb.testutil.MinecraftTestBootstrap.enter(HologramNativeViewportRegression.class, args))
+            return;
+        runAuthoredCapture();
+        System.out.println("GTMB_NATIVE_FIRST_SAVE_PASS");
+    }
     private static void check(boolean value,String why){if(!value)throw new AssertionError(why);}
     private static final String UUID_TEXT="77777777-7777-7777-7777-777777777777",ID="local_"+UUID_TEXT;
     private static final String STONE="{\"block\":\"minecraft:stone\",\"item\":\"minecraft:stone\",\"count\":1,\"x\":%d,\"y\":%d,\"z\":%d}";
@@ -429,11 +437,13 @@ public final class HologramNativeViewportRegression {
         }
         snapshot.setTag("cells", cells);
         var draft = HologramLocalBlueprintInputs.controller(snapshot);
-        check(draft.unsavedLocalCapture()
-                && HologramLocalBlueprintWorkspace.nativeNewSave(draft, LocalSaveIntent.SAVE_AS_NEW, true)
-                && !HologramLocalBlueprintWorkspace.nativeNewSave(draft, LocalSaveIntent.SAVE_AS_NEW, false)
-                && !HologramLocalBlueprintWorkspace.nativeNewSave(draft, LocalSaveIntent.SAVE_CURRENT, true),
-            "the existing Save As can opt in on a capture without switching the default or changing a current save");
+        var freshLiteral = HologramLocalBlueprintInputs.empty();
+        check(freshLiteral.unsavedLocalCapture()
+                && HologramLocalBlueprintWorkspace.nativeNewSave(freshLiteral, LocalSaveIntent.SAVE_AS_NEW, "")
+                && HologramLocalBlueprintWorkspace.nativeNewSave(freshLiteral, LocalSaveIntent.SAVE_CURRENT, "")
+                && !HologramLocalBlueprintWorkspace.nativeNewSave(freshLiteral, LocalSaveIntent.SAVE_CURRENT, ID)
+                && !HologramLocalBlueprintWorkspace.nativeNewSave(draft, LocalSaveIntent.SAVE_AS_NEW, ""),
+            "literal first Save and Save As default to native without changing controller drafts or overwriting legacy");
         Path root = Files.createTempDirectory("gtmb-first-authored-native-");
         var library = new HologramClientLibrary(root);
         try {

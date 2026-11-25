@@ -463,9 +463,10 @@ final class HologramLocalBlueprintWorkspace {
             }
         }finally{java.nio.file.Files.deleteIfExists(temp);}
     }
-    static boolean nativeNewSave(HologramLocalBlueprintDocument draft, LocalSaveIntent intent, boolean experimental) {
-        // Temporary opt-in, only for a new logical slot. Never strand an existing playable legacy save.
-        return experimental && intent == LocalSaveIntent.SAVE_AS_NEW && draft.unsavedLocalCapture();
+    static boolean nativeNewSave(HologramLocalBlueprintDocument draft, LocalSaveIntent intent, String replaceId) {
+        // Both normal first Save (including Ctrl+S) and Save As write native to a fresh literal slot.
+        return replaceId.isEmpty() && (intent == LocalSaveIntent.SAVE_AS_NEW || intent == LocalSaveIntent.SAVE_CURRENT)
+            && draft.nativeFirstSaveEligible();
     }
 
     static final class NewNativeCapture implements AutoCloseable {
@@ -591,7 +592,7 @@ final class HologramLocalBlueprintWorkspace {
         if(current.draft.nativeDraft()!=null){
             saveNative(current,store,saveOptions,id,intent,authorName,authorId,yaw,pitch);return;
         }
-        if (nativeNewSave(current.draft, intent, Boolean.getBoolean("gtmb.nativeBlueprint.newSave"))) {
+        if (nativeNewSave(current.draft, intent, replaceId)) {
             saveNewNative(current,store,saveOptions,id,authorName,authorId,yaw,pitch);return;
         }
         tracedWork(current, Stage.DRAFT_IO_QUEUED, Stage.JSON_FREEZE_BEGIN, () -> {
@@ -1008,7 +1009,7 @@ final class HologramLocalBlueprintWorkspace {
         }
         ui.session.notice(document.dirty()||document.fileId().isEmpty()
             ?"请先保存蓝图，再提交施工"
-            :"旧蓝图请在客户端蓝图库维护页升级指定文件，重开原生版本后再施工");
+            :HologramUiText.projector("library.convert_before_place"));
     }
 
     private void prepareView(Task current, HologramLocalBlueprintDocument document, String notice) throws IOException {

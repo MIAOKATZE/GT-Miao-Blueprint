@@ -39,6 +39,11 @@ public final class HologramMaterialReviewRegression {
     private HologramMaterialReviewRegression() {}
 
     public static void run() {
+        try {
+            HologramMaterialNamesRegression.run();
+        } catch (Exception failure) {
+            throw new AssertionError("production material-row presentation", failure);
+        }
         NBTTagCompound state = new NBTTagCompound();
         NBTTagList rows = new NBTTagList();
         ItemStack tagged = new ItemStack(Items.diamond, 1, 7);

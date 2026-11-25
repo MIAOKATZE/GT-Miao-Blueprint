@@ -15,6 +15,7 @@ import net.minecraft.nbt.NBTTagCompound;
 import net.minecraft.world.World;
 
 import com.github.bsideup.jabel.Desugar;
+import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
 import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 
 import gregtech.api.GregTechAPI;
@@ -26,6 +27,12 @@ import gregtech.common.tileentities.machines.multi.MTEElectricBlastFurnace;
 /** Native ingress-to-slice adapter. Only the future authenticated stock-intent handler may call it. No preview,
  * blueprint, material quote, legacy start, or packet capture is part of this path. */
 final class HologramStockNativeEntry {
+
+    // This is ExtendedFacing.ordinal(), not a ForgeDirection or the count of unique transforms.
+    // Keep all encoded rotations/flips. Admission still compares with the actual controller.
+    private static boolean validControllerFacing(int facing) {
+        return facing >= 0 && facing < ExtendedFacing.STATES_COUNT;
+    }
 
     enum Funding {
         REQUIRE_FULL_BOUND,
@@ -86,11 +93,11 @@ final class HologramStockNativeEntry {
                 && DECLARED.equals(source) && controller == declaration.controller() && declaration.valid()
                 && (declaration.operation() != 1 || !noHatches)
                 && hatch == null && ebf == null && side >= 0 && side < 6 && slot >= 0 && slot < 9
-                && facing >= 0 && facing < 48 && main >= 1 && main <= 64 && funding == Funding.REQUIRE_FULL_BOUND;
+                && validControllerFacing(facing) && main >= 1 && main <= 64 && funding == Funding.REQUIRE_FULL_BOUND;
             if (ebf != null) return request != null
                 && request.kind == HologramConstructionTaskGate.Kind.INCREMENTAL_NATIVE && generation > 0
                 && EBF.equals(source) && controller == HologramStockEbfProfile.CONTROLLER && hatch == null
-                && side >= 0 && side < 6 && slot >= 0 && slot < 9 && facing >= 0 && facing < 48
+                && side >= 0 && side < 6 && slot >= 0 && slot < 9 && validControllerFacing(facing)
                 && main >= 1 && main <= 64 && funding == Funding.REQUIRE_FULL_BOUND
                 && ebf.coil >= 0 && ebf.coil <= 64 && HologramStockEbfProfile.validInstalled(ebf.installed);
 
@@ -99,7 +106,7 @@ final class HologramStockNativeEntry {
             return request != null && request.kind == HologramConstructionTaskGate.Kind.INCREMENTAL_NATIVE
                 && generation > 0 && HologramStockCokeOvenProfile.SOURCE_ID.equals(source)
                 && controller == HologramStockCokeOvenProfile.CONTROLLER
-                && side >= 0 && side < 6 && slot >= 0 && slot < 9 && facing >= 0 && facing < 48
+                && side >= 0 && side < 6 && slot >= 0 && slot < 9 && validControllerFacing(facing)
                 && main >= 1 && main <= 64 && materialPriority >= 0 && materialPriority < 3 && funding != null
                 && hatch != null && hatch.id == HologramStockCokeOvenProfile.HATCH
                 && hatch.tier == HologramStockCokeOvenProfile.HATCH_TIER && hatch.facing >= 0 && hatch.facing < 6

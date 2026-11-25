@@ -304,7 +304,13 @@ final class HologramEditorConfigurationDialogs {
                         String source = "main".equals(cap.getString("id")) ? "主值"
                             : cap.getBoolean("explicit") ? "指定"
                                 : "presence".equals(cap.getString("kind")) ? "默认" : "继承";
-                        return cap.getString("label") + "：" + ui.config.optionLabel(cap) + "（" + source + "）";
+                        String planned = ui.config.optionLabel(cap) + "（" + source + "）";
+                        if (!ui.host.parent().localControllerStandard()) return cap.getString("label") + "：" + planned;
+                        NBTTagCompound observed = ui.session.state().data.getCompoundTag("siteChannels");
+                        String id = cap.getString("id");
+                        return cap.getString("label") + " · 现场 "
+                            + (observed.hasKey(id, 3) ? Integer.toString(observed.getInteger(id)) : "未确认")
+                            + " / 规划 " + planned;
                     },
                         () -> ui.session.configurationEditable() && capabilityRow(slot) != null && capabilityRow(slot).getBoolean("editable"),
                         () -> {

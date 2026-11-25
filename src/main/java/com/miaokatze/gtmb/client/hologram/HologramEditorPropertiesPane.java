@@ -71,6 +71,18 @@ final class HologramEditorPropertiesPane {
             HologramState.Cell cell = ui.session.selectedCell();
             return cell == null ? "目标：未选中" : "目标：" + ui.preview.cellName(cell, false);
         }));
+        target.child(HologramEditorNativeTheme.label(() -> {
+            HologramState.Cell cell = ui.session.selectedCell();
+            if (cell == null || cell.localObservationMissing()) return "";
+            int tier = cell.displayInteger(true, "siteHatchTier", -1);
+            return "现场仓室 · " + (tier >= 0 && tier < gregtech.api.enums.GTValues.VN.length
+                ? gregtech.api.enums.GTValues.VN[tier] : "等级未知")
+                + " · 朝" + ui.config.directionName(cell.actualFacing);
+        }).widthRel(1f).height(20).setEnabledIf(w -> {
+            HologramState.Cell cell = ui.session.selectedCell();
+            return ui.host.parent().localControllerStandard() && cell != null && !cell.localObservationMissing()
+                && cell.displayInteger(true, "siteHatchTier", -1) >= 0;
+        }));
         target.child(meOutputCapacity(true));
         target.child(meOutputCapacity(false));
         Flow grade = row();
@@ -173,6 +185,8 @@ final class HologramEditorPropertiesPane {
                     .caption()));
         sizingSections.add(observed);
         source.child(observed);
+        source.child(HologramEditorNativeTheme.label(() -> HologramScreen.localSiteCaption(ui.session.state().data))
+            .widthRel(1f).height(24).setEnabledIf(w -> ui.host.parent().localControllerStandard()));
         source.child(
             label(
                 () -> ui.session.selectedCell() != null && ui.session.selectedCell().sourceMissing
@@ -230,7 +244,7 @@ final class HologramEditorPropertiesPane {
         source.child(
             action(
                 60,
-                () -> "结构等级 / 信道",
+                () -> ui.host.parent().localControllerStandard() ? "现场 / 规划信道" : "结构等级 / 信道",
                 () -> !ui.session.state().data.getBoolean("virtual")
                     || !ui.session.state().data.getString("activeStructure")
                         .isEmpty(),

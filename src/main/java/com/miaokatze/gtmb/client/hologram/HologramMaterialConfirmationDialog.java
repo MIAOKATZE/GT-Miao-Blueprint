@@ -117,6 +117,7 @@ final class HologramMaterialConfirmationDialog {
     private final boolean local;
     private LocalFrame localFrame;
     private final HologramMaterialReview materials = new HologramMaterialReview();
+    private final HologramMaterialRowPresentation descriptionRows = new HologramMaterialRowPresentation();
     private final IPanelHandler handler;
     private final VerticalScrollData scroll = new VerticalScrollData();
     private MaterialList list;
@@ -379,7 +380,9 @@ final class HologramMaterialConfirmationDialog {
             if (descriptive()) {
                 HologramLibraryMaterialDescription.Row row = descriptionRow(getHoveredRow());
                 if (row != null) {
-                    t.addLine(descriptionIdentity(row));
+                    HologramMaterialRowPresentation.Sample sample = descriptionMaterial(row);
+                    t.addLine(sample.name);
+                    t.addLine(sample.identity);
                     t.addLine("施工用量未核算");
                 }
                 return;
@@ -660,11 +663,8 @@ final class HologramMaterialConfirmationDialog {
             .get(index) : null;
     }
 
-    private static String descriptionIdentity(HologramLibraryMaterialDescription.Row row) {
-        return row.identity()
-            .registry() + ":"
-            + row.identity()
-                .damage();
+    HologramMaterialRowPresentation.Sample descriptionMaterial(HologramLibraryMaterialDescription.Row row) {
+        return descriptionRows.describe(row);
     }
 
     private String localEmptyLabel() {
@@ -851,11 +851,11 @@ final class HologramMaterialConfirmationDialog {
                     GuiDraw.drawRect(0, y, ROW_WIDTH, ROW_HEIGHT - 1, (i & 1) == 0 ? 0xff24323a : 0xff293941);
                     if (descriptive()) {
                         HologramLibraryMaterialDescription.Row row = descriptionRow(i);
-                        font.drawString(
-                            font.trimStringToWidth(descriptionIdentity(row), 232),
-                            15,
-                            y + 16,
-                            HologramMuiTheme.TEXT);
+                        HologramMaterialRowPresentation.Sample sample = descriptionMaterial(row);
+                        if (sample.icon != null) drawItem(sample.icon, 5, y + 8, context.getCurrentDrawingZ());
+                        else font.drawString("?", 7, y + 15, HologramUiAccent.INFORMATION);
+                        font.drawString(font.trimStringToWidth(sample.name, 220), 31, y + 8, HologramMuiTheme.TEXT);
+                        font.drawString(font.trimStringToWidth(sample.identity, 220), 31, y + 24, HologramMuiTheme.MUTED);
                         number(font, Long.toString(row.blueprintCells()), 256, y + 16, HologramMuiTheme.TEXT);
                         number(
                             font,

@@ -940,7 +940,7 @@ public final class HologramLibraryRegression {
             System.out.println("[GTMB-NATIVE-PUBLIC] typed sign, original owner, bound cover, restart and fixed-point refusal passed");
         } finally {
             try (var files = Files.walk(root)) {
-                for (Path path : files.sorted(Comparator.reverseOrder()).toList()) Files.deleteIfExists(path);
+                for (Path path : files.sorted(Comparator.reverseOrder()).collect(java.util.stream.Collectors.toList())) Files.deleteIfExists(path);
             }
         }
     }
