@@ -206,8 +206,8 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
                     int declarationCells = complement.recordedPlacementCount();
                     complement.retainOnlyAdditionalTo(memory);
                     // A no-op or strict subset is not authoritative evidence that the stalled prefix is complete.
-                    if (complement.recordedPlacementCount() == 0 && (declarationCells == 0
-                        || declarationCells < memory.recordedPlacementCount()))
+                    if (complement.recordedPlacementCount() == 0
+                        && (declarationCells == 0 || declarationCells < memory.recordedPlacementCount()))
                         throw new IOException("LOCAL_NATIVE_PREVIEW_INCOMPLETE");
                     placements = both(placements, complement.placements());
                 }
@@ -236,18 +236,24 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
         TileEntity fresh = freshController.create();
         World base = fresh.getWorldObj();
         Object freshContext = HologramStructureDiscovery.context(fresh);
-        if (fresh == controller || !(base instanceof HologramResourceWorld) || base == world || base == emptyWorld
-            || freshContext == null || freshContext == context
-            || fresh.getClass() != controller.getClass() || freshContext.getClass() != context.getClass()
-            || fresh.xCoord != controller.xCoord || fresh.yCoord != controller.yCoord || fresh.zCoord != controller.zCoord)
-            throw new IOException("LOCAL_NATIVE_PREVIEW_COMPLETION_SCOPE");
+        if (fresh == controller || !(base instanceof HologramResourceWorld)
+            || base == world
+            || base == emptyWorld
+            || freshContext == null
+            || freshContext == context
+            || fresh.getClass() != controller.getClass()
+            || freshContext.getClass() != context.getClass()
+            || fresh.xCoord != controller.xCoord
+            || fresh.yCoord != controller.yCoord
+            || fresh.zCoord != controller.zCoord) throw new IOException("LOCAL_NATIVE_PREVIEW_COMPLETION_SCOPE");
         IConstructable full = HologramStructureDiscovery.localConstructable(fresh, freshContext, previewFacing);
         if (full == null) throw new IOException("LOCAL_NATIVE_PREVIEW_DECLARATION_UNAVAILABLE");
         complement = HologramNativePreviewWorld.open(fresh);
         fresh.setWorldObj(complement);
         ItemStack copy = trigger.copy();
         try {
-            INEIPreviewModifier hooks = gregTech && freshContext instanceof INEIPreviewModifier supplied ? supplied : null;
+            INEIPreviewModifier hooks = gregTech && freshContext instanceof INEIPreviewModifier supplied ? supplied
+                : null;
             if (hooks != null) hooks.onPreviewConstruct(copy);
             full.construct(copy, false);
             if (hooks != null) hooks.onPreviewStructureComplete(copy);
@@ -258,14 +264,30 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
 
     private static <T> Iterator<T> both(Iterator<T> first, Iterator<T> second) {
         return new Iterator<T>() {
-            @Override public boolean hasNext() { return first.hasNext() || second.hasNext(); }
-            @Override public T next() { return first.hasNext() ? first.next() : second.next(); }
+
+            @Override
+            public boolean hasNext() {
+                return first.hasNext() || second.hasNext();
+            }
+
+            @Override
+            public T next() {
+                return first.hasNext() ? first.next() : second.next();
+            }
         };
     }
 
-    int passes() { return rounds; }
-    int nativeResult() { return lastSurvivalResult; }
-    int extraDisplayCells() { return complement == null ? 0 : complement.recordedPlacementCount(); }
+    int passes() {
+        return rounds;
+    }
+
+    int nativeResult() {
+        return lastSurvivalResult;
+    }
+
+    int extraDisplayCells() {
+        return complement == null ? 0 : complement.recordedPlacementCount();
+    }
 
     private void elementVisited(StructureElementVisitedEvent event) {
         if ((event.getWorld() != world && event.getWorld() != complement) || Thread.currentThread() != owner
@@ -301,7 +323,8 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
                 || complement != null && complement.hasPlacement(p.x(), p.y(), p.z())
                 || !HologramNativeSourceWater.missingFromDetachedPreview(memory.getBlock(p.x(), p.y(), p.z())))
                 continue;
-            HologramBlueprintLimits.require(memory.recordedPlacementCount() + extraDisplayCells() + generated.size() + 2L);
+            HologramBlueprintLimits
+                .require(memory.recordedPlacementCount() + extraDisplayCells() + generated.size() + 2L);
             generated.add(new HologramNativePreviewWorld.Placement(p.x(), p.y(), p.z(), Blocks.water, 0, null));
         }
         if (generated.isEmpty()) return;
@@ -383,6 +406,21 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
             && sourceWater.contains(new Position(placement.x(), placement.y(), placement.z())))
             cell.nativeSourceWater = true;
         return cell;
+    }
+
+    /**
+     * Trusted native chooser branches are position independent and use the captured effective trigger.
+     * They are queried on an unfilled controller, not inferred from supplemental browser labels.
+     */
+    List<ItemStack> presetOffers(int x, int y, int z) {
+        if (nativeHatchChooser == null) return Collections.emptyList();
+        IStructureElement<?> element = elementAt(x, y, z);
+        return nativeHatchChooser.offers(element, x, y, z, trigger);
+    }
+
+    /** Registry snapshots are capture-owned. Only the exact-version GTSR policy may filter this view. */
+    List<ItemStack> presetCatalog() {
+        return items.catalog();
     }
 
     HologramCapture.Cell candidateCell(int x, int y, int z, String role) {
@@ -495,6 +533,11 @@ public final class HologramNativeStructurePreview implements AutoCloseable {
     interface ControllerFactory {
 
         TileEntity create() throws IOException;
+    }
+
+    /** Only a proven coordinate-independent native offer is eligible for shared material-row encoding. */
+    boolean hasSharedOptions(IStructureElement<?> element) {
+        return sharedOptions.containsKey(element);
     }
 
     private static boolean reusablePreviewOptions(IStructureElement<?> element) {

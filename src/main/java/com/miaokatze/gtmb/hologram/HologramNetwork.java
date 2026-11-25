@@ -4,7 +4,6 @@
 package com.miaokatze.gtmb.hologram;
 
 import java.io.IOException;
-import java.lang.ref.WeakReference;
 import java.util.ArrayDeque;
 import java.util.Arrays;
 import java.util.Deque;
@@ -17,13 +16,9 @@ import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 
 import net.minecraft.entity.player.EntityPlayerMP;
-import net.minecraft.item.Item;
-import net.minecraft.item.ItemStack;
 import net.minecraft.nbt.CompressedStreamTools;
 import net.minecraft.nbt.NBTTagCompound;
-import net.minecraft.network.NetHandlerPlayServer;
 
-import com.miaokatze.gtmb.common.items.hologram.ItemNekoHologramProjector;
 import com.miaokatze.gtmb.util.ServerTaskScheduler;
 
 import cpw.mods.fml.common.FMLCommonHandler;
@@ -74,8 +69,8 @@ public final class HologramNetwork {
     private static final HologramRequestGate snapshotControlGate = new HologramRequestGate(2, 256);
     private static final HologramRequestGate retiredPlacementGate = new HologramRequestGate(1, 32);
     private static final AtomicLong constructionIntentSequence = new AtomicLong();
-    private static final HologramStockNativeServer stockNativeServer =
-        new HologramStockNativeServer(HologramNetwork::sendStockNativeReply);
+    private static final HologramStockNativeServer stockNativeServer = new HologramStockNativeServer(
+        HologramNetwork::sendStockNativeReply);
     private static volatile StockNativeReplies stockNativeReplies;
     private static final String RETIRED_PLACEMENT_REPLY = "retiredWholePlacement";
     private static final String RETIRED_PLACEMENT_REASON = "旧版整份施工上传已停用，未开始施工。请使用两端支持的新版施工入口。";
@@ -94,6 +89,7 @@ public final class HologramNetwork {
 
     static void clearServerQueues() {
         stockNativeServer.reset();
+        HologramNativePresetStock.reset();
         HologramAttachmentUpload.clearServer();
         retiredPlacementGate.clear();
         // On an in-process reset keep the intent watermark; an old already-issued ticket is no longer usable.
@@ -191,11 +187,12 @@ public final class HologramNetwork {
         return sendStockNativeAction(HologramStockNativeWire.confirmAfterProbe(confirmation));
     }
 
-    public static boolean sendStockNativeControl(HologramStockNativeWire.Key key, HologramStockNativeWire.Command command) {
+    public static boolean sendStockNativeControl(HologramStockNativeWire.Key key,
+        HologramStockNativeWire.Command command) {
         return sendStockNativeAction(HologramStockNativeWire.control(key, command));
     }
 
-    private static boolean sendStockNativeAction(NBTTagCompound tag) {
+    static boolean sendStockNativeAction(NBTTagCompound tag) {
         SimpleNetworkWrapper wire = channel;
         if (wire == null) return false;
         Action packet = new Action();
@@ -209,6 +206,12 @@ public final class HologramNetwork {
         SimpleNetworkWrapper wire = channel;
         if (wire != null && HologramWorkspace.currentActionEndpoint(endpoint))
             wire.sendTo(new State(HologramStockNativeWire.writeReply(reply)), endpoint.player);
+    }
+
+    static void sendPresetQuote(HologramWorkspace.ActionEndpoint endpoint, NBTTagCompound tag) {
+        SimpleNetworkWrapper wire = channel;
+        if (wire != null && HologramWorkspace.currentActionEndpoint(endpoint))
+            wire.sendTo(new State(tag), endpoint.player);
     }
 
     static void tickStockNativeServer(long deadline) {
@@ -324,7 +327,8 @@ public final class HologramNetwork {
         runQueuedAction(player, world, lease, () -> dispatch(player, tag));
     }
 
-    public static void setCutReceiver(java.util.function.BiConsumer<NBTTagCompound, net.minecraft.network.INetHandler> value) {
+    public static void setCutReceiver(
+        java.util.function.BiConsumer<NBTTagCompound, net.minecraft.network.INetHandler> value) {
         synchronized (cutTransportLock) {
             cutReceiver = value;
             cutReplySequence = -1;
@@ -441,8 +445,8 @@ public final class HologramNetwork {
     public static final class CutServerHandler implements IMessageHandler<CutAction, IMessage> {
 
         public IMessage onMessage(CutAction message, MessageContext context) {
-            HologramCutService.receive(
-                HologramWorkspace.captureActionEndpoint(context.getServerHandler()), message.tag);
+            HologramCutService
+                .receive(HologramWorkspace.captureActionEndpoint(context.getServerHandler()), message.tag);
             return null;
         }
     }
@@ -476,12 +480,17 @@ public final class HologramNetwork {
             if (buf.readableBytes() >= HologramCutReplyCodec.HEADER_BYTES) {
                 long next = buf.readLong();
                 int total = buf.readInt(), index = buf.readInt(), length = buf.readInt();
-                if (HologramCutReplyCodec.marked(next) && index == 0 && total == length
-                    && HologramCutReplyCodec.fitsFrame(length) && length == buf.readableBytes()) {
+                if (HologramCutReplyCodec.marked(next) && index == 0
+                    && total == length
+                    && HologramCutReplyCodec.fitsFrame(length)
+                    && length == buf.readableBytes()) {
                     sequence = next;
                     bytes = new byte[length];
                     buf.readBytes(bytes);
-                    HologramRuntimeMetrics.packet(HologramRuntimeMetrics.Packet.CUT_FRAGMENT, false, false,
+                    HologramRuntimeMetrics.packet(
+                        HologramRuntimeMetrics.Packet.CUT_FRAGMENT,
+                        false,
+                        false,
                         bytes.length + HologramCutReplyCodec.HEADER_BYTES);
                     return;
                 }
@@ -497,7 +506,10 @@ public final class HologramNetwork {
             buf.writeInt(0);
             buf.writeInt(bytes.length);
             buf.writeBytes(bytes);
-            HologramRuntimeMetrics.packet(HologramRuntimeMetrics.Packet.CUT_FRAGMENT, false, true,
+            HologramRuntimeMetrics.packet(
+                HologramRuntimeMetrics.Packet.CUT_FRAGMENT,
+                false,
+                true,
                 bytes.length + HologramCutReplyCodec.HEADER_BYTES);
         }
     }
@@ -514,11 +526,17 @@ public final class HologramNetwork {
                     cutInbound = inbound;
                     cutReplySequence = -1;
                     cutClientGeneration.incrementAndGet();
-                    cutDecoder.getQueue().clear();
+                    cutDecoder.getQueue()
+                        .clear();
                 }
                 if (message.sequence <= cutReplySequence) return null;
                 cutReplySequence = message.sequence;
-                observeFragment("cut", message.sequence, message.bytes.length, 0, message.bytes.length,
+                observeFragment(
+                    "cut",
+                    message.sequence,
+                    message.bytes.length,
+                    0,
+                    message.bytes.length,
                     HologramCutReplyCodec.MAX_COMPRESSED_BYTES);
                 java.util.function.BiConsumer<NBTTagCompound, net.minecraft.network.INetHandler> current = cutReceiver;
                 long generation = cutClientGeneration.get();
@@ -972,7 +990,6 @@ public final class HologramNetwork {
             && player.playerNetServerHandler.netManager.isChannelOpen();
     }
 
-
     private static final class Outbox {
 
         final EntityPlayerMP player;
@@ -1171,7 +1188,8 @@ public final class HologramNetwork {
                     cuts.remove();
                     continue;
                 }
-                channel.sendTo(new CutFragment(snapshot.sequence, snapshot.bytes.length, 0, snapshot.bytes),
+                channel.sendTo(
+                    new CutFragment(snapshot.sequence, snapshot.bytes.length, 0, snapshot.bytes),
                     box.endpoint.player);
                 box.pendingBytes -= snapshot.bytes.length;
                 box.snapshots.removeFirst();
@@ -1528,6 +1546,11 @@ public final class HologramNetwork {
 
         public IMessage onMessage(Action msg, MessageContext ctx) {
             // Retired control packets from older clients must never enter workspace command dispatch.
+            if (msg.tag.hasKey(HologramNativePresetStock.MARKER)) {
+                if (ctx != null) HologramNativePresetStock
+                    .enqueue(msg.tag, HologramWorkspace.captureActionEndpoint(ctx.getServerHandler()));
+                return null;
+            }
             String action = msg.tag.getString("action");
             if (HologramStockNativeWire.recognizes(msg.tag)) {
                 HologramStockNativeWire.Request request = HologramStockNativeWire.readRequest(msg.tag);
@@ -1535,12 +1558,13 @@ public final class HologramNetwork {
                     stockNativeServer.enqueue(HologramWorkspace.captureActionEndpoint(ctx.getServerHandler()), request);
                 return null; // Exact marker never falls through to old construction or library actions.
             }
-            if("serverRules".equals(action)||ctx==null)return null;
+            if ("serverRules".equals(action) || ctx == null) return null;
             HologramWorkspace.ActionEndpoint endpoint = HologramWorkspace.captureActionEndpoint(ctx.getServerHandler());
             if (endpoint == null) return null;
             if ("projectedPlacement".equals(action) || "checkPlacementMaterials".equals(action)) {
                 if (msg.tag.hasKey("placementRequestId", 8)) refuseRetiredPlacement(
-                    endpoint, msg.tag.getString("placementRequestId"),
+                    endpoint,
+                    msg.tag.getString("placementRequestId"),
                     "projectedPlacement".equals(action) ? RETIRED_PLACEMENT_REASON : RETIRED_MATERIAL_CHECK_REASON);
                 return null;
             }
@@ -1583,12 +1607,16 @@ public final class HologramNetwork {
         }
     }
 
-    /** Direct Actions use the exact authenticated ingress generation, even after a round trip back to the same world. */
+    /**
+     * Direct Actions use the exact authenticated ingress generation, even after a round trip back to the same world.
+     */
     static void runQueuedAction(HologramWorkspace.ActionEndpoint endpoint, HologramRequestGate.Lease lease,
         Runnable action) {
-        runQueuedAction(endpoint.player, endpoint.world, lease, () -> {
-            if (HologramWorkspace.currentActionEndpoint(endpoint)) action.run();
-        });
+        runQueuedAction(
+            endpoint.player,
+            endpoint.world,
+            lease,
+            () -> { if (HologramWorkspace.currentActionEndpoint(endpoint)) action.run(); });
     }
 
     /** Admission belongs to the original live world; queued input cannot act after a connection/world transition. */
@@ -1708,15 +1736,20 @@ public final class HologramNetwork {
     public static final class ClientHandler implements IMessageHandler<State, IMessage> {
 
         public IMessage onMessage(State msg, MessageContext ctx) {
+            if (msg.tag.hasKey(HologramNativePresetStock.MARKER)) {
+                if (ctx != null) HologramNativePresetStock.receive(msg.tag, ctx.netHandler);
+                return null;
+            }
             // Older servers send this sessionless login envelope; it is not a workspace snapshot.
             // New clients never send a whole placement. Its legacy refusal cannot finish any live native request.
             if (HologramStockNativeWire.recognizes(msg.tag)) {
                 StockNativeReplies receiver = stockNativeReplies;
-                HologramStockNativeWire.Reply reply = receiver == null ? null : HologramStockNativeWire.readReply(msg.tag);
+                HologramStockNativeWire.Reply reply = receiver == null ? null
+                    : HologramStockNativeWire.readReply(msg.tag);
                 if (reply != null && ctx != null) receiver.accept(reply, ctx.netHandler);
                 return null;
             }
-            if(msg.tag.getBoolean(RETIRED_PLACEMENT_REPLY)||msg.tag.getBoolean("serverRulesOnly"))return null;
+            if (msg.tag.getBoolean(RETIRED_PLACEMENT_REPLY) || msg.tag.getBoolean("serverRulesOnly")) return null;
             if (msg.tag.getBoolean("progressOnly")) {
                 observeProgress(msg.tag.getCompoundTag("progress"));
                 return null;

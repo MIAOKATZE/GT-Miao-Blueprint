@@ -51,8 +51,10 @@ final class HologramLocalBlueprintStructureRegression {
             Object item = trigger.get(null);
             try {
                 trigger.set(null, Items.stick);
-                IMultiblockInfoContainer.registerTileClass(TileEntityChest.class, new Source());
-                checkBlueprint();
+                IMultiblockInfoContainer.registerTileClass(TileEntityChest.class, new Source(false));
+                checkBlueprint(false);
+                IMultiblockInfoContainer.registerTileClass(TileEntityChest.class, new Source(true));
+                checkBlueprint(true);
             } finally {
                 trigger.set(null, item);
                 if (previous == null) IMultiblockInfoContainer.MULTIBLOCK_MAP.remove(type);
@@ -63,7 +65,7 @@ final class HologramLocalBlueprintStructureRegression {
         }
     }
 
-    private static void checkBlueprint() throws IOException {
+    private static void checkBlueprint(boolean creativeOnly) throws IOException {
         Preset preset = new Preset();
         preset.name = "Detached structure";
         preset.controllerType = "area";
@@ -120,6 +122,22 @@ final class HologramLocalBlueprintStructureRegression {
         configure.setString("structureId", "native");
         configure.setInteger("main", 2);
         configure.setTag("channels", channels);
+        if (creativeOnly) {
+            byte[] before = document.artifact();
+            try {
+                apply(document, "configure", configure);
+                throw new AssertionError("creative-only footprint cannot authorize a legacy group replacement");
+            } catch (IOException expected) {
+                SimpleAssert.that(
+                    expected.getCause() instanceof IOException cause && cause.getMessage()
+                        .contains("未能核实原蓝图的结构归属"),
+                    "creative-only rejection is an ownership-proof failure, not missing source or settings: "
+                        + expected);
+            }
+            SimpleAssert.eq(0L, document.revision(), "a refused legacy regeneration creates no undo revision");
+            SimpleAssert.that(Arrays.equals(before, document.artifact()), "the original legacy file is unchanged");
+            return;
+        }
         apply(document, "configure", configure);
         NBTTagCompound changed = document.snapshot();
         SimpleAssert.eq(
@@ -204,10 +222,55 @@ final class HologramLocalBlueprintStructureRegression {
             SimpleAssert.that(task != null, "operation starts its native client task");
             for (int step = 0; step < 32; step++) {
                 if (!task.step(2, 5_000_000L)) continue;
-                task.commit(() -> true);
+                try {
+                    task.commit(() -> true);
+                } catch (IOException failure) {
+                    throw new IOException(
+                        "file-owned structure commit failed: " + operation
+                            + " request="
+                            + request
+                            + " declared before="
+                            + capturedOffsets(task, "before")
+                            + " declared after="
+                            + capturedOffsets(task, "after")
+                            + " saved="
+                            + document.snapshot()
+                                .getTagList("cells", 10),
+                        failure);
+                }
                 return;
             }
             throw new AssertionError("Native preview did not finish");
+        }
+    }
+
+    private static String capturedOffsets(HologramLocalBlueprintDocument.StructureTask task, String stage) {
+        try {
+            Field field = task.getClass()
+                .getDeclaredField(stage);
+            field.setAccessible(true);
+            NBTTagCompound snapshot = (NBTTagCompound) field.get(task);
+            if (snapshot == null) return "<reused or not captured>";
+            NBTTagList rows = snapshot.getTagList("cells", 10);
+            StringBuilder result = new StringBuilder();
+            for (int i = 0; i < rows.tagCount(); i++) {
+                NBTTagCompound row = rows.getCompoundTagAt(i);
+                result.append('[')
+                    .append(row.getInteger("dx"))
+                    .append(',')
+                    .append(row.getInteger("dy"))
+                    .append(',')
+                    .append(row.getInteger("dz"))
+                    .append(':')
+                    .append(row.getString("wantId"))
+                    .append(", item=")
+                    .append(row.hasKey("targetStack", 10))
+                    .append(']');
+            }
+            return result.toString();
+        } catch (ReflectiveOperationException failure) {
+            return "<capture diagnostic unavailable: " + failure.getClass()
+                .getSimpleName() + ">";
         }
     }
 
@@ -253,26 +316,41 @@ final class HologramLocalBlueprintStructureRegression {
 
     private static final class Source implements IMultiblockInfoContainer<TileEntityChest> {
 
+        private final boolean creativeOnly;
+
+        Source(boolean creativeOnly) {
+            this.creativeOnly = creativeOnly;
+        }
+
         @Override
         public void construct(ItemStack trigger, boolean hints, TileEntityChest tile, ExtendedFacing facing) {
-            SimpleAssert.that(!hints, "file structure uses the actual StructureCompat fallback");
+            SimpleAssert.that(creativeOnly && !hints, "only the unsupported survival path requests creative geometry");
+            int tier = tier(trigger);
+            World world = tile.getWorldObj();
+            for (int x : offsets(tier)) {
+                Block block = block(tier, x);
+                visit(world, x, StructureUtility.ofBlock(block, 0));
+                world.setBlock(x, 128, 0, block, 0, 2);
+            }
+        }
+
+        private static int tier(ItemStack trigger) {
             int tier = ChannelDataAccessor.hasSubChannel(trigger, "span")
                 ? ChannelDataAccessor.getChannelData(trigger, "span")
                 : 1;
             if (tier == 3) throw new IllegalStateException("fixture upstream could not construct");
-            World world = tile.getWorldObj();
-            Block casing = tier == 1 ? Blocks.stone : Blocks.sandstone;
-            visit(world, StructureUtility.ofBlock(casing, 0));
-            world.setBlock(1, 128, 0, casing, 0, 2);
-            world.setBlock(4, 128, 0, tier == 1 ? Blocks.stone : Blocks.sandstone, 0, 2);
-            if (tier == 1) {
-                for (int x : new int[] { 2, 3, 5 }) world.setBlock(x, 128, 0, Blocks.stone, 0, 2);
-            } else {
-                for (int x : new int[] { 6, 7 }) world.setBlock(x, 128, 0, Blocks.glass, 0, 2);
-            }
+            return tier;
         }
 
-        private static void visit(World world, IStructureElement<?> element) {
+        private static int[] offsets(int tier) {
+            return tier == 1 ? new int[] { 1, 2, 3, 4, 5 } : new int[] { 1, 4, 6, 7 };
+        }
+
+        private static Block block(int tier, int x) {
+            return tier == 1 ? Blocks.stone : x <= 4 ? Blocks.sandstone : Blocks.glass;
+        }
+
+        private static void visit(World world, int x, IStructureElement<?> element) {
             try {
                 Constructor<StructureElementVisitedEvent> constructor = StructureElementVisitedEvent.class
                     .getDeclaredConstructor(
@@ -286,7 +364,7 @@ final class HologramLocalBlueprintStructureRegression {
                         IStructureElement.class);
                 constructor.setAccessible(true);
                 new HologramNativeStructurePreview.VisitedListener()
-                    .elementVisited(constructor.newInstance(world, 1, 128, 0, 1, 0, 0, element));
+                    .elementVisited(constructor.newInstance(world, x, 128, 0, x, 0, 0, element));
             } catch (ReflectiveOperationException failure) {
                 throw new AssertionError("Fixture StructureLib visited event", failure);
             }
@@ -295,7 +373,29 @@ final class HologramLocalBlueprintStructureRegression {
         @Override
         public int survivalConstruct(ItemStack trigger, int budget, ISurvivalBuildEnvironment environment,
             TileEntityChest tile, ExtendedFacing facing) {
-            return -2;
+            if (creativeOnly) return -2;
+            int tier = tier(trigger);
+            World world = tile.getWorldObj();
+            int writes = 0;
+            for (int x : offsets(tier)) {
+                Block block = block(tier, x);
+                visit(world, x, StructureUtility.ofBlock(block, 0));
+                if (world.getBlock(x, 128, 0) == block) continue;
+                SimpleAssert.eq(
+                    IStructureElement.PlaceResult.ACCEPT,
+                    StructureUtility.survivalPlaceBlock(
+                        block,
+                        0,
+                        world,
+                        x,
+                        128,
+                        0,
+                        environment.getSource(),
+                        environment.getActor()),
+                    "authentic native survival placement of the file-owned declaration");
+                writes++;
+            }
+            return writes == 0 ? -1 : writes;
         }
 
         @Override

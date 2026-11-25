@@ -141,13 +141,20 @@ public final class HologramMaterialReviewRegression {
         var source = new HologramLocalPlacement.Submission(null, null, 42, original);
         var selected = HologramLibraryMaterialReviewScreen.paymentChoice(source, true);
         var plain = HologramLibraryMaterialReviewScreen.paymentChoice(source, false);
-        SimpleAssert.that(selected.intent().getBoolean("voucherRequested")
-            && !plain.intent().getBoolean("voucherRequested") && !original.hasKey("voucherRequested")
-            && !source.intent().hasKey("voucherRequested")
-            && selected.lockGeneration() == source.lockGeneration()
-            && selected.intent().getInteger("placementX") == 17,
+        SimpleAssert.that(
+            selected.intent()
+                .getBoolean("voucherRequested")
+                && !plain.intent()
+                    .getBoolean("voucherRequested")
+                && !original.hasKey("voucherRequested")
+                && !source.intent()
+                    .hasKey("voucherRequested")
+                && selected.lockGeneration() == source.lockGeneration()
+                && selected.intent()
+                    .getInteger("placementX") == 17,
             "a local voucher choice is explicit and preserves exact frozen source/placement without mutating either");
-        SimpleAssert.that(HologramLibraryMaterialReviewScreen.paymentChoice(null, true) == null,
+        SimpleAssert.that(
+            HologramLibraryMaterialReviewScreen.paymentChoice(null, true) == null,
             "expired local tickets cannot create a new payment intent");
     }
 
@@ -222,7 +229,7 @@ public final class HologramMaterialReviewRegression {
         HologramSelection selection = new HologramSelection();
         selection.bindMaterials(displayed);
         selection.load(config.getIntArray("selectedIndices"), 2, displayed.cells.size());
-        HologramLocalMaterialReview review = new HologramLocalMaterialReview(displayed, config, true, selection);
+        HologramLocalMaterialReview review = new HologramLocalMaterialReview(displayed, config, selection);
         ItemStack[] backpack = { new ItemStack(net.minecraft.init.Blocks.stone, 2, 0) };
         review.tick(backpack, -1);
 
@@ -280,8 +287,7 @@ public final class HologramMaterialReviewRegression {
         Minecraft client = (Minecraft) unsafe.allocateInstance(Minecraft.class);
         OwnerWorld world = (OwnerWorld) unsafe.allocateInstance(OwnerWorld.class);
         EntityClientPlayerMP player = (EntityClientPlayerMP) unsafe.allocateInstance(EntityClientPlayerMP.class);
-        NetHandlerPlayClient connection = (NetHandlerPlayClient) unsafe
-            .allocateInstance(NetHandlerPlayClient.class);
+        NetHandlerPlayClient connection = (NetHandlerPlayClient) unsafe.allocateInstance(NetHandlerPlayClient.class);
         field(EntityClientPlayerMP.class, "sendQueue").set(player, connection);
         player.inventory = new InventoryPlayer(player);
         ItemStack tool = new ItemStack(new ItemNekoHologramProjector());
@@ -292,6 +298,8 @@ public final class HologramMaterialReviewRegression {
         tile.setWorldObj(world);
         world.tile = tile;
         HologramScreen screen = (HologramScreen) unsafe.allocateInstance(HologramScreen.class);
+        field(HologramScreen.class, "localNativeChoices").set(screen, new java.util.LinkedHashSet<>());
+        field(HologramScreen.class, "localPresetChoices").set(screen, new java.util.LinkedHashSet<>());
         field(GuiScreen.class, "mc").set(screen, client);
         client.currentScreen = screen;
         HologramUiModules ui = new HologramUiModules(screen);
@@ -323,23 +331,48 @@ public final class HologramMaterialReviewRegression {
         });
         SimpleAssert.that(
             attempts[0] == 1 && ui.review.localMaterials() == frozen
-                && "fixture pre-dispatch refusal".equals(view.localFrame().status()),
+                && "fixture pre-dispatch refusal".equals(
+                    view.localFrame()
+                        .status()),
             "a locally refused submit keeps the only current pane open and shows its reason");
         ui.review.submitLocalMaterials(settings -> {
             attempts[0]++;
             return true;
         });
-        ui.review.submitLocalMaterials(settings -> {
-            throw new AssertionError("a closed pane must not re-dispatch");
-        });
+        ui.review.submitLocalMaterials(settings -> { throw new AssertionError("a closed pane must not re-dispatch"); });
         SimpleAssert.that(
             attempts[0] == 2 && view.localFrame() == null && ui.session.sequence() == 0,
             "successful local dispatch closes once without claiming a server acknowledgement");
         ui.review.openNativeLocalMaterials();
         view.localAction(LocalAction.BACK);
+        SimpleAssert
+            .that(view.localFrame() == null && ui.session.sequence() == 0, "the native port's Back is purely local");
+        NBTTagCompound readyMetadata = new NBTTagCompound();
+        readyMetadata.setBoolean("supported", true);
+        readyMetadata.setBoolean("target", true);
+        readyMetadata.setBoolean("capturePending", false);
+        readyMetadata.setBoolean("projectionDataComplete", true);
+        HologramState ready = HologramLocalMaterialPlannerRegression.state(6, 2, true)
+            .withMetadata(readyMetadata);
+        ui.preview.retainSelection(ready);
+        field(HologramUiSession.class, "state").set(ui.session, ready);
+        SimpleAssert.that(ui.review.openNativeLocalMaterials(), "the local target opens a single material pane");
+        ui.review.refreshLocalMaterials();
+        HologramLocalMaterialReview detailed = ui.review.localMaterials();
+        LocalFrame frame = view.localFrame();
         SimpleAssert.that(
-            view.localFrame() == null && ui.session.sequence() == 0,
-            "the native port's Back is purely local");
+            detailed != null && frame != null
+                && frame.ready()
+                && frame.description() == null
+                && frame.rows()
+                    .getTagList("rows", 10)
+                    .tagCount() > 0
+                && ui.session.sequence() == 0,
+            "the formal entry presents exact rows on first open, without any alternate view or server command");
+        SimpleAssert.that(
+            ui.review.localMaterials() == detailed && client.currentScreen == screen,
+            "reading the material data does not reopen the pane");
+        view.localAction(LocalAction.BACK);
         for (int mode : new int[] { 1, 2 }) {
             NBTTagCompound otherMode = (NBTTagCompound) metadata.copy();
             otherMode.setInteger("mode", mode);
@@ -354,12 +387,14 @@ public final class HologramMaterialReviewRegression {
         player.inventory.currentItem = 1;
         LocalFrame stale = view.localFrame();
         SimpleAssert.that(
-            stale != null && stale.rows().hasNoTags() && !stale.ready() && !view.localSubmitAvailable()
-                && stale.status().contains("已变化"),
+            stale != null && stale.rows()
+                .hasNoTags()
+                && !stale.ready()
+                && !view.localSubmitAvailable()
+                && stale.status()
+                    .contains("已变化"),
             "the visible pane explains stale ownership without exposing old rows or enabling submission");
-        ui.review.submitLocalMaterials(settings -> {
-            throw new AssertionError("a stale scope must not dispatch");
-        });
+        ui.review.submitLocalMaterials(settings -> { throw new AssertionError("a stale scope must not dispatch"); });
         view.localAction(LocalAction.REFRESH);
         SimpleAssert.that(
             ui.review.localMaterials() == null && ui.review.openNativeLocalMaterials()
@@ -379,8 +414,7 @@ public final class HologramMaterialReviewRegression {
         SimpleAssert.that(ui.review.localMaterials() != null, "original owner can open a fresh pane");
         client.thePlayer = (EntityClientPlayerMP) unsafe.allocateInstance(EntityClientPlayerMP.class);
         view.localAction(LocalAction.REFRESH); // Replacement player has no inventory; the fence must run first.
-        SimpleAssert
-            .that(ui.review.localMaterials() == null, "stale review never reads another player's inventory");
+        SimpleAssert.that(ui.review.localMaterials() == null, "stale review never reads another player's inventory");
 
         client.thePlayer = player;
         ui.review.openNativeLocalMaterials();
@@ -408,7 +442,8 @@ public final class HologramMaterialReviewRegression {
                 && ui.review.localFrame() == null
                 && ui.session.state() == state
                 && !ui.session.awaitingScan()
-                && ui.session.sequence() == 0 && wire.sends == sends,
+                && ui.session.sequence() == 0
+                && wire.sends == sends,
             "unsupported local material view reports unknown without a scan, stock query or any outbound message");
     }
 
@@ -492,11 +527,14 @@ public final class HologramMaterialReviewRegression {
                 .collect(java.util.stream.Collectors.toList());
             SimpleAssert.that(
                 controls.keySet()
-                    .equals(new java.util.HashSet<>(java.util.Arrays.asList(245, 247, 252, 54, 55))) && buttons.size() == 4,
-                "local review keeps voucher/refresh/back/submit but never mounts the no-op AE order");
-            var recovery = (com.cleanroommc.modularui.widget.ParentWidget<?>) panel.getChildren().stream()
+                    .equals(new java.util.HashSet<>(java.util.Arrays.asList(245, 247, 252, 54, 55)))
+                    && buttons.size() == 4,
+                "the single material view keeps voucher/refresh/back/submit with no base/detail switch or no-op AE order");
+            var recovery = (com.cleanroommc.modularui.widget.ParentWidget<?>) panel.getChildren()
+                .stream()
                 .filter(widget -> "material_recovery_destination".equals(widget.getName()))
-                .findFirst().orElseThrow(() -> new AssertionError("Recovery control missing"));
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("Recovery control missing"));
             SimpleAssert.that(!recovery.isEnabled(), "placement has no visible empty recovery button");
             SimpleAssert.eq(
                 HologramEditorTheme.TEXT,

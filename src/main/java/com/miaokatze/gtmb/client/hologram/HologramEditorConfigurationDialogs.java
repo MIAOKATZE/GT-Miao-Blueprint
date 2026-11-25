@@ -213,7 +213,9 @@ final class HologramEditorConfigurationDialogs {
     }
 
     private TextFieldWidget configurationField(HologramMuiTextField adapter) {
-        return ui.shell.adoptField(adapter).height(20).setEnabledIf(w -> ui.session.configurationEditable());
+        return ui.shell.adoptField(adapter)
+            .height(20)
+            .setEnabledIf(w -> ui.session.configurationEditable());
     }
 
     private boolean optionEditable() {
@@ -305,14 +307,17 @@ final class HologramEditorConfigurationDialogs {
                             : cap.getBoolean("explicit") ? "指定"
                                 : "presence".equals(cap.getString("kind")) ? "默认" : "继承";
                         String planned = ui.config.optionLabel(cap) + "（" + source + "）";
-                        if (!ui.host.parent().localControllerStandard()) return cap.getString("label") + "：" + planned;
+                        if (!ui.host.parent()
+                            .localControllerStandard()) return cap.getString("label") + "：" + planned;
                         NBTTagCompound observed = ui.session.state().data.getCompoundTag("siteChannels");
                         String id = cap.getString("id");
                         return cap.getString("label") + " · 现场 "
                             + (observed.hasKey(id, 3) ? Integer.toString(observed.getInteger(id)) : "未确认")
-                            + " / 规划 " + planned;
+                            + " / 规划 "
+                            + planned;
                     },
-                        () -> ui.session.configurationEditable() && capabilityRow(slot) != null && capabilityRow(slot).getBoolean("editable"),
+                        () -> ui.session.configurationEditable() && capabilityRow(slot) != null
+                            && capabilityRow(slot).getBoolean("editable"),
                         () -> {
                             NBTTagCompound cap = capabilityRow(slot);
                             return cap == null ? "本页无此项"
@@ -337,7 +342,8 @@ final class HologramEditorConfigurationDialogs {
         content.child(action(67, () -> "添加 / 更新具名信道", ui.session::configurationEditable, this::reason));
         Flow main = row();
         main.child(configurationField(ui.config.mainField()).expanded());
-        main.child(action(30, () -> "应用主值", ui.session::configurationEditable, () -> "未独立指定的子信道按原结构规则继承主值。").width(100));
+        main.child(
+            action(30, () -> "应用主值", ui.session::configurationEditable, () -> "未独立指定的子信道按原结构规则继承主值。").width(100));
         content.child(main);
         Flow toggles = row();
         toggles.child(action(23, () -> "重新采集", this::editable, this::reason).expanded());
@@ -500,8 +506,7 @@ final class HologramEditorConfigurationDialogs {
     }
 
     private String candidateCount(int index) {
-        int[] available = ui.session.cellTag()
-            .getIntArray("candidateAvailable");
+        int[] available = ui.session.candidateAvailable();
         return ui.session.state().data.getBoolean("creativeMaterials") ? "∞"
             : index >= 0 && index < available.length ? Integer.toString(available[index]) : "?";
     }
@@ -564,8 +569,7 @@ final class HologramEditorConfigurationDialogs {
                 () -> "仓室朝向：" + ui.config.directionName(
                     ui.session.cellTag()
                         .getInteger("hatchFacing")),
-                () -> ui.session.selectedNativeEditable() && ui.session.cellTag()
-                    .getIntArray("hatchFacings").length > 0,
+                () -> ui.session.selectedNativeEditable() && ui.session.hatchFacings().length > 0,
                 () -> "只轮换当前格的合法设备朝向。").expanded());
         facing.child(
             action(
@@ -701,8 +705,8 @@ final class HologramEditorConfigurationDialogs {
                 () -> editable() && ui.session.state().data.getBoolean("supported")
                     && (ui.config.nativeCustomPresets() ? ui.config.nativeSelectedPreset()
                         : ui.config.basicPresetActionAvailable()),
-                () -> ui.session.state().data.getBoolean("localStandardController")
-                    ? "明确提交后由服务器核对并应用原结构声明配额；不扣料、不施工。" : reason()).expanded());
+                () -> ui.session.state().data.getBoolean("localStandardController") ? "明确提交后由服务器核对并应用原结构声明配额；不扣料、不施工。"
+                    : reason()).expanded());
         apply.child(
             action(
                 107,

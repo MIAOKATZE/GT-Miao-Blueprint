@@ -160,8 +160,7 @@ final class HologramUiConfiguration {
                         + ui.config.candidateNote()));
             List<Integer> indices = ui.config.filteredHatches();
             this.hatchOffset = Math.max(0, Math.min(this.hatchOffset, Math.max(0, indices.size() - 2)));
-            int[] available = ui.session.cellTag()
-                .getIntArray("candidateAvailable");
+            int[] available = ui.session.candidateAvailable();
             for (int row = 0; row < 2 && row + this.hatchOffset < indices.size(); row++) {
                 int index = indices.get(row + this.hatchOffset);
                 ItemStack stack = cell.candidates.get(index);
@@ -463,10 +462,8 @@ final class HologramUiConfiguration {
     List<String> hatchRoles() {
         List<String> roles = new ArrayList<>();
         roles.add("全部类型");
-        NBTTagList tags = ui.session.cellTag()
-            .getTagList("candidateRoles", 8);
-        for (int i = 0; i < tags.tagCount(); i++) {
-            String role = tags.getStringTagAt(i);
+        List<String> tags = ui.session.candidateRoles();
+        for (String role : tags) {
             if (!role.isEmpty() && !roles.contains(role)) roles.add(role);
         }
         return roles;
@@ -478,13 +475,11 @@ final class HologramUiConfiguration {
         if (cell == null) return indices;
         List<String> roles = ui.config.hatchRoles();
         this.hatchRole = Math.floorMod(this.hatchRole, roles.size());
-        NBTTagList tags = ui.session.cellTag()
-            .getTagList("candidateRoles", 8);
-        int[] tiers = ui.session.cellTag()
-            .getIntArray("candidateTiers");
+        List<String> tags = ui.session.candidateRoles();
+        int[] tiers = ui.session.candidateTiers();
         for (int i = 0; i < cell.candidates.size(); i++) {
             if (this.hatchRole > 0 && !roles.get(this.hatchRole)
-                .equals(tags.getStringTagAt(i))) continue;
+                .equals(i < tags.size() ? tags.get(i) : "")) continue;
             if (this.hatchFilterTier >= 0 && (i >= tiers.length || tiers[i] != this.hatchFilterTier)) continue;
             indices.add(i);
         }
@@ -497,14 +492,12 @@ final class HologramUiConfiguration {
 
     List<Integer> availableTiers() {
         List<Integer> levels = new ArrayList<>();
-        NBTTagList roles = ui.session.cellTag()
-            .getTagList("candidateRoles", 8);
-        int[] tiers = ui.session.cellTag()
-            .getIntArray("candidateTiers");
+        List<String> roles = ui.session.candidateRoles();
+        int[] tiers = ui.session.candidateTiers();
         List<String> options = ui.config.hatchRoles();
         for (int i = 0; i < tiers.length; i++) {
             if (this.hatchRole > 0 && !options.get(this.hatchRole)
-                .equals(roles.getStringTagAt(i))) continue;
+                .equals(i < roles.size() ? roles.get(i) : "")) continue;
             if (tiers[i] >= 0 && !levels.contains(tiers[i])) levels.add(tiers[i]);
         }
         Collections.sort(levels);
@@ -601,10 +594,8 @@ final class HologramUiConfiguration {
         ui.config.drawTierSelector(165, 105, 231, mx, my);
         List<Integer> indices = ui.config.filteredHatches();
         this.hatchOffset = Math.max(0, Math.min(this.hatchOffset, Math.max(0, indices.size() - 5)));
-        int[] available = ui.session.cellTag()
-            .getIntArray("candidateAvailable");
-        int[] tiers = ui.session.cellTag()
-            .getIntArray("candidateTiers");
+        int[] available = ui.session.candidateAvailable();
+        int[] tiers = ui.session.candidateTiers();
         for (int row = 0; row < 5 && this.hatchOffset + row < indices.size(); row++) {
             int index = indices.get(this.hatchOffset + row);
             ItemStack stack = ui.session.selectedCell().candidates.get(index);
@@ -639,8 +630,7 @@ final class HologramUiConfiguration {
         if (indices.isEmpty()) ui.canvas.text("本筛选没有候选，请更换类型或等级", 165, 125, 231, 0xe4b85a);
         ui.canvas.text("滚轮翻页 · " + indices.size() + " 项", 165, 240, 115, 0x94afb4);
         ui.canvas.button(66, 282, 237, 114, 18, "恢复默认壳", ui.session.editable() && ui.preview.hasSelectedPin(), mx, my);
-        int[] facings = ui.session.cellTag()
-            .getIntArray("hatchFacings");
+        int[] facings = ui.session.hatchFacings();
         ui.canvas.button(
             99,
             165,
@@ -765,7 +755,11 @@ final class HologramUiConfiguration {
             String name = id == 1713 ? selectedHatchPreset
                 : hatchPresetNameField.getText()
                     .trim();
-            presetStore.save(name, ui.session.state().data.getCompoundTag("hatchProfile"), id == 1713);
+            HologramScreen root = ui.host == null ? null : ui.host.parent();
+            NBTTagCompound profile = root != null && root.localControllerStandard()
+                ? root.currentNativeHatchProfile(presetTier, presetDowngrade)
+                : ui.session.state().data.getCompoundTag("hatchProfile");
+            presetStore.save(name, profile, id == 1713);
             selectedHatchPreset = name;
             customPresets = true;
             presetOffset = Math.max(0, hatchPresetNames().indexOf(name) - 3);
@@ -1067,14 +1061,12 @@ final class HologramUiConfiguration {
                 break;
             }
         }
-        NBTTagList roles = ui.session.cellTag()
-            .getTagList("candidateRoles", 8);
-        int[] tiers = ui.session.cellTag()
-            .getIntArray("candidateTiers");
-        this.hatchRole = index >= 0 && index < roles.tagCount() ? Math.max(
+        List<String> roles = ui.session.candidateRoles();
+        int[] tiers = ui.session.candidateTiers();
+        this.hatchRole = index >= 0 && index < roles.size() ? Math.max(
             0,
             ui.config.hatchRoles()
-                .indexOf(roles.getStringTagAt(index)))
+                .indexOf(roles.get(index)))
             : 0;
         this.hatchFilterTier = index >= 0 && index < tiers.length ? tiers[index] : -1;
         this.hatchOffset = 0;
@@ -1323,8 +1315,7 @@ final class HologramUiConfiguration {
             case 99:
             case 102:
                 if (!ui.session.selectedNativeEditable()) return true;
-                int[] facings = ui.session.cellTag()
-                    .getIntArray("hatchFacings");
+                int[] facings = ui.session.hatchFacings();
                 int nextFacing = -1;
                 if (id == 99 && facings.length > 0) {
                     nextFacing = facings[0];
@@ -1535,6 +1526,22 @@ final class HologramUiConfiguration {
                 ui.memory.basicConfigured(true);
                 ui.memory.rememberGuidance();
             }
+        }
+    }
+
+    void acceptNativePresetShortcut(NBTTagCompound request) {
+        if (presetStore == null || ui.session.isTutorial()) return;
+        boolean basic = !request.hasKey("hatchProfile", 10);
+        NBTTagCompound profile = basic ? new NBTTagCompound()
+            : (NBTTagCompound) request.getCompoundTag("hatchProfile")
+                .copy();
+        profile.setBoolean("basic", basic);
+        profile.setInteger("tier", request.getInteger("hatchTier"));
+        profile.setBoolean("downgrade", request.getBoolean("hatchDowngrade"));
+        try {
+            presetStore.accepted(true, profile);
+        } catch (java.io.IOException ignored) {
+            // accepted() already updated the in-memory shortcut.
         }
     }
 
@@ -1750,11 +1757,11 @@ final class HologramUiConfiguration {
     /** This allows an explicit server check, not a promise that the local preview knows the quota. */
     boolean basicPresetActionAvailable() {
         NBTTagCompound state = ui.session.state().data;
-        return state.getBoolean("presetAvailable") || state.getBoolean("localStandardController")
-            && state.getBoolean("supported")
-            && !state.getBoolean("virtual")
-            && state.getInteger("mode") != 2
-            && !state.getBoolean("capturePending");
+        return state.getBoolean("presetAvailable")
+            || state.getBoolean("localStandardController") && state.getBoolean("supported")
+                && !state.getBoolean("virtual")
+                && state.getInteger("mode") != 2
+                && !state.getBoolean("capturePending");
     }
 
     int nativePresetCount() {

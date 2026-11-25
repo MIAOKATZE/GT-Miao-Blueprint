@@ -38,6 +38,8 @@ public final class HologramHatchPolicy {
     private static final Map<IStructureElement<?>, Integer> ELEMENT_SINGLE_IDS = new WeakHashMap<>();
     private static final Map<Object, BiFunction<Object, ItemStack, Predicate<ItemStack>>> BUILDERS = new WeakHashMap<>();
     private static final Map<IStructureElement<?>, BiFunction<Object, ItemStack, Predicate<ItemStack>>> ELEMENTS = new WeakHashMap<>();
+    private static final Map<Object, Predicate<ItemStack>> STRUCTURAL_BUILDERS = new WeakHashMap<>();
+    private static final Map<IStructureElement<?>, Predicate<ItemStack>> STRUCTURAL_ELEMENTS = new WeakHashMap<>();
     private static final Map<Object, Map<IHatchElement<?>, Integer>> REQUIREMENTS = new WeakHashMap<>();
     private static final Map<IStructureElement<?>, Map<IHatchElement<?>, Integer>> ELEMENT_REQUIREMENTS = new WeakHashMap<>();
     private static final Map<IStructureElement<?>, java.util.EnumSet<ForgeDirection>> DISALLOWED = new WeakHashMap<>();
@@ -219,16 +221,18 @@ public final class HologramHatchPolicy {
             if (declared.size() == 1) values.put(declared.get(0), 1);
             REQUIREMENTS.put(builder, values);
         }
-        BUILDERS.put(builder, (context, trigger) -> stack -> {
+        Predicate<ItemStack> structural = stack -> {
             IMetaTileEntity tile = ItemMachines.getMetaTileEntity(stack);
             if (tile == null) return false;
             for (IHatchElement<?> element : declared) {
                 // The builder blacklist limits automatic placement/preview, not structural acceptance.
                 // Explicit declaration candidates must also include manually installed specialised hatches.
-                if (matchesHatch(element, tile)) return true;
+                if (reviewedGtsrDynamo(element) ? nativeDynamo(tile) : matchesHatch(element, tile)) return true;
             }
             return false;
-        });
+        };
+        STRUCTURAL_BUILDERS.put(builder, structural);
+        BUILDERS.put(builder, (context, trigger) -> structural);
     }
 
     private static boolean reviewed(IHatchElement<?> element, int depth) {
@@ -248,6 +252,10 @@ public final class HologramHatchPolicy {
     private static int inspect(IHatchElement<?> element, IMetaTileEntity tile, int depth, boolean quota,
         IdentityHashMap<IHatchElement<?>, Boolean> path) {
         if (element == null || depth >= 12 || path.put(element, Boolean.TRUE) != null) return -1;
+        if (reviewedGtsrDynamo(element)) {
+            path.remove(element);
+            return tile != null && nativeDynamo(tile) ? 1 : 0;
+        }
         if (element instanceof gregtech.api.enums.HatchElement || reviewedSteamBus(element)
             || !quota && reviewedStockCokeElement(element)) {
             path.remove(element);
@@ -289,6 +297,7 @@ public final class HologramHatchPolicy {
 
     public static synchronized void reset(Object builder) {
         SINGLE_IDS.remove(builder);
+        STRUCTURAL_BUILDERS.remove(builder);
         automaticReject(builder);
     }
 
@@ -316,13 +325,30 @@ public final class HologramHatchPolicy {
             && ("InputBus_Steam".equals(role.name()) || "OutputBus_Steam".equals(role.name()));
     }
 
+    private static boolean reviewedGtsrDynamo(IHatchElement<?> element) {
+        // GTSR .70 DynamoOutput uses its two standard dynamo lists; steam/layer counters are not inferred.
+        return element instanceof Enum<?>role && "DynamoOutput".equals(role.name())
+            && role.getDeclaringClass()
+                .getClassLoader() == IHatchElement.class.getClassLoader()
+            && role.getDeclaringClass()
+                .getName()
+                .equals("com.miaokatze.gtsr.common.machine.MTEMegaSteamTurbineArray$MegaSteamTurbineArrayHatchElement");
+    }
+
+    private static boolean nativeDynamo(IMetaTileEntity tile) {
+        return tile instanceof gregtech.api.metatileentity.implementations.MTEHatchDynamo
+            || tile instanceof tectech.thing.metaTileEntity.hatch.MTEHatchDynamoMulti;
+    }
+
     private static boolean reviewedStockCokeElement(IHatchElement<?> element) {
         // GT's declared CokeHatch leaf exposes a fixed MTEHatchCokeOven class matcher. Its count/adder are
         // not used here; this trusts one declaration primitive, not the controller or a handpicked position.
-        return element instanceof Enum<?> role && "CokeHatch".equals(role.name())
-            && role.getDeclaringClass().getClassLoader() == IHatchElement.class.getClassLoader()
-            && role.getDeclaringClass().getName().equals(
-                "gregtech.common.tileentities.machines.multi.MTECokeOven$CokeHatchElement");
+        return element instanceof Enum<?>role && "CokeHatch".equals(role.name())
+            && role.getDeclaringClass()
+                .getClassLoader() == IHatchElement.class.getClassLoader()
+            && role.getDeclaringClass()
+                .getName()
+                .equals("gregtech.common.tileentities.machines.multi.MTECokeOven$CokeHatchElement");
     }
 
     static synchronized int manualSteamId(IStructureElement<?> element, Object context) {
@@ -342,20 +368,33 @@ public final class HologramHatchPolicy {
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
     public static synchronized void andFunction(Object builder, Function filter) {
-        // An arbitrary function cannot be queried while displaying or planning a blueprint.
-        reset(builder);
+        invalidateAdditionalFilter(builder);
     }
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
     public static synchronized void andBiFunction(Object builder, BiFunction filter) {
-        reset(builder);
+        invalidateAdditionalFilter(builder);
+    }
+
+    private static void invalidateAdditionalFilter(Object builder) {
+        // GT's structural check calls the native adder only. Additional item filters govern automatic funding
+        // and candidate queries, and are never invoked for the already selected model's structural proof.
+        SINGLE_IDS.remove(builder);
+        BUILDERS.remove(builder);
+        COLD_BUILDERS.remove(builder);
+        NATIVE_BROWSE_BUILDERS.remove(builder);
     }
 
     public static synchronized void built(Object builder, IStructureElement<?> element) {
         if (element != null && SINGLE_IDS.containsKey(builder))
             ELEMENT_SINGLE_IDS.put(element, SINGLE_IDS.get(builder));
         BiFunction<Object, ItemStack, Predicate<ItemStack>> rule = BUILDERS.get(builder);
-        if (rule != null && element != null) ELEMENTS.put(element, rule);
+        if (element == null) return;
+        if (rule != null) ELEMENTS.put(element, rule);
+        else ELEMENTS.remove(element);
+        Predicate<ItemStack> structural = STRUCTURAL_BUILDERS.get(builder);
+        if (structural != null) STRUCTURAL_ELEMENTS.put(element, structural);
+        else STRUCTURAL_ELEMENTS.remove(element);
         if (element != null && REQUIREMENTS.containsKey(builder))
             ELEMENT_REQUIREMENTS.put(element, REQUIREMENTS.get(builder));
         if (element != null && DECLARED.containsKey(builder)) ELEMENT_DECLARED.put(element, DECLARED.get(builder));
@@ -378,6 +417,12 @@ public final class HologramHatchPolicy {
     /** Known native reference offers, not structural or auto-placement authority. */
     static synchronized Predicate<ItemStack> coldPreviewPredicate(IStructureElement<?> element) {
         return COLD_ELEMENTS.get(element);
+    }
+
+    static synchronized Predicate<ItemStack> structuralPredicate(IStructureElement<?> element, Object context,
+        ItemStack trigger) {
+        Predicate<ItemStack> declaration = STRUCTURAL_ELEMENTS.get(element);
+        return declaration != null ? declaration : predicate(element, context, trigger);
     }
 
     public static synchronized Predicate<ItemStack> predicate(IStructureElement<?> element, Object context,

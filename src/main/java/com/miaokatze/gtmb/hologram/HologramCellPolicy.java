@@ -1379,7 +1379,7 @@ final class HologramCellPolicy {
                             .toArray();
                 }
                 java.util.function.Predicate<ItemStack> declared = HologramHatchPolicy
-                    .predicate(part, detachedContext, c.elementTrigger);
+                    .structuralPredicate(part, detachedContext, c.elementTrigger);
                 if (declared != null && declared.test(target)) {
                     return java.util.Arrays.stream(ForgeDirection.VALID_DIRECTIONS)
                         .filter(

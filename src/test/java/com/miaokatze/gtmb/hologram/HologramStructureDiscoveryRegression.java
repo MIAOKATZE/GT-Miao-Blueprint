@@ -83,8 +83,8 @@ final class HologramStructureDiscoveryRegression {
 
     static void runNativePreview() {
         try {
-            nativePreview(false);
-            nativePreview(true);
+            nativePreview();
+            incompletePreviewWithoutPristineDeclaration();
             gregTechPreview();
             blockRendererPortableHeight();
         } catch (IOException failure) {
@@ -109,32 +109,26 @@ final class HologramStructureDiscoveryRegression {
         }
     }
 
-    private static void nativePreview(boolean structureCompatFallback) throws IOException {
+    private static void nativePreview() throws IOException {
         HologramResourceWorld source = HologramResourceWorld.declarations(Blocks.bookshelf, 0);
         TileEntity tile = new TileEntity();
         tile.yCoord = 128;
         tile.setWorldObj(source);
         source.tile = tile;
-        PreviewFixture fixture = new PreviewFixture(tile, structureCompatFallback);
+        PreviewFixture fixture = new PreviewFixture(tile, false);
         ItemStack trigger = new ItemStack(Items.stick, 2);
         try (HologramNativeStructurePreview preview = new HologramNativeStructurePreview(
             tile,
             fixture,
             fixture,
-            structureCompatFallback,
+            false,
             trigger)) {
-            boolean done = preview.advance(System.nanoTime() - 1);
-            SimpleAssert.eq(structureCompatFallback, done, "a write requires another native survival pass");
+            SimpleAssert.that(!preview.advance(System.nanoTime() - 1), "a write requires another native survival pass");
             SimpleAssert.eq(source, tile.getWorldObj(), "tile is detached from the simulation between passes");
             SimpleAssert.that(!StructureLibAPI.isInstrumentEnabled(), "the StructureLib instrument is scoped");
-            if (!done) {
-                SimpleAssert.that(preview.advance(System.nanoTime() - 1), "the unchanged pass completes the preview");
-            }
-            SimpleAssert.eq(structureCompatFallback ? 1 : 2, fixture.rounds, "survival call count follows writes");
-            SimpleAssert.eq(
-                structureCompatFallback ? 1 : 0,
-                fixture.constructs,
-                "only the compat -2 status requests construct");
+            SimpleAssert.that(preview.advance(System.nanoTime() - 1), "the native terminal pass completes the preview");
+            SimpleAssert.eq(2, fixture.rounds, "survival call count follows writes");
+            SimpleAssert.eq(0, fixture.constructs, "completed native survival does not request construct");
             SimpleAssert.eq(
                 "native preview fixture",
                 preview.description()
@@ -153,6 +147,36 @@ final class HologramStructureDiscoveryRegression {
                         .getItem() == new ItemStack(Blocks.cobblestone).getItem(),
                 "native getBlocksToPlace supplies the final declaration candidates");
             SimpleAssert.eq(Blocks.air, source.getBlock(1, 128, 0), "source world never receives a placed block");
+        }
+    }
+
+    private static void incompletePreviewWithoutPristineDeclaration() throws IOException {
+        HologramResourceWorld source = HologramResourceWorld.declarations(Blocks.bookshelf, 0);
+        TileEntity tile = new TileEntity();
+        tile.yCoord = 128;
+        tile.setWorldObj(source);
+        source.tile = tile;
+        PreviewFixture fixture = new PreviewFixture(tile, true);
+        ItemStack trigger = new ItemStack(Items.stick, 2);
+        try (HologramNativeStructurePreview preview = new HologramNativeStructurePreview(
+            tile,
+            fixture,
+            fixture,
+            true,
+            trigger)) {
+            SimpleAssert.that(
+                !preview.advance(System.nanoTime() - 1),
+                "the detached controller installation alone is not a complete footprint");
+            try {
+                preview.advance(System.nanoTime() - 1);
+                throw new AssertionError("stable unsupported survival cannot publish an unproven footprint");
+            } catch (IOException expected) {
+                SimpleAssert.eq("LOCAL_NATIVE_PREVIEW_INCOMPLETE", expected.getMessage(), "missing declaration proof");
+            }
+            SimpleAssert.eq(2, fixture.rounds, "only the controller write justifies a second pass");
+            SimpleAssert.eq(0, fixture.constructs, "fallback cannot reuse the incomplete controller");
+            SimpleAssert.eq(source, tile.getWorldObj(), "failure restores the original world");
+            SimpleAssert.that(!StructureLibAPI.isInstrumentEnabled(), "failure restores instrumentation scope");
         }
     }
 
@@ -270,7 +294,7 @@ final class HologramStructureDiscoveryRegression {
                 SimpleAssert.that(world.canBlockSeeTheSky(1, 129, 0), "preview queries can see the empty sky");
                 SimpleAssert.that(!world.canBlockSeeTheSky(1, -1, 0), "preview below the empty height map has no sky");
             }
-            return 0;
+            return rounds == 1 ? 0 : -1;
         }
 
         @Override

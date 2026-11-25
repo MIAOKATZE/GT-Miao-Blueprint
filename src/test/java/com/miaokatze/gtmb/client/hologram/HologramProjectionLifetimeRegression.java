@@ -10,6 +10,7 @@ public final class HologramProjectionLifetimeRegression {
     private HologramProjectionLifetimeRegression() {}
 
     public static void run() {
+        HologramLocalControllerGhostRegression.run();
         SimpleAssert.that(
             HologramVoucherRibbon.contains(10, 20, 220, 28, 225, 23),
             "painted cat/banner pixels own the voucher tooltip");
@@ -58,17 +59,20 @@ public final class HologramProjectionLifetimeRegression {
         HologramState displayed = new HologramState(owner);
         net.minecraft.nbt.NBTTagCompound changed = (net.minecraft.nbt.NBTTagCompound) owner.copy();
         changed.setInteger("job", 3);
-        SimpleAssert.that(MiaoVisonLiteRenderer.sameWorldProjection(new HologramState(changed), displayed),
+        SimpleAssert.that(
+            MiaoVisonLiteRenderer.sameWorldProjection(new HologramState(changed), displayed),
             "terminal metadata matches its actual world renderer without needing object identity");
-        for (String key : new String[] { "planRevision", "placementReviewNonce", "editorWorkspaceEpoch",
-            "dimension", "x", "y", "z" }) {
+        for (String key : new String[] { "planRevision", "placementReviewNonce", "editorWorkspaceEpoch", "dimension",
+            "x", "y", "z" }) {
             changed.setLong(key, owner.getLong(key) + 1);
-            SimpleAssert.that(!MiaoVisonLiteRenderer.sameWorldProjection(new HologramState(changed), displayed),
+            SimpleAssert.that(
+                !MiaoVisonLiteRenderer.sameWorldProjection(new HologramState(changed), displayed),
                 "mismatched " + key + " cannot retire a different world renderer");
             changed.setLong(key, owner.getLong(key));
         }
         changed.setBoolean("localPreview", true);
-        SimpleAssert.that(!MiaoVisonLiteRenderer.sameWorldProjection(new HologramState(changed), displayed),
+        SimpleAssert.that(
+            !MiaoVisonLiteRenderer.sameWorldProjection(new HologramState(changed), displayed),
             "a transient local preview cannot retire a server renderer with similar metadata");
     }
 

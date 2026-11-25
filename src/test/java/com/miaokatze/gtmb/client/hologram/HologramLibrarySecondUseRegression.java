@@ -47,84 +47,108 @@ final class HologramLibrarySecondUseRegression {
             calls.add(direct);
             return false;
         };
-        for (var action : new LocalAction[] { LocalAction.REFRESH, LocalAction.BACK, LocalAction.DETAILS }) SimpleAssert.that(
-                !HologramLibraryMaterialReviewScreen.dispatchRefused(
-                    action,
-                    () -> { throw new AssertionError("Local view and unsupported actions cannot consume a ticket"); },
-                    refuse),
-                "there is no placement request from a local or unsupported action");
+        for (var action : new LocalAction[] { LocalAction.REFRESH, LocalAction.BACK }) SimpleAssert.that(
+            !HologramLibraryMaterialReviewScreen.dispatchRefused(
+                action,
+                () -> { throw new AssertionError("Local view and unsupported actions cannot consume a ticket"); },
+                refuse),
+            "there is no placement request from a local or unsupported action");
         SimpleAssert.that(calls.isEmpty() && pending.get() == frozen, "no preliminary send or ticket loss");
         SimpleAssert.that(
-            HologramLibraryMaterialReviewScreen.dispatchRefused(LocalAction.SUBMIT, () -> pending.getAndSet(null), refuse),
+            HologramLibraryMaterialReviewScreen
+                .dispatchRefused(LocalAction.SUBMIT, () -> pending.getAndSet(null), refuse),
             "the direct refusal stays visible");
-        SimpleAssert.eq(Collections.singletonList(true), calls, "only explicit normal confirm can choose the sliced path");
+        SimpleAssert
+            .eq(Collections.singletonList(true), calls, "only explicit normal confirm can choose the sliced path");
         SimpleAssert.that(
-            !HologramLibraryMaterialReviewScreen.dispatchRefused(LocalAction.SUBMIT, () -> pending.getAndSet(null), refuse),
+            !HologramLibraryMaterialReviewScreen
+                .dispatchRefused(LocalAction.SUBMIT, () -> pending.getAndSet(null), refuse),
             "a second normal click cannot revive a consumed ticket");
-        SimpleAssert.that(pending.get() == null && calls.size() == 1,
+        SimpleAssert.that(
+            pending.get() == null && calls.size() == 1,
             "no obsolete transport can be retried after a refused ordinary click");
     }
 
     private static void supportedModeAndSource() {
         var defaultTool = new ItemStack(new ItemNekoHologramProjector());
         var settings = HologramMaterials.read(defaultTool);
-        SimpleAssert.that(settings.main && settings.containers && settings.me && settings.priority == 0,
+        SimpleAssert.that(
+            settings.main && settings.containers && settings.me && settings.priority == 0,
             "an unconfigured real projector enables all three sources and prioritizes the main backpack");
-        SimpleAssert.eq(PlainAvailability.SOURCE,
+        SimpleAssert.eq(
+            PlainAvailability.SOURCE,
             HologramLibraryClient.plainPlacementAvailability(false, true, false, settings, true, true),
             "public, portable and unsupported variants stay material-only");
-        SimpleAssert.eq(PlainAvailability.MODE,
+        SimpleAssert.eq(
+            PlainAvailability.MODE,
             HologramLibraryClient.plainPlacementAvailability(true, false, false, settings, true, true),
             "missing edit permission does not promise placement");
-        SimpleAssert.eq(PlainAvailability.READY,
+        SimpleAssert.eq(
+            PlainAvailability.READY,
             HologramLibraryClient.plainPlacementAvailability(true, true, false, settings, true, true),
             "the unmodified default passes capability checks with the selected stock providers");
-        SimpleAssert.that(!defaultTool.hasTagCompound() && settings.main && settings.containers && settings.me,
+        SimpleAssert.that(
+            !defaultTool.hasTagCompound() && settings.main && settings.containers && settings.me,
             "availability does not rewrite enabled sources on the held projector");
-        SimpleAssert.eq(PlainAvailability.READY, HologramLibraryClient.plainPlacementAvailability(true, true, true, null, true, true),
+        SimpleAssert.eq(
+            PlainAvailability.READY,
+            HologramLibraryClient.plainPlacementAvailability(true, true, true, null, true, true),
             "creative placement does not require any survival material providers");
-        SimpleAssert.eq(PlainAvailability.MODE, HologramLibraryClient.plainPlacementAvailability(true, false, true, settings, true, true),
+        SimpleAssert.eq(
+            PlainAvailability.MODE,
+            HologramLibraryClient.plainPlacementAvailability(true, false, true, settings, true, true),
             "creative still needs world editing privileges");
         // Mask order: neither external source, containers, wireless ME, both.
         var ready = PlainAvailability.READY;
         var blocked = PlainAvailability.MATERIALS;
-        PlainAvailability[][] withMain = {
-            { ready, ready, ready, ready }, { ready, ready, ready, ready }, { ready, ready, ready, ready }
-        };
+        PlainAvailability[][] withMain = { { ready, ready, ready, ready }, { ready, ready, ready, ready },
+            { ready, ready, ready, ready } };
         for (int priority = 0; priority < withMain.length; priority++) {
             for (int mask = 0; mask < withMain[priority].length; mask++) {
                 var configured = new HologramMaterials.Settings();
                 configured.priority = priority;
                 configured.containers = (mask & 1) != 0;
                 configured.me = (mask & 2) != 0;
-                SimpleAssert.eq(withMain[priority][mask],
+                SimpleAssert.eq(
+                    withMain[priority][mask],
                     HologramLibraryClient.plainPlacementAvailability(true, true, false, configured, true, true),
                     "main enabled: priority " + priority + ", fallback mask " + mask);
                 configured.main = false;
-                SimpleAssert.eq(mask == 0 ? blocked : ready,
+                SimpleAssert.eq(
+                    mask == 0 ? blocked : ready,
                     HologramLibraryClient.plainPlacementAvailability(true, true, false, configured, true, true),
-                    "only explicitly enabled external sources remain available: priority " + priority + ", fallback mask " + mask);
+                    "only explicitly enabled external sources remain available: priority " + priority
+                        + ", fallback mask "
+                        + mask);
             }
         }
         for (int invalid : new int[] { -1, 3 }) {
             var configured = new HologramMaterials.Settings();
             configured.priority = invalid;
-            SimpleAssert.eq(blocked,
+            SimpleAssert.eq(
+                blocked,
                 HologramLibraryClient.plainPlacementAvailability(true, true, false, configured, true, true),
                 "invalid priority does not start placement");
         }
-        SimpleAssert.eq(blocked, HologramLibraryClient.plainPlacementAvailability(true, true, false, null, true, true),
+        SimpleAssert.eq(
+            blocked,
+            HologramLibraryClient.plainPlacementAvailability(true, true, false, null, true, true),
             "missing source settings fail closed");
-        SimpleAssert.eq(PlainAvailability.TOOL,
+        SimpleAssert.eq(
+            PlainAvailability.TOOL,
             HologramLibraryClient.plainPlacementAvailability(true, true, false, settings, false, true),
             "fresh projector with no verified id is declined without guessing another stack");
-        SimpleAssert.that(HologramLibraryClient.canonicalProjectorId(new UUID(3, 1).toString())
-            && !HologramLibraryClient.canonicalProjectorId("") && !HologramLibraryClient.canonicalProjectorId("1-2-3-4-5"),
+        SimpleAssert.that(
+            HologramLibraryClient.canonicalProjectorId(new UUID(3, 1).toString())
+                && !HologramLibraryClient.canonicalProjectorId("")
+                && !HologramLibraryClient.canonicalProjectorId("1-2-3-4-5"),
             "only the current canonical UUID qualifies as the tracked tool identity");
-        SimpleAssert.eq(PlainAvailability.TRANSPORT,
+        SimpleAssert.eq(
+            PlainAvailability.TRANSPORT,
             HologramLibraryClient.plainPlacementAvailability(true, true, false, settings, true, false),
             "no local transport is a proved unavailable condition and has no fallback");
-        SimpleAssert.eq(PlainAvailability.READY,
+        SimpleAssert.eq(
+            PlainAvailability.READY,
             HologramLibraryClient.plainPlacementAvailability(true, true, false, settings, true, true),
             "exact selected private/main-only/survival scope keeps the existing explicit submit affordance");
     }

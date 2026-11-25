@@ -27,8 +27,9 @@ public final class HologramLifecycle {
             HologramAeCraftingOrders.tick();
             HologramDemolition.tick();
             HologramService.tick();
-            long slicedBudget = Math.min(HologramWorkBudget.SLICE_NANOS, HologramWorkBudget.tickNanos());
-            long deadline = HologramWorkBudget.deadline(slicedBudget);
+            // Native construction shares the remaining tick headroom, not a fixed 5 ms cap.
+            // Earlier world and mod work has already been charged against the 40 ms tick target.
+            long deadline = HologramWorkBudget.deadline(HologramWorkBudget.tickNanos());
             stockFirst = !stockFirst;
             if (stockFirst) HologramNetwork.tickStockNativeServer(deadline);
             HologramNativeLocalConstruction.tick(deadline);
@@ -69,7 +70,6 @@ public final class HologramLifecycle {
     @SubscribeEvent
     public void changedDimension(PlayerEvent.PlayerChangedDimensionEvent event) {
         if (event.player instanceof EntityPlayerMP player && event.fromDim != event.toDim
-            && player.dimension == event.toDim)
-            HologramWorkspace.publishActionDimension(player);
+            && player.dimension == event.toDim) HologramWorkspace.publishActionDimension(player);
     }
 }

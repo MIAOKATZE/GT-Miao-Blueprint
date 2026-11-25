@@ -192,7 +192,8 @@ final class HologramEditorCommands {
             || ui.shell.fieldFocused()
             || ui.shortcuts.captureBinding() >= 0
             || !(cameraNavigation(name) || "air".equals(name) && !ui.library.openingLocalSource()
-                ? ui.shell.sceneNavigable() : sceneAvailable())
+                ? ui.shell.sceneNavigable()
+                : sceneAvailable())
             || ui.tools.modalOpen()
             || ui.tools.pointerCaptured()
             || ui.preview.inventory()
@@ -397,8 +398,7 @@ final class HologramEditorCommands {
             case "candidates", "inventory" -> !editable ? ui.session.editingReason()
                 : ui.preview.canInventoryPin() ? "" : "先选中可指定目标的非锚点格；拆除模式不指定新目标";
             case "hatchFacing" -> !editable ? ui.session.editingReason()
-                : cell != null && ui.session.cellTag()
-                    .getIntArray("hatchFacings").length > 0 ? "" : "本格没有合法仓室朝向";
+                : cell != null && ui.session.hatchFacings().length > 0 ? "" : "本格没有合法仓室朝向";
             case "hatchPreset" -> !editable ? ui.session.editingReason()
                 : ui.session.state().data.getBoolean("virtual") ? "整机仓室配额仅适用于真实控制器规划"
                     : ui.session.state().data.getInteger("mode") == 2 ? "拆除模式不生成仓室预设"

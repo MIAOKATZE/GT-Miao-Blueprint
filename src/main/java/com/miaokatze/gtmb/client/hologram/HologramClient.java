@@ -182,6 +182,13 @@ public final class HologramClient {
         HologramIsometricCamera.INSTANCE.install();
         HologramLibraryClient.INSTANCE.install();
         HologramCutClient.INSTANCE.install();
+        com.miaokatze.gtmb.hologram.HologramNativePresetStock.setReceiver((reply, handler) -> {
+            Minecraft client = Minecraft.getMinecraft();
+            client.func_152344_a(() -> {
+                if (client.getNetHandler() == handler && client.currentScreen instanceof HologramScreen screen)
+                    screen.receiveNativePreset(reply);
+            });
+        });
         HologramNetwork.setProgressReceiver(nbt -> {
             Minecraft minecraft = Minecraft.getMinecraft();
             Object world = minecraft.theWorld, connection = minecraft.getNetHandler();
@@ -559,103 +566,6 @@ public final class HologramClient {
                     text("worldGuideLockFailed", "Position could not be locked; adjust the preview and try again"));
                 com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Position lock request failed", failure);
             } else throw failure;
-        }
-    }
-
-
-    private static final class ControllerHatchPreset {
-
-        private final long id;
-        private final NBTTagCompound settings;
-
-        private ControllerHatchPreset(long id, NBTTagCompound settings) {
-            this.id = id;
-            this.settings = (NBTTagCompound) settings.copy();
-        }
-    }
-
-    private static ControllerHatchPreset pendingControllerHatchPreset;
-
-    static void prepareControllerHatchPreset(HologramState displayed, NBTTagCompound settings) {
-        Minecraft mc = Minecraft.getMinecraft();
-        if (mc.thePlayer == null || mc.theWorld == null || !displayed.data.getBoolean("supported")
-            || displayed.data.getBoolean("capturePending") || displayed.data.getInteger("mode") == 2) return;
-        int tier = settings.getInteger("hatchTier");
-        if (!settings.hasKey("hatchTier", 3) || tier < 0 || tier >= gregtech.api.enums.GTValues.VN.length) {
-            selectionNotice("仓室预设等级无效，未修改规划。");
-            return;
-        }
-        for (HologramState.Cell cell : displayed.cells) {
-            if ("manual".equals(cell.pinScope) || cell.hatchFacing >= 0) {
-                selectionNotice("当前本地规划含手选仓室或朝向，未替换这些目标。请先保留本地修改，再在服务器结构规划中应用预设。");
-                return;
-            }
-        }
-        TileEntity tile = mc.theWorld.getTileEntity(
-            displayed.data.getInteger("x"), displayed.data.getInteger("y"), displayed.data.getInteger("z"));
-        openControllerAuthority(tile, displayed.data.getInteger("side"), (opening, id) -> {
-            pendingControllerHatchPreset = new ControllerHatchPreset(id, settings);
-        });
-    }
-
-    /** Controller identity and tool are already checked by the opening receipt before an apply is forwarded. */
-    static NBTTagCompound controllerHatchPresetOptions(NBTTagCompound displayed, NBTTagCompound live) {
-        if (!live.getBoolean("target") || live.getBoolean("virtual") || !live.getBoolean("supported")
-            || live.getBoolean("capturePending") || live.getInteger("mode") == 2
-            || live.getInteger("job") == 1 || live.getInteger("job") == 2) return null;
-        for (String field : new String[] { "main", "mode", "facing", "channels", "noHatches" })
-            if (!java.util.Objects.equals(displayed.getTag(field), live.getTag(field))) return null;
-        NBTTagCompound config = (NBTTagCompound) displayed.copy();
-        config.setInteger("scope", 0);
-        config.setInteger("selected", -1);
-        config.setIntArray("selectedIndices", new int[0]);
-        config.setString("structureId", live.getString("activeStructure"));
-        return config;
-    }
-
-    private static void clearControllerHatchPreset(long id) {
-        if (pendingControllerHatchPreset != null && pendingControllerHatchPreset.id == id)
-            pendingControllerHatchPreset = null;
-    }
-
-    private static boolean openControllerAuthority(TileEntity tile, int side,
-        java.util.function.BiConsumer<HologramScreen, Long> prepare) {
-        pendingControllerHatchPreset = null;
-        Minecraft mc = Minecraft.getMinecraft();
-        if (side < 0 || side > 5
-            || tile == null
-            || mc.thePlayer == null
-            || tile.getWorldObj() != mc.theWorld
-            || !HologramService.supportsController(tile)) {
-            selectionNotice(text("controllerLocalChanged", "控制器或手持投影仪已变化"));
-            return false;
-        }
-        rootCloseFence.clear();
-        syncSnapshotWorld();
-        fullSnapshotRequested = false;
-        long id = controllerOpen.begin(mc.thePlayer.dimension, tile.xCoord, tile.yCoord, tile.zCoord);
-        NBTTagCompound request = new NBTTagCompound();
-        request.setString("action", "useBlock");
-        request.setInteger("x", tile.xCoord);
-        request.setInteger("y", tile.yCoord);
-        request.setInteger("z", tile.zCoord);
-        request.setInteger("side", side);
-        request.setLong("controllerOpenId", id);
-        try {
-            HologramScreen opening = new HologramScreen(tile, mc.thePlayer.dimension, id);
-            prepare.accept(opening, id);
-            opening.openFrom(mc.currentScreen);
-            if (mc.currentScreen != opening) {
-                clearControllerHatchPreset(id);
-                controllerOpen.dismiss(id);
-                return false;
-            }
-            stampSemanticRevision(request);
-            HologramNetwork.sendAction(request);
-            return true;
-        } catch (RuntimeException failure) {
-            dismissControllerOpening(id);
-            throw failure;
         }
     }
 
@@ -1629,7 +1539,7 @@ public final class HologramClient {
     static void rememberLocalDocument(com.miaokatze.gtmb.hologram.HologramLocalBlueprintDocument document,
         HologramState accepted, boolean idle) {
         Minecraft mc = Minecraft.getMinecraft();
-        if(localWorkspaceDraft!=null&&localWorkspaceDraft!=document)localWorkspaceDraft.closeNative();
+        if (localWorkspaceDraft != null && localWorkspaceDraft != document) localWorkspaceDraft.closeNative();
         localWorkspaceDraft = document;
         localDraftWorld = document == null ? null : mc.theWorld;
         localDraftConnection = document == null ? null : mc.getNetHandler();
@@ -1911,6 +1821,7 @@ public final class HologramClient {
         Object connection = Minecraft.getMinecraft()
             .getNetHandler();
         if (world == assemblyWorld && connection == assemblyConnection) return;
+        HologramLocalControllerGhost.clear();
         controllerOpen.forgetTarget();
         boolean connectionChanged = connection != assemblyConnection;
         previewDistance.sync(false, null, "");
@@ -2331,7 +2242,8 @@ public final class HologramClient {
         Minecraft mc = Minecraft.getMinecraft();
         snapshotWorld = mc.theWorld;
         if (HologramBackgroundTasks.detached()) return;
-        if (mc.currentScreen instanceof HologramScreen screen && screen.localWorkspaceView()) return;
+        if (mc.currentScreen instanceof HologramScreen screen && screen.localWorkspaceView() && opening != screen)
+            return;
         if (rootCloseFence
             .suppress(next.session, nbt.getLong("uiSequence"), nbt.getBoolean("open"), nbt.getBoolean("areaImporting")))
             return;
@@ -2351,16 +2263,7 @@ public final class HologramClient {
                 opening.controllerOpened(true);
             }
             controllerOpen.installed();
-            ControllerHatchPreset preset = pendingControllerHatchPreset;
-            clearControllerHatchPreset(controllerRequest);
-            if (!sourceSwitch && preset != null && preset.id == controllerRequest) {
-                opening.updateState(next);
-                NBTTagCompound configuration = controllerHatchPresetOptions(preset.settings, next.data);
-                if (configuration == null || !opening.ui.session.editable())
-                    opening.ui.session.notice("服务器结构参数与本地规划不同；未应用仓室预设，请核对后再应用。");
-                else opening.ui.session.send("configure", configuration, true);
-                return;
-            }
+
         }
         if (openingCutWorkspace) {
             clearCutWorkspaceOpening();
@@ -2511,7 +2414,7 @@ public final class HologramClient {
     }
 
     private static void dismissControllerOpening(long request) {
-        clearControllerHatchPreset(request);
+
         HologramScreen opening = openingControllerScreen();
         if (opening != null && request == opening.controllerRequest()) opening.closeControllerOpening();
     }
@@ -2537,6 +2440,7 @@ public final class HologramClient {
         Minecraft mc = Minecraft.getMinecraft();
         assembly.expire(System.nanoTime());
         syncSnapshotWorld();
+        HologramLocalControllerGhost.observe(mc, state);
         boolean serverVisible = state == null
             || projectionLifetime.visible(state.session, state.data.getInteger("job"), System.nanoTime());
         if (!serverVisible) HologramRenderer.releaseWorldFor(state);
@@ -2559,6 +2463,7 @@ public final class HologramClient {
                 areaProjectorWorld() ? areaSelectionAnchor() : null);
             return;
         }
+        if (HologramLocalControllerGhost.render(mc, worldPreview, event.partialTicks)) return;
         if (state == null) return;
         String workspaceSession = mc.currentScreen instanceof HologramScreen screen && !screen.ui.session.isTutorial()
             ? screen.ui.session.state().session

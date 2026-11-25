@@ -4,9 +4,7 @@
 package com.miaokatze.gtmb.client.hologram;
 
 import java.math.BigInteger;
-import java.util.AbstractList;
 import java.util.HashMap;
-import java.util.List;
 import java.util.Map;
 import java.util.function.Function;
 
@@ -26,25 +24,25 @@ final class HologramLocalMaterialReview {
     private final NBTTagCompound settings;
     private final int selected, scope, layer;
     private final int[] selection;
-    private final HologramControllerMaterialCounts captured;
+    private final boolean sealedWholeTarget;
     final HologramLocalHatchDelta hatchDelta;
-    private List<HologramLibraryMaterialDescription.Row> description;
     private int targetCount, unaccounted;
     private NBTTagCompound theory, visible = new NBTTagCompound();
     private ItemStack[] observed;
     private int observedSlot = -1;
 
     HologramLocalMaterialReview(HologramState source, NBTTagCompound settings) {
-        this(source, settings, false);
+        this(source, settings, null);
     }
 
-    HologramLocalMaterialReview(HologramState source, NBTTagCompound settings, boolean detailed) {
-        this(source, settings, detailed, null);
+    HologramLocalMaterialReview(HologramState source, NBTTagCompound settings, HologramSelection selectedMaterials) {
+        this(source, settings, selectedMaterials, false);
     }
 
-    HologramLocalMaterialReview(HologramState source, NBTTagCompound settings, boolean detailed,
-        HologramSelection selectedMaterials) {
+    HologramLocalMaterialReview(HologramState source, NBTTagCompound settings, HologramSelection selectedMaterials,
+        boolean sealedWholeTarget) {
         this.source = source;
+        this.sealedWholeTarget = sealedWholeTarget;
         this.settings = (NBTTagCompound) settings.copy();
         selected = settings.hasKey("selected", 3) ? settings.getInteger("selected") : -1;
         scope = settings.getInteger("scope");
@@ -52,23 +50,31 @@ final class HologramLocalMaterialReview {
         selection = this.settings.getIntArray("selectedIndices");
         int mode = source.data.getInteger("mode");
         hatchDelta = source.data.getBoolean("localStandardController") && (mode == 1 || mode == 2)
-            ? new HologramLocalHatchDelta(source, this.settings) : null;
+            ? new HologramLocalHatchDelta(source, this.settings)
+            : null;
         if (hatchDelta != null) {
-            captured = null;
             theory = hatchDelta.theory;
             targetCount = hatchDelta.exchanges + hatchDelta.turns + hatchDelta.removals;
             visible = stockRows(theory, null, -1);
             return;
         }
-        captured = detailed && !source.data.getBoolean("capturePending") ? null : capturedCounts();
-        if(source.nativeViewport!=null){
-            var result=scope==2&&selection.length>1&&selectedMaterials!=null?selectedMaterials.materialResult(source):source.nativeViewport.material(scope,layer,selected,selection);
-            if(result!=null){theory=result.theory();targetCount=result.targets();unaccounted=theory.getInteger("unaccounted");}
-        }else if (captured != null) description = description(captured, null);
-        else if (source.localMaterialIndex != null && source.localMaterialIndex.current()) {
-            HologramLocalMaterialIndex.Result result = source.localMaterialIndex
-                .select(source.cells, scope, layer, selected, selection,
-                    selectedMaterials == null ? null : selectedMaterials.materialResult(source));
+        if (source.nativeViewport != null) {
+            var result = scope == 2 && selection.length > 1 && selectedMaterials != null
+                ? selectedMaterials.materialResult(source)
+                : source.nativeViewport.material(scope, layer, selected, selection);
+            if (result != null) {
+                theory = result.theory();
+                targetCount = result.targets();
+                unaccounted = theory.getInteger("unaccounted");
+            }
+        } else if (source.localMaterialIndex != null && source.localMaterialIndex.current()) {
+            HologramLocalMaterialIndex.Result result = source.localMaterialIndex.select(
+                source.cells,
+                scope,
+                layer,
+                selected,
+                selection,
+                scope == 0 || selectedMaterials == null ? null : selectedMaterials.materialResult(source));
             if (result == null) return;
             theory = result.theory();
             targetCount = result.targets();
@@ -84,11 +90,22 @@ final class HologramLocalMaterialReview {
 
     boolean current(HologramState state, int layer) {
         if (hatchDelta != null) return !closed && source == state && this.layer == layer;
-        if(source.nativeViewport!=null)return !closed&&source==state&&this.layer==layer&&source.nativeViewport.currentProviders();
-        return !closed && (captured == null ? source.localMaterialIndex == state.localMaterialIndex
-            && state.localMaterialIndex != null && state.localMaterialIndex.current() && !state.data.getBoolean("capturePending")
-            : source.controllerMaterialCounts == state.controllerMaterialCounts) && source.session.equals(state.session)
-            && source.data.getString("generation").equals(state.data.getString("generation"))
+        if (source.nativeViewport != null)
+            return !closed && source == state && this.layer == layer && source.nativeViewport.currentProviders();
+        return !closed && source.localMaterialIndex == state.localMaterialIndex
+            && state.localMaterialIndex != null
+            && state.localMaterialIndex.current()
+            && (sealedWholeTarget || !state.data.getBoolean("capturePending"))
+            && sameScope(state, layer);
+    }
+
+    boolean wholeLedgerStillSelected(NBTTagCompound active) {
+        return sealedWholeTarget && settings.equals(active);
+    }
+
+    private boolean sameScope(HologramState state, int layer) {
+        return source.session.equals(state.session) && source.data.getString("generation")
+            .equals(state.data.getString("generation"))
             && source.data.getLong("planRevision") == state.data.getLong("planRevision")
             && source.data.getInteger("mode") == state.data.getInteger("mode")
             && source.data.getString("activeStructure")
@@ -103,11 +120,7 @@ final class HologramLocalMaterialReview {
     }
 
     boolean ready() {
-        return !closed && (captured != null || theory != null);
-    }
-
-    List<HologramLibraryMaterialDescription.Row> description() {
-        return description;
+        return !closed && theory != null;
     }
 
     NBTTagCompound visible() {
@@ -115,16 +128,12 @@ final class HologramLocalMaterialReview {
     }
 
     String scopeLabel() {
-        if (captured != null) return scope == 2 ? "已选范围 · 原生目标基材" : "当前结构 · 原生目标基材";
         return scope == 2 ? "已选范围的目标材料" : "当前范围的目标材料";
     }
 
     String status() {
         if (hatchDelta != null) return hatchDelta.status();
-        if (captured != null) return captured.total() + " 个目标格"
-            + (captured.unlisted() == 0 ? "" : " · " + captured.unlisted() + " 格基材未列明")
-            + " · 施工用量未核算";
-        if (!ready()&&source.nativeViewport!=null)return "此范围尚未核算，不能作为零用量";
+        if (!ready() && source.nativeViewport != null) return "此范围尚未核算，不能作为零用量";
         if (!ready()) return "当前来源尚未提供材料汇总，请重新读取结构";
         String status = targetCount + " 个目标格";
         if (unaccounted > 0) status += " · " + unaccounted + " 格未核算";
@@ -133,7 +142,7 @@ final class HologramLocalMaterialReview {
     }
 
     boolean empty() {
-        return ready() && (captured == null ? targetCount : captured.total()) == 0;
+        return ready() && targetCount == 0;
     }
 
     void tick(ItemStack[] inventory, int protectedSlot) {
@@ -141,80 +150,25 @@ final class HologramLocalMaterialReview {
     }
 
     void refresh(ItemStack[] inventory, int protectedSlot) {
-        if (closed) return;
-        if (captured == null && theory == null) return;
+        if (closed || theory == null) return;
         if (!settings.getBoolean("materialMain")) inventory = null;
-        if ((captured != null || visible.hasKey("rows", 9)) && observedSlot == protectedSlot
+        if (visible.hasKey("rows", 9) && observedSlot == protectedSlot
             && sameInventory(observed, inventory, protectedSlot)) return;
         observedSlot = protectedSlot;
         observed = copyInventory(inventory, protectedSlot);
-        if (captured != null) description = description(captured, stockItems(observed, protectedSlot));
-        else visible = stockRows(theory, observed, protectedSlot);
-    }
-
-    private HologramControllerMaterialCounts capturedCounts() {
-        if (source.controllerMaterialCounts == null) return null;
-        if (scope == 0) return source.controllerMaterialCounts;
-        // Single-cell inspection stays immediate. Wider scoped reviews use the existing exact path, never whole counts.
-        if (scope != 2 || selection.length > 1) return null;
-        int index = selection.length == 0 ? selected : selection[0];
-        if (index < 0 || index >= source.cells.size()) return null;
-        HologramControllerMaterialCounts.Builder one = new HologramControllerMaterialCounts.Builder();
-        one.add(contribution(source, source.cells.get(index)));
-        return one.seal();
+        visible = stockRows(theory, observed, protectedSlot);
     }
 
     static HologramControllerMaterialCounts.Contribution contribution(HologramState state, HologramState.Cell cell) {
         int x = state.data.getInteger("x"), y = state.data.getInteger("y"), z = state.data.getInteger("z");
-        if (cell.excluded || !cell.inScope || cell.anchor || "minecraft:air".equals(cell.wantId)
+        if (cell.excluded || !cell.inScope
+            || cell.anchor
+            || "minecraft:air".equals(cell.wantId)
             || cell.x == x && cell.y == y && cell.z == z
             || HologramControllerMaterialCounts.sourceWater(cell.capturedNativeTarget(), x, y, z))
             return HologramControllerMaterialCounts.EXCLUDED;
-        return HologramControllerMaterialCounts.material(
-            cell.targetStack,
-            cell.missingBlock || cell.iconOnly || cell.block(false) == null);
-    }
-
-    @Desugar
-    private record BackpackKey(Item item, int damage) {}
-
-    private static Map<BackpackKey, Long> stockItems(ItemStack[] inventory, int protectedSlot) {
-        if (inventory == null || protectedSlot < 0 || protectedSlot >= inventory.length) return null;
-        Map<BackpackKey, Long> stock = new HashMap<>();
-        try {
-            for (int i = 0; i < inventory.length; i++) {
-                ItemStack stack = inventory[i];
-                if (i != protectedSlot && stack != null && stack.getItem() != null && stack.stackSize > 0
-                    && !stack.hasTagCompound())
-                    stock.merge(new BackpackKey(stack.getItem(), stack.getItemDamage()), (long) stack.stackSize, Long::sum);
-            }
-        } catch (RuntimeException | LinkageError unavailable) {
-            return null; // A failed stock observation is never an observed zero.
-        }
-        return stock;
-    }
-
-    private static List<HologramLibraryMaterialDescription.Row> description(HologramControllerMaterialCounts counts,
-        Map<BackpackKey, Long> stock) {
-        List<HologramControllerMaterialCounts.Row> rows = counts.rows();
-        return new AbstractList<>() {
-
-            @Override
-            public HologramLibraryMaterialDescription.Row get(int index) {
-                var row = rows.get(index);
-                var identity = row.identity();
-                Long available = stock == null ? null
-                    : stock.getOrDefault(new BackpackKey(identity.item(), identity.damage()), 0L);
-                return new HologramLibraryMaterialDescription.Row(
-                    new HologramLibraryMaterialForecast.Identity(identity.registry(), identity.damage()),
-                    row.cells(), available);
-            }
-
-            @Override
-            public int size() {
-                return rows.size();
-            }
-        };
+        return HologramControllerMaterialCounts
+            .material(cell.targetStack, cell.missingBlock || cell.iconOnly || cell.block(false) == null);
     }
 
     private static boolean sameInventory(ItemStack[] old, ItemStack[] current, int protectedSlot) {

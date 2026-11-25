@@ -7,11 +7,14 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.Iterator;
+import java.util.Comparator;
+import java.util.HashSet;
 import java.util.IdentityHashMap;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.BooleanSupplier;
 
 import net.minecraft.block.Block;
@@ -21,9 +24,9 @@ import net.minecraft.item.ItemStack;
 import net.minecraft.world.World;
 
 import com.github.bsideup.jabel.Desugar;
+import com.gtnewhorizon.structurelib.alignment.constructable.IConstructable;
 import com.gtnewhorizon.structurelib.alignment.enumerable.ExtendedFacing;
 import com.gtnewhorizon.structurelib.structure.AutoPlaceEnvironment;
-import com.gtnewhorizon.structurelib.alignment.constructable.IConstructable;
 import com.gtnewhorizon.structurelib.structure.IStructureDefinition;
 import com.gtnewhorizon.structurelib.structure.IStructureElement;
 import com.gtnewhorizon.structurelib.structure.IStructureElementChain;
@@ -36,10 +39,10 @@ import com.miaokatze.gtmb.hologram.HologramStockNativeConstruction.State;
 
 import gregtech.api.GregTechAPI;
 import gregtech.api.interfaces.metatileentity.IMetaTileEntity;
-import gregtech.common.blocks.ItemMachines;
 import gregtech.api.metatileentity.BaseMetaTileEntity;
 import gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase;
 import gregtech.api.util.GTStructureUtility;
+import gregtech.common.blocks.ItemMachines;
 
 /** The server resolves one named registered definition. Only this owner (not a client geometry row) makes permits. */
 final class HologramDeclaredNativeConstruction {
@@ -48,17 +51,22 @@ final class HologramDeclaredNativeConstruction {
     private record DefinitionPiece(IStructureElement<?>[] elements, HologramCapture.Piece piece) {}
 
     @Desugar
-    private record Member(DefinitionPiece definition, int index, IStructureElement<?> element, Offset position) {}
+    private record Member(DefinitionPiece definition, int index, IStructureElement<?> element, Offset position,
+        int ordinal) {}
 
     @Desugar
     private record Target(HologramCapture.Cell cell, ItemStack item, int facing, boolean hatch,
-        HologramDeclaredNativeMutation.Proof original, boolean rotation) {
-        Target(HologramCapture.Cell cell, ItemStack item, int facing, boolean hatch) {
-            this(cell, item, facing, hatch, null, false);
+        HologramDeclaredNativeMutation.Proof original, boolean rotation,
+        HologramDeclaredNativeMutation.CasingProof casing) {
+
+        Target(HologramCapture.Cell cell, ItemStack item, int facing, boolean hatch,
+            HologramDeclaredNativeMutation.Proof original, boolean rotation) {
+            this(cell, item, facing, hatch, original, rotation, null);
         }
     }
 
     private static final class Need {
+
         final ItemStack specimen;
         int count;
 
@@ -73,6 +81,7 @@ final class HologramDeclaredNativeConstruction {
     private final HologramSession session;
     private final HologramDeclaredNativeSelection selection;
     private final BooleanSupplier stillConfirmed;
+    private final Timing timing = Boolean.getBoolean("gtmb.hologram.declaredNativeTiming") ? new Timing() : null;
     private final boolean creative;
     private final BaseMetaTileEntity tile;
     private final MTEEnhancedMultiBlockBase<?> machine;
@@ -83,12 +92,18 @@ final class HologramDeclaredNativeConstruction {
     private final ItemStack trigger;
     private final Map<Offset, Hatch> edits = new LinkedHashMap<>();
     private final Map<Offset, Member> members = new LinkedHashMap<>();
+    private final Set<Offset> selectedOffsets;
+    private final List<Member> layerMembers;
+    private final IdentityHashMap<DefinitionPiece, IdentityHashMap<IStructureElement<?>, HologramCasingFallback.Target>> constantBlockDefaults = new IdentityHashMap<>();
     private final List<Target> moves = new ArrayList<>();
     private final Map<HologramBlueprintResources.ExactKey, Need> funding = new LinkedHashMap<>();
     private final HologramDeclarationAdapters.Bindings declarations = new HologramDeclarationAdapters.Bindings();
     private final HologramMaterials.Context stock, demolition;
     private final java.util.NavigableMap<Offset, Target> removalOrder = new java.util.TreeMap<>(
-        java.util.Comparator.comparingInt(Offset::y).reversed().thenComparingInt(Offset::z).thenComparingInt(Offset::x));
+        java.util.Comparator.comparingInt(Offset::y)
+            .reversed()
+            .thenComparingInt(Offset::z)
+            .thenComparingInt(Offset::x));
     private Iterator<Target> removals;
     private Target activeRemoval;
     private StructureSources.Resolution source;
@@ -111,6 +126,8 @@ final class HologramDeclaredNativeConstruction {
         this.lease = lease;
         this.session = session;
         this.selection = selection;
+        selectedOffsets = selection.scope() == 2 ? new HashSet<>(selection.selected()) : Collections.emptySet();
+        layerMembers = selection.scope() == 1 ? new ArrayList<>() : null;
         this.stillConfirmed = stillConfirmed;
         if (creative && selection.operation() != 0)
             throw new IllegalArgumentException("Creative placement requires ordinary construction");
@@ -131,18 +148,30 @@ final class HologramDeclaredNativeConstruction {
         // Retain the same source from funding to the scoped world transaction, not one discovery per cell.
         if (selection.operation() == 0) session.materialContext = stock;
         demolition = selection.operation() == 2
-            ? HologramDemolition.recoveryContext(session.player, session.slot, selection.destination()) : null;
+            ? HologramDemolition.recoveryContext(session.player, session.slot, selection.destination())
+            : null;
     }
 
     private boolean bound(HologramCapture scratch) {
         var player = session.player;
-        return state == State.ACTIVE && player.capabilities.isCreativeMode == creative && stillConfirmed.getAsBoolean()
+        return state == State.ACTIVE && player.capabilities.isCreativeMode == creative
+            && stillConfirmed.getAsBoolean()
             && HologramWorkspace.find(endpoint.actor) == session
-            && session.capture == scratch && session.editorWorkspaceEpoch == epoch && session.planRevision == revision
-            && session.x == ax && session.y == ay && session.z == az && session.mode == selection.operation() && !session.virtual
-            && session.facing == facing.ordinal() && !tile.isInvalid() && tile.getWorldObj() == endpoint.world
-            && tile.getMetaTileID() == selection.controller() && tile.getMetaTileEntity() == machine
-            && machine.getBaseMetaTileEntity() == tile && machine.getExtendedFacing() == facing
+            && session.capture == scratch
+            && session.editorWorkspaceEpoch == epoch
+            && session.planRevision == revision
+            && session.x == ax
+            && session.y == ay
+            && session.z == az
+            && session.mode == selection.operation()
+            && !session.virtual
+            && session.facing == facing.ordinal()
+            && !tile.isInvalid()
+            && tile.getWorldObj() == endpoint.world
+            && tile.getMetaTileID() == selection.controller()
+            && tile.getMetaTileEntity() == machine
+            && machine.getBaseMetaTileEntity() == tile
+            && machine.getExtendedFacing() == facing
             && GregTechAPI.METATILEENTITIES[selection.controller()] == prototype
             && player.getDistanceSq(ax + .5, ay + .5, az + .5) <= 64
             && interpretations == HologramDeclarationAdapters.generation();
@@ -153,7 +182,8 @@ final class HologramDeclaredNativeConstruction {
             && declarations.validityFailure() == null
             && endpoint.world.blockExists(ax, ay, az)
             && endpoint.world.getBlock(ax, ay, az) == GregTechAPI.sBlockMachines
-            && endpoint.world.getTileEntity(ax, ay, az) == tile && bound(scratch);
+            && endpoint.world.getTileEntity(ax, ay, az) == tile
+            && bound(scratch);
     }
 
     private void resolve() throws IOException {
@@ -173,57 +203,147 @@ final class HologramDeclaredNativeConstruction {
             definition = recorded.definition == null ? detached.getStructureDefinition() : recorded.definition;
         }
         if (definition == null || !HologramStructureCursor.supports(definition)
-            || resolvedPieces.isEmpty() || resolvedPieces.size() > 4096)
-            throw refused("未取得原生片段或声明使用自定义遍历；未施工。");
+            || resolvedPieces.isEmpty()
+            || resolvedPieces.size() > 4096) throw refused("未取得原生片段或声明使用自定义遍历；未施工。");
         var accepted = new ArrayList<DefinitionPiece>();
         for (var piece : resolvedPieces) {
             var elements = definition.getStructureFor(piece.name);
-            if (elements == null || !relative(piece.a, piece.b, piece.c))
-                throw refused("片段坐标不在服务器支持的范围。");
+            if (elements == null || !relative(piece.a, piece.b, piece.c)) throw refused("片段坐标不在服务器支持的范围。");
             accepted.add(new DefinitionPiece(elements, piece));
         }
         pieces = Collections.unmodifiableList(new ArrayList<>(accepted));
     }
 
+    private enum Stage {
+        RESOLVE,
+        DECLARATION,
+        WORLD_PREPARE,
+        FUNDING,
+        WORLD_WRITE
+    }
+
+    /** Opt-in slice accounting: timestamps at phase boundaries and first commit, never once per position. */
+    private final class Timing {
+
+        private final long started = System.nanoTime();
+        private final long[] work = new long[Stage.values().length];
+        private Stage stage;
+        private long stageStart, firstCommit;
+        private int slices;
+        private boolean ended;
+
+        void enter(Stage next, long now) {
+            if (next == stage) return;
+            leave(now);
+            stage = next;
+            stageStart = now;
+        }
+
+        void leave(long now) {
+            if (stage == null) return;
+            work[stage.ordinal()] += Math.max(0, now - stageStart);
+            stage = null;
+        }
+
+        void committed() {
+            if (firstCommit != 0) return;
+            long now = System.nanoTime();
+            firstCommit = now - started;
+            report("first-commit", now);
+        }
+
+        void finish(long now) {
+            leave(now);
+            if (!ended && state != State.ACTIVE) {
+                ended = true;
+                report("terminal", now);
+            }
+        }
+
+        private long stageNanos(Stage key, long now) {
+            return work[key.ordinal()] + (stage == key ? Math.max(0, now - stageStart) : 0);
+        }
+
+        private void report(String event, long now) {
+            com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.info(
+                "GTMB declared-native timing event={} controller={} operation={} scope={} creative={} state={} slices={} examined={} unique={} targets={} plannedWrites={} placed={} fundingKinds={} elapsedNs={} firstCommitNs={} resolveNs={} declarationNs={} worldPrepareNs={} fundingNs={} writeNs={}",
+                event,
+                selection.controller(),
+                selection.operation(),
+                selection.scope(),
+                creative,
+                state,
+                slices,
+                examined,
+                members.size(),
+                targets,
+                demolition == null ? moves.size() : removalOrder.size(),
+                placed,
+                funding.size(),
+                now - started,
+                firstCommit,
+                stageNanos(Stage.RESOLVE, now),
+                stageNanos(Stage.DECLARATION, now),
+                stageNanos(Stage.WORLD_PREPARE, now),
+                stageNanos(Stage.FUNDING, now),
+                stageNanos(Stage.WORLD_WRITE, now));
+        }
+    }
+
+    private void recordCommitted() {
+        placed++;
+        if (timing != null) timing.committed();
+    }
+
     State drain(long deadline, PermitAdmission admission) {
         if (!gate.onOwnerThread()) throw new IllegalStateException("Native construction owner thread");
         if (state != State.ACTIVE || System.nanoTime() >= deadline) return state;
+        if (timing != null) timing.slices++;
         try (var observed = HologramDeclarationAdapters.observe(declarations)) {
             if (!current(null) || HologramConstructionAuthority.hasKnownRecovery(session.player))
                 return stop("控制器、材料来源或原工作台已变化。");
-            if (pieces == null) resolve();
-            while (System.nanoTime() < deadline) {
+            if (pieces == null) {
+                if (timing != null) timing.enter(Stage.RESOLVE, System.nanoTime());
+                resolve();
+            }
+            long now;
+            while ((now = System.nanoTime()) < deadline) {
                 if (memberIterator == null) {
+                    if (timing != null) timing.enter(Stage.DECLARATION, now);
                     if (pieceIndex < pieces.size()) {
                         recordMember();
                         continue;
                     }
-                    bindSelection();
-                    memberIterator = members.values().iterator();
+                    memberIterator = bindSelection();
+                    if (timing != null) now = System.nanoTime();
                 }
                 if (memberIterator.hasNext()) {
+                    if (timing != null) timing.enter(Stage.WORLD_PREPARE, now);
                     prepare(memberIterator.next());
                     continue;
                 }
                 if (needs == null) {
-                    if (targets == 0) return stop(unselectedHatches == 0 ? "所选范围没有可施工的目标。"
-                        : "请先选定所需仓室，当前范围没有其他可施工的方块。");
-                    needs = funding.values().iterator();
+                    if (targets == 0)
+                        return stop(unselectedHatches == 0 ? "所选范围没有可施工的目标。" : "请先选定所需仓室，当前范围没有其他可施工的方块。");
+                    needs = funding.values()
+                        .iterator();
                 }
                 if (needs.hasNext()) {
+                    if (timing != null) timing.enter(Stage.FUNDING, now);
                     Need required = needs.next();
                     if (stock.count(required.specimen, required.count) != required.count)
                         return stop("所选材料来源不足，未开始放置。");
                     if (!current(null)) return stop("材料检查期间施工条件已变化。");
                     continue;
                 }
-                if (demolition != null && removals == null) removals = removalOrder.values().iterator();
+                if (timing != null) timing.enter(Stage.WORLD_WRITE, now);
+                if (demolition != null && removals == null) removals = removalOrder.values()
+                    .iterator();
                 if (demolition != null ? activeRemoval == null && !removals.hasNext() : next == moves.size()) {
+                    if (unselectedHatches > 0) return stop("仍有 " + unselectedHatches + " 处必需仓室尚未指定，结构未完成。");
                     if (!current(null) || !gate.finish(lease, HologramConstructionTaskGate.End.COMPLETE))
                         return stop("施工许可已变化；无法确认完成。");
                     state = State.COMPLETE;
-                    if (unselectedHatches > 0)
-                        reason = "另有 " + unselectedHatches + " 处未选仓室，请手动补齐。";
                     return state;
                 }
                 if (demolition != null) {
@@ -239,51 +359,71 @@ final class HologramDeclaredNativeConstruction {
         } catch (IOException failure) {
             return stop(failure.getMessage());
         } catch (RuntimeException | LinkageError failure) {
-            return stop("原生片段或其材料声明不可用，未继续施工（" + failure.getClass().getSimpleName() + "）。");
+            return stop(
+                "原生片段或其材料声明不可用，未继续施工（" + failure.getClass()
+                    .getSimpleName() + "）。");
+        } finally {
+            if (timing != null) timing.finish(System.nanoTime());
         }
         return state;
     }
 
     private void recordMember() throws IOException {
         DefinitionPiece piece = pieces.get(pieceIndex);
-        if (cursor == null) cursor = new HologramStructureCursor(piece.elements, piece.piece.a, piece.piece.b, piece.piece.c);
+        if (cursor == null)
+            cursor = new HologramStructureCursor(piece.elements, piece.piece.a, piece.piece.b, piece.piece.c);
         if (cursor.done() == cursor.total()) {
             cursor = null;
             pieceIndex++;
             return;
         }
-        if (examined++ >= HologramBlueprintLimits.MAX_CELLS) throw refused("原生片段超过声明复杂度边界。");
+        int ordinal = examined++;
+        if (ordinal >= HologramBlueprintLimits.MAX_CELLS) throw refused("原生片段超过声明复杂度边界。");
         int index = cursor.done();
         var point = cursor.declarationOffset(facing);
         if (point == null) return; // StructureLib navigation.
         if (!point.valid()) throw refused("原生目标超出相对坐标范围。");
         var element = piece.elements[index];
-        Member next = new Member(piece, index, element, point);
+        Member next = new Member(piece, index, element, point, ordinal);
         Member previous = members.putIfAbsent(point, next);
-        if (previous != null && (previous.element != element
-            || !equalSignal(previous.definition.piece.trigger, piece.piece.trigger)))
+        if (previous != null
+            && (previous.element != element || !equalSignal(previous.definition.piece.trigger, piece.piece.trigger)))
             throw refused("原生片段在同一坐标上有冲突声明；未放置任何格。");
+        if (previous == null && layerMembers != null && !anchor(point) && point.y() == selection.layer())
+            layerMembers.add(next);
     }
 
     private static boolean equalSignal(ItemStack a, ItemStack b) {
         return a.stackSize == b.stackSize && HologramValues.sameMaterial(a, b);
     }
 
-    private void bindSelection() throws IOException {
-        for (Offset position : selection.selected())
-            if (!members.containsKey(position) || anchor(position)) throw refused("选择不属于当前声明的可放置格。");
+    private Iterator<Member> bindSelection() throws IOException {
+        var selected = new ArrayList<Member>(
+            selection.selected()
+                .size());
+        for (Offset position : selection.selected()) {
+            Member member = members.get(position);
+            if (member == null || anchor(position)) throw refused("选择不属于当前声明的可放置格。");
+            selected.add(member);
+        }
         if (selection.scope() == 3) {
-            Member member = members.get(selection.selected().get(0));
-            family = family(member);
+            family = family(selected.get(0));
             if (family.isEmpty()) throw refused("所选位置不属于可证明的声明材料族。");
         }
-        if (selection.operation() == 1 && !edits.keySet().equals(new java.util.HashSet<>(selection.selected())))
-            throw refused("换装只处理已逐格指定类型或方向的所选仓室。");
+        if (selection.operation() == 1 && !edits.keySet()
+            .equals(selectedOffsets)) throw refused("换装只处理已逐格指定类型或方向的所选仓室。");
         for (Offset position : edits.keySet()) {
             Member member = members.get(position);
-            if (member == null || anchor(position) || !includes(member))
-                throw refused("手选仓室不在已确认的声明范围。");
+            if (member == null || !includes(member)) throw refused("手选仓室不在已确认的声明范围。");
         }
+        // All pieces still prove bounds and collisions first; only the world-preparation cursor narrows.
+        if (selection.scope() == 2) {
+            selected.sort(Comparator.comparingInt(Member::ordinal));
+            return selected.iterator();
+        }
+        if (layerMembers != null) return layerMembers.iterator();
+        return members.values()
+            .iterator();
     }
 
     private boolean includes(Member member) {
@@ -291,7 +431,7 @@ final class HologramDeclaredNativeConstruction {
         return switch (selection.scope()) {
             case 0 -> true;
             case 1 -> member.position.y() == selection.layer();
-            case 2 -> selection.selected().contains(member.position);
+            case 2 -> selectedOffsets.contains(member.position);
             case 3 -> family.equals(family(member));
             default -> false;
         };
@@ -308,28 +448,31 @@ final class HologramDeclaredNativeConstruction {
 
     private String family(Member member) {
         var fallback = HologramCasingFallback.resolve(member.element, member.definition.piece.trigger);
-        var group = HologramReplacementFamily.resolve(member.element,
-            fallback == null ? null : fallback.block, fallback == null ? 0 : fallback.meta);
+        var group = HologramReplacementFamily
+            .resolve(member.element, fallback == null ? null : fallback.block, fallback == null ? 0 : fallback.meta);
         return group == null ? "" : group.id;
     }
 
     private void prepare(Member member) throws IOException {
         if (!includes(member)) return;
         Offset p = member.position;
-        var cell = new HologramCapture.Cell(member.element, Math.addExact(ax, p.x()), Math.addExact(ay, p.y()),
-            Math.addExact(az, p.z()), member.definition.piece.trigger);
+        var cell = new HologramCapture.Cell(
+            member.element,
+            Math.addExact(ax, p.x()),
+            Math.addExact(ay, p.y()),
+            Math.addExact(az, p.z()),
+            member.definition.piece.trigger);
         cell.stableIndex = 0;
         World world = endpoint.world;
         if (!HologramWorldFlow.worldPosition(cell.x, cell.y, cell.z, world.getHeight())
             || !world.blockExists(cell.x, cell.y, cell.z)) throw refused("施工范围包含未加载或无效的坐标。");
-        Block existing = world.getBlock(cell.x, cell.y, cell.z);
-        int metadata = world.getBlockMetadata(cell.x, cell.y, cell.z);
-        var present = world.getTileEntity(cell.x, cell.y, cell.z);
         Hatch edit = edits.get(p);
         if (selection.operation() != 0) {
             prepareMutation(p, cell, edit);
             return;
         }
+        Block existing = world.getBlock(cell.x, cell.y, cell.z);
+        var present = world.getTileEntity(cell.x, cell.y, cell.z);
         if (HologramElementCatalog.nativeAir(member.element)) {
             if (edit != null || existing != Blocks.air || present != null) throw refused("原生声明空位已被占用或误选。");
             if (selection.scope() == 2) throw refused("所选位置是原生留空，不是可放置格。");
@@ -338,50 +481,86 @@ final class HologramDeclaredNativeConstruction {
         boolean stateful = false;
         ItemStack item;
         int requestedFacing = -1;
+        int[] legal = null;
         if (edit != null) {
             if (session.noHatches) throw refused("当前不放仓室的配置与手选仓室冲突。");
             item = hatch(edit.id());
-            int[] legal = HologramCellPolicy.previewHatchFacings(cell, item, detached, facing);
+            legal = HologramCellPolicy.previewHatchFacings(cell, item, detached, facing);
             // The handshake may leave direction unspecified, not permit a different requested exact facing.
-            if (legal.length == 0 || edit.facing() >= 0 && Arrays.stream(legal).noneMatch(d -> d == edit.facing()))
-                throw refused("所选仓室的类型、等级或方向不符合该格的原生声明。");
+            if (legal.length == 0 || edit.facing() >= 0 && Arrays.stream(legal)
+                .noneMatch(d -> d == edit.facing())) throw refused("所选仓室的类型、等级或方向不符合该格的原生声明。");
             requestedFacing = edit.facing() >= 0 ? edit.facing() : legal[0];
             stateful = true;
         } else {
             if (existing == GregTechAPI.sBlockMachines && present instanceof BaseMetaTileEntity base
                 && base.getMetaTileEntity() != null) {
-                int installedFacing = base.getFrontFacing() == null ? -1 : base.getFrontFacing().ordinal();
-                if (installedFacing >= 0 && Arrays.stream(HologramCellPolicy.previewHatchFacings(
-                    cell, hatch(base.getMetaTileID()), detached, facing)).anyMatch(d -> d == installedFacing)) {
+                int installedFacing = base.getFrontFacing() == null ? -1
+                    : base.getFrontFacing()
+                        .ordinal();
+                if (installedFacing >= 0 && Arrays
+                    .stream(HologramCellPolicy.previewHatchFacings(cell, hatch(base.getMetaTileID()), detached, facing))
+                    .anyMatch(d -> d == installedFacing)) {
                     targets++;
                     return; // Compatible installed device is not touched or charged.
                 }
             }
             item = defaultMaterial(member, cell);
-            if (item == null && existing == Blocks.air && present == null
-                && mandatoryHatch(member.element)) {
+            if (item == null && existing == Blocks.air && present == null && mandatoryHatch(member.element)) {
                 // A declared hatch-only slot has no ordinary casing default. Do not guess its equipment.
                 unselectedHatches++;
                 return;
             }
         }
-        if (item == null || !(item.getItem() instanceof ItemBlock) || item.hasTagCompound())
-            throw refused("存在无法识别施工材料的结构位置，未放置。");
+        if (item == null || !(item.getItem() instanceof ItemBlock) || item.hasTagCompound()) {
+            String kind = item == null ? "no-default" : item.hasTagCompound() ? "tagged" : "not-block-item";
+            var factory = HologramDeclarationWrappers.factory(member.element.getClass());
+            com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn(
+                "GTMB native material refused controller={} piece={} index={} offset=({},{},{}) element={} factory={} kind={} item={} damage={} selectedHatch={}",
+                selection.controller(),
+                member.definition.piece.name,
+                member.index,
+                p.x(),
+                p.y(),
+                p.z(),
+                member.element.getClass()
+                    .getName(),
+                factory == null ? "-" : factory.getName(),
+                kind,
+                item == null ? "-" : net.minecraft.item.Item.itemRegistry.getNameForObject(item.getItem()),
+                item == null ? -1 : item.getItemDamage(),
+                edit != null);
+            throw refused("无法确定施工材料（" + p.x() + ", " + p.y() + ", " + p.z() + "），未放置。");
+        }
         cell.block = Block.getBlockFromItem(item.getItem());
-        cell.meta = stateful ? ItemMachines.getMetaTileEntity(item).getTileEntityBaseType()
-            : item.getItem().getMetadata(item.getItemDamage());
+        cell.meta = stateful ? ItemMachines.getMetaTileEntity(item)
+            .getTileEntityBaseType()
+            : item.getItem()
+                .getMetadata(item.getItemDamage());
         if (cell.block == Blocks.air || (stateful ? cell.block != GregTechAPI.sBlockMachines
             : cell.block.hasTileEntity(cell.meta) && !HologramFrameSupport.inertFrameBlock(cell.block, cell.meta)))
             throw refused("原生声明的设备需要明确支持的放置方式。");
         targets++;
-        if (existing == cell.block && (stateful ? present instanceof BaseMetaTileEntity base
-            && base.getMetaTileEntity() != null && base.getMetaTileID() == item.getItemDamage()
-            && base.getFrontFacing() != null && (edit.facing() < 0
-                ? Arrays.stream(HologramCellPolicy.previewHatchFacings(cell, item, detached, facing))
-                    .anyMatch(d -> d == base.getFrontFacing().ordinal())
-                : base.getFrontFacing().ordinal() == requestedFacing) : metadata == cell.meta)) return;
-        if (existing != Blocks.air || present != null) throw refused("施工格已有不匹配的方块；补建不会替换。");
-        moves.add(new Target(cell, item, requestedFacing, cell.block.hasTileEntity(cell.meta)));
+        if (existing == cell.block
+            && (stateful
+                ? present instanceof BaseMetaTileEntity base && base.getMetaTileEntity() != null
+                    && base.getMetaTileID() == item.getItemDamage()
+                    && base.getFrontFacing() != null
+                    && (edit.facing() < 0 ? Arrays.stream(legal)
+                        .anyMatch(
+                            d -> d == base.getFrontFacing()
+                                .ordinal())
+                        : base.getFrontFacing()
+                            .ordinal() == requestedFacing)
+                : world.getBlockMetadata(cell.x, cell.y, cell.z) == cell.meta))
+            return;
+        HologramDeclaredNativeMutation.CasingProof casing = null;
+        if (existing != Blocks.air || present != null) {
+            if (stateful && present == null)
+                casing = HologramDeclaredNativeMutation.CasingProof.read(session.player, world, cell);
+            if (casing == null) throw refused("施工位已有不匹配的方块，未替换。");
+            if (tile.isActive()) throw refused("机器正在运行，未替换机壳。");
+        }
+        moves.add(new Target(cell, item, requestedFacing, stateful, null, false, casing));
         if (!creative) funding.computeIfAbsent(HologramValues.stackKey(item), ignored -> new Need(item)).count++;
     }
 
@@ -394,8 +573,8 @@ final class HologramDeclaredNativeConstruction {
     }
 
     private void prepareMutation(Offset p, HologramCapture.Cell cell, Hatch edit) throws IOException {
-        var original = HologramDeclaredNativeMutation.Proof.read(session.player, endpoint.world, machine,
-            cell.x, cell.y, cell.z);
+        var original = HologramDeclaredNativeMutation.Proof
+            .read(session.player, endpoint.world, machine, cell.x, cell.y, cell.z);
         if (original == null || HologramElementCatalog.nativeAir(cell.element))
             throw refused("所选位置不是原机当前登记且归你所有的仓室；外壳或未证明的方块保留。");
         if (!endpoint.world.canMineBlock(session.player, cell.x, cell.y, cell.z)
@@ -403,8 +582,10 @@ final class HologramDeclaredNativeConstruction {
             || GregTechAPI.sBlockMachines.getBlockHardness(endpoint.world, cell.x, cell.y, cell.z) < 0)
             throw refused("所选设备不可编辑，未修改任何格。");
         ItemStack before = hatch(original.id());
-        if (before == null || Arrays.stream(HologramCellPolicy.previewHatchFacings(
-            cell, before, detached, facing)).noneMatch(side -> side == original.front().ordinal()))
+        if (before == null || Arrays.stream(HologramCellPolicy.previewHatchFacings(cell, before, detached, facing))
+            .noneMatch(
+                side -> side == original.front()
+                    .ordinal()))
             throw refused("现场仓室已不符合所选级别/信道的可核验原生声明；原设备保留。");
         targets++;
         if (demolition != null) {
@@ -413,18 +594,24 @@ final class HologramDeclaredNativeConstruction {
             return;
         }
         ItemStack item = hatch(edit.id());
-        int wanted = edit.facing() < 0 ? original.front().ordinal() : edit.facing();
+        int wanted = edit.facing() < 0 ? original.front()
+            .ordinal() : edit.facing();
         if (item == null || item.hasTagCompound()
             || Arrays.stream(HologramCellPolicy.previewHatchFacings(cell, item, detached, facing))
                 .noneMatch(side -> side == wanted))
             throw refused("目标仓室或朝向不符合此位置的原生声明。");
-        if (edit.id() == original.id() && wanted == original.front().ordinal()) return;
+        if (edit.id() == original.id() && wanted == original.front()
+            .ordinal()) return;
 
         // Swap only like-for-like GT hatch types. A different role can consume another quota, even at this site.
-        if (ItemMachines.getMetaTileEntity(item).getClass() != original.hatch().getClass())
+        if (ItemMachines.getMetaTileEntity(item)
+            .getClass()
+            != original.hatch()
+                .getClass())
             throw refused("无法证明换装后仍占用同一原机仓室角色；原仓室保留。");
         cell.block = GregTechAPI.sBlockMachines;
-        cell.meta = ItemMachines.getMetaTileEntity(item).getTileEntityBaseType();
+        cell.meta = ItemMachines.getMetaTileEntity(item)
+            .getTileEntityBaseType();
         boolean rotation = edit.id() == original.id();
         moves.add(new Target(cell, item, wanted, true, original, rotation));
         if (!rotation) funding.computeIfAbsent(HologramValues.stackKey(item), ignored -> new Need(item)).count++;
@@ -449,21 +636,26 @@ final class HologramDeclaredNativeConstruction {
                 } catch (IOException | RuntimeException | LinkageError failure) {
                     // There is no stock or recovery output in this branch. Stop on an exception and report only
                     // a direction that can still be observed on the exact same tile; never replay the callback.
-                    net.minecraftforge.common.util.ForgeDirection wanted =
-                        net.minecraftforge.common.util.ForgeDirection.getOrientation(target.facing);
+                    net.minecraftforge.common.util.ForgeDirection wanted = net.minecraftforge.common.util.ForgeDirection
+                        .getOrientation(target.facing);
                     rotated = original.exact(wanted);
-                    settled = gate.settle(permit, rotated ? HologramConstructionTaskGate.Settlement.COMMITTED
-                        : HologramConstructionTaskGate.Settlement.ROLLED_BACK);
-                    if (settled && rotated) placed++;
-                    stop("原生朝向结束核对失败，未继续；没有扣料（"
-                        + failure.getClass().getSimpleName() + "：" + HologramAePolicy.fallback(failure.getMessage()) + "）。");
+                    settled = gate.settle(
+                        permit,
+                        rotated ? HologramConstructionTaskGate.Settlement.COMMITTED
+                            : HologramConstructionTaskGate.Settlement.ROLLED_BACK);
+                    if (settled && rotated) recordCommitted();
+                    stop(
+                        "原生朝向结束核对失败，未继续；没有扣料（" + failure.getClass()
+                            .getSimpleName() + "：" + HologramAePolicy.fallback(failure.getMessage()) + "）。");
                     return false;
                 }
-                settled = gate.settle(permit, rotated ? HologramConstructionTaskGate.Settlement.COMMITTED
-                    : HologramConstructionTaskGate.Settlement.ROLLED_BACK);
+                settled = gate.settle(
+                    permit,
+                    rotated ? HologramConstructionTaskGate.Settlement.COMMITTED
+                        : HologramConstructionTaskGate.Settlement.ROLLED_BACK);
                 if (!settled) return false;
                 if (rotated) {
-                    placed++;
+                    recordCommitted();
                     return true;
                 }
                 stop("原仓室朝向未提交，背包未扣料。");
@@ -481,20 +673,28 @@ final class HologramDeclaredNativeConstruction {
                 stop("回收目的地或原仓室已变化，未拆除。");
                 return false;
             }
-            var result = HologramDemolition.removeBlock(session.player, endpoint.world, original.x(), original.y(),
-                original.z(), () -> authority.getAsBoolean() && original.current());
+            var result = HologramDemolition.removeBlock(
+                session.player,
+                endpoint.world,
+                original.x(),
+                original.y(),
+                original.z(),
+                () -> authority.getAsBoolean() && original.current());
             if (result.failure != null) {
-                HologramPlacementDiagnostics.failure(session, target.cell, 0, "declared-native-harvest", result.failure);
+                HologramPlacementDiagnostics
+                    .failure(session, target.cell, 0, "declared-native-harvest", result.failure);
                 if (Boolean.getBoolean("gtmb.v0111.nativeContractsOnly")) result.failure.printStackTrace(System.err);
             }
             demolition.recoverWorldAtPlayer(result.drops, selection.destination());
-            settled = gate.settle(permit, result.removed || !result.drops.isEmpty()
-                ? HologramConstructionTaskGate.Settlement.COMMITTED : HologramConstructionTaskGate.Settlement.ROLLED_BACK);
+            settled = gate.settle(
+                permit,
+                result.removed || !result.drops.isEmpty() ? HologramConstructionTaskGate.Settlement.COMMITTED
+                    : HologramConstructionTaskGate.Settlement.ROLLED_BACK);
             if (!settled) return false;
             boolean removed = result.removed && endpoint.world.blockExists(original.x(), original.y(), original.z())
                 && endpoint.world.getBlock(original.x(), original.y(), original.z()) == Blocks.air
                 && endpoint.world.getTileEntity(original.x(), original.y(), original.z()) == null;
-            if (removed) placed++;
+            if (removed) recordCommitted();
             if (!result.drops.isEmpty()) {
                 try {
                     demolition.flushRecovery();
@@ -525,17 +725,32 @@ final class HologramDeclaredNativeConstruction {
             var prototype = GregTechAPI.METATILEENTITIES[id];
             if (prototype != null) {
                 var item = prototype.getStackForm(1);
-                if (item != null && item.getItem() instanceof ItemMachines && item.getItemDamage() == id
+                if (item != null && item.getItem() instanceof ItemMachines
+                    && item.getItemDamage() == id
                     && HologramCellPolicy.hatchTier(item) != Integer.MAX_VALUE) return item;
             }
         }
         return null;
     }
 
-    @SuppressWarnings({"rawtypes", "unchecked"})
+    @SuppressWarnings({ "rawtypes", "unchecked" })
     private ItemStack defaultMaterial(Member member, HologramCapture.Cell cell) {
         ItemStack signal = member.definition.piece.trigger;
-        var casing = HologramCasingFallback.resolve(member.element, signal);
+        var byElement = constantBlockDefaults.computeIfAbsent(member.definition, ignored -> new IdentityHashMap<>());
+        var casing = byElement.get(member.element);
+        if (casing == null) {
+            casing = HologramCasingFallback.resolve(member.element, signal);
+            if (casing != null) {
+                var factory = HologramDeclarationWrappers.factory(member.element.getClass());
+                // Only native ofBlock closes over immutable block and metadata fields. Do not memoize
+                // arbitrary alternatives, mutable tier lists or the answer of any world-aware adapter.
+                if (factory != null
+                    && factory.getDeclaringClass() == com.gtnewhorizon.structurelib.structure.StructureUtility.class
+                    && "ofBlock".equals(factory.getName())
+                    && HologramDeclarationAdapters.declaration(member.element) == null)
+                    byElement.put(member.element, casing);
+            }
+        }
         if (casing != null) return HologramBlockIdentity.materialStack(casing.block, casing.meta);
         var frame = HologramFrameSupport.target(member.element);
         if (frame != null) return frame;
@@ -543,13 +758,12 @@ final class HologramDeclaredNativeConstruction {
     }
 
     /** Walk proofs, not the flattened browse list: every authorized wrapper transforms its own signal. */
-    @SuppressWarnings({"rawtypes", "unchecked"})
+    @SuppressWarnings({ "rawtypes", "unchecked" })
     private ItemStack declaredDefault(IStructureElement<?> element, HologramCapture.Cell cell, ItemStack signal,
         IdentityHashMap<IStructureElement<?>, Boolean> path, int[] visits, int depth) {
-        if (element == null || depth > 12 || visits[0]++ >= 128 || path.put(element, Boolean.TRUE) != null)
-            return null;
+        if (element == null || depth > 12 || visits[0]++ >= 128 || path.put(element, Boolean.TRUE) != null) return null;
         try {
-            if (element instanceof Declarations.PureElement<?> pure) {
+            if (element instanceof Declarations.PureElement<?>pure) {
                 for (ItemStack candidate : pure.candidates())
                     if (candidate != null && !(candidate.getItem() instanceof ItemMachines)
                         && pure.placementAllows(candidate)) return candidate.copy();
@@ -558,30 +772,43 @@ final class HologramDeclaredNativeConstruction {
             if (adapter == null || adapter.backingAuthority) {
                 var backing = HologramDeclarationWrappers.backing(element);
                 if (backing != null) {
-                    ItemStack candidate = declaredDefault(backing, cell,
-                        HologramDeclarationWrappers.trigger(element, signal), path, visits, depth + 1);
+                    ItemStack candidate = declaredDefault(
+                        backing,
+                        cell,
+                        HologramDeclarationWrappers.trigger(element, signal),
+                        path,
+                        visits,
+                        depth + 1);
                     if (candidate != null) return candidate;
                 }
             }
-            if (element instanceof IStructureElementChain<?> chain) {
+            if (element instanceof IStructureElementChain<?>chain) {
                 var children = HologramDeclarationWrappers.nativeChainChildren(chain);
-                if (children != null && children.length <= 64)
-                    for (var child : children) {
-                        ItemStack candidate = declaredDefault(child, cell, signal, path, visits, depth + 1);
-                        if (candidate != null) return candidate;
-                    }
+                if (children != null && children.length <= 64) for (var child : children) {
+                    ItemStack candidate = declaredDefault(child, cell, signal, path, visits, depth + 1);
+                    if (candidate != null) return candidate;
+                }
                 return null;
             }
             var factory = HologramDeclarationWrappers.factory(element.getClass());
+            var ordinary = nativeBlockDefault(element, factory);
+            if (ordinary != null) return ordinary;
             if (factory == null || factory.getDeclaringClass() != GTStructureUtility.class
                 || !"ofCoil".equals(factory.getName())) return null;
             // Read only the exact GT leaf on a detached machine, not a context-dependent or advisory wrapper.
-            var blocks = ((IStructureElement) element).getBlocksToPlace(detached,
-                detached.getBaseMetaTileEntity().getWorld(), cell.x, cell.y, cell.z, signal.copy(),
-                AutoPlaceEnvironment.fromLegacy((predicate, simulate, count) -> Collections.emptyMap(), session.player,
-                    ignored -> {}));
+            var blocks = ((IStructureElement) element).getBlocksToPlace(
+                detached,
+                detached.getBaseMetaTileEntity()
+                    .getWorld(),
+                cell.x,
+                cell.y,
+                cell.z,
+                signal.copy(),
+                AutoPlaceEnvironment
+                    .fromLegacy((predicate, simulate, count) -> Collections.emptyMap(), session.player, ignored -> {}));
             if (blocks != null && blocks.getStacks() != null) {
-                var output = blocks.getStacks().iterator();
+                var output = blocks.getStacks()
+                    .iterator();
                 if (output.hasNext()) {
                     ItemStack candidate = output.next();
                     if (candidate != null && !output.hasNext()) return candidate.copy();
@@ -593,6 +820,41 @@ final class HologramDeclaredNativeConstruction {
             path.remove(element);
         }
         return null;
+    }
+
+    /**
+     * Use the actual default selected by these StructureLib placement factories, not the first allowed block.
+     * Hint-only declarations, custom setters, device blocks and item/world metadata mismatches stay out.
+     */
+    private static ItemStack nativeBlockDefault(IStructureElement<?> element, java.lang.reflect.Method factory)
+        throws ReflectiveOperationException {
+        if (factory == null
+            || factory.getDeclaringClass() != com.gtnewhorizon.structurelib.structure.StructureUtility.class)
+            return null;
+        String name = factory.getName();
+        if (!"ofBlockAnyMeta".equals(name) && !"ofBlocksFlat".equals(name) && !"ofBlocksMap".equals(name)) return null;
+        Object declared = HologramDeclarationWrappers.captured(element, "val$defaultBlock");
+        Object value = HologramDeclarationWrappers.captured(element, "val$defaultMeta");
+        if (!(declared instanceof Block block) || !(value instanceof Integer meta)
+            || meta < 0
+            || meta > 15
+            || block == Blocks.air
+            || block.hasTileEntity(meta)
+            || block instanceof com.gtnewhorizon.structurelib.structure.ICustomBlockSetting) return null;
+        if ("ofBlockAnyMeta".equals(name)) {
+            if (HologramDeclarationWrappers.captured(element, "val$block") != block) return null;
+        } else {
+            Object raw = HologramDeclarationWrappers.captured(element, "val$blocsMap");
+            if (!(raw instanceof Map<?, ?>declaredBlocks)) return null;
+            Object variants = declaredBlocks.get(block);
+            if (!(meta.equals(variants) || variants instanceof java.util.Collection<?>values && values.contains(meta)))
+                return null;
+        }
+        ItemStack stack = HologramBlockIdentity.materialStack(block, meta);
+        return stack != null && stack.getItem() instanceof ItemBlock
+            && Block.getBlockFromItem(stack.getItem()) == block
+            && stack.getItem()
+                .getMetadata(stack.getItemDamage()) == meta ? stack : null;
     }
 
     private boolean place(Target target, PermitAdmission admission) {
@@ -611,25 +873,44 @@ final class HologramDeclaredNativeConstruction {
             session.pins.put(0, target.item);
             session.planTargets.add(target.item);
             if (target.facing >= 0) session.planFacings.put(0, target.facing);
-            BooleanSupplier owns = () -> bound(scratch) && session.pins.get(0) == target.item
-                && session.planTargets.size() == 1 && session.planTargets.get(0) == target.item
+            BooleanSupplier owns = () -> bound(scratch) && (target.casing == null || !tile.isActive())
+                && session.pins.get(0) == target.item
+                && session.planTargets.size() == 1
+                && session.planTargets.get(0) == target.item
                 && gate.transactionCurrent(permit);
             session.status = ""; // Only the transaction's current failure, not a prior cell's message.
             boolean wrote = target.original == null
-                ? HologramWorldTransactions.operateDeclaredNative(session, cell, 0, target.hatch,
-                    target.facing, owns, () -> current(scratch))
-                : HologramWorldTransactions.replaceDeclaredNative(session, cell, 0, target.facing,
-                    target.original, owns, () -> current(scratch));
+                ? HologramWorldTransactions.operateDeclaredNative(
+                    session,
+                    cell,
+                    0,
+                    target.hatch,
+                    target.facing,
+                    target.casing,
+                    owns,
+                    () -> current(scratch))
+                : HologramWorldTransactions.replaceDeclaredNative(
+                    session,
+                    cell,
+                    0,
+                    target.facing,
+                    target.original,
+                    owns,
+                    () -> current(scratch));
             if (session.job == 4 || HologramConstructionJournal.pending(session.player)) return false;
-            boolean committed = wrote && (target.original == null ? "placed" : "replaced").equals(cell.status);
-            settled = gate.settle(permit, committed ? HologramConstructionTaskGate.Settlement.COMMITTED
-                : HologramConstructionTaskGate.Settlement.ROLLED_BACK);
+            boolean replaced = target.original != null || target.casing != null;
+            boolean committed = wrote && (replaced ? "replaced" : "placed").equals(cell.status);
+            settled = gate.settle(
+                permit,
+                committed ? HologramConstructionTaskGate.Settlement.COMMITTED
+                    : HologramConstructionTaskGate.Settlement.ROLLED_BACK);
             if (!settled) return false;
             if (committed) {
-                placed++;
-                if (target.original != null) {
-                    try { stock.flushRecovery(); }
-                    catch (RuntimeException | LinkageError failure) {
+                recordCommitted();
+                if (replaced) {
+                    try {
+                        stock.flushRecovery();
+                    } catch (RuntimeException | LinkageError failure) {
                         HologramDemolition.resumeRecovery(session.player);
                         stop("换装已提交，旧仓室留在回收凭据中；未继续施工。");
                         return false;
@@ -643,14 +924,14 @@ final class HologramDeclaredNativeConstruction {
                 return true;
             }
             String detail = session.status;
-            stop((detail == null || detail.isEmpty() ? "本格未提交（" + cell.status + "）。" : detail + "。")
-                + "已确认的放置不重复。");
+            stop((detail == null || detail.isEmpty() ? "本格未提交（" + cell.status + "）。" : detail + "。") + "已确认的放置不重复。");
             return false;
         } finally {
             if (session.capture == scratch) {
                 session.capture = null;
                 session.pins.remove(0, target.item);
-                if (session.planTargets.size() == 1 && session.planTargets.get(0) == target.item) session.planTargets.clear();
+                if (session.planTargets.size() == 1 && session.planTargets.get(0) == target.item)
+                    session.planTargets.clear();
                 if (target.facing >= 0) session.planFacings.remove(0, target.facing);
             }
             if (!settled) {
@@ -679,10 +960,19 @@ final class HologramDeclaredNativeConstruction {
         if (state != State.ACTIVE || !gate.cancel(lease.scope, lease.request)) return false;
         reason = "已停止原生操作，已确认的世界与材料变更保留。";
         state = State.STOPPED;
+        if (timing != null) timing.finish(System.nanoTime());
         return true;
     }
 
-    int placed() { return placed; }
-    String reason() { return reason; }
-    HologramConstructionTaskGate.Permit unsettled() { return unsettled; }
+    int placed() {
+        return placed;
+    }
+
+    String reason() {
+        return reason;
+    }
+
+    HologramConstructionTaskGate.Permit unsettled() {
+        return unsettled;
+    }
 }

@@ -29,6 +29,7 @@ import com.gtnewhorizon.structurelib.structure.IStructureElement.PlaceResult;
 import com.gtnewhorizon.structurelib.structure.StructureUtility;
 import com.gtnewhorizon.structurelib.util.ItemStackPredicate;
 
+import gregtech.api.GregTechAPI;
 import gregtech.api.interfaces.tileentity.IGregTechTileEntity;
 import gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase;
 import gregtech.common.blocks.BlockFrameBox;
@@ -66,44 +67,60 @@ final class HologramWorldTransactions {
         return operateScoped(s, c, index, authority, null);
     }
 
-    /** Optional live dependencies read after Forge but before the final candidate/stock fence. This is not
-     * part of the callback-free authority predicate and may not settle or release the driver's lease. */
+    /**
+     * Optional live dependencies read after Forge but before the final candidate/stock fence. This is not
+     * part of the callback-free authority predicate and may not settle or release the driver's lease.
+     */
     static boolean operateScoped(HologramSession s, HologramCapture.Cell c, int index, BooleanSupplier authority,
         BooleanSupplier livePrecommit) {
-        PlacementScope scope=new PlacementScope(s,c,Objects.requireNonNull(authority),livePrecommit,null,null);
-        scope.selectedSources=s.stockNativePrivate && (s.materialSettings.containers || s.materialSettings.me);
-        return operate(s,c,index,scope);
+        PlacementScope scope = new PlacementScope(s, c, Objects.requireNonNull(authority), livePrecommit, null, null);
+        scope.selectedSources = s.stockNativePrivate && (s.materialSettings.containers || s.materialSettings.me);
+        return operate(s, c, index, scope);
     }
 
     /** Saved native state uses the same resource, Forge, ownership and recovery logic as reviewed legacy plans. */
-    static boolean operateSavedNative(HologramSession s,HologramCapture.Cell c,int index,boolean stateful,
+    static boolean operateSavedNative(HologramSession s, HologramCapture.Cell c, int index, boolean stateful,
         BooleanSupplier authority) {
-        PlacementScope scope=new PlacementScope(s,c,Objects.requireNonNull(authority),null,null,null);
-        scope.selectedSources=true;
-        scope.allowVoucher=s.jobVoucherRequested;
-        scope.savedNative=true;
-        scope.stateful=stateful;
-        return operate(s,c,index,scope);
+        PlacementScope scope = new PlacementScope(s, c, Objects.requireNonNull(authority), null, null, null);
+        scope.selectedSources = true;
+        scope.allowVoucher = s.jobVoucherRequested;
+        scope.savedNative = true;
+        scope.stateful = stateful;
+        return operate(s, c, index, scope);
     }
 
     /** Exact native declaration already pinned by the registered machine owner, not by a saved blueprint. */
     static boolean operateDeclaredNative(HologramSession s, HologramCapture.Cell c, int index, boolean stateful,
-        int facing, BooleanSupplier authority, BooleanSupplier livePrecommit) {
-        PlacementScope scope = new PlacementScope(s, c, Objects.requireNonNull(authority),
-            Objects.requireNonNull(livePrecommit), null, null);
+        int facing, HologramDeclaredNativeMutation.CasingProof casing, BooleanSupplier authority,
+        BooleanSupplier livePrecommit) {
+        PlacementScope scope = new PlacementScope(
+            s,
+            c,
+            Objects.requireNonNull(authority),
+            Objects.requireNonNull(livePrecommit),
+            null,
+            null);
         scope.selectedSources = true;
         scope.declared = true;
         scope.savedNative = true; // Same staged placement/escrow and recovery machinery, not a blueprint load.
         scope.stateful = stateful;
         scope.declaredFacing = facing;
+        scope.casing = casing;
+        if (casing != null && (!stateful || facing < 0 || c.block != GregTechAPI.sBlockMachines))
+            return scopedRejected(s, c);
         return operate(s, c, index, scope);
     }
 
     /** Only a native, checked live hatch proof may extend the scoped transaction to a non-air original. */
     static boolean replaceDeclaredNative(HologramSession s, HologramCapture.Cell c, int index, int facing,
         HologramDeclaredNativeMutation.Proof original, BooleanSupplier authority, BooleanSupplier livePrecommit) {
-        var scope = new PlacementScope(s, c, Objects.requireNonNull(authority),
-            Objects.requireNonNull(livePrecommit), null, null);
+        var scope = new PlacementScope(
+            s,
+            c,
+            Objects.requireNonNull(authority),
+            Objects.requireNonNull(livePrecommit),
+            null,
+            null);
         scope.selectedSources = scope.declared = scope.savedNative = scope.stateful = true;
         scope.declaredFacing = facing;
         scope.replacement = Objects.requireNonNull(original);
@@ -114,10 +131,15 @@ final class HologramWorldTransactions {
     static boolean operateScopedEbf(HologramSession s, HologramStockEbfProfile.PreparedCell prepared,
         BooleanSupplier authority, BooleanSupplier livePrecommit, BooleanSupplier liveTransport) {
         Objects.requireNonNull(prepared);
-        PlacementScope scope=new PlacementScope(s,prepared.cell,Objects.requireNonNull(authority),
-            Objects.requireNonNull(livePrecommit),Objects.requireNonNull(liveTransport),prepared);
-        scope.selectedSources=s.materialSettings.containers || s.materialSettings.me;
-        return operate(s,prepared.cell,0,scope);
+        PlacementScope scope = new PlacementScope(
+            s,
+            prepared.cell,
+            Objects.requireNonNull(authority),
+            Objects.requireNonNull(livePrecommit),
+            Objects.requireNonNull(liveTransport),
+            prepared);
+        scope.selectedSources = s.materialSettings.containers || s.materialSettings.me;
+        return operate(s, prepared.cell, 0, scope);
     }
 
     private static final class PlacementScope {
@@ -139,33 +161,52 @@ final class HologramWorldTransactions {
         int declaredFacing = -1;
         TileEntity candidateTile;
         HologramDeclaredNativeMutation.Proof replacement;
+        HologramDeclaredNativeMutation.CasingProof casing;
         boolean removedOriginal;
+
+        boolean replacing() {
+            return replacement != null || casing != null;
+        }
+
+        boolean replacementCurrent(HologramCapture.Cell c) {
+            if (replacement != null) return replacement.current() && replacement.x() == c.x
+                && replacement.y() == c.y
+                && replacement.z() == c.z;
+            return casing != null && casing.world() == world
+                && casing.current()
+                && casing.x() == c.x
+                && casing.y() == c.y
+                && casing.z() == c.z;
+        }
+
         ItemStack[] replacementHeld;
 
         boolean replacementStockCurrent(HologramSession s) {
             if (replacementHeld == null) return true;
             if (!endpoint(s) || replacementHeld.length != main.length) return false;
             for (int i = 0; i < main.length; i++)
-                if (!ItemStack.areItemStacksEqual(replacementHeld[i], main[i])) return false;
+                if ((casing == null || i != slot) && !ItemStack.areItemStacksEqual(replacementHeld[i], main[i]))
+                    return false;
             return true;
         }
 
         boolean originalCurrent(HologramCapture.Cell cell, Block old, int oldMeta, TileEntity tile) {
-            return removedOriginal ? world.blockExists(cell.x, cell.y, cell.z)
-                && world.getBlock(cell.x, cell.y, cell.z) == Blocks.air
-                && world.getTileEntity(cell.x, cell.y, cell.z) == null
+            return removedOriginal
+                ? world.blockExists(cell.x, cell.y, cell.z) && world.getBlock(cell.x, cell.y, cell.z) == Blocks.air
+                    && world.getTileEntity(cell.x, cell.y, cell.z) == null
                 : sameWorldCell(world, cell, old, oldMeta, tile);
         }
 
-        void observeCandidate(HologramCapture.Cell c){
-            if(!savedNative||world.getBlock(c.x,c.y,c.z)!=block||world.getBlockMetadata(c.x,c.y,c.z)!=metadata)return;
-            candidateTile=world.getTileEntity(c.x,c.y,c.z);
-            candidateKnown=true;
+        void observeCandidate(HologramCapture.Cell c) {
+            if (!savedNative || world.getBlock(c.x, c.y, c.z) != block
+                || world.getBlockMetadata(c.x, c.y, c.z) != metadata) return;
+            candidateTile = world.getTileEntity(c.x, c.y, c.z);
+            candidateKnown = true;
         }
 
-        boolean candidate(HologramCapture.Cell c){
+        boolean candidate(HologramCapture.Cell c) {
             return (!stateful || candidateKnown)
-                && sameWorldCell(world,c,block,metadata,stateful?candidateTile:null);
+                && sameWorldCell(world, c, block, metadata, stateful ? candidateTile : null);
         }
 
         PlacementScope(HologramSession s, HologramCapture.Cell cell, BooleanSupplier authority,
@@ -198,17 +239,22 @@ final class HologramWorldTransactions {
         }
 
         boolean inputs(HologramSession s) {
-            return endpoint(s) && s.mode == (replacement == null ? 0 : 1) && s.slot == slot && settings == s.materialSettings
-                && (selectedSources || settings.main && !settings.containers && !settings.me) && (allowVoucher == s.jobVoucherRequested)
-                && s.player.capabilities.allowEdit && s.player.capabilities.isCreativeMode == creative
-                && (materials == null
-                    || s.materialContext == materials && (selectedSources ? materials.scopedSelected(s.player, settings, slot)
+            return endpoint(s) && s.mode == (replacement == null ? 0 : 1)
+                && s.slot == slot
+                && settings == s.materialSettings
+                && (selectedSources || settings.main && !settings.containers && !settings.me)
+                && (allowVoucher == s.jobVoucherRequested)
+                && s.player.capabilities.allowEdit
+                && s.player.capabilities.isCreativeMode == creative
+                && (materials == null || s.materialContext == materials
+                    && (selectedSources ? materials.scopedSelected(s.player, settings, slot)
                         : materials.scopedMain(s.player, settings, slot)));
         }
 
         boolean current(HologramSession s) {
             return inputs(s) && (ebf == null || ebf.matches(s, ebf.cell, 0, ebf.material))
-                && authority.getAsBoolean() && inputs(s)
+                && authority.getAsBoolean()
+                && inputs(s)
                 && (ebf == null || ebf.matches(s, ebf.cell, 0, ebf.material));
         }
     }
@@ -236,8 +282,7 @@ final class HologramWorldTransactions {
             if (HologramConstructionJournal.pending(s.player)) {
                 s.job = 4;
                 s.stopTick = true;
-                if (scope == null || !scope.unresolved)
-                    s.status = "施工结果待核定，已暂停并保留世界/付款凭据；请联系管理员 /gtmb recovery";
+                if (scope == null || !scope.unresolved) s.status = "施工结果待核定，已暂停并保留世界/付款凭据；请联系管理员 /gtmb recovery";
             }
             return result;
         } catch (RuntimeException | LinkageError failure) {
@@ -266,11 +311,18 @@ final class HologramWorldTransactions {
 
     private static boolean scopedPlainShell(HologramSession s, HologramCapture.Cell c, ItemStack target,
         PlacementScope scope) throws java.io.IOException {
-        return target != null && target.getItem() instanceof ItemBlock && !target.hasTagCompound()
+        return target != null && target.getItem() instanceof ItemBlock
+            && !target.hasTagCompound()
             && Block.getBlockFromItem(target.getItem()) == c.block
-            && target.getItem().getMetadata(target.getItemDamage()) == c.meta
-            && c.itemNbt.isEmpty() && c.tileNbt.isEmpty() && c.coverMaterials.isEmpty() && c.coverCostsNbt.isEmpty()
-            && !c.invalidCoverCosts && s.pendingAssetBudget.isEmpty() && s.cellAssetBudgets.isEmpty()
+            && target.getItem()
+                .getMetadata(target.getItemDamage()) == c.meta
+            && c.itemNbt.isEmpty()
+            && c.tileNbt.isEmpty()
+            && c.coverMaterials.isEmpty()
+            && c.coverCostsNbt.isEmpty()
+            && !c.invalidCoverCosts
+            && s.pendingAssetBudget.isEmpty()
+            && s.cellAssetBudgets.isEmpty()
             && (!HologramMaterialAccess.voucherSelected(s) || scope.allowVoucher)
             && HologramGtswnPlacementMaterials.supplyKind(target) < 0
             && !HologramGtswnPlacementMaterials.freeShell(c.block, target)
@@ -278,18 +330,22 @@ final class HologramWorldTransactions {
                 : scope.ebf.matches(s, c, 0, target))
             && !HologramDecorMaterials.supports(c.block)
             && (!s.virtual || s.virtualPreset != null && s.virtualPreset.schema >= 2
-                && !s.virtualPreset.retainNbt && !s.virtualPreset.retainCovers
-                && HologramCellPolicy.coverCosts(s, c).isEmpty());
+                && !s.virtualPreset.retainNbt
+                && !s.virtualPreset.retainCovers
+                && HologramCellPolicy.coverCosts(s, c)
+                    .isEmpty());
     }
 
     private static boolean scopedJournalOwned(HologramSession s, HologramMaterials.Transaction transaction) {
-        return HologramConstructionJournal.owner(s.player).getTag(HologramConstructionJournal.KEY)
-            == transaction.journalReceipt();
+        return HologramConstructionJournal.owner(s.player)
+            .getTag(HologramConstructionJournal.KEY) == transaction.journalReceipt();
     }
 
     private static boolean scopedMutationCurrent(HologramSession s, HologramCapture.Cell c,
         HologramMaterials.Transaction transaction, PlacementScope scope) {
-        return c.block == scope.block && c.meta == scope.metadata && scope.stockCurrent(s) && scope.current(s)
+        return c.block == scope.block && c.meta == scope.metadata
+            && scope.stockCurrent(s)
+            && scope.current(s)
             && scopedJournalOwned(s, transaction);
     }
 
@@ -338,7 +394,8 @@ final class HologramWorldTransactions {
         }
         boolean exactEbf = scope != null && scope.ebf != null;
         if (exactEbf && !scope.ebf.matches(s, c, index, scope.ebf.material)) return scopedRejected(s, c);
-        String declarationProtection = exactEbf || scope != null && scope.declared ? null : HologramSourcePolicy.protectionReason(s, c, index);
+        String declarationProtection = exactEbf || scope != null && scope.declared ? null
+            : HologramSourcePolicy.protectionReason(s, c, index);
         if (declarationProtection != null) {
             c.status = "protected";
             s.status = declarationProtection;
@@ -394,11 +451,12 @@ final class HologramWorldTransactions {
         }
         Block old = w.getBlock(c.x, c.y, c.z);
         int oldMeta = w.getBlockMetadata(c.x, c.y, c.z);
-        boolean exactReplacement = scope != null && scope.replacement != null;
-        if (exactReplacement && (!scope.replacement.current() || scope.replacement.x() != c.x
-            || scope.replacement.y() != c.y || scope.replacement.z() != c.z)) return scopedRejected(s, c);
-        if (s.mode == 1 && !exactReplacement && (!s.replacementAuthorized || !HologramCellPolicy.originalMember(s, c)
-            || HologramCellPolicy.trivial(w, c.x, c.y, c.z))) {
+        boolean exactReplacement = scope != null && scope.replacing();
+        boolean exactCasing = exactReplacement && scope.casing != null;
+        if (exactReplacement && !scope.replacementCurrent(c)) return scopedRejected(s, c);
+        if (s.mode == 1 && !exactReplacement
+            && (!s.replacementAuthorized || !HologramCellPolicy.originalMember(s, c)
+                || HologramCellPolicy.trivial(w, c.x, c.y, c.z))) {
             c.status = "protected";
             return true;
         }
@@ -452,7 +510,7 @@ final class HologramWorldTransactions {
                 return false;
             }
         }
-        if (!empty && s.mode == 0 && !s.player.capabilities.isCreativeMode) {
+        if (!empty && s.mode == 0 && !exactCasing && !s.player.capabilities.isCreativeMode) {
             c.status = "blocked";
             s.status = "结构占位被遮挡，未扣材料，未替换旧方块";
             return false;
@@ -468,8 +526,11 @@ final class HologramWorldTransactions {
         }
         TileEntity originalTile = w.getTileEntity(c.x, c.y, c.z);
         if (scope != null) {
-            if (exactReplacement ? empty || originalTile != scope.replacement.tile()
-                || !HologramRecovery.supported(originalTile) : !empty || old != Blocks.air || originalTile != null) {
+            if (exactReplacement
+                ? empty || (exactCasing
+                    ? originalTile != null || old != scope.casing.block() || oldMeta != scope.casing.meta()
+                    : originalTile != scope.replacement.tile() || !HologramRecovery.supported(originalTile))
+                : !empty || old != Blocks.air || originalTile != null) {
                 c.status = "blocked";
                 s.status = "逐格施工只填真实空位，不替换原方块";
                 return false;
@@ -480,9 +541,10 @@ final class HologramWorldTransactions {
             || (s.player.capabilities.isCreativeMode && w.getTileEntity(c.x, c.y, c.z) == null)
                 ? Collections.emptyList()
                 : HologramMaterialAccess.drops(old, w, c, oldMeta);
+        if (exactCasing && !scope.creative && !scope.casing.refundMatches(drops)) return scopedRejected(s, c);
         // Ordinary declared construction cannot debit its held projector. Do not snapshot a draft into a cell
         // journal or roll the projector tag backwards on a failed cell.
-        int untouchedSlot = scope != null && scope.declared && !exactReplacement ? s.slot : -1;
+        int untouchedSlot = scope != null && scope.declared && scope.replacement == null ? s.slot : -1;
         ItemStack[] inventory = HologramMaterialAccess.copyInventory(s.player, untouchedSlot);
         NBTTagCompound savedTile = w.getTileEntity(c.x, c.y, c.z) == null ? null
             : (NBTTagCompound) drops.get(0)
@@ -494,9 +556,11 @@ final class HologramWorldTransactions {
         if (scope != null && !scope.current(s)) return scopedRejected(s, c);
         HologramMaterials.Transaction transaction = materialSource(s, scope).begin();
         if (scope == null || scope.selectedSources) {
-            transaction.protectAssets(s.pendingAssetBudget, s.cellAssetBudgets.getOrDefault(index, Collections.emptyMap()))
-                .journal(HologramConstructionJournal.begin(s.player, c.x, c.y, c.z, old, oldMeta, savedTile, inventory,
-                    untouchedSlot));
+            transaction
+                .protectAssets(s.pendingAssetBudget, s.cellAssetBudgets.getOrDefault(index, Collections.emptyMap()))
+                .journal(
+                    HologramConstructionJournal
+                        .begin(s.player, c.x, c.y, c.z, old, oldMeta, savedTile, inventory, untouchedSlot));
         } else {
             transaction.scopedJournal(
                 HologramConstructionJournal.begin(s.player, c.x, c.y, c.z, old, oldMeta, savedTile, inventory));
@@ -561,7 +625,8 @@ final class HologramWorldTransactions {
                     && !HologramRecovery.hasSeal(energyTarget)
                     && HologramDecorationVoucher.covered(c.block, energyTarget);
                 boolean voucherDecoration = voucher && HologramDecorationVoucher.hasCovered(c.block, decorDescriptor);
-                if (!s.player.capabilities.isCreativeMode && (voucherShell || voucherDecoration) && !s.jobVoucherConsumed) {
+                if (!s.player.capabilities.isCreativeMode && (voucherShell || voucherDecoration)
+                    && !s.jobVoucherConsumed) {
                     // The existing inventory snapshot is the rollback receipt. A voucher is deliberately
                     // paid from the main inventory, independently of ME/container material priority.
                     if (!HologramDecorationVoucher.reserveMain(s.player)) {
@@ -579,8 +644,8 @@ final class HologramWorldTransactions {
                     && (!s.player.capabilities.isCreativeMode
                         || HologramRecovery.hasSeal(HologramCellPolicy.targetFor(s, c, index)))) {
                     ItemStack required = HologramEssentia.shellMaterial(HologramCellPolicy.targetFor(s, c, index));
-                    if (!HologramMaterialAccess.fuzzyBlueprintShells(s, required) && transaction.takeOne(required, false))
-                        reserved = required.copy();
+                    if (!HologramMaterialAccess.fuzzyBlueprintShells(s, required)
+                        && transaction.takeOne(required, false)) reserved = required.copy();
                     if (reserved == null && !HologramMaterialAccess.fuzzyBlueprintShells(s, required)) {
                         rollbackMaterials(s, transaction, inventory, scope);
                         c.status = "missing";
@@ -611,7 +676,8 @@ final class HologramWorldTransactions {
                 }
                 if (s.mode != 2 && decorDescriptor != null && !s.player.capabilities.isCreativeMode) {
                     decorQuote = s.decorLedger.quote(
-                        voucherDecoration ? HologramDecorationVoucher.payable(c.block, decorDescriptor) : decorDescriptor,
+                        voucherDecoration ? HologramDecorationVoucher.payable(c.block, decorDescriptor)
+                            : decorDescriptor,
                         (stack, limit) -> HologramMaterialAccess.decorativeAvailability(s, index, stack, limit));
                     for (ItemStack payment : decorQuote.items) if (!transaction.takeAll(payment, false)) {
                         rollbackMaterials(s, transaction, inventory, scope);
@@ -641,10 +707,12 @@ final class HologramWorldTransactions {
                     // Saved creative builds must never withdraw from a real player's energy network.
                     // Keep protected stored energy empty unless no payment was required.
                     boolean noStockCreative = scope != null && scope.savedNative && !scope.declared && scope.creative;
-                    cachePaid = cachedPayload.demand.empty() || !noStockCreative && transaction.takeCachedEnergy(cachedPayload.demand);
+                    cachePaid = cachedPayload.demand.empty()
+                        || !noStockCreative && transaction.takeCachedEnergy(cachedPayload.demand);
                     if (!cachePaid) cacheNotice = "设备缓存余额不足，已按空缓存放置";
                     if (!cachedPayload.warnings.isEmpty())
-                        cacheNotice += (cacheNotice.isEmpty() ? "" : "；") + "未知缓存已安全省略：" + cachedPayload.warnings.get(0);
+                        cacheNotice += (cacheNotice.isEmpty() ? "" : "；") + "未知缓存已安全省略："
+                            + cachedPayload.warnings.get(0);
                     if (!cachedPayload.intrinsicSource.isEmpty())
                         cacheNotice += (cacheNotice.isEmpty() ? "" : "；") + "保留原生固有能源";
                 }
@@ -657,13 +725,14 @@ final class HologramWorldTransactions {
             }
             if (!empty) {
                 placementStage = "remove";
-                if (exactReplacement && (!scope.current(s) || !scope.replacement.current()
+                if (exactReplacement && (!scope.current(s) || !scope.replacementCurrent(c)
                     || !scopedJournalOwned(s, transaction)
                     || old.getBlockHardness(w, c.x, c.y, c.z) < 0)) {
                     rollbackMaterials(s, transaction, inventory, scope);
                     return scopedRejected(s, c);
                 }
-                if (exactReplacement) scope.replacementHeld = HologramMaterialAccess.copyInventory(s.player);
+                if (exactReplacement)
+                    scope.replacementHeld = HologramMaterialAccess.copyInventory(s.player, untouchedSlot);
                 BlockEvent.BreakEvent event = new BlockEvent.BreakEvent(c.x, c.y, c.z, w, old, oldMeta, s.player);
                 boolean cancelled = MinecraftForge.EVENT_BUS.post(event);
                 if (exactReplacement && !scope.replacementStockCurrent(s))
@@ -692,15 +761,33 @@ final class HologramWorldTransactions {
                     snapshot = readOnlyBlockSnapshot(w, c.x, c.y, c.z);
                 }
                 if (exactReplacement) {
-                    if (!scope.current(s) || !scope.replacement.current() || !scopedJournalOwned(s, transaction)) {
+                    if (!scope.current(s) || !scope.replacementCurrent(c) || !scopedJournalOwned(s, transaction)) {
                         rollbackMaterials(s, transaction, inventory, scope);
                         return scopedRejected(s, c);
                     }
-                    transaction.journalReceipt().setTag("tile", savedTile.copy());
+                    if (savedTile != null) transaction.journalReceipt()
+                        .setTag("tile", savedTile.copy());
                 }
                 boolean tile = originalTile != null;
                 boolean removed;
-                if (tile) {
+                if (exactCasing) {
+                    if (!w.canMineBlock(s.player, c.x, c.y, c.z)
+                        || !s.player.canPlayerEdit(c.x, c.y, c.z, 1, HologramSessionPolicy.trigger(s))
+                        || !scope.replacementCurrent(c)
+                        || !scope.current(s)
+                        || !scopedJournalOwned(s, transaction)) {
+                        rollbackMaterials(s, transaction, inventory, scope);
+                        return scopedRejected(s, c);
+                    }
+                    transaction.beforeWorldMutation();
+                    changedWorld = true;
+                    removed = w.setBlockToAir(c.x, c.y, c.z);
+                    scope.removedOriginal = removed;
+                    if (!scope.replacementStockCurrent(s))
+                        return retainScopedJournal(s, transaction, scope, "declared-casing-stock-changed");
+                    if (removed && !scope.originalCurrent(c, old, oldMeta, null))
+                        return retainScopedJournal(s, transaction, scope, "declared-casing-removal-uncertain");
+                } else if (tile) {
                     changedWorld = true;
                     transaction.beforeWorldMutation();
                     removed = HologramRecovery.removeWithoutDrops(w, c.x, c.y, c.z);
@@ -772,23 +859,27 @@ final class HologramWorldTransactions {
                 boolean nativeCancelled;
                 NBTTagCompound selectedCacheTile = cachedPayload == null ? null
                     : cachePaid ? cachedPayload.tilePaid : cachedPayload.tileEmpty;
-                boolean nativePlacement = (scope == null || scope.savedNative) && s.virtual && s.virtualPreset.schema >= 2
+                boolean nativePlacement = (scope == null || scope.savedNative) && s.virtual
+                    && s.virtualPreset.schema >= 2
                     && HologramNativePlacement.supported(c.block, selectedCacheTile);
                 try (HologramNativePlacementEvents.Scope events = HologramNativePlacementEvents
                     .open(w, s.player, c.x, c.y, c.z)) {
                     if (scope != null) {
                         if (!scope.current(s) || !scope.originalCurrent(c, old, oldMeta, originalTile)
-                            || c.block != scope.block || c.meta != scope.metadata
-                            || !scope.stockCurrent(s) || !scope.current(s)) {
-                            if (changedWorld
-                                && !restoreCell(s, c, transaction, old, oldMeta, savedTile, scope)) return false;
+                            || c.block != scope.block
+                            || c.meta != scope.metadata
+                            || !scope.stockCurrent(s)
+                            || !scope.current(s)) {
+                            if (changedWorld && !restoreCell(s, c, transaction, old, oldMeta, savedTile, scope))
+                                return false;
                             rollbackMaterials(s, transaction, inventory, scope);
                             return scopedRejected(s, c);
                         }
                         // The exact EBF source adds a last live transport probe then a raw Air/dependency check
                         // before entering the existing Forge ItemBlock route. That route still owns its own checks.
                         if (exactEbf && (!scope.liveTransport.getAsBoolean() || !scope.ebf.beforePlace(oldMeta)
-                            || !scope.stockCurrent(s) || !scope.current(s))) {
+                            || !scope.stockCurrent(s)
+                            || !scope.current(s))) {
                             if (!scope.worldCurrent(s)) return retainScopedJournal(s, transaction, scope);
                             rollbackMaterials(s, transaction, inventory, scope);
                             return scopedRejected(s, c);
@@ -824,8 +915,8 @@ final class HologramWorldTransactions {
                     }
                     nativeCancelled = events.cancelled();
                 }
-                if(scope!=null&&scope.savedNative&&(result==PlaceResult.ACCEPT||result==PlaceResult.ACCEPT_STOP))
-                    scope.observeCandidate(c);
+                if (scope != null && scope.savedNative
+                    && (result == PlaceResult.ACCEPT || result == PlaceResult.ACCEPT_STOP)) scope.observeCandidate(c);
                 if (scope != null) {
                     if (!scope.worldCurrent(s)) return retainScopedJournal(s, transaction, scope);
                     if (!scope.replacementStockCurrent(s))
@@ -861,16 +952,17 @@ final class HologramWorldTransactions {
                     return false;
                 }
                 if (result == PlaceResult.ACCEPT_STOP) s.stopTick = true;
-                if ((scope == null || scope.savedNative) && s.virtual && s.virtualPreset.schema >= 2
+                if ((scope == null || scope.savedNative) && s.virtual
+                    && s.virtualPreset.schema >= 2
                     && (nativePlacement || pin.getItem() instanceof ItemBlock
                         || w.getBlock(c.x, c.y, c.z) == Block.getBlockFromItem(pin.getItem()))
                     && (result == PlaceResult.ACCEPT || result == PlaceResult.ACCEPT_STOP
                         || result == PlaceResult.SKIP)) {
                     int plannedMetadata = HologramCellPolicy.targetPreviewMeta(s, c, pin);
                     HologramPresets.validateMaterialVariant(w.getBlock(c.x, c.y, c.z), plannedMetadata, pin);
-                    if(w.getBlockMetadata(c.x,c.y,c.z)!=plannedMetadata)
+                    if (w.getBlockMetadata(c.x, c.y, c.z) != plannedMetadata)
                         w.setBlockMetadataWithNotify(c.x, c.y, c.z, plannedMetadata, 2);
-                    if(scope!=null&&scope.savedNative)scope.observeCandidate(c);
+                    if (scope != null && scope.savedNative) scope.observeCandidate(c);
                 }
                 if ((result != PlaceResult.ACCEPT && result != PlaceResult.ACCEPT_STOP && result != PlaceResult.SKIP)
                     || (!nativePlacement && w.isAirBlock(c.x, c.y, c.z))
@@ -878,14 +970,15 @@ final class HologramWorldTransactions {
                         && (w.getBlock(c.x, c.y, c.z) != c.block || w.getBlockMetadata(c.x, c.y, c.z) != c.meta))
                     || (reservation != null && !reservation.used)
                     || (pin != null && !nativePlacement
-                        && (!exactEbf ? !HologramCellPolicy.targetMatches(
-                            s,
-                            c,
-                            index,
-                            w.getBlock(c.x, c.y, c.z),
-                            w.getBlockMetadata(c.x, c.y, c.z),
-                            false) : w.getBlock(c.x, c.y, c.z) != c.block
-                                || w.getBlockMetadata(c.x, c.y, c.z) != c.meta))) {
+                        && (!exactEbf
+                            ? !HologramCellPolicy.targetMatches(
+                                s,
+                                c,
+                                index,
+                                w.getBlock(c.x, c.y, c.z),
+                                w.getBlockMetadata(c.x, c.y, c.z),
+                                false)
+                            : w.getBlock(c.x, c.y, c.z) != c.block || w.getBlockMetadata(c.x, c.y, c.z) != c.meta))) {
                     HologramPlacementDiagnostics
                         .rejected(s, c, index, result.name(), nativeCancelled, reservation == null || reservation.used);
                     if (!restoreCell(s, c, transaction, old, oldMeta, savedTile, scope)) return false;
@@ -908,7 +1001,7 @@ final class HologramWorldTransactions {
                         return scopedRejected(s, c);
                     }
                 }
-                if(scope==null||scope.savedNative&&scope.stateful){
+                if (scope == null || scope.savedNative && scope.stateful) {
                     Block placed = w.getBlock(c.x, c.y, c.z);
                     placementStage = "native-callbacks";
                     if (placed instanceof ICustomBlockSetting) {
@@ -927,7 +1020,8 @@ final class HologramWorldTransactions {
                         ownerHost.setOwnerName(s.player.getCommandSenderName());
                     }
                     boolean blueprintTileDataApplied = false;
-                    boolean emptyAeNativeShell = nativePlacement && HologramAeBlueprint.supportsEmptyNativeShell(c.block);
+                    boolean emptyAeNativeShell = nativePlacement
+                        && HologramAeBlueprint.supportsEmptyNativeShell(c.block);
                     boolean requiredNetworkBinding = selectedCacheTile != null
                         && selectedCacheTile.hasKey(HologramNetworkBindings.GROUP);
                     boolean restoreBlueprintTileData = s.virtual && s.virtualPreset.schema >= 2
@@ -1021,7 +1115,7 @@ final class HologramWorldTransactions {
                                 HologramNetworkBindings.node(c.block)
                                     && HologramBlueprintProcessing.quantumCleared(s.virtualPreset));
                             else placedTile.readFromNBT(data);
-                            if(scope!=null&&scope.savedNative&&w.getTileEntity(c.x,c.y,c.z)==placedTile)
+                            if (scope != null && scope.savedNative && w.getTileEntity(c.x, c.y, c.z) == placedTile)
                                 scope.observeCandidate(c);
                             blueprintTileDataApplied = true;
                             if (direction != null && direction >= 0 && placedTile instanceof IGregTechTileEntity) {
@@ -1034,7 +1128,8 @@ final class HologramWorldTransactions {
                                     throw new IllegalStateException("blueprint facing rejected");
                                 gt.setFrontFacing(ForgeDirection.getOrientation(direction));
                                 if (gt.getFrontFacing()
-                                    .ordinal() != direction) throw new IllegalStateException("blueprint front rejected");
+                                    .ordinal() != direction)
+                                    throw new IllegalStateException("blueprint front rejected");
                             }
                             placedTile.markDirty();
                             w.markBlockForUpdate(c.x, c.y, c.z);
@@ -1082,10 +1177,11 @@ final class HologramWorldTransactions {
                         throw new java.io.IOException(c.resourceError);
                     }
                 }
-                if (scope!=null&&scope.savedNative&&(!scope.candidate(c)||!scopedMutationCurrent(s,c,transaction,scope))) {
+                if (scope != null && scope.savedNative
+                    && (!scope.candidate(c) || !scopedMutationCurrent(s, c, transaction, scope))) {
                     if (!restoreCell(s, c, transaction, old, oldMeta, savedTile, scope)) return false;
                     rollbackMaterials(s, transaction, inventory, scope);
-                    return scopedRejected(s,c);
+                    return scopedRejected(s, c);
                 }
                 if (MinecraftForge.EVENT_BUS.post(new BlockEvent.PlaceEvent(snapshot, old, s.player))) {
                     if (!restoreCell(s, c, transaction, old, oldMeta, savedTile, scope)) return false;
@@ -1107,10 +1203,13 @@ final class HologramWorldTransactions {
                 HologramCellPolicy
                     .validateGtPlacedIdentity(energyTarget, w.getBlock(c.x, c.y, c.z), w.getTileEntity(c.x, c.y, c.z));
                 if (s.virtualPreset != null && s.virtualPreset.schema >= 2) {
-                    if(scope!=null&&scope.savedNative&&scope.stateful&&!HologramCellPolicy.targetMatches(s,c,index,
-                        w.getBlock(c.x,c.y,c.z),w.getBlockMetadata(c.x,c.y,c.z))) {
-                        // A listener changed the installed state. Never refund and erase an uncertain foreign candidate.
-                        return retainScopedJournal(s,transaction,scope,"native-post-event-state-changed");
+                    if (scope != null && scope.savedNative
+                        && scope.stateful
+                        && !HologramCellPolicy
+                            .targetMatches(s, c, index, w.getBlock(c.x, c.y, c.z), w.getBlockMetadata(c.x, c.y, c.z))) {
+                        // A listener changed the installed state. Never refund and erase an uncertain foreign
+                        // candidate.
+                        return retainScopedJournal(s, transaction, scope, "native-post-event-state-changed");
                     }
                     HologramCellPolicy.validateOrdinaryPlacedVariant(w, c, energyTarget);
                     if (Boolean.FALSE.equals(HologramCellPolicy.nativePanelMatches(s, c, true))) {
@@ -1124,7 +1223,8 @@ final class HologramWorldTransactions {
                 if (scope.declared && scope.declaredFacing >= 0) {
                     TileEntity physical = w.getTileEntity(c.x, c.y, c.z);
                     if (!(physical instanceof IGregTechTileEntity gt) || gt.getFrontFacing() == null
-                        || gt.getFrontFacing().ordinal() != scope.declaredFacing)
+                        || gt.getFrontFacing()
+                            .ordinal() != scope.declaredFacing)
                         return retainScopedJournal(s, transaction, scope, "declared-hatch-facing-changed");
                 }
                 if (scope.endpoint(s)) scope.inventory.markDirty();
@@ -1133,8 +1233,7 @@ final class HologramWorldTransactions {
                     || (scope.current(s) && scope.livePrecommit.getAsBoolean());
                 if (!scope.worldCurrent(s)) return retainScopedJournal(s, transaction, scope);
                 // Candidate, journal and slot must be proved after the additional live getter callbacks.
-                boolean candidateIntact = scope.candidate(c)
-                    && c.block == scope.block && c.meta == scope.metadata;
+                boolean candidateIntact = scope.candidate(c) && c.block == scope.block && c.meta == scope.metadata;
                 // The last live check may itself reenter through NetworkManager/Channel. Keep it before raw
                 // data, even when it says no. Rollback still needs an exact original-world ownership witness.
                 boolean transportIntact = scope.ebf == null || scope.liveTransport.getAsBoolean();
@@ -1152,8 +1251,10 @@ final class HologramWorldTransactions {
                     return retainScopedJournal(s, transaction, scope, "ebf-raw-candidate-uncertain");
                 // Forge and every final world callback have returned. Debit only from the confirmed original
                 // slot and retire this exact receipt in one callback-free transition.
-                if (!liveIntact || !transportIntact || ebfSeal == HologramStockEbfProfile.FinalSeal.DEPENDENCY_CHANGED
-                    || !scope.stockCurrent(s) || !scope.current(s)
+                if (!liveIntact || !transportIntact
+                    || ebfSeal == HologramStockEbfProfile.FinalSeal.DEPENDENCY_CHANGED
+                    || !scope.stockCurrent(s)
+                    || !scope.current(s)
                     || !scope.selectedSources && !transaction.finishScopedPlain(scope.claim)) {
                     if (!scope.worldCurrent(s)) return retainScopedJournal(s, transaction, scope);
                     if (changedWorld && !restoreCell(s, c, transaction, old, oldMeta, savedTile, scope)) return false;
@@ -1168,8 +1269,8 @@ final class HologramWorldTransactions {
                         return retainScopedJournal(s, transaction, scope, "selected-payment-commit-uncertain");
                     }
                 }
-                if(decorQuote!=null)s.decorLedger.commit(decorQuote);
-                HologramMaterialAccess.commitAssetBudget(s,index);
+                if (decorQuote != null) s.decorLedger.commit(decorQuote);
+                HologramMaterialAccess.commitAssetBudget(s, index);
                 if (voucherReserved) s.jobVoucherConsumed = true;
                 c.status = exactReplacement ? "replaced" : "placed";
                 return true;
@@ -1188,17 +1289,21 @@ final class HologramWorldTransactions {
             if (voucherReserved) s.jobVoucherConsumed = true;
         } catch (java.io.IOException | RuntimeException | LinkageError e) {
             if (scope != null) {
-                if (scope.replacement != null) {
+                if (scope.replacement != null || scope.declared) {
                     HologramPlacementDiagnostics.failure(s, c, index, placementStage, e);
                     if (Boolean.getBoolean("gtmb.v0111.nativeContractsOnly")) e.printStackTrace(System.err);
                 }
                 if (!scope.worldCurrent(s)) return retainScopedJournal(s, transaction, scope);
                 if (!scope.replacementStockCurrent(s))
                     return retainScopedJournal(s, transaction, scope, "declared-replacement-stock-changed");
-                if(newQuantumJoin!=null){
-                    if(!scope.candidate(c))return retainScopedJournal(s,transaction,scope,"scoped-quantum-join-candidate-changed");
-                    try{HologramNetworkBindings.rollbackJoin(newQuantumJoin,s.player);}
-                    catch(java.io.IOException rollback){return retainScopedJournal(s,transaction,scope,"scoped-quantum-join-rollback-uncertain");}
+                if (newQuantumJoin != null) {
+                    if (!scope.candidate(c))
+                        return retainScopedJournal(s, transaction, scope, "scoped-quantum-join-candidate-changed");
+                    try {
+                        HologramNetworkBindings.rollbackJoin(newQuantumJoin, s.player);
+                    } catch (java.io.IOException rollback) {
+                        return retainScopedJournal(s, transaction, scope, "scoped-quantum-join-rollback-uncertain");
+                    }
                 }
                 if (changedWorld && !restoreCell(s, c, transaction, old, oldMeta, savedTile, scope)) return false;
                 rollbackMaterials(s, transaction, inventory, scope);
@@ -1354,13 +1459,30 @@ final class HologramWorldTransactions {
 
     private static boolean restoreCell(HologramSession s, HologramCapture.Cell c,
         HologramMaterials.Transaction transaction, Block old, int metadata, NBTTagCompound tile, PlacementScope scope) {
-        if (scope == null)
-            return restoreCell(
-                s,
-                transaction,
-                () -> HologramRecovery.restore(s.player.worldObj, c.x, c.y, c.z, old, metadata, tile));
+        if (scope == null) return restoreCell(
+            s,
+            transaction,
+            () -> HologramRecovery.restore(s.player.worldObj, c.x, c.y, c.z, old, metadata, tile));
         if (!scope.worldCurrent(s)) return retainScopedJournal(s, transaction, scope);
         if (scope.ebf != null) return restoreOwnedEbfAir(s, c, transaction, old, metadata, tile, scope);
+        if (scope.casing != null) {
+            if (!scopedJournalOwned(s, transaction))
+                return retainScopedJournal(s, transaction, scope, "journal-ownership-changed");
+            if (scope.casing.exact()) return true;
+            if (tile != null || old != scope.casing.block()
+                || metadata != scope.casing.meta()
+                || !scope.removedOriginal
+                || !scope.originalCurrent(c, old, metadata, null) && !scope.candidate(c))
+                return retainScopedJournal(s, transaction, scope, "declared-casing-rollback-uncertain");
+            try {
+                transaction.checkpoint();
+                HologramRecovery.restore(scope.world, c.x, c.y, c.z, old, metadata, null);
+                return scope.worldCurrent(s) && scopedJournalOwned(s, transaction) && scope.casing.exact()
+                    || retainScopedJournal(s, transaction, scope, "declared-casing-restore-not-exact");
+            } catch (RuntimeException | LinkageError failure) {
+                return retainScopedJournal(s, transaction, scope, "declared-casing-restore-failed");
+            }
+        }
         if (scope.replacement != null) {
             if (!scopedJournalOwned(s, transaction))
                 return retainScopedJournal(s, transaction, scope, "journal-ownership-changed");
@@ -1374,7 +1496,8 @@ final class HologramWorldTransactions {
                 var restored = scope.world.getTileEntity(c.x, c.y, c.z);
                 return scope.worldCurrent(s) && scopedJournalOwned(s, transaction)
                     && sameWorldCell(scope.world, c, old, metadata, restored)
-                    && restored instanceof IGregTechTileEntity gt && gt.getMetaTileID() == scope.replacement.id()
+                    && restored instanceof IGregTechTileEntity gt
+                    && gt.getMetaTileID() == scope.replacement.id()
                     && gt.getFrontFacing() == scope.replacement.front()
                     || retainScopedJournal(s, transaction, scope, "declared-replacement-restore-not-exact");
             } catch (RuntimeException | LinkageError failed) {
@@ -1467,7 +1590,8 @@ final class HologramWorldTransactions {
                 transaction.rollbackExternal();
             } finally {
                 HologramMaterialAccess.restoreInventory(s, inventory);
-                HologramMaterialAccess.materialSource(s).afterInventoryRestore();
+                HologramMaterialAccess.materialSource(s)
+                    .afterInventoryRestore();
             }
             return;
         }
@@ -1488,7 +1612,8 @@ final class HologramWorldTransactions {
         try {
             transaction.rollbackExternal();
             HologramMaterialAccess.restoreInventory(s, inventory);
-            HologramMaterialAccess.materialSource(s).afterInventoryRestore();
+            HologramMaterialAccess.materialSource(s)
+                .afterInventoryRestore();
             HologramConstructionJournal.clear(s.player);
         } catch (RuntimeException | LinkageError failure) {
             HologramConstructionJournal.suspend(s, transaction, failure);

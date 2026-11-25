@@ -20,8 +20,8 @@ import com.miaokatze.gtmb.hologram.HologramNetwork;
 import com.miaokatze.gtmb.hologram.HologramStockActionTrace;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Command;
-import com.miaokatze.gtmb.hologram.HologramStockNativeWire.EbfHatch;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Confirmation;
+import com.miaokatze.gtmb.hologram.HologramStockNativeWire.EbfHatch;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Key;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Phase;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Reply;
@@ -40,6 +40,7 @@ public final class HologramClientStockNative {
     static final long RESULT_NANOS = TimeUnit.SECONDS.toNanos(35);
 
     interface Wire {
+
         boolean probe(Confirmation value);
 
         boolean begin(Confirmation value, boolean afterProbe);
@@ -51,14 +52,25 @@ public final class HologramClientStockNative {
     record Context(Object handler, Object world, Object player, int dimension) {
 
         boolean same(Context other) {
-            return other != null && handler != null && world != null && player != null
-                && handler == other.handler && world == other.world && player == other.player && dimension == other.dimension;
+            return other != null && handler != null
+                && world != null
+                && player != null
+                && handler == other.handler
+                && world == other.world
+                && player == other.player
+                && dimension == other.dimension;
         }
     }
 
     @Desugar
-    record Owner(Object view, BooleanSupplier exactBeforeStart, BooleanSupplier visible,
-        Consumer<String> notice, Runnable refresh) {}
+    record Owner(Object view, BooleanSupplier exactBeforeStart, BooleanSupplier visible, Consumer<String> notice,
+        Consumer<Reply> terminal) {
+
+        Owner(Object view, BooleanSupplier exactBeforeStart, BooleanSupplier visible, Consumer<String> notice,
+            Runnable terminal) {
+            this(view, exactBeforeStart, visible, notice, reply -> terminal.run());
+        }
+    }
 
     @Desugar
     record Site(TileEntity controller, BaseMetaTileEntity hatch, int controllerFacing, int hx, int hy, int hz,
@@ -72,28 +84,41 @@ public final class HologramClientStockNative {
             if (ebf()) {
                 return controller instanceof BaseMetaTileEntity base
                     && base.getMetaTileEntity() instanceof MTEElectricBlastFurnace ebf
-                    && ebf.getExtendedFacing().ordinal() == controllerFacing
+                    && ebf.getExtendedFacing()
+                        .ordinal() == controllerFacing
                     && ebfHatches.equals(HologramStockNativeWire.observedEbfHatches(world, controller));
             }
-            if (world == null || controller.isInvalid() || hatch.isInvalid() || controller.getWorldObj() != world
-                || hatch.getWorldObj() != world || !(controller instanceof BaseMetaTileEntity tile)
+            if (world == null || controller.isInvalid()
+                || hatch.isInvalid()
+                || controller.getWorldObj() != world
+                || hatch.getWorldObj() != world
+                || !(controller instanceof BaseMetaTileEntity tile)
                 || !(tile.getMetaTileEntity() instanceof MTECokeOven oven)
-                || oven.getExtendedFacing().ordinal() != controllerFacing) return false;
+                || oven.getExtendedFacing()
+                    .ordinal() != controllerFacing)
+                return false;
             int x = controller.xCoord + hx, y = controller.yCoord + hy, z = controller.zCoord + hz;
             return world.blockExists(x, y, z) && world.getBlock(x, y, z) == GregTechAPI.sBlockMachines
-                && world.getTileEntity(x, y, z) == hatch && realHatch(hatch)
-                && hatch.getFrontFacing().ordinal() == hatchFacing;
+                && world.getTileEntity(x, y, z) == hatch
+                && realHatch(hatch)
+                && hatch.getFrontFacing()
+                    .ordinal() == hatchFacing;
         }
 
         String submitLabel() {
-            return ebf() ? "所选来源补建 · 先备 12 个耐热外壳和 16 个所选线圈，只按缺位扣除"
-                : "所选来源补建 · 先备 24 块焦炉砖，只按缺位扣除";
+            return ebf() ? "所选来源补建 · 先备 12 个耐热外壳和 16 个所选线圈，只按缺位扣除" : "所选来源补建 · 先备 24 块焦炉砖，只按缺位扣除";
         }
 
         String description() {
             if (ebf()) return "保留已安装的 5 个电力高炉仓室";
-            return "保留已安装 ULV 焦炉仓室 (" + (controller.xCoord + hx) + ", " + (controller.yCoord + hy)
-                + ", " + (controller.zCoord + hz) + ") · " + net.minecraftforge.common.util.ForgeDirection.getOrientation(hatchFacing).name();
+            return "保留已安装 ULV 焦炉仓室 (" + (controller.xCoord + hx)
+                + ", "
+                + (controller.yCoord + hy)
+                + ", "
+                + (controller.zCoord + hz)
+                + ") · "
+                + net.minecraftforge.common.util.ForgeDirection.getOrientation(hatchFacing)
+                    .name();
         }
     }
 
@@ -103,20 +128,31 @@ public final class HologramClientStockNative {
         int facing) {
 
         static DeclarationSite read(World world, TileEntity target) {
-            if (world == null || !(target instanceof BaseMetaTileEntity base) || base.isInvalid()
-                || base.getWorldObj() != world || base.getMetaTileID() <= 0
-                || !(base.getMetaTileEntity() instanceof
-                    gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase<?> machine)) return null;
-            return new DeclarationSite(base, machine, base.getMetaTileID(), machine.getExtendedFacing().ordinal());
+            if (world == null || !(target instanceof BaseMetaTileEntity base)
+                || base.isInvalid()
+                || base.getWorldObj() != world
+                || base.getMetaTileID() <= 0
+                || !(base
+                    .getMetaTileEntity() instanceof gregtech.api.metatileentity.implementations.MTEEnhancedMultiBlockBase<?>machine))
+                return null;
+            return new DeclarationSite(
+                base,
+                machine,
+                base.getMetaTileID(),
+                machine.getExtendedFacing()
+                    .ordinal());
         }
 
         boolean current(World world) {
             int x = controller.xCoord, y = controller.yCoord, z = controller.zCoord;
-            return world != null && world.blockExists(x, y, z) && world.getTileEntity(x, y, z) == controller
+            return world != null && world.blockExists(x, y, z)
+                && world.getTileEntity(x, y, z) == controller
                 && equals(read(world, controller));
         }
 
-        String description() { return projectorOr("stock.retain_matching", "保留现场已匹配的方块和仓室"); }
+        String description() {
+            return projectorOr("stock.retain_matching", "保留现场已匹配的方块和仓室");
+        }
     }
 
     /** Translate known vanilla-stock protocol reasons client-side. Older or external reasons stay intact. */
@@ -132,7 +168,9 @@ public final class HologramClientStockNative {
             case "已取消，未开始施工。" -> projectorOr("stock.reason_cancelled", "已取消，未开始施工。");
             case "已停止原生操作，已确认的世界与材料变更保留。" -> projectorOr("stock.reason_stopped", "已停止原生操作，已确认的世界与材料变更保留。");
             case "原生结构或施工权限已变化。" -> projectorOr("stock.reason_permission", "原生结构或施工权限已变化。");
-            case "施工结果待核定；未继续放置。可请管理员使用 /gtmb recovery。" -> projectorOr("stock.reason_recovery", "施工结果待核定；未继续放置。可请管理员使用 /gtmb recovery。");
+            case "施工结果待核定；未继续放置。可请管理员使用 /gtmb recovery。" -> projectorOr(
+                "stock.reason_recovery",
+                "施工结果待核定；未继续放置。可请管理员使用 /gtmb recovery。");
             default -> reason;
         };
     }
@@ -147,17 +185,20 @@ public final class HologramClientStockNative {
         int placed = -1;
 
         boolean placing() {
-            return original.declaration() == null || original.declaration().operation() == 0;
+            return original.declaration() == null || original.declaration()
+                .operation() == 0;
         }
 
         String operationLabel() {
             if (original.declaration() == null) return projectorOr("stock.action_fill", "原生补建");
-            return switch (original.declaration().operation()) {
+            return switch (original.declaration()
+                .operation()) {
                 case 1 -> projectorOr("stock.action_replace", "原生换装");
                 case 2 -> projectorOr("stock.action_remove", "原生拆除");
                 default -> projectorOr("stock.action_build", "原生施工");
             };
         }
+
         boolean beginSent, afterProbe, stopSent, uncertain;
 
         Attempt(Confirmation original, Context context, Owner owner, long deadline) {
@@ -201,7 +242,8 @@ public final class HologramClientStockNative {
             } catch (HologramStockNativeWire.InvalidConfirmation invalid) {
                 // PROBE itself never starts a task. Report local contract errors separately from a missing channel.
                 active = null;
-                com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Stock construction probe rejected its input", invalid);
+                com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG
+                    .warn("Stock construction probe rejected its input", invalid);
                 owner.notice.accept(projectorOr("stock.invalid_controller", "未提交施工：控制器参数未通过检查，请重新读取现场。"));
                 return false;
             } catch (RuntimeException | LinkageError failed) {
@@ -218,7 +260,8 @@ public final class HologramClientStockNative {
         private boolean begin(Attempt attempt, long usableGeneration, boolean afterProbe, long now) {
             if (active != attempt || attempt.beginSent || !attempt.owner.exactBeforeStart.getAsBoolean()) {
                 if (active == attempt) active = null;
-                if (attempt.owner.visible.getAsBoolean()) attempt.owner.notice.accept(projectorOr("stock.start_stale", "当前确认已变化，未开始施工。"));
+                if (attempt.owner.visible.getAsBoolean())
+                    attempt.owner.notice.accept(projectorOr("stock.start_stale", "当前确认已变化，未开始施工。"));
                 return false;
             }
             Confirmation issued = attempt.original.forGeneration(usableGeneration);
@@ -244,10 +287,23 @@ public final class HologramClientStockNative {
         void receive(Reply reply, Object from, Context current, long now) {
             retireChangedContext(current);
             Attempt attempt = active;
-            if (attempt == null || current.handler != from || !attempt.context.same(current)
-                || !attempt.original.key().request().equals(reply.key().request())
-                || attempt.original.key().sequence() != reply.key().sequence()) return;
-            if (reply.phase() != Phase.ACTIVE) HologramStockActionTrace.event("client.reply", reply.key(), reply.phase().name());
+            if (attempt == null || current.handler != from
+                || !attempt.context.same(current)
+                || !attempt.original.key()
+                    .request()
+                    .equals(
+                        reply.key()
+                            .request())
+                || attempt.original.key()
+                    .sequence()
+                    != reply.key()
+                        .sequence())
+                return;
+            if (reply.phase() != Phase.ACTIVE) HologramStockActionTrace.event(
+                "client.reply",
+                reply.key(),
+                reply.phase()
+                    .name());
             if (!attempt.beginSent) {
                 if (now >= attempt.deadline || !attempt.owner.visible.getAsBoolean()) {
                     active = null;
@@ -260,14 +316,20 @@ public final class HologramClientStockNative {
                     attempt.owner.notice.accept(serverReason(reply.reason()));
                     return;
                 }
-                if (reply.phase() != Phase.CAPABLE || reply.key().generation() <= 0) return;
+                if (reply.phase() != Phase.CAPABLE || reply.key()
+                    .generation() <= 0) return;
                 if (!attempt.owner.exactBeforeStart.getAsBoolean()) {
                     active = null;
                     attempt.owner.notice.accept(projectorOr("stock.start_stale", "当前确认已变化，未开始施工。"));
                     return;
                 }
                 // CAPABLE is permission to submit this very confirmation, never cached warm readiness.
-                begin(attempt, reply.key().generation(), true, now);
+                begin(
+                    attempt,
+                    reply.key()
+                        .generation(),
+                    true,
+                    now);
                 return;
             }
             if (!attempt.key.equals(reply.key()) || reply.phase() == Phase.CAPABLE
@@ -279,18 +341,24 @@ public final class HologramClientStockNative {
             if (reply.phase() == Phase.NEEDS_PROOF) forgetWarm(attempt);
             else if (attempt.afterProbe && (reply.phase() == Phase.ACCEPTED || reply.phase() == Phase.ACTIVE
                 || reply.phase() == Phase.COMPLETE)) {
-                known = current;
-                generation = reply.key().generation();
-            }
+                    known = current;
+                    generation = reply.key()
+                        .generation();
+                }
             int previous = attempt.placed;
             attempt.placed = reply.placed();
             if (reply.phase() == Phase.ACCEPTED || reply.phase() == Phase.ACTIVE) {
                 if (previous < attempt.placed && !attempt.stopSent) attempt.deadline = now + RESULT_NANOS;
                 if (attempt.owner.visible.getAsBoolean() && !attempt.stopSent && !attempt.uncertain)
-                    attempt.owner.notice.accept(reply.phase() == Phase.ACCEPTED
-                        ? (attempt.placing() ? projectorOr("stock.accepted_placement", "服务器已受理%1$s；尚未确认方块提交。", attempt.operationLabel())
+                    attempt.owner.notice.accept(
+                        reply.phase() == Phase.ACCEPTED ? (attempt.placing()
+                            ? projectorOr("stock.accepted_placement", "服务器已受理%1$s；尚未确认方块提交。", attempt.operationLabel())
                             : projectorOr("stock.accepted_changes", "服务器已受理%1$s；尚未确认现场变更。", attempt.operationLabel()))
-                        : projectorOr("stock.confirmed_cells", "%1$s：已确认 %2$s 格。", attempt.operationLabel(), attempt.placed));
+                            : projectorOr(
+                                "stock.confirmed_cells",
+                                "%1$s：已确认 %2$s 格。",
+                                attempt.operationLabel(),
+                                attempt.placed));
                 return;
             }
             active = null;
@@ -298,16 +366,33 @@ public final class HologramClientStockNative {
             String reason = serverReason(reply.reason());
             String status = switch (reply.phase()) {
                 case COMPLETE -> (attempt.placing()
-                    ? projectorOr("stock.done_placement", "%1$s完成，实际放置 %2$s 格。", attempt.operationLabel(), attempt.placed)
-                    : projectorOr("stock.done_changes", "%1$s完成，实际变更 %2$s 格。", attempt.operationLabel(), attempt.placed)) + (reason.isEmpty() ? "" : " " + reason);
-                case STOPPED -> projectorOr("stock.stopped", "%1$s已停止，已确认 %2$s 格。", attempt.operationLabel(), attempt.placed)
+                    ? projectorOr(
+                        "stock.done_placement",
+                        "%1$s完成，实际放置 %2$s 格。",
+                        attempt.operationLabel(),
+                        attempt.placed)
+                    : projectorOr(
+                        "stock.done_changes",
+                        "%1$s完成，实际变更 %2$s 格。",
+                        attempt.operationLabel(),
+                        attempt.placed))
                     + (reason.isEmpty() ? "" : " " + reason);
-                case RECOVERY_PENDING -> projectorOr("stock.recovery_pending", "%1$s结果待核定，已确认 %2$s 格。", attempt.operationLabel(), attempt.placed)
-                    + (reason.isEmpty() ? "" : " " + reason);
+                case STOPPED -> projectorOr(
+                    "stock.stopped",
+                    "%1$s已停止，已确认 %2$s 格。",
+                    attempt.operationLabel(),
+                    attempt.placed) + (reason.isEmpty() ? "" : " " + reason);
+                case RECOVERY_PENDING -> projectorOr(
+                    "stock.recovery_pending",
+                    "%1$s结果待核定，已确认 %2$s 格。",
+                    attempt.operationLabel(),
+                    attempt.placed) + (reason.isEmpty() ? "" : " " + reason);
                 default -> reason;
             };
             attempt.owner.notice.accept(status);
-            if (attempt.placed > 0 || reply.phase() == Phase.COMPLETE) attempt.owner.refresh.run();
+            if (attempt.placed > 0 || reply.phase() == Phase.COMPLETE
+                || reply.phase() == Phase.STOPPED && attempt.placing() && !reason.isEmpty())
+                attempt.owner.terminal.accept(reply);
         }
 
         void tick(Object view, Context context, long now) {
@@ -316,8 +401,8 @@ public final class HologramClientStockNative {
             if (attempt == null || attempt.owner.view != view) return;
             if (!attempt.beginSent && (!attempt.owner.exactBeforeStart.getAsBoolean() || now >= attempt.deadline)) {
                 active = null;
-                if (attempt.owner.visible.getAsBoolean())
-                    attempt.owner.notice.accept(now >= attempt.deadline ? projectorOr("stock.probe_no_confirmation", "服务器未确认支持此短请求；未发送施工指令。")
+                if (attempt.owner.visible.getAsBoolean()) attempt.owner.notice.accept(
+                    now >= attempt.deadline ? projectorOr("stock.probe_no_confirmation", "服务器未确认支持此短请求；未发送施工指令。")
                         : projectorOr("stock.request_stale", "当前确认已变化，未发送施工指令。"));
             } else if (attempt.beginSent && now >= attempt.deadline && !attempt.uncertain) {
                 reportUnknown(attempt);
@@ -345,9 +430,8 @@ public final class HologramClientStockNative {
             attempt.uncertain = true;
             forgetWarm(attempt);
             boolean stopped = stopOnce(attempt);
-            if (attempt.owner.visible.getAsBoolean())
-                attempt.owner.notice.accept((stopped
-                    ? projectorOr("stock.unknown_stop", "尚无法确认%1$s结果。已请求停止，未确认停工。", attempt.operationLabel())
+            if (attempt.owner.visible.getAsBoolean()) attempt.owner.notice.accept(
+                (stopped ? projectorOr("stock.unknown_stop", "尚无法确认%1$s结果。已请求停止，未确认停工。", attempt.operationLabel())
                     : projectorOr("stock.unknown_no_retry", "尚无法确认%1$s结果。没有重试；请先核对现场。", attempt.operationLabel())));
         }
 
@@ -407,15 +491,17 @@ public final class HologramClientStockNative {
 
     static Context context(Minecraft client) {
         return client == null || client.thePlayer == null || client.theWorld == null || client.getNetHandler() == null
-            ? null : new Context(client.getNetHandler(), client.theWorld, client.thePlayer, client.thePlayer.dimension);
+            ? null
+            : new Context(client.getNetHandler(), client.theWorld, client.thePlayer, client.thePlayer.dimension);
     }
 
     static UUID canonicalTool(String id) {
         if (id == null || id.length() != 36) return null;
         try {
             UUID value = UUID.fromString(id);
-            return value.toString().equals(id) && (value.getMostSignificantBits() != 0
-                || value.getLeastSignificantBits() != 0) ? value : null;
+            return value.toString()
+                .equals(id) && (value.getMostSignificantBits() != 0 || value.getLeastSignificantBits() != 0) ? value
+                    : null;
         } catch (IllegalArgumentException bad) {
             return null;
         }
@@ -429,30 +515,46 @@ public final class HologramClientStockNative {
             && base.getMetaTileEntity() instanceof MTEElectricBlastFurnace ebf) {
             List<EbfHatch> hatches = HologramStockNativeWire.observedEbfHatches(world, target);
             return hatches.isEmpty() ? null
-                : new Site(target, null, ebf.getExtendedFacing().ordinal(), 0, 0, 0, 0, hatches);
+                : new Site(
+                    target,
+                    null,
+                    ebf.getExtendedFacing()
+                        .ordinal(),
+                    0,
+                    0,
+                    0,
+                    0,
+                    hatches);
         }
         if (base.getMetaTileID() != MetaTileEntityIDs.COKE_OVEN_CONTROLLER.ID
-            || !(base.getMetaTileEntity() instanceof MTECokeOven oven) || oven.getClass() != MTECokeOven.class
+            || !(base.getMetaTileEntity() instanceof MTECokeOven oven)
+            || oven.getClass() != MTECokeOven.class
             || oven.mMachine) return null;
         var facing = oven.getExtendedFacing();
         int[] abc = new int[3], delta = new int[3];
         Site chosen = null;
-        for (int c = 0; c <= 2; c++)
-            for (int b = -1; b <= 1; b++)
-                for (int a = -1; a <= 1; a++) {
-                    if (a == 0 && b == 0 && c < 2) continue;
-                    abc[0] = a;
-                    abc[1] = b;
-                    abc[2] = c;
-                    facing.getWorldOffset(abc, delta);
-                    int x = base.xCoord + delta[0], y = base.yCoord + delta[1], z = base.zCoord + delta[2];
-                    if (!world.blockExists(x, y, z)) return null;
-                    if (world.getBlock(x, y, z) != GregTechAPI.sBlockMachines) continue;
-                    if (!(world.getTileEntity(x, y, z) instanceof BaseMetaTileEntity hatch) || !realHatch(hatch)) continue;
-                    if (chosen != null) return null;
-                    chosen = new Site(base, hatch, facing.ordinal(), delta[0], delta[1], delta[2],
-                        hatch.getFrontFacing().ordinal(), null);
-                }
+        for (int c = 0; c <= 2; c++) for (int b = -1; b <= 1; b++) for (int a = -1; a <= 1; a++) {
+            if (a == 0 && b == 0 && c < 2) continue;
+            abc[0] = a;
+            abc[1] = b;
+            abc[2] = c;
+            facing.getWorldOffset(abc, delta);
+            int x = base.xCoord + delta[0], y = base.yCoord + delta[1], z = base.zCoord + delta[2];
+            if (!world.blockExists(x, y, z)) return null;
+            if (world.getBlock(x, y, z) != GregTechAPI.sBlockMachines) continue;
+            if (!(world.getTileEntity(x, y, z) instanceof BaseMetaTileEntity hatch) || !realHatch(hatch)) continue;
+            if (chosen != null) return null;
+            chosen = new Site(
+                base,
+                hatch,
+                facing.ordinal(),
+                delta[0],
+                delta[1],
+                delta[2],
+                hatch.getFrontFacing()
+                    .ordinal(),
+                null);
+        }
         return chosen;
     }
 
@@ -460,7 +562,10 @@ public final class HologramClientStockNative {
         return base.getClass() == BaseMetaTileEntity.class && !base.isInvalid()
             && base.getMetaTileID() == MetaTileEntityIDs.COKE_OVEN_HATCH.ID
             && base.getMetaTileEntity() instanceof MTEHatchCokeOven hatch
-            && hatch.getClass() == MTEHatchCokeOven.class && hatch.mTier == 0
-            && base.getFrontFacing() != null && base.getFrontFacing().ordinal() < 6;
+            && hatch.getClass() == MTEHatchCokeOven.class
+            && hatch.mTier == 0
+            && base.getFrontFacing() != null
+            && base.getFrontFacing()
+                .ordinal() < 6;
     }
 }

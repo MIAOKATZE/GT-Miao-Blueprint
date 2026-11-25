@@ -36,10 +36,10 @@ final class HologramUiSession {
     void installLocalDocument(HologramLocalBlueprintDocument document, HologramState initial) {
         HologramScreen root = ui.host.parent();
         if (root == null || !initial.data.getBoolean("localBlueprintDocument")) return;
-        HologramLocalBlueprintDocument previous=root.ui.session.document;
+        HologramLocalBlueprintDocument previous = root.ui.session.document;
         root.updateState(initial);
         root.ui.session.document = document;
-        if(previous!=null&&previous!=document)previous.closeNative();
+        if (previous != null && previous != document) previous.closeNative();
     }
 
     void publishLocalDocument(HologramLocalBlueprintDocument document, HologramState next) {
@@ -315,12 +315,23 @@ final class HologramUiSession {
         return editOwnerReady() && !this.state.data.getBoolean("capturePending");
     }
 
+    /** Whole native construction may use the sealed target before alternative choices are populated. */
+    boolean nativeConstructionEditable(NBTTagCompound settings) {
+        if (editable()) return true;
+        HologramScreen root = ui.host == null ? null : ui.host.parent();
+        return editOwnerReady() && root != null
+            && root.localConfigurationCurrent(ui)
+            && HologramPlacementConfirmation.wholeNativeTargetReady(state, settings, root.hasLocalNativeChoices());
+    }
+
     /** Local preferences/declared parameters are not a full-geometry or server-admission operation. */
     boolean configurationEditable() {
         if (editable()) return true;
         HologramScreen root = ui.host == null ? null : ui.host.parent();
-        return editOwnerReady() && !controllerOpening() && state.data.getBoolean("capturePending")
-            && root != null && root.localConfigurationCurrent(ui);
+        return editOwnerReady() && !controllerOpening()
+            && state.data.getBoolean("capturePending")
+            && root != null
+            && root.localConfigurationCurrent(ui);
     }
 
     private boolean editOwnerReady() {
@@ -343,7 +354,8 @@ final class HologramUiSession {
     boolean selectedNativeEditable() {
         if (editable()) return selectedCell() != null;
         HologramScreen root = ui.host == null ? null : ui.host.parent();
-        return editOwnerReady() && state.data.getBoolean("capturePending") && root != null
+        return editOwnerReady() && state.data.getBoolean("capturePending")
+            && root != null
             && root.earlyControllerRowReady(ui);
     }
 
@@ -357,7 +369,27 @@ final class HologramUiSession {
 
     NBTTagCompound cellTag() {
         HologramState.Cell cell = selectedCell();
-        return cell == null ? new NBTTagCompound() : cell.tag();
+        return cell == null ? new NBTTagCompound() : cell.inspectionTag();
+    }
+
+    java.util.List<String> candidateRoles() {
+        HologramState.Cell cell = selectedCell();
+        return cell == null ? java.util.Collections.emptyList() : cell.candidateRoles();
+    }
+
+    int[] candidateTiers() {
+        HologramState.Cell cell = selectedCell();
+        return cell == null ? new int[0] : cell.candidateTiers();
+    }
+
+    int[] candidateAvailable() {
+        HologramState.Cell cell = selectedCell();
+        return cell == null ? new int[0] : cell.candidateAvailable();
+    }
+
+    int[] hatchFacings() {
+        HologramState.Cell cell = selectedCell();
+        return cell == null ? new int[0] : cell.hatchFacings();
     }
 
     String editingReason() {
@@ -384,7 +416,8 @@ final class HologramUiSession {
             return;
         }
         if (controllerOpening()) return;
-        if (ui.library.openingLocalSource() && !"close".equals(op) && !"cancelSourceSwitch".equals(op)
+        if (ui.library.openingLocalSource() && !"close".equals(op)
+            && !"cancelSourceSwitch".equals(op)
             && !"switchEditorWorkspace".equals(op)) return;
         HologramScreen localRoot = ui.host == null ? null : ui.host.parent();
         if (localRoot != null
@@ -437,10 +470,13 @@ final class HologramUiSession {
             }
         }
         if (state.data.getBoolean("localStandardController")) {
+            if (localRoot != null && "clearHatchPreset".equals(op)) {
+                localRoot.clearNativePreset();
+                return;
+            }
             if (localRoot != null && "configure".equals(op) && request != null) {
                 if (request.getBoolean("applyHatchPreset")) {
-                    if (editable() && localRoot.localMaterialOwnerCurrent(ui))
-                        HologramClient.prepareControllerHatchPreset(state, request);
+                    if (editable() && localRoot.localMaterialOwnerCurrent(ui)) localRoot.applyNativePreset(request);
                     else notice("控制器或手持投影仪已变化，请重新打开结构。");
                 } else if (configurationEditable()) localRoot.refreshLocalController(request);
             }

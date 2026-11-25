@@ -16,15 +16,83 @@ final class HologramPlacementConfirmation {
 
     private HologramPlacementConfirmation() {}
 
-    /** A visible native projection is not a complete construction target. */
+    /** Without a frozen construction scope, require all interaction details. */
     static String localStructureReviewBlocker(HologramState state) {
+        return localStructureReviewBlocker(state, null, true);
+    }
+
+    static String localStructureReviewBlocker(HologramState state, NBTTagCompound settings, boolean localEdits) {
         NBTTagCompound data = state.data;
         if (!data.getBoolean("localStandardController")) return "";
-        if (data.getBoolean("localStructureUnavailable") || !data.getBoolean("supported")) return projectorOr("stock.unavailable", "当前控制器没有可用于施工的原生结构。");
-        if (data.getBoolean("capturePending") || !data.getBoolean("projectionDataComplete")) return projectorOr("stock.reading_structure", "正在采集结构，请稍候。");
-        if (data.getBoolean("localPlanPending")) return projectorOr("stock.updating_plan", "施工计划正在更新，请稍候。");
+        if (data.getBoolean("localStructureUnavailable") || !data.getBoolean("supported"))
+            return projectorOr("stock.unavailable", "当前控制器没有可用于施工的原生结构。");
+        if (data.getBoolean("localPlanPending")) return projectorOr("stock.updating_plan", "正在更新计划");
+        if (finishedWholeNativePlacement(state, settings, localEdits))
+            return projectorOr("stock.already_built", "结构已建成。");
+        if ((data.getBoolean("capturePending") || !data.getBoolean("projectionDataComplete"))
+            && !wholeNativeTargetReady(state, settings, localEdits))
+            return projectorOr("stock.reading_structure", "结构未就绪");
         if (state.cells.isEmpty()) return projectorOr("stock.no_structure_cells", "当前控制器没有可用于施工的结构格。");
         return "";
+    }
+
+    static boolean finishedWholeNativePlacement(HologramState state, NBTTagCompound settings, boolean localEdits) {
+        return state.data.getBoolean("nativeBuildSatisfied") && wholeNativeScope(state.data, settings);
+    }
+
+    private static boolean wholeNativeScope(NBTTagCompound state, NBTTagCompound settings) {
+        return settings != null && state.getBoolean("localStandardController")
+            && state.getInteger("mode") == 0
+            && settings.hasKey("mode", 3)
+            && settings.getInteger("mode") == 0
+            && settings.hasKey("scope", 3)
+            && settings.getInteger("scope") == 0
+            && settings.getIntArray("selectedIndices").length == 0
+            && settings.getString("structureId")
+                .isEmpty()
+            && (!state.getBoolean("presetActive") || state.getBoolean("nativePresetExact"));
+    }
+
+    /** Candidate enrichment does not change the sealed target or its construction ledger. */
+    static boolean wholeNativeTargetReady(HologramState state, NBTTagCompound settings, boolean localEdits) {
+        NBTTagCompound data = state.data;
+        return !localEdits && wholeNativeScope(data, settings)
+            && !data.getBoolean("presetActive")
+            && data.getBoolean("target")
+            && data.getBoolean("supported")
+            && !data.getBoolean("virtual")
+            && !data.getBoolean("controllerOpening")
+            && !data.getBoolean("targetClosed")
+            && !data.getBoolean("localStructureUnavailable")
+            && !data.getBoolean("localPlanPending")
+            && data.hasKey("siteOccupied", 3)
+            && data.hasKey("siteUnknown", 3)
+            && data.getInteger("siteUnknown") == 0
+            && (!data.hasKey("siteNativeUnknown", 3) || data.getInteger("siteNativeUnknown") == 0)
+            && !state.cells.isEmpty()
+            && state.controllerMaterialCounts != null
+            && state.localMaterialIndex != null
+            && state.localMaterialIndex.current();
+    }
+
+    /** A candidate-only publication may replace cell wrappers, but never the captured target and ledger. */
+    static boolean sameWholeNativeTarget(HologramState before, HologramState now) {
+        if (before == null || now == null
+            || before.controllerMaterialCounts == null
+            || before.localMaterialIndex == null
+            || before.controllerMaterialCounts != now.controllerMaterialCounts
+            || before.localMaterialIndex != now.localMaterialIndex
+            || !before.session.equals(now.session)
+            || before.cells.size() != now.cells.size()) return false;
+        NBTTagCompound from = before.data, to = now.data;
+        String key = from.getString("generation");
+        return !key.isEmpty() && key.equals(to.getString("generation"))
+            && from.getLong("planRevision") == to.getLong("planRevision")
+            && from.getBoolean("mainExplicit") == to.getBoolean("mainExplicit")
+            && from.getInteger("dimension") == to.getInteger("dimension")
+            && from.getInteger("x") == to.getInteger("x")
+            && from.getInteger("y") == to.getInteger("y")
+            && from.getInteger("z") == to.getInteger("z");
     }
 
     static boolean lockedBlueprint(NBTTagCompound state) {
