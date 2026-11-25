@@ -145,6 +145,7 @@ final class HologramStockNativeServer {
                 (stop ? stops : inbound).addLast(waiting);
                 enqueued = true;
             }
+            if (probe || begin) HologramStockActionTrace.event("server.queued", request.key(), request.command().name());
             return true;
         } finally {
             if (!enqueued) slot.close();
@@ -432,6 +433,7 @@ final class HologramStockNativeServer {
         if (!HologramWorkspace.currentActionEndpoint(endpoint)) return;
         try {
             sink.send(endpoint, reply);
+            if (reply.phase() != Phase.ACTIVE) HologramStockActionTrace.event("server.reply", reply.key(), reply.phase().name());
         } catch (RuntimeException | LinkageError unavailable) {
             // Status is not transaction authority. The same owner can query a settled/active result.
         }

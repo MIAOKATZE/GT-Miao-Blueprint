@@ -58,6 +58,31 @@ public final class HologramStockNativeClientRegression {
     public static void run() throws ReflectiveOperationException {
         var unsafe = (sun.misc.Unsafe) field(sun.misc.Unsafe.class, "theUnsafe").get(null);
         var client = (Minecraft) unsafe.allocateInstance(Minecraft.class);
+        Field instance = field(Minecraft.class, "theMinecraft");
+        Object previousClient = instance.get(null);
+        Block savedCasing = GregTechAPI.sBlockCasings12, savedMachines = GregTechAPI.sBlockMachines;
+        instance.set(null, client);
+        try {
+            // This offline launcher has no GT access transformer for the graphical tooltip reload-listener.
+            // FML 1.7.10 getEffectiveSide uses this name; only initialize that superclass as on a dedicated
+            // server, then restore the actual client side before constructing any UI or dispatching any click.
+            Thread bootstrap = Thread.currentThread();
+            String priorName = bootstrap.getName();
+            try {
+                bootstrap.setName("Server thread");
+                Class.forName("gregtech.api.metatileentity.implementations.MTETooltipMultiBlockBase", true,
+                    HologramStockNativeClientRegression.class.getClassLoader());
+            } finally { bootstrap.setName(priorName); }
+            field(Minecraft.class, "mcResourceManager").set(client,
+                new net.minecraft.client.resources.SimpleReloadableResourceManager(
+                    new net.minecraft.client.resources.data.IMetadataSerializer()));
+            if (savedCasing == null) GregTechAPI.sBlockCasings12 = (gregtech.common.blocks.BlockCasings12) unsafe.allocateInstance(gregtech.common.blocks.BlockCasings12.class);
+            if (savedMachines == null) GregTechAPI.sBlockMachines = Blocks.iron_block;
+            runPanel(unsafe, client);
+        } finally { GregTechAPI.sBlockCasings12 = savedCasing; GregTechAPI.sBlockMachines = savedMachines; instance.set(null, previousClient); }
+    }
+
+    private static void runPanel(sun.misc.Unsafe unsafe, Minecraft client) throws ReflectiveOperationException {
         var world = (CokeWorld) unsafe.allocateInstance(CokeWorld.class);
         var player = (EntityClientPlayerMP) unsafe.allocateInstance(EntityClientPlayerMP.class);
         var connection = (NetHandlerPlayClient) unsafe.allocateInstance(NetHandlerPlayClient.class);
@@ -110,6 +135,8 @@ public final class HologramStockNativeClientRegression {
         metadata.setBoolean("supported", true);
         metadata.setBoolean("target", true);
         metadata.setBoolean("projectionDataComplete", true);
+        metadata.setInteger("siteOccupied", 0);
+        metadata.setInteger("siteMatchingSolid", 0);
         metadata.setInteger("main", 1);
         metadata.setInteger("facing", controller.getExtendedFacing().ordinal());
         var row = new NBTTagCompound();
@@ -136,13 +163,35 @@ public final class HologramStockNativeClientRegression {
             reply, inbound, HologramClientStockNative.context(client), System.nanoTime()));
         try {
             SimpleAssert.that(ui.preview.activateControl(26) && ui.review.localFrame() != null
-                && ui.review.localFrame().scope().contains("ULV") && recorded.sent.isEmpty(),
-                "existing material page displays its exact stock hatch, with no preview/material request");
+                && ui.review.localFrame().scope().contains("现场") && ui.review.localSubmitLabel().equals("确认新建")
+                && recorded.sent.isEmpty(),
+                "bare-site confirmation uses the declaration and remains local, without calling the retired coke profile");
             SimpleAssert.that(!screen.reviewLocalConstruction(ui.config.configuration()) && recorded.sent.isEmpty(),
                 "former direct/default scan/preflight cannot masquerade as visible confirmation");
+            NBTTagCompound pending = new NBTTagCompound();
+            pending.setBoolean("currentPlacementPending", true);
+            field(HologramUiSession.class, "state").set(ui.session, displayed.withMetadata(pending));
+            SimpleAssert.that(!ui.review.localSubmitAvailable(), "pending submission must be blocked");
+            ui.review.localSubmitDenied();
+            SimpleAssert.that(ui.review.localFrame().status().contains("等待") && recorded.sent.isEmpty(),
+                "blocked confirm explains current request, no network bytes");
+            field(HologramUiSession.class, "state").set(ui.session, displayed);
+            ui.review.closeLocalMaterials();
+            SimpleAssert.that(ui.review.openNativeLocalMaterials(), "reopen the official pane after the pending request clears");
             clickExistingSubmit(ui);
             SimpleAssert.that(recorded.sent.size() == 1 && command(recorded.sent.get(0)) == Command.PROBE,
                 "actual existing material button emits exactly one cold proof request and no eager BEGIN");
+            var hudOnly = new NBTTagCompound();
+            hudOnly.setString("status", "fixture HUD update");
+            field(HologramUiSession.class, "state").set(ui.session, displayed.withMetadata(hudOnly));
+            // Forge may publish another identical stack instance for the same slot/tool. Neither is a new authority.
+            player.inventory.mainInventory[0] = projector.copy();
+            var changed = new NBTTagCompound();
+            changed.setLong("planRevision", displayed.data.getLong("planRevision") + 1);
+            SimpleAssert.that(HologramScreen.sameNativeReview(displayed, ui.session.state())
+                && !HologramScreen.sameNativeReview(displayed, displayed.withMetadata(changed))
+                && !HologramScreen.sameNativeReview(displayed, new HologramState(metadata)),
+                "HUD-only state is admissible; different plan revision or new geometry is not");
             Key cold = key(recorded.sent.get(0), 71);
             var proof = new Reply(cold, Phase.CAPABLE, 0, "");
             deliver(proof, other);

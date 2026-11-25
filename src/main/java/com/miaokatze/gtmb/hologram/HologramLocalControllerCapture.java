@@ -74,6 +74,7 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
     private HologramChannelTrace.Report report;
     private NBTTagList publishedCapabilities;
     private boolean geometryReady;
+    private final long openedAt = System.nanoTime();
     private StructureSources.ReadSet reuseProof;
     private boolean complete;
 
@@ -270,6 +271,15 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
         NBTTagCompound metadata = opening();
         if (!alreadyDetached) site.publish(metadata);
         if (nativePreview != null) metadata.setTag("structureDescription", nativePreview.description());
+        if (!alreadyDetached) {
+            com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.info(
+                "Controller preview stage=capture generation={} source={} declaredPieces={} survivalPasses={} lastSurvivalResult={} creativeDisplayOnly={} targetWithAnchor={} observedNonAir={} unknown={} elapsedMs={}",
+                generation, metadata.getString("sourceClass"), capture == null ? -1 : capture.pieces.size(),
+                nativePreview == null ? 0 : nativePreview.passes(),
+                nativePreview == null || nativePreview.nativeResult() == Integer.MIN_VALUE ? "n/a" : Integer.toString(nativePreview.nativeResult()),
+                nativePreview == null ? 0 : nativePreview.extraDisplayCells(), targetCells.size(),
+                metadata.getInteger("siteOccupied"), metadata.getInteger("siteUnknown"), (System.nanoTime() - openedAt) / 1_000_000L);
+        }
         HologramControllerMaterialCounts materials = targetMaterials.seal();
         targetMaterials = null;
         return new HologramControllerTarget.Projection(metadata, targetCells, materials);
@@ -481,7 +491,7 @@ public final class HologramLocalControllerCapture implements AutoCloseable {
                 constructable,
                 structureCompat,
                 previewTrigger(null, settings),
-                controllerId >= 0 ? this::createNativeController : null);
+                this::createNativeController, facing);
         }
         if (!nativePreview.advance(deadline)) return false;
         nativePlacements = nativePreview.placements();

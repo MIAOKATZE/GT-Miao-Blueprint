@@ -15,6 +15,7 @@ import net.minecraft.world.World;
 
 import com.github.bsideup.jabel.Desugar;
 import com.miaokatze.gtmb.hologram.HologramNetwork;
+import com.miaokatze.gtmb.hologram.HologramStockActionTrace;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.Command;
 import com.miaokatze.gtmb.hologram.HologramStockNativeWire.EbfHatch;
@@ -113,8 +114,7 @@ public final class HologramClientStockNative {
                 && equals(read(world, controller));
         }
 
-        String description() { return "按原生声明补建，保留现场已匹配的方块和仓室"; }
-        String submitLabel() { return "确认原生补建 · 仅按缺位扣料"; }
+        String description() { return "保留现场已匹配的方块和仓室"; }
     }
 
     private static final class Attempt {
@@ -135,7 +135,7 @@ public final class HologramClientStockNative {
             return switch (original.declaration().operation()) {
                 case 1 -> "原生换装";
                 case 2 -> "原生拆除";
-                default -> "原生补建";
+                default -> "原生施工";
             };
         }
         boolean beginSent, afterProbe, stopSent, uncertain;
@@ -174,7 +174,8 @@ public final class HologramClientStockNative {
             if (context.same(known) && generation > 0) return begin(attempt, generation, false, now);
             try {
                 if (wire.probe(original)) {
-                    owner.notice.accept("正在确认服务器支持此短请求；还未开始施工。");
+                    HologramStockActionTrace.event("client.sent", original.key(), "PROBE");
+                    owner.notice.accept("已发送施工查询，等待服务器确认。");
                     return true;
                 }
             } catch (HologramStockNativeWire.InvalidConfirmation invalid) {
@@ -215,6 +216,7 @@ public final class HologramClientStockNative {
                 reportUnknown(attempt);
                 return true;
             }
+            HologramStockActionTrace.event("client.sent", issued.key(), afterProbe ? "BEGIN_AFTER_PROBE" : "BEGIN");
             attempt.owner.notice.accept("已提交" + attempt.operationLabel() + "请求，等待服务器确认。");
             return true;
         }
@@ -225,6 +227,7 @@ public final class HologramClientStockNative {
             if (attempt == null || current.handler != from || !attempt.context.same(current)
                 || !attempt.original.key().request().equals(reply.key().request())
                 || attempt.original.key().sequence() != reply.key().sequence()) return;
+            if (reply.phase() != Phase.ACTIVE) HologramStockActionTrace.event("client.reply", reply.key(), reply.phase().name());
             if (!attempt.beginSent) {
                 if (now >= attempt.deadline || !attempt.owner.visible.getAsBoolean()) {
                     active = null;

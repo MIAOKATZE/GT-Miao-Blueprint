@@ -89,7 +89,17 @@ public final class HologramLibraryNativeConversionRegression {
             var nativeBefore=NativeBlueprintPairStore.receipt(store.directory(),N);
             // Paired and visible, but the sidecar no longer belongs to BAD. The failure must retain its original.
             Path invalid=put(store,BAD,"minecraft:stone");
+            byte[] goodCover = Files.readAllBytes(HologramBlueprintArtifact.previewPath(invalid));
             Files.write(HologramBlueprintArtifact.previewPath(invalid),new byte[]{1,2,3});
+            // Same shape as the real library: five missing legacy index targets; one stale alias is
+            // shadowed by a valid native receipt for N. No user assets or game process involved.
+            Path index = store.directory().resolve(".gtmb-blueprint-files.properties");
+            java.util.Properties mappings = new java.util.Properties();
+            if (Files.exists(index)) try (var input = Files.newInputStream(index)) { mappings.load(input); }
+            for (int i=20;i<25;i++) mappings.setProperty(id(i),"missing-"+i+".json");
+            mappings.setProperty(N, "removed-original-native-N.json");
+            try (var out = Files.newOutputStream(index)) { mappings.store(out, "fixture"); }
+            byte[] initialIndex = Files.readAllBytes(index);
             byte[] old=Files.readAllBytes(original),png=Files.readAllBytes(HologramBlueprintArtifact.previewPath(original)),otherOld=Files.readAllBytes(other);
             Path excluded=store.directory().resolve("public_00000000-0000-0000-0000-000000000001.json"), unpaired=store.directory().resolve("unpaired.json");
             Files.copy(original,excluded); Files.copy(HologramBlueprintArtifact.previewPath(original),HologramBlueprintArtifact.previewPath(excluded)); Files.copy(original,unpaired);
@@ -114,13 +124,57 @@ public final class HologramLibraryNativeConversionRegression {
             check(Arrays.equals(old,Files.readAllBytes(original))&&Arrays.equals(png,Files.readAllBytes(HologramBlueprintArtifact.previewPath(original))),"source pair byte-identical");
             ui.library.nativeBindRow(0,row(owner,B));ui.router.activate(14000);ui.library.confirmConversionPrompt(true);idle(mc,owner);
             check(row(owner,B).getBoolean("nativeFile")&&row(owner,C).getBoolean("nativeFile")&&!row(owner,BAD).getBoolean("nativeFile"),"all converts B+C, retains failed source");
-            check(owner.upgradeDetails().size()==1&&owner.upgradeDetails().get(0).contains(BAD),"failure visibly identifies file");
+            check(owner.upgradeDetails().size()==1&&owner.upgradeDetails().get(0).contains(BAD),"only the genuinely bad pair fails, not the five stale mappings");
+            check(HologramBackgroundTasks.status().contains("部分完成") && !HologramBackgroundTasks.succeeded(),
+                "true mixed publication is shown as partial, not all failed or all successful");
             check(NativeBlueprintPairStore.sameReceipt(nativeBefore,NativeBlueprintPairStore.receipt(store.directory(),N))&&Arrays.equals(otherOld,Files.readAllBytes(other)),"already native skipped, original B retained");
             Path next=put(store,id(6),"minecraft:stone");owner.refreshLocal();idle(mc,owner);
             ui.library.activateControl(226);idle(mc,owner);
             check(row(owner,id(6)).getBoolean("nativeFile")&&Files.isRegularFile(next),"library-wide control uses same whole-library converter");
             check(Files.exists(excluded)&&Arrays.equals(old,Files.readAllBytes(excluded))&&Arrays.equals(old,Files.readAllBytes(unpaired))
                 &&Arrays.equals(new byte[]{1,2,3},Files.readAllBytes(HologramBlueprintArtifact.previewPath(invalid))),"public, unpaired, failed original content not rewritten");
+            // Retry with just a genuine failure; then repair the synthetic sidecar and retry through the same header.
+            ui.library.activateControl(226);idle(mc,owner);
+            check(!HologramBackgroundTasks.succeeded() && HologramBackgroundTasks.status().contains("失败")
+                && !HologramBackgroundTasks.status().contains("部分完成") && owner.upgradeDetails().size()==1,
+                "all newly attempted work failed, no bogus partial/success");
+            Files.write(HologramBlueprintArtifact.previewPath(invalid), goodCover);
+            ui.library.activateControl(226);idle(mc,owner);
+            check(HologramBackgroundTasks.succeeded() && owner.upgradeDetails().isEmpty() && row(owner,BAD).getBoolean("nativeFile"),
+                "after actual repair, only stale legacy aliases remain; normal status is success and card refreshes");
+            Path nativeIndex = store.directory().resolve(".gtmb-native-catalog.properties");
+            var time = Files.getLastModifiedTime(nativeIndex);
+            byte[] catalog = Files.readAllBytes(nativeIndex);
+            ui.library.activateControl(226);idle(mc,owner);
+            var report = new HologramClientLibrary.ConversionReport();
+            store.convertAllLocal(()->true,(i,n)->{},report);
+            check(report.stale==5 && report.skipped==6 && report.requested==11
+                && report.validated==0 && report.converted==0 && report.problems.isEmpty()
+                && HologramBackgroundTasks.succeeded() && time.equals(Files.getLastModifiedTime(nativeIndex))
+                && Arrays.equals(catalog,Files.readAllBytes(nativeIndex)) && Arrays.equals(initialIndex,Files.readAllBytes(index))
+                && NativeBlueprintPairStore.sameReceipt(nativeBefore,NativeBlueprintPairStore.receipt(store.directory(),N))
+                && row(owner,N).getBoolean("nativeFile"),"repeated bulk skip only; native beats shadowed stale mapping, neither index rewritten");
+            // A legacy mapping is stale only when neither side exists. A remaining PNG is evidence,
+            // not garbage. Do not lose it or include its absolute location in any completion message.
+            Path orphanCover = store.directory().resolve("missing-20.png");
+            Files.write(orphanCover,goodCover);
+            ui.library.activateControl(226);idle(mc,owner);
+            check(!HologramBackgroundTasks.succeeded() && owner.upgradeDetails().size()==1
+                && owner.upgradeDetails().get(0).contains("missing-20.json")
+                && !HologramBackgroundTasks.status().contains("missing-20")
+                && !owner.upgradeDetails().get(0).contains(root.toString())
+                && Arrays.equals(goodCover,Files.readAllBytes(orphanCover)),"orphan cover is a real error, safe detailed identity, intact file");
+            check(!HologramClientLibrary.conversionReason(new java.nio.file.AccessDeniedException(
+                orphanCover.toString())).contains(root.toString()) && !HologramClientLibrary.conversionReason(
+                new java.io.IOException("读取失败："+orphanCover)).contains(root.toString()),"OS path never copied into error message");
+            Files.delete(orphanCover);
+            // Absence of an active native source is real corruption, unlike the five historical missing JSON pointers.
+            Files.delete(nativeBefore.source);
+            ui.library.activateControl(226);idle(mc,owner);
+            check(!HologramBackgroundTasks.succeeded() && owner.upgradeDetails().size()==1
+                && owner.upgradeDetails().get(0).contains(nativeBefore.source.getFileName().toString()),
+                "broken native receipt is not silently treated as a stale legacy pointer");
+            System.out.println("PASS stale index classification, precise success/partial/failure, preserved active native precedence and idempotent retries.");
             System.out.println("PASS native library settings: gray row/no open, cancel, clicked-ID vs typed-ID, native no-op, cold open + unchanged originals, all legacy + partial failure, whole-library action.");
         }finally{
             singleton.set(null,previous);

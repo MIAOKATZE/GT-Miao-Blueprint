@@ -208,9 +208,14 @@ public final class HologramBlueprintFiles {
 
     /** Ordinary catalog reads enumerate candidates without adopting or validating artifact pairs. */
     public static synchronized Map<String, Path> displayCandidates(Path directory) throws IOException {
-        Path root = directory.toAbsolutePath()
-            .normalize();
-        Map<String, Path> result = managed(root, "local_");
+        return displayCandidates(directory, null);
+    }
+
+    /** Mark legacy-index provenance, without another disk/index read per candidate. Active native receipts win. */
+    public static synchronized Map<String, Path> displayCandidates(Path directory, java.util.Set<Path> indexedLegacy)
+        throws IOException {
+        Path root = directory.toAbsolutePath().normalize();
+        Map<String, Path> result = managed(root, "local_", indexedLegacy);
         java.util.Set<Path> known = new java.util.HashSet<>(result.values());
         try (java.nio.file.DirectoryStream<Path> files = Files.newDirectoryStream(root, "*.json")) {
             for (Path path : files) {
@@ -269,6 +274,11 @@ public final class HologramBlueprintFiles {
     }
 
     private static synchronized Map<String, Path> managed(Path directory, String prefix) throws IOException {
+        return managed(directory, prefix, null);
+    }
+
+    private static Map<String, Path> managed(Path directory, String prefix, java.util.Set<Path> indexedLegacy)
+        throws IOException {
         Path root = directory.toAbsolutePath()
             .normalize();
         Files.createDirectories(root);
@@ -281,6 +291,7 @@ public final class HologramBlueprintFiles {
             if (result.containsKey(id) || NativeBlueprintPairStore.inactive(root, path)) continue;
             if (result.containsValue(path)) throw new IOException("Duplicate blueprint filename mapping");
             result.put(id, path);
+            if (indexedLegacy != null) indexedLegacy.add(path);
         }
         try (java.nio.file.DirectoryStream<Path> files = Files.newDirectoryStream(root, prefix + "*.json")) {
             for (Path file : files) {

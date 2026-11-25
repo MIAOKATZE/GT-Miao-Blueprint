@@ -41,6 +41,7 @@ public final class HologramBackgroundTasks {
             completion = noWork ? "无需施工" + (detail == null || detail.isEmpty() ? "" : "：" + detail)
                 : label
                 + (succeeded ? "已完成"
+                    : result == HologramTaskOwner.Result.PARTIAL ? "部分完成"
                     : result == HologramTaskOwner.Result.REVIEW_REQUIRED ? "等待确认"
                         : result == HologramTaskOwner.Result.CANCELLED ? "已取消" : "失败")
                 + (detail == null || detail.isEmpty() ? "" : "：" + detail);
@@ -343,17 +344,8 @@ public final class HologramBackgroundTasks {
         return token;
     }
 
-    static void finishLibrary(long token, boolean success, String detail) {
-        finishLibrary(token, success, detail, false);
-    }
-
-    static void finishLibrary(long token, boolean success, String detail, boolean cancelled) {
-        if (!"library".equals(OWNER.kind())) return;
-        OWNER.finish(
-            token,
-            success ? HologramTaskOwner.Result.SUCCESS
-                : cancelled ? HologramTaskOwner.Result.CANCELLED : HologramTaskOwner.Result.FAILURE,
-            detail);
+    static void finishLibrary(long token, HologramTaskOwner.Result result, String detail) {
+        if ("library".equals(OWNER.kind())) OWNER.finish(token, result, detail);
     }
 
     static void command(String sessionId, long sequence, String op) {

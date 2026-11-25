@@ -346,7 +346,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
     boolean reviewLocalConstruction(NBTTagCompound settings) {
         if (!localControllerStandard()) return false;
         String unavailable = nativeConstructionUnavailable(ui.session.state().data, settings, !localNativeChoices.isEmpty());
-        ui.session.notice(unavailable.isEmpty() ? "请在材料页确认原生补建；预览与扫描不发送施工请求。" : unavailable);
+        ui.session.notice(unavailable.isEmpty() ? "请在材料页确认施工。" : unavailable);
         return false;
     }
 
@@ -392,7 +392,10 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         }
         var context = HologramClientStockNative.context(client);
         long sequence = com.miaokatze.gtmb.hologram.HologramNetwork.nextConstructionIntentSequence();
-        if (sequence <= 0 || context == null) return false;
+        if (sequence <= 0 || context == null) {
+            ui.session.notice("未提交施工：服务器连接未就绪。");
+            return false;
+        }
         int picked = ui.preview.selection().version();
         int x = openingController.xCoord, y = openingController.yCoord, z = openingController.zCoord;
         ItemStack pinnedTool = held.copy();
@@ -401,24 +404,38 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         var original = com.miaokatze.gtmb.hologram.HologramStockNativeWire.Confirmation.declared(
             nonce, client.thePlayer.dimension, tool, x, y, z, localControllerSide, openingSlot, paneSite.facing(),
             main, displayed.data.getBoolean("mainExplicit"), settings.getBoolean("noHatches"), sourceKey, declaration);
+        com.miaokatze.gtmb.hologram.HologramStockActionTrace.event("client.admitted", nonce,
+            "operation=" + declaration.operation());
         var view = ui;
         java.util.function.BooleanSupplier visible = () -> minecraft().currentScreen == this && ui == view
             && localControllerStandard() && context.same(HologramClientStockNative.context(minecraft()));
         var owner = new HologramClientStockNative.Owner(this, () -> {
-            if (!visible.getAsBoolean() || ui.session.state() != displayed || !controllerContextCurrent(false)
+            HologramState currentState = ui.session.state();
+            if (!visible.getAsBoolean() || !ui.session.editable() || !sameNativeReview(displayed, currentState)
+                || !controllerContextCurrent(false)
                 || ui.preview.selection().version() != picked || openingController.xCoord != x
                 || openingController.yCoord != y || openingController.zCoord != z
-                || minecraft().thePlayer.getHeldItem() != held || !ItemStack.areItemStacksEqual(pinnedTool, held)) return false;
+                || !ItemStack.areItemStacksEqual(pinnedTool, minecraft().thePlayer.getHeldItem())) return false;
             NBTTagCompound active = ui.config.configuration();
             if (declaration.operation() == 2) active.setInteger("demolitionDestination", declaration.destination());
-            return stockNativeSources(active, com.miaokatze.gtmb.hologram.HologramMaterials.read(held))
+            return stockNativeSources(active, com.miaokatze.gtmb.hologram.HologramMaterials.read(minecraft().thePlayer.getHeldItem()))
                 && active.getInteger("main") == original.main()
                 && active.getBoolean("noHatches") == original.noHatches()
-                && ordinaryNativeSubmit(displayed.data, active, !localNativeChoices.isEmpty())
-                && declaration.equals(declaredSelection(paneSite.controllerId(), displayed, active, localNativeChoices))
+                && ordinaryNativeSubmit(currentState.data, active, !localNativeChoices.isEmpty())
+                && declaration.equals(declaredSelection(paneSite.controllerId(), currentState, active, localNativeChoices))
                 && paneSite.current(minecraft().theWorld);
         }, visible, view.session::notice, this::rescanDisplayedStructure);
         return HologramClientStockNative.OWNER.submit(original, context, owner, System.nanoTime());
+    }
+
+    /** HUD metadata may be republished while a PROBE is in flight. Never accept new geometry or planning authority. */
+    static boolean sameNativeReview(HologramState before, HologramState now) {
+        if (before == null || now == null || now.cells != before.cells || !before.session.equals(now.session)
+            || !now.data.getBoolean("localStandardController") || now.data.getBoolean("targetClosed")
+            || !HologramPlacementConfirmation.localStructureReviewBlocker(now).isEmpty()) return false;
+        return before.data.getString("generation").equals(now.data.getString("generation"))
+            && before.data.getLong("planRevision") == now.data.getLong("planRevision")
+            && before.data.getBoolean("mainExplicit") == now.data.getBoolean("mainExplicit");
     }
 
     static com.miaokatze.gtmb.hologram.HologramDeclaredNativeSelection declaredSelection(int controller,
@@ -647,6 +664,13 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG
                 .debug("Local controller standard structure unavailable", failure);
             String status = HologramClient.text("controllerLocalUnavailable", "此控制器没有可用的本地标准结构");
+            if (failure instanceof java.io.IOException && "LOCAL_NATIVE_PREVIEW_INCOMPLETE".equals(failure.getMessage())) {
+                boolean retained = localControllerPrevious != null && !localControllerPrevious.cells.isEmpty();
+                com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn(
+                    "Controller preview stage=capture-failed generation={} reason=LOCAL_NATIVE_PREVIEW_INCOMPLETE retainedPrevious={}",
+                    ui.session.state().data.getString("generation"), retained);
+                status = retained ? "原生声明未返回完整结构，已保留上一次预览" : "原生声明未返回完整结构，未显示不完整的预览";
+            }
             if (localControllerPrevious != null && !localControllerPrevious.cells.isEmpty()) {
                 updateState(localControllerPrevious.withMetadata(localControllerPreferences(ui.session.state().data)));
                 ui.session.notice(status);
@@ -781,7 +805,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             EarlyControllerEdit edit = entry.getValue();
             if (index < completed.cells.size() && edit.matches(completed.cells.get(index))) {
                 edits.appendTag(edit.row());
-                if ("manual".equals(edit.row().getString("pinScope")) || edit.row().getInteger("hatchFacing") >= 0)
+                if ("manual".equals(edit.row().getString("pinScope")) || edit.row().hasKey("hatchFacing", 3) && edit.row().getInteger("hatchFacing") >= 0)
                     localNativeChoices.add(index);
             } else changed = true;
         }

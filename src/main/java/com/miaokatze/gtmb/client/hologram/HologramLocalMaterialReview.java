@@ -27,6 +27,7 @@ final class HologramLocalMaterialReview {
     private final int selected, scope, layer;
     private final int[] selection;
     private final HologramControllerMaterialCounts captured;
+    final HologramLocalHatchDelta hatchDelta;
     private List<HologramLibraryMaterialDescription.Row> description;
     private int targetCount, unaccounted;
     private NBTTagCompound theory, visible = new NBTTagCompound();
@@ -49,6 +50,16 @@ final class HologramLocalMaterialReview {
         scope = settings.getInteger("scope");
         layer = settings.getInteger("layer");
         selection = this.settings.getIntArray("selectedIndices");
+        int mode = source.data.getInteger("mode");
+        hatchDelta = source.data.getBoolean("localStandardController") && (mode == 1 || mode == 2)
+            ? new HologramLocalHatchDelta(source, this.settings) : null;
+        if (hatchDelta != null) {
+            captured = null;
+            theory = hatchDelta.theory;
+            targetCount = hatchDelta.exchanges + hatchDelta.turns + hatchDelta.removals;
+            visible = stockRows(theory, null, -1);
+            return;
+        }
         captured = detailed && !source.data.getBoolean("capturePending") ? null : capturedCounts();
         if(source.nativeViewport!=null){
             var result=scope==2&&selection.length>1&&selectedMaterials!=null?selectedMaterials.materialResult(source):source.nativeViewport.material(scope,layer,selected,selection);
@@ -72,6 +83,7 @@ final class HologramLocalMaterialReview {
     }
 
     boolean current(HologramState state, int layer) {
+        if (hatchDelta != null) return !closed && source == state && this.layer == layer;
         if(source.nativeViewport!=null)return !closed&&source==state&&this.layer==layer&&source.nativeViewport.currentProviders();
         return !closed && (captured == null ? source.localMaterialIndex == state.localMaterialIndex
             && state.localMaterialIndex != null && state.localMaterialIndex.current() && !state.data.getBoolean("capturePending")
@@ -108,6 +120,7 @@ final class HologramLocalMaterialReview {
     }
 
     String status() {
+        if (hatchDelta != null) return hatchDelta.status();
         if (captured != null) return captured.total() + " 个目标格"
             + (captured.unlisted() == 0 ? "" : " · " + captured.unlisted() + " 格基材未列明")
             + " · 施工用量未核算";

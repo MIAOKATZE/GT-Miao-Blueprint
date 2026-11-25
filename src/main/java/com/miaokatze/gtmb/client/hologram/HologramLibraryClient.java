@@ -966,6 +966,11 @@ final class HologramLibraryClient {
         localProgressPhase = "library.disk";
         transferProgress.update("library:" + token, localProgressPhase, 0, 0, "steps", false, System.nanoTime());
         status = action;
+        String scope = selectedId == null ? "all" : "single";
+        com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.info("Blueprint upgrade task=" + upgrading.task
+            + " scope=" + scope + " phase=request");
+        HologramClientLibrary.ConversionReport report = new HologramClientLibrary.ConversionReport();
+        if (selectedId != null) report.requested = 1;
         work(() -> {
             java.util.function.BooleanSupplier current = () -> token == generation
                 && upgrading.task == backgroundTaskToken
@@ -977,11 +982,12 @@ final class HologramLibraryClient {
                 upgrading.progressedAt = System.nanoTime();
             };
             String result;
-            java.util.List<String> details = new java.util.ArrayList<>();
-            if (selectedId == null) result = store.convertAllLocal(current, progress, details);
-            else {
+            if (selectedId == null) {
+                store.convertAllLocal(current, progress, report);
+                result = report.summary();
+            } else {
                 progress.accept(0, 1);
-                result = store.commitSelectedNativeUpgrade(selectedId, current);
+                result = store.commitSelectedNativeUpgrade(selectedId, current, report);
                 progress.accept(1, 1);
             }
             main(() -> {
@@ -989,10 +995,11 @@ final class HologramLibraryClient {
                 upgradeTask = null;
                 preparing = false;
                 status = result;
-                upgradeDetails.addAll(details);
-                for (String detail : details) com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.warn("Legacy conversion: " + detail);
+                upgradeDetails.addAll(report.problems);
+                // File-level detail is available in the UI. Emit counts only, not user filenames or paths.
+                logUpgradeSummary(upgrading.task, scope, report, false);
                 progressCompleted();
-                finishBackgroundTask(backgroundTaskToken, details.isEmpty(), result);
+                finishBackgroundTask(upgrading.task, report.outcome(), result);
                 refreshLocal();
                 if (refreshCatalog != null) refreshCatalog.run();
             });
@@ -1000,9 +1007,25 @@ final class HologramLibraryClient {
             if (token != generation || upgrading.task != backgroundTaskToken || upgradeTask != upgrading) return;
             upgradeTask = null;
             preparing = false;
-            status = action + "：" + HologramUiText.reason(error.getMessage());
-            finishBackgroundTask(upgrading.task, false, status);
+            String reason = HologramClientLibrary.conversionReason(error);
+            status = action + "：" + reason;
+            report.problems.add(reason);
+            upgradeDetails.addAll(report.problems);
+            if (report.converted != 0) status = report.summary();
+            logUpgradeSummary(upgrading.task, scope, report, true);
+            finishBackgroundTask(upgrading.task, report.outcome(), status);
+            refreshLocal();
+            if (refreshCatalog != null) refreshCatalog.run();
         });
+    }
+
+    private static void logUpgradeSummary(long task, String scope, HologramClientLibrary.ConversionReport report,
+        boolean aborted) {
+        com.miaokatze.gtmb.main.GTMiaoBlueprint.LOG.info("Blueprint upgrade task=" + task + " scope=" + scope
+            + " phase=complete outcome=" + report.outcome().name().toLowerCase(java.util.Locale.ROOT)
+            + " requested=" + report.requested + " validated=" + report.validated + " committed=" + report.converted
+            + " skipped=" + report.skippedTotal() + " stale=" + report.stale + " failed=" + report.problems.size()
+            + " aborted=" + aborted);
     }
 
     void upgradeServer(Runnable refreshCatalog) {
@@ -1412,16 +1435,21 @@ final class HologramLibraryClient {
     }
 
     private void finishBackgroundTask(long token, boolean success, String detail, boolean cancelled) {
+        finishBackgroundTask(token, success ? HologramTaskOwner.Result.SUCCESS
+            : cancelled ? HologramTaskOwner.Result.CANCELLED : HologramTaskOwner.Result.FAILURE, detail);
+    }
+
+    private void finishBackgroundTask(long token, HologramTaskOwner.Result result, String detail) {
         if (token == 0 || token != backgroundTaskToken) return;
         SaveCommand completed = draftSave;
-        lifecycle(success ? "success" : cancelled ? "cancelled" : "failure", true);
+        lifecycle(result.name().toLowerCase(java.util.Locale.ROOT), true);
         preparationProgress.clear();
         backgroundTaskToken = 0;
         localDisplayTask = false;
         quickPreview = false;
         draftSave = null;
         savePreviewPose = null;
-        HologramBackgroundTasks.finishLibrary(token, success, detail, cancelled);
+        HologramBackgroundTasks.finishLibrary(token, result, detail);
         Minecraft mc = Minecraft.getMinecraft();
         if (completed != null && mc != null && mc.currentScreen instanceof HologramScreen screen)
             screen.ui.session.libraryTaskFinished(completed.session, completed.sequence, token, detail);

@@ -88,7 +88,8 @@ mapOf(
     "runLiveControllerSiteTest" to "com.miaokatze.gtmb.hologram.HologramLiveControllerSiteRegression",
     "runMaterialNamesTest" to "com.miaokatze.gtmb.client.hologram.HologramMaterialNamesRegression",
     "runNativeFirstSaveTest" to "com.miaokatze.gtmb.client.hologram.HologramNativeViewportRegression",
-    "runNativeLibraryConversionTest" to "com.miaokatze.gtmb.client.hologram.HologramLibraryNativeConversionRegression"
+    "runNativeLibraryConversionTest" to "com.miaokatze.gtmb.client.hologram.HologramLibraryNativeConversionRegression",
+    "runNativeRendererReleaseTest" to "com.miaokatze.gtmb.client.hologram.HologramNativeRendererReleaseRegression"
 ).forEach { (taskName, entryPoint) ->
     tasks.register<JavaExec>(taskName) {
         group = "verification"

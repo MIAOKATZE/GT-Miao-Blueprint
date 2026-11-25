@@ -93,6 +93,7 @@ public final class HologramLiveControllerSiteRegression {
                     "detail publication does not overwrite live evidence");
             }
         }
+        verifyLarge();
         // Real GT meta tile with a live attached energy hatch. Vanilla furnace is the offline TE-capable host block.
         var uf = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
         uf.setAccessible(true);
@@ -140,6 +141,111 @@ public final class HologramLiveControllerSiteRegression {
             NBTTagCompound observed = new NBTTagCompound(); site.publish(observed);
             SimpleAssert.eq(meta == 4 ? 2 : 0, observed.getCompoundTag("siteChannels").getInteger("sample_channel"),
                 "real StructureLib channel tier; inconsistent physical observations never report a value");
+        }
+    }
+
+    /** A survival element rejects further work halfway through a 100 x 10 x 20 declaration. */
+    public static final class LargeController extends TileEntity
+        implements com.gtnewhorizon.structurelib.alignment.constructable.ISurvivalConstructable {
+        static boolean unsupported, emptyNative;
+        @Override public int survivalConstruct(ItemStack signal, int budget,
+            com.gtnewhorizon.structurelib.structure.ISurvivalBuildEnvironment env) {
+            if (unsupported) return -2;
+            if (worldObj.getBlock(xCoord - 50, yCoord + 1, zCoord - 10) != Blocks.air) return 0;
+            for (int i = 0; i < 10000; i++)
+                worldObj.setBlock(xCoord + i % 100 - 50, yCoord + i / 2000 + 1, zCoord + (i / 100) % 20 - 10,
+                    i == 0 ? Blocks.furnace : Blocks.wool, i == 0 ? 4 : 3, 3);
+            return 10000;
+        }
+        @Override public void construct(ItemStack signal, boolean hints) {
+            if (!(worldObj instanceof HologramNativePreviewWorld)) throw new AssertionError("live creative write");
+            if (emptyNative) return;
+            for (int i = 0; i < 20000; i++)
+                worldObj.setBlock(xCoord + i % 100 - 50, yCoord + i / 2000 + 1, zCoord + (i / 100) % 20 - 10,
+                    Blocks.brick_block, 0, 3);
+        }
+        @Override public String[] getStructureDescription(ItemStack signal) { return new String[0]; }
+    }
+
+    private static final class LargeSite extends HologramResourceWorld {
+        boolean installed;
+        final java.util.Map<Long, Chunk> chunks = new java.util.HashMap<>();
+        LargeSite() { super(Blocks.stone, 0); isRemote = true; }
+        @Override boolean previewChunkExists(int x, int z) { return true; }
+        @Override public Chunk getChunkFromChunkCoords(int x, int z) {
+            return chunks.computeIfAbsent(((long)x << 32) ^ (z & 0xffffffffL), k -> new Chunk(this,x,z));
+        }
+        @Override public boolean blockExists(int x, int y, int z) { return y >= 0 && y < 256; }
+        private int index(int x, int y, int z) {
+            int ix=x-(tile.xCoord-50), iy=y-tile.yCoord-1, iz=z-(tile.zCoord-10);
+            return ix>=0 && ix<100 && iy>=0 && iy<10 && iz>=0 && iz<20 ? ix+100*iz+2000*iy : -1;
+        }
+        @Override public Block getBlock(int x, int y, int z) {
+            if (x == tile.xCoord && y == tile.yCoord && z == tile.zCoord) return Blocks.stone;
+            int index=index(x,y,z);
+            return index<0 ? Blocks.air : installed ? index==0 ? Blocks.furnace
+                : index<10000 ? Blocks.wool : Blocks.brick_block : index<8 ? Blocks.dirt : Blocks.air;
+        }
+        @Override public int getBlockMetadata(int x,int y,int z) {
+            int index=index(x,y,z);
+            return !installed || index<0 ? 0 : index==0 ? 4 : index<10000 ? 3 : 0;
+        }
+        @Override public TileEntity getTileEntity(int x,int y,int z) {
+            return x==tile.xCoord && y==tile.yCoord && z==tile.zCoord ? tile : null;
+        }
+        @Override public boolean setBlock(int x, int y, int z, Block block, int meta, int flags) {
+            throw new AssertionError("preview wrote a live site");
+        }
+    }
+
+    private static void verifyLarge() throws Exception {
+        LargeSite world=HologramResourceWorld.create(LargeSite::new);
+        LargeController tile = new LargeController(); tile.xCoord=37; tile.yCoord=64; tile.zCoord=-33;
+        tile.setWorldObj(world); world.tile=tile;
+        ItemStack tool=new ItemStack(Items.stick);
+        for (int scenario=0;scenario<4;scenario++) {
+            long start=System.nanoTime();
+            world.installed=scenario==1; LargeController.unsupported=scenario==2;
+            LargeController.emptyNative=scenario==3;
+            try (HologramLocalControllerCapture capture=new HologramLocalControllerCapture(tile,0,2,tool,
+                HologramLocalControllerCapture.toolSettings(tool),"")) {
+                if (LargeController.emptyNative) {
+                    try {
+                        for (int i=0;i<100;i++) if (capture.stepTarget(607,Long.MAX_VALUE / 2)!=null)
+                            throw new AssertionError("no native completion, but a prefix was published");
+                        throw new AssertionError("stalled machine did not report failure");
+                    } catch (java.io.IOException expected) {
+                        SimpleAssert.that("LOCAL_NATIVE_PREVIEW_INCOMPLETE".equals(expected.getMessage()),
+                            "incomplete declaration is surfaced explicitly");
+                    }
+                    continue;
+                }
+                HologramControllerTarget.Projection model=null;
+                for (int i=0;i<250 && model==null;i++) model=capture.stepTarget(607,Long.MAX_VALUE / 2);
+                SimpleAssert.that(model!=null, "partial survival prefix must not be published as final");
+                SimpleAssert.eq(20001,model.cells().size(),"20k + independent protected anchor");
+                SimpleAssert.eq(world.installed ? 20000 : 8,model.metadata().getInteger("siteOccupied"),"real non-air sites");
+                SimpleAssert.eq(world.installed ? 1 : 0,view(model.metadata(),false),"terrain does not select LIVE");
+                int[] visibility=com.miaokatze.gtmb.client.hologram.HologramLargeControllerViewportChecks.verify(model);
+                SimpleAssert.eq(20001,visibility[0],"target all regions including far edge");
+                SimpleAssert.eq(world.installed ? 20001 : 9,visibility[1],"current view independent of target");
+                boolean[] occupied=new boolean[20000]; int displayOnly=0;
+                for (var cell:model.cells()) {
+                    if (cell.anchor()) continue;
+                    int ordinal=cell.dx()+50 + 100*(cell.dz()+10) + 2000*(cell.dy()-1);
+                    SimpleAssert.that(ordinal>=0 && ordinal<occupied.length && !occupied[ordinal],"unique declared coordinate");
+                    occupied[ordinal]=true;
+                    boolean extra=LargeController.unsupported || ordinal>=10000;
+                    if (extra) displayOnly++;
+                    SimpleAssert.that(cell.targetBlock()==(extra ? Blocks.brick_block : ordinal==0 ? Blocks.furnace : Blocks.wool),
+                        "creative display may fill holes; never substitute for a survival-selected TE/casing");
+                    SimpleAssert.that(cell.missingBlock()==extra,"creative-only rows cannot prove a payable target");
+                }
+                SimpleAssert.eq(LargeController.unsupported ? 20000 : 10000,displayOnly,"display-only complement");
+                System.out.println("LargeController actual-capture→candidate: scenario="+scenario+" source=20000+anchor"
+                    +" target="+visibility[0]+" site="+visibility[1]+" regions="+visibility[2]
+                    +" displayOnly="+displayOnly+" elapsedMs="+(System.nanoTime()-start)/1_000_000L);
+            }
         }
     }
 
