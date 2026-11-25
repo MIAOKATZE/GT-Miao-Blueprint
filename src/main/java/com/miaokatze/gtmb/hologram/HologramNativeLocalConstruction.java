@@ -191,7 +191,7 @@ public final class HologramNativeLocalConstruction {
     private static void admit(Attempt attempt, Prepared prepared, EntityPlayerMP player, String toolId,
         int dimension, int[] anchor, int[] recipe, int reviewedSources, boolean voucher,int[] bindingSlots) throws IOException {
         if (player == null || player.worldObj == null || player.worldObj.isRemote || player.dimension != dimension
-            || player.isDead || !player.capabilities.allowEdit || player.capabilities.isCreativeMode
+            || player.isDead || !player.capabilities.allowEdit
             || player.playerNetServerHandler == null || attempt.intent <= 0 || anchor.length != 3
             || recipe.length > HologramPreviewPose.MAX_RECIPE_LENGTH || toolId == null || toolId.isEmpty())
             throw new IOException("原生施工上下文已变化");
@@ -218,14 +218,18 @@ public final class HologramNativeLocalConstruction {
                 }
         var endpoint = HologramWorkspace.captureActionEndpoint(player.playerNetServerHandler);
         var gate = HologramWorkspace.constructionGate(endpoint);
-        var configured = HologramProjectedMainPolicy.captureSelected(HologramMaterials.read(held));
-        if (gate == null || configured == null || reviewedSources != HologramProjectedMainPolicy.settingsKey(HologramMaterials.read(held))) throw new IOException("施工权限或材料来源不可用");
+        final boolean creative = player.capabilities.isCreativeMode;
+        var settings = HologramMaterials.read(held);
+        var configured = HologramProjectedMainPolicy.captureSaved(settings,creative);
+        if (gate == null || configured == null || reviewedSources != HologramProjectedMainPolicy.savedPlacementKey(settings,creative)) throw new IOException("施工权限或材料来源不可用");
         var scope = configured.selectedScope();
+        // No real material source, wireless terminal, container or voucher is opened for creative construction.
+        if (creative) scope.main = scope.containers = scope.me = false;
         var tx = new HologramSession(player, anchor[0], anchor[1], anchor[2], false, 1);
         if (!toolId.equals(toolId(player.getHeldItem())) || !configured.configuredMatches(tx.materialSettings))
             throw new IOException("材料来源或投影仪已变化");
         tx.materialSettings = scope;
-        tx.jobVoucherRequested = voucher;
+        tx.jobVoucherRequested = !creative && voucher;
         tx.virtual = tx.virtualPlacement = tx.virtualLocked = true;
         tx.job = 1;
         tx.executionRequestId = attempt.id.toString();
@@ -239,10 +243,10 @@ public final class HologramNativeLocalConstruction {
         }
         // Only the transaction knows whether the target is already satisfied. A gross bill is
         // not a stock admission gate: never reserve/spend for already-present or skipped cells.
-        if (voucher && !HologramDecorationVoucher.enabled())
+        if (tx.jobVoucherRequested && !HologramDecorationVoucher.enabled())
             throw new IOException("装饰抵用券不可用，未开始施工");
         if (!HologramWorkspace.currentActionEndpoint(endpoint) || attempt.cancelled.get()
-            || !toolId.equals(toolId(player.getHeldItem())) || player.dimension != dimension
+            || player.capabilities.isCreativeMode != creative || !toolId.equals(toolId(player.getHeldItem())) || player.dimension != dimension
             || !configured.configuredMatches(HologramMaterials.read(player.getHeldItem())))
             throw new IOException("原生施工上下文已变化");
         var intent = new HologramConstructionTaskGate.Request(attempt.id,attempt.intent,
@@ -253,7 +257,7 @@ public final class HologramNativeLocalConstruction {
             HologramConstructionAuthority.hasKnownRecovery(player));
         if (admitted.lease == null) throw new IOException("已有施工或待核定结果");
         JOBS.put(player.getUniqueID(),new Job(attempt,prepared,endpoint,gate,admitted.lease,tx,configured,
-            stock,toolId,anchor,pose,samples));
+            stock,toolId,anchor,pose,samples,creative));
         attempt.admitted=true;
         attempt.publish(Phase.EXECUTING,0,0,prepared.total,"开始原生蓝图施工");
     }
@@ -294,9 +298,11 @@ public final class HologramNativeLocalConstruction {
             ItemStack exact=HologramNativePlacement.sample(block,cell.metadata,tile);
             if(exact!=null)sample=exact;
         }
+        boolean aliasedItem=HologramLittleTilesMaterialAliases.applyItem(block,item);
         if(item!=null)sample.setTagCompound(HologramBlueprintNbt.nativePayload(item));
         return new Target(block,sample,cell.metadata,cell.facing,
-            tile==null?"":HologramBlueprintNbt.encodeCanonical(block,tile),cell.itemNbt,cell.controller,
+            tile==null?"":HologramBlueprintNbt.encodeCanonical(block,tile),
+            aliasedItem?HologramBlueprintNbt.encodeCanonical(item):cell.itemNbt,cell.controller,
             block.hasTileEntity(cell.metadata)||tile!=null||item!=null||HologramDecorMaterials.supports(block));
     }
 
@@ -338,13 +344,15 @@ public final class HologramNativeLocalConstruction {
         final Map<Long,Target> samples;
         final EntityPlayerMP player;
         final World world;
+        final boolean creative;
         int cursor, placed, satisfied;
         boolean uncertain;
 
         Job(Attempt attempt, Prepared prepared, HologramWorkspace.ActionEndpoint endpoint,
             HologramConstructionTaskGate gate,HologramConstructionTaskGate.Lease lease,HologramSession tx,
             HologramProjectedMainPolicy.Snapshot configured,HologramMaterials.Context stock,String toolId,
-            int[] anchor,HologramPreviewPose pose,Map<Long,Target> samples) {
+            int[] anchor,HologramPreviewPose pose,Map<Long,Target> samples,boolean creative) {
+            this.creative=creative;
             this.attempt=attempt;
             this.prepared=prepared;
             this.endpoint=endpoint;
@@ -364,7 +372,7 @@ public final class HologramNativeLocalConstruction {
         boolean current() {
             return !attempt.cancelled.get() && HologramWorkspace.currentActionEndpoint(endpoint)
                 && player.worldObj == world && !player.isDead && player.capabilities.allowEdit
-                && !player.capabilities.isCreativeMode && player.inventory.currentItem == tx.slot
+                && player.capabilities.isCreativeMode == creative && player.inventory.currentItem == tx.slot
                 && toolId.equals(toolId(player.getHeldItem())) && tx.tool == player.getHeldItem().getItem()
                 && configured.configuredMatches(HologramMaterials.read(player.getHeldItem()));
         }

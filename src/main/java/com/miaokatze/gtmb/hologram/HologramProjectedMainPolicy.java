@@ -20,6 +20,15 @@ public final class HologramProjectedMainPolicy {
         return (s.main?1:0) | (s.containers?2:0) | (s.me?4:0) | (s.priority<<3) | (s.recoveryDestination<<5);
     }
 
+    /** An unsigned byte outside the survival masks; only the live server mode can authorize this value. */
+    public static int savedPlacementKey(HologramMaterials.Settings settings, boolean creative) {
+        return creative ? 128 : settingsKey(settings);
+    }
+
+    static Snapshot captureSaved(HologramMaterials.Settings configured, boolean creative) {
+        return creative && configured != null ? new Snapshot(configured) : captureSelected(configured);
+    }
+
     static Snapshot captureSelected(HologramMaterials.Settings configured) {
         return eligibleSelected(configured) ? new Snapshot(configured) : null;
     }

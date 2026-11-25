@@ -355,9 +355,13 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             ? HologramClientStockNative.DeclarationSite.read(minecraft().theWorld, openingController) : null;
     }
 
+    boolean stockNativePending() {
+        return HologramClientStockNative.OWNER.pending(this);
+    }
+
     boolean confirmStockNative(NBTTagCompound settings, HologramClientStockNative.DeclarationSite paneSite) {
         if (!localControllerStandard()) return false;
-        if (HologramClientStockNative.OWNER.pending(this)) {
+        if (stockNativePending()) {
             ui.session.notice("上一次施工请求尚未确认结束，请先核对现场。");
             return false;
         }
@@ -371,6 +375,12 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
         Minecraft client = minecraft();
         if (paneSite == null || !controllerContextCurrent(false) || !paneSite.equals(stockNativeSite())) {
             ui.session.notice("已确认的原生控制器或手持投影仪已变化，请重新打开结构。");
+            return false;
+        }
+        var capabilities = client.thePlayer.capabilities;
+        boolean creative = capabilities != null && capabilities.isCreativeMode;
+        if (creative && settings.getInteger("mode") != 0) {
+            ui.session.notice("创造模式的结构施工仅支持新建和补建。");
             return false;
         }
         ItemStack held = client.thePlayer.getHeldItem();
@@ -413,6 +423,7 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
             HologramState currentState = ui.session.state();
             if (!visible.getAsBoolean() || !ui.session.editable() || !sameNativeReview(displayed, currentState)
                 || !controllerContextCurrent(false)
+                || creative != (minecraft().thePlayer.capabilities != null && minecraft().thePlayer.capabilities.isCreativeMode)
                 || ui.preview.selection().version() != picked || openingController.xCoord != x
                 || openingController.yCoord != y || openingController.zCoord != z
                 || !ItemStack.areItemStacksEqual(pinnedTool, minecraft().thePlayer.getHeldItem())) return false;
@@ -424,7 +435,10 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
                 && ordinaryNativeSubmit(currentState.data, active, !localNativeChoices.isEmpty())
                 && declaration.equals(declaredSelection(paneSite.controllerId(), currentState, active, localNativeChoices))
                 && paneSite.current(minecraft().theWorld);
-        }, visible, view.session::notice, this::rescanDisplayedStructure);
+        }, visible, view.review::stockNativeNotice, () -> {
+            view.review.closeLocalMaterials();
+            rescanDisplayedStructure();
+        });
         return HologramClientStockNative.OWNER.submit(original, context, owner, System.nanoTime());
     }
 
@@ -715,9 +729,11 @@ public final class HologramScreen extends HologramMuiCanvasScreen implements Hol
 
     static String localSiteCaption(NBTTagCompound data) {
         if (!data.hasKey("siteOccupied", 3)) return "正在读取控制器现场";
-        int occupied = data.getInteger("siteOccupied"), unknown = data.getInteger("siteUnknown");
+        boolean installed = data.hasKey("siteNativeGroups", 3);
+        int occupied = data.getInteger(installed ? "siteNativeOccupied" : "siteOccupied");
+        int unknown = data.getInteger(installed ? "siteNativeUnknown" : "siteUnknown");
         String description = occupied > 0
-            ? "现场：" + occupied + " 格非空，" + data.getInteger("siteHatches") + " 个仓室"
+            ? "现场：" + occupied + " 格非空，" + data.getInteger(installed ? "siteNativeHatches" : "siteHatches") + " 个仓室"
             : unknown > 0 ? "现场：已读取范围内未见机身" : "现场：仅控制器";
         return description + " · 缺 " + data.getInteger("siteMissing") + "，与目标不同 "
             + data.getInteger("siteDifferent") + (unknown > 0 ? "，未确认 " + unknown : "");

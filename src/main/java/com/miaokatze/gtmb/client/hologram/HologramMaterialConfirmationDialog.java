@@ -102,6 +102,8 @@ final class HologramMaterialConfirmationDialog {
             return false;
         }
 
+        default String localVoucherBlocker() { return "此操作不使用装饰券"; }
+
         default boolean localVoucherSelected() {
             return false;
         }
@@ -111,7 +113,7 @@ final class HologramMaterialConfirmationDialog {
         }
 
         default String localVoucherLabel() {
-            return "猫猫装饰抵用券：本次来源不支持";
+            return "装饰抵扣";
         }
 
         void localAction(LocalAction action); // Revalidate deferred callbacks before using local or server data.
@@ -441,35 +443,24 @@ final class HologramMaterialConfirmationDialog {
                 150,
                 () -> localView.localAction(LocalAction.DETAILS),
                 localView::localDetailsAvailable,
-                () -> 0).tooltipBuilder(t -> t.addLine("仅本地统计指定结构，不请求或开始施工。")));
+                () -> 0));
             panel.child(HologramMuiTheme.label(localView::localSourcesLabel, 14, 340, 210, 16,
-                HologramMuiTheme.MUTED).tooltipBuilder(t -> {
-                    t.addLine(localView.localSourcesLabel());
-                    t.addLine("主物品栏观察只是本机数量；背包适配器、无线 AE、权限和实际缺料由服务端核验。");
-                    t.addLine("AE 补单、设备资源及去标识设置未接入本地提交，不将其伪装成可用功能。");
-                }));
+                HologramMuiTheme.MUTED));
             if(localView.hasBindingChoices()) {
                 panel.child(button(250,localView::bindingGroupLabel,234,340,160,
-                    ()->localView.localAction(LocalAction.BIND_GROUP),()->true,()->0)
-                    .tooltipBuilder(t->t.addLine("切换量子类群；默认槽仅在手动选择后应用到未单选的类群。")));
+                    ()->localView.localAction(LocalAction.BIND_GROUP),()->true,()->0));
                 panel.child(button(251,localView::bindingSlotLabel,165,369,165,
-                    ()->localView.localAction(LocalAction.BIND_SLOT),()->true,()->0)
-                    .tooltipBuilder(t->t.addLine("循环背包中真实量子终端槽；服务端核验绑定、权限与实际物品。")));
-            } else panel.child(button(162, () -> "AE 补单：本地模式未接入", 234, 340, 160,
-                () -> {}, () -> false, () -> 0).tooltipBuilder(t ->
-                    t.addLine("无线 AE 直接取料按工具设置执行；这不是 AE 自动合成订单。")));
+                    ()->localView.localAction(LocalAction.BIND_SLOT),()->true,()->0));
+            } else panel.child(button(162, () -> "AE 补单", 234, 340, 160,
+                () -> {}, () -> false, () -> 0));
             panel.child(button(245, localView::localVoucherLabel, 400, 340, 218,
                 () -> { if (localView.localVoucherAvailable()) localView.localAction(LocalAction.VOUCHER); },
                 localView::localVoucherAvailable,
-                () -> localView.localVoucherSelected() ? HologramUiAccent.SUGGESTION : 0).tooltipBuilder(t -> {
-                    t.addLine("仅明确勾选才请求抵扣；服务端按当前规则确认可抵扣装饰材料。");
-                    t.addLine("首个成功抵扣才消耗主物品栏中一张券；失败和重发不重复扣券。");
-                }));
+                () -> localView.localVoucherSelected() ? HologramUiAccent.SUGGESTION : 0));
             // Mount this on every panel build: MUI can reuse the panel when switching from place to remove.
             panel.child(button(252, localView::localDemolitionDestinationLabel, 165, 369, 165,
                 () -> localView.localAction(LocalAction.DEMOLITION_DESTINATION), localView::localDemolitionAvailable,
-                () -> 0).setEnabledIf(widget -> localView.localDemolitionAvailable())
-                    .tooltipBuilder(t -> t.addLine("仅切换本次回收去向；确认后实际掉落只投到所选目的地。")));
+                () -> 0).setEnabledIf(widget -> localView.localDemolitionAvailable()));
             panel.child(
                 button(
                     247,
@@ -506,9 +497,7 @@ final class HologramMaterialConfirmationDialog {
             return panel;
         }
         panel.child(
-            HologramMuiTheme.label(this::status, 14, 299, 604, 16, HologramMuiTheme.TEXT)
-                .tooltipBuilder(t -> t.addLine(status()))
-                .tooltipAutoUpdate(true));
+            HologramMuiTheme.label(this::status, 14, 299, 604, 16, HologramMuiTheme.TEXT));
         panel.child(
             HologramMuiTheme.label(ui.review::lastCacheReviewSummary, 14, 316, 604, 16, HologramMuiTheme.TEXT)
                 .color(ui.review::lastCacheReviewColor)
@@ -582,11 +571,11 @@ final class HologramMaterialConfirmationDialog {
                     .voucherChoiceAvailable(state(), hasVoucherDemand(), voucherSelected()),
                 () -> voucherEnabled() && (hasVoucherDemand() || voucherSelected()) ? HologramUiAccent.SUGGESTION : 0)
                     .tooltipBuilder(t -> {
-                        t.addLine("有可抵扣方块即可勾选查看减免；不要求其他材料或抵用券已备齐。生存施工仍需主背包中的抵用券。");
-                        t.addLine(
-                            state().getCompoundTag("materialQuote")
-                                .getBoolean("creativePaymentsFree") ? "创造模式可切换并核查抵扣方案；施工不消耗抵用券。"
-                                    : "使用 1 张抵本次建筑 Mod 材料；工业设备、内部资源和封存物品仍按清单取料。");
+                        if (voucherEnabled() && (hasVoucherDemand() || voucherSelected())) {
+                            if (state().getCompoundTag("materialQuote").getBoolean("creativePaymentsFree"))
+                                t.addLine("创造模式不消耗抵用券");
+                            else t.addLine("主物品栏：" + state().getCompoundTag("decorativeVoucher").getLong("available") + " 张");
+                        }
                     }));
         panel.child(
             button(
@@ -610,8 +599,7 @@ final class HologramMaterialConfirmationDialog {
                 () -> ui.review.materialBlockers() > 0 ? HologramUiAccent.WARNING : 0));
         panel.child(button(184, () -> "数据校验详情", 230, 369, 102, () -> action(184), () -> !orderActive(), () -> 0));
         panel.child(
-            button(247, () -> "刷新材料", 338, 369, 132, ui.session::refreshMaterialReview, this::editable, () -> 0)
-                .tooltipBuilder(t -> t.addLine("重新检查本次材料库存；确认施工或提交 AE 时再次核对。")));
+            button(247, () -> "刷新材料", 338, 369, 132, ui.session::refreshMaterialReview, this::editable, () -> 0));
         panel.child(
             button(246, () -> "返回世界 · 后台继续", 476, 369, 142, () -> ui.router.closeRoot(), this::orderActive, () -> 0));
         panel.child(
@@ -702,15 +690,7 @@ final class HologramMaterialConfirmationDialog {
     }
 
     private String voucherLabel() {
-        if (!voucherEnabled()) return "猫猫装饰抵用券：配置已禁用";
-        boolean creative = state().getCompoundTag("materialQuote")
-            .getBoolean("creativePaymentsFree");
-        return (voucherSelected() ? creative ? "✓ 查看抵扣方案 · 创造不扣券"
-            : state().getCompoundTag("decorativeVoucher")
-                .getLong("available") > 0 ? "✓ 本次使用 1 张" : "✓ 查看方案 · 待补充抵用券"
-            : "本次使用猫猫装饰抵用券") + " · 持有 "
-            + state().getCompoundTag("decorativeVoucher")
-                .getLong("available");
+        return voucherSelected() ? "✓ 装饰抵扣" : "装饰抵扣";
     }
 
     private void voucher() {
@@ -726,8 +706,8 @@ final class HologramMaterialConfirmationDialog {
     private String unavailableReason(int id) {
         if (local) {
             if (id == 55) return localView.localSubmitBlocker();
-            if (id == 245 && !localView.localVoucherAvailable()) return "本次来源或施工入口尚不支持装饰抵扣。";
-            if (id == 162) return "此入口尚无 AE 自动合成订单；无线 AE 直接取料仍按工具设置执行。";
+            if (id == 245 && !localView.localVoucherAvailable()) return localView.localVoucherBlocker();
+            if (id == 162) return "本地施工不支持 AE 自动补单";
             return "";
         }
         if (id == 168 && !ui.nbt.hasPlacementNbtChoices()) return "本次蓝图没有可调整的 NBT 条目。";

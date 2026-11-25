@@ -25,6 +25,13 @@ public final class HologramLibraryAdminUiRegression {
 
     private HologramLibraryAdminUiRegression() {}
 
+    public static void main(String[] args) throws Exception {
+        if (!com.miaokatze.gtmb.testutil.MinecraftTestBootstrap.enter(HologramLibraryAdminUiRegression.class, args))
+            return;
+        run();
+        System.out.println("HologramLibraryAdminUiRegression passed: native admin and discard projection handoff");
+    }
+
     @SuppressWarnings("unchecked")
     public static void run() throws Exception {
         Field unsafeField = sun.misc.Unsafe.class.getDeclaredField("theUnsafe");
@@ -153,11 +160,69 @@ public final class HologramLibraryAdminUiRegression {
             SimpleAssert.that(
                 !ui.library.libraryAdminDrawer(),
                 "actual native ADMIN close does not rely on a background panel tick or dedicated-server context");
+            projectionDiscardClosesModalBeforeHandoff(unsafe, minecraft, screen, ui, targets);
         } finally {
             field(HologramLibraryClient.class, "config").set(client, beforeConfig);
             field(HologramLibraryClient.class, "configWritePending").set(client, false);
             singleton.set(null, beforeMinecraft);
         }
+    }
+
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    private static void projectionDiscardClosesModalBeforeHandoff(sun.misc.Unsafe unsafe, Minecraft minecraft,
+        HologramScreen screen, HologramUiModules ui, Map<String, List<IWidget>> targets) throws Exception {
+        minecraft.currentScreen = screen;
+        HologramUiDeferredAction queue = new HologramUiDeferredAction();
+        field(HologramMuiScreen.class, "deferredAction").set(screen, queue);
+        NBTTagCompound proposal = new NBTTagCompound();
+        proposal.setString("op", "switchEditorWorkspace");
+        proposal.setString("editorWorkspace", "blueprint");
+        proposal.setString("sourceSwitchNonce", "first");
+        NBTTagCompound state = new NBTTagCompound();
+        state.setString("session", "projectionFixture");
+        state.setString("editorWorkspace", "projection");
+        state.setBoolean("discardConfirmationRequired", true);
+        state.setTag("discardTargetAction", proposal);
+        field(HologramUiSession.class, "state").set(ui.session, new HologramState(state));
+        ui.library.acceptSourceSwitchProposal();
+
+        HologramEditorNativeLibraryDialogs dialogs = new HologramEditorNativeLibraryDialogs(ui);
+        Class<?> kind = Class.forName(HologramEditorNativeLibraryDialogs.class.getName() + "$Kind");
+        Method build = HologramEditorNativeLibraryDialogs.class.getDeclaredMethod("build", kind);
+        build.setAccessible(true);
+        ModularPanel discard = (ModularPanel) build.invoke(dialogs, Enum.valueOf((Class) kind, "DISCARD"));
+        // Bind the actual built modal to MUI's real panel stack. Only the window/GL attachment is omitted.
+        com.cleanroommc.modularui.screen.ModularScreen nativeScreen = (com.cleanroommc.modularui.screen.ModularScreen)
+            unsafe.allocateInstance(com.cleanroommc.modularui.screen.ModularScreen.class);
+        ModularPanel base = new ModularPanel("workspace_fixture");
+        com.cleanroommc.modularui.screen.PanelManager manager =
+            new com.cleanroommc.modularui.screen.PanelManager(nativeScreen, base);
+        field(com.cleanroommc.modularui.screen.ModularScreen.class, "panelManager").set(nativeScreen, manager);
+        ((List<ModularPanel>) field(manager.getClass(), "panels").get(manager)).add(discard);
+        field(ModularPanel.class, "screen").set(discard, nativeScreen);
+        field(ModularPanel.class, "state").set(discard, ModularPanel.State.OPEN);
+        field(com.cleanroommc.modularui.widget.AbstractWidget.class, "valid").setBoolean(discard, true);
+        List<String> sent = new ArrayList<>();
+        field(HologramUiSession.class, "tutorialSink").set(ui.session,
+            (java.util.function.BiConsumer<String, NBTTagCompound>) (op, request) -> {
+                SimpleAssert.that(!manager.hasOpenPanel(discard), "source modal must leave MUI stack before routing");
+                SimpleAssert.that(request.getBoolean("confirmDiscard"), "actual reviewed discard reaches dispatch");
+                sent.add(op + ":" + request.getString("sourceSwitchNonce"));
+            });
+        click(targets, "control.224");
+        SimpleAssert.that(manager.hasOpenPanel(discard) && sent.isEmpty(), "switch is not run inside mouse dispatch");
+        ui.session.state().data.getCompoundTag("discardTargetAction").setString("sourceSwitchNonce", "new");
+        ui.library.acceptSourceSwitchProposal();
+        queue.run(true);
+        SimpleAssert.that(manager.hasOpenPanel(discard) && sent.isEmpty(), "superseded consent cannot switch workspace");
+        click(targets, "control.224");
+        click(targets, "control.224");
+        queue.run(true);
+        queue.run(true);
+        SimpleAssert.eq(java.util.Collections.singletonList("switchEditorWorkspace:new"), sent,
+            "one fresh confirmation, no duplicate submit or close-triggered cancellation");
+        SimpleAssert.that(!discard.isOpen() && !manager.hasOpenPanel(discard) && !ui.library.discardReview(),
+            "old source has no modal shade / input blocker after the handoff");
     }
 
     private static void click(Map<String, List<IWidget>> targets, String key) {

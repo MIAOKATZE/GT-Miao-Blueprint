@@ -73,6 +73,7 @@ final class HologramDeclaredNativeConstruction {
     private final HologramSession session;
     private final HologramDeclaredNativeSelection selection;
     private final BooleanSupplier stillConfirmed;
+    private final boolean creative;
     private final BaseMetaTileEntity tile;
     private final MTEEnhancedMultiBlockBase<?> machine;
     private final IMetaTileEntity prototype;
@@ -98,19 +99,22 @@ final class HologramDeclaredNativeConstruction {
     private Iterator<Member> memberIterator;
     private Iterator<Need> needs;
     private String family, reason = "";
-    private int pieceIndex, targets, next, placed, examined;
+    private int pieceIndex, targets, next, placed, examined, unselectedHatches;
     private State state = State.ACTIVE;
     private HologramConstructionTaskGate.Permit unsettled;
 
     HologramDeclaredNativeConstruction(HologramWorkspace.ActionEndpoint endpoint, HologramConstructionTaskGate gate,
         HologramConstructionTaskGate.Lease lease, HologramSession session, HologramDeclaredNativeSelection selection,
-        BooleanSupplier stillConfirmed) {
+        boolean creative, BooleanSupplier stillConfirmed) {
         this.endpoint = endpoint;
         this.gate = gate;
         this.lease = lease;
         this.session = session;
         this.selection = selection;
         this.stillConfirmed = stillConfirmed;
+        if (creative && selection.operation() != 0)
+            throw new IllegalArgumentException("Creative placement requires ordinary construction");
+        this.creative = creative;
         tile = (BaseMetaTileEntity) session.target;
         machine = session.machine;
         facing = machine.getExtendedFacing();
@@ -123,14 +127,15 @@ final class HologramDeclaredNativeConstruction {
         interpretations = HologramDeclarationAdapters.generation();
         trigger = HologramSessionPolicy.trigger(session);
         for (Hatch edit : selection.hatches()) edits.put(edit.position(), edit);
-        stock = new HologramMaterials.Context(session.player, session.materialSettings, session.slot);
+        stock = creative ? null : new HologramMaterials.Context(session.player, session.materialSettings, session.slot);
         demolition = selection.operation() == 2
             ? HologramDemolition.recoveryContext(session.player, session.slot, selection.destination()) : null;
     }
 
     private boolean bound(HologramCapture scratch) {
         var player = session.player;
-        return state == State.ACTIVE && stillConfirmed.getAsBoolean() && HologramWorkspace.find(endpoint.actor) == session
+        return state == State.ACTIVE && player.capabilities.isCreativeMode == creative && stillConfirmed.getAsBoolean()
+            && HologramWorkspace.find(endpoint.actor) == session
             && session.capture == scratch && session.editorWorkspaceEpoch == epoch && session.planRevision == revision
             && session.x == ax && session.y == ay && session.z == az && session.mode == selection.operation() && !session.virtual
             && session.facing == facing.ordinal() && !tile.isInvalid() && tile.getWorldObj() == endpoint.world
@@ -199,7 +204,8 @@ final class HologramDeclaredNativeConstruction {
                     continue;
                 }
                 if (needs == null) {
-                    if (targets == 0) return stop("所选范围没有可施工的目标。");
+                    if (targets == 0) return stop(unselectedHatches == 0 ? "所选范围没有可施工的目标。"
+                        : "请先选定所需仓室，当前范围没有其他可施工的方块。");
                     needs = funding.values().iterator();
                 }
                 if (needs.hasNext()) {
@@ -214,6 +220,8 @@ final class HologramDeclaredNativeConstruction {
                     if (!current(null) || !gate.finish(lease, HologramConstructionTaskGate.End.COMPLETE))
                         return stop("施工许可已变化；无法确认完成。");
                     state = State.COMPLETE;
+                    if (unselectedHatches > 0)
+                        reason = "另有 " + unselectedHatches + " 处未选仓室，请手动补齐。";
                     return state;
                 }
                 if (demolition != null) {
@@ -348,9 +356,15 @@ final class HologramDeclaredNativeConstruction {
                 }
             }
             item = defaultMaterial(member, cell);
+            if (item == null && existing == Blocks.air && present == null
+                && mandatoryHatch(member.element)) {
+                // A declared hatch-only slot has no ordinary casing default. Do not guess its equipment.
+                unselectedHatches++;
+                return;
+            }
         }
         if (item == null || !(item.getItem() instanceof ItemBlock) || item.hasTagCompound())
-            throw refused("此格没有可执行的原生材料声明；未使用旧路径。");
+            throw refused("存在无法识别施工材料的结构位置，未放置。");
         cell.block = Block.getBlockFromItem(item.getItem());
         cell.meta = stateful ? ItemMachines.getMetaTileEntity(item).getTileEntityBaseType()
             : item.getItem().getMetadata(item.getItemDamage());
@@ -366,7 +380,15 @@ final class HologramDeclaredNativeConstruction {
                 : base.getFrontFacing().ordinal() == requestedFacing) : metadata == cell.meta)) return;
         if (existing != Blocks.air || present != null) throw refused("施工格已有不匹配的方块；补建不会替换。");
         moves.add(new Target(cell, item, requestedFacing, cell.block.hasTileEntity(cell.meta)));
-        funding.computeIfAbsent(HologramValues.stackKey(item), ignored -> new Need(item)).count++;
+        if (!creative) funding.computeIfAbsent(HologramValues.stackKey(item), ignored -> new Need(item)).count++;
+    }
+
+    private static boolean mandatoryHatch(IStructureElement<?> element) {
+        try {
+            return HologramHatchPolicy.completeMarker(element);
+        } catch (ReflectiveOperationException | RuntimeException | LinkageError unavailable) {
+            return false;
+        }
     }
 
     private void prepareMutation(Offset p, HologramCapture.Cell cell, Hatch edit) throws IOException {
@@ -590,6 +612,7 @@ final class HologramDeclaredNativeConstruction {
             BooleanSupplier owns = () -> bound(scratch) && session.pins.get(0) == target.item
                 && session.planTargets.size() == 1 && session.planTargets.get(0) == target.item
                 && gate.transactionCurrent(permit);
+            session.status = ""; // Only the transaction's current failure, not a prior cell's message.
             boolean wrote = target.original == null
                 ? HologramWorldTransactions.operateDeclaredNative(session, cell, 0, target.hatch,
                     target.facing, owns, () -> current(scratch))
@@ -617,7 +640,9 @@ final class HologramDeclaredNativeConstruction {
                 }
                 return true;
             }
-            stop("本格未提交（" + cell.status + "）；已确认放置和扣料不重复。");
+            String detail = session.status;
+            stop((detail == null || detail.isEmpty() ? "本格未提交（" + cell.status + "）。" : detail + "。")
+                + "已确认的放置不重复。");
             return false;
         } finally {
             if (session.capture == scratch) {

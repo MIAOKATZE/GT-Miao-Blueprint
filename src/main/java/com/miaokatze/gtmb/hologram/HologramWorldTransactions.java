@@ -634,7 +634,10 @@ final class HologramWorldTransactions {
                 }
                 if (s.mode != 2 && s.virtual && s.virtualPreset.schema >= 2) {
                     cachedPayload = HologramCellPolicy.cachePlan(s, c, index);
-                    cachePaid = cachedPayload.demand.empty() || transaction.takeCachedEnergy(cachedPayload.demand);
+                    // Saved creative builds must never withdraw from a real player's energy network.
+                    // Keep protected stored energy empty unless no payment was required.
+                    boolean noStockCreative = scope != null && scope.savedNative && !scope.declared && scope.creative;
+                    cachePaid = cachedPayload.demand.empty() || !noStockCreative && transaction.takeCachedEnergy(cachedPayload.demand);
                     if (!cachePaid) cacheNotice = "设备缓存余额不足，已按空缓存放置";
                     if (!cachedPayload.warnings.isEmpty())
                         cacheNotice += (cacheNotice.isEmpty() ? "" : "；") + "未知缓存已安全省略：" + cachedPayload.warnings.get(0);

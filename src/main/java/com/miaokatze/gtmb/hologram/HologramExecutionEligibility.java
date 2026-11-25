@@ -105,7 +105,9 @@ final class HologramExecutionEligibility {
             && (tile != null || HologramAeBlueprint.supports(block, tile))) {
             HologramCoordinatePolicies.validatePaymentPayload(tile);
             ItemStack exact = sample.copy();
-            exact.setTagCompound(HologramBlueprintNbt.nativePayload(item));
+            NBTTagCompound payment = HologramBlueprintNbt.nativePayload(item);
+            HologramLittleTilesMaterialAliases.applyItem(block, payment);
+            exact.setTagCompound(payment);
             if (!HologramNativePlacement.matchesSample(block, metadata, tile, exact))
                 throw new IOException("原生设备配置与实际付款材料不符");
             return;

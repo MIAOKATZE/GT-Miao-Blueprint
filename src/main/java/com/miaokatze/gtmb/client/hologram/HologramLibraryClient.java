@@ -2651,7 +2651,7 @@ final class HologramLibraryClient {
     enum PlainAvailability {
         READY(""), SOURCE("仅可施工已保存的原生蓝图；请先保存或转换"),
         NATIVE_PENDING("当前服务器未提供已保存原生蓝图施工"),
-        MODE("需要有编辑权限的生存玩家"), MATERIALS("请至少开启一种有效材料来源"),
+        MODE("需要编辑权限"), MATERIALS("请至少开启一种有效材料来源"),
         TOOL("该投影仪没有可核对的施工身份"), TRANSPORT("原生施工连接不可用"),
         BUSY("已有任务，暂不能提交施工");
         final String reason;
@@ -2666,7 +2666,7 @@ final class HologramLibraryClient {
         ItemStack held = player == null ? null : player.getHeldItem();
         PlainAvailability support = plainPlacementAvailability(
             nativeSource,
-            player != null && player.capabilities.allowEdit && !player.capabilities.isCreativeMode,
+            player != null && player.capabilities.allowEdit, player != null && player.capabilities.isCreativeMode,
             HologramMaterials.read(held),
             canonicalProjectorId(projectorId(held)),
             nativeSource);
@@ -2674,11 +2674,11 @@ final class HologramLibraryClient {
             : support;
     }
 
-    static PlainAvailability plainPlacementAvailability(boolean exactSource, boolean allowedSurvival,
+    static PlainAvailability plainPlacementAvailability(boolean exactSource, boolean allowEdit, boolean creative,
         HologramMaterials.Settings sources, boolean identifiedTool, boolean registered) {
         if (!exactSource) return PlainAvailability.SOURCE;
-        if (!allowedSurvival) return PlainAvailability.MODE;
-        if (!HologramProjectedMainPolicy.eligibleSelected(sources)) return PlainAvailability.MATERIALS;
+        if (!allowEdit) return PlainAvailability.MODE;
+        if (!creative && !HologramProjectedMainPolicy.eligibleSelected(sources)) return PlainAvailability.MATERIALS;
         if (!identifiedTool) return PlainAvailability.TOOL;
         return registered ? PlainAvailability.READY : PlainAvailability.TRANSPORT;
     }

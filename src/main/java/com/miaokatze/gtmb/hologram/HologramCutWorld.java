@@ -116,7 +116,7 @@ final class HologramCutWorld {
 
         private void verifyBoundChunks(Map<BoundChunk, Map<Integer, ExtendedBlockStorage>> expected)
             throws IOException {
-            // Exact vanilla backing only. These reads cannot load a chunk or call a World's mutable lookup override.
+            // Bound owner-thread index only: these reads neither load a chunk nor call a mutable World override.
             verifyProvider();
             for (BoundChunk bound : originalChunks.values()) verifyChunkSlot(bound);
             for (Map.Entry<BoundChunk, Map<Integer, ExtendedBlockStorage>> chunk : expected.entrySet())
@@ -133,6 +133,31 @@ final class HologramCutWorld {
             if (!sections.containsKey(y)) sections.put(y, bound.sections[y]);
         }
 
+        /**
+         * The final transaction fence needs a direct, non-loading, owner-thread slot lookup. GTNH replaces
+         * ChunkProviderServer's vanilla table with Hodgepodge's primitive map. Its server variant serves a stale
+         * snapshot OFF thread; only the constructing thread reads its actual backing. Unknown overrides must not
+         * run callbacks between the slot check and a live section write.
+         */
+        static void requireLiveIndex(LongHashMap index) throws IOException {
+            if (index == null) throw new IOException("剪切区块索引不可用");
+            Class<?> type = index.getClass();
+            if (type == LongHashMap.class) return;
+            String fast = "com.mitchej123.hodgepodge.util.FastUtilLongHashMap";
+            Class<?> base = type.getName().equals("com.mitchej123.hodgepodge.util.ServerThreadLongHashMap")
+                ? type.getSuperclass() : type;
+            if (!base.getName().equals(fast))
+                throw new IOException("剪切无法验证当前区块索引：" + type.getName());
+            try {
+                java.lang.reflect.Field owner = base.getDeclaredField("ownerThread");
+                owner.setAccessible(true);
+                if (owner.get(index) != Thread.currentThread())
+                    throw new IOException("剪切必须在区块索引所属线程执行；暂存已保留");
+            } catch (ReflectiveOperationException | SecurityException unavailable) {
+                throw new IOException("剪切无法确认区块索引所属线程；暂存已保留", unavailable);
+            }
+        }
+
         Edit(WorldServer world, NBTTagCompound shape, int x, int y, int z) throws IOException {
             HologramCutEntry.validate(shape);
             HologramCutEntry
@@ -140,11 +165,11 @@ final class HologramCutWorld {
             this.world = world;
             provider = world.theChunkProviderServer;
             worldProvider = world.provider;
-            if (provider == null || worldProvider == null || !(provider.currentChunkLoader instanceof AnvilChunkLoader anvil)
-                || provider.loadedChunkHashMap == null || provider.loadedChunkHashMap.getClass() != LongHashMap.class)
+            if (provider == null || worldProvider == null || !(provider.currentChunkLoader instanceof AnvilChunkLoader anvil))
                 throw new IOException("剪切需要可验证存盘的原生 Anvil 世界");
             loader = anvil;
             loadedChunks = provider.loadedChunkHashMap;
+            requireLiveIndex(loadedChunks);
             this.x = x;
             this.y = y;
             this.z = z;

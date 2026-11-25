@@ -276,7 +276,7 @@ public final class HologramClientStockNative {
             if (!attempt.owner.visible.getAsBoolean()) return;
             String status = switch (reply.phase()) {
                 case COMPLETE -> attempt.operationLabel() + (attempt.placing() ? "完成，实际放置 " : "完成，实际变更 ")
-                    + attempt.placed + " 格。";
+                    + attempt.placed + " 格。" + reply.reason();
                 case STOPPED -> attempt.operationLabel() + "已停止，已确认 " + attempt.placed + " 格。" + reply.reason();
                 case RECOVERY_PENDING -> attempt.operationLabel() + "结果待核定，已确认 " + attempt.placed + " 格。" + reply.reason();
                 default -> reply.reason();

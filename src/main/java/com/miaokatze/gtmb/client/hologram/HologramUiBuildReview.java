@@ -231,6 +231,9 @@ final class HologramUiBuildReview implements LocalView {
         if (!ui.session.editable()) return localMaterialEditingReason();
         if (ui.session.state().nativeViewport != null)
             return ui.library.savedNativePlacementReady() ? "" : "请先保存蓝图。";
+        HologramScreen root = ui.host == null ? null : ui.host.parent();
+        if (localStockSite != null && root != null && root.stockNativePending())
+            return "正在等候本次施工结果。";
         String blocker = HologramPlacementConfirmation.localStructureReviewBlocker(ui.session.state());
         if (!blocker.isEmpty()) return blocker;
         return localHatchDelta() ? localMaterials.hatchDelta.blocker : "";
@@ -322,6 +325,11 @@ final class HologramUiBuildReview implements LocalView {
             ? ui.library.placeNativeSaved() : root.confirmStockNative(settings,localStockSite));
     }
 
+    void stockNativeNotice(String message) {
+        ui.session.notice(message);
+        if (localStockSite != null && localMaterials != null) localMaterialNotice = message;
+    }
+
     void submitLocalMaterials(java.util.function.Predicate<NBTTagCompound> dispatch) {
         retireStaleLocalMaterials();
         if (!localSubmitAvailable()) {
@@ -333,8 +341,11 @@ final class HologramUiBuildReview implements LocalView {
         // True means only that this local action sent or scheduled the request, never server acceptance.
         NBTTagCompound settings = localMaterials.settings();
         if (reviewedNativeMode(2)) settings.setInteger("demolitionDestination", nativeDemolitionDestination);
-        if (dispatch.test(settings)) closeLocalMaterials();
-        else {
+        if (dispatch.test(settings)) {
+            // A cold PROBE is not placement acceptance; leave its status or refusal in the existing dialog.
+            HologramScreen root = ui.host == null ? null : ui.host.parent();
+            if (localStockSite == null || root == null || !root.stockNativePending()) closeLocalMaterials();
+        } else {
             localMaterialNotice = ui.session.notice();
             if (localMaterialNotice.isEmpty()) localMaterialNotice = "未提交施工，请检查当前状态后重试。";
             // A dispatch error might originate in external content; do not log its arbitrary message.

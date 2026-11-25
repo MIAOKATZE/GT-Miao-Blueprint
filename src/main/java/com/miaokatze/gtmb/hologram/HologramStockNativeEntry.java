@@ -82,6 +82,10 @@ final class HologramStockNativeEntry {
                 materialPriority, funding, hatch, null);
         }
 
+        private boolean allowsCreative() {
+            return declaration != null && declaration.operation() == 0;
+        }
+
         boolean valid() {
             // Every request freezes the exact enabled providers, ordering and recovery destination.
             // No missing/zero mask may silently fall back to a main-inventory-only payment.
@@ -137,6 +141,13 @@ final class HologramStockNativeEntry {
         }
     }
 
+    @Desugar
+    record Ingress(Submission submission, String refusal) {
+        private static Ingress refused(String detail) {
+            return new Ingress(null, detail);
+        }
+    }
+
     /** The transport captures this immediately at authenticated ingress, before enqueuing server work. */
     static final class Submission {
 
@@ -148,10 +159,11 @@ final class HologramStockNativeEntry {
         private final EbfToolStamp exactEbfTool;
         private final String toolId;
         private final HologramProjectedMainPolicy.Snapshot configured;
+        private final boolean creative;
 
         private Submission(HologramWorkspace.ActionEndpoint endpoint, Intent intent, InventoryPlayer inventory,
             ItemStack[] slots, ItemStack projector, String toolId, HologramProjectedMainPolicy.Snapshot configured,
-            EbfToolStamp exactEbfTool) {
+            EbfToolStamp exactEbfTool, boolean creative) {
             this.endpoint = endpoint;
             this.intent = intent;
             this.inventory = inventory;
@@ -160,14 +172,7 @@ final class HologramStockNativeEntry {
             this.exactEbfTool = exactEbfTool;
             this.toolId = toolId;
             this.configured = configured;
-        }
-
-        private boolean stillHeld() {
-            EntityPlayerMP player = endpoint.player;
-            return HologramWorkspace.currentActionEndpoint(endpoint) && !player.isDead
-                && player.capabilities.allowEdit && !player.capabilities.isCreativeMode
-                && sameInventory() && player.getHeldItem() == projector && sameInventory()
-                && ItemNekoHologramProjector.isProjector(projector);
+            this.creative = creative;
         }
 
         private boolean sameInventory() {
@@ -180,9 +185,22 @@ final class HologramStockNativeEntry {
         }
 
         boolean current() {
-            return stillHeld() && toolId.equals(toolId(projector))
-                && (exactEbfTool == null || exactEbfTool.matches(projector))
-                && configured.configuredMatches(HologramMaterials.read(projector));
+            return refusal() == null;
+        }
+
+        String refusal() {
+            EntityPlayerMP player = endpoint.player;
+            if (!HologramWorkspace.currentActionEndpoint(endpoint)) return "施工连接或所在世界已变化，请重新确认。";
+            if (player.isDead || !player.capabilities.allowEdit) return "当前玩家没有施工权限。";
+            if (creative != player.capabilities.isCreativeMode) return "游戏模式已变化，请重新确认施工。";
+            if (!sameInventory() || player.getHeldItem() != projector || !sameInventory()
+                || !ItemNekoHologramProjector.isProjector(projector) || !toolId.equals(toolId(projector)))
+                return "手持投影仪已变化，请重新确认施工。";
+            if (exactEbfTool != null && !exactEbfTool.matches(projector))
+                return "投影仪的高炉等级、线圈或草稿状态已变化，请重新确认施工。";
+            if (!configured.configuredMatches(HologramMaterials.read(projector)))
+                return "投影仪材料来源已变化，请重新确认施工。";
+            return null;
         }
     }
 
@@ -235,31 +253,51 @@ final class HologramStockNativeEntry {
     }
 
     static Submission ingress(HologramWorkspace.ActionEndpoint endpoint, Intent intent, String confirmedToolId) {
-        Submission submitted = ingress(endpoint, intent);
-        return submitted != null && submitted.toolId.equals(confirmedToolId) ? submitted : null;
+        return inspect(endpoint, intent, confirmedToolId).submission;
     }
 
     static Submission ingress(HologramWorkspace.ActionEndpoint endpoint, Intent intent) {
-        if (endpoint == null || endpoint.constructionScope == null || intent == null || !intent.valid()
-            || intent.generation != endpoint.constructionScope.generation
-            || !HologramWorkspace.currentActionEndpoint(endpoint)) return null;
+        return inspect(endpoint, intent, null).submission;
+    }
+
+    static Ingress inspect(HologramWorkspace.ActionEndpoint endpoint, HologramStockNativeWire.Confirmation confirmed) {
+        if (confirmed == null || confirmed.tool() == null) return Ingress.refused("缺少原生施工确认。");
+        if (endpoint == null) return Ingress.refused("施工连接或所在世界已变化，请重新确认。");
+        if (confirmed.dimension() != endpoint.player.dimension)
+            return Ingress.refused("施工所属维度已变化，请重新确认。");
+        return inspect(endpoint, confirmed.intent(), confirmed.tool().toString());
+    }
+
+    private static Ingress inspect(HologramWorkspace.ActionEndpoint endpoint, Intent intent, String confirmedToolId) {
+        if (endpoint == null || endpoint.constructionScope == null || !HologramWorkspace.currentActionEndpoint(endpoint))
+            return Ingress.refused("施工连接或所在世界已变化，请重新确认。");
+        if (intent == null || !intent.valid() || intent.generation != endpoint.constructionScope.generation)
+            return Ingress.refused("原生施工确认已失效，请重新确认。");
         EntityPlayerMP player = endpoint.player;
+        if (player.isDead || !player.capabilities.allowEdit) return Ingress.refused("当前玩家没有施工权限。");
+        boolean creative = player.capabilities.isCreativeMode;
+        if (creative && !intent.allowsCreative())
+            return Ingress.refused("创造模式的结构施工仅支持新建和补建；未开始施工。");
         var inventory = player.inventory;
         ItemStack[] slots = inventory.mainInventory;
-        if (intent.slot >= slots.length || inventory.currentItem != intent.slot) return null;
+        if (intent.slot >= slots.length || inventory.currentItem != intent.slot)
+            return Ingress.refused("手持栏已变化，请重新确认施工。");
         ItemStack held = slots[intent.slot];
-        if (!ItemNekoHologramProjector.isProjector(held)) return null;
-        var settings = HologramMaterials.read(held);
-        if(HologramProjectedMainPolicy.settingsKey(settings)!=intent.sources)return null;
-        var configured = HologramProjectedMainPolicy.captureSelected(settings);
-        if (configured == null || settings.priority != intent.materialPriority) return null;
+        if (!ItemNekoHologramProjector.isProjector(held)) return Ingress.refused("当前未手持已确认的投影仪。");
         String id = toolId(held);
-        // A blank UUID would let Session's constructor mint one across markDirty callbacks. Until a distinct
-        // authenticated initializer exists, only a preidentified exact projector can own this short intent.
-        if (!HologramNativeCompactStart.canonical(id)) return null;
+        // Do not mint a new identity or adopt a different projector in response to a short intent.
+        if (!HologramNativeCompactStart.canonical(id) || confirmedToolId != null && !id.equals(confirmedToolId))
+            return Ingress.refused("投影仪身份未同步或已变化，请重新打开结构后确认。");
+        var settings = HologramMaterials.read(held);
+        var configured = HologramProjectedMainPolicy.captureSelected(settings);
+        if (configured == null || HologramProjectedMainPolicy.settingsKey(settings) != intent.sources
+            || settings.priority != intent.materialPriority)
+            return Ingress.refused("投影仪材料来源设置与确认不一致，请重新确认。");
         EbfToolStamp exactEbfTool = intent.ebf == null ? null : EbfToolStamp.capture(held);
-        if (intent.ebf != null && exactEbfTool == null) return null;
-        return new Submission(endpoint, intent, inventory, slots, held, id, configured, exactEbfTool);
+        if (intent.ebf != null && exactEbfTool == null)
+            return Ingress.refused("投影仪有草稿或高炉等级和线圈设置无法核对。");
+        return new Ingress(new Submission(endpoint, intent, inventory, slots, held, id, configured, exactEbfTool,
+            creative), null);
     }
 
     private static String toolId(ItemStack tool) {
@@ -274,7 +312,8 @@ final class HologramStockNativeEntry {
         if (gate == null) throw new IOException("原生补建的连接已变化。");
         var player = endpoint.player;
         Prior prior = Prior.capture(endpoint);
-        boolean current = submission.current();
+        String refusal = submission.refusal();
+        boolean current = refusal == null;
         boolean competing = !current || HologramConstructionAuthority.competingWork(player)
             || prior.session != null && !HologramSessionPolicy.valid(prior.session);
         boolean recovery = current && HologramConstructionAuthority.hasKnownRecovery(player);
@@ -282,8 +321,7 @@ final class HologramStockNativeEntry {
         // stale tool, invalid anchor, busy work or recovery and then become a delayed start.
         var admission = gate.acquire(endpoint.constructionScope, intent.request, competing, recovery);
         if (admission.decision != HologramConstructionTaskGate.Decision.GRANTED)
-            throw new IOException(!current ? "原生补建的手持投影仪已变化。"
-                : "原生补建未获得许可：" + admission.decision);
+            throw new IOException(!current ? refusal : "原生补建未获得许可：" + admission.decision);
         boolean taken = false;
         try {
             var entry = open(submission, gate, admission.lease, prior);
@@ -454,7 +492,7 @@ final class HologramStockNativeEntry {
             target.mode = intent.declaration.operation();
             target.materialSettings = submission.sources();
             var job = new HologramDeclaredNativeConstruction(endpoint, gate, lease, target, intent.declaration,
-                () -> submission.current() && prior.unchanged());
+                submission.creative, () -> submission.current() && prior.unchanged());
             var owned = new HologramStockNativeEntry(submission, prior, target, null, null, job);
             taken = true;
             return owned;
