@@ -283,6 +283,22 @@ public final class HologramStockEbfConstructionRegression {
         var inventory = player.inventory.mainInventory;
         var heldCasing = inventory[1];
         var heldCoil = inventory[2];
+        var projector = inventory[0];
+        var projectorTag = projector.getTagCompound();
+        var priorDraft = new NBTTagCompound();
+        priorDraft.setString("authorState", "unsaved test draft");
+        priorDraft.setByteArray("packedRows", new byte[] { 4, 9, 1, -3 });
+        projectorTag.setTag(HologramSessionKeys.DRAFT, priorDraft);
+        byte[] expectedDraft = HologramSnapshotCodec.compress(priorDraft);
+        var prior = new HologramSession(player, controller.xCoord, controller.yCoord, controller.zCoord, false, 2);
+        prior.open = true;
+        prior.blueprintDirty = true;
+        prior.status = "unsaved origin";
+        var seats = HologramWorkspace.class.getDeclaredField("SESSIONS");
+        seats.setAccessible(true);
+        @SuppressWarnings("unchecked")
+        var map = (java.util.Map<UUID,HologramSession>) seats.get(null);
+        SimpleAssert.eq(null, map.put(endpoint.actor, prior), "install an idle occupied workspace before real BEGIN");
         var replies = new ArrayList<HologramStockNativeWire.Reply>();
         var server = new HologramStockNativeServer((actor, reply) -> {
             SimpleAssert.that(actor == endpoint, "the authenticated actor owns the exact declared receipt");
@@ -349,6 +365,10 @@ public final class HologramStockEbfConstructionRegression {
             var survivor = create.apply(4);
             proveDeclared(server, endpoint, replies, survivor);
             var built = finishDeclared(server, endpoint, replies, survivor.forGeneration(generation));
+            SimpleAssert.that(HologramWorkspace.find(endpoint.actor) == prior && prior.blueprintDirty && prior.open
+                && prior.status.equals("unsaved origin") && inventory[0] == projector && projector.getTagCompound() == projectorTag
+                && java.util.Arrays.equals(expectedDraft, HologramSnapshotCodec.compress(projectorTag.getCompoundTag(HologramSessionKeys.DRAFT))),
+                "real survival completion returns to the exact unsaved workspace and preserves held draft bytes");
             SimpleAssert.that(built.phase() == HologramStockNativeWire.Phase.COMPLETE && built.placed() == 32
                 && built.reason().contains("1 处未选仓室") && world.writes().size()==32
                 && inventory[1].stackSize == 16 && inventory[2] == null
@@ -370,7 +390,11 @@ public final class HologramStockEbfConstructionRegression {
                 && world.getTileEntity(controller.xCoord, controller.yCoord, controller.zCoord) == controller
                 && world.getBlockMetadata(coil[0],coil[1],coil[2]) == 9,
                 "creative bare EBF commits real shell and selected coil with an empty inventory: " + free);
-            System.out.println("GTMB_DECLARED_EBF_PROOF_AND_PLACEMENT survival=32 (+32 debit), creative=32 (0 debit), exhaust preserved; mode drift and missing stock denied");
+            SimpleAssert.that(HologramWorkspace.find(endpoint.actor) == prior && prior.blueprintDirty && prior.open
+                && prior.status.equals("unsaved origin") && inventory[0] == projector && projector.getTagCompound() == projectorTag
+                && java.util.Arrays.equals(expectedDraft, HologramSnapshotCodec.compress(projectorTag.getCompoundTag(HologramSessionKeys.DRAFT))),
+                "real Creative leaves the exact same unsaved workspace and draft intact");
+            System.out.println("GTMB_DECLARED_EBF_PROOF_AND_PLACEMENT survival=32 (+32 debit), creative=32 (0 debit), draft retained; mode drift and missing stock denied");
         } finally {
             for (int i = 0; i < offsets.size(); i++) {
                 var p = offsets.get(i);
@@ -380,6 +404,8 @@ public final class HologramStockEbfConstructionRegression {
             }
             world.writes().clear();
             if (oldTileName == null) tileNames.remove(BaseMetaTileEntity.class);
+            map.remove(endpoint.actor, prior);
+            projectorTag.removeTag(HologramSessionKeys.DRAFT);
             inventory[1] = heldCasing;
             inventory[2] = heldCoil;
             player.capabilities.isCreativeMode = false;

@@ -9,13 +9,18 @@ final class HologramConstructionAuthority {
     private HologramConstructionAuthority() {}
 
     static boolean competingWork(EntityPlayerMP player){
-        return HologramNativeLocalConstruction.active(player)||!quiet(player,HologramWorkspace.find(player.getUniqueID()));
+        return competingWork(player, false);
+    }
+
+    static boolean competingWork(EntityPlayerMP player, boolean preserveIdleDraft) {
+        return HologramNativeLocalConstruction.active(player)
+            || !quiet(player, HologramWorkspace.find(player.getUniqueID()), preserveIdleDraft);
     }
     static boolean hasKnownRecovery(EntityPlayerMP player){
         return HologramConstructionJournal.pending(player)||HologramMaterials.Context.pendingWorldRecovery(player);
     }
 
-    private static boolean quiet(EntityPlayerMP player, HologramSession origin) {
+    private static boolean quiet(EntityPlayerMP player, HologramSession origin, boolean preserveIdleDraft) {
         if (HologramWorkspace.find(player.getUniqueID()) != origin || HologramDemolition.active(player)
             || HologramAeCraftingOrders.active(player))
             return false;
@@ -24,7 +29,7 @@ final class HologramConstructionAuthority {
             && (origin == null || origin.player == player && HologramEditorWorkspaceRegistry.idle(origin)
                 && origin.nativeReadyPlacement == null && origin.nativeCompactStart == null
                 && origin.presentationTransition == null && !HologramSnapshotPreparation.pending(origin)
-                && !HologramAuthoringWorkflow.blueprintHasUnsavedChanges(origin));
+                && (preserveIdleDraft || !HologramAuthoringWorkflow.blueprintHasUnsavedChanges(origin)));
     }
 
 }

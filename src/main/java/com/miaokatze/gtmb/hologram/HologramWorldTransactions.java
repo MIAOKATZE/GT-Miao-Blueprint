@@ -480,7 +480,10 @@ final class HologramWorldTransactions {
             || (s.player.capabilities.isCreativeMode && w.getTileEntity(c.x, c.y, c.z) == null)
                 ? Collections.emptyList()
                 : HologramMaterialAccess.drops(old, w, c, oldMeta);
-        ItemStack[] inventory = HologramMaterialAccess.copyInventory(s.player);
+        // Ordinary declared construction cannot debit its held projector. Do not snapshot a draft into a cell
+        // journal or roll the projector tag backwards on a failed cell.
+        int untouchedSlot = scope != null && scope.declared && !exactReplacement ? s.slot : -1;
+        ItemStack[] inventory = HologramMaterialAccess.copyInventory(s.player, untouchedSlot);
         NBTTagCompound savedTile = w.getTileEntity(c.x, c.y, c.z) == null ? null
             : (NBTTagCompound) drops.get(0)
                 .getTagCompound()
@@ -492,7 +495,8 @@ final class HologramWorldTransactions {
         HologramMaterials.Transaction transaction = materialSource(s, scope).begin();
         if (scope == null || scope.selectedSources) {
             transaction.protectAssets(s.pendingAssetBudget, s.cellAssetBudgets.getOrDefault(index, Collections.emptyMap()))
-                .journal(HologramConstructionJournal.begin(s.player, c.x, c.y, c.z, old, oldMeta, savedTile, inventory));
+                .journal(HologramConstructionJournal.begin(s.player, c.x, c.y, c.z, old, oldMeta, savedTile, inventory,
+                    untouchedSlot));
         } else {
             transaction.scopedJournal(
                 HologramConstructionJournal.begin(s.player, c.x, c.y, c.z, old, oldMeta, savedTile, inventory));
